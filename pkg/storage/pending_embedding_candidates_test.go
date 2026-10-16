@@ -21,13 +21,10 @@ func pendingCandidateNode(i int) *Node {
 // helpers, rather than checking an implementation-specific cache statistic.
 func TestPendingClaimBoundedWork(t *testing.T) {
 	metric := expvar.Get("badger_iterator_num_user").(*expvar.Int)
-	for _, n := range []int{1, 128, 1024} {
+	for _, n := range []int{1, 128, pendingCandidatePageSize, 3*pendingCandidatePageSize - 100} {
 		t.Run(fmt.Sprintf("pending=%d", n), func(t *testing.T) {
 			e := newTestBadgerEngineForPending(t)
-			for i := 0; i < n; i++ {
-				_, err := e.CreateNode(pendingCandidateNode(i))
-				require.NoError(t, err)
-			}
+			createPendingCandidates(t, e, 0, n)
 			require.NotNil(t, e.FindNodeNeedingEmbedding()) // one startup/recovery load
 			before := metric.Value()
 			for i := 0; i < n; i++ {
@@ -37,8 +34,9 @@ func TestPendingClaimBoundedWork(t *testing.T) {
 				e.MarkNodeEmbedded(node.ID)
 			}
 			work := metric.Value() - before
-			t.Logf("ACTIVE_WORK pending=%d claims=%d range_iterators=%d", n, n, work)
-			require.Zero(t, work, "active claims must use point reads, independent of pending/store size")
+			pages := (n + pendingCandidatePageSize - 1) / pendingCandidatePageSize
+			t.Logf("ACTIVE_WORK pending=%d claims=%d range_iterators=%d pages=%d", n, n, work, pages)
+			require.EqualValues(t, pages-1, work, "active claims use point reads; each later page needs one range read")
 			require.Nil(t, e.FindNodeNeedingEmbedding())
 			require.EqualValues(t, 1, metric.Value()-before-work, "one empty-boundary reconciliation recovers lost hints")
 		})
@@ -351,4 +349,67 @@ func TestPendingCandidatesFailedReadInvalidatesCatalog(t *testing.T) {
 	e.db.oracle.fail(errors.New("injected unavailable store"))
 	require.Nil(t, e.FindNodeNeedingEmbedding(), "failed atomic lookup must not return a candidate")
 	require.Nil(t, e.FindNodeNeedingEmbedding(), "failed catalog reload must remain retryable")
+}
+
+func createPendingCandidates(t testing.TB, e *BadgerEngine, from, to int) {
+	t.Helper()
+	nodes := make([]*Node, 0, to-from)
+	for i := from; i < to; i++ {
+		nodes = append(nodes, pendingCandidateNode(i))
+	}
+	require.NoError(t, e.BulkCreateNodes(nodes))
+	require.Equal(t, to-from, e.PendingEmbeddingsCount())
+}
+
+// The first claim after a restart reads one bounded page of the durable
+// index, not the whole backlog, and keeps only that page in memory.
+func TestPendingFirstClaimReadsOnePage(t *testing.T) {
+	metric := expvar.Get("badger_iterator_num_user").(*expvar.Int)
+	e := newTestBadgerEngineForPending(t)
+	n := 3 * pendingCandidatePageSize
+	createPendingCandidates(t, e, 0, n)
+	e.InvalidatePendingEmbeddingsIndex() // as a restart leaves it
+	before := metric.Value()
+	node := e.FindNodeNeedingEmbedding()
+	require.NotNil(t, node)
+	require.Equal(t, pendingCandidateNode(0).ID, node.ID)
+	require.EqualValues(t, 1, metric.Value()-before)
+	p := &e.pendingCandidates
+	p.mu.Lock()
+	held, members := len(p.ids), len(p.members)
+	p.mu.Unlock()
+	t.Logf("FIRST_CLAIM pending=%d catalog_ids=%d catalog_members=%d", n, held, members)
+	require.LessOrEqual(t, held, pendingCandidatePageSize, "the catalog holds one page, not the backlog")
+	require.LessOrEqual(t, members, pendingCandidatePageSize)
+}
+
+// Additions committed while pages remain: a marker behind the cursor is
+// claimed through its hint, one ahead of it through its page. Every pending
+// node is claimed exactly once.
+func TestPendingCandidatesHintsAroundCursor(t *testing.T) {
+	e := newTestBadgerEngineForPending(t)
+	n := pendingCandidatePageSize + 10
+	createPendingCandidates(t, e, 0, n)
+	first := e.FindNodeNeedingEmbedding()
+	require.NotNil(t, first)
+	e.MarkNodeEmbedded(first.ID)
+	behind := &Node{ID: "test:a-behind", Labels: []string{"Doc"}, Properties: map[string]any{"content": "behind"}}
+	ahead := &Node{ID: "test:z-ahead", Labels: []string{"Doc"}, Properties: map[string]any{"content": "ahead"}}
+	for _, node := range []*Node{behind, ahead} {
+		_, err := e.CreateNode(node)
+		require.NoError(t, err)
+	}
+	next := e.FindNodeNeedingEmbedding()
+	require.NotNil(t, next)
+	require.Equal(t, behind.ID, next.ID, "a marker behind the cursor is claimed through its hint")
+	claimed := map[NodeID]int{first.ID: 1}
+	for node := next; node != nil; node = e.FindNodeNeedingEmbedding() {
+		claimed[node.ID]++
+		e.MarkNodeEmbedded(node.ID)
+	}
+	require.Len(t, claimed, n+2)
+	for id, count := range claimed {
+		require.Equal(t, 1, count, id)
+	}
+	require.Contains(t, claimed, ahead.ID)
 }

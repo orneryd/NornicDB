@@ -355,11 +355,12 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // The durable prefixPendingEmbed index is authoritative. A derived candidate
 // heap avoids reopening/rewinding that range for every claim: Badger's rewind
 // and read-ahead revisit deleted marker versions even with a prefix bound.
-// After one lazy index load, a live candidate needs only point validation;
-// stale candidates are removed once. Each returned node is validated in the
-// engine write that cleans the markers before it; cleanup larger than one
-// Badger batch commits batch by batch, so it always makes progress. Claim
-// serialization remains with the worker.
+// Candidates load lazily one bounded page at a time, so the first claim after
+// a restart does not read the whole backlog. A live candidate then needs only
+// point validation; stale candidates are removed once. Each returned node is
+// validated in the engine write that cleans the markers before it; cleanup
+// larger than one Badger batch commits batch by batch, so it always makes
+// progress. Claim serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	if b.ensureOpen() != nil {
 		return nil
@@ -371,11 +372,8 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	// index. Reconcile at the empty boundary; a previously verified empty
 	// snapshot is reusable until storage publishes another commit. Live
 	// claims keep their point-read path; worker scheduling owns idle backoff.
-	reconciled := len(p.ids) == 0 || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
+	reconciled := (len(p.ids) == 0 && p.next == nil) || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
 	if p.load(b) != nil {
-		return nil
-	}
-	if len(p.ids) == 0 {
 		return nil
 	}
 
@@ -383,7 +381,22 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	removedStale := 0
 	removedNoLongerNeeds := 0
 
-	for len(p.ids) > 0 {
+	for {
+		if len(p.ids) == 0 {
+			// The loaded candidates were stale. Continue with the next page;
+			// at the end, a committed marker whose hint was lost may still
+			// exist behind the cursor, so rescan from the start once.
+			if p.next == nil {
+				if reconciled {
+					break
+				}
+				reconciled = true
+			}
+			if p.load(b) != nil {
+				return nil
+			}
+			continue
+		}
 		// Cleanup deletions are committed one Badger batch at a time: a
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
@@ -465,14 +478,8 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		if batchFull {
 			continue
 		}
-		if found != nil || reconciled {
+		if found != nil {
 			break
-		}
-		// The last cached hints were stale. A committed marker whose hint was
-		// lost may still exist, so check the durable index before returning nil.
-		reconciled = true
-		if p.load(b) != nil {
-			return nil
 		}
 	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).

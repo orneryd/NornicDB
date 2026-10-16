@@ -10,20 +10,27 @@ import (
 // pendingEmbeddingCandidates is a derived key catalog, not a second durable
 // queue. The existing pending markers remain authoritative: every candidate
 // is checked in the finder's transaction before its node is returned. Loading
-// the catalog once avoids repeatedly walking old marker versions/tombstones
+// a page of the catalog avoids repeatedly walking old marker versions/tombstones
 // when a fresh Badger iterator rewinds (and prefetches a second live item).
+// Pages continue from a cursor, so a claim's latency and memory do not grow
+// with the pending backlog.
 type pendingEmbeddingCandidates struct {
 	mu         sync.Mutex
 	loaded     bool
 	generation uint64
 	ids        pendingEmbeddingHeap
 	members    map[NodeID]struct{}
+	// next is the first durable marker key no page has read yet; nil once a
+	// page reached the end of the index.
+	next []byte
 	// A verified empty snapshot is reusable only while the authoritative
 	// commit timestamp and invalidation generation are unchanged. Hint loss
 	// cannot hide a new durable marker: its commit advances the timestamp.
 	emptyVerified bool
 	emptyReadTs   uint64
 }
+
+const pendingCandidatePageSize = 1024
 
 type pendingEmbeddingHeap []NodeID
 
@@ -62,26 +69,34 @@ func (p *pendingEmbeddingCandidates) removeFirst() {
 	}
 }
 
-// load runs under mu. A concurrent commit publishes its additions under the
-// same lock, so an addition missed by this snapshot cannot be lost. Failed
-// loads leave the catalog unloaded and can be retried.
+// load runs under mu and reads at most one page: the next one after the
+// cursor, or the first one when the catalog is invalid or a page reached the
+// end. A concurrent commit publishes its additions under the same lock, so an
+// addition missed by this snapshot cannot be lost. Failed loads leave the
+// catalog as it was and can be retried.
 func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 	generation := b.pendingCandidatesGeneration.Load()
 	if p.loaded && p.generation == generation && len(p.ids) > 0 {
 		return nil
 	}
+	restart := !p.loaded || p.generation != generation || p.next == nil
+	start := p.next
+	if restart {
+		start = []byte{prefixPendingEmbed}
+	}
 	var ids pendingEmbeddingHeap
 	var members map[NodeID]struct{}
+	var next []byte
 	var readTs uint64
 	err := b.withView(func(txn *badger.Txn) error {
 		readTs = txn.ReadTs()
-		if p.loaded && p.generation == generation && p.emptyVerified && p.emptyReadTs == readTs {
+		if restart && p.loaded && p.generation == generation && p.emptyVerified && p.emptyReadTs == readTs {
 			return nil
 		}
 		prefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Seek(start); it.Valid() && len(ids) < pendingCandidatePageSize; it.Next() {
 			key := it.Item().Key()
 			if len(key) <= 1 {
 				continue
@@ -93,17 +108,26 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 			ids = append(ids, id)
 			members[id] = struct{}{}
 		}
+		if it.Valid() {
+			next = it.Item().KeyCopy(nil)
+		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	p.ids, p.members, p.loaded = ids, members, true
+	p.ids, p.members, p.loaded, p.next = ids, members, true, next
 	p.generation = generation
-	p.emptyVerified = len(ids) == 0
+	p.emptyVerified = restart && len(ids) == 0
 	p.emptyReadTs = readTs
 	heap.Init(&p.ids)
 	return nil
+}
+
+// behindCursor reports whether a page already passed id's marker. A later
+// marker is read by its page, so only these additions need a hint.
+func (p *pendingEmbeddingCandidates) behindCursor(id NodeID) bool {
+	return p.next == nil || string(p.next[1:]) > string(id)
 }
 
 // setPendingEmbeddingInTxn is the single writer of pending-marker additions.
@@ -156,7 +180,9 @@ func (cw *commitWriter) publishPendingEmbeddingAdds() {
 	defer p.mu.Unlock()
 	if p.loaded {
 		for id := range cw.pendingEmbeddingIDs {
-			p.add(id)
+			if p.behindCursor(id) {
+				p.add(id)
+			}
 		}
 	}
 	cw.pendingEmbeddingIDs = nil
@@ -176,6 +202,7 @@ func (b *BadgerEngine) releasePendingEmbeddingCandidates() {
 	p.mu.Lock()
 	p.ids = nil
 	p.members = nil
+	p.next = nil
 	p.loaded = false
 	p.mu.Unlock()
 	b.pendingEmbeddingAdds.Clear()
