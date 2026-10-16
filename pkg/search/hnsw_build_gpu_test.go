@@ -76,7 +76,8 @@ func TestBuildHNSWWithOptionalGPUFallback(t *testing.T) {
 	require.NotNil(t, idx)
 	assert.Equal(t, len(pairs), idx.Size())
 	assert.True(t, stats.Fallback)
-	assert.Equal(t, "cpu", stats.Strategy)
+	assert.Equal(t, "batch_parallel", stats.Strategy)
+	assert.Equal(t, "*search.CPUHNSWBuildAccelerator", stats.Backend)
 	assert.GreaterOrEqual(t, stats.KernelErrors, 1)
 
 	results, err := idx.Search(context.Background(), pairs[0].vec, 1, 0)
@@ -96,7 +97,7 @@ func TestBuildHNSWAcceleratedCPUShim(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, idx)
 	assert.Equal(t, len(pairs), idx.Size())
-	assert.Equal(t, "gpu_assisted", stats.Strategy)
+	assert.Equal(t, "batch_parallel", stats.Strategy)
 	assert.NotZero(t, stats.Batches)
 
 	for _, query := range []hnswBuildPair{pairs[0], pairs[17], pairs[99]} {
@@ -118,7 +119,7 @@ func BenchmarkHNSWBuildCPUVsAcceleratedCandidates(b *testing.B) {
 
 	b.Run("CPU", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx, _, err := buildHNSWCPU(context.Background(), 64, baseConfig, nil, len(pairs), hnswPairSliceIterator(pairs))
+			idx, _, err := buildHNSWSequential(64, baseConfig, pairs)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -208,7 +209,7 @@ func BenchmarkHNSWBuildCPUVsAcceleratedCandidates1024D(b *testing.B) {
 
 	b.Run("CPU", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx, _, err := buildHNSWCPU(context.Background(), 1024, baseConfig, nil, len(pairs), hnswPairSliceIterator(pairs))
+			idx, _, err := buildHNSWSequential(1024, baseConfig, pairs)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -287,7 +288,7 @@ func BenchmarkHNSWBuildCPUVsAcceleratedCandidatesLarge1024D(b *testing.B) {
 
 	b.Run("CPU", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			idx, _, err := buildHNSWCPU(context.Background(), 1024, baseConfig, nil, len(pairs), hnswPairSliceIterator(pairs))
+			idx, _, err := buildHNSWSequential(1024, baseConfig, pairs)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -373,7 +374,7 @@ func BenchmarkHNSWBuildFromVectorFileStore(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx, _, err := buildHNSWCPU(context.Background(), dim, config, nil, total, iter)
+		idx, _, err := buildHNSWWithOptionalGPU(context.Background(), dim, config, nil, total, iter, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
