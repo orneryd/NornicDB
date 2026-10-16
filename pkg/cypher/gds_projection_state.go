@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +25,27 @@ func newGraphProjection(name, database string) *GraphProjection {
 	}
 }
 
-// indexNodes establishes the same deterministic node order for every reader.
-func (p *GraphProjection) indexNodes() {
-	sort.Strings(p.NodeIDs)
+// indexNodes gives every reader one node order: the import's. A native
+// projection reads stored nodes in ID order (#1183); an aggregation keeps its
+// rows' first-occurrence order, which is GDS's node mapping and decides
+// Louvain's community IDs and similarity's tie winners.
+func (p *GraphProjection) indexNodes(sorted bool) {
+	if sorted {
+		sort.Strings(p.NodeIDs)
+	}
 	p.nodeIndex = gdsNodeIndex(p.NodeIDs)
+}
+
+// nodeIDValue is a projected node's id as the algorithms' rows return it: the
+// INTEGER an aggregation row supplied, as in GDS, or else NornicDB's stored
+// string id (#1165).
+func (p *GraphProjection) nodeIDValue(id string) interface{} {
+	if p.integerNodeIDs[id] {
+		if number, err := strconv.ParseInt(id, 10, 64); err == nil {
+			return number
+		}
+	}
+	return id
 }
 
 // finishCounts records catalog totals once each import has supplied its labels

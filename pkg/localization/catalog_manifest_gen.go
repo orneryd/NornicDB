@@ -506,6 +506,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphergraphprocedures.labels_true_deprecated", Constructor: "CypherGraphProceduresLabelsTrueDeprecated", Fields: []string{"Key", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.louvain_intermediate_consecutive", Constructor: "CypherGraphProceduresLouvainIntermediateConsecutive", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.louvain_seeding_consecutive", Constructor: "CypherGraphProceduresLouvainSeedingConsecutive", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.node_id_negative", Constructor: "CypherGraphProceduresNodeIDNegative", Fields: []string{"ID"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.node_labels_not_found", Constructor: "CypherGraphProceduresNodeLabelsNotFound", Fields: []string{"Labels"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.node_labels_not_in_graph", Constructor: "CypherGraphProceduresNodeLabelsNotInGraph", Fields: []string{"Available", "Labels"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.node_not_node_or_integer", Constructor: "CypherGraphProceduresNodeNotNodeOrInteger", Fields: []string{"Type"}, PluralForms: []string{"other"}},

@@ -9,6 +9,7 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // gdsProjectionRow is one row of gds.graph.project's Cypher aggregation
@@ -86,7 +87,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	seen := make(map[string]bool)
 	relationshipKeys := make(map[string][]string) // each type's property keys, its first relationship's
 	addNode := func(value, labels, properties interface{}, labelsKey, variable string) (string, error) {
-		id, err := gdsProjectionNode(value)
+		id, integer, err := gdsProjectionNode(value)
 		if err != nil {
 			return "", err
 		}
@@ -101,6 +102,12 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		}
 		seen[id] = true
 		projection.NodeIDs = append(projection.NodeIDs, id)
+		if integer {
+			if projection.integerNodeIDs == nil {
+				projection.integerNodeIDs = make(map[string]bool)
+			}
+			projection.integerNodeIDs[id] = true
+		}
 		if len(nodeLabels) == 0 {
 			nodeLabels = []string{"__ALL__"}
 		}
@@ -252,7 +259,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 			}
 		}
 	}
-	projection.indexNodes()
+	projection.indexNodes(false)
 	for _, id := range projection.NodeIDs {
 		for _, label := range projection.NodeLabels[id] {
 			projection.Labels = appendUnique(projection.Labels, label)
@@ -274,19 +281,26 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	}, nil
 }
 
-// gdsProjectionNode reads a projected node: a node, or an INTEGER id, which
-// needn't be a stored node's, as in GDS.
-func gdsProjectionNode(value interface{}) (string, error) {
+// gdsProjectionNode reads a projected node: a node, or a non-negative INTEGER
+// id, which needn't be a stored node's, as in GDS. integer reports an INTEGER
+// id, which the algorithms' rows return as an INTEGER.
+func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
 	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
-	_, stringID := value.(string)
-	if id, ok := gdsNodeID(value); ok && !stringID {
-		return string(id), nil
+	if isIntegerProcedureValue(value) {
+		number := gdsInteger(value)
+		if number < 0 {
+			return "", false, localizedError(localization.CypherGraphProceduresNodeIDNegative(strconv.FormatInt(number, 10)), nil)
+		}
+		return strconv.FormatInt(number, 10), true, nil
+	}
+	if node, ok := value.(*storage.Node); ok && node != nil {
+		return string(node.ID), false, nil
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {
 		typeName = "NO_VALUE"
 	}
-	return "", localizedError(localization.CypherGraphProceduresNodeNotNodeOrInteger(typeName), nil)
+	return "", false, localizedError(localization.CypherGraphProceduresNodeNotNodeOrInteger(typeName), nil)
 }
 
 // gdsAggregationLabels reads a dataConfig's node labels: a STRING, a list

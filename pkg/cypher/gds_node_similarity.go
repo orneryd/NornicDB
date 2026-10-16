@@ -367,7 +367,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			if component != nil && component[source] != component[target] {
 				continue
 			}
-			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes)
+			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes, proj.nodeIDValue)
 			// An undefined score (0/0) is dropped, as GDS drops it.
 			if math.IsNaN(similarity) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 				continue
@@ -396,7 +396,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 	}
 	rows := make([][]interface{}, len(pairs))
 	for i, pair := range pairs {
-		rows[i] = []interface{}{graph.nodes[pair.source], graph.nodes[pair.target], pair.similarity, pair.shared}
+		rows[i] = []interface{}{proj.nodeIDValue(graph.nodes[pair.source]), proj.nodeIDValue(graph.nodes[pair.target]), pair.similarity, pair.shared}
 	}
 	return rows, nil
 }
@@ -456,8 +456,8 @@ func nodeSimilarityBefore(a, b nodeSimilarityPair, bottom bool) bool {
 
 // nodeSimilarity is the similarity of two sorted neighbour vectors by metric,
 // and the neighbours they share (nodeId, and weight: the smaller of the two
-// weights, 1 unweighted), most weight first.
-func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string) (float64, []interface{}) {
+// weights, 1 unweighted), most weight first. nodeID renders a node's id.
+func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string, nodeID func(string) interface{}) (float64, []interface{}) {
 	weightOf := func(edge gdsEdge) float64 {
 		if weighted {
 			return edge.weight
@@ -517,7 +517,7 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 	})
 	out := make([]interface{}, len(shared))
 	for i, neighbor := range shared {
-		out[i] = map[string]interface{}{"nodeId": nodes[neighbor.node], "weight": neighbor.weight}
+		out[i] = map[string]interface{}{"nodeId": nodeID(nodes[neighbor.node]), "weight": neighbor.weight}
 	}
 	return similarity, out
 }

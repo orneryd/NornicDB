@@ -127,6 +127,9 @@
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: Mensaje de GDS (node not node or integer).
   other: 'El nodo tiene que ser un NODE o un INTEGER, pero se recibió {{.Type}}'
+- id: cyphergraphprocedures.node_id_negative
+  description: Mensaje de GDS (node id negative).
+  other: 'GDS espera identificadores de nodo positivos, pero recibió el identificador negativo `{{.ID}}`.'
 - id: cyphergraphprocedures.config_key_missing_pair
   description: Mensaje de GDS (config key missing pair).
   other: 'Falta la clave de configuración ''{{.Missing}}'', pero se proporcionó ''{{.Provided}}''. Si realmente quería proporcionar solo `{{.Provided}}` sin valor para `{{.Missing}}`, puede establecer `{{.Missing}}` en `NULL`.'

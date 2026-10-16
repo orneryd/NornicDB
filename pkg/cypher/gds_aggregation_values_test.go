@@ -144,18 +144,22 @@ func TestGDSSharedNodeIDPolicy(t *testing.T) {
 		want        string
 		aggregation bool
 		storedID    bool
+		integer     bool
 	}{
-		{int64(9007199254740993), "9007199254740993", true, true},
-		{&storage.Node{ID: "node-id"}, "node-id", true, true},
-		{"node-id", "node-id", false, true},
-		{(*storage.Node)(nil), "", false, false},
-		{nil, "", false, false},
-		{true, "", false, false},
+		{int64(9007199254740993), "9007199254740993", true, true, true},
+		{uint8(0), "0", true, true, true},
+		{&storage.Node{ID: "node-id"}, "node-id", true, true, false},
+		{"node-id", "node-id", false, true, false},
+		{int64(-1), "-1", false, true, true},
+		{(*storage.Node)(nil), "", false, false, false},
+		{nil, "", false, false, false},
+		{true, "", false, false, false},
 	} {
-		id, err := gdsProjectionNode(tc.value)
+		id, integer, err := gdsProjectionNode(tc.value)
 		if tc.aggregation {
 			require.NoError(t, err)
 			require.Equal(t, tc.want, id)
+			require.Equal(t, tc.integer, integer)
 		} else {
 			require.Error(t, err)
 		}
