@@ -1794,12 +1794,12 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
+	return e.executeUnionBranches(ctx, cypher, unionAll, func(query string) (*ExecuteResult, error) {
 		return e.executeInternal(ctx, query, nil)
 	})
 }
 
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
@@ -1818,6 +1818,11 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
+	// The combined rows' slots and the DISTINCT index count against the
+	// statement's memory limit before they are kept (#1343); the branch rows
+	// themselves counted where each branch kept them.
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
@@ -1872,11 +1877,17 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		// Add rows from this query
 		if unionAll {
 			// UNION ALL - include all rows
+			if err := retention.reserveSlots(len(result.Rows), sliceHeaderBytes); err != nil {
+				return nil, err
+			}
 			combinedResult.Rows = append(combinedResult.Rows, result.Rows...)
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
 				if _, exists := seen.addTuple(row); !exists {
+					if err := retention.reserveBytes(sliceHeaderBytes + mapEntryBytes + int64(len(row))*valueSlotBytes); err != nil {
+						return nil, err
+					}
 					combinedResult.Rows = append(combinedResult.Rows, row)
 				}
 			}

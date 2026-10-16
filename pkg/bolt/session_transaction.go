@@ -144,6 +144,7 @@ func (s *Session) clearExplicitTransactionState() {
 	s.txMergeStatements = nil
 	s.txWriteInfos = nil
 	s.pendingFlush = false
+	s.releaseResultMemory()
 	s.lastResult = nil
 	s.resultIndex = 0
 	s.resultStreams = nil

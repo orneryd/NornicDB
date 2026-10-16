@@ -33,12 +33,12 @@ func newMemoryRetention(ctx context.Context) memoryRetention {
 
 // tracking reports whether a limit is configured for the statement.
 func (r *memoryRetention) tracking() bool {
-	return r.account.scope != nil
+	return r != nil && r.account.scope != nil
 }
 
 // reserveBytes reserves n estimated bytes.
 func (r *memoryRetention) reserveBytes(n int64) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	return r.account.grow(n)
@@ -47,7 +47,7 @@ func (r *memoryRetention) reserveBytes(n int64) error {
 // reserveSlots reserves capacity for n slots of slotBytes each (a
 // preallocated slice), before the slice is made.
 func (r *memoryRetention) reserveSlots(n int, slotBytes int64) error {
-	if r.account.scope == nil || n <= 0 {
+	if r == nil || r.account.scope == nil || n <= 0 {
 		return nil
 	}
 	return r.account.grow(saturatingProduct(int64(n), slotBytes))
@@ -55,7 +55,7 @@ func (r *memoryRetention) reserveSlots(n int, slotBytes int64) error {
 
 // reserveValue reserves a value the site keeps.
 func (r *memoryRetention) reserveValue(value interface{}) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	return r.account.growValue(value)
@@ -63,7 +63,7 @@ func (r *memoryRetention) reserveValue(value interface{}) error {
 
 // reserveRow reserves a binding row the site keeps (or a copy of it).
 func (r *memoryRetention) reserveRow(row pipelineRow) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	return r.account.grow(r.rows.bytes(row))
@@ -72,7 +72,7 @@ func (r *memoryRetention) reserveRow(row pipelineRow) error {
 // reserveMergedRow reserves the row merging outer's and inner's bindings,
 // before it is built.
 func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	size := int64(pipelineRowExtraBytes + mapHeaderBytes)
@@ -88,7 +88,7 @@ func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow) error {
 // reserveExtendedRow reserves the row extending outer with columns bound
 // to values, before it is built.
 func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string, values []interface{}) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	size := int64(pipelineRowExtraBytes + mapHeaderBytes)
@@ -105,7 +105,7 @@ func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string
 
 // reserveResultRow reserves a result row the site keeps.
 func (r *memoryRetention) reserveResultRow(values []interface{}) error {
-	if r.account.scope == nil {
+	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	return r.account.grow(estimateResultRowBytes(values, r.rows.known))
@@ -113,7 +113,9 @@ func (r *memoryRetention) reserveResultRow(values []interface{}) error {
 
 // close returns the unspent credit.
 func (r *memoryRetention) close() {
-	r.account.close()
+	if r != nil {
+		r.account.close()
+	}
 }
 
 // maxReservation caps one reservation (1 PiB): larger than any limit, and
@@ -224,4 +226,37 @@ func expressionBuildsValues(expression string) bool {
 	}
 	return strings.Contains(lower, "[") && strings.Contains(lower, " in ") &&
 		(strings.Contains(lower, "|") || strings.Contains(lower, " where "))
+}
+
+// trackedRetention is a retention owner for ctx's statement while a limit
+// is configured, nil otherwise: for a site whose closure would otherwise
+// capture an owner it never uses (every method is nil-safe).
+func trackedRetention(ctx context.Context) *memoryRetention {
+	if !transactionMemoryActive.Load() {
+		return nil
+	}
+	retention := newMemoryRetention(ctx)
+	if !retention.tracking() {
+		return nil
+	}
+	return &retention
+}
+
+// reserveTraversalRow reserves an OPTIONAL MATCH candidate row (its node,
+// relationship and value bindings), before it is kept.
+func (r *memoryRetention) reserveTraversalRow(row traversalOptRow) error {
+	if r == nil || r.account.scope == nil {
+		return nil
+	}
+	size := int64(pipelineRowExtraBytes + 3*mapHeaderBytes)
+	for name := range row.nodes {
+		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + entityReferenceBytes
+	}
+	for name := range row.rels {
+		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + entityReferenceBytes
+	}
+	for name, value := range row.values {
+		size += r.rows.entry(name, value)
+	}
+	return r.account.grow(size)
 }

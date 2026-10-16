@@ -28,6 +28,10 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 }
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+	// Each row it keeps counts against the statement's memory limit before
+	// it is kept (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
@@ -37,6 +41,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				return nil, false
 			}
 			if accepted {
+				if retention.reserveRow(projected) != nil {
+					return nil, false
+				}
 				out = append(out, projected)
 			}
 		}
@@ -87,6 +94,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			projected := make(pipelineRow, len(row))
 			for name, value := range row {
 				projected[name] = value
+			}
+			if retention.reserveRow(projected) != nil {
+				return nil, false
 			}
 			out = append(out, projected)
 		}
@@ -198,6 +208,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			}
 			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
+				if retention.reserveRow(newRow) != nil {
+					return nil, false
+				}
 				out = append(out, newRow)
 				continue
 			}
@@ -214,7 +227,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
 				continue
 			}
+			if retention.reserveRow(newRow) != nil {
+				return nil, false
+			}
 			out = append(out, newRow)
+			if retention.reserveRow(orderScope) != nil {
+				return nil, false
+			}
 			orderScopes = append(orderScopes, orderScope)
 		}
 		if withDistinct {
@@ -251,6 +270,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !accepted {
 			continue
 		}
+		if retention.reserveRow(newRow) != nil {
+			return nil, false
+		}
 		out = append(out, newRow)
 		if needsOrderScopes {
 			// ORDER BY may name a projected expression by its text; its value
@@ -260,6 +282,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				if _, projected := newRow[ordered.expression]; !projected {
 					scope[ordered.expression] = newRow[ordered.alias]
 				}
+			}
+			if retention.reserveRow(scope) != nil {
+				return nil, false
 			}
 			orderScopes = append(orderScopes, scope)
 		}
@@ -1153,6 +1178,10 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	// The result rows it keeps count against the statement's memory limit
+	// before they are kept (#1343); emitted rows go to the client's stream.
+	retention := trackedRetention(ctx)
+	defer retention.close()
 	if rows == nil && source != nil {
 		// A local the closure captures, so the rows path below doesn't pay
 		// for a captured result variable.
@@ -1166,6 +1195,10 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			if emit != nil {
 				return emit(values)
 			}
+			if retention.reserveResultRow(values) != nil {
+				sourceProjected = false
+				return false
+			}
 			*out = append(*out, values)
 			return true
 		})
@@ -1177,6 +1210,9 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			return false, true
 		}
 		if emit == nil {
+			if retention.reserveResultRow(values) != nil {
+				return false, true
+			}
 			*out = append(*out, values)
 		} else if !emit(values) {
 			break

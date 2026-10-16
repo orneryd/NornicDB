@@ -819,6 +819,15 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 
 // handleTransactionEndpoint routes transaction-related requests
 func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Request, dbName string, remaining []string) {
+	// The request holds its statements' results until its response is
+	// written: their reservations in the transaction memory pools stay
+	// until then, and go back when the handler returns, written or
+	// cancelled (#1343).
+	if cypher.TransactionMemoryLimited() {
+		memory := &cypher.ResultMemory{}
+		r = r.WithContext(cypher.WithResultMemory(r.Context(), memory))
+		defer memory.Release()
+	}
 	switch {
 	case len(remaining) == 0:
 		// POST /db/{dbName}/tx - open new transaction

@@ -605,6 +605,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				result, retErr = nil, err
 			}
 		}
+		// A caller that keeps the result (a Bolt session until PULL, an
+		// HTTP request until its response is written) takes over its
+		// reservation (WithResultMemory).
+		if retErr == nil {
+			running.keepResult(ctx, result)
+		}
 		running.done()
 	}()
 	registerStatement := func() error {

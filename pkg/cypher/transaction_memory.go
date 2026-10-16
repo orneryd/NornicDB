@@ -216,6 +216,11 @@ type transactionMemoryTracker struct {
 	knownMu   sync.Mutex
 	known     [knownLists]knownList
 	knownNext int
+
+	// resultMemory takes resultBytes of the reservation over when the
+	// statement ends: the caller keeps the result (keepResult). Guarded by mu.
+	resultMemory *ResultMemory
+	resultBytes  int64
 }
 
 // knownList is a list collect() counted: its backing array, length and
@@ -321,7 +326,15 @@ func (t *transactionMemoryTracker) end() {
 	reserved := t.reserved.Swap(0)
 	t.used.Store(0)
 	t.statement = nil
+	resultMemory, kept := t.resultMemory, min(t.resultBytes, reserved)
+	t.resultMemory, t.resultBytes = nil, 0
 	t.mu.Unlock()
+	if resultMemory != nil && kept > 0 {
+		// The caller keeps the result: its share of the reservation stays in
+		// the pools until the caller releases it.
+		resultMemory.hold(t.database, kept)
+		reserved -= kept
+	}
 	t.knownMu.Lock()
 	t.known = [knownLists]knownList{}
 	t.knownNext = 0

@@ -247,7 +247,20 @@ func (s *Session) handleRun(data []byte) error {
 			return nil
 		}
 	} else {
-		result, err = executor.Execute(ctx, query, params)
+		// The session holds the result until it is pulled or discarded: its
+		// reservation in the transaction memory pools stays until then (#1343).
+		var memory *cypher.ResultMemory
+		runCtx := ctx
+		if cypher.TransactionMemoryLimited() {
+			memory = &cypher.ResultMemory{}
+			runCtx = cypher.WithResultMemory(ctx, memory)
+		}
+		result, err = executor.Execute(runCtx, query, params)
+		if result != nil {
+			result.memory = memory
+		} else {
+			memory.Release()
+		}
 	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
 	// defer remains the panic/early-return safety net; finishRun is idempotent.
@@ -319,6 +332,10 @@ func (s *Session) handleRun(data []byte) error {
 	}
 
 	// Store result for PULL
+	if !s.inTransaction && s.lastResult != result {
+		// An auto-commit result the client never pulled is dropped.
+		s.lastResult.releaseMemory()
+	}
 	s.lastResult = result
 	s.resultIndex = 0
 
@@ -724,6 +741,7 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		if hasMore {
 			*s.resultStreams[statementID] = stream
 		} else {
+			stream.result.releaseMemory()
 			delete(s.resultStreams, statementID)
 		}
 		if statementID != s.latestStatementID {
@@ -735,6 +753,8 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.resultIndex = stream.index
 		s.lastLazy = stream.lazy
 	} else {
+		// Pulled to the end or discarded: the reservation goes back.
+		stream.result.releaseMemory()
 		s.lastResult = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
@@ -1049,6 +1069,7 @@ func (s *Session) handleReset(data []byte) error {
 		return fmt.Errorf("RESET transaction cleanup failed: %w", err)
 	}
 	s.failedUntilReset = false
+	s.releaseResultMemory()
 	s.lastResult = nil
 	s.resultIndex = 0
 	if err := s.sendSuccessNoFlush(nil); err != nil {
@@ -1170,6 +1191,7 @@ func (s *Session) handleBegin(data []byte) error {
 	s.txWriteInfos = nil
 	s.queryId = 0
 	s.latestStatementID = -1
+	s.releaseResultMemory()
 	s.resultStreams = make(map[int64]*resultStream)
 	if err := s.sendSuccessNoFlush(nil); err != nil {
 		return err
@@ -1878,4 +1900,14 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 	}
 	s.identity, s.identityAuth = identity, s.authResult
 	return identity
+}
+
+// releaseResultMemory gives back the reservations of every result the
+// session holds (#1343): on RESET, at a transaction's end, when the
+// connection closes.
+func (s *Session) releaseResultMemory() {
+	s.lastResult.releaseMemory()
+	for _, stream := range s.resultStreams {
+		stream.result.releaseMemory()
+	}
 }

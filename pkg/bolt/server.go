@@ -405,6 +405,17 @@ type QueryResult struct {
 	Rows     [][]any
 	Metadata map[string]any
 	Stats    *QueryStats // Write counters for ResultSummary
+	// memory is the result's reservation in the transaction memory pools
+	// while the session holds it (#1343); released when it is pulled to
+	// the end, discarded, or dropped (releaseMemory).
+	memory *cypher.ResultMemory
+}
+
+// releaseMemory gives the result's reservation back.
+func (r *QueryResult) releaseMemory() {
+	if r != nil && r.memory != nil {
+		r.memory.Release()
+	}
 }
 
 type resultStream struct {
@@ -1306,6 +1317,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 	session.publishConnectionListing()
 	defer session.removeConnectionListing()
+	// Results the client never pulled give their reservations back (#1343).
+	defer session.releaseResultMemory()
 	_, sourceTransactional := s.executor.(TransactionalExecutor)
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
 		session.executor = factory.NewSessionExecutor()
