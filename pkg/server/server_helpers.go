@@ -159,6 +159,30 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 	return s.GetResolvedAccessForRoles(claims.Roles, dbName)
 }
 
+// databaseReadAccess is the one check of whether the principal may read a
+// database through a route that reads it directly (search, similarity, the
+// graph routes): accessible is whether the database allowlist lets it use the
+// database at all, readable whether it may also read it (the per-database
+// read privilege of a signed-in principal; a request without claims passes
+// the allowlist only when authentication is disabled).
+func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
+	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+		return false, false
+	}
+	return true, claims == nil || s.getResolvedAccess(claims, dbName).Read
+}
+
+// authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
+// whose principal may not read dbName (databaseReadAccess), and reports
+// whether the request may go on.
+func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
+	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		return false
+	}
+	return true
+}
+
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
