@@ -18,7 +18,7 @@ import (
 func TestCollectionsCreateLocalizesRequiredNameAndPreservesCode(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
-	service := NewCollectionsService(nil, nil, nil)
+	service := NewCollectionsService(nil, nil)
 	service.localizer = manager
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
 
@@ -65,7 +65,7 @@ func TestDatabaseAccessLocalizesDenialAndPreservesCode(t *testing.T) {
 	config.DatabaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
 		return auth.DenyAllDatabaseAccessMode
 	}
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	server, err := NewServer(config, store, nil, nil, nil)
 	require.NoError(t, err)
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("accept-language", "es-ES"))
