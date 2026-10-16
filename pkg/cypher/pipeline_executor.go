@@ -553,7 +553,11 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 
 	// Parameters remain typed bindings through every clause.
 	params := getParamsFromContext(ctx)
-	if !hasCallSubquery {
+	// The statement shortcuts read the store as if every variable were
+	// unbound, so a correlated body (EXISTS / COUNT / COLLECT over an
+	// imported variable) takes the row pipeline, which is seeded with the
+	// imports below.
+	if !hasCallSubquery && !e.pipelineReadsImportedBinding(ctx, clauses) {
 		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
@@ -1087,6 +1091,38 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 		return nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterWrite(clause), nil)
 	}
 	return nil, false, nil
+}
+
+// pipelineReadsImportedBinding reports whether a clause mentions a variable
+// the pipeline's first row imports: a correlated subquery body's outer row
+// (fabricRecordBindings) or an enclosing value scope. Parameters are not
+// imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
+// use, so a body that only names its own variables keeps the shortcuts.
+func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+	references := func(name string) bool {
+		if strings.HasPrefix(name, "$") {
+			return false
+		}
+		for _, clause := range clauses {
+			if isIdentifierReferenced(clause.text, name) {
+				return true
+			}
+		}
+		return false
+	}
+	for name := range e.fabricRecordBindings {
+		if references(name) {
+			return true
+		}
+	}
+	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
+		for name := range valueBindingsFromContext(ctx) {
+			if references(name) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of
