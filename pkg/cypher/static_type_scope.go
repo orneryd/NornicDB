@@ -378,10 +378,15 @@ func carryStaticSubqueryImports(projected, input, imports typeScope, projection 
 // commonStaticOperand widens differing facts independently: an unrelated map
 // member must not erase the Map kind or another member's agreed type. Members
 // present in only one alternative have no guaranteed type in the result.
+// Exclusions (nonBoolean, nonInteger, nonEntity) hold only when both
+// alternatives agree; a deferred predicate check stays deferred if either
+// alternative defers it.
 func commonStaticOperand(left, right staticOperand) staticOperand {
 	common := staticOperand{
-		nonBoolean: left.nonBoolean && right.nonBoolean,
-		nonEntity:  left.nonEntity && right.nonEntity,
+		nonBoolean:        left.nonBoolean && right.nonBoolean,
+		predicateDeferred: left.predicateDeferred || right.predicateDeferred,
+		nonInteger:        left.nonInteger && right.nonInteger,
+		nonEntity:         left.nonEntity && right.nonEntity,
 	}
 	if left.kind == right.kind {
 		common.kind = left.kind
