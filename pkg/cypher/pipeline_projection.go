@@ -4,6 +4,7 @@ package cypher
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -865,7 +866,7 @@ func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) strin
 // without more items) that produced no rows lists the variables in scope, as
 // Neo4j does, since no row carries them (#883). Otherwise the columns take
 // the statement's own item texts (original), which rewrites may have changed.
-func pipelineNameReturnColumns(final *ExecuteResult, clause, original string, scope map[string]struct{}) {
+func pipelineNameReturnColumns(ctx context.Context, final *ExecuteResult, clause, original string, scope map[string]struct{}) {
 	if plan := returnProjectionPlanFor(clause); plan.star {
 		if len(final.Rows) == 0 {
 			final.Columns = plan.withStarExpanded(pipelineScopeColumns(scope)).columns
@@ -875,8 +876,8 @@ func pipelineNameReturnColumns(final *ExecuteResult, clause, original string, sc
 	if original == "" {
 		return
 	}
-	if columns := pipelineReturnSourceColumns(original); len(columns) == len(final.Columns) {
-		final.Columns = columns
+	if columns := pipelineReturnSourceColumnsFor(ctx, original); len(columns) == len(final.Columns) {
+		final.Columns = slices.Clone(columns)
 	}
 }
 
@@ -1204,7 +1205,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		}
 	}
 	named := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
-	pipelineNameReturnColumns(named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+	pipelineNameReturnColumns(ctx, named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 	stream.begin(named.Columns)
 	stopped := false
 	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {

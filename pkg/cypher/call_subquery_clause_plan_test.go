@@ -23,6 +23,8 @@ func TestCallSubqueryClausePlanMatchesNeo4j(t *testing.T) {
 		"exists_where":              {{int64(299)}},
 		"count_return":              {{int64(1201)}},
 		"count_in_call":             {{int64(1200)}},
+		"where_fold":                {{int64(440)}},
+		"limit_body":                {{int64(800), "q0"}},
 	}
 	for _, tc := range callPlanBenchQueries {
 		result, err := exec.Execute(ctx, tc.query, nil)
@@ -93,6 +95,8 @@ func TestCallSubqueryClausePlanParsesOncePerStatement(t *testing.T) {
 		"exists_where":              {clauseAnalysisBoundChain},
 		"count_return":              {clauseAnalysisBoundChain},
 		"count_in_call":             {clauseAnalysisCallSubquery, clauseAnalysisBoundChain},
+		"where_fold":                {clauseAnalysisCallSubquery, clauseAnalysisMaySubquery, clauseAnalysisOperandFacts},
+		"limit_body":                {clauseAnalysisCallSubquery, clauseAnalysisLimitModifier, clauseAnalysisReturnSourceColumns},
 	}
 	for _, tc := range callPlanBenchQueries {
 		mu.Lock()

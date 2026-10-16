@@ -508,7 +508,7 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		return matched, true, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpressionInContext(ctx, trimmed, func(operand string, position foldPosition) (interface{}, bool, error) {
-		if !isolateOperandErrors(operand, position, true) {
+		if !rowOperandFactsFor(ctx, operand).isolate(position, true) {
 			value, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)
 			return value, resolved, nil
 		}

@@ -291,7 +291,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	}
 
 	// 2) Conjunction: any recognized id-conjunct is safe to use as a pruning seek.
-	if findTopLevelKeyword(clause, " AND ") > 0 {
+	if findTopLevelKeywordFor(ctx, clause, " AND ") > 0 {
 		for _, raw := range splitTopLevelAndConjuncts(clause) {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
@@ -307,7 +307,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	}
 
 	// 3) Disjunction: only safe when every branch is recognized as an ID seek.
-	orTerms := splitTopLevelOrTerms(clause)
+	orTerms := splitTopLevelOrTermsFor(ctx, clause)
 	if len(orTerms) > 1 {
 		merged := make([]*storage.Node, 0, len(orTerms))
 		seen := make(map[storage.NodeID]struct{}, len(orTerms))
@@ -591,7 +591,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	// pruning seek (see over-fetch-only argument in the doc comment above).
 	// A label disjunction among the conjuncts names the labels a match must
 	// carry, for a pattern without labels (#858).
-	if findTopLevelKeyword(clause, " AND ") > 0 {
+	if findTopLevelKeywordFor(ctx, clause, " AND ") > 0 {
 		conjuncts := splitTopLevelAndConjuncts(clause)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
@@ -645,7 +645,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	// comment above). A label disjunction among the conjuncts
 	// (n.id = $id AND (n:A OR n:B)) names the labels a match must carry, for
 	// a pattern without labels (#858).
-	if findTopLevelKeyword(clause, " AND ") > 0 {
+	if findTopLevelKeywordFor(ctx, clause, " AND ") > 0 {
 		conjuncts := splitTopLevelAndConjuncts(clause)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
@@ -670,6 +670,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 // This is important for cleanup/read paths that pass large key lists and would
 // otherwise full-scan labels.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -678,7 +679,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	if clause == "" || params == nil {
 		return nil, false, nil
 	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
+	orIdx := findTopLevelKeywordFor(ctx, clause, " OR ")
 	if orIdx <= 0 {
 		return nil, false, nil
 	}
@@ -777,7 +778,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	if clause == "" {
 		return nil, false, nil
 	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
+	orIdx := findTopLevelKeywordFor(ctx, clause, " OR ")
 	if orIdx <= 0 {
 		return nil, false, nil
 	}
@@ -2108,7 +2109,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	}
 	// An id IN list among AND conditions seeks the same way; the caller
 	// still evaluates the whole WHERE on the nodes it selects.
-	if findTopLevelKeyword(whereClause, " AND ") > 0 {
+	if findTopLevelKeywordFor(ctx, whereClause, " AND ") > 0 {
 		for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
 			if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, conjunct, params); err != nil || used {
 				return nodes, false, used, err
@@ -2121,7 +2122,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		inList  bool
 	}{
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)

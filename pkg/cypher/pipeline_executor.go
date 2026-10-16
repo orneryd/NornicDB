@@ -1011,12 +1011,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
-					pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+					pipelineNameReturnColumns(ctx, final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 					return final, true, failure
 				}
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+			pipelineNameReturnColumns(ctx, final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 			result.Columns = final.Columns
 			result.Rows = final.Rows
 			// RETURN is always last.
@@ -1093,10 +1093,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
-	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
+	split := pipelineMatchBodyWhereFor(ctx, clauses[0].text)
+	if split.hasWhere {
 		return nil, false, nil
 	}
+	matchBody := split.body
 	if len(splitTopLevelComma(matchBody)) != 1 {
 		return nil, false, nil
 	}
@@ -1131,12 +1132,8 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
 	}
-	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(matchBody, "WHERE"); whereIndex >= 0 {
-		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
-		matchBody = strings.TrimSpace(matchBody[:whereIndex])
-	}
+	split := pipelineMatchBodyWhereFor(ctx, clauses[0].text)
+	matchBody, whereClause := split.body, split.where
 	// A path assignment (p = (n:L)) is the general route's, which binds the
 	// path: read as a node, its variable would be "p = (n".
 	if !e.isSingleNodePattern(matchBody) || extractPathAssignmentVariable(matchBody) != "" {
@@ -1164,7 +1161,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 	if err != nil {
 		return nil, true, err
 	}

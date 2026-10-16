@@ -53,6 +53,10 @@ var callPlanBenchQueries = []struct{ name, query string }{
 	{"exists_where", "MATCH (p:P) WHERE EXISTS { MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1 AND r.w >= p.m AND coalesce(q.name, 'callplan-once') <> 'none' } RETURN count(p) AS matched"},
 	{"count_return", "MATCH (p:P) RETURN sum(COUNT { MATCH (p)-[r:R]->(q:Q) WHERE r.w >= p.m AND coalesce(q.name, 'callplan-once') <> 'none' }) AS total"},
 	{"count_in_call", "MATCH (p:P) CALL (p) { RETURN COUNT { MATCH (p)-[r:R]->(q:Q) WHERE q.k <> 3 AND coalesce(q.name, 'callplan-once') <> 'none' } AS c } RETURN sum(c) AS total"},
+	// A WHERE folding OR and EXISTS operands, and a body with ORDER BY and
+	// LIMIT.
+	{"where_fold", "MATCH (p:P) CALL (p) { MATCH (p)-[r:R]->(q:Q) WHERE (q.k = 1 OR EXISTS { (q)<-[:R {w: 3}]-(:P {i: 7}) }) AND coalesce(q.name, 'callplan-once') <> 'none' RETURN count(q) AS c } RETURN sum(c) AS total"},
+	{"limit_body", "MATCH (p:P) CALL (p) { MATCH (p)-[r:R]->(q:Q) RETURN coalesce(q.name, 'callplan-once') AS name ORDER BY name LIMIT 2 } RETURN count(name) AS names, min(name) AS first"},
 }
 
 // BenchmarkCallSubqueryClausePlan measures a correlated CALL subquery run
