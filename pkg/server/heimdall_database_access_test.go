@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -28,8 +30,7 @@ func heimdallPrincipal(databases []string, allows func(database string, permissi
 	for _, database := range databases {
 		selections[database] = database
 	}
-	ctx := auth.WithRequestDatabaseScope(context.Background(), auth.NewRequestDatabaseScope("", selections))
-	return auth.WithRequestEntitlementResolver(ctx, allows)
+	return auth.WithRequestPrincipal(context.Background(), allows, auth.NewRequestDatabaseScope("", selections))
 }
 
 // heimdallPermissions allows the given permissions on every database.
@@ -171,4 +172,95 @@ func TestHeimdallRouterRefusesCompositeSearchAndStats(t *testing.T) {
 	require.ErrorContains(t, err, "composite")
 	_, err = router.Stats(compositeOnly, "portfolio")
 	require.ErrorContains(t, err, "composite")
+}
+
+// A statement the principal may not run on a database leaves no executor
+// for it: the router shares a new executor, with the database's search
+// service and embed queue, only once the executor has admitted a statement.
+// A leading USE runs on its target, so the database it is sent to needs only
+// access, as before.
+func TestHeimdallRouterSharesExecutorOnlyAfterStatementAdmitted(t *testing.T) {
+	server, _ := setupTestServer(t)
+	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
+	require.NoError(t, server.dbManager.CreateDatabase("cold_db"))
+	require.NoError(t, server.dbManager.CreateDatabase("warm_db"))
+	principal := heimdallPrincipal([]string{"cold_db", "warm_db"}, func(database string, permission auth.Permission) bool {
+		return permission == "access" || database == "warm_db" && permission == auth.PermRead
+	})
+
+	_, err := router.Query(principal, "cold_db", "MATCH (n) RETURN count(n) AS n", nil)
+	require.ErrorContains(t, err, "read permission")
+	require.Nil(t, router.cachedExecutor("cold_db"), "the router shared an executor for a refused statement")
+
+	rows, err := router.Query(principal, "cold_db", "USE warm_db MATCH (n) RETURN count(n) AS n", nil)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Nil(t, router.cachedExecutor("cold_db"))
+
+	_, err = router.Query(principal, "warm_db", "MATCH (n) RETURN count(n) AS n", nil)
+	require.NoError(t, err)
+	require.NotNil(t, router.cachedExecutor("warm_db"))
+}
+
+// An action invoked asynchronously keeps the caller's principal, not its
+// cancellation: it reaches the database router as the caller, after the
+// caller's request has ended.
+func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
+	server, _ := setupTestServer(t)
+	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
+	type outcome struct {
+		rows []map[string]interface{}
+		err  error
+	}
+	outcomes := make(chan outcome, 1)
+	heimdall.RegisterBuiltinAction(heimdall.ActionFunc{
+		Name:     "heimdall_async_principal_probe",
+		Category: "testing",
+		Handler: func(ctx heimdall.ActionContext) (*heimdall.ActionResult, error) {
+			rows, err := ctx.Database.Query(ctx.Context, "nornic", "MATCH (n) RETURN count(n) AS n", nil)
+			outcomes <- outcome{rows: rows, err: err}
+			return &heimdall.ActionResult{Success: err == nil}, nil
+		},
+	})
+	invoker := heimdall.NewLiveHeimdallInvoker(heimdall.GetSubsystemManager(), nil, nil, router, nil)
+
+	request, cancel := context.WithCancel(heimdallPrincipal([]string{"nornic"}, heimdallPermissions(map[auth.Permission]bool{"access": true, auth.PermRead: true})))
+	invoker.InvokeActionAsync(request, "heimdall_async_principal_probe", nil)
+	cancel()
+	select {
+	case got := <-outcomes:
+		require.NoError(t, got.err)
+		require.Len(t, got.rows, 1)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the asynchronous action did not run")
+	}
+
+	// Without a principal it is refused, as before.
+	invoker.InvokeActionAsync(context.Background(), "heimdall_async_principal_probe", nil)
+	select {
+	case got := <-outcomes:
+		requireHeimdallForbidden(t, got.err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the asynchronous action did not run")
+	}
+}
+
+// A context with a permission resolver but no database scope is an
+// incomplete principal, and no context at all carries none: the router
+// refuses both, without resolving or opening anything.
+func TestHeimdallRouterRefusesIncompletePrincipal(t *testing.T) {
+	server, _ := setupTestServer(t)
+	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
+	resolverOnly := auth.WithRequestEntitlementResolver(context.Background(), func(string, auth.Permission) bool { return true })
+	var noContext context.Context
+
+	for _, ctx := range []context.Context{resolverOnly, noContext} {
+		_, err := router.Query(ctx, "nornic", "RETURN 1 AS n", nil)
+		requireHeimdallForbidden(t, err)
+		_, err = router.Discover(ctx, "nornic", "x", nil, 5, 0)
+		requireHeimdallForbidden(t, err)
+		_, err = router.Stats(ctx, "nornic")
+		requireHeimdallForbidden(t, err)
+	}
+	require.Nil(t, router.cachedExecutor("nornic"))
 }
