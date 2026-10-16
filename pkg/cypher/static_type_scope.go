@@ -35,7 +35,7 @@ func (operand staticOperand) bindingKind() matchBindingKind {
 	}
 	// A type of several choices that may be a node or relationship ("Map,
 	// Node or Relationship") is checked when the row runs.
-	for _, choice := range staticTypeChoices(operand.kind) {
+	for _, choice := range staticTypeChoices(operand.typeName()) {
 		if choice == "Node" || choice == "Relationship" {
 			return matchBindingUnknown
 		}
@@ -79,14 +79,40 @@ func typedOperand(typeName string) staticOperand {
 	if typeName == staticPropertyValueType {
 		return staticOperand{display: typeName, nonEntity: true}
 	}
+	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+		return knownOperand(typeName)
+	}
+	if choices := staticTypeChoices(typeName); len(choices) > 1 {
+		// Existing numeric operands already have an operator category. Other
+		// unions retain their alternatives without claiming one scalar kind.
+		if operand := knownOperand(typeName); operand.numeric() {
+			return operand
+		}
+		operand := staticOperand{display: typeName, union: true}
+		allLists, allNumbers, allMaps := true, true, true
+		for _, choice := range choices {
+			member := knownOperand(choice)
+			allLists = allLists && member.list()
+			allNumbers = allNumbers && member.numeric()
+			allMaps = allMaps && containsString(staticCatalogTypeNames["MAP"], choice)
+		}
+		if allLists {
+			operand.kind = "List<T>"
+		} else if allNumbers {
+			operand.kind = "Number"
+		} else if allMaps {
+			operand.kind = "Map"
+		}
+		return operand
+	}
 	return knownOperand(typeName)
 }
 
 // typeName is the static type name of operand: its kind, or a property
 // value's type (typedOperand); "" when neither is known.
 func (operand staticOperand) typeName() string {
-	if operand.kind == "" && operand.display == staticPropertyValueType {
-		return staticPropertyValueType
+	if operand.union || operand.kind == "" && operand.display == staticPropertyValueType {
+		return operand.display
 	}
 	return operand.kind
 }
@@ -294,7 +320,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 		// An element of a typed list ([n, o][0], nodes(p)[0]) has its
 		// element type; a slice is the list's type.
 		list := projectedOperand(types, input, receiver)
-		if element := elementOfType(list.kind); element != "" {
+		if element := elementOfType(list.typeName()); element != "" {
 			if _, _, slice := staticSliceBounds(index); slice {
 				return list
 			}
@@ -320,7 +346,7 @@ func unwoundOperand(types typeScope, input staticTypeScope, clause string) stati
 // variable, a comprehension's or quantifier's local; localBindingKind).
 func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
 	operand := projectedOperand(types, input, list)
-	if element := elementOfType(operand.kind); element != "" {
+	if element := elementOfType(operand.typeName()); element != "" {
 		return typedOperand(element)
 	}
 	if operand.kind != "" && !strings.Contains(operand.kind, "List<") {
