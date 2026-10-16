@@ -152,7 +152,11 @@ func (r *nodeResolver) nodeSimilar(ctx context.Context, obj *models.Node, limit 
 	}
 	// threshold is ignored - FindSimilar doesn't support it
 
-	results, err := r.DB.FindSimilar(ctx, obj.ID, lim)
+	_, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results, err := r.DB.FindSimilarInDatabase(ctx, engine, obj.ID, lim)
 	if err != nil {
 		return nil, err
 	}
