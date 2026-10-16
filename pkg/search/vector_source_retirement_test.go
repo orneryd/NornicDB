@@ -19,6 +19,7 @@ func sourceRetirementNode(t *testing.T, svc *Service, id string, vector []float3
 	_, err := svc.engine.CreateNode(node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
+	require.NoError(t, waitNodeAdmission(t, svc))
 }
 
 func sourceRetirementIDs(t *testing.T, svc *Service, want ...string) {

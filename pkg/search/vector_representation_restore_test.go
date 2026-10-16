@@ -45,6 +45,7 @@ func TestVectorScaleReplacementPreservesRawCoordinates(t *testing.T) {
 					}
 					for _, scale := range []float32{2, 3, 1, 2} {
 						require.NoError(t, svc.IndexNode(makeNode(scale)))
+						require.NoError(t, waitNodeAdmission(t, svc))
 						for _, similarity := range []string{"dot", "euclidean"} {
 							hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{Property: "v", Similarity: similarity, Limit: 1})
 							require.NoError(t, err)
@@ -101,6 +102,7 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				first := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, bm25Engine, options)
 				configure(first)
 				require.NoError(t, first.IndexNode(node))
+				require.NoError(t, waitNodeAdmission(t, first))
 				require.Equal(t, int64(42), first.vectorMetadataBytes)
 				fulltextResident, fulltextMetadata := first.bm25ResidentBytes, first.bm25MetadataBytes
 				first.PersistIndexesToDisk()

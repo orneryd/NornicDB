@@ -85,9 +85,10 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	server.db.ResetSearchService(database)
 	service, err := server.db.GetOrCreateSearchService(database, gated)
 	require.NoError(t, err)
-	// Wait for the DB owner's initial build; starting a second BuildIndexes
-	// here would itself race the asynchronous initial build.
-	require.Eventually(t, service.IsReady, 10*time.Second, 10*time.Millisecond)
+	// Only database creation starts a build, so build the replacement here
+	// (BuildIndexes serialises with any build the database started).
+	require.NoError(t, service.BuildIndexes(context.Background()))
+	require.True(t, service.IsReady())
 	rebuildResult := make(chan error, 1)
 	server.db.SetEmbedder(&readinessChangingEmbedder{
 		countingEmbedder: countingEmbedder{dims: 1024},
