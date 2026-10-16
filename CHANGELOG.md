@@ -42,7 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with committed updates and cascading deletes. Release admission/accounting
   before ordered synchronous listener delivery, allow concurrent unlimited
   transactions, honor cancellation while waiting, and preserve explicit quota
-  statuses and Bolt connection reuse after rejection (#1366).
+  statuses and Bolt connection reuse after rejection (#1366). Preserve the
+  managed system-database owner for routed administration commits and canonical
+  byte accounting across propertyless staged/point/stream representations.
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).
