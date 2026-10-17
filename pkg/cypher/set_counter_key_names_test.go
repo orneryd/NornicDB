@@ -39,22 +39,22 @@ func TestSetCountsNullsForKnownKeyNames(t *testing.T) {
 	// A rolled-back write makes k and k2 known.
 	require.Equal(t, 2, propertiesSet(match+"SET n.k = 1, n.k2 = 1"))
 	for query, count := range map[string]int{
-		"SET n.k = null":                       0,
-		"SET n += {k: null}":                   1,
-		"SET n.k = null, n.y = 1":              2,
-		"SET n.y = 1, n.k = null":              2,
-		"SET n.k = null, n.k2 = null":          2,
-		"SET n.k = null, n.never = null":       1,
-		"SET n.never = null, n.never2 = null":  0,
-		"SET n.k = null SET n.y = 1":           1,
-		"SET n.k = null, n:L":                  0,
-		"SET n:L, n.k = null":                  0,
-		"SET n.k = null, n.h = 2":              2,
-		"SET n.k = null, n.k = null":           1,
-		"SET n.k = null, n += {}":              0,
-		"SET n = {h: 1, k: null}":              2,
-		"SET n += {k: null, never: null}":      1,
-		"SET n.k = null, n.k2 = 5":             2,
+		"SET n.k = null":                      0,
+		"SET n += {k: null}":                  1,
+		"SET n.k = null, n.y = 1":             2,
+		"SET n.y = 1, n.k = null":             2,
+		"SET n.k = null, n.k2 = null":         2,
+		"SET n.k = null, n.never = null":      1,
+		"SET n.never = null, n.never2 = null": 0,
+		"SET n.k = null SET n.y = 1":          1,
+		"SET n.k = null, n:L":                 0,
+		"SET n:L, n.k = null":                 0,
+		"SET n.k = null, n.h = 2":             2,
+		"SET n.k = null, n.k = null":          1,
+		"SET n.k = null, n += {}":             0,
+		"SET n = {h: 1, k: null}":             2,
+		"SET n += {k: null, never: null}":     1,
+		"SET n.k = null, n.k2 = 5":            2,
 	} {
 		require.Equal(t, count, propertiesSet(match+query), query)
 	}

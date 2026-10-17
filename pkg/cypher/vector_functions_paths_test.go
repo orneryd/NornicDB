@@ -23,14 +23,14 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 		"RETURN toFloatList(vector('[1.5, 2]', 2, FLOAT))":                                        []interface{}{1.5, 2.0},
 		"RETURN vector_distance(vector([1, 2], 2, FLOAT), vector([2, 4], 2, FLOAT), HAMMING)":     2.0,
 		"RETURN vector_distance(vector([3, 1], 2, INTEGER), vector([1, 2], 2, INTEGER), HAMMING)": 2.0,
-		"RETURN uuid() IS :: UUID":                  true,
-		"RETURN size(toString(uuid()))":             int64(36),
-		"RETURN substring(toString(uuid()), 14, 1)": "7",
+		"RETURN uuid() IS :: UUID":                                                                           true,
+		"RETURN size(toString(uuid()))":                                                                      int64(36),
+		"RETURN substring(toString(uuid()), 14, 1)":                                                          "7",
 		"RETURN uuid.mostSignificantBits(uuid('00000000-0000-0001-0000-000000000002'))":                      int64(1),
 		"RETURN uuid.leastSignificantBits(uuid(1, 2))":                                                       int64(2),
 		"RETURN uuid.leastSignificantBits(null)":                                                             nil,
 		"RETURN uuid('550E8400-E29B-41D4-A716-446655440000') = uuid('550e8400-e29b-41d4-a716-446655440000')": true,
-		"RETURN uuid(null)": nil,
+		"RETURN uuid(null)":                                                                                  nil,
 	} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query+" AS x", nil)
 		require.NoError(t, err, query)

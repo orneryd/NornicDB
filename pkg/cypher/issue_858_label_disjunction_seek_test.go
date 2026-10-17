@@ -27,13 +27,13 @@ func TestWhereLabelDisjunction(t *testing.T) {
 		{"n:Code|Document", []string{"Code", "Document"}},
 		{"n : Code | `Odd Label`", []string{"Code", "Odd Label"}},
 		{"n:Code OR n:Document|Entity", []string{"Code", "Document", "Entity"}},
-		{"n:Code:Document", nil},          // both labels, not one of them
-		{"m:Code OR n:Document", nil},     // another variable
-		{"n:Code OR n.id = 1", nil},       // not only labels
-		{"n.id = 1", nil},                 // no label
-		{"NOT n:Code", nil},               // negation
-		{"n:Code|", nil},                  // malformed
-		{"n:Code AND n:Document", nil},    // conjunction
+		{"n:Code:Document", nil},                                   // both labels, not one of them
+		{"m:Code OR n:Document", nil},                              // another variable
+		{"n:Code OR n.id = 1", nil},                                // not only labels
+		{"n.id = 1", nil},                                          // no label
+		{"NOT n:Code", nil},                                        // negation
+		{"n:Code|", nil},                                           // malformed
+		{"n:Code AND n:Document", nil},                             // conjunction
 		{"(n:Code) OR (n:Document)", []string{"Code", "Document"}}, // each side in parentheses
 	} {
 		labels, ok := whereLabelDisjunction("n", tc.term)
