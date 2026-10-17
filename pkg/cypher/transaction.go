@@ -82,15 +82,20 @@ type TransactionContext struct {
 // failTransaction records err as the active explicit transaction's failure
 // and returns err. The first failure wins: it is the cause COMMIT reports. It
 // is the one rule for a statement that fails inside a transaction, whether it
-// ran through Execute or an inline transaction script (#683).
+// ran through Execute or an inline transaction script (#683). A composite
+// transaction's local participants fail with it, with the same cause.
 func (e *StorageExecutor) failTransaction(err error) error {
 	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
 		tx.failed = err
-		// The transaction can no longer commit: its MERGE key locks must not
-		// keep other transactions' MERGEs of those keys waiting until the
-		// client rolls it back.
+		// The transaction can no longer commit: the MERGE key locks it holds,
+		// itself or through a participant's sub-transaction, must not keep
+		// other transactions' MERGEs of those keys waiting until the client
+		// rolls it back.
 		if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
 			releaser.ReleaseMergeKeys()
+		}
+		for _, participant := range tx.fabricLocalTxExec {
+			participant.failTransaction(err)
 		}
 	}
 	return err
