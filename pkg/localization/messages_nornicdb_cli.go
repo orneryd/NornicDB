@@ -165,7 +165,7 @@ func NornicDBCLIFlagSearchVectorWarming() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagSearchVectorWarming, "Vector build trigger: startup or lazy. Default: startup.")
 }
 func NornicDBCLIFlagGPUBackend() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagGPUBackend, "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagGPUBackend, "GPU backend: cpu (disabled), vulkan, cuda, metal, opencl (empty=auto-detect)")
 }
 func NornicDBCLIFlagNoAuth() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagNoAuth, "Disable authentication")

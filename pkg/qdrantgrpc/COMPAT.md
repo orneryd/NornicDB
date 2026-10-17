@@ -34,8 +34,8 @@ NornicDB exposes a single gRPC surface: the **official upstream Qdrant gRPC cont
 | `Get` | ✅ | With payload/vectors selectors |
 | `Delete` | ✅ | By ID list or filter |
 | `Count` | ✅ | |
-| `Search` / `SearchBatch` | ✅ | `vector_name` supported. Runs on the collection database's search index and ANN strategy (`NORNICDB_VECTOR_ANN_QUALITY`), the same as Cypher's `db.index.vector.queryNodes`; `params.hnsw_ef` sets the HNSW beam for HNSW-based strategies; without it, the configured preset's `efSearch` |
-| `Query` / `QueryBatch` | ✅ | Supports `VectorInput` (Dense/Id) and `Document` when embeddings are enabled |
+| `Search` / `SearchBatch` | ✅ | `vector_name` supported. Runs on the collection database's search index and ANN strategy (`NORNICDB_VECTOR_ANN_QUALITY`), the same as Cypher's `db.index.vector.queryNodes`; `params.exact=true` evaluates all indexed points; `params.hnsw_ef` sets the HNSW beam for HNSW-based strategies; without it, the configured preset's `efSearch` |
+| `Query` / `QueryBatch` | ✅ | Supports `VectorInput` (Dense/Id), forwards `params`, and supports `Document` when embeddings are enabled |
 | `Scroll` | ✅ | |
 | `SetPayload` / `OverwritePayload` / `DeletePayload` / `ClearPayload` | ✅ | |
 | `UpdateVectors` / `DeleteVectors` | ✅ | Subject to embedding ownership flag |
@@ -59,3 +59,5 @@ NornicDB exposes a single gRPC surface: the **official upstream Qdrant gRPC cont
 - Unit tests: `go test ./pkg/qdrantgrpc -v`
 - Go integration (server feature-flag): `go test ./pkg/server -run QdrantGRPC -v`
 - Python SDK compatibility E2E: `./scripts/qdrantgrpc_e2e_python.sh`
+
+Collection `hnsw_config` and `quantization_config` are accepted but ignored; use the server's ANN settings. `Get` reports the effective configured HNSW M and efConstruction. `quantization.rescore` is accepted but exact rescoring remains enabled.

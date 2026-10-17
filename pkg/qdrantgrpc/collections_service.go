@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
 )
@@ -101,8 +102,8 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 		pointsCount = uint64(count)
 	}
 
-	hnswM := uint64(16)
-	hnswEfConstruct := uint64(100)
+	hnswM := uint64(search.HNSWConfigFromEnv().M)
+	hnswEfConstruct := uint64(search.HNSWConfigFromEnv().EfConstruction)
 	hnswFullScanThreshold := uint64(10_000)
 
 	optimizerDeletedThreshold := float64(0.2)
