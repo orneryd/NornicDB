@@ -359,7 +359,7 @@ CREATE (a)-[:R {name: 'ar', w: 1}]->(f), (f)-[:R {name: 'fg', w: 2}]->(g), (c)-[
 	require.NoError(t, err)
 	names := referenceClosureNamesOf(t, exec, ctx)
 	closure := func(seeds, config string) map[string]string {
-		_, categories := runReferenceClosure(t, exec, ctx, "MATCH (a {id: 'a'}) OPTIONAL MATCH ()-[ar {name: 'ar'}]->() CALL nornicdb.graph.expandReferences("+seeds+", "+config+") YIELD node, relationship, category RETURN coalesce(elementId(node), elementId(relationship)), category", nil)
+		_, categories := runReferenceClosure(t, exec, ctx, "MATCH (a {id: 'a'}), (c {id: 'c'}) OPTIONAL MATCH ()-[ar {name: 'ar'}]->() CALL nornicdb.graph.expandReferences("+seeds+", "+config+") YIELD node, relationship, category RETURN coalesce(elementId(node), elementId(relationship)), category", nil)
 		got := map[string]string{}
 		for element, category := range categories {
 			got[names[element]] = category
@@ -390,6 +390,13 @@ CREATE (a)-[:R {name: 'ar', w: 1}]->(f), (f)-[:R {name: 'fg', w: 2}]->(g), (c)-[
 		closure("[ar]", "{between: [{relationshipFilter: 'R'}]}"))
 	require.Equal(t, map[string]string{"A:a": "seed", "C:c": "reached", "B:b": "reached", "C:3": "reached", "C:3.0": "reached", "A:f": "reached", "cf": "reached", "ar": "reached"},
 		closure("[a, null]", "{references: ['ref', 'more'], domains: ['B', 'C'], between: [{}], expand: [{relationshipFilter: 'S>'}]}"))
+	// between follows a relationship whatever its filter's direction once both
+	// ends are found, with start and end bound for where; one whose end is
+	// found later (f, by c's expand, after a was followed) waits for it.
+	require.Equal(t, map[string]string{"A:a": "seed", "C:c": "seed", "cf": "reached", "A:f": "reached", "ar": "reached"},
+		closure("[a, c]", "{expand: [{relationshipFilter: 'S>'}], between: [{relationshipFilter: '<R'}]}"))
+	require.Equal(t, map[string]string{"A:a": "seed", "C:c": "seed", "cf": "reached", "A:f": "reached"},
+		closure("[a, c]", "{expand: [{relationshipFilter: 'S>'}], between: [{relationshipFilter: 'R', where: 'start.id = \"f\"'}]}"))
 	// The first category wins, seed nodes before relationships; groups and
 	// bare elements mix.
 	require.Equal(t, map[string]string{"A:a": "two", "ar": "one", "A:f": "x"},

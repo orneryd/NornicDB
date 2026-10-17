@@ -51,8 +51,17 @@ type referenceBranch struct {
 	steps []apocRelationshipStep
 	// where is the compiled where predicate; nil admits every relationship.
 	where func(*storage.Edge, *storage.Node, *storage.Node) bool
+	// ends: where reads start or end, so they are read for it.
+	ends bool
 	// fromSeeds: an expand branch is followed from seed nodes too.
 	fromSeeds bool
+}
+
+// referenceWaiting is a relationship a between branch follows, read from
+// its found start, waiting for its end to be found.
+type referenceWaiting struct {
+	edge   *storage.Edge
+	branch *referenceBranch
 }
 
 // referenceClosure is one nornicdb.graph.expandReferences call.
@@ -65,16 +74,20 @@ type referenceClosure struct {
 	between    []referenceBranch
 	category   string
 
-	nodes    map[storage.NodeID]bool // found
-	seeds    map[storage.NodeID]bool // found as seed nodes
-	edges    map[storage.EdgeID]bool // found
-	asked    map[interface{}]bool    // names looked up or pending
-	pending  []interface{}           // names found since the last lookup
-	frontier []*storage.Node         // nodes found since the last branch step
+	nodes    map[storage.NodeID]*storage.Node // found
+	seeds    map[storage.NodeID]bool          // found as seed nodes
+	edges    map[storage.EdgeID]bool          // found
+	asked    map[interface{}]bool             // names looked up or pending
+	pending  []interface{}                    // names found since the last lookup
+	frontier []*storage.Node                  // nodes found since the last branch step
 
 	// byID maps each domain no index serves from id key to its nodes.
 	byID map[string]map[interface{}][]*storage.Node
 	rows [][]interface{}
+
+	// waiting holds the relationships between branches read from a found
+	// start, by the end not found yet.
+	waiting map[storage.NodeID][]referenceWaiting
 }
 
 // callNornicGraphExpandReferences implements
@@ -209,8 +222,9 @@ func readReferenceSeedGroup(entries map[string]interface{}) (referenceSeedGroup,
 func (e *StorageExecutor) newReferenceClosure(ctx context.Context, options map[string]interface{}) (*referenceClosure, error) {
 	closure := &referenceClosure{
 		e: e, idProperty: "id", category: "reached",
-		nodes: map[storage.NodeID]bool{}, seeds: map[storage.NodeID]bool{}, edges: map[storage.EdgeID]bool{},
+		nodes: map[storage.NodeID]*storage.Node{}, seeds: map[storage.NodeID]bool{}, edges: map[storage.EdgeID]bool{},
 		asked: map[interface{}]bool{}, byID: map[string]map[interface{}][]*storage.Node{},
+		waiting: map[storage.NodeID][]referenceWaiting{},
 	}
 	c, err := newGDSConfig(options, expandReferencesConfigKeys...)
 	if err != nil {
@@ -280,6 +294,7 @@ func (e *StorageExecutor) readReferenceBranches(ctx context.Context, c *gdsConfi
 				return nil, err
 			}
 			branch.where = e.compileRelationshipWhereFilter(ctx, where)
+			branch.ends = containsIdentifierToken(where, "start") || containsIdentifierToken(where, "end")
 		}
 		if fromSeeds, given, err := b.boolean("fromSeeds"); err != nil {
 			return nil, err
@@ -291,18 +306,25 @@ func (e *StorageExecutor) readReferenceBranches(ctx context.Context, c *gdsConfi
 	return branches, nil
 }
 
-// addNode records node, once, with its row and its names.
+// addNode records node, once, with its row and its names, and admits the
+// between relationships that waited for it.
 func (r *referenceClosure) addNode(node *storage.Node, category string, seed bool) {
-	if r.nodes[node.ID] {
+	if r.nodes[node.ID] != nil {
 		return
 	}
-	r.nodes[node.ID] = true
+	r.nodes[node.ID] = node
 	if seed {
 		r.seeds[node.ID] = true
 	}
 	r.rows = append(r.rows, []interface{}{node, nil, category})
 	r.frontier = append(r.frontier, node)
 	r.name(node.Properties)
+	if waiting := r.waiting[node.ID]; len(waiting) > 0 {
+		delete(r.waiting, node.ID)
+		for _, entry := range waiting {
+			r.admitBetween(entry.edge, entry.branch)
+		}
+	}
 }
 
 // addRelationship records edge, once, after its ends, with its names.
@@ -312,7 +334,7 @@ func (r *referenceClosure) addRelationship(edge *storage.Edge, category string) 
 	}
 	r.edges[edge.ID] = true
 	for _, end := range []storage.NodeID{edge.StartNode, edge.EndNode} {
-		if r.nodes[end] {
+		if r.nodes[end] != nil {
 			continue
 		}
 		if node, err := r.e.getQueryNode(r.e.storage, end); err == nil && node != nil {
@@ -399,24 +421,20 @@ func (r *referenceClosure) run(ctx context.Context) error {
 }
 
 // followAll applies node's branches, reading its relationships once in
-// each direction a branch follows.
+// each direction one follows. A between branch reads outgoing relationships
+// only: whatever its filter's direction, it follows a relationship from one
+// end exactly when it follows it from the other (one end sees it outgoing,
+// the other incoming), so each is read once, from its start; one whose end
+// is not found yet waits for it (addNode).
 func (r *referenceClosure) followAll(node *storage.Node) {
-	var expand, between []*referenceBranch
+	var expand []*referenceBranch
+	outgoing, incoming := len(r.between) > 0, false
 	for index := range r.expand {
 		if branch := &r.expand[index]; branch.fromSeeds || !r.seeds[node.ID] {
 			expand = append(expand, branch)
+			out, in := apocStepDirections(branch.steps)
+			outgoing, incoming = outgoing || out, incoming || in
 		}
-	}
-	for index := range r.between {
-		between = append(between, &r.between[index])
-	}
-	outgoing, incoming := false, false
-	for _, branch := range append(append([]*referenceBranch(nil), expand...), between...) {
-		out, in := apocStepDirections(branch.steps)
-		outgoing, incoming = outgoing || out, incoming || in
-	}
-	if !outgoing && !incoming {
-		return
 	}
 	var out, in []*storage.Edge
 	if outgoing {
@@ -426,37 +444,72 @@ func (r *referenceClosure) followAll(node *storage.Node) {
 		in, _ = r.e.storage.GetIncomingEdges(node.ID)
 	}
 	for _, branch := range expand {
-		r.follow(node, branch, false, out, in)
+		r.expandFrom(node, branch, out, in)
 	}
-	for _, branch := range between {
-		r.follow(node, branch, true, out, in)
+	for index := range r.between {
+		branch := &r.between[index]
+		for _, edge := range out {
+			if r.edges[edge.ID] || !apocStepsMatchType(branch.steps, edge) {
+				continue
+			}
+			if r.nodes[edge.EndNode] == nil {
+				r.waiting[edge.EndNode] = append(r.waiting[edge.EndNode], referenceWaiting{edge: edge, branch: branch})
+				continue
+			}
+			r.admitBetween(edge, branch)
+		}
 	}
 }
 
-// follow finds the relationships branch follows from node among its
-// relationships out and in: for a between branch, only those whose other
-// end is found.
-func (r *referenceClosure) follow(node *storage.Node, branch *referenceBranch, between bool, out, in []*storage.Edge) {
+// apocStepsMatchType reports whether a filter step names edge's type (or
+// any type), whatever its direction.
+func apocStepsMatchType(steps []apocRelationshipStep, edge *storage.Edge) bool {
+	if len(steps) == 0 {
+		return true
+	}
+	for _, step := range steps {
+		if step.relType == "" || step.relType == edge.Type {
+			return true
+		}
+	}
+	return false
+}
+
+// admitBetween finds a between branch's relationship whose ends are both
+// found, when its where holds.
+func (r *referenceClosure) admitBetween(edge *storage.Edge, branch *referenceBranch) {
+	if r.edges[edge.ID] {
+		return
+	}
+	if branch.where != nil && !branch.where(edge, r.nodes[edge.StartNode], r.nodes[edge.EndNode]) {
+		return
+	}
+	r.addRelationship(edge, r.category)
+}
+
+// expandFrom finds the relationships an expand branch follows from node
+// among its relationships out and in, with their other end. The ends are
+// read for where only when it reads start or end.
+func (r *referenceClosure) expandFrom(node *storage.Node, branch *referenceBranch, out, in []*storage.Edge) {
 	for _, edge := range apocStepsAmong(node.ID, branch.steps, out, in) {
 		if r.edges[edge.ID] {
 			continue
 		}
-		otherID := otherEnd(edge, node.ID)
-		if between && !r.nodes[otherID] {
-			continue
-		}
 		if branch.where != nil {
-			other := node
-			if otherID != node.ID {
-				loaded, err := r.e.getQueryNode(r.e.storage, otherID)
-				if err != nil || loaded == nil {
-					continue
+			var start, end *storage.Node
+			if branch.ends {
+				other := r.nodes[otherEnd(edge, node.ID)]
+				if other == nil {
+					loaded, err := r.e.getQueryNode(r.e.storage, otherEnd(edge, node.ID))
+					if err != nil || loaded == nil {
+						continue
+					}
+					other = loaded
 				}
-				other = loaded
-			}
-			start, end := node, other
-			if edge.StartNode != node.ID {
-				start, end = other, node
+				start, end = node, other
+				if edge.StartNode != node.ID {
+					start, end = other, node
+				}
 			}
 			if !branch.where(edge, start, end) {
 				continue
