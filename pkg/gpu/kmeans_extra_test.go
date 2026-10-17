@@ -302,6 +302,12 @@ func TestClusteringReconcilesMembershipByID(t *testing.T) {
 		t.Fatalf("clusters a=%d b=%d, want two distinct topics", aCluster, bCluster)
 	}
 
+	if cid, ok := clustering.ClusterOf("a1"); !ok || cid != aCluster {
+		t.Fatalf("ClusterOf(a1) = %d, %t; want %d", cid, ok, aCluster)
+	}
+	if _, ok := clustering.ClusterOf("unknown"); ok {
+		t.Fatalf("ClusterOf reports an id outside the generation")
+	}
 	if _, ok := ci.AssignToClustering(clustering, "unknown"); ok {
 		t.Fatalf("an id without an embedding cannot be assigned")
 	}
