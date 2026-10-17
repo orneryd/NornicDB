@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
+  order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
+  vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
+- Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
+- Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
+  merging reuse the existing kernels. Graph search explores the retained beam completely instead of truncating it
+  at a round cap; the candidate-depth setting remains effective above the construction-quality floor.
+- Recreate the cluster backend when an unfixed collection adopts a new vector dimension, retaining its k-means policy.
+- Support `--gpu-backend cpu` / `NORNICDB_GPU_BACKEND=cpu` to disable all GPU-manager paths, including clustering.
+- Replace a full HNSW result beam's worst heap member with one sift rather than a push/pop pair.
+
 - Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
   `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
   (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
@@ -25,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
   distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
   scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
+- Make the Metal HNSW build 43x faster: on 88k 1024-d vectors the index is ready in 38 s instead of 1,660 s (the CPU
+  build: 69 s), at the same recall. The build keeps the vectors it has inserted on the GPU (4 bytes per dimension per
+  vector, for the build only), so each batch's level-0 candidates are its exact nearest inserted vectors from one pass,
+  instead of a graph search that uploaded its candidates' vectors every round. Scores come from a Metal Performance
+  Shaders matrix product, and each query's top candidates are picked on the CPU from the shared score matrix; the
+  previous kernel computed both serially per query. CUDA and Vulkan keep the graph search.
 - Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
   search), then vectors are linked in order. Recall matches one-at-a-time inserts.
 - Make exact (brute-force) vector search about 8x faster: keep the best results in a bounded heap rather than sorting
@@ -33,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recall@10 on 88k 1024-d vectors at a sixth of the latency.
 - Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
   (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
+- Cluster a database with k-means soon after a bulk load finishes instead of at the next
+  `NORNICDB_KMEANS_CLUSTER_INTERVAL` tick (15 minutes by default): a check every 10 seconds clusters a database whose
+  vectors grew by a fifth since its last clustering and then stopped changing. `NORNICDB_KMEANS_GROWTH_RATIO` (0
+  disables) and `NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL` tune it.
+- Build the GPU brute-force copy of the vectors only when a search first chooses GPU brute force. Attaching the GPU
+  built it for every database, which held every vector again in host and GPU memory (about 690 MB for 88k 1024-d
+  vectors) even when the vector count was outside the GPU brute-force range and it was never searched.
 - Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
   strategy transitions still only move between brute force and HNSW.
 - Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest

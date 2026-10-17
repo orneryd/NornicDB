@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,22 @@ type HNSWBuildAccelerator interface {
 
 type HNSWGraphBuildAccelerator interface {
 	CandidateSearchGraph(ctx context.Context, queries [][]float32, graph *hnswBuildGraphSnapshot, topK int) (indices [][]uint32, distances [][]float32, err error)
+}
+
+// HNSWResidentBuildAccelerator keeps every vector the build has inserted on the
+// device, by internal ID, so a batch's level-0 candidates are its exact nearest
+// inserted vectors from one scoring pass, with nothing re-uploaded. A graph
+// search (HNSWGraphBuildAccelerator) uploads the vectors of each round's
+// candidates instead, which dominates a large build. ResidentReady reports
+// whether the device is prepared to retain inserted vectors; otherwise the build uses the
+// accelerator's graph search.
+type HNSWResidentBuildAccelerator interface {
+	ResidentReady() bool
+	// AppendInserted stores normalized vectors as the next internal IDs.
+	AppendInserted(vecs [][]float32) error
+	// CandidateSearchInserted returns each query's topK closest inserted
+	// vectors by internal ID, closest first, with cosine distances.
+	CandidateSearchInserted(ctx context.Context, queries [][]float32, topK int) (indices [][]uint32, distances [][]float32, err error)
 }
 
 // gpuBuildCandidateSearcher is the backend-local candidate-search contract the
@@ -75,8 +92,8 @@ func candidateSearchGraphBatched[A gpuBuildCandidateSearcher](ctx context.Contex
 // candidateSearchGraphGroup runs one group's beam search over the build graph.
 // Each round expands the beam nodes not expanded yet (their level-0
 // neighbours join the candidates), scores every query against the group's
-// candidates and keeps each query's closest beamWidth, until no beam changes or
-// after NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS rounds. Each query's result is its
+// candidates and keeps each query's closest beamWidth until all retained nodes
+// have been expanded. A fixed round cap can truncate a still-improving search. Each query's result is its
 // beam cut to topK, equal distances ordered by lexical closeness to the query.
 // offset is the group's first query within graph.querySeeds.
 func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context, a A, queries [][]float32, graph *hnswBuildGraphSnapshot, offset int, topK int) ([][]uint32, [][]float32, error) {
@@ -85,14 +102,16 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		beamWidth = topK
 	}
 	beamWidth = min(beamWidth, 256)
-	rounds := envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS", 16)
-	if rounds <= 0 {
-		rounds = 16
-	}
 	unionMax := envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX", 16384)
 	if unionMax <= 0 {
 		unionMax = 16384
 	}
+
+	maxDegree := 0
+	for _, neighbors := range graph.neighbors {
+		maxDegree = max(maxDegree, len(neighbors))
+	}
+	unionMax = max(unionMax, len(queries)*beamWidth+maxDegree)
 
 	beams := make([][]uint32, len(queries))
 	dists := make([][]float32, len(queries))
@@ -101,7 +120,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		beams[qi] = graph.seedsForQuery(offset+qi, beamWidth)
 		expanded[qi] = make(map[uint32]struct{}, beamWidth*2)
 	}
-	for round := 0; round < rounds; round++ {
+	for {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
@@ -113,7 +132,6 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		if err != nil {
 			return nil, nil, err
 		}
-		changed := false
 		for qi := range localIdx {
 			next := make([]uint32, 0, len(localIdx[qi]))
 			nextDist := make([]float32, 0, len(localIdx[qi]))
@@ -126,13 +144,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 					nextDist = append(nextDist, localDist[qi][i])
 				}
 			}
-			if !sameCandidateSet(beams[qi], next) {
-				changed = true
-			}
 			beams[qi], dists[qi] = next, nextDist
-		}
-		if !changed {
-			break
 		}
 	}
 	for qi := range beams {
@@ -149,22 +161,6 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		}
 	}
 	return beams, dists, nil
-}
-
-func sameCandidateSet(a, b []uint32) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	set := make(map[uint32]struct{}, len(a))
-	for _, id := range a {
-		set[id] = struct{}{}
-	}
-	for _, id := range b {
-		if _, ok := set[id]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // seedsForQuery is query qi's starting beam: its own seeds (level-0 entry
@@ -235,6 +231,11 @@ func (g *hnswBuildGraphSnapshot) expandBeams(beams [][]uint32, expanded []map[ui
 			}
 			id := beam[rank]
 			if _, done := expanded[qi][id]; done {
+				continue
+			}
+			// Leave this node for the next round if its complete adjacency list
+			// cannot fit. Never mark a partly explored node as expanded.
+			if int(id) < len(g.neighbors) && len(out)+len(g.neighbors[id]) > limit {
 				continue
 			}
 			expanded[qi][id] = struct{}{}
@@ -365,8 +366,20 @@ type MetalHNSWBuildAccelerator struct {
 	device              *metal.Device
 	dim                 int
 	maxFrontierPerShard int
-	maxQueriesPerShard  int
+
+	// resident holds the inserted vectors (residentN of them, room for
+	// residentCap) for CandidateSearchInserted.
+	resident    *metal.Buffer
+	residentN   int
+	residentCap int
+	// scores is scoreTopK's reusable score matrix (scoresCap floats).
+	scores    *metal.Buffer
+	scoresCap int
 }
+
+// hnswBuildScoreFloats bounds each backend's score matrix for one scoring call
+// (queries × vectors), 256 MB; queries are split to fit.
+const hnswBuildScoreFloats = 64 << 20
 
 // NewMetalHNSWBuildAccelerator creates a Metal-backed HNSW build accelerator.
 func NewMetalHNSWBuildAccelerator() (*MetalHNSWBuildAccelerator, error) {
@@ -377,16 +390,82 @@ func NewMetalHNSWBuildAccelerator() (*MetalHNSWBuildAccelerator, error) {
 	return &MetalHNSWBuildAccelerator{
 		device:              device,
 		maxFrontierPerShard: 65536,
-		maxQueriesPerShard:  512,
 	}, nil
 }
 
-func (a *MetalHNSWBuildAccelerator) Prepare(dim int, _ int) error {
+// Prepare sets the dimension and reserves the resident buffer for maxNodes
+// vectors. Without the room, the build uses the graph search.
+func (a *MetalHNSWBuildAccelerator) Prepare(dim int, maxNodes int) error {
 	if dim <= 0 {
 		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
 	}
 	a.dim = dim
+	a.releaseResident()
+	if a.device != nil && maxNodes > 0 {
+		if buf, err := a.device.NewEmptyBuffer(uint64(maxNodes)*uint64(dim)*4, metal.StorageShared); err == nil {
+			a.resident, a.residentCap = buf, maxNodes
+		} else {
+			logSearchPrintf("[HNSW] Metal build: no room for %d resident vectors, using graph search: %v", maxNodes, err)
+		}
+	}
 	return nil
+}
+
+func (a *MetalHNSWBuildAccelerator) ResidentReady() bool {
+	return a.device != nil && a.resident != nil
+}
+
+// AppendInserted copies vecs (normalized) into the resident buffer after the
+// vectors already there, doubling the buffer when the build outgrows maxNodes.
+func (a *MetalHNSWBuildAccelerator) AppendInserted(vecs [][]float32) error {
+	if !a.ResidentReady() {
+		return metal.ErrMetalNotAvailable
+	}
+	if need := a.residentN + len(vecs); need > a.residentCap {
+		newCap := max(need, a.residentCap*2)
+		buf, err := a.device.NewEmptyBuffer(uint64(newCap)*uint64(a.dim)*4, metal.StorageShared)
+		if err != nil {
+			return err
+		}
+		if err := buf.WriteFloat32(a.resident.ReadFloat32(a.residentN*a.dim), 0); err != nil {
+			buf.Release()
+			return err
+		}
+		a.resident.Release()
+		a.resident, a.residentCap = buf, newCap
+	}
+	flat := flattenHNSWBuildQueriesInto(nil, vecs, a.dim)
+	if len(flat) != len(vecs)*a.dim {
+		return localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(a.dim), nil)
+	}
+	if err := a.resident.WriteFloat32(flat, a.residentN*a.dim); err != nil {
+		return err
+	}
+	a.residentN += len(vecs)
+	return nil
+}
+
+// CandidateSearchInserted scores the queries against every resident vector
+// (scoreTopK) and keeps each query's topK, at most 256.
+func (a *MetalHNSWBuildAccelerator) CandidateSearchInserted(ctx context.Context, queries [][]float32, topK int) ([][]uint32, [][]float32, error) {
+	if topK <= 0 || len(queries) == 0 || a.residentN == 0 {
+		return make([][]uint32, len(queries)), make([][]float32, len(queries)), ctx.Err()
+	}
+	if !a.ResidentReady() {
+		return nil, nil, metal.ErrMetalNotAvailable
+	}
+	return a.scoreTopK(ctx, a.resident, a.residentN, queries, min(topK, 256))
+}
+
+func (a *MetalHNSWBuildAccelerator) releaseResident() {
+	if a.resident != nil {
+		a.resident.Release()
+	}
+	a.resident, a.residentN, a.residentCap = nil, 0, 0
+	if a.scores != nil {
+		a.scores.Release()
+	}
+	a.scores, a.scoresCap = nil, 0
 }
 
 func (a *MetalHNSWBuildAccelerator) CandidateSearch(ctx context.Context, queries [][]float32, frontier [][]float32, topK int) ([][]int, [][]float32, error) {
@@ -407,67 +486,31 @@ func (a *MetalHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries
 	if shardSize <= 0 {
 		shardSize = 65536
 	}
-	queryShardSize := a.maxQueriesPerShard
-	if queryShardSize <= 0 {
-		queryShardSize = 512
-	}
 	merged := make([][]hnswCandidateDistance, len(queries))
 	flat := make([]float32, 0, min(len(frontier), shardSize)*a.dim)
-	flatQueries := make([]float32, 0, min(len(queries), queryShardSize)*a.dim)
 	for start := 0; start < len(frontier); start += shardSize {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		end := start + shardSize
-		if end > len(frontier) {
-			end = len(frontier)
-		}
-		flat = flattenHNSWBuildFrontierInto(flat[:0], frontier[start:end], a.dim)
-		if len(flat) == 0 {
-			continue
+		end := min(start+shardSize, len(frontier))
+		flat = flattenHNSWBuildQueriesInto(flat[:0], frontier[start:end], a.dim)
+		if len(flat) != (end-start)*a.dim {
+			return nil, nil, localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(a.dim), nil)
 		}
 		frontierBuf, err := a.device.NewBuffer(flat, metal.StorageShared)
 		if err != nil {
 			return nil, nil, err
 		}
-		for qStart := 0; qStart < len(queries); qStart += queryShardSize {
-			if err := ctx.Err(); err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			qEnd := qStart + queryShardSize
-			if qEnd > len(queries) {
-				qEnd = len(queries)
-			}
-			flatQueries = flattenHNSWBuildQueriesInto(flatQueries[:0], queries[qStart:qEnd], a.dim)
-			queryBuf, err := a.device.NewBuffer(flatQueries, metal.StorageShared)
-			if err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			indices, scores, err := a.device.HNSWBuildTopK(frontierBuf, queryBuf, uint32(end-start), uint32(qEnd-qStart), uint32(a.dim), topK)
-			queryBuf.Release()
-			if err != nil {
-				frontierBuf.Release()
-				return nil, nil, err
-			}
-			for localQ := 0; localQ < qEnd-qStart; localQ++ {
-				globalQ := qStart + localQ
-				row := localQ * topK
-				for i := 0; i < topK && row+i < len(indices) && row+i < len(scores); i++ {
-					localIdx := int(indices[row+i])
-					idx := start + localIdx
-					if localIdx < 0 || idx < start || idx >= end {
-						continue
-					}
-					merged[globalQ] = append(merged[globalQ], hnswCandidateDistance{
-						index: idx,
-						dist:  float32(1.0) - scores[row+i],
-					})
-				}
+		ids, dists, err := a.scoreTopK(ctx, frontierBuf, end-start, queries, topK)
+		frontierBuf.Release()
+		if err != nil {
+			return nil, nil, err
+		}
+		for qi := range ids {
+			for i, id := range ids[qi] {
+				merged[qi] = append(merged[qi], hnswCandidateDistance{index: start + int(id), dist: dists[qi][i]})
 			}
 		}
-		frontierBuf.Release()
 	}
 
 	outIdx := make([][]int, len(queries))
@@ -494,6 +537,124 @@ func (a *MetalHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries
 	return outIdx, outDist, nil
 }
 
+// scoreTopK scores queries against the first frontierN normalized vectors of
+// frontier: one Metal Performance Shaders matrix product per chunk of queries
+// (the score matrix bounded by hnswBuildScoreFloats), then each query's
+// topK picked on the CPU from the score matrix in shared memory, in parallel.
+// Results are closest first with cosine distances; equal scores keep the lower
+// index.
+func (a *MetalHNSWBuildAccelerator) scoreTopK(ctx context.Context, frontier *metal.Buffer, frontierN int, queries [][]float32, topK int) ([][]uint32, [][]float32, error) {
+	outIdx := make([][]uint32, len(queries))
+	outDist := make([][]float32, len(queries))
+	topK = min(topK, frontierN)
+	if topK <= 0 {
+		return outIdx, outDist, ctx.Err()
+	}
+	chunk := max(1, min(len(queries), hnswBuildScoreFloats/frontierN))
+	var flat []float32
+	for start := 0; start < len(queries); start += chunk {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		end := min(start+chunk, len(queries))
+		rows := end - start
+		flat = flattenHNSWBuildQueriesInto(flat[:0], queries[start:end], a.dim)
+		if len(flat) != rows*a.dim {
+			return nil, nil, localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(a.dim), nil)
+		}
+		queryBuf, err := a.device.NewBuffer(flat, metal.StorageShared)
+		if err != nil {
+			return nil, nil, err
+		}
+		scores, err := a.scoreScratch(rows * frontierN)
+		if err == nil {
+			err = a.device.MPSMatrixMultiplyTransposeB(queryBuf, frontier, scores, uint32(rows), uint32(frontierN), uint32(a.dim))
+		}
+		queryBuf.Release()
+		if err != nil {
+			return nil, nil, err
+		}
+		matrix := scores.Float32View(rows * frontierN)
+		if err := parallelOver(ctx, rows, func(q int) {
+			outIdx[start+q], outDist[start+q] = topKScoreRow(matrix[q*frontierN:(q+1)*frontierN], topK)
+		}); err != nil {
+			return nil, nil, err
+		}
+	}
+	return outIdx, outDist, nil
+}
+
+// scoreScratch is a reusable shared buffer of at least floats float32s.
+func (a *MetalHNSWBuildAccelerator) scoreScratch(floats int) (*metal.Buffer, error) {
+	if a.scores != nil && a.scoresCap >= floats {
+		return a.scores, nil
+	}
+	if a.scores != nil {
+		a.scores.Release()
+		a.scores, a.scoresCap = nil, 0
+	}
+	buf, err := a.device.NewEmptyBuffer(uint64(floats)*4, metal.StorageShared)
+	if err != nil {
+		return nil, err
+	}
+	a.scores, a.scoresCap = buf, floats
+	return buf, nil
+}
+
+// topKScoreRow returns the indices of row's k highest scores, highest first
+// (equal scores: lower index first), with distances 1-score.
+func topKScoreRow(row []float32, k int) ([]uint32, []float32) {
+	// heap is a min-heap of the best k seen: its root is the worst of them.
+	heap := make([]hnswCandidateDistance, 0, k)
+	worse := func(x, y hnswCandidateDistance) bool { // x ranks below y
+		return x.dist < y.dist || (x.dist == y.dist && x.index > y.index)
+	}
+	down := func(i int) {
+		for {
+			l, r, m := 2*i+1, 2*i+2, i
+			if l < len(heap) && worse(heap[l], heap[m]) {
+				m = l
+			}
+			if r < len(heap) && worse(heap[r], heap[m]) {
+				m = r
+			}
+			if m == i {
+				return
+			}
+			heap[i], heap[m] = heap[m], heap[i]
+			i = m
+		}
+	}
+	for i, score := range row {
+		c := hnswCandidateDistance{index: i, dist: score} // dist holds the score here
+		if len(heap) < k {
+			heap = append(heap, c)
+			for j := len(heap) - 1; j > 0; {
+				p := (j - 1) / 2
+				if !worse(heap[j], heap[p]) {
+					break
+				}
+				heap[j], heap[p] = heap[p], heap[j]
+				j = p
+			}
+			continue
+		}
+		if score > heap[0].dist {
+			heap[0] = c
+			down(0)
+		}
+	}
+	ids := make([]uint32, len(heap))
+	dists := make([]float32, len(heap))
+	for n := len(heap) - 1; n >= 0; n-- {
+		ids[n], dists[n] = uint32(heap[0].index), 1-heap[0].dist
+		heap[0] = heap[len(heap)-1]
+		heap = heap[:len(heap)-1]
+		down(0)
+	}
+	return ids, dists
+}
+
 func (a *MetalHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, queries [][]float32, graph *hnswBuildGraphSnapshot, topK int) ([][]uint32, [][]float32, error) {
 	if topK <= 0 || len(queries) == 0 || graph == nil || !graph.hasEntryPoint || len(graph.vectors) == 0 {
 		return make([][]uint32, len(queries)), make([][]float32, len(queries)), ctx.Err()
@@ -508,6 +669,7 @@ func (a *MetalHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, qu
 }
 
 func (a *MetalHNSWBuildAccelerator) Close() error {
+	a.releaseResident()
 	if a.device != nil {
 		a.device.Release()
 		a.device = nil
@@ -628,6 +790,19 @@ func (g *hnswBuildGraphSnapshot) vectorsForInternalIDs(ids []uint32) [][]float32
 // preference and returns the first one that initializes successfully.
 // Falls back to CPU if no GPU backend is available.
 func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
+	// Explicit selection is also used by the cross-backend benchmark. An
+	// unavailable selected device reaches the existing CPU fallback, rather
+	// than silently substituting another GPU backend.
+	switch strings.ToLower(envutil.Get("NORNICDB_GPU_BACKEND", "")) {
+	case "cpu":
+		return NewCPUHNSWBuildAccelerator(), nil
+	case "cuda":
+		return NewCudaHNSWBuildAccelerator()
+	case "vulkan":
+		return NewVulkanHNSWBuildAccelerator()
+	case "metal":
+		return NewMetalHNSWBuildAccelerator()
+	}
 	// Try CUDA first (NVIDIA GPUs)
 	if accel, err := NewCudaHNSWBuildAccelerator(); err == nil {
 		logSearchPrintf("[HNSW] Using CUDA GPU accelerator")
@@ -696,8 +871,11 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 //     come from a beam search of width efConstruction that starts at the
 //     vector's own level-0 entry point (the upper-layer descent an insert
 //     makes) and at inserted vectors sharing a lexical signature band with it
-//     when the build has BM25 hints. A GPU accelerator with a graph search
-//     (HNSWGraphBuildAccelerator: CUDA, Metal, Vulkan) runs it on the device
+//     when the build has BM25 hints. A GPU accelerator holding the inserted
+//     vectors on the device (HNSWResidentBuildAccelerator: Metal) instead
+//     returns each vector's exact nearest inserted vectors, which a beam search
+//     approximates; one with a graph search (HNSWGraphBuildAccelerator: CUDA,
+//     Metal, Vulkan) runs the beam search on the device
 //     (CandidateSearchGraph); otherwise each vector runs the insert's own
 //     search (buildLevelZeroCandidates), in parallel, since it only reads.
 //  2. accel scores the batch against itself, so each vector also gets the
@@ -715,10 +893,14 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 		built.SetVectorLookup(lookup)
 	}
 	stats := hnswBuildStats{Strategy: "batch_parallel", Backend: fmt.Sprintf("%T", accel)}
-	ef := max(config.EfConstruction, config.M)
+	ef := max(config.GPUBuildCandidateK, config.EfConstruction, config.M)
 	bands := newLexicalBandIndex()
 	signatures := make(map[uint32]uint64)
+	resident, onDevice := accel.(HNSWResidentBuildAccelerator)
+	onDevice = onDevice && resident.ResidentReady()
 	graphAccel, onGPU := accel.(HNSWGraphBuildAccelerator)
+	onGPU = onGPU && !onDevice
+	var residentVecs [][]float32 // the batch's vectors to append, by internal ID
 	var graphSnapshot *hnswBuildGraphSnapshot
 	var frontierVecs [][]float32 // by internal ID: what a GPU graph search scores
 	var signaturesByID []uint64
@@ -742,7 +924,17 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 		graphDists := make([][]float32, len(batch))
 		var searchErr error
 		var searchErrOnce sync.Once
-		if onGPU && len(frontierVecs) > 0 {
+		if onDevice {
+			if added > 0 {
+				found, dists, err := resident.CandidateSearchInserted(ctx, queries, ef)
+				if err != nil {
+					stats.KernelErrors++
+					return err
+				}
+				copy(graphIDs, found)
+				copy(graphDists, dists)
+			}
+		} else if onGPU && len(frontierVecs) > 0 {
 			graphSnapshot = buildHNSWGraphSnapshot(built, frontierVecs, graphSnapshot)
 			graphSnapshot.signatures = signaturesByID
 			order := seedGraphQueries(ctx, built, graphSnapshot, batch, bands)
@@ -793,6 +985,7 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 			}
 		}
 
+		searched := time.Since(batchStart)
 		batchInternalIDs := make([]uint32, len(batch))
 		for i, p := range batch {
 			if err := ctx.Err(); err != nil {
@@ -824,6 +1017,12 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 				return fmt.Errorf("failed to resolve HNSW internal ID for %q", p.id)
 			}
 			batchInternalIDs[i] = internalID
+			if onDevice {
+				if int(internalID) != added {
+					return fmt.Errorf("HNSW build: internal ID %d of %q is not the next resident vector %d", internalID, p.id, added)
+				}
+				residentVecs = append(residentVecs, hnswBuildVectorReference(built, internalID, p.vec))
+			}
 			if onGPU {
 				frontierVecs = append(frontierVecs, hnswBuildVectorReference(built, internalID, p.vec))
 				for len(signaturesByID) <= int(internalID) {
@@ -842,7 +1041,15 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 				logSearchPrintf("[HNSW] 🔨 Progress: %d / %d vectors", added, total)
 			}
 		}
-		logSearchPrintf("[HNSW] build batch=%d vectors=%d indexed=%d duration=%s", stats.Batches, len(batch), added, time.Since(batchStart))
+		if onDevice {
+			if err := resident.AppendInserted(residentVecs); err != nil {
+				stats.KernelErrors++
+				return err
+			}
+			residentVecs = residentVecs[:0]
+		}
+		elapsed := time.Since(batchStart)
+		logSearchPrintf("[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s", stats.Batches, len(batch), added, elapsed, searched, elapsed-searched)
 		return nil
 	})
 	stats.Duration = time.Since(started)

@@ -79,7 +79,7 @@ func HNSWConfigFromEnv() HNSWConfig {
 		config.SearchBeamFactor = beamFactor
 	}
 
-	config.UseGPUBuild = envutil.GetBoolStrict("NORNICDB_HNSW_BUILD_GPU_ENABLED", true)
+	config.UseGPUBuild = envutil.GetBoolStrict("NORNICDB_HNSW_BUILD_GPU_ENABLED", true) && !strings.EqualFold(envutil.Get("NORNICDB_GPU_BACKEND", ""), "cpu")
 	config.GPUBuildBatchSize = envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE", 2048)
 	if config.GPUBuildBatchSize <= 0 {
 		config.GPUBuildBatchSize = 2048
