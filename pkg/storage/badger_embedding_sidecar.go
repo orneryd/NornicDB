@@ -169,6 +169,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		// the next read re-hydrates from the sidecar. Body cache and counts
 		// are untouched: the node record did not change.
 		cw.publish = func() { b.cacheDeleteNode(node.ID) }
+		cw.publishKeys = []any{node.ID}
 		return nil
 	})
 	if errors.Is(err, badger.ErrConflict) {

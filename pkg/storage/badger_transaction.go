@@ -3037,8 +3037,8 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.acquireCommitPublicationLocked()
 
 	// The caches, counts, indexes and unique-value registry, in commit order
-	// (badger_publication_stage.go).
-	cw.publish = tx.publication()
+	// per entity and unique value (badger_publication_stage.go).
+	cw.publish, cw.publishKeys = tx.publication()
 
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.
@@ -4053,16 +4053,18 @@ func setCommitTailHook(hook func()) func() {
 // publication is the commit's derived-state publication, which the ordered
 // stage runs once the commit is visible (badger_publication_stage.go): the
 // caches and counts per operation, in operation order, then the unique-value
-// registry. All operations belong to the transaction's pinned namespace.
-func (tx *BadgerTransaction) publication() func() {
+// registry; and the keys it is ordered on. All operations belong to the
+// transaction's pinned namespace.
+func (tx *BadgerTransaction) publication() (func(), []any) {
 	engine, ops := tx.engine, tx.operations
 	if len(ops) == 0 {
-		return nil
+		return nil, nil
 	}
 	var schema *SchemaManager
 	if tx.namespace != "" {
 		schema = engine.GetSchemaForNamespace(tx.namespace)
 	}
+	keys := appendOperationPublicationKeys(nil, schema, ops)
 	return func() {
 		for _, op := range ops {
 			switch op.Type {
@@ -4095,7 +4097,7 @@ func (tx *BadgerTransaction) publication() func() {
 			}
 		}
 		engine.publishUniqueValuesForOps(schema, ops)
-	}
+	}, keys
 }
 
 func runCommitTailHook() {

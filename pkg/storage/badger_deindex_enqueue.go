@@ -53,7 +53,14 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
-	}, publish)
+	}, publish, func() []any {
+		// The rewrite changes no property, so it frees and takes no
+		// unique value.
+		if isEdge {
+			return []any{EdgeID(entityID)}
+		}
+		return []any{NodeID(entityID)}
+	})
 	if err == nil && nodeChanged {
 		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
 	}

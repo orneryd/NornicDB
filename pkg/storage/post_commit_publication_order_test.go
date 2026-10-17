@@ -376,6 +376,112 @@ func TestPostCommitPublicationWithinOneCommit(t *testing.T) {
 	checkNodeConsumers(t, b, nil, []string{"A"}, true)
 }
 
+// holdFirstPublication holds the first publication the stage runs after the
+// call until release; started is closed when it is held.
+func holdFirstPublication(t *testing.T) (started <-chan struct{}, release func()) {
+	t.Helper()
+	held, resume := make(chan struct{}), make(chan struct{})
+	var once atomic.Bool
+	var released sync.Once
+	restore := setPublicationStageHook(func(uint64) {
+		if once.CompareAndSwap(false, true) {
+			close(held)
+			<-resume
+		}
+	})
+	release = func() { released.Do(func() { close(resume) }) }
+	t.Cleanup(func() { release(); restore() })
+	return held, release
+}
+
+// Publications with disjoint keys apply in parallel: while one node's
+// publication is held in the stage, a write of another node returns with its
+// own derived state applied, and the held node still shows its prefix state.
+func TestDisjointPublicationsApplyInParallel(t *testing.T) {
+	b := newPublicationMatrixEngine(t)
+	sm := b.GetSchemaForNamespace("db")
+	x := &Node{ID: "db:px", Labels: []string{"L"}, Properties: map[string]any{"p": "A", "q": "w", "u": "A"}}
+	y := &Node{ID: "db:py", Labels: []string{"L"}, Properties: map[string]any{"p": "P", "q": "w", "u": "P"}}
+	for _, n := range []*Node{x, y} {
+		_, err := b.CreateNode(CopyNode(n))
+		require.NoError(t, err)
+	}
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(b, sm))
+
+	started, release := holdFirstPublication(t)
+	olderDone := make(chan error, 1)
+	go func() {
+		updated := CopyNode(x)
+		updated.Properties["p"], updated.Properties["u"] = "B", "B"
+		olderDone <- b.UpdateNode(updated)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("x's write never reached the stage")
+	}
+	for _, explicit := range []bool{false, true} {
+		value := map[bool]string{false: "Q", true: "R"}[explicit]
+		updated := CopyNode(y)
+		updated.Properties["p"], updated.Properties["u"] = value, value
+		done := make(chan error, 1)
+		go func() {
+			done <- writeMaybeInTransaction(b, explicit, func(tx *BadgerTransaction) error { return tx.UpdateNode(updated) }, func() error { return b.UpdateNode(updated) })
+		}()
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("a write of another node waited for a held publication (explicit=%v)", explicit)
+		}
+		holder, found, _, _ := sm.lookupUniqueConstraintValueForValidation("L", "u", value)
+		assert.True(t, found && holder == "db:py", "y's publication applied (explicit=%v)", explicit)
+		assert.Equal(t, []NodeID{"db:py"}, sm.PropertyIndexLookup("L", "p", value))
+	}
+	holder, found, _, _ := sm.lookupUniqueConstraintValueForValidation("L", "u", "A")
+	assert.True(t, found && holder == "db:px", "x's publication is still held: the registry shows its prefix state")
+	release()
+	require.NoError(t, <-olderDone)
+	holder, found, _, _ = sm.lookupUniqueConstraintValueForValidation("L", "u", "B")
+	assert.True(t, found && holder == "db:px")
+	assert.Zero(t, b.db.oracle.stage.pendingCount(), "every publication ran")
+}
+
+// Publications that share a unique value are ordered on it even for
+// different nodes: x frees A while its publication is held, and y, whose
+// validation reads committed state (the registry is not complete yet), takes
+// A. y's write returns only after x's publication, and A stays registered
+// for y; applied the other way round, x's late unregister would drop y's A.
+func TestUniqueValueKeyOrdersPublications(t *testing.T) {
+	b := newPublicationMatrixEngine(t)
+	sm := b.GetSchemaForNamespace("db")
+	x := &Node{ID: "db:vx", Labels: []string{"L"}, Properties: map[string]any{"p": "A", "q": "w", "u": "A"}}
+	_, err := b.CreateNode(CopyNode(x))
+	require.NoError(t, err)
+	constraint := sm.uniqueConstraints["L:u"]
+	require.NotNil(t, constraint)
+	constraint.mu.Lock()
+	constraint.valuesCacheComplete = false
+	constraint.mu.Unlock()
+
+	publishHeld(t,
+		func() error {
+			freed := CopyNode(x)
+			freed.Properties["p"], freed.Properties["u"] = "B", "B"
+			return b.UpdateNode(freed)
+		},
+		func() error {
+			_, err := b.CreateNode(&Node{ID: "db:vy", Labels: []string{"L"}, Properties: map[string]any{"p": "A", "q": "w", "u": "A"}})
+			return err
+		}, nil)
+	key, ok := uniqueConstraintValueKey("A")
+	require.True(t, ok)
+	constraint.mu.RLock()
+	holder := constraint.values[key]
+	constraint.mu.RUnlock()
+	assert.Equal(t, NodeID("db:vy"), holder, "A belongs to y after both publications")
+}
+
 type matrixEdgeWrite struct {
 	apply func(b *BadgerEngine, explicit bool) error
 }

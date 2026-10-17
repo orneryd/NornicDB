@@ -66,17 +66,18 @@ func TestAfterPublicationFollowsTheStage(t *testing.T) {
 	require.Equal(t, []string{"stage", "afterPublication", "listener"}, events.list())
 }
 
-// While an older commit's publication is held in the stage, a newer
-// transaction's afterPublication does not run: the stage passes the older
-// commit first, then its own.
+// While an older commit's publication of a node is held in the stage, a newer
+// transaction writing the same node doesn't run afterPublication: the stage
+// passes the older publication first, then its own. A transaction writing a
+// different node runs it meanwhile: disjoint publications don't wait.
 func TestAfterPublicationWaitsForEarlierPublications(t *testing.T) {
 	b, _ := newAdmissionTestEngine(t, BadgerOptions{InMemory: true})
 	_, err := b.CreateNode(&Node{ID: "db:older", Labels: []string{"L"}, Properties: map[string]any{"u": "O1"}})
 	require.NoError(t, err)
 
 	var events publicationEvents
-	b.OnNodeCreated(func(node *Node) {
-		if node.ID == "db:newer" {
+	b.OnNodeUpdated(func(node *Node) {
+		if node.ID == "db:older" && node.Properties["u"] == "O3" {
 			events.add("listener")
 		}
 	})
@@ -90,7 +91,7 @@ func TestAfterPublicationWaitsForEarlierPublications(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if _, err := tx.CreateNode(&Node{ID: "db:newer", Labels: []string{"L"}, Properties: map[string]any{"u": "N"}}); err != nil {
+			if err := tx.UpdateNode(&Node{ID: "db:older", Labels: []string{"L"}, Properties: map[string]any{"u": "O3"}}); err != nil {
 				return err
 			}
 			return tx.CommitContextWithPublication(context.Background(), func() {
@@ -99,7 +100,30 @@ func TestAfterPublicationWaitsForEarlierPublications(t *testing.T) {
 			})
 		},
 		func() {
-			require.Zero(t, hookRuns.Load(), "afterPublication ran while an earlier commit's publication was held")
+			require.Zero(t, hookRuns.Load(), "afterPublication ran while an earlier publication of the same node was held")
+			// A transaction writing another node commits and runs its
+			// afterPublication while that publication is held.
+			disjoint := make(chan error, 1)
+			var disjointRan atomic.Bool
+			go func() {
+				tx, err := b.BeginTransaction()
+				if err != nil {
+					disjoint <- err
+					return
+				}
+				if _, err := tx.CreateNode(&Node{ID: "db:disjoint", Labels: []string{"L"}, Properties: map[string]any{"u": "D"}}); err != nil {
+					disjoint <- err
+					return
+				}
+				disjoint <- tx.CommitContextWithPublication(context.Background(), func() { disjointRan.Store(true) })
+			}()
+			select {
+			case err := <-disjoint:
+				require.NoError(t, err)
+				require.True(t, disjointRan.Load())
+			case <-time.After(5 * time.Second):
+				t.Fatal("a transaction writing another node waited for a held publication")
+			}
 		})
 	require.EqualValues(t, 1, hookRuns.Load())
 	require.Equal(t, []string{"afterPublication", "listener"}, events.list())

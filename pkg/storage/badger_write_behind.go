@@ -418,6 +418,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			b.publishCommitOperations(c.namespace, schemas[c.namespace], c.ops)
 		}
 	}
+	for _, c := range commits {
+		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, schemas[c.namespace], c.ops)
+	}
 
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
