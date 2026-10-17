@@ -39,8 +39,9 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 
 	// Pin the exact release inventory, not just its count: a missing function
 	// cannot be hidden by an unrelated addition, and duplicate rows fail too.
-	// This includes the twelve native graph/path/temporal bindings and the
-	// case-distinct plugin entry, while catalog/plugin overlap stays one row.
+	// This includes the twelve native graph/path/temporal bindings, the three
+	// apoc.util digests and the case-distinct plugin entry, while
+	// catalog/plugin overlap stays one row.
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, isBuiltIn WHERE name STARTS WITH 'apoc.' RETURN name, isBuiltIn ORDER BY name", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{
@@ -94,6 +95,9 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 		{"apoc.rel.type", false},
 		{"apoc.temporal.format", false},
 		{"apoc.text.join", false},
+		{"apoc.util.md5", false},
+		{"apoc.util.sha1", false},
+		{"apoc.util.sha256", false},
 	}, result.Rows)
 
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, description WHERE name = 'apoc.coll.sum' RETURN description", nil)
