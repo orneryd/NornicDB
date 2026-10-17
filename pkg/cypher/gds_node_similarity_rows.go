@@ -318,6 +318,12 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	var members []int
 	for _, id := range config.sources {
 		index := sort.SearchStrings(incidence.sources, id)
+		if index == len(incidence.sources) || incidence.sources[index] != id {
+			// An id as given may name a remote node of the rows by its
+			// elementId.
+			id = similarityRemoteKey + id
+			index = sort.SearchStrings(incidence.sources, id)
+		}
 		if index < len(incidence.sources) && incidence.sources[index] == id && !excluded[index] {
 			excluded[index] = true
 			members = append(members, index)
@@ -358,7 +364,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 				return order < 0
 			}
 		}
-		return a < b
+		return similarityShownBefore(a, b)
 	}
 	sort.Slice(scored, func(i, j int) bool {
 		if scored[i].similarity != scored[j].similarity {
@@ -372,7 +378,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	var node1 interface{} = similarityDisplayID(config.sources[0])
 	if config.group {
 		ids := append([]string(nil), config.sources...)
-		sort.Strings(ids)
+		sort.Slice(ids, func(i, j int) bool { return similarityShownBefore(ids[i], ids[j]) })
 		list := make([]interface{}, len(ids))
 		for i, id := range ids {
 			list[i] = similarityDisplayID(id)
@@ -382,17 +388,15 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	rows := make([][]interface{}, len(scored))
 	for i, pair := range scored {
 		_, shared := nodeSimilarity(source, neighbors[pair.target], config.metric, true, things, true)
-		if config.tieBreak != "" {
-			// Most weight first, as the kernel orders them; equal weights
-			// by the tieBreakProperty, then by id.
-			sort.Slice(shared, func(i, j int) bool {
-				left, right := shared[i].(map[string]interface{}), shared[j].(map[string]interface{})
-				if lw, rw := left["weight"].(float64), right["weight"].(float64); lw != rw {
-					return lw > rw
-				}
-				return tieBefore(left["nodeId"].(string), right["nodeId"].(string))
-			})
-		}
+		// Most weight first, as the kernel orders them; equal weights
+		// by the tieBreakProperty, then by id.
+		sort.Slice(shared, func(i, j int) bool {
+			left, right := shared[i].(map[string]interface{}), shared[j].(map[string]interface{})
+			if lw, rw := left["weight"].(float64), right["weight"].(float64); lw != rw {
+				return lw > rw
+			}
+			return tieBefore(left["nodeId"].(string), right["nodeId"].(string))
+		})
 		for _, entry := range shared {
 			item := entry.(map[string]interface{})
 			item["nodeId"] = similarityDisplayID(item["nodeId"].(string))
@@ -429,4 +433,13 @@ func similarityNodeID(value interface{}) (string, bool) {
 // elementId, or the local id.
 func similarityDisplayID(key string) string {
 	return strings.TrimPrefix(key, similarityRemoteKey)
+}
+
+// similarityShownBefore orders two keys by the ids the output shows, then by
+// key: a local and a remote node can show the same id.
+func similarityShownBefore(a, b string) bool {
+	if shownA, shownB := similarityDisplayID(a), similarityDisplayID(b); shownA != shownB {
+		return shownA < shownB
+	}
+	return a < b
 }
