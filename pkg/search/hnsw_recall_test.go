@@ -213,7 +213,7 @@ func TestHNSWCandidateGenerationSelectsDistinctNodesFromChunkedResults(t *testin
 	require.NoError(t, err)
 	var nodes []string
 	for _, candidate := range candidates {
-		node := normalizeVectorResultIDToNodeID(candidate.ID)
+		node := mustVectorEntryOwner(t, candidate.ID)
 		if !slices.Contains(nodes, node) {
 			nodes = append(nodes, node)
 		}
