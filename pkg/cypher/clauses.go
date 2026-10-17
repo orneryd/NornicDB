@@ -1800,7 +1800,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 }
 
 func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesFor(ctx, cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
