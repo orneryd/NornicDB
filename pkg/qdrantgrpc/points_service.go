@@ -295,10 +295,12 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	}
 
 	for _, nodeID := range nodeIDs {
+		// Persist first, as upserts do: population must either see the deletion
+		// or finish before the final shared-index removal can be acknowledged.
+		_ = store.DeleteNode(nodeID)
 		if searchSvc != nil {
 			_ = searchSvc.RemoveNode(nodeID)
 		}
-		_ = store.DeleteNode(nodeID)
 	}
 
 	return &qpb.PointsOperationResponse{

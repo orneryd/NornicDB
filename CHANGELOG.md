@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
   order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
   vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
+- Delete Qdrant storage before final shared-index removal, so population cannot restore a point while its durable
+  deletion is in flight.
 - Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
 - Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
   merging reuse the existing kernels. Graph search explores the retained beam completely instead of truncating it
