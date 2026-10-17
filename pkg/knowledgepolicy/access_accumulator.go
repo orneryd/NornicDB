@@ -1,6 +1,7 @@
 package knowledgepolicy
 
 import (
+	"log"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -129,6 +130,11 @@ type AccessAccumulator struct {
 	enabled       bool
 	maxBufferSize int64
 	onBufferFull  func()
+
+	// Custom key kinds, fixed by first use (claimCustomKind).
+	customKinds          sync.Map // key -> customKind
+	loggedCustomRefusals sync.Map // key -> struct{}
+	rejectedCustomWrites atomic.Int64
 }
 
 // NewAccessAccumulator creates an accumulator with one shard per GOMAXPROCS.
@@ -187,18 +193,20 @@ func (a *AccessAccumulator) IncrementTraversal(entityID string) {
 }
 
 // IncrementCustom adds delta to the custom counter key. Custom counters are
-// summed across shards and onto the persisted value.
+// summed across shards and onto the persisted value. A key first used with
+// SetTimestamp is refused (see claimCustomKind).
 func (a *AccessAccumulator) IncrementCustom(entityID string, key string, delta int64) {
-	if !a.enabled {
+	if !a.enabled || !a.claimCustomKind(key, customCounter) {
 		return
 	}
 	a.currentShard().incrementCustom(entityID, key, counter(delta))
 }
 
 // SetTimestamp records ts for the custom timestamp key. Custom timestamps keep
-// the latest value across shards and against the persisted value.
+// the latest value across shards and against the persisted value. A key first
+// used with IncrementCustom is refused (see claimCustomKind).
 func (a *AccessAccumulator) SetTimestamp(entityID string, key string, ts int64) {
-	if !a.enabled {
+	if !a.enabled || !a.claimCustomKind(key, customTimestamp) {
 		return
 	}
 	a.currentShard().setTimestamp(entityID, key, timestamp(ts))
@@ -207,8 +215,8 @@ func (a *AccessAccumulator) SetTimestamp(entityID string, key string, ts int64) 
 // ReadThrough returns the persisted value combined with the buffered deltas
 // across all P-local shards: persisted + sum for counters, the latest of the
 // persisted and buffered values for timestamps. The fixed key names read the
-// fixed fields; any other key is a custom timestamp when one was buffered
-// with SetTimestamp, otherwise a custom counter.
+// fixed fields; any other key reads by the kind of its first use, and a key
+// never used returns persisted.
 // This is eventually-consistent and NOT bound by MVCC snapshot isolation.
 func (a *AccessAccumulator) ReadThrough(entityID string, key string, persisted int64) int64 {
 	if !a.enabled {
@@ -224,24 +232,58 @@ func (a *AccessAccumulator) ReadThrough(entityID string, key string, persisted i
 	case "lastTraversedAt":
 		return int64(a.latestTimestamp(entityID, timestamp(persisted), func(d *entityDelta) timestamp { return d.lastTraversedAt }))
 	}
-	var counted counter
-	latest := timestamp(persisted)
-	isTimestamp := false
-	for i := range a.shards {
-		a.shards[i].mu.Lock()
-		if d := a.shards[i].deltas[entityID]; d != nil {
-			counted = counted.merge(d.counters[key])
-			if ts, ok := d.timestamps[key]; ok {
-				latest = latest.merge(ts)
-				isTimestamp = true
-			}
-		}
-		a.shards[i].mu.Unlock()
+	switch a.customKindOf(key) {
+	case customCounter:
+		return int64(a.sumCounters(entityID, counter(persisted), func(d *entityDelta) counter { return d.counters[key] }))
+	case customTimestamp:
+		return int64(a.latestTimestamp(entityID, timestamp(persisted), func(d *entityDelta) timestamp { return d.timestamps[key] }))
 	}
-	if isTimestamp {
-		return int64(latest)
+	return persisted
+}
+
+// customKind is the kind a custom key was first used as.
+type customKind uint8
+
+const (
+	customCounter customKind = iota + 1
+	customTimestamp
+)
+
+func (k customKind) String() string {
+	if k == customTimestamp {
+		return "timestamp"
 	}
-	return int64(counter(persisted).merge(counted))
+	return "counter"
+}
+
+// claimCustomKind fixes key's kind on its first use and reports whether key
+// may be used as kind. A key keeps its kind for the accumulator's lifetime, so
+// the buffers, ReadThrough and the flusher never hold one key as both a
+// counter and a timestamp. A use as the other kind is refused: every refusal
+// is counted (RejectedCustomWrites) and the first one per key is logged.
+func (a *AccessAccumulator) claimCustomKind(key string, kind customKind) bool {
+	current, _ := a.customKinds.LoadOrStore(key, kind)
+	if current.(customKind) == kind {
+		return true
+	}
+	a.rejectedCustomWrites.Add(1)
+	if _, logged := a.loggedCustomRefusals.LoadOrStore(key, struct{}{}); !logged {
+		log.Printf("knowledgepolicy: custom access key %q is a %s; refused its use as a %s", key, current, kind)
+	}
+	return false
+}
+
+// customKindOf returns key's kind, or 0 when key has not been used.
+func (a *AccessAccumulator) customKindOf(key string) customKind {
+	kind, _ := a.customKinds.Load(key)
+	k, _ := kind.(customKind)
+	return k
+}
+
+// RejectedCustomWrites returns how many IncrementCustom and SetTimestamp calls
+// were refused because the key was first used as the other kind.
+func (a *AccessAccumulator) RejectedCustomWrites() int64 {
+	return a.rejectedCustomWrites.Load()
 }
 
 // sumCounters merges one counter slot of entityID's deltas across all shards
