@@ -350,11 +350,11 @@ func TestCollapseIndexResultsByNodeIDFastPathAndFallback(t *testing.T) {
 	duplicate := collapseIndexResultsByNodeID([]indexResult{{ID: "doc-a", Score: 0.7}, {ID: "doc-a", Score: 0.9}})
 	require.Equal(t, []indexResult{{ID: "doc-a", Score: 0.9}}, duplicate)
 
-	chunked := collapseIndexResultsByNodeID([]indexResult{{ID: "doc-a-chunk-0", Score: 0.7}, {ID: "doc-a-chunk-1", Score: 0.9}})
-	require.Equal(t, []indexResult{{ID: "doc-a", MatchID: "doc-a-chunk-1", Score: 0.9}}, chunked)
+	chunked := collapseIndexResultsByNodeID([]indexResult{{ID: nodeChunkVectorKey("doc-a", 0), Score: 0.7}, {ID: nodeChunkVectorKey("doc-a", 1), Score: 0.9}})
+	require.Equal(t, []indexResult{{ID: "doc-a", MatchID: nodeChunkVectorKey("doc-a", 1), Score: 0.9}}, chunked)
 	fused := svc.fuseRRF(chunked, nil, &SearchOptions{RRFK: 60})
 	require.Len(t, fused, 1)
-	require.Equal(t, "doc-a-chunk-1", fused[0].MatchID)
+	require.Equal(t, nodeChunkVectorKey("doc-a", 1), fused[0].MatchID)
 }
 
 func TestServicePersistenceAndTimingHelpers(t *testing.T) {

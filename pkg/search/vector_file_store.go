@@ -27,7 +27,7 @@ import (
 
 const (
 	vecFileMagic             = "NVF\n"
-	vecFileVersion           = 2
+	vecFileVersion           = 3 // 3: vector-entry keys (vectorEntryKeyFormat); older stores are rebuilt
 	vecHeaderSize            = 64
 	vectorScoreReadBatchSize = 1024 * 1024
 )

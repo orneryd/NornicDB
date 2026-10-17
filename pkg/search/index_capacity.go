@@ -91,31 +91,16 @@ func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, fulltext n
 	}
 	diskPayload := s.vectorFileStore != nil || s.vectorStorageMode == "disk"
 	s.mu.RUnlock()
-	addVector := func(id string, vector []float32) {
-		if len(vector) == 0 || (dimensions > 0 && len(vector) != dimensions) {
-			return
+	s.forEachNodeVectorEntry(node, dimensions, func(item nodeVectorEntry) bool {
+		if dimensions > 0 && len(item.vector) != dimensions {
+			return true
 		}
-		usage.vectorMetadata += int64(len(id) + 16)
+		usage.vectorMetadata += int64(len(item.key) + 16)
 		if !diskPayload {
-			usage.vectorResident += int64(len(vector) * 2 * 4)
+			usage.vectorResident += int64(len(item.vector) * 2 * 4)
 		}
-	}
-	for name, vector := range node.NamedEmbeddings {
-		addVector(fmt.Sprintf("%s-named-%s", node.ID, name), vector)
-	}
-	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-		addVector(nodeID, node.ChunkEmbeddings[0])
-		if len(node.ChunkEmbeddings) > 1 {
-			for index, vector := range node.ChunkEmbeddings {
-				addVector(fmt.Sprintf("%s-chunk-%d", node.ID, index), vector)
-			}
-		}
-	}
-	for property, value := range node.Properties {
-		if vector, ok := vectorFromPropertyValue(value, dimensions); ok {
-			addVector(fmt.Sprintf("%s-prop-%s", node.ID, property), vector)
-		}
-	}
+		return true
+	})
 	return usage
 }
 

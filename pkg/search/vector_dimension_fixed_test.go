@@ -30,7 +30,7 @@ func TestFixedVectorDimensionsIgnoreNumericListProperties(t *testing.T) {
 	// A 4-element numeric list property is a vector of the index.
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "prop", Labels: []string{"P"},
 		Properties: map[string]interface{}{"v": []interface{}{1.0, 0.0, 0.0, 1.0}}}))
-	require.True(t, svc.vectorIndex.HasVector("prop-prop-v"))
+	require.True(t, svc.vectorIndex.HasVector(nodePropertyVectorKey("prop", "v")))
 }
 
 // Without an embedder the first vector-shaped value still sets an empty
