@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add opt-in HNSW scalar int8, product (4×–64×), and binary coordinate compression
+- Default application HNSW traversal to scalar int8 with original-vector rescoring;
+  `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` retains full-precision traversal.
+- Add HNSW scalar int8, product (4×–64×), and binary coordinate compression
   (with binary or 4/8-bit scalar queries),
   preserving original-vector construction, lexical hints, exact rescoring and checkpoints.
   Persist Qdrant collection quantization policies and honor request ignore/rescore/oversampling.
