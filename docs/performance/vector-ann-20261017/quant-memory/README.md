@@ -138,7 +138,8 @@ root before repeating to preserve previous evidence. Cases follow harness mode
 order, not CLI order. `profile_memory_finish.py` resumes snapshot numbering at
 four for this recorded interrupted run. No vectors, query matrix, datasets or
 binaries are committed. Heap text and detailed `vmmap` output are gzip-compressed;
-runtime stats and top allocations remain readable. Heap `.pb.gz` profiles open
+runtime stats and top allocations remain readable. Readable OS summaries trim
+trailing whitespace; their unmodified captures are preserved as `.txt.gz`. Heap `.pb.gz` profiles open
 directly with `go tool pprof -top -inuse_space`.
 
 Fresh checks for this investigation: clean native build and five full-corpus
