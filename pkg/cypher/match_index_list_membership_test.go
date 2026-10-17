@@ -1,0 +1,220 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// listMembershipSetup is the graph the list-membership seek tests read: an
+// identity population with scalar keys and list keys, and the values that
+// test Cypher's membership edge cases (a scalar in place of a list, numbers
+// of both kinds, empty lists, other labels).
+const listMembershipSetup = `
+UNWIND range(0, 59) AS i
+CREATE (:GraphNode:Identity {id: 'id' + toString(i), name_key: 'name' + toString(i % 20),
+  alias_keys: ['alias' + toString(i), 'shared' + toString(i % 7)], current: i % 5 <> 0})
+WITH count(*) AS created
+CREATE (:GraphNode:Identity {id: 'scalar', name_key: 'scalar', alias_keys: 'alias3', current: true}),
+       (:GraphNode:Identity {id: 'nums', alias_keys: [1, 2.5], current: true}),
+       (:GraphNode:Identity {id: 'empty', alias_keys: [], current: true}),
+       (:GraphNode:Identity {id: 'none', current: true}),
+       (:Doc {id: 'doc', alias_keys: ['alias3'], name_key: 'name3'})`
+
+var listMembershipIndexes = []string{
+	"CREATE INDEX identity_alias_keys FOR (n:Identity) ON (n.alias_keys)",
+	"CREATE INDEX identity_name_key FOR (n:Identity) ON (n.name_key)",
+	"CREATE INDEX identity_id FOR (n:Identity) ON (n.id)",
+}
+
+// listMembershipQueries are answered by membership seeks once the indexes
+// exist, and must return what the label scan returns without them.
+var listMembershipQueries = []string{
+	"MATCH (n:Identity) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE 'alias3' IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE 1 IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE 1.0 IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE 2.5 IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE null IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE $missing IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE ANY(k IN ['shared2', 'alias4'] WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN $empty WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN $nullList WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE $x IN n.alias_keys AND n.current RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE n.current AND any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE n.name_key = $name OR $x IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE (n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys)) AND coalesce(n.current, true) RETURN n.id ORDER BY n.id",
+	"MATCH (n:GraphNode:Identity) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity {current: true}) WHERE $x IN n.alias_keys OR n.name_key = 'name3' RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE $x IN n.alias_keys RETURN count(n) AS c",
+	"UNWIND $keys AS key MATCH (n:Identity) WHERE key IN n.alias_keys RETURN key, n.id ORDER BY key, n.id",
+	"MATCH (n:Identity) WHERE NOT $x IN n.alias_keys AND n.name_key = 'name3' RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE $x IN n.alias_keys OR n.unindexed = 1 RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE n.alias_keys = ['alias3', 'shared3'] RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE n.alias_keys = 'alias3' RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) RETURN n.id ORDER BY n.alias_keys, n.id LIMIT 5",
+	"MATCH (n) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"MATCH (n:Doc) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id",
+	"OPTIONAL MATCH (n:Identity) WHERE 'nothing' IN n.alias_keys RETURN n.id",
+}
+
+func listMembershipParams() map[string]interface{} {
+	return map[string]interface{}{
+		"x":        "alias3",
+		"missing":  "nothing",
+		"keys":     []interface{}{"shared2", "alias4", "nothing", nil},
+		"empty":    []interface{}{},
+		"nullList": nil,
+		"ids":      []interface{}{"id11", "id12"},
+		"names":    []interface{}{"name7"},
+		"name":     "name8",
+	}
+}
+
+func newListMembershipExecutor(t *testing.T, namespace string, indexed bool) *StorageExecutor {
+	t.Helper()
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace))
+	ctx := context.Background()
+	if indexed {
+		for _, ddl := range listMembershipIndexes {
+			_, err := exec.Execute(ctx, ddl, nil)
+			require.NoError(t, err, ddl)
+		}
+	}
+	_, err := exec.Execute(ctx, listMembershipSetup, nil)
+	require.NoError(t, err)
+	return exec
+}
+
+// An index on a list property answers membership tests from the index and
+// returns exactly what the label scan returns, in auto-commit and explicit
+// transactions, before and after the transaction's own writes.
+func TestListMembershipSeekMatchesScan(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			ctx := context.Background()
+			indexed := newListMembershipExecutor(t, "member_indexed", true)
+			scanned := newListMembershipExecutor(t, "member_scanned", false)
+			params := listMembershipParams()
+			compare := func(stage string) {
+				t.Helper()
+				for _, query := range listMembershipQueries {
+					want, err := scanned.Execute(ctx, query, params)
+					require.NoError(t, err, "%s scan: %s", stage, query)
+					got, err := indexed.Execute(ctx, query, params)
+					require.NoError(t, err, "%s seek: %s", stage, query)
+					require.Equal(t, want.Rows, got.Rows, "%s: %s", stage, query)
+				}
+			}
+			if explicit {
+				for _, exec := range []*StorageExecutor{indexed, scanned} {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					exec := exec
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+				}
+			}
+			compare("before writes")
+			for _, write := range []string{
+				"CREATE (:GraphNode:Identity {id: 'new', alias_keys: ['alias3', 'fresh'], current: true})",
+				"MATCH (n:Identity {id: 'id4'}) SET n.alias_keys = ['moved']",
+				"MATCH (n:Identity {id: 'id3'}) SET n.alias_keys = n.alias_keys + ['extra']",
+				"MATCH (n:Identity {id: 'id11'}) DETACH DELETE n",
+				"MATCH (n:Identity {id: 'id2'}) REMOVE n:Identity",
+				"MATCH (n:Doc {id: 'doc'}) SET n:Identity",
+			} {
+				for _, exec := range []*StorageExecutor{indexed, scanned} {
+					_, err := exec.Execute(ctx, write, nil)
+					require.NoError(t, err, write)
+				}
+			}
+			compare("after writes")
+		})
+	}
+}
+
+// The membership tests are answered by the index: a node hidden from the
+// alias index is not found by them, while a statement the index can't answer
+// still finds it.
+func TestListMembershipSeekUsesIndex(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			ctx := context.Background()
+			exec := newListMembershipExecutor(t, "member_proof", true)
+			_, err := exec.Execute(ctx, "MATCH (n:Identity {id: 'scalar'}) DETACH DELETE n", nil)
+			require.NoError(t, err)
+			schema := exec.storage.GetSchema()
+			hidden := schema.PropertyIndexLookup("Identity", "id", "id3")
+			require.Len(t, hidden, 1)
+			// id3's aliases are ['alias3', 'shared3']: hide them from the alias index.
+			require.NoError(t, schema.PropertyIndexDelete("Identity", "alias_keys", hidden[0], []interface{}{"alias3", "shared3"}))
+			exec.ClearQueryCaches()
+			if explicit {
+				_, err := exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+			}
+			params := map[string]interface{}{"x": "alias3", "keys": []interface{}{"alias3", "alias5"}, "ids": []interface{}{"id9"}}
+			rows := func(query string) [][]interface{} {
+				t.Helper()
+				result, err := exec.Execute(ctx, query, params)
+				require.NoError(t, err, query)
+				return result.Rows
+			}
+			for _, test := range []struct {
+				query string
+				want  [][]interface{}
+			}{
+				{"MATCH (n:Identity) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id", nil},
+				{"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
+				{"MATCH (n:Identity) WHERE n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}, {"id9"}}},
+				{"MATCH (n:Identity) WHERE (n.id IN $ids OR $x IN n.alias_keys) AND n.current RETURN n.id ORDER BY n.id", [][]interface{}{{"id9"}}},
+				// Not answered by the alias index: the hidden node is found.
+				{"MATCH (n:Identity) WHERE $x IN n.alias_keys OR n.unindexed = 1 RETURN n.id ORDER BY n.id", [][]interface{}{{"id3"}}},
+				{"MATCH (n:Identity) WHERE NOT 'zzz' IN n.alias_keys AND n.id = 'id3' RETURN n.id", [][]interface{}{{"id3"}}},
+			} {
+				got := rows(test.query)
+				if len(test.want) == 0 {
+					require.Empty(t, got, test.query)
+					continue
+				}
+				require.Equal(t, test.want, got, test.query)
+			}
+		})
+	}
+}
+
+// Two OR-ed equalities are answered from the indexes only when both
+// properties are indexed: with one side unindexed the union of seeks could
+// miss the other side's matches.
+func TestDisjunctionSeekNeedsEveryTermIndexed(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			ctx := context.Background()
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "disjunction"))
+			_, err := exec.Execute(ctx, "CREATE INDEX p_a FOR (n:P) ON (n.a)", nil)
+			require.NoError(t, err)
+			_, err = exec.Execute(ctx, "CREATE (:P {a: 1, b: 0, id: 'x'}), (:P {a: 0, b: 2, id: 'y'}), (:P {a: 0, b: 0, id: 'z'})", nil)
+			require.NoError(t, err)
+			if explicit {
+				_, err = exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+			}
+			for _, query := range []string{
+				"MATCH (n:P) WHERE n.a = 1 OR n.b = 2 RETURN n.id ORDER BY n.id",
+				"MATCH (n:P) WHERE n.b = 2 OR n.a = 1 RETURN n.id ORDER BY n.id",
+				"MATCH (n:P) WHERE n.a IN [1] OR n.b IN [2] RETURN n.id ORDER BY n.id",
+			} {
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err, query)
+				require.Equal(t, [][]interface{}{{"x"}, {"y"}}, result.Rows, query)
+			}
+		})
+	}
+}

@@ -25,6 +25,18 @@ func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, l
 	return ids
 }
 
+// propertyIndexMemberLookup is propertyIndexLookup for value IN n.property:
+// the nodes of label whose property is a list holding value, or equals it,
+// as engine sees them (storage.SchemaManager.PropertyIndexMemberLookup). A
+// node can be listed twice.
+func propertyIndexMemberLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
+	ids := schema.PropertyIndexMemberLookup(label, property, value)
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingPropertyMemberMatches(ids, label, property, value)
+	}
+	return ids
+}
+
 // compositeIndexLookup is the composite-index counterpart of
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull

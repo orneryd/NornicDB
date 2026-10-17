@@ -2,6 +2,7 @@ package storage
 
 import (
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,98 @@ func indexValueKey(value interface{}) (interface{}, bool) {
 		return key, true
 	}
 	return nil, false
+}
+
+// listElementKey is the key an arity-1 property index files a node under for
+// each element of its list value, so a membership test (x IN n.prop) seeks
+// the nodes whose list holds x (PropertyIndexMemberLookup). Its own type
+// keeps it apart from the whole-value keys, which equality seeks, ordered
+// scans and index statistics read.
+type listElementKey struct {
+	element interface{}
+}
+
+// forEachIndexEntryKey visits every key a property index files value under:
+// its indexValueKey, when it has one, and for a list a listElementKey for
+// each distinct element that has one. A list is filed by element even when
+// the whole list has no key (it holds a byte array): a membership seek must
+// still find it by its other elements. Every arity-1 index and pending view
+// files and removes a value through this one reader, so the element entries
+// never drift from the whole-value entry. A scalar costs no allocation.
+func forEachIndexEntryKey(value interface{}, visit func(key interface{})) {
+	if whole, ok := indexValueKey(value); ok {
+		visit(whole)
+	}
+	elements, isList := listElementKeys(value)
+	if !isList {
+		return
+	}
+	for _, key := range elements {
+		visit(key)
+	}
+}
+
+// listElementKeys returns the distinct listElementKeys of a list value's
+// elements; isList is false for a value that is not a list (byte arrays are
+// not lists).
+func listElementKeys(value interface{}) (keys []interface{}, isList bool) {
+	if value == nil {
+		return nil, false
+	}
+	list := reflect.ValueOf(value)
+	if (list.Kind() != reflect.Slice && list.Kind() != reflect.Array) || list.Type().Elem().Kind() == reflect.Uint8 {
+		return nil, false
+	}
+	for i := 0; i < list.Len(); i++ {
+		elementKey, ok := indexValueKey(list.Index(i).Interface())
+		if !ok {
+			continue
+		}
+		key := listElementKey{element: elementKey}
+		if !slices.Contains(keys, interface{}(key)) {
+			keys = append(keys, key)
+		}
+	}
+	return keys, true
+}
+
+// hasIndexEntryKey reports whether a property index files value under key
+// (forEachIndexEntryKey).
+func hasIndexEntryKey(value, key interface{}) bool {
+	if _, isElement := key.(listElementKey); isElement {
+		elements, _ := listElementKeys(value)
+		return slices.Contains(elements, key)
+	}
+	whole, ok := indexValueKey(value)
+	return ok && whole == key
+}
+
+// sameIndexEntryKeys reports whether two values are filed under the same keys.
+func sameIndexEntryKeys(a, b interface{}) bool {
+	aKey, aOK := indexValueKey(a)
+	bKey, bOK := indexValueKey(b)
+	if aOK != bOK || aKey != bKey {
+		return false
+	}
+	if aOK {
+		// Equal whole keys are equal canonical values: the same elements.
+		return true
+	}
+	aElements, _ := listElementKeys(a)
+	bElements, _ := listElementKeys(b)
+	return slices.Equal(aElements, bElements)
+}
+
+// indexMemberKeys returns the keys under which a property index lists the
+// nodes for which value IN n.prop can hold: a list property holding an
+// element equal to value, and a property equal to value itself. ok is false
+// when value has no key, which no index entry can equal.
+func indexMemberKeys(value interface{}) (keys []interface{}, ok bool) {
+	whole, ok := indexValueKey(value)
+	if !ok {
+		return nil, false
+	}
+	return []interface{}{whole, listElementKey{element: whole}}, true
 }
 
 // compositeIndexKey is the index key of a list or map value: a canonical text

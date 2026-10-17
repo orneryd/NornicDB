@@ -26,7 +26,8 @@ func (tx *BadgerTransaction) pendingNodeChangedLocked(prev, node *Node) {
 }
 
 // pendingValueMatchesLocked returns the transaction's pending nodes with
-// label whose property has valueKey (an indexValueKey). The first lookup
+// label whose property is filed under valueKey (forEachIndexEntryKey:
+// its indexValueKey, or a list element's listElementKey). The first lookup
 // made with more than pendingIndexMinNodes pending nodes builds the index
 // from them; the first lookup of a (label, property) pair indexes that pair
 // by value. The result may be the index's own slice: callers copy it.
@@ -41,7 +42,7 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(label, property string, v
 			if !hasLabel(node.Labels, label) {
 				continue
 			}
-			if key, ok := indexValueKey(node.Properties[property]); ok && key == valueKey {
+			if hasIndexEntryKey(node.Properties[property], valueKey) {
 				matches = append(matches, id)
 			}
 		}
@@ -64,6 +65,26 @@ func (tx *BadgerTransaction) pendingValueMatchesLocked(label, property string, v
 // value are added. ids is filtered in place. A transaction without node
 // writes returns ids unchanged.
 func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, property string, value interface{}) []NodeID {
+	valueKey, ok := indexValueKey(value)
+	if !ok {
+		return tx.mergePendingPropertyKeyMatches(ids, label, property)
+	}
+	return tx.mergePendingPropertyKeyMatches(ids, label, property, valueKey)
+}
+
+// MergePendingPropertyMemberMatches is MergePendingPropertyMatches for a
+// membership lookup (SchemaManager.PropertyIndexMemberLookup): the
+// transaction's pending nodes added are those for which value IN n.property
+// can be true (indexMemberKeys). A node can be listed twice.
+func (tx *BadgerTransaction) MergePendingPropertyMemberMatches(ids []NodeID, label, property string, value interface{}) []NodeID {
+	keys, _ := indexMemberKeys(value)
+	return tx.mergePendingPropertyKeyMatches(ids, label, property, keys...)
+}
+
+// mergePendingPropertyKeyMatches drops the committed ids the transaction has
+// rewritten or deleted and adds its pending nodes with label filed under any
+// of keys.
+func (tx *BadgerTransaction) mergePendingPropertyKeyMatches(ids []NodeID, label, property string, keys ...interface{}) []NodeID {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
@@ -79,11 +100,13 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, pr
 		}
 		kept = append(kept, id)
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok || len(tx.pendingNodes) == 0 {
+	if len(tx.pendingNodes) == 0 {
 		return kept
 	}
-	return append(kept, tx.pendingValueMatchesLocked(label, property, valueKey)...)
+	for _, key := range keys {
+		kept = append(kept, tx.pendingValueMatchesLocked(label, property, key)...)
+	}
+	return kept
 }
 
 // MergePendingCompositeMatches is MergePendingPropertyMatches for a composite

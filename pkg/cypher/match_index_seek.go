@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // indexSeekConstant evaluates the value side of a predicate an index seek
@@ -662,181 +661,261 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	return nil, false, nil
 }
 
-// tryCollectNodesFromPropertyIndexInOrParam attempts to satisfy OR-combined IN
-// predicates backed by indexes, e.g.:
-//
-//	n.textKey IN $keys OR n.textKey128 IN $keys
-//
-// This is important for cleanup/read paths that pass large key lists and would
-// otherwise full-scan labels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" || params == nil {
-		return nil, false, nil
-	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
-	if orIdx <= 0 {
-		return nil, false, nil
-	}
-	left := strings.TrimSpace(clause[:orIdx])
-	right := strings.TrimSpace(clause[orIdx+4:])
-	if left == "" || right == "" {
-		return nil, false, nil
-	}
-
-	lprop, lvals, lok := e.parseSimpleIndexedInParam(nodePattern.variable, left, params)
-	rprop, rvals, rok := e.parseSimpleIndexedInParam(nodePattern.variable, right, params)
-	if !lok || !rok {
-		return nil, false, nil
-	}
-
-	// Merge values (keep deterministic and duplicate-free).
-	merged := make([]interface{}, 0, util.SafePreallocSum(len(lvals), len(rvals)))
-	seenVals := make(map[string]struct{}, util.SafePreallocSum(len(lvals), len(rvals)))
-	for _, v := range append(lvals, rvals...) {
-		if v == nil {
-			continue
-		}
-		k := fmt.Sprintf("%T:%v", v, v)
-		if _, ok := seenVals[k]; ok {
-			continue
-		}
-		seenVals[k] = struct{}{}
-		merged = append(merged, v)
-	}
-
-	schema := e.storage.GetSchema()
-	if schema == nil {
-		return nil, false, nil
-	}
-
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
-	if len(leftLabels) == 0 || len(rightLabels) == 0 {
-		return nil, false, nil
-	}
-
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range leftLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, v) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	for _, label := range rightLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, v) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		ids = append(ids, string(id))
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	return nodes, true, nil
+// indexSeekTerm is a WHERE term on a node variable that an arity-1 property
+// index answers: the property, the values it selects, and whether it tests
+// membership (value IN n.property) or equality (n.property = value).
+type indexSeekTerm struct {
+	property string
+	values   []interface{}
+	member   bool
 }
 
-// tryCollectNodesFromPropertyIndexOrEquality attempts to satisfy OR-combined
-// equality predicates backed by indexes, e.g.:
+// parseIndexSeekTerm is the one reader of the WHERE terms a property index
+// answers for variable:
 //
-//	a.prop1 = $x OR a.prop2 = $x
-//	a.prop1 = 'val1' OR a.prop2 = 'val2'
+//	n.p = v, v = n.p                   equality
+//	n.p IN $list, n.p IN [v, …]        equality with each element
+//	v IN n.p                           membership
+//	any(x IN <list> WHERE x IN n.p)    membership of each element
 //
-// It splits the OR into two branches, attempts index lookup on each, and merges
-// results with deduplication. This removes a major source of slow scans for
-// dual-key lookup workloads.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	params map[string]interface{},
-) ([]*storage.Node, bool, error) {
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" {
-		return nil, false, nil
+// v and the lists are constants of the incoming scope (indexSeekConstant).
+// A membership seek lists the nodes whose property is a list holding the
+// value, or equals it (propertyIndexMemberLookup); it is used only for
+// strings, booleans and numbers, whose index keys are equal exactly when
+// the values are, so it never misses a match.
+func (e *StorageExecutor) parseIndexSeekTerm(ctx context.Context, variable, term string, params map[string]interface{}) (indexSeekTerm, bool) {
+	term = unwrapOuterParens(strings.TrimSpace(term))
+	if term == "" {
+		return indexSeekTerm{}, false
 	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
-	if orIdx <= 0 {
-		return nil, false, nil
+	if property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, term); ok {
+		return indexSeekTerm{property: property, values: []interface{}{value}}, true
 	}
-	left := strings.TrimSpace(clause[:orIdx])
-	right := strings.TrimSpace(clause[orIdx+4:])
-	if left == "" || right == "" {
-		return nil, false, nil
+	if property, values, ok := e.parseSimpleIndexedInParam(variable, term, params); ok {
+		return indexSeekTerm{property: property, values: values}, true
 	}
+	if property, values, ok := e.parseSimpleIndexedInLiteral(ctx, variable, term); ok {
+		return indexSeekTerm{property: property, values: values}, true
+	}
+	if property, values, ok := e.parseIndexedMembership(ctx, variable, term); ok {
+		return indexSeekTerm{property: property, values: values, member: true}, true
+	}
+	return indexSeekTerm{}, false
+}
 
-	// Try to parse each branch as a simple indexed equality predicate.
-	lprop, lval, lok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, left)
-	rprop, rval, rok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, right)
-	if !lok || !rok {
-		return nil, false, nil
+// parseIndexedMembership reads v IN n.p and any(x IN <list> WHERE x IN n.p):
+// the property and the values whose membership selects a node. A null value
+// or list selects nothing (the test is never true). ok is false for any
+// other term, for a list that is not a list (the evaluator reports it), and
+// for a value that is not a string, boolean or number.
+func (e *StorageExecutor) parseIndexedMembership(ctx context.Context, variable, term string) (string, []interface{}, bool) {
+	var property string
+	var values []interface{}
+	if name, inner, ok := parseFunctionCallWS(term); ok && strings.EqualFold(name, "any") && strings.HasSuffix(term, ")") {
+		whereIdx := keywordIndexFrom(inner, "WHERE", 0, defaultKeywordScanOpts())
+		if whereIdx <= 0 {
+			return "", nil, false
+		}
+		local, listExpr, ok := splitTopLevelIn(inner[:whereIdx])
+		if !ok || !isValidIdentifier(local) || strings.EqualFold(local, variable) {
+			return "", nil, false
+		}
+		element, propertyExpr, ok := splitTopLevelIn(inner[whereIdx+len("WHERE"):])
+		if !ok || element != local {
+			return "", nil, false
+		}
+		if property, ok = membershipProperty(propertyExpr, variable); !ok {
+			return "", nil, false
+		}
+		list, constant := e.indexSeekConstant(ctx, listExpr)
+		if !constant {
+			return "", nil, false
+		}
+		if list != nil {
+			items, isList := cypherListValue(list)
+			if !isList {
+				return "", nil, false
+			}
+			values = items
+		}
+	} else {
+		if hasTopLevelLogicalOperator(term) || topLevelKeywordIndex(term, "NOT") >= 0 {
+			return "", nil, false
+		}
+		left, propertyExpr, ok := splitTopLevelIn(term)
+		if !ok {
+			return "", nil, false
+		}
+		if property, ok = membershipProperty(propertyExpr, variable); !ok {
+			return "", nil, false
+		}
+		value, constant := e.indexSeekConstant(ctx, left)
+		if !constant {
+			return "", nil, false
+		}
+		values = []interface{}{value}
 	}
+	out := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		if !propertyIndexMissIsAuthoritative(value) {
+			return "", nil, false
+		}
+		out = append(out, value)
+	}
+	return property, out, true
+}
 
+// splitTopLevelIn splits "<left> IN <right>" at its one top-level IN.
+func splitTopLevelIn(expr string) (left, right string, ok bool) {
+	expr = strings.TrimSpace(expr)
+	inIdx := keywordIndexFrom(expr, "IN", 0, defaultKeywordScanOpts())
+	if inIdx <= 0 || inIdx+2 >= len(expr) {
+		return "", "", false
+	}
+	left = strings.TrimSpace(expr[:inIdx])
+	right = strings.TrimSpace(expr[inIdx+2:])
+	if left == "" || right == "" || keywordIndexFrom(right, "IN", 0, defaultKeywordScanOpts()) >= 0 {
+		return "", "", false
+	}
+	return left, right, true
+}
+
+// membershipProperty reads n.p, the list side of a membership seek: a plain
+// property of variable.
+func membershipProperty(expr, variable string) (string, bool) {
+	property, ok := parseVariableProperty(strings.TrimSpace(expr), variable)
+	if !ok || !isValidIdentifier(property) {
+		return "", false
+	}
+	return property, true
+}
+
+// collectIndexSeekTermNodes returns the nodes the property indexes list for
+// any of terms: the union of one lookup per value of each term, sorted by ID,
+// each carrying the pattern's labels and one of anyOf (when set). ok is false
+// when a term's property has no index usable for the pattern
+// (seekCandidateLabels): the union could then miss a match. The candidates
+// are a superset of the matches; the caller applies the WHERE to them.
+func (e *StorageExecutor) collectIndexSeekTermNodes(nodePattern nodePatternInfo, terms []indexSeekTerm, anyOf []string) ([]*storage.Node, bool) {
 	schema := e.storage.GetSchema()
-	if schema == nil {
-		return nil, false, nil
+	if schema == nil || len(terms) == 0 {
+		return nil, false
 	}
-
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
-	if len(leftLabels) == 0 && len(rightLabels) == 0 {
-		return nil, false, nil
+	termLabels := make([][]string, len(terms))
+	for i, term := range terms {
+		labels, _ := e.seekCandidateLabels(schema, nodePattern.labels, term.property, anyOf)
+		if len(labels) == 0 {
+			return nil, false
+		}
+		termLabels[i] = labels
 	}
-
-	idSet := make(map[storage.NodeID]struct{}, 64)
-	for _, label := range leftLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, lval) {
-			idSet[id] = struct{}{}
+	idSet := make(map[storage.NodeID]struct{})
+	for i, term := range terms {
+		for _, label := range termLabels[i] {
+			for _, value := range term.values {
+				var ids []storage.NodeID
+				if term.member {
+					ids = propertyIndexMemberLookup(e.storage, schema, label, term.property, value)
+				} else {
+					ids = propertyIndexLookup(e.storage, schema, label, term.property, value)
+				}
+				for _, id := range ids {
+					idSet[id] = struct{}{}
+				}
+			}
 		}
 	}
-	for _, label := range rightLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, rval) {
-			idSet[id] = struct{}{}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
+	nodes := make([]*storage.Node, 0, len(ids))
 	for _, id := range ids {
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+			continue
+		}
+		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties) {
 			continue
 		}
 		nodes = append(nodes, node)
 	}
-	return nodes, true, nil
+	return nodes, true
+}
+
+// indexSeekDisjunction reads clause as one index seek term or a disjunction
+// of them (t1 OR t2 OR …), every one of them read by parseIndexSeekTerm.
+func (e *StorageExecutor) indexSeekDisjunction(ctx context.Context, variable, clause string, params map[string]interface{}) ([]indexSeekTerm, bool) {
+	disjuncts := splitTopLevelOrTerms(unwrapOuterParens(strings.TrimSpace(clause)))
+	if len(disjuncts) == 0 {
+		return nil, false
+	}
+	terms := make([]indexSeekTerm, 0, len(disjuncts))
+	for _, disjunct := range disjuncts {
+		term, ok := e.parseIndexSeekTerm(ctx, variable, disjunct, params)
+		if !ok {
+			return nil, false
+		}
+		terms = append(terms, term)
+	}
+	return terms, true
+}
+
+// tryCollectNodesFromPropertyIndexDisjunction seeds a MATCH from the property
+// indexes when its WHERE is a disjunction of index seek terms
+// (parseIndexSeekTerm), e.g.
+//
+//	n.id IN $ids OR n.name_key = $name OR any(k IN $keys WHERE k IN n.alias_keys)
+//
+// with the union of one seek per value of every term. Every disjunct must be
+// answered by an index: a term the indexes can't answer could select a node
+// none of the seeks lists.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexDisjunction(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+	clause := strings.TrimSpace(whereClause)
+	if clause == "" || findTopLevelKeyword(clause, " OR ") <= 0 {
+		return nil, false, nil
+	}
+	terms, ok := e.indexSeekDisjunction(ctx, nodePattern.variable, clause, params)
+	if !ok {
+		return nil, false, nil
+	}
+	nodes, used := e.collectIndexSeekTermNodes(nodePattern, terms, nil)
+	return nodes, used, nil
+}
+
+// tryCollectNodesFromPropertyIndexConjunctTerms seeds a MATCH whose WHERE, or
+// one of its top-level AND conjuncts, is a membership seek term or a
+// disjunction of index seek terms (indexSeekDisjunction): the shapes the
+// equality and IN-list seeks before it don't read, e.g.
+//
+//	(n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys)) AND n.current
+//
+// Seeding from one conjunct can only over-fetch; the caller applies the
+// whole WHERE.
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexConjunctTerms(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" || (!containsFold(clause, " IN ") && !containsFold(clause, " OR ")) {
+		return nil, false, nil
+	}
+	conjuncts := splitTopLevelAndConjuncts(clause)
+	anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
+	for _, conjunct := range conjuncts {
+		terms, ok := e.indexSeekDisjunction(ctx, nodePattern.variable, conjunct, params)
+		if !ok || (len(terms) == 1 && !terms[0].member) {
+			continue
+		}
+		if nodes, used := e.collectIndexSeekTermNodes(nodePattern, terms, anyOf); used {
+			return nodes, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // tryCollectNodesFromIDIn attempts to satisfy simple id/elementId IN-list predicates:
@@ -2121,16 +2200,16 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		inList  bool
 	}{
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
-		}},
-		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexDisjunction(ctx, nodePattern, whereClause, params)
 		}},
 		{inList: true, collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
+		}},
+		{collect: func() ([]*storage.Node, bool, error) {
+			return e.tryCollectNodesFromPropertyIndexConjunctTerms(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.

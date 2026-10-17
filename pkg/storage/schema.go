@@ -1084,21 +1084,9 @@ func (idx *CompositeIndex) filesSameEntries(a, b map[string]interface{}) bool {
 // holds idx.mu for writing.
 func (idx *CompositeIndex) indexNodeLocked(nodeID NodeID, properties map[string]interface{}) {
 	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return
+		if value, exists := properties[idx.Properties[0]]; exists {
+			idx.fileValueLocked(nodeID, value)
 		}
-		valueKey, ok := indexValueKey(value)
-		if !ok {
-			return // null / byte array / non-comparable: no key to file
-		}
-		if idx.values == nil {
-			idx.values = make(map[interface{}][]NodeID)
-		}
-		if _, exists := idx.values[valueKey]; !exists {
-			idx.keysDirty = true
-		}
-		idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
 		return
 	}
 
@@ -1129,20 +1117,8 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 // caller holds idx.mu for writing.
 func (idx *CompositeIndex) removeNodeLocked(nodeID NodeID, properties map[string]interface{}) {
 	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return
-		}
-		valueKey, ok := indexValueKey(value)
-		if !ok {
-			return
-		}
-		ids := removeNodeID(idx.values[valueKey], nodeID)
-		if len(ids) > 0 {
-			idx.values[valueKey] = ids
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
+		if value, exists := properties[idx.Properties[0]]; exists {
+			idx.unfileValueLocked(nodeID, value)
 		}
 		return
 	}
@@ -1285,6 +1261,49 @@ func (idx *CompositeIndex) Stats() map[string]interface{} {
 		"prefixEntries":    len(idx.prefixIndex),
 		"valueEntries":     len(idx.values),
 	}
+}
+
+// fileValueLocked files nodeID under every entry key of value
+// (forEachIndexEntryKey): its whole value and, for a list, each element. It
+// is the one insert of an arity-1 index; null, byte arrays and other values
+// without a key are not filed. The caller holds idx.mu for writing.
+func (idx *CompositeIndex) fileValueLocked(nodeID NodeID, value interface{}) {
+	forEachIndexEntryKey(value, func(key interface{}) {
+		if idx.values == nil {
+			idx.values = make(map[interface{}][]NodeID)
+		}
+		if _, exists := idx.values[key]; !exists {
+			if _, element := key.(listElementKey); !element {
+				idx.keysDirty = true
+			}
+		}
+		idx.values[key] = appendUnique(idx.values[key], nodeID)
+	})
+}
+
+// unfileValueLocked removes the entries fileValueLocked made for nodeID and
+// value. The caller holds idx.mu for writing.
+func (idx *CompositeIndex) unfileValueLocked(nodeID NodeID, value interface{}) {
+	forEachIndexEntryKey(value, func(key interface{}) {
+		ids, exists := idx.values[key]
+		if !exists {
+			return
+		}
+		kept := make([]NodeID, 0, len(ids))
+		for _, id := range ids {
+			if id != nodeID {
+				kept = append(kept, id)
+			}
+		}
+		if len(kept) > 0 {
+			idx.values[key] = kept
+			return
+		}
+		delete(idx.values, key)
+		if _, element := key.(listElementKey); !element {
+			idx.keysDirty = true
+		}
+	})
 }
 
 // appendUnique appends a nodeID to a slice if not already present.
@@ -2012,22 +2031,7 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-
-	if idx.values == nil {
-		idx.values = make(map[interface{}][]NodeID)
-	}
-
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		// Ignore non-comparable values (maps/slices). These cannot be stored in
-		// Go map keys and must not crash index maintenance paths.
-		return nil
-	}
-
-	if _, exists := idx.values[valueKey]; !exists {
-		idx.keysDirty = true
-	}
-	idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
+	idx.fileValueLocked(nodeID, value)
 	return nil
 }
 
@@ -2069,26 +2073,7 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return nil
-	}
-
-	if ids, ok := idx.values[valueKey]; ok {
-		newIDs := make([]NodeID, 0, len(ids)-1)
-		for _, id := range ids {
-			if id != nodeID {
-				newIDs = append(newIDs, id)
-			}
-		}
-		if len(newIDs) > 0 {
-			idx.values[valueKey] = newIDs
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
-	}
+	idx.unfileValueLocked(nodeID, value)
 	return nil
 }
 
@@ -2208,6 +2193,32 @@ func (sm *SchemaManager) PropertyIndexLookup(label, property string, value inter
 	return idx.lookupLocked(view, nil, property, valueKey)
 }
 
+// PropertyIndexMemberLookup lists the nodes of label for which
+// value IN n.property can be true: those whose property is a list holding an
+// element equal to value, and those whose property equals value
+// (indexMemberKeys), merged with an attached AsyncEngine's pending writes. A
+// node can be listed twice. Returns nil when there is no seekable index for
+// the label and property, or value has no key.
+func (sm *SchemaManager) PropertyIndexMemberLookup(label, property string, value interface{}) []NodeID {
+	sm.mu.RLock()
+	idx, exists := sm.seekablePropertyIndexLocked(label, property)
+	sm.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+	keys, ok := indexMemberKeys(value)
+	if !ok {
+		return nil
+	}
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	var ids []NodeID
+	for _, key := range keys {
+		ids = idx.lookupLocked(view, ids, property, key)
+	}
+	return ids
+}
+
 // PropertyIndexTopK returns up to limit node IDs from a property index ordered by
 // indexed property value, merged with the pending writes. Nil keys are skipped.
 func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, descending bool) []NodeID {
@@ -2273,9 +2284,12 @@ func (idx *PropertyIndex) sortedKeysViewLocked() ([]interface{}, propertyIndexKe
 			if k == nil || len(ids) == 0 {
 				continue
 			}
-			// Lists and maps are filed for equality only; ordered scans
-			// read scalar keys (#844).
+			// Lists and maps are filed for equality only, list elements
+			// for membership only; ordered scans read scalar keys (#844).
 			if _, composite := k.(compositeIndexKey); composite {
+				continue
+			}
+			if _, element := k.(listElementKey); element {
 				continue
 			}
 			keys = append(keys, k)
@@ -2382,10 +2396,13 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 		totalEntries := int64(0)
 		uniqueValues := int64(0)
 		if len(idx.Properties) == 1 {
-			for _, ids := range idx.values {
+			for key, ids := range idx.values {
+				if _, element := key.(listElementKey); element {
+					continue // a list's element entries, not its value
+				}
 				totalEntries += int64(len(ids))
+				uniqueValues++
 			}
-			uniqueValues = int64(len(idx.values))
 		} else {
 			for _, ids := range idx.fullIndex {
 				totalEntries += int64(len(ids))

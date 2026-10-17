@@ -81,13 +81,19 @@ func (p *pendingNodeIndex) add(node *Node) {
 
 // addValue indexes node's value of property under label.
 func (p *pendingNodeIndex) addValue(node *Node, label, property string) {
-	valueKey, ok := indexValueKey(node.Properties[property])
+	value := node.Properties[property]
+	// byValue lists the node under every key the property indexes file the
+	// value under (a list's elements too, for membership seeks); byProperty
+	// under its whole value, for ordered scans.
+	forEachIndexEntryKey(value, func(entryKey interface{}) {
+		key := pendingValueKey{label: label, property: property, value: entryKey}
+		if valueIDs := p.byValue[key]; !slices.Contains(valueIDs, node.ID) {
+			p.byValue[key] = append(valueIDs, node.ID)
+		}
+	})
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return
-	}
-	key := pendingValueKey{label: label, property: property, value: valueKey}
-	if valueIDs := p.byValue[key]; !slices.Contains(valueIDs, node.ID) {
-		p.byValue[key] = append(valueIDs, node.ID)
 	}
 	pair := pendingPropertyKey{label: label, property: property}
 	propertyIDs := p.byProperty[pair]
@@ -112,25 +118,23 @@ func (p *pendingNodeIndex) remove(node *Node) {
 			}
 		}
 		for property := range p.tracked[label] {
-			valueKey, ok := indexValueKey(node.Properties[property])
-			if !ok {
-				continue
-			}
-			key := pendingValueKey{label: label, property: property, value: valueKey}
-			valueIDs := p.byValue[key]
-			for index, id := range valueIDs {
-				if id != node.ID {
-					continue
+			forEachIndexEntryKey(node.Properties[property], func(entryKey interface{}) {
+				key := pendingValueKey{label: label, property: property, value: entryKey}
+				valueIDs := p.byValue[key]
+				for index, id := range valueIDs {
+					if id != node.ID {
+						continue
+					}
+					last := len(valueIDs) - 1
+					valueIDs[index] = valueIDs[last]
+					if last == 0 {
+						delete(p.byValue, key)
+					} else {
+						p.byValue[key] = valueIDs[:last]
+					}
+					break
 				}
-				last := len(valueIDs) - 1
-				valueIDs[index] = valueIDs[last]
-				if last == 0 {
-					delete(p.byValue, key)
-				} else {
-					p.byValue[key] = valueIDs[:last]
-				}
-				break
-			}
+			})
 			pair := pendingPropertyKey{label: label, property: property}
 			if propertyIDs := p.byProperty[pair]; propertyIDs != nil {
 				delete(propertyIDs, node.ID)
@@ -177,9 +181,7 @@ func (p *pendingNodeIndex) sameEntries(prev, node *Node) bool {
 	}
 	for _, label := range node.Labels {
 		for property := range p.tracked[label] {
-			before, beforeOK := indexValueKey(prev.Properties[property])
-			after, afterOK := indexValueKey(node.Properties[property])
-			if beforeOK != afterOK || before != after {
+			if !sameIndexEntryKeys(prev.Properties[property], node.Properties[property]) {
 				return false
 			}
 		}
