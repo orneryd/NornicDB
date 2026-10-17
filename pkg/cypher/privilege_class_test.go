@@ -77,3 +77,16 @@ func TestFunctionRegistrationRequiresPrivilegeContract(t *testing.T) {
 		require.False(t, found)
 	}
 }
+
+// Only a registry function that reads as the executing principal (GDS's
+// per-user projections) binds the statement context in every row; a
+// built-in that reads the statement's own storage (startNode, labels) costs
+// no copy of the row.
+func TestRowStatementContextOnlyForPrincipalReaders(t *testing.T) {
+	for _, expression := range []string{"startNode(r).id <> 'zz'", "endNode(r).id + '|' + r.kind", "size(labels(n)) > 0", "keys(n)"} {
+		require.False(t, needsRowStatementContext(expression), expression)
+	}
+	for _, expression := range []string{"gds.graph.exists('g')", "gds.util.asNode(1).id = 'a'"} {
+		require.True(t, needsRowStatementContext(expression), expression)
+	}
+}

@@ -41,12 +41,15 @@ func functionPrivilegeClass(name string) (PrivilegeClass, bool) {
 }
 
 // containsPrivilegedFunctionCall marks expression rows that must retain the
-// executing context. It uses the same contract as authorization: graph and
-// catalog readers cannot fall back to an anonymous row-evaluation context.
+// executing context: a registry function (pkg/cypher/fn) that reads the
+// graph or catalog as the executing principal (ctx.Request, such as GDS's
+// per-user projections) cannot fall back to an anonymous row-evaluation
+// context. Built-in functions read the statement's own admitted storage,
+// and plugin calls are containsContextPluginCall's, so neither copies rows.
 func containsPrivilegedFunctionCall(expression string) bool {
 	needsContext := false
 	_ = forEachFunctionCall(expression, func(name, _ string) error {
-		if class, found := functionPrivilegeClass(name); found && class != PrivilegeNone {
+		if class, found := cypherfn.Class(name); found && class != PrivilegeNone {
 			needsContext = true
 		}
 		return nil
