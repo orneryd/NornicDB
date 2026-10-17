@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -129,7 +130,18 @@ func (src *packageSource) stageRoots() map[string][]ast.Node {
 				continue
 			}
 			if fn.Name.Name == "publication" {
-				roots[fn.Name.Name] = append(roots[fn.Name.Name], fn.Body)
+				// What the stage runs is the closure the method returns; the
+				// rest of the method runs before the commit.
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					if ret, ok := n.(*ast.ReturnStmt); ok {
+						for _, result := range ret.Results {
+							if lit, ok := result.(*ast.FuncLit); ok {
+								roots[fn.Name.Name] = append(roots[fn.Name.Name], lit.Body)
+							}
+						}
+					}
+					return true
+				})
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch n := n.(type) {
@@ -222,7 +234,11 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 	seen := map[*types.Func]bool{}
 	var visit func(owner string, node ast.Node)
 	visit = func(owner string, node ast.Node) {
+		stored := storedClosures(node)
 		ast.Inspect(node, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.FuncLit); ok && stored[lit] {
+				return false // kept for later, not run here
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -260,6 +276,36 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 		visit("publication", root)
 	}
 	return reached, locks, dynamic, via
+}
+
+// storedClosures are the closures in node that are kept rather than run
+// where they appear: assigned, declared, returned or placed in a literal.
+// A closure passed to a call or called in place is walked.
+func storedClosures(node ast.Node) map[*ast.FuncLit]bool {
+	stored := map[*ast.FuncLit]bool{}
+	mark := func(exprs ...ast.Expr) {
+		for _, e := range exprs {
+			if lit, ok := e.(*ast.FuncLit); ok {
+				stored[lit] = true
+			}
+		}
+	}
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			mark(n.Rhs...)
+		case *ast.ValueSpec:
+			mark(n.Values...)
+		case *ast.ReturnStmt:
+			mark(n.Results...)
+		case *ast.KeyValueExpr:
+			mark(n.Value)
+		case *ast.CompositeLit:
+			mark(n.Elts...)
+		}
+		return true
+	})
+	return stored
 }
 
 func isBuiltin(info *types.Info, call *ast.CallExpr) bool {
@@ -410,11 +456,11 @@ func TestPublicationStageBoundary(t *testing.T) {
 	t.Logf("publishing paths: %s", strings.Join(paths, ", "))
 	for _, path := range paths {
 		_, known := publishingPaths[path]
-		require.True(t, known, "publishing path %s has no case in the publication matrix (publishingPaths)", path)
+		assert.True(t, known, "publishing path %s has no case in the publication matrix (publishingPaths)", path)
 	}
 	for path := range publishingPaths {
 		_, found := roots[path]
-		require.True(t, found, "publishingPaths lists %s, which no longer hands the stage a publication", path)
+		assert.True(t, found, "publishingPaths lists %s, which no longer hands the stage a publication", path)
 	}
 
 	reached, locks, dynamic, via := src.reach(all)
@@ -427,7 +473,7 @@ func TestPublicationStageBoundary(t *testing.T) {
 	sort.Strings(dynamic)
 	t.Logf("calls of function values inside publications (%d): %s", len(dynamic), strings.Join(dynamic, "; "))
 	for _, name := range commitFunctions {
-		require.False(t, reached[name], "a publication reaches %s: the stage could wait on itself (%s)", name, chain(via, name))
+		assert.False(t, reached[name], "a publication reaches %s: the stage could wait on itself (%s)", name, chain(via, name))
 	}
 
 	var lockNames []string
@@ -451,11 +497,11 @@ func TestPublicationStageBoundary(t *testing.T) {
 	}
 	for _, lock := range lockNames {
 		_, known := stageLocks[lock]
-		require.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
+		assert.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
 	}
 	for _, hit := range held {
 		_, known := heldAcrossCommit[hit]
-		require.True(t, known, "%s: classify it in heldAcrossCommit (its commit must carry no publication)", hit)
+		assert.True(t, known, "%s: classify it in heldAcrossCommit (its commit must carry no publication)", hit)
 	}
 
 	// Every operation type a commit carries is covered.
@@ -485,7 +531,7 @@ func TestPublicationStageBoundary(t *testing.T) {
 	require.NotEmpty(t, ops)
 	for _, op := range ops {
 		_, known := operationCoverage[op]
-		require.True(t, known, "operation type %s has no matrix coverage (operationCoverage)", op)
+		assert.True(t, known, "operation type %s has no matrix coverage (operationCoverage)", op)
 	}
 	require.NotEmpty(t, publicationMatrixNodeConsumers)
 	require.NotEmpty(t, publicationMatrixEdgeConsumers)
