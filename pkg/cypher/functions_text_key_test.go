@@ -123,15 +123,29 @@ func TestTextKeyFunction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"müller 1"}, {"other"}}, result.Rows)
 
+	// A value that isn't a string fails as it fails toLower, with the same
+	// code: a literal's type is a SyntaxError (Neo4j's "Type mismatch"), a
+	// value met while running a TypeError, and a parameter whatever toLower
+	// gives.
 	for _, value := range []interface{}{int64(1), 1.5, true, []interface{}{"a"}, map[string]interface{}{"a": "b"}} {
-		_, keyErr := exec.Execute(ctx, "RETURN nornicdb.text.key($v) AS v", map[string]interface{}{"v": value})
-		_, lowerErr := exec.Execute(ctx, "RETURN toLower($v) AS v", map[string]interface{}{"v": value})
-		require.Error(t, keyErr, "%v", value)
-		require.Error(t, lowerErr, "%v", value)
-		keyCode, _ := nornicerrors.Neo4jStatus(keyErr)
-		lowerCode, _ := nornicerrors.Neo4jStatus(lowerErr)
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", keyCode, "%v", value)
-		require.Equal(t, lowerCode, keyCode, "%v", value)
+		for _, form := range []struct{ query, code string }{
+			{"RETURN %s($v) AS v", ""},
+			{"RETURN %s(1) AS v", "Neo.ClientError.Statement.SyntaxError"},
+			{"UNWIND [$v, 'a'] AS s RETURN %s(s) AS v", "Neo.ClientError.Statement.TypeError"},
+			{"WITH {p: $v} AS m RETURN %s(m.p) AS v", "Neo.ClientError.Statement.TypeError"},
+		} {
+			parameters := map[string]interface{}{"v": value}
+			_, keyErr := exec.Execute(ctx, strings.ReplaceAll(form.query, "%s", "nornicdb.text.key"), parameters)
+			_, lowerErr := exec.Execute(ctx, strings.ReplaceAll(form.query, "%s", "toLower"), parameters)
+			require.Error(t, keyErr, "%s %v", form.query, value)
+			require.Error(t, lowerErr, "%s %v", form.query, value)
+			keyCode, _ := nornicerrors.Neo4jStatus(keyErr)
+			lowerCode, _ := nornicerrors.Neo4jStatus(lowerErr)
+			require.Equal(t, lowerCode, keyCode, "%s %v", form.query, value)
+			if form.code != "" {
+				require.Equal(t, form.code, keyCode, "%s %v", form.query, value)
+			}
+		}
 	}
 	for _, query := range []string{"RETURN nornicdb.text.key(1) AS v", "RETURN nornicdb.text.key() AS v", "RETURN nornicdb.text.key('a', 'b') AS v"} {
 		_, err := exec.Execute(ctx, query, nil)
@@ -225,7 +239,7 @@ func TestTextKeyDecimalDigits(t *testing.T) {
 
 // textKeyReference is textKey as the Cypher functions of its steps compute
 // it, slowly: normalize's NFKC, toLower, replace, normalize again, split(…,
-// '') into code points with each decimal digit mapped (referenceDigits) and
+// "") into code points with each decimal digit mapped (referenceDigits) and
 // joined, string.regexReplace of the whitespace runs, and trim.
 func textKeyReference(t *testing.T, digits map[rune]byte, text string) string {
 	lowered := cypherfn.LowerCaseText(norm.NFKC.String(text))
@@ -407,9 +421,9 @@ func checkTextKeyOracleSums(t *testing.T, dir string) {
 
 // checkTextKeyVectors checks that each vector's out is its in's key. A null
 // in is skipped: the key of null is null (TestTextKeyFunction), where the
-// oracle's Cypher gives ''. A mismatch only in digits, where the oracle's
-// digit table and Go's unicode.Nd read a code point differently, is counted
-// apart too.
+// oracle's Cypher gives the empty string. A mismatch only in digits, where
+// the oracle's digit table and Go's unicode.Nd read a code point
+// differently, is counted apart too.
 func checkTextKeyVectors(t *testing.T, vectors []textKeyVector) {
 	require.NotEmpty(t, vectors)
 	mismatches, digitMismatches, nulls := 0, 0, 0
