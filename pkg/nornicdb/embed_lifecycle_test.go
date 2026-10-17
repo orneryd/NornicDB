@@ -168,12 +168,13 @@ func TestInstalledRegistryDefaultClosedOnce(t *testing.T) {
 // closed, not handed out or left open.
 func TestRegistryCreateRacingCloseIsClosed(t *testing.T) {
 	db := openEmbeddingPauseDB(t, t.TempDir())
-	entered, release := make(chan struct{}), make(chan struct{})
-	t.Cleanup(sync.OnceFunc(func() { close(release) }))
+	entered, releaseFactory := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(releaseFactory) })
+	t.Cleanup(release)
 	var built atomic.Pointer[closeCountingEmbedder]
 	db.embedderFactory = func(cfg *embed.Config) (embed.Embedder, error) {
 		close(entered)
-		<-release
+		<-releaseFactory
 		e := newCloseCountingEmbedder(cfg.Dimensions)
 		built.Store(e)
 		return e, nil
@@ -184,7 +185,7 @@ func TestRegistryCreateRacingCloseIsClosed(t *testing.T) {
 	}()
 	<-entered
 	require.NoError(t, db.Close())
-	close(release)
+	release()
 	select {
 	case e := <-got:
 		require.Nil(t, e, "a closed database hands out no new model")
