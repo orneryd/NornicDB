@@ -1,0 +1,110 @@
+# github.com/orneryd/nornicdb/pkg/server.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestQdrantRecommendKeepsProviderSnapshot
+=== RUN   TestQdrantRecommendKeepsProviderSnapshot/Recommend
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/nornicdb-server-test-2906723725 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /Users/timothysweet/src/NornicDB/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /Users/timothysweet/src/NornicDB/pkg/server/plugins
+2026/10/17 07:33:10 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/17 07:33:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:10 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/17 07:33:10 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/17 07:33:10 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/17 07:33:10 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:10 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:10 ✅ BM25 + vector search indexes ready (default database)
+2026/10/17 07:33:10 ✅ Qdrant gRPC server listening on 127.0.0.1:0
+2026/10/17 07:33:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:10 INFO 📊 Indexed 1 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=1
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: base index iteration complete (processed=1) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=1
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:10 Qdrant gRPC server stopped
+=== RUN   TestQdrantRecommendKeepsProviderSnapshot/RecommendNegative
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/nornicdb-server-test-1101617728 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /Users/timothysweet/src/NornicDB/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /Users/timothysweet/src/NornicDB/pkg/server/plugins
+2026/10/17 07:33:10 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/17 07:33:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:10 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/17 07:33:10 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/17 07:33:10 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/17 07:33:10 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:10 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:10 ✅ BM25 + vector search indexes ready (default database)
+2026/10/17 07:33:10 ✅ Qdrant gRPC server listening on 127.0.0.1:0
+2026/10/17 07:33:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:10 INFO 📊 Indexed 1 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=1
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: base index iteration complete (processed=1) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=1
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:10 Qdrant gRPC server stopped
+=== RUN   TestQdrantRecommendKeepsProviderSnapshot/RecommendBatch
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/nornicdb-server-test-81543277 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /Users/timothysweet/src/NornicDB/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /Users/timothysweet/src/NornicDB/pkg/server/plugins
+2026/10/17 07:33:10 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/17 07:33:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:10 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/17 07:33:10 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/17 07:33:10 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/17 07:33:10 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:10 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/17 07:33:10 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:10 ✅ BM25 + vector search indexes ready (default database)
+2026/10/17 07:33:11 ✅ Qdrant gRPC server listening on 127.0.0.1:0
+2026/10/17 07:33:11 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:11 INFO 📊 Indexed 1 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=1
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: base index iteration complete (processed=1) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=1
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:11 Qdrant gRPC server stopped
+=== RUN   TestQdrantRecommendKeepsProviderSnapshot/QueryBatch
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/nornicdb-server-test-4162131985 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /Users/timothysweet/src/NornicDB/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /Users/timothysweet/src/NornicDB/pkg/server/plugins
+2026/10/17 07:33:11 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/17 07:33:11 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:11 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/17 07:33:11 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/17 07:33:11 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/17 07:33:11 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:11 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:11 ✅ BM25 + vector search indexes ready (default database)
+2026/10/17 07:33:11 ✅ Qdrant gRPC server listening on 127.0.0.1:0
+2026/10/17 07:33:11 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 07:33:11 INFO 📊 Indexed 1 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=1
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: base index iteration complete (processed=1) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=1
+2026/10/17 07:33:11 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 07:33:11 Qdrant gRPC server stopped
+--- PASS: TestQdrantRecommendKeepsProviderSnapshot (1.06s)
+    --- PASS: TestQdrantRecommendKeepsProviderSnapshot/Recommend (0.30s)
+    --- PASS: TestQdrantRecommendKeepsProviderSnapshot/RecommendNegative (0.25s)
+    --- PASS: TestQdrantRecommendKeepsProviderSnapshot/RecommendBatch (0.26s)
+    --- PASS: TestQdrantRecommendKeepsProviderSnapshot/QueryBatch (0.25s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/server	1.889s

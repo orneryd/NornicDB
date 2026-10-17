@@ -1,0 +1,4 @@
+# github.com/orneryd/nornicdb/pkg/search [github.com/orneryd/nornicdb/pkg/search.test]
+pkg/search/vector_file_query_access_test.go:124:63: cannot use i (variable of type int) as int64 value in argument to benchmarkStorageVector
+FAIL	github.com/orneryd/nornicdb/pkg/search [build failed]
+FAIL

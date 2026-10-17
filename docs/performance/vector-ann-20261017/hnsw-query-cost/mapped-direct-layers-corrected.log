@@ -1,0 +1,13 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 07:12:14 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:12:15 INFO 🔍 Vector search strategy: HNSW scalar int8 (90623340 encoded bytes) (N=88155 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="HNSW scalar int8 (90623340 encoded bytes)" arg_1=88155
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkANNProfileLayers/graph-12         	    6093	    166190 ns/op	    1498 B/op	       5 allocs/op
+BenchmarkANNProfileLayers/pipeline-12      	    5491	    199954 ns/op	    7731 B/op	      12 allocs/op
+BenchmarkANNProfileLayers/public-12        	    5077	    235439 ns/op	   88713 B/op	     101 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	7.814s

@@ -1,0 +1,3 @@
+== nornicdb / pq-x8: HNSW + product quantization x8 (rescore)
+   preset beam      recall@10 0.9947  p50   1.213 ms  p95   1.535 ms    5629.0 qps
+   load 13.2s (6694/s), index ready 42.2s, disk 1630 MB, RSS 3182 MB, strategy: HNSW PQ x8 (46183936 encoded bytes)

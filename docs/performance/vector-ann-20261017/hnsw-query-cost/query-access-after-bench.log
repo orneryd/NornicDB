@@ -1,0 +1,13 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkVectorFileQueryCandidateScoring-12    	   68863	     18131 ns/op	     385 B/op	       1 allocs/op
+BenchmarkVectorFileQueryCandidateScoring-12    	   68232	     17420 ns/op	     385 B/op	       1 allocs/op
+BenchmarkVectorFileQueryCandidateScoring-12    	   67948	     17083 ns/op	     385 B/op	       1 allocs/op
+BenchmarkVectorFileQueryCandidateScoring-12    	   70652	     17030 ns/op	     385 B/op	       1 allocs/op
+BenchmarkVectorFileQueryCandidateScoring-12    	   69208	     17137 ns/op	     386 B/op	       1 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	9.003s
