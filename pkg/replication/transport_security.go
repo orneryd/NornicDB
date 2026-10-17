@@ -24,6 +24,7 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 	if cfg.ReplicationSecret != "" {
 		transportCfg.AuthSecret = []byte(cfg.ReplicationSecret)
 	}
+	transportCfg.RequireReplayProtection = cfg.ReplayProtection == ReplayProtectionRequire
 
 	if cfg.TLS.Enabled {
 		serverTLS, clientTLS, err := buildTLSConfigs(cfg.TLS)
