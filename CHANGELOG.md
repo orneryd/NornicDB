@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Build IVF-HNSW graphs for every nonempty cluster, retire minimum-size/maximum-count
+  build filters, and return an error for missing routed graphs instead of exact scans.
+  Apply the configured compression policy to new and restored cluster graphs.
 - Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
   query, retaining full per-cluster candidate budgets and merging in route order.
 

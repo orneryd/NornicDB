@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -52,7 +51,7 @@ func TestIVFHNSW_UsedAfterClustering_CPUOnly(t *testing.T) {
 	require.NotEmpty(t, got)
 }
 
-func TestIVFHNSWCandidateGen_ErrorAndFallbackBranches(t *testing.T) {
+func TestIVFHNSWCandidateGen_ErrorBranches(t *testing.T) {
 	query := []float32{1, 0, 0}
 
 	// Not clustered path.
@@ -85,19 +84,11 @@ func TestIVFHNSWCandidateGen_ErrorAndFallbackBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "lookup not configured")
 
-	// Missing per-cluster HNSW falls back to exact clustered search.
-	gen = NewIVFHNSWCandidateGen(clusterIndex, func(clusterID int) *HNSWIndex { return nil }, 1)
+	// Missing per-cluster HNSW is an error, never an exact-search fallback.
+	gen = NewIVFHNSWCandidateGen(clusterIndex, func(int) *HNSWIndex { return nil }, 1)
 	gen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{0} })
-	cands, err := gen.SearchCandidates(context.Background(), query, 5, -1.0)
-	require.NoError(t, err)
-	require.NotEmpty(t, cands)
-	for _, limit := range []int{-1, 0, 1, 3} {
-		t.Run(fmt.Sprintf("exact fallback budget %d", limit), func(t *testing.T) {
-			got, err := gen.SearchCandidates(context.Background(), query, limit, -1)
-			require.NoError(t, err)
-			require.Len(t, got, min(2, max(0, limit)))
-		})
-	}
+	_, err = gen.SearchCandidates(context.Background(), query, 5, -1)
+	require.ErrorContains(t, err, "missing graph for routed cluster 0")
 
 	// Canceled context is propagated from per-cluster HNSW search path.
 	hidx := NewHNSWIndex(3, DefaultHNSWConfig())
@@ -133,23 +124,18 @@ func TestIVFHNSWCandidateGen_MoreSearchBranches(t *testing.T) {
 		require.Empty(t, out)
 	})
 
-	t.Run("lookup turns nil during per-cluster loop", func(t *testing.T) {
+	t.Run("one missing routed graph fails the complete query", func(t *testing.T) {
 		hidx := NewHNSWIndex(2, DefaultHNSWConfig())
 		require.NoError(t, hidx.Add("a", []float32{1, 0}))
-
-		calls := 0
-		gen := NewIVFHNSWCandidateGen(clusterIndex, func(int) *HNSWIndex {
-			calls++
-			if calls <= 2 {
-				return hidx // precheck pass
+		gen := NewIVFHNSWCandidateGen(clusterIndex, func(c int) *HNSWIndex {
+			if c == 0 {
+				return hidx
 			}
-			return nil // per-cluster loop branch: idx == nil => continue
+			return nil
 		}, 2)
 		gen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{0, 1} })
-
-		out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)
-		require.NoError(t, err)
-		require.Empty(t, out)
+		_, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)
+		require.ErrorContains(t, err, "missing graph for routed cluster 1")
 	})
 
 	t.Run("per-cluster search error surfaces", func(t *testing.T) {
