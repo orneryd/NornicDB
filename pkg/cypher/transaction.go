@@ -82,19 +82,55 @@ type TransactionContext struct {
 // failTransaction records err as the active explicit transaction's failure
 // and returns err. The first failure wins: it is the cause COMMIT reports. It
 // is the one rule for a statement that fails inside a transaction, whether it
-// ran through Execute or an inline transaction script (#683).
-func (e *StorageExecutor) failTransaction(err error) error {
+// ran through Execute or an inline transaction script (#683). A composite
+// transaction's participants end their part with it: each local one fails
+// with the same cause, and each remote sub-transaction is rolled back. ctx is
+// the failed statement's context, whose deadline bounds the remote rollbacks.
+func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error {
 	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
 		tx.failed = err
+		// The transaction can no longer commit: the MERGE key locks it holds,
+		// itself or through a participant's sub-transaction, must not keep
+		// other transactions' MERGEs of those keys waiting until the client
+		// rolls it back. Local keys are released first: they never wait on a
+		// remote.
+		if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
+			releaser.ReleaseMergeKeys()
+		}
+		for _, participant := range tx.fabricLocalTxExec {
+			participant.failTransaction(ctx, err)
+		}
+		if tx.fabricRemoteExe != nil {
+			// A remote participant records its own rollback error (a
+			// deadline included); the transaction keeps reporting err.
+			rollbackCtx, cancel := remoteFailureRollbackContext(ctx)
+			_ = tx.fabricRemoteExe.RollbackParticipants(rollbackCtx)
+			cancel()
+		}
 	}
 	return err
+}
+
+// remoteFailureRollbackContext bounds a failed transaction's remote
+// rollbacks: by the statement's deadline (its transaction or statement
+// timeout), and never longer than the remote client's request timeout. It
+// isn't cancelled with the statement, which already failed.
+func remoteFailureRollbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.Now().Add(storage.RemoteRequestTimeout)
+	if statementDeadline, ok := ctx.Deadline(); ok && statementDeadline.Before(deadline) {
+		deadline = statementDeadline
+	}
+	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
 }
 
 // abortTransaction fails the active transaction with err and ends it: what an
 // inline transaction script (BEGIN … COMMIT in one request) does when its
 // statement fails, since no later ROLLBACK can reach it. It returns err.
-func (e *StorageExecutor) abortTransaction(err error) error {
-	e.failTransaction(err)
+func (e *StorageExecutor) abortTransaction(ctx context.Context, err error) error {
+	e.failTransaction(ctx, err)
 	_, _ = e.handleRollback()
 	return err
 }

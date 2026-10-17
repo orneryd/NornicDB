@@ -462,7 +462,7 @@ type remoteTxResponse struct {
 func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransport, error) {
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: RemoteRequestTimeout}
 	}
 	return &httpTransport{
 		baseURL:   strings.TrimRight(uri, "/"),
@@ -694,6 +694,11 @@ func (t *httpCypherTx) Commit(ctx context.Context) error {
 	return err
 }
 
+// OutlivesConnection reports that the server addresses this transaction by
+// its URL, not by a connection: closing a connection doesn't end it, only a
+// rollback, a commit or the server's transaction timeout does.
+func (t *httpCypherTx) OutlivesConnection() bool { return true }
+
 func (t *httpCypherTx) Rollback(ctx context.Context) error {
 	if t.closed {
 		return nil
@@ -820,10 +825,15 @@ func remoteToInt64(v interface{}) int64 {
 	}
 }
 
-// defaultCtx creates a context with a 30-second timeout as a fallback
-// for Engine methods that don't accept a caller-provided context.
+// RemoteRequestTimeout bounds a remote request that has no deadline of its
+// own: the HTTP transport's client timeout and the fallback context of
+// Engine methods that don't accept one.
+const RemoteRequestTimeout = 30 * time.Second
+
+// defaultCtx creates a context with a RemoteRequestTimeout timeout as a
+// fallback for Engine methods that don't accept a caller-provided context.
 func defaultCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+	return context.WithTimeout(context.Background(), RemoteRequestTimeout)
 }
 
 // ---------------------------------------------------------------------------
