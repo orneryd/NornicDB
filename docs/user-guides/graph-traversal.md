@@ -463,6 +463,40 @@ RETURN nodeId, embedding
   YIELD node2, similarity, shared
   RETURN node2, similarity, shared
   ```
+- **Exact pair page over rows (NornicDB extension):** `nornicdb.similarity.pairs(rows, config)` returns the best unordered pairs among many sources, and the exact number of every eligible pair, from the same incidence rows as `nornicdb.similarity.stream`. It scores by resource allocation: a pair's score is the sum, over the things both hold other than the two sources themselves, of the smaller of their two weights, added largest first. Rows also take `having` (a thing's holder count): without a `weight`, the weight is `1.0 / having`, and a `having` that is not positive drops the row's thing. Configuration:
+  - `sources` (required): one map per source:
+
+    | Key | Meaning |
+    | --- | --- |
+    | `source` | the source node or id (sources without rows are allowed) |
+    | `partitionKeys` | a list of keys (strings or integers); two sources pair only when they share one |
+    | `classKey` | a class, or null for unknown; known classes must be equal |
+    | `identifierKeys` | a list of keys; a pair's `identifiers` are the first source's keys the second also has, in the first source's order |
+    | `documentKey` | the source's document, or null |
+    | `allowUnshared` | `true`: the source pairs without a shared thing (score 0) |
+
+    A pair is eligible when its partition keys intersect, its classes are equal or either is null, it is not excluded and, unless either source allows unshared pairs, its documents differ and the two share a thing.
+  - `excludedPairs`: a list of `[node, node]` pairs never to return or count (either order).
+  - `tieBreakProperty`: a property of the source nodes that orders sources (and so `node1` before `node2`) before the id.
+  - `topK` (0: no limit): the best pairs kept per first source; `topN` (10): the page size.
+  - `includeShared`: add `shared` (`{nodeId, weight, having}`) to the returned pairs.
+  - `similarityMetric`: optional, and only `'RESOURCE_ALLOCATION'`.
+
+  The result is one row, even when nothing pairs: `pairs` (best first by the number of `identifiers`, then the score, then the two sources), each `{node1, node2, similarity, identifiers, conflicts}` with `conflicts` `['identifiers differ']` when both sources have identifier keys and share none; `reached`, the exact count of eligible pairs; `capped` (`reached > topN`); and `work`, counters of what the call did. Most pairs of a large group are counted, not scored, and the call keeps only the page in memory, polls cancellation and charges its working state to the statement's memory limit. Callers that compare things by a property must have it unique, e.g. via a uniqueness constraint:
+
+  ```cypher
+  WITH [{source: 'm1', thing: 'bank', having: 3}, {source: 'm2', thing: 'bank', having: 3},
+        {source: 'm2', thing: 'inv7', having: 2}, {source: 'm3', thing: 'inv7', having: 2},
+        {source: 'm3', thing: 'bank', having: 3}] AS rows
+  CALL nornicdb.similarity.pairs(rows, {
+    sources: [{source: 'm1', partitionKeys: ['petrov'], documentKey: 'd1'},
+              {source: 'm2', partitionKeys: ['petrov'], documentKey: 'd2'},
+              {source: 'm3', partitionKeys: ['petrov'], documentKey: 'd3'}],
+    topN: 2})
+  YIELD pairs, reached, capped
+  RETURN [p IN pairs | [p.node1, p.node2, p.similarity]] AS best, reached, capped
+  // best: [['m2', 'm3', 0.8333333333333333], ['m1', 'm2', 0.3333333333333333]], reached: 3, capped: true
+  ```
 - **Louvain:** `gds.louvain.stream(graph, config)` returns `nodeId` as a STRING containing the stored node ID, including nonnumeric IDs, consistently with node similarity. GDS returns INTEGER node IDs; this is a NornicDB extension. `communityId` and intermediate community IDs remain INTEGER values. Louvain finds communities as GDS 2.13 does over the projection (relationships in their projected direction, weighted by `relationshipWeightProperty`). Its modularity optimization colours the nodes and moves each colour class at once, levels merge communities, and `maxLevels`, `maxIterations` and `tolerance` stop it as in GDS. `seedProperty` sets initial communities, `includeIntermediateCommunities` gives each level's community, and `minCommunitySize` drops small communities. As in GDS, a community is named by the node it grew from: that node's position in the projection, or with `seedProperty` its seed (non-negative integers), or for an unseeded node the largest seed + 1 + its position (GDS adds the largest seed to the Neo4j id). `consecutiveIds` numbers the surviving communities 0, 1, … by first node after the size filter. `apoc.algo.louvain` runs the same algorithm with GDS's defaults. The APOC library's `community.Louvain` also uses this engine with undirected input; its iteration, threshold and resolution settings are applied by the same implementation.
 - **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
 

@@ -229,3 +229,6 @@
 - id: cyphergraphprocedures.similarity_duplicate_source
   description: Expanded pseudo-locale similarity duplicate source.
   other: '[!! Source {{.Position}} of the similarity sources repeats the source {{.Source}}; each source is listed once !!]'
+- id: cyphergraphprocedures.similarity_pairs_metric
+  description: Expanded pseudo-locale similarity pairs metric.
+  other: '[!! {{.Metric}} is not a valid metric for nornicdb.similarity.pairs, which scores RESOURCE_ALLOCATION !!]'

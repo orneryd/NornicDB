@@ -229,3 +229,6 @@
 - id: cyphergraphprocedures.similarity_duplicate_source
   description: Mensaje de nornicdb.similarity.pairs (similarity duplicate source).
   other: 'La fuente {{.Position}} de las fuentes de similitud repite la fuente {{.Source}}; cada fuente se indica una sola vez'
+- id: cyphergraphprocedures.similarity_pairs_metric
+  description: Mensaje de nornicdb.similarity.pairs (similarity pairs metric).
+  other: '{{.Metric}} no es una métrica válida para nornicdb.similarity.pairs, que puntúa RESOURCE_ALLOCATION'

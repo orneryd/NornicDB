@@ -501,7 +501,7 @@ func ensureBuiltInProceduresRegistered() {
 		// NornicDB extension sharing nornicdb.similarity.stream's kernel.
 		registerBuiltInProcedure("nornicdb.similarity.pairs", "nornicdb.similarity.pairs(rows :: LIST<MAP>, configuration = {} :: MAP) :: (pairs :: LIST<MAP>, reached :: INTEGER, capped :: BOOLEAN, work :: MAP)", localization.CypherProcedureMetadata("nornicdb.similarity.pairs"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return callNornicSimilarityPairs(args)
+				return callNornicSimilarityPairs(ctx, args)
 			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

@@ -3,9 +3,11 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,9 @@ type pairsParty struct {
 	document    interface{} // string or nil
 	allow       bool
 	things      []string
+	// weights, for a thing, are its rows' explicit weights (repeated rows),
+	// in place of the fixture's having.
+	weights map[string][]float64
 }
 
 // pairsFixture is a fixture: sources, each thing's holder count, and the
@@ -36,6 +41,12 @@ func (f pairsFixture) args(topK, topN int) []interface{} {
 	var rows, sources []interface{}
 	for _, p := range f.parties {
 		for _, thing := range p.things {
+			if weights, ok := p.weights[thing]; ok {
+				for _, weight := range weights {
+					rows = append(rows, map[string]interface{}{"source": p.id, "thing": thing, "weight": weight})
+				}
+				continue
+			}
 			rows = append(rows, map[string]interface{}{"source": p.id, "thing": thing, "having": int64(f.having[thing])})
 		}
 		keys := make([]interface{}, len(p.keys))
@@ -137,24 +148,26 @@ func (o *pairsOracle) judge(i, j int) (pairsOraclePair, bool) {
 	if !shareKey || a.class != nil && b.class != nil && a.class != b.class || o.excluded[[2]string{a.id, b.id}] {
 		return pairsOraclePair{}, false
 	}
-	var shared []string
+	var shared []float64
 	for t := range o.things[i] {
-		if o.things[j][t] && t != a.id && t != b.id && o.fixture.having[t] > 0 {
-			shared = append(shared, t)
+		if !o.things[j][t] || t == a.id || t == b.id {
+			continue
+		}
+		wa, okA := o.weight(a, t)
+		wb, okB := o.weight(b, t)
+		if okA && okB {
+			shared = append(shared, math.Min(wa, wb))
 		}
 	}
 	if !a.allow && !b.allow && (a.document != nil && a.document == b.document || len(shared) == 0) {
 		return pairsOraclePair{}, false
 	}
-	sort.Slice(shared, func(x, y int) bool {
-		if hx, hy := o.fixture.having[shared[x]], o.fixture.having[shared[y]]; hx != hy {
-			return hx < hy
-		}
-		return shared[x] < shared[y]
-	})
+	// A pair's shared things, the smaller of its two weights each, added
+	// largest first (for weights 1.0/having: rarest first).
+	sort.Sort(sort.Reverse(sort.Float64Slice(shared)))
 	score := 0.0
-	for _, t := range shared {
-		score += 1.0 / float64(o.fixture.having[t])
+	for _, weight := range shared {
+		score += weight
 	}
 	identifiers := []interface{}{}
 	for _, k := range a.identifiers {
@@ -256,7 +269,7 @@ func (o *pairsOracle) streamedPage(topN int) ([]interface{}, int64) {
 // runPairs calls the procedure directly with the fixture.
 func runPairs(t *testing.T, f pairsFixture, topK, topN int) ([]interface{}, int64, map[string]interface{}) {
 	t.Helper()
-	result, err := callNornicSimilarityPairs(f.args(topK, topN))
+	result, err := callNornicSimilarityPairs(context.Background(), f.args(topK, topN))
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	row := result.Rows[0]
@@ -343,6 +356,7 @@ func TestSimilarityPairsOwnerFixture528(t *testing.T) {
 		require.Equal(t, want, page, "topN=%d", topN)
 		require.GreaterOrEqual(t, work["countedCombinatorially"].(int64), int64(528*527/2))
 		require.Less(t, work["pairScores"].(int64), int64(528*527/2))
+		require.LessOrEqual(t, work["peakPairMaps"].(int64), int64(topN)+work["representatives"].(int64))
 	}
 }
 
@@ -363,6 +377,7 @@ func TestSimilarityPairsOwnerFixture5280(t *testing.T) {
 		require.Equal(t, want[:topN], page, "topN=%d", topN)
 		require.GreaterOrEqual(t, work["countedCombinatorially"].(int64), int64(13936560))
 		require.Less(t, work["pairScores"].(int64), int64(1500000))
+		require.LessOrEqual(t, work["peakPairMaps"].(int64), int64(topN)+work["representatives"].(int64))
 		t.Logf("topN=%d work=%v", topN, work)
 	}
 }
@@ -406,6 +421,20 @@ func TestSimilarityPairsRandom(t *testing.T) {
 			for _, thing := range thingPool {
 				if random.Intn(3) == 0 || common && thing == "t1" {
 					p.things = append(p.things, thing)
+				}
+			}
+			// Half the rounds give some things per-source weights, repeated
+			// rows included, as weighted rows may.
+			if round%2 == 1 {
+				p.weights = make(map[string][]float64)
+				for _, thing := range p.things {
+					if random.Intn(3) == 0 {
+						choices := []float64{0, 0.125, 0.25, 0.5, 1}
+						p.weights[thing] = []float64{choices[random.Intn(len(choices))]}
+						if random.Intn(2) == 0 {
+							p.weights[thing] = append(p.weights[thing], choices[random.Intn(len(choices))])
+						}
+					}
 				}
 			}
 			f.parties = append(f.parties, p)
@@ -505,7 +534,8 @@ func TestSimilarityPairsProcedure(t *testing.T) {
 	for _, tc := range []struct{ config, want string }{
 		{", tieBreakProperty: 'id', topN: 0", "topN"},
 		{", topK: -1", "topK"},
-		{", similarityMetric: 'JACCARD'", "similarityMetric"},
+		{", similarityMetric: 'JACCARD'", "JACCARD is not a valid metric for nornicdb.similarity.pairs, which scores RESOURCE_ALLOCATION"},
+		{", similarityMetric: 1", "similarityMetric"},
 		{", excludedPairs: [['a']]", "excludedPairs[0]"},
 		{", excludedPairs: 'a'", "excludedPairs"},
 	} {
@@ -536,4 +566,189 @@ func TestSimilarityPairsProcedure(t *testing.T) {
 	result, err := exec.Execute(context.Background(), "CALL nornicdb.similarity.pairs([], {sources: [{source: 'a', partitionKeys: ['g']}]}) YIELD pairs, reached, capped RETURN pairs, reached, capped", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{}, int64(0), false}}, result.Rows)
+}
+
+// weight is a source's weight for a thing as the rows give it: the largest
+// of its explicit weights, else 1.0/having; false for a thing nobody holds.
+func (o *pairsOracle) weight(p pairsParty, thing string) (float64, bool) {
+	if weights, ok := p.weights[thing]; ok {
+		best := weights[0]
+		for _, w := range weights[1:] {
+			best = math.Max(best, w)
+		}
+		return best, true
+	}
+	having := o.fixture.having[thing]
+	return 1.0 / float64(having), having > 0
+}
+
+// oneAtom is n sources of one partition key, each in its own document
+// unless documents says otherwise, all holding x with weight 1.
+func oneAtom(n int, documents func(i int) string) pairsFixture {
+	f := pairsFixture{having: map[string]int{}}
+	for i := 0; i < n; i++ {
+		document := fmt.Sprintf("d%05d", i)
+		if documents != nil {
+			document = documents(i)
+		}
+		f.parties = append(f.parties, pairsParty{id: fmt.Sprintf("p%05d", i), keys: []string{"g"}, document: document,
+			things: []string{"x"}, weights: map[string][]float64{"x": {1}}})
+	}
+	return f
+}
+
+// TestSimilarityPairsWeightedCommonThings: a common thing whose per-source
+// weights differ is not a base all pairs share; the pairs it ranks are found
+// and the page stays exact (review R1, bot 4300779657).
+func TestSimilarityPairsWeightedCommonThings(t *testing.T) {
+	// a, b, c share only x, with weights 1, 0.125, 1: (a, c) is first.
+	f := pairsFixture{having: map[string]int{}}
+	for _, p := range []struct {
+		id     string
+		weight float64
+	}{{"a", 1}, {"b", 0.125}, {"c", 1}} {
+		f.parties = append(f.parties, pairsParty{id: p.id, keys: []string{"g"}, document: "d" + p.id, things: []string{"x"}, weights: map[string][]float64{"x": {p.weight}}})
+	}
+	oracle := newPairsOracle(f)
+	for _, limits := range [][2]int{{0, 1}, {1, 2}, {0, 3}} {
+		page, reached, _ := runPairs(t, f, limits[0], limits[1])
+		want, wantReached := oracle.page(limits[0], limits[1])
+		require.Equal(t, wantReached, reached)
+		require.Equal(t, want, page, "topK=%d topN=%d", limits[0], limits[1])
+	}
+	page, _, _ := runPairs(t, f, 0, 1)
+	require.Equal(t, "a", page[0].(map[string]interface{})["node1"])
+	require.Equal(t, "c", page[0].(map[string]interface{})["node2"])
+	require.Equal(t, 1.0, page[0].(map[string]interface{})["similarity"])
+	// Four sources with weights 1, 1, 100, 100 (repeated rows resolve to
+	// their largest): the last pair, at 100, is first.
+	g := pairsFixture{having: map[string]int{}}
+	for i, weights := range [][]float64{{1}, {0.5, 1}, {100}, {3, 100}} {
+		g.parties = append(g.parties, pairsParty{id: fmt.Sprintf("q%d", i), keys: []string{"g"}, document: fmt.Sprintf("dq%d", i), things: []string{"x"}, weights: map[string][]float64{"x": weights}})
+	}
+	page, _, _ = runPairs(t, g, 0, 1)
+	require.Equal(t, []interface{}{map[string]interface{}{"node1": "q2", "node2": "q3", "similarity": 100.0, "identifiers": []interface{}{}, "conflicts": []interface{}{}}}, page)
+	want, _ := newPairsOracle(g).page(0, 1)
+	require.Equal(t, want, page)
+}
+
+// TestSimilarityPairsBoundedSelection: every pair sharing one identifier is
+// scored, yet the retained pairs stay within the page (review R2, R7).
+func TestSimilarityPairsBoundedSelection(t *testing.T) {
+	f := oneAtom(1000, nil)
+	for i := range f.parties {
+		f.parties[i].identifiers = []string{"shared-id"}
+	}
+	page, reached, work := runPairs(t, f, 0, 50)
+	require.Equal(t, int64(1000*999/2), reached)
+	require.Equal(t, int64(1000*999/2), work["pairScores"].(int64))
+	require.LessOrEqual(t, work["peakPairMaps"].(int64), int64(50)+work["representatives"].(int64))
+	want, _ := newPairsOracle(f).streamedPage(50)
+	require.Equal(t, want, page)
+	// Empty input: an empty page and zero counters, peakPairMaps included.
+	_, reached, work = runPairs(t, pairsFixture{having: map[string]int{}}, 0, 10)
+	require.Zero(t, reached)
+	require.Equal(t, int64(0), work["peakPairMaps"])
+}
+
+// TestSimilarityPairsSameDocumentRuns: the representatives skip a source's
+// document at once, so a block of one document costs nothing and one whose
+// last source differs costs a few visits per source (review R5).
+func TestSimilarityPairsSameDocumentRuns(t *testing.T) {
+	const n = 2000
+	same := oneAtom(n, func(int) string { return "d" })
+	_, reached, work := runPairs(t, same, 0, 50)
+	require.Zero(t, reached)
+	require.Zero(t, work["partnerVisits"].(int64))
+	lastDiffers := oneAtom(n, func(i int) string {
+		if i == n-1 {
+			return "other"
+		}
+		return "d"
+	})
+	for _, limits := range [][2]int{{0, 50}, {1, 50}} {
+		page, reached, work := runPairs(t, lastDiffers, limits[0], limits[1])
+		require.Equal(t, int64(n-1), reached)
+		require.Less(t, work["partnerVisits"].(int64), int64(4*n), "topK=%d", limits[0])
+		want, _ := newPairsOracle(lastDiffers).page(limits[0], limits[1])
+		require.Equal(t, want, page, "topK=%d", limits[0])
+	}
+}
+
+// TestSimilarityPairsCancellation: a cancelled statement stops the call, at
+// once and mid-work (review R3).
+func TestSimilarityPairsCancellation(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := callNornicSimilarityPairs(cancelled, oneAtom(10, nil).args(0, 5))
+	require.ErrorIs(t, err, context.Canceled)
+	// Mid-work: every pair shares an identifier, so the call scores half a
+	// million pairs unless it stops.
+	f := oneAtom(1000, nil)
+	for i := range f.parties {
+		f.parties[i].identifiers = []string{"shared-id"}
+	}
+	args := f.args(0, 50)
+	ctx, stop := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer stop()
+	_, err = callNornicSimilarityPairs(ctx, args)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestSimilarityPairsMemoryAccounting: the call's working state is charged
+// to the statement: over the transaction limit it fails with the memory
+// error and gives everything back; under it, it succeeds and gives back its
+// temporaries (review R4).
+func TestSimilarityPairsMemoryAccounting(t *testing.T) {
+	resetTransactionMemory(t)
+	executor := newTransactionMemoryExecutor(t)
+	args := ownerFixture(528).args(0, 50)
+	params := map[string]interface{}{"rows": args[0], "config": args[1]}
+	query := "CALL nornicdb.similarity.pairs($rows, $config) YIELD reached RETURN reached"
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 20})
+	_, err := executor.Execute(context.Background(), query, params)
+	requireMemoryError(t, err, "Neo.TransientError.General.TransactionMemoryLimit", "db.memory.transaction.max")
+	requirePoolsEmpty(t, "nornic")
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 30})
+	result, err := executor.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Equal(t, int64(139412), result.Rows[0][0])
+	requirePoolsEmpty(t, "nornic")
+}
+
+// TestSimilarityPairsMetric: RESOURCE_ALLOCATION may be named, in any case.
+func TestSimilarityPairsMetric(t *testing.T) {
+	for _, metric := range []string{"RESOURCE_ALLOCATION", "resource_allocation"} {
+		args := oneAtom(3, nil).args(0, 5)
+		args[1].(map[string]interface{})["similarityMetric"] = metric
+		result, err := callNornicSimilarityPairs(context.Background(), args)
+		require.NoError(t, err, metric)
+		require.Equal(t, int64(3), result.Rows[0][1])
+	}
+	result, err := callNornicSimilarityPairs(context.Background(), []interface{}{[]interface{}{}, map[string]interface{}{"sources": []interface{}{}, "similarityMetric": "RESOURCE_ALLOCATION"}})
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{}, result.Rows[0][0])
+}
+
+// similarityPairsExample is the user guide's nornicdb.similarity.pairs
+// example.
+const similarityPairsExample = `WITH [{source: 'm1', thing: 'bank', having: 3}, {source: 'm2', thing: 'bank', having: 3},
+      {source: 'm2', thing: 'inv7', having: 2}, {source: 'm3', thing: 'inv7', having: 2},
+      {source: 'm3', thing: 'bank', having: 3}] AS rows
+CALL nornicdb.similarity.pairs(rows, {
+  sources: [{source: 'm1', partitionKeys: ['petrov'], documentKey: 'd1'},
+            {source: 'm2', partitionKeys: ['petrov'], documentKey: 'd2'},
+            {source: 'm3', partitionKeys: ['petrov'], documentKey: 'd3'}],
+  topN: 2})
+YIELD pairs, reached, capped
+RETURN [p IN pairs | [p.node1, p.node2, p.similarity]] AS best, reached, capped`
+
+// TestSimilarityPairsDocExample pins the user guide's example.
+func TestSimilarityPairsDocExample(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
+	result, err := exec.Execute(context.Background(), similarityPairsExample, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{
+		[]interface{}{"m2", "m3", floatSum(1.0/2, 1.0/3)}, []interface{}{"m1", "m2", 1.0 / 3},
+	}, int64(3), true}}, result.Rows)
 }

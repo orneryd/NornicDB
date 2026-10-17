@@ -56,9 +56,7 @@ type TraversalContext struct {
 	// abandon long traversals on client disconnect / server shutdown. It is
 	// allowed to be nil for legacy call sites that pass through Background.
 	cancelCtx            context.Context
-	cancelDone           <-chan struct{}
-	cancelParentDone     <-chan struct{}
-	cancelInitialized    bool
+	cancelProbe          contextCancelProbe
 	cancellationObserved bool
 	// memory is the traversal's account in the statement's memory scope,
 	// resolved once from cancelCtx (#1343).

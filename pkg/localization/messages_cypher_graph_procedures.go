@@ -442,6 +442,7 @@ const (
 	MessageCypherGraphProceduresSimilarityRowNode          MessageID = "cyphergraphprocedures.similarity_row_node"
 	MessageCypherGraphProceduresSimilarityRowWeight        MessageID = "cyphergraphprocedures.similarity_row_weight"
 	MessageCypherGraphProceduresSimilarityDuplicateSource  MessageID = "cyphergraphprocedures.similarity_duplicate_source"
+	MessageCypherGraphProceduresSimilarityPairsMetric      MessageID = "cyphergraphprocedures.similarity_pairs_metric"
 )
 
 // CypherGraphProceduresInvalidRowSimilarityMetric is nornicdb.similarity.stream's message for an unknown similarity metric.
@@ -472,4 +473,9 @@ func CypherGraphProceduresSimilarityRowWeight(position, weight string) Message {
 // CypherGraphProceduresSimilarityDuplicateSource is nornicdb.similarity.pairs's message for a source listed twice in its sources.
 func CypherGraphProceduresSimilarityDuplicateSource(position, source string) Message {
 	return Message{ID: MessageCypherGraphProceduresSimilarityDuplicateSource, Fallback: "Source " + position + " of the similarity sources repeats the source " + source + "; each source is listed once", Data: map[string]any{"Position": position, "Source": source}}
+}
+
+// CypherGraphProceduresSimilarityPairsMetric is nornicdb.similarity.pairs's message for a similarity metric other than RESOURCE_ALLOCATION.
+func CypherGraphProceduresSimilarityPairsMetric(metric string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityPairsMetric, Fallback: metric + " is not a valid metric for nornicdb.similarity.pairs, which scores RESOURCE_ALLOCATION", Data: map[string]any{"Metric": metric}}
 }

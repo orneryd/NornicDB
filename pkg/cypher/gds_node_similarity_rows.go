@@ -165,6 +165,19 @@ func (w *similarityWeight) resolve(fallback float64) float64 {
 // drops its row's thing; its source stays a source. Repeated (source, thing)
 // rows are one, with the largest weight given.
 func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) {
+	return readSimilarityIncidenceAccounted(items, &memoryAccount{})
+}
+
+// similaritySourceBytes and similarityEntryBytes estimate the reader's map
+// entries for a source and for one (source, thing), beyond the ids' bytes.
+const (
+	similaritySourceBytes = 160
+	similarityEntryBytes  = 96
+)
+
+// readSimilarityIncidenceAccounted is readSimilarityIncidence charging its
+// maps to account (a zero account charges nothing).
+func readSimilarityIncidenceAccounted(items []interface{}, account *memoryAccount) (*similarityIncidence, error) {
 	incidence := &similarityIncidence{things: make(map[string]map[string]*similarityWeight), nodes: make(map[string]interface{}), having: make(map[string]interface{})}
 	remember := func(id string, value interface{}) {
 		if _, isID := value.(string); !isID && !isIntegerProcedureValue(value) {
@@ -194,6 +207,9 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			things = make(map[string]*similarityWeight)
 			incidence.things[string(source)] = things
 			incidence.sources = append(incidence.sources, string(source))
+			if err := account.grow(similaritySourceBytes + int64(len(source))); err != nil {
+				return nil, err
+			}
 		}
 		value, hasWeight := row["weight"]
 		if row["thing"] == nil {
@@ -241,6 +257,9 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 		if weight == nil {
 			weight = &similarityWeight{}
 			things[string(thing)] = weight
+			if err := account.grow(similarityEntryBytes + int64(len(thing))); err != nil {
+				return nil, err
+			}
 		}
 		if !hasWeight {
 			weight.hasDefault = true

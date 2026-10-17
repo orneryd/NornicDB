@@ -531,6 +531,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphergraphprocedures.seed_property_not_found", Constructor: "CypherGraphProceduresSeedPropertyNotFound", Fields: []string{"Available", "Property"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.seed_property_not_long", Constructor: "CypherGraphProceduresSeedPropertyNotLong", Fields: []string{"Property"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.similarity_duplicate_source", Constructor: "CypherGraphProceduresSimilarityDuplicateSource", Fields: []string{"Position", "Source"}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.similarity_pairs_metric", Constructor: "CypherGraphProceduresSimilarityPairsMetric", Fields: []string{"Metric"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.similarity_row_key", Constructor: "CypherGraphProceduresSimilarityRowKey", Fields: []string{"Key", "Position"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.similarity_row_node", Constructor: "CypherGraphProceduresSimilarityRowNode", Fields: []string{"Key", "Position", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.similarity_row_not_map", Constructor: "CypherGraphProceduresSimilarityRowNotMap", Fields: []string{"Position", "Type"}, PluralForms: []string{"other"}},
