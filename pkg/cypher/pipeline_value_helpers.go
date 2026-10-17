@@ -68,7 +68,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	// thing to do is wrap the literal and let the storage executor parse it
 	// as a value. Without plumbing a full parser here we only accept the
 	// `[...]` form and split top-level items.
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
+	if isListLiteral(expr) {
 		parsed, ok := parseLiteralValueForPipeline(expr)
 		if !ok {
 			return nil, false
@@ -212,7 +212,7 @@ func parseLiteralMapForPipeline(s string) map[string]interface{} {
 
 func parseLiteralListForPipeline(s string) ([]interface{}, bool) {
 	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
+	if !isListLiteral(s) {
 		return nil, false
 	}
 	inner := strings.TrimSpace(s[1 : len(s)-1])
@@ -243,7 +243,7 @@ func parseLiteralValueForPipeline(s string) (interface{}, bool) {
 		}
 		return m, true
 	}
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+	if isListLiteral(s) {
 		return parseLiteralListForPipeline(s)
 	}
 	return parseLiteralScalarForPipeline(s)

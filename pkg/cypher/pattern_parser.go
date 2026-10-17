@@ -427,8 +427,9 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		return floatVal
 	}
 
-	// Handle arrays
-	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
+	// Handle arrays: one list literal. A subscript of one (['a', 'b'][i]) is
+	// an expression, evaluated below.
+	if isListLiteral(valueStr) {
 		if _, _, _, _, comprehension := parseListComprehension(valueStr[1 : len(valueStr)-1]); comprehension {
 			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
 			return value
