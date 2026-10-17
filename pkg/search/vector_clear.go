@@ -65,6 +65,7 @@ func (s *Service) clearIndexes(all bool) error {
 	clear(s.edgePropVector)
 	s.clearVectorIndexCapacityLocked()
 	if all {
+		s.hnswQuantizationOverride = nil
 		if ft := s.fulltext(); ft != nil {
 			ft.Clear()
 		}

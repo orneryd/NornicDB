@@ -23,7 +23,9 @@ target. CUDA/Vulkan device execution remains for the hardware handoff.
 - Apple M2 Max, 12 cores, 32 GiB, Darwin 25.5.0; native ARM64/CGO. Qdrant 1.19.2.
 - 88,155 normalized 1,024-dimensional cached Titan V2 vectors, all 1,000 queries,
   exact top-100 ground truth, measured K=10. Each curve uses 100 warm-ups, sequential
-  latency and 8-client throughput on one shared gRPC channel. No AWS requests.
+  latency and 8-client throughput on one shared gRPC channel. Recall is checked
+  against truth in the sequential pass; the concurrent pass measures throughput
+  and does not separately validate recall. No AWS requests.
 - **41 cases / 263 query curves**: all 15 NornicDB modes and 13 corresponding Qdrant
   modes, matched float-file controls, five paired 8× rescoring variants, and a
   RAM-originals control. Each case loads fresh data. Engines and heavy verification
@@ -78,8 +80,12 @@ parameters; its original-vector storage uses its default configuration.
 ## Rescoring depth and original-vector storage
 
 All rows below use an explicit 8× rescoring pool and the preset request beam.
-A top-10 pool of 80 raises a narrower traversal beam to at least 80. The same
-request parameters go to both engines. NornicDB searches one global graph;
+In this benchmark’s public NornicDB vector-query path, top-10 requests first
+apply the default 1.5×
+initial overfetch, giving 15 candidates before quantization oversampling. Thus
+1×/2×/8× settings score up to 15/30/120 candidates, and 8× raises a narrower
+traversal beam to at least 120. The same request parameters go to both engines;
+they do not guarantee identical candidate work. NornicDB searches one global graph;
 Qdrant searches segments and merges their results, so global candidate work can
 still differ. Exact rescoring improves order among discovered candidates.
 
@@ -164,7 +170,7 @@ and compare CPU/GPU on the same machine. CUDA/Vulkan skips remain unverified.
 Application single-graph HNSW configuration now defaults to scalar int8, retaining the fast
 graph preset and exact original-vector rescoring. Set
 `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` to disable compression, or select
-`pq`/`binary` explicitly. Explicit collection policies (including no quantization)
+`pq`/`binary` explicitly. Explicit collection compression policies
 still override the application default; the low-level index configuration remains
 explicit. Existing checkpoints and GPU construction remain supported.
 
@@ -179,6 +185,16 @@ default choice, not a universal accuracy or GPU-performance guarantee.
 
 The 18.177 ms row is IVF-HNSW, not IVF-PQ (5.175 ms). IVF-HNSW routes into
 multiple clusters, searches their graphs sequentially, then merges candidates;
-its missing-graph path scores the selected cluster population exactly. IVF-PQ
+the original measured snapshot used exact population scoring when any selected
+cluster graph was missing. The [follow-up](ivf-parallel/README.md) removes that
+fallback and measures the complete change. IVF-PQ
 uses compressed product codes. The existing timings do not isolate the cost of
 full-precision distances from routing, per-cluster traversal, merging or fallback.
+
+## Latest IVF-HNSW follow-up
+
+The [new full-corpus run](ivf-parallel/README.md) builds all 209 cluster graphs,
+searches them with up to four workers and removes the exact population fallback:
+97.37% recall@10, **2.363 ms p50 / 2.691 ms p95**, **738 queries/s**.
+A fresh serial control measured 97.34%, 7.159 / 20.637 ms and 557 queries/s.
+The original 18.177 ms row above remains the historical initial snapshot.

@@ -593,11 +593,16 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 		filterParts = append(filterParts, k+"="+strings.Join(vals, ","))
 	}
 
+	quantization := effectiveHNSWQuantizationOptions(opts)
 	return strings.Join([]string{
 		query,
 		strconv.Itoa(len(embedding)),
 		strconv.FormatUint(embeddingHash.Sum64(), 16),
 		strconv.Itoa(opts.Limit),
+		strconv.Itoa(opts.HNSWEf),
+		strconv.FormatBool(quantization.ignore),
+		strconv.FormatBool(quantization.rescore),
+		strconv.FormatFloat(quantization.oversampling, 'g', -1, 64),
 		strings.Join(typesCopy, "|"),
 		strconv.FormatBool(opts.RerankEnabled),
 		strconv.Itoa(opts.RerankTopK),
