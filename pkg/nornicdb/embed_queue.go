@@ -341,6 +341,13 @@ func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
 // written. Resuming wakes every worker to take the pending nodes.
 func (ew *EmbedWorker) SetPaused(paused bool) {
 	if ew.operatorPaused.Swap(paused) != paused {
+		if paused {
+			// Wait out a claim already past its pause check: once this
+			// returns, the claimed nodes (Stats().InFlight) are all that
+			// will be embedded until the resume.
+			ew.claimMu.Lock()
+			ew.claimMu.Unlock() //nolint:staticcheck // A barrier, not a critical section.
+		}
 		ew.signalAllWorkers()
 	}
 }
@@ -1625,6 +1632,11 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 
+	// Rechecked for every claim, so a pause or restore that starts while a
+	// batch is being filled leaves the nodes not yet claimed pending.
+	if ew.operatorPaused.Load() || ew.restoreHolds.Load() > 0 {
+		return nil, false
+	}
 	pending := ew.findNodeWithoutEmbedding()
 	if pending == nil {
 		return nil, false

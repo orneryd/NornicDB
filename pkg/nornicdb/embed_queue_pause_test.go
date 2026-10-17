@@ -3,10 +3,13 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -150,4 +153,84 @@ func TestEmbedWorkerStartPaused(t *testing.T) {
 
 	paused.SetPaused(false)
 	require.Eventually(t, func() bool { return paused.Stats().Processed == 1 }, 5*time.Second, time.Millisecond)
+}
+
+// pausingQueue pauses the worker as the first node is handed out, standing
+// in for an administrator who pauses while a batch is being filled.
+type pausingQueue struct {
+	*sequenceEmbeddingEngine
+	worker *EmbedWorker
+	paused chan struct{}
+}
+
+func (q *pausingQueue) FindNodeNeedingEmbedding() *storage.Node {
+	node := q.sequenceEmbeddingEngine.FindNodeNeedingEmbedding()
+	if q.next == 1 {
+		// The claim holds claimMu, which SetPaused waits on, so pause from
+		// another goroutine and continue once the flag is set.
+		go func() {
+			q.worker.SetPaused(true)
+			close(q.paused)
+		}()
+		for !q.worker.Paused() {
+			runtime.Gosched()
+		}
+	}
+	return node
+}
+
+func (q *pausingQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
+
+// A pause issued while a batch is being filled stops the claims: only the
+// node claimed before it is embedded, the rest stay pending, and the resume
+// embeds them. Covers both batching paths.
+func TestEmbedWorkerPauseStopsBatchFill(t *testing.T) {
+	for _, path := range []string{"resolved", "document"} {
+		t.Run(path, func(t *testing.T) {
+			engine := storage.NewMemoryEngine()
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			nodes := []*storage.Node{
+				{ID: "docs:first", Properties: map[string]any{"content": "first"}},
+				{ID: "docs:second", Properties: map[string]any{"content": "second"}},
+				{ID: "docs:third", Properties: map[string]any{"content": "third"}},
+			}
+			for _, node := range nodes {
+				_, err := engine.CreateNode(node)
+				require.NoError(t, err)
+			}
+			queue := &pausingQueue{sequenceEmbeddingEngine: &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}, paused: make(chan struct{})}
+			provider := &resolvedDocumentBatchEmbedder{}
+			config := &EmbedWorkerConfig{NumWorkers: 0, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 8, DeferWorkerStart: true}
+			var worker *EmbedWorker
+			if path == "resolved" {
+				worker = NewEmbedWorker(newMockEmbedder(), queue, config)
+				worker.SetEmbedderResolver(func(storage.NodeID) (embed.Embedder, error) { return provider, nil })
+			} else {
+				worker = NewEmbedWorker(provider, queue, config)
+			}
+			t.Cleanup(worker.Close)
+			queue.worker = worker
+
+			require.True(t, worker.processNextBatch())
+			<-queue.paused
+			require.Equal(t, []int{1}, provider.batchSizes, "no node is claimed after the pause")
+			require.Equal(t, 1, queue.next, "the queue is not read after the pause")
+			require.Zero(t, worker.Stats().InFlight)
+			for _, node := range nodes[1:] {
+				stored, err := engine.GetNode(node.ID)
+				require.NoError(t, err)
+				require.Empty(t, stored.ChunkEmbeddings, "%s stays pending", node.ID)
+			}
+			require.False(t, worker.processNextBatch(), "a paused worker takes nothing")
+
+			worker.SetPaused(false)
+			require.True(t, worker.processNextBatch())
+			require.Equal(t, []int{1, 2}, provider.batchSizes, "the resume embeds the pending nodes")
+			for _, node := range nodes {
+				stored, err := engine.GetNode(node.ID)
+				require.NoError(t, err)
+				require.NotEmpty(t, stored.ChunkEmbeddings, "%s is embedded", node.ID)
+			}
+		})
+	}
 }
