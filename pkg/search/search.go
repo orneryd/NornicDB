@@ -986,6 +986,11 @@ type Service struct {
 	buildTotalNodes  atomic.Int64
 	buildProcessed   atomic.Int64
 
+	// fulltextUnsaved: a population rebuilt BM25 from storage and no save
+	// has written it yet. Not dirty does not mean the saved snapshot is
+	// current: a rebuild that indexed nothing changes no version.
+	fulltextUnsaved atomic.Bool
+
 	// indexRevision advances after every change to what a search can return
 	// (indexChanged). Cached search results, here and in the Cypher result
 	// cache, are keyed by it (IndexRevision), so a result computed before a
@@ -2284,9 +2289,9 @@ func (s *Service) persistBaseIndexes() error {
 // persistBaseIndexesAndPark is persistBaseIndexes that, when park is set,
 // parks BM25 at the checkpoint it wrote. Parking happens under persistRunMu,
 // so no BM25 writer runs between the save and the park, and only when the
-// whole persist succeeded and the index still matches the saved snapshot. An
-// index never written, a skipped or failed save, or a change after the save
-// leaves no current checkpoint, so BM25 stays resident.
+// whole persist succeeded and the index still matches the saved snapshot. A
+// skipped or failed save, or a change after the save, leaves no current
+// checkpoint, so BM25 stays resident.
 func (s *Service) persistBaseIndexesAndPark(park bool) error {
 	if !s.nodePopulationForPersist(context.Background()) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
@@ -2361,7 +2366,7 @@ func (s *Service) persistFulltext(path string, noCopy bool) (saved bool, err err
 		s.logPrintf("📇 Persist: BM25 is parked; keeping its checkpoint")
 		return false, nil
 	}
-	if !s.fulltext().IsDirty() {
+	if !s.fulltext().IsDirty() && !s.fulltextUnsaved.Load() {
 		s.logPrintf("📇 Persist: BM25 skip (unchanged)")
 		// The saved snapshot is still the index; record the storage it
 		// matches now, so a restart does not rebuild it needlessly.
@@ -2379,6 +2384,7 @@ func (s *Service) persistFulltext(path string, noCopy bool) (saved bool, err err
 		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", path, err)
 		return false, err
 	}
+	s.fulltextUnsaved.Store(false)
 	s.recordFulltextCheckpoint(path)
 	s.logPrintf("📇 Background persist: BM25 index saved to %s", path)
 	return true, nil
@@ -4287,6 +4293,9 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 		}
 	}
 
+	if !skipFulltextRebuild {
+		s.fulltextUnsaved.Store(true)
+	}
 	if vectorPath != "" {
 		s.logPrintf("📇 BuildIndexes: building from storage (file-backed vector store)")
 	} else {
