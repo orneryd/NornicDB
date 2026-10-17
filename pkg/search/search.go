@@ -2474,7 +2474,7 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 		s.logPrintf("📇 Background persist: HNSW skip (index not built yet; will be built during warmup or when k-means completes)")
 		return
 	}
-	if err := idx.Save(hnswPath); err != nil {
+	if _, err := s.publishStagedArtifact(hnswPath, idx.Save, func() bool { return true }); err != nil {
 		s.logPrintf("⚠️ Background persist: failed to save HNSW index to %s: %v", hnswPath, err)
 		return
 	}
@@ -4436,6 +4436,7 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 	s.setBuildPhase("persisting_final_indexes")
 	s.buildInProgress.Store(false)
 	s.indexChanged()
+	runPopulationHook(&finalPersistHook, s)
 	s.runPersistWithContext(ctx)
 	s.setLifecycleState(lifecycleReady)
 	s.setBuildPhase("ready")
@@ -4594,6 +4595,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 			return s.Search(ctx, query, embedding, opts)
 		})
 	}
+	runPopulationHook(&searchReadHook, s)
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,

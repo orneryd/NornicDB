@@ -1,6 +1,11 @@
 package search
 
-import "github.com/orneryd/nornicdb/pkg/gpu"
+import (
+	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/security"
+)
 
 // Publication through the lifecycle owner (F-I86 B3). These are the only
 // writers of the derived vector artifacts: the cached query pipeline, the
@@ -116,4 +121,42 @@ func (s *Service) setVectorIndexLocked(vi *VectorIndex) {
 
 func (s *Service) setVectorFileStoreLocked(vfs *VectorFileStore) {
 	s.vectorFileStore = vfs
+}
+
+// publishStagedArtifact is the one durable-publication primitive for file
+// artifacts derived from a source (graphs, snapshots). save writes the
+// artifact to a staging path beside final, outside every lock; the rename
+// over final then happens inside the retirement barrier (indexMu), and only
+// while current reports that the state the artifact was saved from is still
+// published. Retirement deletes saved artifacts and retires that state under
+// indexMu, so a save that raced it is discarded instead of resurrecting a
+// retired artifact. It reports whether the artifact was published.
+func (s *Service) publishStagedArtifact(final string, save func(staged string) error, current func() bool) (bool, error) {
+	staged := final + ".staged"
+	if err := save(staged); err != nil {
+		_ = security.RemoveAllRootedPath(staged)
+		return false, err
+	}
+	runPublishHook(&artifactPublishHook, s, final)
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	if !current() {
+		_ = security.RemoveAllRootedPath(staged)
+		return false, nil
+	}
+	if err := security.RenameRootedFile(staged, final); err != nil {
+		_ = security.RemoveAllRootedPath(staged)
+		return false, err
+	}
+	return true, nil
+}
+
+// artifactPublishHook runs after a staged artifact is written and before it
+// is published. Nil outside tests.
+var artifactPublishHook atomic.Pointer[func(*Service, string)]
+
+func runPublishHook(hook *atomic.Pointer[func(*Service, string)], s *Service, path string) {
+	if fn := hook.Load(); fn != nil {
+		(*fn)(s, path)
+	}
 }

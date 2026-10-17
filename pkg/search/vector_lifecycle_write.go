@@ -363,6 +363,11 @@ var vectorStoreLockedLoadHook atomic.Pointer[func(*Service)]
 // outside tests.
 var annWarmupStartedHook atomic.Pointer[func(*Service)]
 
+// finalPersistHook runs in an explicit build just before its final
+// persistence, after the warmup. searchReadHook runs inside a search, after it
+// waited for any running source step and before it reads. Nil outside tests.
+var finalPersistHook, searchReadHook atomic.Pointer[func(*Service)]
+
 func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
 	if fn := hook.Load(); fn != nil {
 		(*fn)(s)
