@@ -75,7 +75,10 @@ curl -X DELETE http://localhost:7474/auth/roles/data_analyst \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-A role cannot be deleted while any user is assigned to it.
+Deleting a role removes everything the role owns — its database access
+and privileges, entitlements, procedure grants and impersonation privileges — and removes it from every user
+assigned to it, in one transaction. Those users keep their other roles. Built-in roles cannot be deleted.
+Renaming a role moves the same records and assignments to the new name.
 
 ---
 
