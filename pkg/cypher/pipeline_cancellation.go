@@ -214,6 +214,24 @@ func (probe *pipelineCancellation) check() bool {
 	return probe.poll()
 }
 
+// pipelineTextCostUnit is the number of string bytes one probe unit stands
+// for when a native map hashes or compares a string.
+const pipelineTextCostUnit = 4096
+
+// chargeText counts a native scan of n string bytes against the polling
+// interval, so many large strings hashed between two samples cannot outrun
+// the deadline. A string shorter than one unit costs nothing extra.
+func (probe *pipelineCancellation) chargeText(n int) bool {
+	if n < pipelineTextCostUnit {
+		return probe.err == nil
+	}
+	probe.remaining -= n / pipelineTextCostUnit
+	if probe.remaining > 0 {
+		return true
+	}
+	return probe.poll()
+}
+
 func (probe *pipelineCancellation) Continue() bool { return probe.check() }
 func (probe *pipelineCancellation) Err() error     { return probe.err }
 func (probe *pipelineCancellation) SortStrings(values []string) bool {
@@ -331,7 +349,14 @@ func markStatementCommitted(ctx context.Context) {
 	for probe := contextPipelineProbe(ctx); probe != nil; probe = probe.parent {
 		probe.committed.Store(true)
 	}
+	if hook := statementCommittedHook.Load(); hook != nil {
+		(*hook)(ctx)
+	}
 }
+
+// statementCommittedHook, set only by tests, runs once a statement's writes
+// are durable, so a test can end its deadline inside the commit.
+var statementCommittedHook atomic.Pointer[func(context.Context)]
 
 // statementCommitted reports whether the statement's writes are durable.
 func statementCommitted(ctx context.Context) bool {
