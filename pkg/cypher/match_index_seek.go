@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -677,6 +678,8 @@ type indexSeekTerm struct {
 //	n.p IN $list, n.p IN [v, …]        equality with each element
 //	v IN n.p                           membership
 //	any(x IN <list> WHERE x IN n.p)    membership of each element
+//	any(x IN n.p WHERE x IN <list>)    the same, mirrored; n.p may be
+//	                                   coalesce(n.p, [])
 //
 // v and the lists are constants of the incoming scope (indexSeekConstant).
 // A membership seek lists the nodes whose property is a list holding the
@@ -703,8 +706,9 @@ func (e *StorageExecutor) parseIndexSeekTerm(ctx context.Context, variable, term
 	return indexSeekTerm{}, false
 }
 
-// parseIndexedMembership reads v IN n.p and any(x IN <list> WHERE x IN n.p):
-// the property and the values whose membership selects a node. A null value
+// parseIndexedMembership reads v IN n.p, any(x IN <list> WHERE x IN n.p) and
+// its mirror any(x IN n.p WHERE x IN <list>): the property and the values
+// whose membership selects a node. A null value
 // or list selects nothing (the test is never true). ok is false for any
 // other term, for a list that is not a list (the evaluator reports it), and
 // for a value that is not a string, boolean or number.
@@ -716,15 +720,24 @@ func (e *StorageExecutor) parseIndexedMembership(ctx context.Context, variable, 
 		if whereIdx <= 0 {
 			return "", nil, false
 		}
-		local, listExpr, ok := splitTopLevelIn(inner[:whereIdx])
+		local, bound, ok := splitTopLevelIn(inner[:whereIdx])
 		if !ok || !isValidIdentifier(local) || strings.EqualFold(local, variable) {
 			return "", nil, false
 		}
-		element, propertyExpr, ok := splitTopLevelIn(inner[whereIdx+len("WHERE"):])
+		element, tested, ok := splitTopLevelIn(inner[whereIdx+len("WHERE"):])
 		if !ok || element != local {
 			return "", nil, false
 		}
-		if property, ok = membershipProperty(propertyExpr, variable); !ok {
+		// any(x IN <list> WHERE x IN n.p), or the mirrored
+		// any(x IN n.p WHERE x IN <list>): both are true exactly when some
+		// element of the list is in n.p, a scalar n.p counting as a
+		// one-element list.
+		var listExpr string
+		if property, ok = membershipProperty(tested, variable); ok {
+			listExpr = bound
+		} else if property, ok = membershipListProperty(bound, variable); ok && !slices.Contains(expressionFreeVariables(tested), local) {
+			listExpr = tested
+		} else {
 			return "", nil, false
 		}
 		list, constant := e.indexSeekConstant(ctx, listExpr)
@@ -791,6 +804,22 @@ func membershipProperty(expr, variable string) (string, bool) {
 		return "", false
 	}
 	return property, true
+}
+
+// membershipListProperty reads the list a mirrored membership iterates:
+// n.p, or coalesce(n.p, []), which differs from n.p only for a null property,
+// and there makes any() false instead of null; a WHERE keeps the row in
+// neither case.
+func membershipListProperty(expr, variable string) (string, bool) {
+	expr = strings.TrimSpace(expr)
+	if name, inner, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(name, "coalesce") && strings.HasSuffix(expr, ")") {
+		args := splitTopLevelComma(inner)
+		if len(args) != 2 || strings.ReplaceAll(args[1], " ", "") != "[]" {
+			return "", false
+		}
+		expr = args[0]
+	}
+	return membershipProperty(expr, variable)
 }
 
 // collectIndexSeekTermNodes returns the nodes the property indexes list for

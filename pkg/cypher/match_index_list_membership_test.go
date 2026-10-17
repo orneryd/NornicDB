@@ -43,6 +43,15 @@ var listMembershipQueries = []string{
 	"MATCH (n:Identity) WHERE ANY(k IN ['shared2', 'alias4'] WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE any(k IN $empty WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE any(k IN $nullList WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
+	// The mirrored membership: the property is the iterated list.
+	"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN $keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN coalesce(n.alias_keys, []) WHERE k IN $keys) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN ['alias3', 'shared4']) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN $empty) RETURN n.id ORDER BY n.id",
+	"MATCH (n:Identity) WHERE any(k IN coalesce(n.alias_keys, []) WHERE k IN $nullList) RETURN n.id ORDER BY n.id",
+	"WITH $keys AS scopes MATCH (n:Identity) WHERE any(id IN coalesce(n.alias_keys, []) WHERE id IN scopes) WITH n ORDER BY n.id DESC LIMIT 3 RETURN n.id",
+	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(a IN n.alias_keys WHERE a IN $names) RETURN n.id ORDER BY n.id",
+	"WITH 'alias3' AS k MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN [k]) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE $x IN n.alias_keys AND n.current RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.current AND any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
@@ -171,6 +180,8 @@ func TestListMembershipSeekUsesIndex(t *testing.T) {
 			}{
 				{"MATCH (n:Identity) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id", nil},
 				{"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
+				{"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN $keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
+				{"WITH $keys AS scopes MATCH (n:Identity) WHERE any(k IN coalesce(n.alias_keys, []) WHERE k IN scopes) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}, {"id9"}}},
 				{"MATCH (n:Identity) WHERE (n.id IN $ids OR $x IN n.alias_keys) AND n.current RETURN n.id ORDER BY n.id", [][]interface{}{{"id9"}}},
 				// Not answered by the alias index: the hidden node is found.
