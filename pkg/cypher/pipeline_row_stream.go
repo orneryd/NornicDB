@@ -157,10 +157,16 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	}
 	return func(yield func(interface{}) bool) {
 		// The evaluated list stays counted against the statement's memory
-		// limit while its rows stream (#1343).
+		// limit while its rows stream (#1343): its slots when the row or a
+		// parameter holds it, with what its elements hold when the
+		// expression built it.
 		budget := expressionBudgetOf(ctx)
 		if budget.active() {
-			if budget.holdList(items) != nil {
+			hold := budget.holdBuiltList
+			if pipelineListIsBound(ctx, row, items) {
+				hold = budget.holdList
+			}
+			if hold(items) != nil {
 				return
 			}
 			defer budget.release()
@@ -171,6 +177,23 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 			}
 		}
 	}, true
+}
+
+// pipelineListIsBound reports whether items is a list the row or the
+// statement's parameters hold (UNWIND xs, UNWIND $list), not one the UNWIND
+// expression built.
+func pipelineListIsBound(ctx context.Context, row pipelineRow, items []interface{}) bool {
+	for _, value := range row {
+		if sameBindingValue(value, items) {
+			return true
+		}
+	}
+	for _, value := range getParamsFromContext(ctx) {
+		if sameBindingValue(value, items) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
@@ -330,7 +353,27 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		current := make(pipelineRow, len(templates))
 		resolved := make([]nodePatternInfo, len(templates))
 		candidates := make([][]*storage.Node, len(templates))
+		// The cached candidates count until the source is done (consumed,
+		// stopped or cancelled), an input row's own while it is matched
+		// (#1343).
+		cachedCandidates := trackedRetention(ctx)
+		defer cachedCandidates.release()
+		rowCandidates := trackedRetention(ctx)
+		defer rowCandidates.release()
+		// A source run again keeps what an earlier run cached.
+		for index := range caches {
+			cache := &caches[index]
+			if cache.initialized && (cachedCandidates.reserveCandidates(len(cache.nodes)) != nil || cachedCandidates.reserveCacheKey(cache.key) != nil) {
+				return false
+			}
+			for key, nodes := range cache.alternatives {
+				if cachedCandidates.reserveCandidates(len(nodes)) != nil || cachedCandidates.reserveCacheKey(key) != nil {
+					return false
+				}
+			}
+		}
 		completed := inputSource(func(input pipelineRow) bool {
+			rowCandidates.release()
 			clear(current)
 			for name, value := range input {
 				current[name] = value
@@ -376,14 +419,22 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							candidateCtx = withValueBindings(ctx, input)
 							candidatesBound = true
 						}
+						owner := rowCandidates
+						if keyed {
+							owner = cachedCandidates
+						}
 						var err error
-						nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
+						nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, owner, pattern, "", hint)
 						if err != nil {
 							recordExpressionFailure(ctx, err)
 							valid = false
 							return false
 						}
 						if keyed {
+							if cachedCandidates.reserveCacheKey(key) != nil {
+								valid = false
+								return false
+							}
 							if !cache.initialized {
 								cache.key, cache.nodes, cache.initialized = key, nodes, true
 							} else {

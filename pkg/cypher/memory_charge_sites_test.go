@@ -35,6 +35,8 @@ var accountantFiles = map[string]bool{
 var accountantFunctions = map[string]bool{
 	"estimateValueBytes":      true,
 	"estimateValueBytesAt":    true,
+	"estimateHeldBytes":       true,
+	"estimateHeldBytesAt":     true,
 	"estimateResultRowBytes":  true,
 	"estimatePathResultBytes": true,
 	"shallowValueBytes":       true,

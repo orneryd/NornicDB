@@ -107,6 +107,7 @@ func TestTraversalStartPropertyScanPushdown_Equality(t *testing.T) {
 
 	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(
 		context.Background(),
+		nil,
 		nodePatternInfo{variable: "node", labels: []string{"OriginalText"}},
 		"node.originalText = 'Get it delivered'",
 	)
@@ -138,6 +139,7 @@ func TestTraversalStartPropertyScanPushdown_IsNotNull(t *testing.T) {
 
 	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(
 		context.Background(),
+		nil,
 		nodePatternInfo{variable: "node", labels: []string{"OriginalText"}},
 		"node.sourceId IS NOT NULL",
 	)

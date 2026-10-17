@@ -56,9 +56,10 @@ func rowQuantifierLoop(function string, items []interface{}, bind func(interface
 // the comprehension unresolved.
 //
 // The result counts against the statement's memory limit while it is built
-// (budget, #1343): its capacity before it is made, its values as they are
-// added, checked every comprehensionCheckEvery elements. It is given back
-// once built; the row or list that keeps it counts it there.
+// (budget, #1343): its capacity before it is made, its values with what they
+// hold as they are added, checked whenever it grew by transientCheckBytes
+// and once built. It is given back then; the row or list that keeps it
+// counts it there.
 func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error)) (interface{}, bool, error) {
 	if budget.active() {
 		if err := budget.beginList(len(items)); err != nil {
@@ -67,12 +68,7 @@ func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind fu
 		defer budget.release()
 	}
 	result := make([]interface{}, 0, len(items))
-	for index, item := range items {
-		if index > 0 && index%comprehensionCheckEvery == 0 {
-			if err := budget.checkList(); err != nil {
-				return nil, false, err
-			}
-		}
+	for _, item := range items {
 		bind(item)
 		if holds != nil {
 			kept, evaluated, err := holds()
@@ -98,15 +94,19 @@ func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind fu
 				return nil, false, nil
 			}
 		}
-		budget.addElement(value)
+		budget.addElement(item, value)
 		result = append(result, value)
+		if budget.checkDue() {
+			if err := budget.checkList(); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	if err := budget.checkList(); err != nil {
+		return nil, false, err
 	}
 	return result, true, nil
 }
-
-// comprehensionCheckEvery is how many elements a comprehension adds between
-// checks of what it built against the statement's limits.
-const comprehensionCheckEvery = 1024
 
 // rowConditionHolds is a comprehension condition's value read as kept: only
 // true keeps the element; a value that isn't a boolean or null is the
