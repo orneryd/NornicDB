@@ -12,6 +12,10 @@ These reports record the cached 88,155-vector workload used to finish #1370, #13
 - Corpus integrity: all vectors/queries are finite and normalized, all ground-truth IDs are in range, and the top-100 boundary was recomputed against every stored vector for all 1,000 queries with zero discrepancies at tolerance 1e-5. No AWS/Titan calls were made.
 - This legacy corpus has **no lexical payloads**. These timings do not measure lexical construction gains. Real BM25/document-to-embedding identity, construction seeds and hybrid cluster routing are covered by public regression tests, separately from these vector-only measurements.
 
+## Configured request logging follow-up
+
+The maintainer-approved request log-level change at `5cfe2533f` is measured separately in the [logging follow-up](request-logging/README.md). It confirms successful requests are suppressed at info; the modest latency changes do not establish a large additional speedup.
+
 ## ARM64 scoring follow-up
 
 A later CPU balanced-HNSW measurement at `cd5e02461` records approximately 11% lower preset p50 and 17% lower beam-512 p50. See the [source analysis, before/after results and limits](arm64-dot/README.md). The original sweep below retains its actual measured source.
