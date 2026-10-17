@@ -150,6 +150,22 @@ func TestEvidenceBufferConcurrentAPI(t *testing.T) {
 	stress(t, 3, 60, ops)
 }
 
+// GetPendingEdges hands out independent copies: evidence added afterwards
+// does not change an entry already returned. A shared Sessions or Metadata
+// map would change under the caller, and reading it would race the writer.
+func TestPendingEdgesAreIndependentCopies(t *testing.T) {
+	eb := NewEvidenceBuffer()
+	eb.SetThreshold("stress", EvidenceThreshold{MinCount: 100, MinScore: 1000, MinSessions: 100, MaxAge: time.Hour})
+	eb.AddEvidenceWithMetadata("a", "b", "stress", 0.5, "coaccess", "s1", map[string]interface{}{"k1": 1})
+	pending := eb.GetPendingEdges(0)
+	require.Len(t, pending, 1)
+
+	eb.AddEvidenceWithMetadata("a", "b", "stress", 0.5, "similarity", "s2", map[string]interface{}{"k2": 2})
+	require.Len(t, pending[0].Sessions, 1, "a returned entry's sessions must not change")
+	require.Len(t, pending[0].Metadata, 1, "a returned entry's metadata must not change")
+	require.Len(t, eb.GetPendingEdges(0)[0].Sessions, 2, "the buffer itself has both sessions")
+}
+
 func TestClusterIntegrationConcurrentAPI(t *testing.T) {
 	cfg := testClusterConfig()
 	cfg.AutoRecluster = true
