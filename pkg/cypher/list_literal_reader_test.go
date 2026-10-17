@@ -106,7 +106,7 @@ func TestSpatialListExpressionsAreNotListLiterals(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "spatial_list_expressions"))
 	for query, points := range map[string]int{
 		"RETURN polygon([point({x: 0, y: 0}), point({x: 1, y: 0})] + [point({x: 0, y: 1})])": 3,
-		"RETURN lineString([point({x: 0, y: 0})] + [point({x: 1, y: 0})])":                    2,
+		"RETURN lineString([point({x: 0, y: 0})] + [point({x: 1, y: 0})])":                   2,
 	} {
 		result, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err, query)
