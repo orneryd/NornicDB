@@ -54,9 +54,12 @@ func (s *Session) handleRun(data []byte) error {
 	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
-	if !s.refreshAuthResult() {
+	if ok, revokedTarget := s.refreshAuthResult(); !ok {
 		if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
 			return fmt.Errorf("revoked account transaction cleanup failed: %w", err)
+		}
+		if revokedTarget != "" {
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.BoltImpersonationForbidden(revokedTarget))
 		}
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
 	}
@@ -815,6 +818,10 @@ func (s *Session) handlePull(data []byte) error {
 		lazyFailure = err.(*lazyStatementError)
 	}
 
+	// Whatever this PULL's records opened to attribute their entities is
+	// released once they are written; the answers are kept for the next PULL.
+	defer stream.result.entityAttribution.Release()
+
 	// Stream records - use batched writing for large result sets
 	remaining := len(stream.result.Rows) - stream.index
 	if options.limit > 0 && remaining > options.limit {
@@ -1062,7 +1069,7 @@ func (s *Session) handleRoute(data []byte) error {
 	// default one, as NornicDB has no per-user home database) must be one
 	// that user may use, refused as a RUN would be, and the routing table
 	// names it. The session's own principal is left as it was.
-	if !s.refreshAuthResult() {
+	if ok, _ := s.refreshAuthResult(); !ok {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
 	}
 	extra := routeExtra(data)
@@ -1162,7 +1169,7 @@ func (s *Session) handleBegin(data []byte) error {
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
 			"an explicit transaction is already active")
 	}
-	if !s.refreshAuthResult() {
+	if ok, _ := s.refreshAuthResult(); !ok {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
 	}
 
@@ -1592,9 +1599,25 @@ func (s *Session) handleRollback(data []byte) error {
 // sendRecord sends a RECORD response.
 // Uses buffer pooling to reduce allocations for high-frequency record sending.
 func (s *Session) bindResultEntityDatabase(ctx context.Context, result *QueryResult, database string) {
-	if result != nil {
-		result.entityDatabase = s.newRecordEntityDatabaseResolver(context.WithoutCancel(ctx), database)
+	if result == nil {
+		return
 	}
+	ctx = context.WithoutCancel(ctx)
+	// One attribution for the whole result: its constituent lookup and each
+	// entity's answer are kept across the result's records, and every PULL
+	// releases what it opened when its records are written (handlePull).
+	if s.server != nil && s.server.dbManager != nil {
+		if manager := s.cypherDatabaseManager(); manager != nil {
+			result.entityAttribution = cypher.NewEntityDatabaseAttribution(ctx, manager, database, func(database string, err error) {
+				s.server.logEvent(ctx, slog.LevelError, localization.OperationStorageCleanupFailedEvent(database, err))
+			})
+			if result.entityAttribution != nil {
+				result.entityDatabase = result.entityAttribution.Resolve
+			}
+			return
+		}
+	}
+	result.entityDatabase = s.newRecordEntityDatabaseResolver(ctx, database)
 }
 
 func (s *Session) recordEntityDatabaseResolver(dbName string, provided ...boltEntityDatabaseResolver) boltEntityDatabaseResolver {
@@ -1960,10 +1983,14 @@ func (s *Session) cypherDatabaseManager() cypher.DatabaseManagerInterface {
 // the authenticator, before a statement or transaction runs: a role removed
 // from the user or deleted since HELLO no longer applies (CurrentAuthResult).
 // An impersonated user's are read again the same way, so a transaction
-// impersonating them follows their current roles.
-func (s *Session) refreshAuthResult() bool {
+// impersonating them follows their current roles, and the signer's
+// IMPERSONATE decision for that user is taken again on its current roles
+// (impersonationAllowedFor): a signer that lost the privilege, the role
+// granting it, or administration ends the transaction (ok false, with the
+// user it may no longer impersonate in revokedTarget).
+func (s *Session) refreshAuthResult() (ok bool, revokedTarget string) {
 	if s.authResult == nil || s.server == nil {
-		return true
+		return true, ""
 	}
 	if current, ok := s.server.config.Authenticator.(interface {
 		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
@@ -1972,14 +1999,18 @@ func (s *Session) refreshAuthResult() bool {
 		// The signer's account authorizes the connection itself. Refreshing
 		// the target must never keep a revoked signer's transaction usable.
 		if s.authResult == nil || !s.authResult.Authenticated {
-			return false
+			return false, ""
 		}
 		if s.impersonated != nil {
+			target := s.impersonated.Username
+			if !s.impersonationAllowedFor(target) {
+				return false, target
+			}
 			s.impersonated = current.CurrentAuthResult(s.impersonated)
-			return s.impersonated != nil && s.impersonated.Authenticated
+			return s.impersonated != nil && s.impersonated.Authenticated, ""
 		}
 	}
-	return true
+	return true, ""
 }
 
 // accessMode is the databases the session's principal (the executing user,

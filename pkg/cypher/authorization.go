@@ -502,34 +502,6 @@ func GraphIsRemote(manager DatabaseManagerInterface, graph string) bool {
 	return false
 }
 
-// refuseRemoteImpersonation refuses, while the statement impersonates a
-// user, a graph on another server (GraphIsRemote): the remote server would
-// run it as the login's forwarded credential or the constituent's stored
-// one, never as the impersonated user, and Neo4j doesn't impersonate a user
-// through a remote database alias. An empty database is the statement's
-// own (its authorization's, else the executor's).
-func (e *StorageExecutor) refuseRemoteImpersonation(ctx context.Context, database string) error {
-	if !impersonating(ctx) {
-		return nil
-	}
-	if database == "" {
-		if authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); ok {
-			database = authorization.database
-		}
-		if database == "" {
-			database = e.currentDatabaseName()
-		}
-	}
-	var manager DatabaseManagerInterface
-	if e.dbManager != nil {
-		manager = e.dbManager
-	}
-	if GraphIsRemote(manager, database) {
-		return localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImpersonationRemoteDenied(database))
-	}
-	return nil
-}
-
 // authorizeSelectedDatabase owns the selection and permission decision for a
 // statement or fragment. Each containing composite or alias needs access;
 // the physical target needs the statement's data permissions. An empty name
@@ -547,6 +519,11 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 	return admitSelectedDatabase(ctx, e.dbManager, database, query, selection)
 }
 
+// admitGraphImpersonation refuses, while the statement impersonates a user,
+// a graph on another server (GraphIsRemote): the remote server would run it
+// as the login's forwarded credential or the constituent's stored one,
+// never as the impersonated user, and Neo4j doesn't impersonate a user
+// through a remote database alias.
 func admitGraphImpersonation(ctx context.Context, manager DatabaseManagerInterface, database string) error {
 	if impersonating(ctx) && GraphIsRemote(manager, database) {
 		return localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImpersonationRemoteDenied(database))

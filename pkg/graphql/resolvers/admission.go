@@ -67,7 +67,7 @@ var resolverClasses = map[string]cypher.PrivilegeClass{
 }
 
 type subscriptionDatabaseKey struct{}
-type subscriptionDatabase struct{ selected, defaultDatabase string }
+type subscriptionDatabase struct{ selected string }
 
 func (r *Resolver) admitField(ctx context.Context, field string) (context.Context, error) {
 	class := resolverClasses[field] // zero is invalid and refused by the owner
@@ -97,24 +97,24 @@ func (r *Resolver) admitField(ctx context.Context, field string) (context.Contex
 		}
 	}
 	if strings.HasPrefix(field, "subscriptionResolver.") {
-		ctx = context.WithValue(ctx, subscriptionDatabaseKey{}, subscriptionDatabase{database, r.dbManager.DefaultDatabaseName()})
+		ctx = context.WithValue(ctx, subscriptionDatabaseKey{}, subscriptionDatabase{database})
 	}
 	return ctx, nil
 }
 
-// eventVisible scopes live payloads using the same request resolver that
-// admitted the subscription. Embedded broker users keep their shared stream.
-func eventVisibility(ctx context.Context) func(string) bool {
+// eventVisibility scopes live payloads using the same request resolver that
+// admitted the subscription: an event is delivered only when the database it
+// was published in (EventBroker.Publish...In, from the storage namespace,
+// never from the payload's user-controlled ID) is the selected one and the
+// principal may read it. An event of no known database is not delivered.
+// Embedded broker users keep their shared stream.
+func eventVisibility(ctx context.Context) func(database string) bool {
 	scope, scoped := ctx.Value(subscriptionDatabaseKey{}).(subscriptionDatabase)
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if !scoped || allows == nil {
 		return func(string) bool { return true }
 	}
-	return func(id string) bool {
-		database := scope.defaultDatabase
-		if prefix, _, ok := strings.Cut(id, ":"); ok {
-			database = prefix
-		}
-		return database == scope.selected && allows(database, auth.PermRead)
+	return func(database string) bool {
+		return database != "" && database == scope.selected && allows(database, auth.PermRead)
 	}
 }

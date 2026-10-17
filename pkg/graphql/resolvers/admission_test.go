@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -117,24 +118,68 @@ func TestGraphQLStatsAndSubscriptionUseRequestDatabase(t *testing.T) {
 	require.NoError(t, err)
 	deleted, err := r.Subscription().NodeDeleted(ctx, nil)
 	require.NoError(t, err)
-	r.EventBroker.PublishNodeCreated(&models.Node{ID: "base-local"})
-	r.EventBroker.PublishNodeDeleted("base-local")
+	r.EventBroker.PublishNodeCreatedIn(base, &models.Node{ID: "base-local"})
+	r.EventBroker.PublishNodeDeletedIn(base, "base-local")
+	// A default-database node whose own ID looks like the selected
+	// database's: its database is where it was stored, not its ID's prefix.
+	r.EventBroker.PublishNodeCreatedIn(base, &models.Node{ID: "gql_target:secret"})
+	r.EventBroker.PublishNodeDeletedIn(base, "gql_target:secret")
+	// An event that names no database is never delivered to a scoped stream.
+	r.EventBroker.PublishNodeCreated(&models.Node{ID: "gql_target:unnamed"})
+	r.EventBroker.PublishNodeDeleted("gql_target:unnamed")
 	select {
-	case <-created:
-		t.Fatal("foreign created event")
+	case event := <-created:
+		t.Fatalf("foreign created event %q", event.ID)
 	default:
 	}
 	select {
-	case <-deleted:
-		t.Fatal("foreign deleted event")
+	case event := <-deleted:
+		t.Fatalf("foreign deleted event %q", event)
 	default:
 	}
-	r.EventBroker.PublishNodeCreated(&models.Node{ID: "gql_target:mine"})
-	r.EventBroker.PublishNodeDeleted("gql_target:mine")
+	r.EventBroker.PublishNodeCreatedIn("gql_target", &models.Node{ID: "gql_target:mine"})
+	r.EventBroker.PublishNodeDeletedIn("gql_target", "gql_target:mine")
 	require.Equal(t, "gql_target:mine", (<-created).ID)
 	require.Equal(t, "gql_target:mine", <-deleted)
 	_, err = r.Mutation().TriggerEmbedding(ctx, nil)
 	require.Error(t, err)
 	_, err = r.Mutation().RebuildSearchIndex(ctx)
 	require.Error(t, err)
+}
+
+// A subscription scoped to a database receives the nodes stored there and
+// none stored in the default database, even one whose own ID begins with
+// the scoped database's name: the stored namespace decides, not the ID.
+func TestGraphQLSubscriptionDatabaseIsTheStorageNamespace(t *testing.T) {
+	db := testDB(t)
+	manager := testDBManager(t, db)
+	require.NoError(t, manager.CreateDatabase("gql_target"))
+	r := NewResolver(db, manager)
+	t.Cleanup(r.EventBroker.Close)
+	ctx, cancel := context.WithCancel(gqlPrincipal("gql_target", map[string]string{"gql_target": "gql_target"}, true, false, false))
+	defer cancel()
+	created, err := r.Subscription().NodeCreated(ctx, nil)
+	require.NoError(t, err)
+
+	base, err := manager.GetStorage(manager.DefaultDatabaseName())
+	require.NoError(t, err)
+	_, err = base.CreateNode(&storage.Node{ID: "gql_target:secret", Labels: []string{"Leak"}, Properties: map[string]any{"secret": true}})
+	require.NoError(t, err)
+	target, err := manager.GetStorage("gql_target")
+	require.NoError(t, err)
+	_, err = target.CreateNode(&storage.Node{ID: "mine", Labels: []string{"Scoped"}})
+	require.NoError(t, err)
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-created:
+			require.NotContains(t, event.Labels, "Leak", "a default-database node reached the gql_target stream")
+			if event.ID == "gql_target:mine" {
+				return
+			}
+		case <-timeout:
+			t.Fatal("the gql_target node's event was not delivered")
+		}
+	}
 }

@@ -404,11 +404,12 @@ type DeferrableExecutor interface {
 
 // QueryResult holds the result of a query.
 type QueryResult struct {
-	Columns        []string
-	Rows           [][]any
-	Metadata       map[string]any
-	Stats          *QueryStats                // Write counters for ResultSummary
-	entityDatabase boltEntityDatabaseResolver // Captured executing context for subsequent PULL.
+	Columns           []string
+	Rows              [][]any
+	Metadata          map[string]any
+	Stats             *QueryStats                // Write counters for ResultSummary
+	entityDatabase    boltEntityDatabaseResolver // Captured executing context for subsequent PULL.
+	entityAttribution *cypher.EntityDatabaseAttribution
 }
 
 type resultStream struct {

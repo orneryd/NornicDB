@@ -95,10 +95,7 @@ func (s *Session) resolveImpersonation(extra map[string]any) (*BoltAuthResult, *
 	if user == s.authResult.Username {
 		return nil, nil
 	}
-	s.server.mu.RLock()
-	allowed := s.server.impersonationAllowed
-	s.server.mu.RUnlock()
-	if allowed == nil || !allowed(s.authResult.Roles, s.authResult.HasPermission(string(auth.PermAdmin)), user) {
+	if !s.impersonationAllowedFor(user) {
 		return nil, forbidden
 	}
 	target, err := resolver.ImpersonationAuthResult(user)
@@ -169,4 +166,19 @@ func databaseAccessDenied(who *BoltAuthResult) localization.Message {
 		return localization.DatabaseAccessDenied("", nil)
 	}
 	return localization.DatabaseAccessDenied(who.Username, who.Roles)
+}
+
+// impersonationAllowedFor reports whether the session's signer, with its
+// current roles and admin entitlement, may impersonate user: the server's
+// IMPERSONATE decision, taken when a request names imp_user and again before
+// each statement of a transaction impersonating user (refreshAuthResult).
+// Without a signer or a resolver no one may.
+func (s *Session) impersonationAllowedFor(user string) bool {
+	if s.server == nil || s.authResult == nil {
+		return false
+	}
+	s.server.mu.RLock()
+	allowed := s.server.impersonationAllowed
+	s.server.mu.RUnlock()
+	return allowed != nil && allowed(s.authResult.Roles, s.authResult.HasPermission(string(auth.PermAdmin)), user)
 }

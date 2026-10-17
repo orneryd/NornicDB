@@ -231,6 +231,14 @@ func (f *impersonationFixture) nodeCount() int64 {
 	return result.Rows[0][0].(int64)
 }
 
+// labelCount is the number of nodes labelled label in database "nornic".
+func (f *impersonationFixture) labelCount(label string) int64 {
+	f.t.Helper()
+	result, err := f.executor.Execute(f.ctx, "MATCH (n:`"+label+"`) RETURN count(n)", nil)
+	require.NoError(f.t, err)
+	return result.Rows[0][0].(int64)
+}
+
 func imp(user any) map[string]any { return map[string]any{"imp_user": user} }
 
 // An authorized impersonation runs with the impersonated user's privileges

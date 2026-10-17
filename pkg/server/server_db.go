@@ -1551,9 +1551,15 @@ func (s *Server) appendStatementResultWithContext(ctx context.Context, response 
 	}
 	var entityDatabase cypher.EntityDatabaseResolver
 	if s.dbManager != nil {
-		entityDatabase = cypher.NewEntityDatabaseResolver(ctx, &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName, func(database string, err error) {
+		// One attribution for the whole result, released once it is converted:
+		// each constituent is opened at most once, not once per entity.
+		attribution := cypher.NewEntityDatabaseAttribution(ctx, &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName, func(database string, err error) {
 			s.logEvent(ctx, slog.LevelError, localization.OperationStorageCleanupFailedEvent(database, err))
 		})
+		if attribution != nil {
+			defer attribution.Release()
+			entityDatabase = attribution.Resolve
+		}
 	}
 	identityState := &transactionHTTPValueState{mapKeyOrders: result.MapKeyOrders, entityDatabase: entityDatabase, entityContextBound: true}
 	for i, row := range result.Rows {
