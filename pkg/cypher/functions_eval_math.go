@@ -902,7 +902,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "polygon")
 
 		// Check if inner is a list literal [...]
-		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+		if isListLiteral(inner) {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)
@@ -944,7 +944,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "linestring")
 
 		// Check if inner is a list literal [...]
-		if strings.HasPrefix(inner, "[") && strings.HasSuffix(inner, "]") {
+		if isListLiteral(inner) {
 			// Parse and evaluate list elements manually
 			listContent := inner[1 : len(inner)-1]
 			pointExprs := e.splitFunctionArgs(listContent)

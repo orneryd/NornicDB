@@ -90,7 +90,7 @@ func vectorTypeText(coordinateType VectorCoordinateType, dimension int) string {
 func vectorItems(value interface{}) ([]interface{}, error) {
 	if text, ok := value.(string); ok {
 		trimmed := strings.TrimSpace(text)
-		if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+		if !isListLiteral(trimmed) {
 			return nil, vectorCoordinateTypeError("vector", text)
 		}
 		var items []interface{}

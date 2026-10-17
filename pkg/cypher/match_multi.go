@@ -1143,7 +1143,7 @@ func parseCartesianInListTerm(term string) (string, string, []interface{}, bool)
 	if !ok {
 		return "", "", nil, false
 	}
-	if !(strings.HasPrefix(rhs, "[") && strings.HasSuffix(rhs, "]")) {
+	if !isListLiteral(rhs) {
 		return "", "", nil, false
 	}
 	inner := strings.TrimSpace(rhs[1 : len(rhs)-1])

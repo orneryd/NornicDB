@@ -441,7 +441,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		if strings.HasPrefix(queryStr, "$") {
 			// Parameter reference - store name for later resolution
 			input.paramName = strings.TrimPrefix(queryStr, "$")
-		} else if strings.HasPrefix(queryStr, "[") {
+		} else if isListLiteral(queryStr) {
 			// Inline vector array
 			input.vector = parseInlineVector(queryStr)
 		} else if (strings.HasPrefix(queryStr, "'") && strings.HasSuffix(queryStr, "'")) ||
@@ -508,10 +508,13 @@ func splitParamsCarefully(params string) []string {
 	return result
 }
 
-// parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]
+// parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]; nil for
+// anything but one list literal.
 func parseInlineVector(s string) []float32 {
-	s = strings.TrimPrefix(s, "[")
-	s = strings.TrimSuffix(s, "]")
+	if !isListLiteral(s) {
+		return nil
+	}
+	s = s[1 : len(s)-1]
 
 	parts := strings.Split(s, ",")
 	result := make([]float32, 0, len(parts))
