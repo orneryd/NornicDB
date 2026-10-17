@@ -54,7 +54,10 @@ import (
 )
 
 // DefaultCooldowns defines standard cooldown durations per edge label.
-// These can be overridden per-table or globally.
+// These can be overridden per table (WithLabelCooldown, SetLabelCooldown).
+// Read-only: tables copy it when they are created, and nothing in NornicDB
+// writes it after package initialization; changing it at run time would race
+// with NewCooldownTable.
 var DefaultCooldowns = map[string]time.Duration{
 	"relates_to":    5 * time.Minute,
 	"similar_to":    10 * time.Minute,
@@ -404,22 +407,28 @@ func NewCooldownTableWithOptions(opts ...CooldownTableOption) *CooldownTable {
 	return ct
 }
 
-// Global singleton for convenience
-var globalCooldownTable *CooldownTable
-var globalCooldownOnce sync.Once
+// Global singleton for convenience. globalCooldownMu owns the pointer, so
+// GlobalCooldownTable and ResetGlobalCooldownTable may run concurrently.
+var (
+	globalCooldownMu    sync.Mutex
+	globalCooldownTable *CooldownTable
+)
 
 // GlobalCooldownTable returns the global cooldown table singleton.
 // Lazily initialized on first call.
 func GlobalCooldownTable() *CooldownTable {
-	globalCooldownOnce.Do(func() {
+	globalCooldownMu.Lock()
+	defer globalCooldownMu.Unlock()
+	if globalCooldownTable == nil {
 		globalCooldownTable = NewCooldownTable()
-	})
+	}
 	return globalCooldownTable
 }
 
-// ResetGlobalCooldownTable resets the global cooldown table.
-// Primarily for testing.
+// ResetGlobalCooldownTable resets the global cooldown table; the next
+// GlobalCooldownTable call creates a new one. Primarily for testing.
 func ResetGlobalCooldownTable() {
-	globalCooldownOnce = sync.Once{}
+	globalCooldownMu.Lock()
+	defer globalCooldownMu.Unlock()
 	globalCooldownTable = nil
 }

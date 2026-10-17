@@ -71,7 +71,9 @@ May add: "additional":[{"target_id":"id","type":"TYPE","conf":0.8,"reason":"why"
 
 // HeimdallFunc is the function signature for calling the SLM.
 //
-// IMPORTANT: Each call is STATELESS. No context accumulates.
+// IMPORTANT: Each call is STATELESS. No context accumulates. The engine calls
+// it without holding any inference lock, possibly from several goroutines at
+// once, so it must be safe for concurrent use.
 // Uses the SAME heimdall.Generator as Bifrost commands (in-memory llama.cpp).
 // System prompt is cached in KV, only user content varies per call.
 //

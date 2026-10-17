@@ -17,18 +17,28 @@ import (
 // every snapshot that breaks its invariants (snapshot returns "" when it
 // holds). Snapshots taken while workers update the statistics are what a
 // separately-loaded set of counters gets wrong.
+//
+// This is stress coverage: whether a snapshot lands mid-update depends on
+// scheduling. The proof that each set has one owning lock is
+// TestStatisticsSetsGoThroughTheirOwningLock; here the sampler is at least
+// running before the work starts.
 func liveSnapshots(work func(), snapshot func() string) (taken int, broken []string) {
 	var done atomic.Bool
+	started := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
-		for !done.Load() {
+		for first := true; first || !done.Load(); first = false {
 			taken++
 			if problem := snapshot(); problem != "" && len(broken) < 5 {
 				broken = append(broken, problem)
 			}
+			if first {
+				close(started)
+			}
 		}
 	}()
+	<-started
 	work()
 	done.Store(true)
 	<-finished

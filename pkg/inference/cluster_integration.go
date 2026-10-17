@@ -16,6 +16,7 @@ package inference
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -122,6 +123,10 @@ type ClusterIntegration struct {
 	// are counted in searches, which keeps the counts a consistent set.
 	searches        searchCounters
 	lastReclusterAt int64 // embedding count at last recluster
+
+	// reclusterPending makes the background recluster OnNodeUpdate starts
+	// single-flight: at most one is pending or running at a time.
+	reclusterPending atomic.Bool
 }
 
 // searchCounters counts searches. The counts are read as a set
@@ -180,12 +185,8 @@ func (c *searchCounters) snapshot() (total, clustered int64) {
 //	embConfig := gpu.DefaultEmbeddingIndexConfig(768)
 //	ci = inference.NewClusterIntegration(gpuMgr, config, kmeansConfig, embConfig)
 func NewClusterIntegration(manager *gpu.Manager, config *ClusterConfig, kmeansConfig *gpu.KMeansConfig, embConfig *gpu.EmbeddingIndexConfig) *ClusterIntegration {
-	if config == nil {
-		config = DefaultClusterConfig()
-	}
-
 	return &ClusterIntegration{
-		config:       config,
+		config:       ownClusterConfig(config),
 		clusterIndex: gpu.NewClusterIndex(manager, embConfig, kmeansConfig),
 	}
 }
@@ -339,10 +340,12 @@ func (ci *ClusterIntegration) OnNodeUpdate(nodeID string, embedding []float32) e
 	}
 
 	// Check for auto-recluster
-	if ci.config.AutoRecluster && ci.ShouldReclusterLocked() {
-		// Trigger async recluster in background
+	// Check for auto-recluster. One background recluster at a time: further
+	// updates while one is pending or running don't queue more.
+	if ci.config.AutoRecluster && ci.shouldReclusterLocked() && ci.reclusterPending.CompareAndSwap(false, true) {
 		go func() {
-			ci.Recluster()
+			defer ci.reclusterPending.Store(false)
+			_ = ci.Recluster()
 		}()
 	}
 
@@ -360,12 +363,12 @@ func (ci *ClusterIntegration) OnNodeUpdate(nodeID string, embedding []float32) e
 func (ci *ClusterIntegration) ShouldRecluster() bool {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
-	return ci.ShouldReclusterLocked()
+	return ci.shouldReclusterLocked()
 }
 
-// ShouldReclusterLocked checks without acquiring lock.
+// shouldReclusterLocked checks without acquiring lock.
 // Caller must hold ci.mu.
-func (ci *ClusterIntegration) ShouldReclusterLocked() bool {
+func (ci *ClusterIntegration) shouldReclusterLocked() bool {
 	if !ci.config.Enabled {
 		return false
 	}
@@ -442,6 +445,8 @@ type ClusterIntegrationStats struct {
 
 // IsEnabled returns whether clustering is enabled.
 func (ci *ClusterIntegration) IsEnabled() bool {
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
 	return ci.config.Enabled
 }
 
@@ -463,15 +468,29 @@ func (ci *ClusterIntegration) GetClusterIndex() *gpu.ClusterIndex {
 //
 // Changes take effect immediately for future operations.
 // Does not trigger reclustering - call Recluster() if needed.
+// The integration keeps its own copy: later changes to config have no effect.
+// A nil config restores the defaults.
 func (ci *ClusterIntegration) SetConfig(config *ClusterConfig) {
+	owned := ownClusterConfig(config)
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
-	ci.config = config
+	ci.config = owned
 }
 
-// GetConfig returns the current configuration.
+// GetConfig returns a copy of the current configuration; changing it has no
+// effect on the integration (use SetConfig).
 func (ci *ClusterIntegration) GetConfig() *ClusterConfig {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
-	return ci.config
+	return ownClusterConfig(ci.config)
+}
+
+// ownClusterConfig returns a private copy of config (the defaults for nil),
+// so the integration's config is only ever changed under ci.mu.
+func ownClusterConfig(config *ClusterConfig) *ClusterConfig {
+	if config == nil {
+		return DefaultClusterConfig()
+	}
+	owned := *config
+	return &owned
 }

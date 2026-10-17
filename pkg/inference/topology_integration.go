@@ -83,6 +83,14 @@ type TopologyConfig struct {
 
 	// ProgressCallback is called during graph building.
 	// Optional.
+	//
+	// It runs while the rebuild holds the integration's graph lock, so it must
+	// not call back into the same TopologyIntegration (that would deadlock).
+	// It cannot run after the lock is released: it reports progress during
+	// the build, and the build holds the lock so that a concurrent
+	// InvalidateCache or graph delta can't be overwritten by an older build.
+	// Running the build unlocked would need a separate build-generation
+	// protocol.
 	ProgressCallback func(processed, total int, elapsed time.Duration)
 }
 
