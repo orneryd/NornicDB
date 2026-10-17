@@ -16,7 +16,8 @@ import (
 const listMembershipSetup = `
 UNWIND range(0, 59) AS i
 CREATE (:GraphNode:Identity {id: 'id' + toString(i), name_key: 'name' + toString(i % 20),
-  alias_keys: ['alias' + toString(i), 'shared' + toString(i % 7)], current: i % 5 <> 0})
+  alias_keys: ['alias' + toString(i), 'shared' + toString(i % 7)], current: i % 5 <> 0,
+  identifier_value_keys: ['acct' + toString(i % 9), 'tax' + toString(i)]})
 WITH count(*) AS created
 CREATE (:GraphNode:Identity {id: 'scalar', name_key: 'scalar', alias_keys: 'alias3', current: true}),
        (:GraphNode:Identity {id: 'nums', alias_keys: [1, 2.5], current: true}),
@@ -27,6 +28,7 @@ CREATE (:GraphNode:Identity {id: 'scalar', name_key: 'scalar', alias_keys: 'alia
 var listMembershipIndexes = []string{
 	"CREATE INDEX identity_alias_keys FOR (n:Identity) ON (n.alias_keys)",
 	"CREATE INDEX identity_name_key FOR (n:Identity) ON (n.name_key)",
+	"CREATE INDEX identity_identifier_value_keys FOR (n:Identity) ON (n.identifier_value_keys)",
 	"CREATE INDEX identity_id FOR (n:Identity) ON (n.id)",
 }
 
@@ -52,6 +54,9 @@ var listMembershipQueries = []string{
 	"WITH $keys AS scopes MATCH (n:Identity) WHERE any(id IN coalesce(n.alias_keys, []) WHERE id IN scopes) WITH n ORDER BY n.id DESC LIMIT 3 RETURN n.id",
 	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(a IN n.alias_keys WHERE a IN $names) RETURN n.id ORDER BY n.id",
 	"WITH 'alias3' AS k MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN [k]) RETURN n.id ORDER BY n.id",
+	// The downstream mention-match shape over stored keys.
+	"MATCH (i:GraphNode:Identity) WHERE coalesce(i.current, true) AND (i.id IN $ids OR i.name_key IN $names OR any(a IN i.alias_keys WHERE a IN $names) OR any(v IN i.identifier_value_keys WHERE v IN $values)) RETURN i.id ORDER BY i.id",
+	"MATCH (i:Identity) WHERE any(v IN i.identifier_value_keys WHERE v IN $values) RETURN i.id ORDER BY i.id",
 	"MATCH (n:Identity) WHERE $x IN n.alias_keys AND n.current RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.current AND any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
@@ -81,6 +86,7 @@ func listMembershipParams() map[string]interface{} {
 		"ids":      []interface{}{"id11", "id12"},
 		"names":    []interface{}{"name7"},
 		"name":     "name8",
+		"values":   []interface{}{"acct3", "tax17", "nothing"},
 	}
 }
 
@@ -161,13 +167,14 @@ func TestListMembershipSeekUsesIndex(t *testing.T) {
 			require.Len(t, hidden, 1)
 			// id3's aliases are ['alias3', 'shared3']: hide them from the alias index.
 			require.NoError(t, schema.PropertyIndexDelete("Identity", "alias_keys", hidden[0], []interface{}{"alias3", "shared3"}))
+			require.NoError(t, schema.PropertyIndexDelete("Identity", "identifier_value_keys", hidden[0], []interface{}{"acct3", "tax3"}))
 			exec.ClearQueryCaches()
 			if explicit {
 				_, err := exec.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
 			}
-			params := map[string]interface{}{"x": "alias3", "keys": []interface{}{"alias3", "alias5"}, "ids": []interface{}{"id9"}}
+			params := map[string]interface{}{"x": "alias3", "keys": []interface{}{"alias3", "alias5"}, "ids": []interface{}{"id9"}, "values": []interface{}{"acct3"}}
 			rows := func(query string) [][]interface{} {
 				t.Helper()
 				result, err := exec.Execute(ctx, query, params)
@@ -181,6 +188,7 @@ func TestListMembershipSeekUsesIndex(t *testing.T) {
 				{"MATCH (n:Identity) WHERE $x IN n.alias_keys RETURN n.id ORDER BY n.id", nil},
 				{"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN $keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
+				{"MATCH (n:Identity) WHERE any(v IN n.identifier_value_keys WHERE v IN $values) RETURN n.id ORDER BY n.id", [][]interface{}{{"id12"}, {"id21"}, {"id30"}, {"id39"}, {"id48"}, {"id57"}}},
 				{"WITH $keys AS scopes MATCH (n:Identity) WHERE any(k IN coalesce(n.alias_keys, []) WHERE k IN scopes) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}, {"id9"}}},
 				{"MATCH (n:Identity) WHERE (n.id IN $ids OR $x IN n.alias_keys) AND n.current RETURN n.id ORDER BY n.id", [][]interface{}{{"id9"}}},
