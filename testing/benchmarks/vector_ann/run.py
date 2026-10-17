@@ -111,6 +111,14 @@ def go_build_settings(binary):
     return settings
 
 
+def quantization_title(title, oversampling):
+    """Describe the effective rescoring factor, including tagged variants."""
+    if oversampling is None:
+        return title
+    return re.sub(r"\b\d+(?:\.\d+)?(?:e[+-]?\d+)?x oversampling\b",
+                  f"{oversampling:g}x oversampling", title)
+
+
 def dir_bytes(path: Path) -> int:
     """Bytes allocated on disk under path. Both engines preallocate sparse files (Badger's value log,
     Qdrant's WAL), so apparent file sizes overstate what is stored."""
@@ -421,6 +429,7 @@ def run_one(engine, mode, args, vectors, queries, truth):
     mode = {**mode, "base_mode": mode["name"]}
     if args.tag:
         mode = {**mode, "name": f"{mode['name']}+{args.tag}", "title": f"{mode['title']} [{args.tag}]"}
+    mode = {**mode, "title": quantization_title(mode["title"], getattr(args, "quantization_oversampling", None))}
     if engine.mode_key == "nornic" and args.nornic_env:
         mode = {**mode, "nornic": {**mode["nornic"], **dict(kv.split("=", 1) for kv in args.nornic_env)}}
     data_dir = Path(tempfile.mkdtemp(prefix=f"{engine.name}-{mode['name']}-", dir=args.data_root))
@@ -563,6 +572,10 @@ def main():
         "harness_commit": commit,
         "checkout_dirty": bool(subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout),
     }
+    if "nornicdb" in args.engines.split(","):
+        build = args.provenance["nornic_build_settings"]
+        if not build.get("vcs.revision") or build.get("vcs.modified") not in ("true", "false"):
+            raise RuntimeError("NornicDB benchmark binary lacks embedded VCS revision/status; rebuild with go build -buildvcs=true in a Git checkout. If a worktree omits VCS information, build from a regular clone.")
     import report
     (args.out / "environment.json").write_text(json.dumps({
         "nornic_version": version([args.nornic_bin, "version"]), "nornic_commit": args.provenance["nornic_build_settings"].get("vcs.revision", "unknown"),

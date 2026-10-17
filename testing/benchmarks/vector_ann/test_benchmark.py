@@ -217,3 +217,60 @@ class QuantizationContracts(unittest.TestCase):
             mode = next(m for m in run.MODES if m["name"] == name)
             for engine in (run.NornicEngine(args), run.QdrantEngine(args)):
                 self.assertEqual(8, engine.search_params(mode, 128).quantization.oversampling)
+
+class QuantizationEvidenceContracts(unittest.TestCase):
+    def test_unstamped_binary_cannot_start_a_nornic_benchmark(self):
+        import numpy as np
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root/"corpus"
+            corpus.mkdir()
+            np.save(corpus/"vectors.npy", np.array([[1, 0]], dtype=np.float32))
+            np.save(corpus/"queries.npy", np.array([[1, 0]], dtype=np.float32))
+            np.save(corpus/"truth.npy", np.array([[0]], dtype=np.int64))
+            (corpus/"meta.json").write_text("{}")
+            binary = root/"binary"
+            binary.write_text("fixture")
+            argv = ["run.py", "--corpus", str(corpus), "--out", str(root/"out"),
+                    "--data-root", str(root/"data"), "--nornic-bin", str(binary),
+                    "--qdrant-bin", str(binary), "--engines", "nornicdb", "--modes", "exact", "--queries", "1", "--k", "1"]
+            with patch.object(sys, "argv", argv), \
+                    patch.object(run.subprocess, "run", return_value=SimpleNamespace(stdout="binary: go1.26.6\n\tbuild\tCGO_ENABLED=1\n")), \
+                    patch.object(report, "machine", return_value="fixture"), \
+                    patch.object(run, "run_one") as start:
+                with self.assertRaisesRegex(RuntimeError, "embedded VCS"):
+                    run.main()
+                start.assert_not_called()
+
+    def test_runner_caption_uses_explicit_rescoring_factor(self):
+        import numpy as np
+        class StopBeforeStartup:
+            name, mode_key = "nornicdb", "nornic"
+            server = None
+            def start(self, mode, data_dir, log):
+                self.mode = mode
+                raise RuntimeError("stop before startup")
+            def close(self):
+                pass
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            args = type("Args", (), dict(tag="rescore8", nornic_env=[], data_root=root, out=root,
+                                         keep_data=False, quantization_oversampling=8))()
+            engine = StopBeforeStartup()
+            mode = next(m for m in run.MODES if m["name"] == "bq")
+            with self.assertRaisesRegex(RuntimeError, "stop before startup"):
+                run.run_one(engine, mode, args, np.ones((2, 2)), None, None)
+            self.assertIn("8x oversampling", engine.mode["title"])
+            self.assertNotIn("2x oversampling", engine.mode["title"])
+
+    def test_report_caption_uses_recorded_parameters_without_rewriting_raw_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            raw = dict(engine="nornicdb", mode="bq+rescore8", title="binary (2x oversampling) [rescore8]",
+                       runs=[dict(hnsw_ef=None, search_params=dict(quantization=dict(rescore=True, oversampling=8)))])
+            path = root/"result.json"
+            path.write_text(json.dumps(raw))
+            displayed = report.load(root)[("nornicdb", "bq+rescore8")]
+            self.assertIn("8x oversampling", displayed["title"])
+            self.assertEqual(raw, json.loads(path.read_text()))
