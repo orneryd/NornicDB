@@ -1,0 +1,142 @@
+Checked product source: cd5e02461285bbedca6b42454b78e93c737cd9cf
+Product base: f2ddd27cfae3788076778a0a0d48c827df046a3b
+All commands below exited 0.
+
+go test ./pkg/search ./pkg/qdrantgrpc ./pkg/simd -count=1
+# github.com/orneryd/nornicdb/pkg/qdrantgrpc.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/search	171.733s
+ok  	github.com/orneryd/nornicdb/pkg/qdrantgrpc	3.353s
+ok  	github.com/orneryd/nornicdb/pkg/simd	1.512s
+
+
+CGO_ENABLED=0 go test ./pkg/simd -count=1
+ok  	github.com/orneryd/nornicdb/pkg/simd	0.312s
+
+
+go test -race ./pkg/simd ./pkg/search -run 'TestDotProductNormalizedBlockBoundaries|TestANNPublicBuildUsesNamedVectorLexicalSeeds|TestHNSWLexicalSeedsFollowVectorIdentity|TestHNSWSearchUsesLexicalEntryPointsToReachDisconnectedRegions' -count=1
+ok  	github.com/orneryd/nornicdb/pkg/simd	1.332s
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/search	1.673s
+
+
+go vet ./pkg/simd ./pkg/search ./pkg/qdrantgrpc
+
+
+.venv-ann/bin/python -m unittest discover -s testing/benchmarks/vector_ann -p test_*.py
+....== nornicdb / exact: Exact (brute force)
+== nornicdb / exact: Exact (brute force)
+.......
+----------------------------------------------------------------------
+Ran 11 tests in 0.059s
+
+OK
+wrote /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmprd5a3itm/comparison.md
+
+
+GOFLAGS=-count=1 make test
+Exit 0; fresh results, no cached package results. Target filters individual test/skip output.
+lint-slog: PASS (LOG-09 + LOG-01 gates clean)
+lint-cardinality: PASS (MET-04 helper-only registration enforced)
+# pipefail propagates `go test`'s real exit through the grep filter,
+# so a test failure still fails the make target even though grep
+# strips most of the noise. `go test ./...` always emits at least one
+# `ok` or `FAIL` line per package, so grep never returns 1 in
+# practice — pipefail's status is `go test`'s status.
+ok  	github.com/orneryd/nornicdb/apoc	0.309s
+ok  	github.com/orneryd/nornicdb/apoc/atomic	0.497s
+ok  	github.com/orneryd/nornicdb/apoc/bitwise	0.772s
+ok  	github.com/orneryd/nornicdb/apoc/coll	1.186s
+ok  	github.com/orneryd/nornicdb/apoc/community	0.970s
+ok  	github.com/orneryd/nornicdb/apoc/date	1.385s
+ok  	github.com/orneryd/nornicdb/apoc/diff	1.587s
+ok  	github.com/orneryd/nornicdb/apoc/hashing	1.994s
+ok  	github.com/orneryd/nornicdb/apoc/json	1.789s
+ok  	github.com/orneryd/nornicdb/apoc/refactor	2.192s
+ok  	github.com/orneryd/nornicdb/apoc/warmup	2.401s
+ok  	github.com/orneryd/nornicdb/apoc/xml	2.639s
+ok  	github.com/orneryd/nornicdb/cmd/metrics-doc-gen	2.221s
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb	16.660s
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb-admin	1.975s
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb-snowball	7.629s
+ok  	github.com/orneryd/nornicdb/cmd/oauth-provider	1.837s
+ok  	github.com/orneryd/nornicdb/cmd/recall-bench	2.451s
+ok  	github.com/orneryd/nornicdb/cmd/swagger-ui	2.468s
+ok  	github.com/orneryd/nornicdb/pkg/adminimport	3.197s
+ok  	github.com/orneryd/nornicdb/pkg/audit	3.064s
+ok  	github.com/orneryd/nornicdb/pkg/auth	12.562s
+ok  	github.com/orneryd/nornicdb/pkg/bolt	52.775s
+ok  	github.com/orneryd/nornicdb/pkg/buildinfo	3.050s
+ok  	github.com/orneryd/nornicdb/pkg/cache	3.403s
+ok  	github.com/orneryd/nornicdb/pkg/compliance	3.437s
+ok  	github.com/orneryd/nornicdb/pkg/config	3.463s
+ok  	github.com/orneryd/nornicdb/pkg/config/dbconfig	3.700s
+ok  	github.com/orneryd/nornicdb/pkg/convert	3.014s
+ok  	github.com/orneryd/nornicdb/pkg/cypher	89.853s
+ok  	github.com/orneryd/nornicdb/pkg/cypher/antlr	4.301s
+ok  	github.com/orneryd/nornicdb/pkg/cypher/fn	0.541s
+ok  	github.com/orneryd/nornicdb/pkg/cypher/internal/text	1.905s
+ok  	github.com/orneryd/nornicdb/pkg/cypher/testutil	2.740s
+ok  	github.com/orneryd/nornicdb/pkg/embed	0.963s
+ok  	github.com/orneryd/nornicdb/pkg/embeddingutil	3.926s
+ok  	github.com/orneryd/nornicdb/pkg/encryption	3.316s
+ok  	github.com/orneryd/nornicdb/pkg/envutil	4.144s
+ok  	github.com/orneryd/nornicdb/pkg/errors	4.640s
+ok  	github.com/orneryd/nornicdb/pkg/eval	4.588s
+ok  	github.com/orneryd/nornicdb/pkg/eval/ir	5.186s
+ok  	github.com/orneryd/nornicdb/pkg/fabric	5.284s
+ok  	github.com/orneryd/nornicdb/pkg/filter	4.716s
+ok  	github.com/orneryd/nornicdb/pkg/gpu	4.249s
+ok  	github.com/orneryd/nornicdb/pkg/gpu/cuda	3.905s
+ok  	github.com/orneryd/nornicdb/pkg/gpu/metal	3.600s
+ok  	github.com/orneryd/nornicdb/pkg/gpu/opencl	3.559s
+ok  	github.com/orneryd/nornicdb/pkg/gpu/vulkan	3.646s
+ok  	github.com/orneryd/nornicdb/pkg/graphql	4.880s
+ok  	github.com/orneryd/nornicdb/pkg/graphql/models	4.500s
+ok  	github.com/orneryd/nornicdb/pkg/graphql/resolvers	9.299s
+ok  	github.com/orneryd/nornicdb/pkg/heimdall	25.967s
+ok  	github.com/orneryd/nornicdb/pkg/indexing	4.842s
+ok  	github.com/orneryd/nornicdb/pkg/inference	6.343s
+ok  	github.com/orneryd/nornicdb/pkg/internal/plugintest	5.199s
+ok  	github.com/orneryd/nornicdb/pkg/kms	16.058s
+ok  	github.com/orneryd/nornicdb/pkg/knowledgepolicy	6.275s
+ok  	github.com/orneryd/nornicdb/pkg/lifecycle	6.142s
+ok  	github.com/orneryd/nornicdb/pkg/linkpredict	5.466s
+ok  	github.com/orneryd/nornicdb/pkg/localization	7.743s
+ok  	github.com/orneryd/nornicdb/pkg/localization/internal/oslocale	3.577s
+ok  	github.com/orneryd/nornicdb/pkg/localllm	3.061s
+ok  	github.com/orneryd/nornicdb/pkg/math/angle	2.302s
+ok  	github.com/orneryd/nornicdb/pkg/math/libm	1.916s
+ok  	github.com/orneryd/nornicdb/pkg/math/vector	2.089s
+ok  	github.com/orneryd/nornicdb/pkg/mcp	5.357s
+ok  	github.com/orneryd/nornicdb/pkg/multidb	3.582s
+ok  	github.com/orneryd/nornicdb/pkg/nornicdb	102.032s
+ok  	github.com/orneryd/nornicdb/pkg/nornicgrpc	6.568s
+ok  	github.com/orneryd/nornicdb/pkg/observability	8.103s
+ok  	github.com/orneryd/nornicdb/pkg/pool	4.658s
+ok  	github.com/orneryd/nornicdb/pkg/qdrantgrpc	7.647s
+ok  	github.com/orneryd/nornicdb/pkg/replication	81.350s
+ok  	github.com/orneryd/nornicdb/pkg/resultstream	4.711s
+ok  	github.com/orneryd/nornicdb/pkg/retention	2.584s
+ok  	github.com/orneryd/nornicdb/pkg/search	197.395s
+ok  	github.com/orneryd/nornicdb/pkg/search/stemmer	2.684s
+ok  	github.com/orneryd/nornicdb/pkg/security	2.473s
+ok  	github.com/orneryd/nornicdb/pkg/server	191.504s
+ok  	github.com/orneryd/nornicdb/pkg/simd	4.600s
+ok  	github.com/orneryd/nornicdb/pkg/storage	113.418s
+ok  	github.com/orneryd/nornicdb/pkg/storage/lifecycle	7.614s
+ok  	github.com/orneryd/nornicdb/pkg/temporal	7.154s
+ok  	github.com/orneryd/nornicdb/pkg/textchunk	6.741s
+ok  	github.com/orneryd/nornicdb/pkg/txsession	6.157s
+ok  	github.com/orneryd/nornicdb/pkg/util	2.494s
+ok  	github.com/orneryd/nornicdb/pkg/vectorspace	2.420s
+ok  	github.com/orneryd/nornicdb/pkg/voyage	3.006s
+ok  	github.com/orneryd/nornicdb/plugins/heimdall	3.408s
+ok  	github.com/orneryd/nornicdb/scripts/localization_inventory	1.959s
+ok  	github.com/orneryd/nornicdb/testing	5.257s
+ok  	github.com/orneryd/nornicdb/testing/benchmarks/northwind_power	3.060s
+ok  	github.com/orneryd/nornicdb/testing/cypher/differential	2.632s
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	5.856s
