@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -51,13 +52,22 @@ func (s *PointsService) openCollection(ctx context.Context, name string) (storag
 	return engine, meta, nil
 }
 
-func (s *PointsService) getSearchService(ctx context.Context, database string, store storage.Engine) (*search.Service, error) {
+func (s *PointsService) getSearchService(ctx context.Context, database string, store storage.Engine, metadata *CollectionMeta) (*search.Service, error) {
 	if s.searchProvider == nil {
 		return nil, nil
 	}
 	svc, err := s.searchProvider(database, store)
 	if err != nil {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
+	}
+	if svc != nil && metadata != nil && metadata.Quantization != nil {
+		cfg, configErr := searchQuantizationConfig(metadata.Quantization)
+		if configErr == nil {
+			configErr = svc.ConfigureHNSWQuantization(ctx, cfg)
+		}
+		if configErr != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(configErr))
+		}
 	}
 	return svc, nil
 }
@@ -192,7 +202,7 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 	}
 
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -280,11 +290,11 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -392,6 +402,12 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 		ef = int(raw)
 	}
 
+	if q := req.GetParams().GetQuantization(); q != nil && q.Oversampling != nil {
+		value := q.GetOversampling()
+		if value < 1 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationOversampling())
+		}
+	}
 	minSimilarity := float64(-1)
 	if req.ScoreThreshold != nil {
 		minSimilarity = float64(*req.ScoreThreshold)
@@ -408,11 +424,11 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
-	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef, req.GetParams().GetExact())
+	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef, req.GetParams().GetExact(), req.GetParams().GetQuantization())
 	if err != nil {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
 	}
@@ -689,7 +705,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -749,11 +765,11 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("vectors.names"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -847,6 +863,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 	}
 
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         queryVec,
 		Filter:         req.Filter,
@@ -928,6 +945,7 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 
 	// Oversample then group.
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         req.Vector,
 		Filter:         req.Filter,
@@ -1324,7 +1342,7 @@ func indexPoint(searchSvc *search.Service, node *storage.Node) error {
 //
 // ef is the request's hnsw_ef (0 for the index's configured ef, see
 // qdrantSearchEf); minScore < 0 means no score_threshold.
-func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int, exact bool) ([]searchResult, error) {
+func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int, exact bool, quantization *qpb.QuantizationSearchParams) ([]searchResult, error) {
 	if searchSvc == nil {
 		return nil, nil
 	}
@@ -1332,6 +1350,12 @@ func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.D
 		vectorName = "default"
 	}
 	opts := &search.SearchOptions{HNSWEf: qdrantSearchEf(ef, limit+offset)}
+	if quantization != nil {
+		q := quantization
+		opts.QuantizationIgnore = q.GetIgnore()
+		opts.QuantizationRescore = q.Rescore
+		opts.QuantizationOversampling = q.GetOversampling()
+	}
 	if filter != nil {
 		opts.Where = func(node *storage.Node) bool { return matchesFilter(node, filter) }
 	}

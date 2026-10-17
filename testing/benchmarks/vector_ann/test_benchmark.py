@@ -182,3 +182,38 @@ class ProvenanceContracts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class QuantizationContracts(unittest.TestCase):
+    def test_both_engines_request_identical_quantization_search_parameters(self):
+        for name in ("sq-int8", "pq-x4", "pq-x8", "pq-x16", "pq-x32", "pq-x64", "bq", "bq-asym4", "bq-asym8"):
+            mode = next(m for m in run.MODES if m["name"] == name)
+            self.assertIn("nornic", mode)
+            self.assertIsNotNone(run.quantization_config(mode))
+            for ef in (None, 16, 512):
+                self.assertEqual(run.NornicEngine(None).search_params(mode, ef),
+                                 run.QdrantEngine(None).search_params(mode, ef))
+
+    def test_pending_or_uncompressed_mode_cannot_publish_compressed_result(self):
+        args = type("Args", (), dict(nornic_gpu=False))()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"server.log"
+            engine = run.NornicEngine(args)
+            engine.log_path = path
+            engine.effective_settings = {}
+            for name, strategy in (("sq-int8", "HNSW scalar int8 (1028 encoded bytes)"),
+                                   ("pq-x16", "HNSW PQ x16 (4352 encoded bytes)"),
+                                   ("bq", "HNSW binary (128 encoded bytes)")):
+                mode = next(m for m in run.MODES if m["name"] == name)
+                for invalid in ("HNSW", "HNSW (quantization pending)"):
+                    path.write_text(f"Vector search strategy: {invalid} (N=1000 vectors)\n")
+                    with self.assertRaises(RuntimeError):
+                        engine.describe(mode)
+                path.write_text(f"Vector search strategy: {strategy} (N=1000 vectors)\n")
+                self.assertEqual(strategy, engine.describe(mode))
+
+    def test_rescoring_variant_is_applied_to_both_engines(self):
+        args = type("Args", (), dict(quantization_oversampling=8))()
+        for name in ("sq-int8", "pq-x16", "bq", "bq-asym8"):
+            mode = next(m for m in run.MODES if m["name"] == name)
+            for engine in (run.NornicEngine(args), run.QdrantEngine(args)):
+                self.assertEqual(8, engine.search_params(mode, 128).quantization.oversampling)

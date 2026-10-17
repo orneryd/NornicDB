@@ -189,7 +189,7 @@ func TestSearch_SharedIndex_VectorSearchDisabledReturnsNoHits(t *testing.T) {
 
 func mustSearchCollection(t *testing.T, ctx context.Context, svc *search.Service, dist qpb.Distance, vectorName string, query []float32, filter *qpb.Filter, limit, offset int, minScore float64, ef int) []searchResult {
 	t.Helper()
-	results, err := searchCollection(ctx, svc, dist, vectorName, query, filter, limit, offset, minScore, ef, false)
+	results, err := searchCollection(ctx, svc, dist, vectorName, query, filter, limit, offset, minScore, ef, false, nil)
 	require.NoError(t, err)
 	return results
 }

@@ -205,7 +205,7 @@ func ivfpqTrainPQCodebooks(ctx context.Context, training [][]float32, centroids 
 				vectors = append(vectors, append([]float32(nil), vectors[rng.Intn(len(vectors))]...))
 			}
 		}
-		centers, err := ivfpqTrainKMeans(ctx, vectors, codewords, profile.KMeansMaxIterations, rng)
+		centers, err := ivfpqTrainPQCodebook(ctx, vectors, codewords, profile.KMeansMaxIterations, rng)
 		if err != nil {
 			return nil, err
 		}
@@ -215,6 +215,16 @@ func ivfpqTrainPQCodebooks(ctx context.Context, training [][]float32, centroids 
 }
 
 func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand) ([][]float32, error) {
+	return trainVectorKMeans(ctx, vectors, k, maxIter, rng, true)
+}
+
+// Product encoding chooses Euclidean codewords. Normalizing its subvectors
+// during training discards magnitude, especially for small PQ chunks.
+func ivfpqTrainPQCodebook(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand) ([][]float32, error) {
+	return trainVectorKMeans(ctx, vectors, k, maxIter, rng, false)
+}
+
+func trainVectorKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, rng *rand.Rand, spherical bool) ([][]float32, error) {
 	if len(vectors) == 0 {
 		return nil, fmt.Errorf("no vectors for kmeans")
 	}
@@ -243,18 +253,26 @@ func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, 
 	}
 
 	assign := make([]int, len(vectors))
-	vectorNorm := make([][]float32, len(vectors))
-	for i := range vectors {
-		vectorNorm[i] = vector.Normalize(vectors[i])
+	var vectorNorm, centroidNorm [][]float32
+	if spherical {
+		vectorNorm = make([][]float32, len(vectors))
+		for i := range vectors {
+			vectorNorm[i] = vector.Normalize(vectors[i])
+		}
+		centroidNorm = normalizeCentroids(centroids)
 	}
-	centroidNorm := normalizeCentroids(centroids)
 	for iter := 0; iter < maxIter; iter++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		changed := false
 		for i := range vectors {
-			best := nearestCentroidIndexFromNormalized(vectorNorm[i], centroidNorm)
+			best := 0
+			if spherical {
+				best = nearestCentroidIndexFromNormalized(vectorNorm[i], centroidNorm)
+			} else {
+				best = nearestPQCodeword(vectors[i], centroids)
+			}
 			if assign[i] != best {
 				assign[i] = best
 				changed = true
@@ -284,9 +302,26 @@ func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, 
 				centroids[c][d] = float32(sums[c][d] / float64(counts[c]))
 			}
 		}
-		centroidNorm = normalizeCentroids(centroids)
+		if spherical {
+			centroidNorm = normalizeCentroids(centroids)
+		}
 	}
 	return centroids, nil
+}
+
+func nearestPQCodeword(v []float32, centers [][]float32) int {
+	best, bestDistance := 0, float32(math.Inf(1))
+	for k, center := range centers {
+		var distance float32
+		for d, x := range v {
+			delta := x - center[d]
+			distance += delta * delta
+		}
+		if distance < bestDistance {
+			best, bestDistance = k, distance
+		}
+	}
+	return best
 }
 
 func encodePQResidual(vec []float32, centroid []float32, codebooks []ivfpqCodebook) []byte {
