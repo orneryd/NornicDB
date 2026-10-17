@@ -6383,9 +6383,11 @@ func (s *Service) replayHNSWBuildRaces(built *HNSWIndex) {
 	s.hnswMu.RLock()
 	current := s.servingHNSW() == built
 	s.hnswMu.RUnlock()
-	if current {
+	// Only a replay that changes the graph is a publication: with nothing
+	// raced, the installed graph already serves the current vectors.
+	if pending := s.hnswRebuildOverlay.snapshot(); current && (len(pending.Vectors) > 0 || len(pending.Tombstones) > 0) {
 		s.publishVectorServing(func() {
-			if err := applyHNSWMutationSnapshot(built, s.hnswRebuildOverlay.snapshot()); err != nil {
+			if err := applyHNSWMutationSnapshot(built, pending); err != nil {
 				s.logPrintf("⚠️ HNSW: replaying the vectors stored during the build failed: %v", err)
 			}
 		}, false)
