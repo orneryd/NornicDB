@@ -1,0 +1,4 @@
+== nornicdb / pq-x64: HNSW + product quantization x64 (rescore)
+Memory snapshot bench-data/vector_ann/profiling/quant-memory-current/case-5 {'pid': 3007, 'params': 'hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 1\n}\n', 'rss_before_gc': 3418832896, 'instrumented': True, 'rss_after_gc': 3420438528, 'vmmap-summary.txt_exit': 0, 'vmmap-resident.txt_exit': 0}
+   preset beam      recall@10 0.8571  p50   0.527 ms  p95   0.582 ms    9754.7 qps
+   load 12.9s (6813/s), index ready 37.2s, disk 1631 MB, RSS 3420 MB, strategy: HNSW PQ x64 (6690496 encoded bytes)
