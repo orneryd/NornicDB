@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
-	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,7 +66,9 @@ func TestExplicitTransaction_UsesEffectiveGraphForAuthorization(t *testing.T) {
 	firstErr, ok := errs[0].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", firstErr["code"])
-	require.Equal(t, (&cypher.PermissionDeniedError{Permission: "read"}).StatusMessage(), firstErr["message"])
+	// "private" is outside the role's allowlist: the selection itself is
+	// refused, before its read permission.
+	require.Equal(t, "Access to database 'private' is not allowed.", firstErr["message"])
 }
 
 func TestInlineShellUseExecutesStatementAndChecksDatabase(t *testing.T) {

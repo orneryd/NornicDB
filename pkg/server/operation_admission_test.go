@@ -13,12 +13,12 @@ import (
 func TestHTTPDirectOperationContractsAndScope(t *testing.T) {
 	expected := map[string]httpOperation{
 		"decay.info":     {cypher.PrivilegeRead, false},
-		"embed.trigger":  {cypher.PrivilegeRead | cypher.PrivilegeWrite | cypher.PrivilegeSharedState, true},
+		"embed.trigger":  {cypher.PrivilegeRead | cypher.PrivilegeWrite, true},
 		"embed.stats":    {cypher.PrivilegeRead, true},
 		"embed.failures": {cypher.PrivilegeRead, true},
-		"embed.retry":    {cypher.PrivilegeRead | cypher.PrivilegeWrite | cypher.PrivilegeSharedState, true},
+		"embed.retry":    {cypher.PrivilegeRead | cypher.PrivilegeWrite, true},
 		"embed.target":   {cypher.PrivilegeWrite, false},
-		"search.rebuild": {cypher.PrivilegeRead | cypher.PrivilegeSharedState, false},
+		"search.rebuild": {cypher.PrivilegeRead | cypher.PrivilegeWrite, false},
 		"gdpr.export":    {cypher.PrivilegeRead, false},
 		"gdpr.delete":    {cypher.PrivilegeRead | cypher.PrivilegeWrite, false},
 		"status":         {cypher.PrivilegeRead, true},

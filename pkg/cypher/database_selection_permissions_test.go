@@ -29,7 +29,8 @@ func TestDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 					if database != route.database {
 						return true
 					}
-					return permission == "read" && access.read || permission == "write" && access.write
+					// The database is selectable; only its read and write vary.
+					return permission == "access" || permission == "read" && access.read || permission == "write" && access.write
 				})
 				for _, statement := range []string{
 					"CREATE (:Loaded)",
@@ -75,7 +76,8 @@ func TestFabricDatabaseSelectionUsesFragmentPermissions(t *testing.T) {
 				if database != "pother" {
 					return true
 				}
-				return permission == "read" && access.read || permission == "write" && access.write
+				// The database is selectable; only its read and write vary.
+				return permission == "access" || permission == "read" && access.read || permission == "write" && access.write
 			})
 			for _, prefix := range []string{"USE pcomp.other ", "USE graph.byName('pcomp.other') ", ":USE pcomp.other\n"} {
 				result, err := exec.Execute(ctx, prefix+"CREATE (:Loaded)", nil)

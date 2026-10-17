@@ -124,6 +124,9 @@ func (r *heimdallDBRouter) cachedExecutor(dbName string) *cypher.StorageExecutor
 // yet the database's search service or embed queue (finishExecutor).
 func (r *heimdallDBRouter) newExecutor(engine storage.Engine) *cypher.StorageExecutor {
 	exec := cypher.NewStatementExecutor(engine)
+	// Every router executor is shared once published, as the HTTP server's
+	// are, so a reusable USE target it routes to is published too.
+	exec.SetSharedExecutor(true)
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)

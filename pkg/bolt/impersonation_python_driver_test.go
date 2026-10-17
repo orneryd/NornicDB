@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -40,7 +41,7 @@ func TestBoltImpersonationOfficialPythonDriver(t *testing.T) {
 	}
 	f := newImpersonationFixture(t)
 	for _, user := range []string{"alice936", "writer936", "bob936", "walled936"} {
-		f.grant("svc", user, false)
+		f.grant("svc", auth.ImpersonateUser(user), false)
 	}
 	base, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)

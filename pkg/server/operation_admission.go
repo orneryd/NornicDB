@@ -14,14 +14,17 @@ type httpOperation struct {
 
 // Direct operations have no Cypher statement to classify. Their registration
 // declares the actual effect; policy is still owned by cypher.AdmitOperation.
+// Waking the embedding worker, retrying its failures and rebuilding a search
+// index keep the write privilege their routes have always required; clearing
+// or regenerating embeddings stays admin-only in its handler.
 var httpOperationClasses = map[string]httpOperation{
 	"decay.info":     {cypher.PrivilegeRead, false},
-	"embed.trigger":  {cypher.PrivilegeRead | cypher.PrivilegeWrite | cypher.PrivilegeSharedState, true},
+	"embed.trigger":  {cypher.PrivilegeRead | cypher.PrivilegeWrite, true},
 	"embed.stats":    {cypher.PrivilegeRead, true},
 	"embed.failures": {cypher.PrivilegeRead, true},
-	"embed.retry":    {cypher.PrivilegeRead | cypher.PrivilegeWrite | cypher.PrivilegeSharedState, true},
+	"embed.retry":    {cypher.PrivilegeRead | cypher.PrivilegeWrite, true},
 	"embed.target":   {cypher.PrivilegeWrite, false},
-	"search.rebuild": {cypher.PrivilegeRead | cypher.PrivilegeSharedState, false},
+	"search.rebuild": {cypher.PrivilegeRead | cypher.PrivilegeWrite, false},
 	"gdpr.export":    {cypher.PrivilegeRead, false},
 	"gdpr.delete":    {cypher.PrivilegeRead | cypher.PrivilegeWrite, false},
 	"status":         {cypher.PrivilegeRead, true},

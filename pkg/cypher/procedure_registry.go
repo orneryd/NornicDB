@@ -80,9 +80,11 @@ type ProcedureSpec struct {
 }
 
 // writes reports whether a call of the procedure changes the database: its
-// data (WRITE) or its schema (SCHEMA).
+// data or its schema, by its declared mode (WRITE, SCHEMA) or its privilege
+// class. Planning and write ordering use it; it is not an authorization
+// decision, so either source makes the call a write.
 func (s ProcedureSpec) writes() bool {
-	return s.Privilege.Has(PrivilegeWrite | PrivilegeSchema)
+	return s.Mode == ProcedureModeWrite || s.Mode == ProcedureModeSchema || s.Privilege.Has(PrivilegeWrite|PrivilegeSchema)
 }
 
 // ProcedureMetadataRenderer renders localized procedure metadata for a request context.

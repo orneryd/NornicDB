@@ -1544,17 +1544,17 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedStats(rec, req)
+	server.handleEmbedStats(rec, as(req, "admin"))
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedTrigger(rec, req)
+	server.handleEmbedTrigger(rec, as(req, "admin"))
 	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError}, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedTrigger(rec, req)
+	server.handleEmbedTrigger(rec, as(req, "admin"))
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusServiceUnavailable}, rec.Code)
 
 	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil)
@@ -3153,11 +3153,18 @@ func TestDatabaseInfoAndExecuteInTxAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
 
-	// handleDatabaseInfo not found.
+	// handleDatabaseInfo not found, for a principal whose scope includes it.
 	req := httptest.NewRequest(http.MethodGet, "/db/missing", nil)
 	rec := httptest.NewRecorder()
-	server.handleDatabaseInfo(rec, req, "missing")
+	server.handleDatabaseInfo(rec, as(req, "admin"), "missing")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	// Without one, a missing name is refused like an existing one, so the
+	// response doesn't tell which databases exist.
+	req = httptest.NewRequest(http.MethodGet, "/db/missing", nil)
+	rec = httptest.NewRecorder()
+	server.handleDatabaseInfo(rec, req, "missing")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	// handleDatabaseInfo forbidden with no claims.
 	req = httptest.NewRequest(http.MethodGet, "/db/"+dbName, nil)

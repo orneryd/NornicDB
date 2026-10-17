@@ -120,7 +120,7 @@ func TestStorageExecutorEnforcesQueryPermissions(t *testing.T) {
 
 func TestDatabasePermissionResolverFollowsExecutionDatabase(t *testing.T) {
 	ctx := WithDatabasePermissionResolver(context.Background(), "writable", func(database, permission string) bool {
-		return permission == "read" || permission == "write" && database == "writable"
+		return permission == "access" || permission == "read" || permission == "write" && database == "writable"
 	})
 	require.NoError(t, AuthorizeQuery(ctx, "CREATE (:Allowed)"))
 

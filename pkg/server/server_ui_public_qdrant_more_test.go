@@ -107,7 +107,7 @@ func TestPublicHandlers_AdditionalCoverage(t *testing.T) {
 	server.db.SetEmbedder(&countingEmbedder{dims: 16})
 	statusReq := httptest.NewRequest(http.MethodGet, "/status", nil)
 	statusRec := httptest.NewRecorder()
-	server.handleStatus(statusRec, statusReq)
+	server.handleStatus(statusRec, as(statusReq, "admin"))
 	require.Equal(t, http.StatusOK, statusRec.Code)
 	require.Contains(t, statusRec.Body.String(), `"embeddings"`)
 }
@@ -187,6 +187,6 @@ func TestPublicHandleStatus_CanceledContextReturnsEarly(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
-	server.handleStatus(rec, req)
+	server.handleStatus(rec, as(req, "admin"))
 	require.Equal(t, "", rec.Body.String())
 }

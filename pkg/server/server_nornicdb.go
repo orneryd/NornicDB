@@ -133,11 +133,11 @@ func targetNames(targets []embedTarget) []string {
 }
 
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
-	if !s.admitHTTPOperation(w, r, "embed.trigger", "") {
-		return
-	}
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
+		return
+	}
+	if !s.admitHTTPOperation(w, r, "embed.trigger", "") {
 		return
 	}
 
@@ -308,11 +308,11 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailures lists durable terminal embedding failures without
 // returning node properties or embedding vectors.
 func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
-	if !s.admitHTTPOperation(w, r, "embed.failures", "") {
-		return
-	}
 	if r.Method != http.MethodGet {
 		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
+		return
+	}
+	if !s.admitHTTPOperation(w, r, "embed.failures", "") {
 		return
 	}
 	limit := 100
@@ -339,11 +339,11 @@ func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailureRetry restores selected terminal failures to the durable
 // pending queue. An empty request body or node_ids list retries all failures.
 func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request) {
-	if !s.admitHTTPOperation(w, r, "embed.retry", "") {
-		return
-	}
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
+		return
+	}
+	if !s.admitHTTPOperation(w, r, "embed.retry", "") {
 		return
 	}
 	var request struct {

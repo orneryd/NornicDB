@@ -1134,16 +1134,17 @@ type NotificationPos struct {
 // handleImplicitTransaction executes statements in an implicit transaction.
 // This is the main query endpoint: POST /db/{dbName}/tx/commit
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
+	// A malformed body is reported first: reading it touches no database.
+	var req TransactionRequest
+	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
+		s.writeNeo4jInvalidTransactionBody(w, r, err)
+		return
+	}
 	if err := s.admitGraph(getClaims(r), dbName); err != nil {
 		s.writeJSON(w, http.StatusOK, TransactionResponse{
 			Results: make([]QueryResult, 0),
 			Errors:  []QueryError{statementError(err)},
 		})
-		return
-	}
-	var req TransactionRequest
-	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
-		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
 

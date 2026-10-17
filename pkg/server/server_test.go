@@ -2335,19 +2335,19 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		// Embed stats when auto-embed is disabled (nil stats branch).
 		req := httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
 		rec := httptest.NewRecorder()
-		server.handleEmbedStats(rec, req)
+		server.handleEmbedStats(rec, as(req, "admin"))
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		// Enable embedder then check enabled stats branch.
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 		req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
 		rec = httptest.NewRecorder()
-		server.handleEmbedStats(rec, req)
+		server.handleEmbedStats(rec, as(req, "admin"))
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		req = httptest.NewRequest(http.MethodGet, "/nornicdb/decay", nil)
 		rec = httptest.NewRecorder()
-		server.handleDecay(rec, req)
+		server.handleDecay(rec, as(req, "admin"))
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
@@ -4550,7 +4550,7 @@ func TestDbConfigStatusAndHeimdallRoutes_AdditionalBranches(t *testing.T) {
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/status", nil)
 	statusRec := httptest.NewRecorder()
-	server.handleStatus(statusRec, statusReq)
+	server.handleStatus(statusRec, as(statusReq, "admin"))
 	require.Equal(t, http.StatusOK, statusRec.Code)
 	require.Contains(t, statusRec.Body.String(), "\"database\"")
 
@@ -4762,7 +4762,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
 		rec = httptest.NewRecorder()
-		server.handleEmbedTrigger(rec, req)
+		server.handleEmbedTrigger(rec, as(req, "admin"))
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(enriched.Context())
@@ -4794,7 +4794,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		cancel()
 		triggerReq := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil).WithContext(ctx)
 		triggerRec := httptest.NewRecorder()
-		server.handleEmbedTrigger(triggerRec, triggerReq)
+		server.handleEmbedTrigger(triggerRec, as(triggerReq, "admin"))
 		require.Equal(t, http.StatusOK, triggerRec.Code)
 	})
 
