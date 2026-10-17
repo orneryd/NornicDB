@@ -498,3 +498,26 @@ func TestSimilarityRowsRemoteIDsAsGiven(t *testing.T) {
 		map[string]interface{}{"nodeId": "b", "weight": 0.5}, map[string]interface{}{"nodeId": "y", "weight": 0.5},
 	}, shared.Rows[0][3])
 }
+
+func TestSimilarityRowsLocalNodeSourceStaysLocal(t *testing.T) {
+	// A stored node absent from the rows is no source, even when a remote
+	// node's elementId equals its id: only an id string may name a remote
+	// node.
+	rows := []interface{}{
+		map[string]interface{}{"source": storage.RemoteEntityValue{"elementId": "a", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}, "thing": "x"},
+		map[string]interface{}{"source": "b", "thing": "x"},
+	}
+	local := &storage.Node{ID: "a"}
+	for _, source := range []interface{}{local, []interface{}{local}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source}})
+		require.NoError(t, err)
+		require.Empty(t, result.Rows, "sourceNode=%v", source)
+	}
+	// The id string still names the remote node.
+	for _, source := range []interface{}{"a", []interface{}{"a"}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source}})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1, "sourceNode=%v", source)
+		require.Equal(t, []interface{}{"b", 1.0}, result.Rows[0][1:3], "sourceNode=%v", source)
+	}
+}
