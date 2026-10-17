@@ -83,23 +83,26 @@ ORDER BY name`, body, pipeline)
 // The node lookup takes one labelled node pattern with a map, whose variable
 // the row doesn't bind; it declines any other body.
 func TestBoundNodeLookupShape(t *testing.T) {
-	for body, ok := range map[string]bool{
-		"MATCH (s:S {id: o.ref})":                       true,
-		"MATCH (s:S {id: o.ref}) WHERE s.n > 1":         true,
-		"MATCH (:S:T {id: $p, n: 1})":                   true,
-		"MATCH (s:S {id: o.ref}) RETURN s":              false,
-		"MATCH (s {id: o.ref})":                         false,
-		"MATCH (s:S)":                                   false,
-		"MATCH (s:S|T {id: o.ref})":                     false,
-		"MATCH (s:S {id: o.ref})-[:R]->(t)":             false,
-		"MATCH (s:S {id: o.ref}), (t:S {id: o.ref})":    false,
-		"MATCH p = (s:S {id: o.ref})":                   false,
-		"MATCH (s:S WHERE s.n > 1 {id: o.ref})":         false,
-		"MATCH (s:S {id: o.ref, id: 1})":                false,
-		"OPTIONAL MATCH (s:S {id: o.ref})":              false,
-		"MATCH (s:S {id: o.ref}) WITH s WHERE s.n > 1": false,
+	for _, test := range []struct {
+		body string
+		ok   bool
+	}{
+		{"MATCH (s:S {id: o.ref})", true},
+		{"MATCH (s:S {id: o.ref}) WHERE s.n > 1", true},
+		{"MATCH (:S:T {id: $p, n: 1})", true},
+		{"MATCH (s:S {id: o.ref}) RETURN s", false},
+		{"MATCH (s {id: o.ref})", false},
+		{"MATCH (s:S)", false},
+		{"MATCH (s:S|T {id: o.ref})", false},
+		{"MATCH (s:S {id: o.ref})-[:R]->(t)", false},
+		{"MATCH (s:S {id: o.ref}), (t:S {id: o.ref})", false},
+		{"MATCH p = (s:S {id: o.ref})", false},
+		{"MATCH (s:S WHERE s.n > 1 {id: o.ref})", false},
+		{"MATCH (s:S {id: o.ref, id: 1})", false},
+		{"OPTIONAL MATCH (s:S {id: o.ref})", false},
+		{"MATCH (s:S {id: o.ref}) WITH s WHERE s.n > 1", false},
 	} {
-		require.Equal(t, ok, parseBoundNodeShape(body).ok, body)
+		require.Equal(t, test.ok, parseBoundNodeShape(test.body).ok, test.body)
 	}
 	exec := boundNodeLookupGraph(t)
 	o, err := exec.storage.GetNode("o0")
