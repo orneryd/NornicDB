@@ -379,7 +379,13 @@ type hnswBuildGraphSnapshot struct {
 // a build batch, parallel across queries. The HNSW build uses it when no GPU is
 // enabled or available.
 type CPUHNSWBuildAccelerator struct {
-	dim int
+	dim     int
+	scratch sync.Pool
+}
+
+type cpuHNSWBuildScratch struct {
+	query      []float32
+	candidates []hnswCandidateDistance
 }
 
 // NewCPUHNSWBuildAccelerator creates a CPU implementation of the build
@@ -404,9 +410,23 @@ func (a *CPUHNSWBuildAccelerator) CandidateSearch(ctx context.Context, queries [
 	outDist := make([][]float32, len(queries))
 	err := parallelOver(ctx, len(queries), func(qi int) {
 		q := queries[qi]
-		normalized := append([]float32(nil), q...)
+		scratch, _ := a.scratch.Get().(*cpuHNSWBuildScratch)
+		if scratch == nil {
+			scratch = &cpuHNSWBuildScratch{}
+		}
+		defer a.scratch.Put(scratch)
+		if cap(scratch.query) < len(q) {
+			scratch.query = make([]float32, len(q))
+		} else {
+			scratch.query = scratch.query[:len(q)]
+		}
+		normalized := scratch.query
+		copy(normalized, q)
 		vector.NormalizeInPlace(normalized)
-		cands := make([]hnswCandidateDistance, 0, len(frontier))
+		if cap(scratch.candidates) < len(frontier) {
+			scratch.candidates = make([]hnswCandidateDistance, 0, len(frontier))
+		}
+		cands := scratch.candidates[:0]
 		for i, f := range frontier {
 			if len(f) != a.dim {
 				continue
