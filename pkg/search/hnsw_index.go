@@ -56,7 +56,7 @@ type HNSWConfig struct {
 	LevelMultiplier           float64 // Level multiplier = 1/ln(M)
 	UseGPUBuild               bool    // Attempt GPU-assisted construction when available
 	GPUBuildBatchSize         int     // Number of vectors per GPU construction batch
-	GPUBuildCandidateK        int     // Number of GPU nearest-neighbor candidates per vector
+	GPUBuildCandidateK        int     // Minimum GPU candidate depth (at least M and EfConstruction)
 	GPUBuildDistancePrecision string  // Distance precision for GPU build kernels (currently fp32)
 }
 
@@ -1335,10 +1335,13 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 
 			if results.Len() < ef || dist < results.Peek().dist {
 				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				results.Push(hnswDistItem{id: neighborID, dist: dist})
-
-				if results.Len() > ef {
-					_ = results.Pop()
+				if results.Len() < ef {
+					results.Push(hnswDistItem{id: neighborID, dist: dist})
+				} else {
+					// A full beam admits only a closer item. Replace its worst
+					// member with one downward sift instead of push then pop.
+					results.items[0] = hnswDistItem{id: neighborID, dist: dist}
+					results.siftDown(0)
 				}
 			}
 		}

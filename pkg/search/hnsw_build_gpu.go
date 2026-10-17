@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +42,7 @@ type HNSWGraphBuildAccelerator interface {
 // inserted vectors from one scoring pass, with nothing re-uploaded. A graph
 // search (HNSWGraphBuildAccelerator) uploads the vectors of each round's
 // candidates instead, which dominates a large build. ResidentReady reports
-// whether the device holds the buffer; when it does not, the build uses the
+// whether the device is prepared to retain inserted vectors; otherwise the build uses the
 // accelerator's graph search.
 type HNSWResidentBuildAccelerator interface {
 	ResidentReady() bool
@@ -91,8 +92,8 @@ func candidateSearchGraphBatched[A gpuBuildCandidateSearcher](ctx context.Contex
 // candidateSearchGraphGroup runs one group's beam search over the build graph.
 // Each round expands the beam nodes not expanded yet (their level-0
 // neighbours join the candidates), scores every query against the group's
-// candidates and keeps each query's closest beamWidth, until no beam changes or
-// after NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS rounds. Each query's result is its
+// candidates and keeps each query's closest beamWidth until all retained nodes
+// have been expanded. A fixed round cap can truncate a still-improving search. Each query's result is its
 // beam cut to topK, equal distances ordered by lexical closeness to the query.
 // offset is the group's first query within graph.querySeeds.
 func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context, a A, queries [][]float32, graph *hnswBuildGraphSnapshot, offset int, topK int) ([][]uint32, [][]float32, error) {
@@ -101,14 +102,16 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		beamWidth = topK
 	}
 	beamWidth = min(beamWidth, 256)
-	rounds := envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS", 16)
-	if rounds <= 0 {
-		rounds = 16
-	}
 	unionMax := envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX", 16384)
 	if unionMax <= 0 {
 		unionMax = 16384
 	}
+
+	maxDegree := 0
+	for _, neighbors := range graph.neighbors {
+		maxDegree = max(maxDegree, len(neighbors))
+	}
+	unionMax = max(unionMax, len(queries)*beamWidth+maxDegree)
 
 	beams := make([][]uint32, len(queries))
 	dists := make([][]float32, len(queries))
@@ -117,7 +120,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		beams[qi] = graph.seedsForQuery(offset+qi, beamWidth)
 		expanded[qi] = make(map[uint32]struct{}, beamWidth*2)
 	}
-	for round := 0; round < rounds; round++ {
+	for {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
@@ -129,7 +132,6 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		if err != nil {
 			return nil, nil, err
 		}
-		changed := false
 		for qi := range localIdx {
 			next := make([]uint32, 0, len(localIdx[qi]))
 			nextDist := make([]float32, 0, len(localIdx[qi]))
@@ -142,13 +144,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 					nextDist = append(nextDist, localDist[qi][i])
 				}
 			}
-			if !sameCandidateSet(beams[qi], next) {
-				changed = true
-			}
 			beams[qi], dists[qi] = next, nextDist
-		}
-		if !changed {
-			break
 		}
 	}
 	for qi := range beams {
@@ -165,22 +161,6 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 		}
 	}
 	return beams, dists, nil
-}
-
-func sameCandidateSet(a, b []uint32) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	set := make(map[uint32]struct{}, len(a))
-	for _, id := range a {
-		set[id] = struct{}{}
-	}
-	for _, id := range b {
-		if _, ok := set[id]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // seedsForQuery is query qi's starting beam: its own seeds (level-0 entry
@@ -251,6 +231,11 @@ func (g *hnswBuildGraphSnapshot) expandBeams(beams [][]uint32, expanded []map[ui
 			}
 			id := beam[rank]
 			if _, done := expanded[qi][id]; done {
+				continue
+			}
+			// Leave this node for the next round if its complete adjacency list
+			// cannot fit. Never mark a partly explored node as expanded.
+			if int(id) < len(g.neighbors) && len(out)+len(g.neighbors[id]) > limit {
 				continue
 			}
 			expanded[qi][id] = struct{}{}
@@ -392,9 +377,9 @@ type MetalHNSWBuildAccelerator struct {
 	scoresCap int
 }
 
-// metalResidentScoreFloats bounds the score matrix of one scoring call
+// hnswBuildScoreFloats bounds each backend's score matrix for one scoring call
 // (queries × vectors), 256 MB; queries are split to fit.
-const metalResidentScoreFloats = 64 << 20
+const hnswBuildScoreFloats = 64 << 20
 
 // NewMetalHNSWBuildAccelerator creates a Metal-backed HNSW build accelerator.
 func NewMetalHNSWBuildAccelerator() (*MetalHNSWBuildAccelerator, error) {
@@ -554,7 +539,7 @@ func (a *MetalHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries
 
 // scoreTopK scores queries against the first frontierN normalized vectors of
 // frontier: one Metal Performance Shaders matrix product per chunk of queries
-// (the score matrix bounded by metalResidentScoreFloats), then each query's
+// (the score matrix bounded by hnswBuildScoreFloats), then each query's
 // topK picked on the CPU from the score matrix in shared memory, in parallel.
 // Results are closest first with cosine distances; equal scores keep the lower
 // index.
@@ -565,7 +550,7 @@ func (a *MetalHNSWBuildAccelerator) scoreTopK(ctx context.Context, frontier *met
 	if topK <= 0 {
 		return outIdx, outDist, ctx.Err()
 	}
-	chunk := max(1, min(len(queries), metalResidentScoreFloats/frontierN))
+	chunk := max(1, min(len(queries), hnswBuildScoreFloats/frontierN))
 	var flat []float32
 	for start := 0; start < len(queries); start += chunk {
 		if err := ctx.Err(); err != nil {
@@ -805,6 +790,19 @@ func (g *hnswBuildGraphSnapshot) vectorsForInternalIDs(ids []uint32) [][]float32
 // preference and returns the first one that initializes successfully.
 // Falls back to CPU if no GPU backend is available.
 func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
+	// Explicit selection is also used by the cross-backend benchmark. An
+	// unavailable selected device reaches the existing CPU fallback, rather
+	// than silently substituting another GPU backend.
+	switch strings.ToLower(envutil.Get("NORNICDB_GPU_BACKEND", "")) {
+	case "cpu":
+		return NewCPUHNSWBuildAccelerator(), nil
+	case "cuda":
+		return NewCudaHNSWBuildAccelerator()
+	case "vulkan":
+		return NewVulkanHNSWBuildAccelerator()
+	case "metal":
+		return NewMetalHNSWBuildAccelerator()
+	}
 	// Try CUDA first (NVIDIA GPUs)
 	if accel, err := NewCudaHNSWBuildAccelerator(); err == nil {
 		logSearchPrintf("[HNSW] Using CUDA GPU accelerator")
@@ -895,7 +893,7 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 		built.SetVectorLookup(lookup)
 	}
 	stats := hnswBuildStats{Strategy: "batch_parallel", Backend: fmt.Sprintf("%T", accel)}
-	ef := max(config.EfConstruction, config.M)
+	ef := max(config.GPUBuildCandidateK, config.EfConstruction, config.M)
 	bands := newLexicalBandIndex()
 	signatures := make(map[uint32]uint64)
 	resident, onDevice := accel.(HNSWResidentBuildAccelerator)

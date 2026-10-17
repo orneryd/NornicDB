@@ -94,10 +94,10 @@ func TestCandidateSearchGraphKernel_Orchestration(t *testing.T) {
 	require.Equal(t, idx[0], idx[1])
 	require.Equal(t, idx[0], idx[2])
 
-	// Three queries with group size 2 -> two groups; at most
-	// NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS (2) local searches per group.
+	// Three queries with group size 2 run in two groups and finish exploring
+	// the retained beam, independently of the obsolete round cap.
 	require.NotEmpty(t, fake.callFrontierLens)
-	require.LessOrEqual(t, len(fake.callFrontierLens), 4)
+	require.LessOrEqual(t, len(fake.callFrontierLens), 2*len(graph.vectors))
 }
 
 // A query's own seeds (graph.querySeeds: its level-0 entry point, lexical
@@ -132,4 +132,22 @@ func TestCandidateSearchGraphKernel_Cancellation(t *testing.T) {
 
 	_, _, err := candidateSearchGraphBatched(cancelled, &fakeGpuCandidateSearcher{}, [][]float32{{0.5, 0.5}}, graph, 2)
 	require.Error(t, err)
+}
+
+// A build may need more expansion rounds than the tuning hint. Returning a
+// partially explored beam silently changes construction quality on every GPU.
+func TestCandidateSearchGraphKernelFinishesLongDescent(t *testing.T) {
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS", "1")
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_BEAM_WIDTH", "1")
+	g := &hnswBuildGraphSnapshot{dim: 2, hasEntryPoint: true, seen: make([]uint32, 40)}
+	for i := 0; i < 40; i++ {
+		g.vectors = append(g.vectors, []float32{float32(i) / 40, 1})
+		g.neighbors = append(g.neighbors, nil)
+		if i < 39 {
+			g.neighbors[i] = []uint32{uint32(i + 1)}
+		}
+	}
+	ids, _, err := candidateSearchGraphBatched(context.Background(), exactGraphBuildAccelerator{}, [][]float32{{1, 0}}, g, 1)
+	require.NoError(t, err)
+	require.Equal(t, [][]uint32{{39}}, ids)
 }

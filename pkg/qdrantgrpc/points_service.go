@@ -51,15 +51,15 @@ func (s *PointsService) openCollection(ctx context.Context, name string) (storag
 	return engine, meta, nil
 }
 
-func (s *PointsService) getSearchService(database string, store storage.Engine) *search.Service {
+func (s *PointsService) getSearchService(ctx context.Context, database string, store storage.Engine) (*search.Service, error) {
 	if s.searchProvider == nil {
-		return nil
+		return nil, nil
 	}
 	svc, err := s.searchProvider(database, store)
 	if err != nil {
-		return nil
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
 	}
-	return svc
+	return svc, nil
 }
 
 // Only text requests capture a provider. The owner keeps the same binding when
@@ -192,6 +192,11 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 	}
 
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(nodesToCreate) > 0 {
 		if err := store.BulkCreateNodes(nodesToCreate); err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err))
@@ -203,7 +208,6 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 	}
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
 	for _, node := range append(nodesToCreate, nodesToUpdate...) {
 		if err := indexPoint(searchSvc, node); err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
@@ -280,7 +284,10 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.Points)
 	if err != nil {
@@ -399,8 +406,11 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
-	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	if err != nil {
+		return nil, err
+	}
+	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef, req.GetParams().GetExact())
 	if err != nil {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
 	}
@@ -677,7 +687,10 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, pv := range req.Points {
 		if pv == nil || pv.Id == nil || pv.Vectors == nil {
@@ -738,7 +751,10 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.PointsSelector)
 	if err != nil {
@@ -1068,6 +1084,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 			ReadConsistency:  req.ReadConsistency,
 			ShardKeySelector: req.ShardKeySelector,
 			Timeout:          req.Timeout,
+			Params:           req.Params,
 		})
 		if err != nil {
 			return nil, err
@@ -1293,9 +1310,6 @@ func indexPoint(searchSvc *search.Service, node *storage.Node) error {
 	if searchSvc == nil {
 		return nil
 	}
-	if err := searchSvc.RemoveNode(node.ID); err != nil {
-		return err
-	}
 	return searchSvc.IndexNode(node)
 }
 
@@ -1308,7 +1322,7 @@ func indexPoint(searchSvc *search.Service, node *storage.Node) error {
 //
 // ef is the request's hnsw_ef (0 for the index's configured ef, see
 // qdrantSearchEf); minScore < 0 means no score_threshold.
-func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int) ([]searchResult, error) {
+func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int, exact bool) ([]searchResult, error) {
 	if searchSvc == nil {
 		return nil, nil
 	}
@@ -1325,6 +1339,7 @@ func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.D
 		Similarity: similarityName(dist),
 		Limit:      limit + offset,
 		ScoreScale: search.VectorScoreSimilarity,
+		Exact:      exact,
 	}, opts)
 	if err != nil {
 		return nil, err

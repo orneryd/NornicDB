@@ -97,7 +97,7 @@
   other: "Vector build trigger: startup or lazy. Default: startup."
 - id: nornicdbcli.flag.gpu_backend
   description: GPU backend flag help. Backend names are machine values.
-  other: "GPU backend: vulkan, cuda, metal, opencl (empty=auto-detect)"
+  other: "GPU backend: cpu (disabled), vulkan, cuda, metal, opencl (empty=auto-detect)"
 - id: nornicdbcli.flag.no_auth
   description: Authentication disablement flag help.
   other: Disable authentication
