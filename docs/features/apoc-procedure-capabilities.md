@@ -2,7 +2,10 @@
 
 The Go APOC library catalog contains 983 names. Its historical list of 118
 procedure-only entries is **excluded from the optional plugin's scalar function
-exports**; the plugin exports the other 865 entries. Removing a false function
+exports**; the other 865 entries are scalar functions. Of those, the plugin
+exports 818: the 47 the query engine has built in (pkg/cypher's function
+catalog) are left to the built-ins, so a loaded plugin doesn't override them
+(`apoc.PluginFunctionNames`). Removing a false function
 declaration does not implement its `CALL` procedure. Genuine scalar functions,
 including `apoc.math.sigmoid`, remain function exports and are not promoted to
 procedures.

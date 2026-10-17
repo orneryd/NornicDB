@@ -2,7 +2,11 @@
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/orneryd/nornicdb/apoc"
+)
 
 func TestAPOCPluginSeparatesProceduresFromFunctions(t *testing.T) {
 	functions := Plugin.Functions()
@@ -11,9 +15,26 @@ func TestAPOCPluginSeparatesProceduresFromFunctions(t *testing.T) {
 			t.Errorf("procedure %s must not be exported as scalar function", name)
 		}
 	}
-	for _, name := range []string{"apoc.math.sigmoid", "apoc.text.camelCase", "apoc.coll.sum"} {
+	for _, name := range []string{"apoc.math.sigmoid", "apoc.text.camelCase", "apoc.coll.sumLongs"} {
 		if _, exists := functions[name]; !exists {
 			t.Errorf("genuine function %s must remain exported", name)
+		}
+	}
+}
+
+// The plugin doesn't export a function the query engine has built in: a
+// loaded plugin function would override the built-in (apoc.map.removeKeys's
+// handler turns a null map into {}, where the built-in fails the call).
+func TestAPOCPluginLeavesBuiltInFunctionsToTheEngine(t *testing.T) {
+	functions := Plugin.Functions()
+	for name := range functions {
+		if apoc.IsBuiltInFunction(name) {
+			t.Errorf("built-in function %s must not be exported", name)
+		}
+	}
+	for _, name := range []string{"apoc.map.removeKeys", "apoc.map.removeKey", "apoc.coll.sum", "apoc.node.id"} {
+		if _, exists := functions[name]; exists {
+			t.Errorf("built-in function %s must not be exported", name)
 		}
 	}
 }
