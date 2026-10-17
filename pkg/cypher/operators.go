@@ -689,6 +689,16 @@ func (e *StorageExecutor) splitByOperator(expr, op string) []string {
 // Arithmetic Helper Functions
 // ========================================
 
+// appendListOperand appends what list + value adds to a list: a list
+// value's elements, any other value itself (value is not null). add and
+// reduce's in-place fold (reduceAppendPlan) both append through it.
+func appendListOperand(list []interface{}, value interface{}) []interface{} {
+	if items, isList := toInterfaceSlice(value); isList {
+		return append(list, items...)
+	}
+	return append(list, value)
+}
+
 // add handles addition including date + duration.
 //
 // This function supports:
@@ -733,17 +743,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// - scalar + list
 	leftList, leftIsList := toInterfaceSlice(left)
 	rightList, rightIsList := toInterfaceSlice(right)
-	if leftIsList && rightIsList {
-		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), len(rightList)))
-		out = append(out, leftList...)
-		out = append(out, rightList...)
-		return out
-	}
 	if leftIsList {
-		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), 1))
-		out = append(out, leftList...)
-		out = append(out, right)
-		return out
+		size := 1
+		if rightIsList {
+			size = len(rightList)
+		}
+		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), size))
+		return appendListOperand(append(out, leftList...), right)
 	}
 	if rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
