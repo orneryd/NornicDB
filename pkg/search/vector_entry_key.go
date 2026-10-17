@@ -123,8 +123,8 @@ func decodeVectorEntryKey(key string) (entry vectorEntry, ok bool) {
 		}
 		return vectorEntry{NodeID: nodeID, Kind: kind}, true
 	case vectorEntryChunk:
-		chunk, err := strconv.Atoi(sub)
-		if err != nil || chunk < 1 || strconv.Itoa(chunk) != sub {
+		chunk, ok := parseVectorEntryChunk(sub)
+		if !ok {
 			return vectorEntry{}, false
 		}
 		return vectorEntry{NodeID: nodeID, Kind: kind, Chunk: chunk}, true
@@ -132,6 +132,22 @@ func decodeVectorEntryKey(key string) (entry vectorEntry, ok bool) {
 		return vectorEntry{NodeID: nodeID, Kind: kind, Name: sub}, true
 	}
 	return vectorEntry{}, false
+}
+
+// parseVectorEntryChunk accepts only the form nodeChunkVectorKey writes: a
+// decimal index of at least 1, with no sign and no leading zero. It does not
+// allocate, so decoding results stays allocation-free for long documents.
+func parseVectorEntryChunk(sub string) (int, bool) {
+	if sub == "" || sub[0] == '0' {
+		return 0, false
+	}
+	for i := 0; i < len(sub); i++ {
+		if sub[i] < '0' || sub[i] > '9' {
+			return 0, false
+		}
+	}
+	chunk, err := strconv.Atoi(sub) // fails only on overflow
+	return chunk, err == nil
 }
 
 // vectorEntryOwner returns the node a vector-entry key belongs to.
