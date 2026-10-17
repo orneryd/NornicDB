@@ -26,6 +26,8 @@ func queryTextFromContext(ctx context.Context) string {
 	return strings.TrimSpace(v)
 }
 
+// clearClusterLexicalProfiles retires the routing profiles; callers hold
+// clusterStateMu, which owns the cluster generation.
 func (s *Service) clearClusterLexicalProfiles() {
 	s.clusterLexicalMu.Lock()
 	s.clusterLexicalProfiles = make(map[int]map[string]float64)
