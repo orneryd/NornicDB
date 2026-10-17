@@ -13,6 +13,8 @@ import platform
 import subprocess
 from pathlib import Path
 
+from run import quantization_title
+
 ENGINES = ("nornicdb", "qdrant")
 LABEL = {"nornicdb": "NornicDB", "qdrant": "Qdrant"}
 
@@ -23,6 +25,8 @@ def load(results_dir: Path):
         data = json.loads(path.read_text())
         if "engine" not in data or "mode" not in data:  # environment.json, corpus.json
             continue
+        factor = data["runs"][0].get("search_params", {}).get("quantization", {}).get("oversampling")
+        data["title"] = quantization_title(data["title"], factor)
         runs[(data["engine"], data["mode"])] = data
     return runs
 

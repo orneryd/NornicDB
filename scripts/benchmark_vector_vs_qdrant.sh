@@ -92,7 +92,7 @@ RUN_WORK="$(mktemp -d "${WORK_DIR}/run-XXXXXX")"
 
 log "building NornicDB (noui, nolocalllm)"
 NORNIC_BIN="${RUN_WORK}/nornicdb"
-go build -tags "${VECTOR_GO_TAGS:-noui nolocalllm}" -o "${NORNIC_BIN}" ./cmd/nornicdb
+go build -buildvcs=true -tags "${VECTOR_GO_TAGS:-noui nolocalllm}" -o "${NORNIC_BIN}" ./cmd/nornicdb
 
 QDRANT_BIN="${RUN_WORK}/qdrant"
 log "verifying Qdrant ${QDRANT_VERSION} (${QDRANT_ASSET})"
