@@ -93,7 +93,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				// to inspect the resolved IDs after the public build completed.
 				svc.applyBM25SeedHints()
 				require.Len(t, preferredSeedsForTest(t, svc.clusterIndex), 2, "BM25 document seeds must reach their named embeddings")
-				require.Len(t, svc.clusterLexicalProfiles, 2)
+				require.Len(t, svc.clusterGen.profiles, 2)
 			} else {
 				require.NotNil(t, svc.hnswIndex)
 				ranked := lexicalHintValues(svc.hnswBuildLexicalSeedHints(svc.fulltext(), svc.hnswIndex.Config().M))
