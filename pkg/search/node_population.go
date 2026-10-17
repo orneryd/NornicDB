@@ -32,6 +32,9 @@ type nodeSourceRecord struct {
 	memoryAuthoritative     bool
 	fulltextCheckpoint      string
 	fulltextCheckpointCount int
+	// unpopulatedLiveWrites: live writes applied while the sources were
+	// incomplete and no population ran. Persistence then populates first.
+	unpopulatedLiveWrites bool
 }
 
 type nodeSourceChange uint8
@@ -60,6 +63,7 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 		s.nodeSources.vectorsComplete = true
 	case nodePopulationAdmitted:
 		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
+		s.nodeSources.unpopulatedLiveWrites = false
 		if s.vectorFileStore == nil {
 			s.nodeSources.memoryAuthoritative = true
 		}
@@ -132,7 +136,9 @@ func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
 	close(job.done)
 }
 
-func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
+// awaitNodeAdmission waits for the running population job and returns its
+// outcome. A live write never starts or runs a population.
+func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 	ctx := s.lifecycleCtx
 	if ctx == nil {
 		ctx = context.Background()
@@ -142,19 +148,14 @@ func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
 		return ctx.Err()
 	case <-job.done:
 		return job.err
-	case <-s.buildMu.token():
-		defer s.buildMu.Unlock()
-		select {
-		case <-job.done:
-			return job.err
-		default:
-		}
-		return s.runBasePopulationOperation(ctx, job, false)
 	}
 }
 
-// lockNodeMutation admits the initial population before ANY mutation-side
-// effect. On success the caller owns indexMu and must call the returned release.
+// lockNodeMutation admits a live write. While a build populates the node
+// sources the write waits for it; otherwise it applies at once, also before
+// any population (the build that follows rebuilds or restores around it). A
+// write never starts or runs a population. On success the caller owns indexMu
+// and must call the returned release.
 // Private node/edge batch writers never enter this public boundary.
 func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 	for {
@@ -176,7 +177,10 @@ func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 			}
 		}
 		s.baseBuildControlMu.Unlock()
-		if !pending && s.nodeSourcesCompleteLocked() {
+		if !pending {
+			if !s.nodeSourcesCompleteLocked() {
+				s.nodeSources.unpopulatedLiveWrites = true
+			}
 			if err := s.materializeNodeFulltextLocked(); err != nil {
 				s.indexMu.Unlock()
 				return nil, err
@@ -206,7 +210,7 @@ func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 				}
 			}
 			s.baseBuildControlMu.Unlock()
-			if pending || !s.nodeSourcesCompleteLocked() {
+			if pending {
 				s.indexMu.Unlock()
 				resume()
 				continue
@@ -223,11 +227,8 @@ func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 			s.indexMu.Unlock()
 			return nil, ErrSearchIndexBuilding
 		}
-		if !pending {
-			job = s.claimNodeAdmission()
-		}
 		s.indexMu.Unlock()
-		if err := s.waitOrRunNodeAdmission(job); err != nil {
+		if err := s.awaitNodeAdmission(job); err != nil {
 			return nil, err
 		}
 	}
@@ -402,4 +403,37 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		return nil
 	}
 	return s.completeBaseIndexBuild(ctx)
+}
+
+// nodePopulationForPersist reports whether a persist outside a population may
+// write the indexes; that needs complete node sources. A service no build
+// populated keeps its saved artifacts untouched, unless live writes were
+// applied to it: persisting those needs the node population first, which this
+// persist (not a live write) then runs. When a build or a pause holds the base
+// operation it skips, as before.
+func (s *Service) nodePopulationForPersist(ctx context.Context) bool {
+	if s.nodePopulationCanPersist() {
+		return true
+	}
+	s.indexMu.RLock()
+	wrote := s.nodeSources.unpopulatedLiveWrites
+	s.indexMu.RUnlock()
+	if !wrote || (s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil) {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-s.buildMu.token():
+		err := s.runBasePopulationOperation(ctx, s.claimNodeAdmission(), false)
+		s.buildMu.Unlock()
+		if err != nil {
+			s.logPrintf("📇 Persist: preserving unopened indexes; node population failed: %v", err)
+			return false
+		}
+		return s.nodePopulationCanPersist()
+	default:
+		return false
+	}
 }

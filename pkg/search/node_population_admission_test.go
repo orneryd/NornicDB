@@ -203,7 +203,7 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 			writeDone, writerID := make(chan error, 1), make(chan string, 1)
 			go func() { writerID <- serviceTestGoroutineID(); writeDone <- svc.IndexNode(b) }()
 			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "waitOrRunNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
 			releaseSource()
 			select {
 			case <-graphStarted:
@@ -277,7 +277,7 @@ func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
 				mutationDone <- svc.IndexNode(admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named"))
 			}()
 			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "waitOrRunNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
 			closed := make(chan error, 1)
 			if closeOwner {
 				go func() { closed <- svc.Close() }()
