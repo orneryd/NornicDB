@@ -49,7 +49,6 @@ import (
 	"github.com/orneryd/nornicdb/apoc/storage"
 	"github.com/orneryd/nornicdb/apoc/temporal"
 	"github.com/orneryd/nornicdb/apoc/text"
-	"github.com/orneryd/nornicdb/apoc/trigger"
 	"github.com/orneryd/nornicdb/apoc/util"
 	"github.com/orneryd/nornicdb/apoc/warmup"
 	"github.com/orneryd/nornicdb/apoc/xml"
@@ -1020,34 +1019,6 @@ func registerAllFunctions() error {
 	register("apoc.temporal.weekOfYear", "temporal", temporal.WeekOfYear, "Week of year", []string{"apoc.temporal.weekOfYear(datetime) => 3"})
 	register("apoc.temporal.isLeapYear", "temporal", temporal.IsLeapYear, "Is leap year", []string{"apoc.temporal.isLeapYear(datetime) => bool"})
 	register("apoc.temporal.daysInMonth", "temporal", temporal.DaysInMonth, "Days in month", []string{"apoc.temporal.daysInMonth(datetime) => 31"})
-
-	// ========================================
-	// Trigger Functions (apoc.trigger.*)
-	// ========================================
-	register("apoc.trigger.add", "trigger", trigger.Add, "Add trigger", []string{"apoc.trigger.add('name', 'MATCH...', {phase:'before'}) => trigger"})
-	register("apoc.trigger.remove", "trigger", trigger.Remove, "Remove trigger", []string{"apoc.trigger.remove('name') => removed"})
-	register("apoc.trigger.removeAll", "trigger", trigger.RemoveAll, "Remove all triggers", []string{"apoc.trigger.removeAll() => count"})
-	register("apoc.trigger.list", "trigger", trigger.List, "List triggers", []string{"apoc.trigger.list() => triggers"})
-	register("apoc.trigger.pause", "trigger", trigger.Pause, "Pause trigger", []string{"apoc.trigger.pause('name') => paused"})
-	register("apoc.trigger.resume", "trigger", trigger.Resume, "Resume trigger", []string{"apoc.trigger.resume('name') => resumed"})
-	register("apoc.trigger.install", "trigger", trigger.Install, "Install trigger", []string{"apoc.trigger.install('name', config) => installed"})
-	register("apoc.trigger.drop", "trigger", trigger.Drop, "Drop trigger", []string{"apoc.trigger.drop('name') => dropped"})
-	register("apoc.trigger.enable", "trigger", trigger.Enable, "Enable trigger", []string{"apoc.trigger.enable('name') => enabled"})
-	register("apoc.trigger.disable", "trigger", trigger.Disable, "Disable trigger", []string{"apoc.trigger.disable('name') => disabled"})
-	register("apoc.trigger.show", "trigger", trigger.Show, "Show trigger", []string{"apoc.trigger.show('name') => trigger"})
-	register("apoc.trigger.nodeByLabel", "trigger", trigger.NodeByLabel, "Node by label trigger", []string{"apoc.trigger.nodeByLabel('Person', fn) => trigger"})
-	register("apoc.trigger.relationshipByType", "trigger", trigger.RelationshipByType, "Rel by type trigger", []string{"apoc.trigger.relationshipByType('KNOWS', fn) => trigger"})
-	register("apoc.trigger.onCreate", "trigger", trigger.OnCreate, "On create trigger", []string{"apoc.trigger.onCreate('name', fn) => trigger"})
-	register("apoc.trigger.onUpdate", "trigger", trigger.OnUpdate, "On update trigger", []string{"apoc.trigger.onUpdate('name', fn) => trigger"})
-	register("apoc.trigger.onDelete", "trigger", trigger.OnDelete, "On delete trigger", []string{"apoc.trigger.onDelete('name', fn) => trigger"})
-	register("apoc.trigger.before", "trigger", trigger.Before, "Before trigger", []string{"apoc.trigger.before('name', fn) => trigger"})
-	register("apoc.trigger.after", "trigger", trigger.After, "After trigger", []string{"apoc.trigger.after('name', fn) => trigger"})
-	register("apoc.trigger.afterAsync", "trigger", trigger.AfterAsync, "Async after trigger", []string{"apoc.trigger.afterAsync('name', fn) => trigger"})
-	register("apoc.trigger.isEnabled", "trigger", trigger.IsEnabled, "Is enabled", []string{"apoc.trigger.isEnabled('name') => bool"})
-	register("apoc.trigger.count", "trigger", trigger.Count, "Trigger count", []string{"apoc.trigger.count() => count"})
-	register("apoc.trigger.stats", "trigger", trigger.Stats, "Trigger stats", []string{"apoc.trigger.stats() => stats"})
-	register("apoc.trigger.export", "trigger", trigger.Export, "Export triggers", []string{"apoc.trigger.export() => triggers"})
-	register("apoc.trigger.import", "trigger", trigger.Import, "Import triggers", []string{"apoc.trigger.import(triggers) => result"})
 
 	// ========================================
 	// Create Functions (apoc.create.*)

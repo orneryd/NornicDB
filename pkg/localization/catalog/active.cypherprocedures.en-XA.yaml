@@ -122,3 +122,23 @@
   other: "[!! READ procedure body contains write operations !!]"
 - id: cypherprocedures.argument_count
   other: "[!! procedure {{.Procedure}} requires {{.Expected}} arguments, got {{.Actual}} !!]"
+- id: cypherprocedures.trigger_not_enabled
+  other: "[!! Triggers have not been enabled. Set 'apoc.trigger.enabled=true' (NORNICDB_APOC_TRIGGER_ENABLED=true) in the configuration. !!]"
+- id: cypherprocedures.trigger_system_database_required
+  other: "[!! The procedure should be executed against a system database. !!]"
+- id: cypherprocedures.trigger_database_not_found
+  other: "[!! The user database with name '{{.Database}}' does not exist !!]"
+- id: cypherprocedures.trigger_bad_target
+  other: "[!! Triggers can only be installed on user databases. !!]"
+- id: cypherprocedures.trigger_statement_invalid
+  other: "[!! trigger {{.Name}}: invalid statement: {{.Cause}} !!]"
+- id: cypherprocedures.trigger_phase_invalid
+  other: "[!! invalid trigger phase '{{.Phase}}': expected before, after, rollback or afterAsync !!]"
+- id: cypherprocedures.trigger_params_invalid
+  other: "[!! invalid trigger params: {{.Cause}} !!]"
+- id: cypherprocedures.trigger_not_found
+  other: "[!! trigger not found: {{.Name}} !!]"
+- id: cypherprocedures.trigger_store_failed
+  other: "[!! trigger store: {{.Cause}} !!]"
+- id: cypherprocedures.trigger_failed
+  other: "[!! Error executing triggers {{.Failures}} !!]"

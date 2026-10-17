@@ -36,6 +36,7 @@ const (
 	EventServerRBACPrivilegesLoadFailed                EventID = "server.rbac.privileges_load_failed"
 	EventServerRBACRoleEntitlementsLoadFailed          EventID = "server.rbac.role_entitlements_load_failed"
 	EventServerDatabaseConfigStoreLoadFailed           EventID = "server.dbconfig.store_load_failed"
+	EventServerAPOCTriggersLoadFailed                  EventID = "server.apoc.triggers_load_failed"
 	EventServerHTTPServeFailed                         EventID = "server.http.serve_failed"
 
 	MessageServerLogHeimdallInitializing                    MessageID = "server.log.heimdall_initializing"
@@ -66,6 +67,7 @@ const (
 	MessageServerLogRBACPrivilegesLoadFailed                MessageID = "server.log.rbac_privileges_load_failed"
 	MessageServerLogRBACRoleEntitlementsLoadFailed          MessageID = "server.log.rbac_role_entitlements_load_failed"
 	MessageServerLogDatabaseConfigStoreLoadFailed           MessageID = "server.log.database_config_store_load_failed"
+	MessageServerLogAPOCTriggersLoadFailed                  MessageID = "server.log.apoc_triggers_load_failed"
 	MessageServerLogHTTPServeFailed                         MessageID = "server.log.http_serve_failed"
 )
 
@@ -207,6 +209,11 @@ func ServerLogRBACRoleEntitlementsLoadFailed() Message {
 // ServerLogDatabaseConfigStoreLoadFailed describes a per-database config store load failure.
 func ServerLogDatabaseConfigStoreLoadFailed() Message {
 	return Message{ID: MessageServerLogDatabaseConfigStoreLoadFailed, Fallback: "failed to load per-DB config store"}
+}
+
+// ServerLogAPOCTriggersLoadFailed describes an APOC trigger store load failure.
+func ServerLogAPOCTriggersLoadFailed() Message {
+	return Message{ID: MessageServerLogAPOCTriggersLoadFailed, Fallback: "failed to load APOC triggers"}
 }
 
 // ServerLogHTTPServeFailed describes an unexpected HTTP serving failure.
@@ -744,6 +751,12 @@ func ServerRBACRoleEntitlementsLoadFailedEvent(err error) LogEvent {
 // ServerDatabaseConfigStoreLoadFailedEvent describes a per-database config store load failure.
 func ServerDatabaseConfigStoreLoadFailedEvent() LogEvent {
 	return serverEvent(EventServerDatabaseConfigStoreLoadFailed, ServerLogDatabaseConfigStoreLoadFailed(), slog.String("subsystem", "dbconfig"))
+}
+
+// ServerAPOCTriggersLoadFailedEvent describes an APOC trigger store load
+// failure at startup: no trigger fires until it loads.
+func ServerAPOCTriggersLoadFailedEvent(err error) LogEvent {
+	return serverEvent(EventServerAPOCTriggersLoadFailed, ServerLogAPOCTriggersLoadFailed(), slog.String("subsystem", "apoc"), slog.Any("error", err))
 }
 
 // ServerHTTPServeFailedEvent describes an unexpected HTTP serving failure.

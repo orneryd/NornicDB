@@ -183,6 +183,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -759,7 +760,10 @@ type Server struct {
 	roleStore          *auth.RoleStore       // user-defined roles when auth enabled
 	privilegesStore    *auth.PrivilegesStore // per-DB read/write (Phase 4) when auth enabled
 	// procedurePrivileges holds EXECUTE [BOOSTED] PROCEDURE grants.
-	procedurePrivileges   *auth.ProcedurePrivilegeStore
+	procedurePrivileges *auth.ProcedurePrivilegeStore
+	// triggerRuntime runs the databases' APOC triggers; nil when the
+	// system database is unavailable.
+	triggerRuntime        *cypher.TriggerRuntime
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
@@ -1718,6 +1722,24 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		// Read on every check (ProcedureGrantChecker): a grant counts once
 		// committed, and a failed read denies.
 		s.procedurePrivileges = auth.NewProcedurePrivilegeStore(systemStorage)
+		// APOC triggers (apoc.trigger.*): kept in the system database, they
+		// run at the commits of the database they're installed on.
+		triggerRuntime, triggerErr := cypher.NewTriggerRuntime(ctx, cypher.TriggerRuntimeConfig{
+			Engine:      systemStorage,
+			System:      systemStorage,
+			ExecutorFor: s.getExecutorForDatabase,
+			DatabaseExists: func(name string) bool {
+				return dbManager.Exists(name) && !dbManager.IsCompositeDatabase(name)
+			},
+			SystemDatabase: "system",
+			Enabled:        apoc.LoadFromEnv().Trigger.Enabled,
+			Logger:         slog.Default(),
+		})
+		if triggerErr != nil {
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerAPOCTriggersLoadFailedEvent(triggerErr))
+		} else {
+			s.triggerRuntime = triggerRuntime
+		}
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
@@ -2028,6 +2050,11 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	}
 
 	s.stopQdrantGRPC()
+
+	// No trigger fires once the server stops; queued afterAsync work ends.
+	if s.triggerRuntime != nil {
+		s.triggerRuntime.Close()
+	}
 
 	// Stop rate limiter cleanup goroutine
 	if s.rateLimiter != nil {

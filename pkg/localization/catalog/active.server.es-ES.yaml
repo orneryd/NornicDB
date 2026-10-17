@@ -211,6 +211,9 @@
 - id: server.log.database_config_store_load_failed
   description: Error de carga del almacén de configuración por base de datos.
   other: no se pudo cargar el almacén de configuración por base de datos
+- id: server.log.apoc_triggers_load_failed
+  description: Error de carga del almacén de triggers APOC.
+  other: no se pudieron cargar los triggers APOC
 - id: server.log.http_serve_failed
   description: Error inesperado del servidor HTTP.
   other: error del servidor HTTP

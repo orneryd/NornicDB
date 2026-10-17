@@ -594,6 +594,18 @@ func keyValues(names []string, properties map[string]any) map[string]any {
 	return values
 }
 
+// ChangedProperties is the change-capture property diff, for commit hooks
+// (commit_hooks.go): the keys whose value differs between before and after.
+func ChangedProperties(before, after map[string]any) []string {
+	return changedProperties(before, after)
+}
+
+// LabelChanges is the change-capture label diff, for commit hooks: the
+// labels after lacks and the labels before lacks.
+func LabelChanges(before, after []string) (removed, added []string) {
+	return labelChanges(before, after)
+}
+
 // changedProperties returns the keys whose value differs between before and
 // after, set on one side only included, sorted.
 func changedProperties(before, after map[string]any) []string {

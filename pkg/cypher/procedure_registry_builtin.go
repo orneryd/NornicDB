@@ -621,6 +621,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocImportJson(ctx, args)
 			})
+		registerApocTriggerProcedures()
 	})
 }
 

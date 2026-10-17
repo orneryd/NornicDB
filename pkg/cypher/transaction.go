@@ -127,14 +127,14 @@ func bareTransactionCommand(cypher string) string {
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
-func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	upper := upperASCII(strings.TrimSpace(cypher))
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
 		return e.handleBegin()
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
-		return e.handleCommit()
+		return e.handleCommitContext(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
 		return e.handleRollback()
 	default:
@@ -256,8 +256,17 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	}, nil
 }
 
-// handleCommit commits the active transaction.
+// handleCommit commits the active transaction without a caller context.
 func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
+	return e.handleCommitContext(context.Background())
+}
+
+// handleCommitContext commits the active transaction. ctx is the COMMIT's:
+// the commit stops when it is cancelled (TERMINATE, the client going away,
+// its deadline) before anything is written, as an auto-commit statement's
+// does, and the database's before triggers run with it, over the
+// transaction's own view (apoc_trigger_runtime.go).
+func (e *StorageExecutor) handleCommitContext(ctx context.Context) (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -283,8 +292,19 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	)
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
+		commitCtx := ctx
+		if commitCtx == nil {
+			commitCtx = context.Background()
+		}
+		if wrapper := e.txContext.storageWrapper; wrapper != nil {
+			commitCtx = context.WithValue(commitCtx, ctxKeyTxStorage, wrapper)
+		}
 		opCount = tx.OperationCount()
-		err = tx.Commit()
+		err = tx.CommitContext(commitCtx)
+		// What before triggers wrote is part of the commit.
+		if count := tx.OperationCount(); count > opCount {
+			opCount = count
+		}
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
 	default:
