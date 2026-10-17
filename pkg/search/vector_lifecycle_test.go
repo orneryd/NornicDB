@@ -103,15 +103,21 @@ func cachedVectorPipeline(svc *Service) *VectorSearchPipeline {
 	return svc.vectorPipeline
 }
 
-// A search answered by the exact fallback while the graph builds is cached
-// under the current IndexRevision; publishing the graph advances the revision,
-// so the cached fallback answer is not served once the graph is ready.
+// A search answered by the exact fallback while the graph builds may be
+// cached under the current IndexRevision; publishing the graph advances the
+// revision, so once the graph is ready the fallback answer is not served
+// again: the next search is answered by the graph.
 func TestGraphInstallRetiresCachedFallbackAnswers(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	svc := NewServiceWithDimensions(engine, 3)
 	t.Cleanup(func() { _ = svc.Close() })
 	for i := range 4 {
-		require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i), 0}}}))
+		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, float32(i), 0}}}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, svc.IndexNode(node))
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -130,16 +136,16 @@ func TestGraphInstallRetiresCachedFallbackAnswers(t *testing.T) {
 	ctx := context.Background()
 	opts := DefaultSearchOptions()
 	opts.Limit = 4
-	first, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
+	fallback, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
 	require.NoError(t, err)
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the graph build did not start")
 	}
-	again, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
-	require.NoError(t, err)
-	require.Same(t, first, again, "precondition: the fallback answer is cached")
+	require.Equal(t, "vector_brute", fallback.SearchMethod, "the held build answers exactly")
+	require.NotEmpty(t, fallback.Results)
+	require.Equal(t, "nornic:n0", fallback.Results[0].ID)
 
 	before := svc.IndexRevision()
 	releaseInstall()
@@ -147,5 +153,7 @@ func TestGraphInstallRetiresCachedFallbackAnswers(t *testing.T) {
 	require.Greater(t, svc.IndexRevision(), before, "publishing the graph must advance the revision")
 	after, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
 	require.NoError(t, err)
-	require.NotSame(t, first, after, "the cached fallback answer was served after the graph installed")
+	require.NotSame(t, fallback, after, "the cached fallback answer was served after the graph installed")
+	require.Equal(t, "vector_hnsw", after.SearchMethod, "the installed graph answers once ready")
+	require.Equal(t, "nornic:n0", after.Results[0].ID, "the graph's answer ranks like the exact one")
 }
