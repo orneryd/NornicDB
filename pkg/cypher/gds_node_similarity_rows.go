@@ -344,7 +344,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 		if excluded[target] {
 			continue
 		}
-		similarity, _ := nodeSimilarity(source, neighbors[target], config.metric, true, things, nil, false)
+		similarity, _ := nodeSimilarity(source, neighbors[target], config.metric, true, things, false)
 		// An undefined score (0/0) is dropped, as gds.nodeSimilarity drops it.
 		if math.IsNaN(similarity) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 			continue
@@ -380,7 +380,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	}
 	rows := make([][]interface{}, len(scored))
 	for i, pair := range scored {
-		_, shared := nodeSimilarity(source, neighbors[pair.target], config.metric, true, things, nil, true)
+		_, shared := nodeSimilarity(source, neighbors[pair.target], config.metric, true, things, true)
 		if config.tieBreak != "" {
 			// Most weight first, as the kernel orders them; equal weights
 			// by the tieBreakProperty, then by id.
