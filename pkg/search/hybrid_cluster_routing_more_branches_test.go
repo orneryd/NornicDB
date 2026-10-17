@@ -27,7 +27,7 @@ func TestHybridRouting_RebuildProfilesGuardBranches(t *testing.T) {
 	clustering, err := svc.clusterIndex.ComputeClustering(context.Background())
 	require.NoError(t, err)
 	svc.setFulltext(nil)
-	require.Empty(t, svc.clusterLexicalProfilesFor(clustering))
+	require.Nil(t, svc.deriveClusterTerms(clustering.MemberIDs(0)))
 }
 
 func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
@@ -44,9 +44,7 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 	require.NotEmpty(t, out)
 
 	// profiles empty branch.
-	svc.clusterLexicalMu.Lock()
-	svc.clusterLexicalProfiles = map[int]map[string]float64{}
-	svc.clusterLexicalMu.Unlock()
+	setClusterProfilesForTest(t, svc, map[int]map[string]float64{})
 	out = svc.selectHybridClusters(withQueryText(context.Background(), "alpha"), []float32{1, 0}, 2)
 	require.NotEmpty(t, out)
 
@@ -57,12 +55,10 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 	// negative lexical/semantic weights branch and sum==0 normalization branch.
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", "-1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "-1")
-	svc.clusterLexicalMu.Lock()
-	svc.clusterLexicalProfiles = map[int]map[string]float64{
+	setClusterProfilesForTest(t, svc, map[int]map[string]float64{
 		semantic[0]: {"alpha": 1.0},
 		semantic[1]: {"beta": 1.0},
-	}
-	svc.clusterLexicalMu.Unlock()
+	})
 	out = svc.selectHybridClusters(withQueryText(context.Background(), "beta"), []float32{1, 0}, 1)
 	require.Len(t, out, 1)
 }
