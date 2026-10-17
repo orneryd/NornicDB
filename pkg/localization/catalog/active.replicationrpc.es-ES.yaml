@@ -28,6 +28,15 @@
 - id: replication.rpc.invalid_signature
   description: Firma de mensaje de RPC de replicación no válida.
   other: firma no válida
+- id: replication.rpc.replayed_message
+  description: Un mensaje de replicación firmado llegó otra vez con un nonce ya recibido.
+  other: mensaje ya recibido (nonce repetido)
+- id: replication.rpc.replay_cache_full
+  description: La caché contra repeticiones está llena. Limit no se traduce.
+  other: "caché contra repeticiones llena ({{.Limit}} mensajes); mensaje rechazado"
+- id: replication.rpc.replay_protection_required
+  description: Se rechazó un mensaje de replicación firmado sin nonce contra repeticiones.
+  other: el mensaje no tiene nonce contra repeticiones; actualice el nodo que lo envía
 - id: replication.rpc.read_failed
   description: Error de lectura de RPC de replicación. Cause no se traduce.
   other: "{{.Cause}}"
