@@ -17,7 +17,7 @@ func prebuildSourceMembership(svc *Service, id string) (text, vector, metadata b
 	svc.indexMu.RLock()
 	defer svc.indexMu.RUnlock()
 	_, text = svc.fulltext().GetDocument(id)
-	key := id + "-named-v"
+	key := nodeNamedVectorKey(id, "v")
 	svc.mu.RLock()
 	if svc.vectorFileStore != nil {
 		vector = svc.vectorFileStore.Has(key)
