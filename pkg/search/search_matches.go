@@ -131,7 +131,7 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 // query vector, in one exact-scorer call, and puts each hit's best chunks
 // first in its Matches.
 func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult, nodes []*storage.Node, hits []int, embedding []float32, minSimilarity float64) {
-	hitByKey := make(map[string]int, len(hits)) // vector-entry key -> hit
+	hitByNode := make(map[string]int, len(hits))
 	var candidates []Candidate
 	spansByHit := make(map[int][]embeddingutil.ChunkSpan, len(hits))
 	// Lock order indexMu -> mu, as index writes take them.
@@ -139,8 +139,8 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	s.mu.RLock()
 	for _, index := range hits {
 		nodeID := string(nodes[index].ID)
+		hitByNode[nodeID] = index
 		for _, vectorID := range s.nodeChunkVectors[nodeID] {
-			hitByKey[vectorID] = index
 			candidates = append(candidates, Candidate{ID: vectorID})
 		}
 		if spans, known := s.nodeChunkSpans[nodeID]; known {
@@ -159,7 +159,11 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	}
 	chunkScores := make(map[int][]ScoredCandidate, len(hits))
 	for _, candidate := range scored { // best first
-		index, ok := hitByKey[candidate.ID]
+		nodeID, ok := vectorEntryOwner(candidate.ID)
+		if !ok {
+			continue
+		}
+		index, ok := hitByNode[nodeID]
 		if !ok {
 			continue
 		}
