@@ -227,6 +227,27 @@ func TestAggregateScopeNeverAliasedPastTheRow(t *testing.T) {
 			distinctMaps(t, result.Rows[0][0].([]interface{}), "k")
 			distinctMaps(t, result.Rows[0][1].([]interface{}), "k")
 
+			// One aggregation per row, each releasing its scope's maps for the
+			// next: every inner list keeps its own row's maps.
+			result, err = exec.Execute(ctx, "UNWIND range(1, $n) AS x CALL (x) { UNWIND [x, x + 1] AS y "+
+				"RETURN collect({k: y, p: $p}) AS ys, collect(y + 1) AS zs } RETURN collect(ys) AS inner, collect(zs) AS sums", params)
+			require.NoError(t, err)
+			inner := result.Rows[0][0].([]interface{})
+			require.Len(t, inner, rows)
+			firsts := make([]interface{}, rows)
+			for index, value := range inner {
+				list := value.([]interface{})
+				require.Len(t, list, 2, "element %d", index)
+				second := list[1].(map[string]interface{})
+				require.Equal(t, int64(index+2), second["k"], "element %d", index)
+				require.False(t, reflect.ValueOf(list[0]).UnsafePointer() == reflect.ValueOf(second).UnsafePointer(), "element %d", index)
+				firsts[index] = list[0]
+			}
+			distinctMaps(t, firsts, "k")
+			for index, value := range result.Rows[0][1].([]interface{}) {
+				require.Equal(t, []interface{}{int64(index + 2), int64(index + 3)}, value, "element %d", index)
+			}
+
 			_, err = exec.Execute(ctx, "UNWIND range(1, $n) AS x CREATE (t:ScopeAlias {k: x, p: $p}) SET t.m = x * 2", params)
 			require.NoError(t, err)
 			result, err = exec.Execute(ctx, "MATCH (t:ScopeAlias) WITH t ORDER BY t.k "+
