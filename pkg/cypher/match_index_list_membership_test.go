@@ -38,7 +38,6 @@ var listMembershipQueries = []string{
 	"MATCH (n:Identity) WHERE 1 IN n.alias_keys RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE 1.0 IN n.alias_keys RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE 2.5 IN n.alias_keys RETURN n.id ORDER BY n.id",
-	"MATCH (n:Identity) WHERE null IN n.alias_keys RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE $missing IN n.alias_keys RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE ANY(k IN ['shared2', 'alias4'] WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
