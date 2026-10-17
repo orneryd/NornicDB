@@ -40,6 +40,7 @@ NORNICDB_DATABASE (CLI flags override).
 import argparse
 import base64
 import json
+from http.client import IncompleteRead
 import os
 import re
 import subprocess
@@ -177,7 +178,7 @@ class HttpSession:
             if error.code in (429, 502, 503, 504):
                 raise RetryableError(f"HTTP {error.code}: {detail}") from error
             raise RuntimeError(f"HTTP {error.code} from {self.url}: {detail}") from error
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, IncompleteRead) as error:
             raise RetryableError(str(error)) from error
         if payload.get("errors"):
             first = payload["errors"][0]
@@ -823,7 +824,7 @@ def comments_for_node(repo_root, data, symbols, docstring_lines, line_cache, sta
     return text or None
 
 
-def git_file_times(repo_root):
+def git_file_times(repo_root, revision="HEAD"):
     """Map path (relative to repo_root) -> last commit time, from git history.
 
     In CI every file's mtime is the checkout time, so mtimes say nothing about
@@ -839,7 +840,7 @@ def git_file_times(repo_root):
     try:
         if git("rev-parse", "--is-shallow-repository").strip() == "true":
             return {}
-        log = git("log", "--relative", "--no-renames", "--format=%x00%ct", "--name-only")
+        log = git("log", revision, "--relative", "--no-renames", "--format=%x00%ct", "--name-only")
     except (OSError, subprocess.CalledProcessError):
         return {}
     times, current = {}, None
