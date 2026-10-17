@@ -1,0 +1,9 @@
+{
+  "pid": 97431,
+  "params": "hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 1\n}\n",
+  "rss_before_gc": 3407544320,
+  "instrumented": true,
+  "rss_after_gc": 3409281024,
+  "vmmap-summary.txt_exit": 0,
+  "vmmap-resident.txt_exit": 0
+}
