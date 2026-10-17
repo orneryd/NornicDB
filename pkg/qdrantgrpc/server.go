@@ -67,7 +67,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +98,12 @@ type Config struct {
 	// TLSConfig enables TLS transport when non-nil. ClientAuth and ClientCAs
 	// control optional mutual TLS authentication.
 	TLSConfig *tls.Config
+
+	// Logger receives request completion events at debug for success, warning
+	// for client failures, and error for internal/service failures. Production
+	// callers should pass their configured logger, e.g. cfg.Logger = logger.
+	// Nil uses an info-level text logger on stderr for standalone callers.
+	Logger *slog.Logger
 
 	// Localizer renders public protocol messages. Nil preserves source English.
 	Localizer *localization.Manager
@@ -306,6 +314,9 @@ type contextKeyClaims struct{}
 func NewServer(config *Config, collections CollectionStore, baseStorage storage.Engine, searchProvider SearchServiceProvider, authenticator *auth.Authenticator) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	if collections == nil {
 		return nil, fmt.Errorf("collection store required")
@@ -623,17 +634,43 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 func (s *Server) unaryLoggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)
-	code := status.Code(err)
-	log.Printf("[gRPC] UNARY %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ctx, "unary", info.FullMethod, start, err)
 	return resp, err
 }
 
 func (s *Server) streamLoggingInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	start := time.Now()
 	err := handler(srv, ss)
-	code := status.Code(err)
-	log.Printf("[gRPC] STREAM %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ss.Context(), "stream", info.FullMethod, start, err)
 	return err
+}
+
+// logRequest uses the injected level policy before formatting completion fields.
+// Protocol/client failures are warnings; service/internal failures are errors.
+func (s *Server) logRequest(ctx context.Context, kind, method string, start time.Time, err error) {
+	code := status.Code(err)
+	level := slog.LevelDebug
+	outcome := "success"
+	if code != codes.OK {
+		level = slog.LevelWarn
+		outcome = "failure"
+		switch code {
+		case codes.Unknown, codes.Internal, codes.DataLoss, codes.Unavailable:
+			level = slog.LevelError
+		}
+	}
+	logger := s.config.Logger
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+	logger.LogAttrs(ctx, level, "gRPC request completed",
+		slog.String("event_id", "qdrant.grpc.request"),
+		slog.String("component", "qdrantgrpc"),
+		slog.String("rpc_type", kind),
+		slog.String("rpc_method", method),
+		slog.String("grpc_code", code.String()),
+		slog.String("outcome", outcome),
+		slog.Duration("duration", time.Since(start)))
 }
 
 // handleBasicAuth handles Basic authentication for gRPC requests.
