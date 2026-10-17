@@ -154,7 +154,7 @@ func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuant
 		return false, nil
 	}
 	s.hnswMu.RLock()
-	idx := s.hnswIndex
+	idx := s.servingHNSW()
 	s.hnswMu.RUnlock()
 	if idx != nil {
 		if err := idx.SetQuantization(ctx, cfg); err != nil {
@@ -167,9 +167,6 @@ func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuant
 		s.resultCache.Invalidate()
 	}
 	s.mu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-	s.indexChanged()
+	s.publishVectorServing(func() {}, true)
 	return true, nil
 }
