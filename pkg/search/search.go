@@ -1972,7 +1972,7 @@ func (s *Service) installClusterGeneration(ctx context.Context, clusterIndex *gp
 	}
 	// Vectors admitted or removed since the snapshot enter (or leave) both the
 	// staged membership and the staged graphs before either is published.
-	s.reconcileClusterStagingLocked(clusterIndex, clustering, graphs)
+	s.reconcileClusterStagingLocked(clusterIndex, clustering, graphs, profiles)
 	s.clusterStaging = nil
 	clusterIndex.PublishClustering(clustering)
 	s.clusterLexicalMu.Lock()
@@ -3021,6 +3021,9 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	if err != nil {
 		return err
 	}
+	if node != nil {
+		s.stageClusterNodeTouchedLocked(string(node.ID))
+	}
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
@@ -3399,6 +3402,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	if nodeIDStr == "" {
 		return
 	}
+	s.stageClusterNodeTouchedLocked(nodeIDStr)
 	s.releaseNodeIndexCapacityLocked(nodeIDStr)
 
 	// Remove main embedding
