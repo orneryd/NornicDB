@@ -12,10 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recordingLog keeps every log message.
+// recordingLog keeps every log message and passes each one to onMessage.
 type recordingLog struct {
-	mu       sync.Mutex
-	messages []string
+	mu        sync.Mutex
+	messages  []string
+	onMessage func(message string)
 }
 
 func (h *recordingLog) Enabled(context.Context, slog.Level) bool { return true }
@@ -23,8 +24,11 @@ func (h *recordingLog) WithAttrs([]slog.Attr) slog.Handler       { return h }
 func (h *recordingLog) WithGroup(string) slog.Handler            { return h }
 func (h *recordingLog) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.messages = append(h.messages, r.Message)
+	h.mu.Unlock()
+	if h.onMessage != nil {
+		h.onMessage(r.Message)
+	}
 	return nil
 }
 
@@ -100,4 +104,34 @@ func parkingSearchIDs(t *testing.T, svc *Service, term string) []string {
 		ids = append(ids, result.ID)
 	}
 	return ids
+}
+
+// BM25 is parked at the checkpoint the base persist wrote. A fulltext path
+// changed after the build started is where that persist saves, so the warmup
+// reloads from it rather than from the path the build started with.
+func TestBM25ParkedAtTheCheckpointThePersistWrote(t *testing.T) {
+	for _, backend := range []string{"v1", "v2"} {
+		t.Run(backend, func(t *testing.T) {
+			engine := storage.NewMemoryEngine()
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
+			require.NoError(t, err)
+			dir := t.TempDir()
+			moved := filepath.Join(dir, "bm25-moved")
+			svc := configureNodeAdmissionService(t, engine, dir, backend, nil)
+			var move sync.Once
+			logs := &recordingLog{onMessage: func(message string) {
+				if strings.Contains(message, "base index iteration complete") {
+					move.Do(func() { svc.SetFulltextIndexPath(moved) })
+				}
+			}}
+			svc.SetLogger(slog.New(logs))
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+			require.True(t, svc.IsReady())
+			require.True(t, logs.saw(bm25ParkedMessage), "parked at the written checkpoint")
+			require.FileExists(t, moved)
+			require.NoFileExists(t, filepath.Join(dir, "bm25"))
+			require.Equal(t, []string{"nornic:a"}, parkingSearchIDs(t, svc, "aterm"))
+		})
+	}
 }
