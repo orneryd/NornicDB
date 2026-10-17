@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -97,6 +98,19 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	// The statement's context (deadlineCtx, once the database's query limits
+	// apply) ends at the first of its deadlines, and its cause names that
+	// deadline's owner: a Bolt client's tx_timeout, the server's statement
+	// timeout, the database's query time limit. A deadline error the
+	// statement returns is that owner's transaction timeout (#1339); a
+	// deadline no owner installed (a caller's own budget, a dependency's
+	// timeout) keeps its error as it is.
+	deadlineCtx := ctx
+	defer func() {
+		if retErr != nil {
+			retErr = nornicerrors.MarkStatementTimeout(retErr, context.Cause(deadlineCtx))
+		}
+	}()
 	// Every rejection of the caller's statement fails its explicit transaction,
 	// including errors before parsing, routing or the system statement policy.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
@@ -699,6 +713,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if err != nil {
 				return nil, err
 			}
+			deadlineCtx = ctx
 			// Ensure cancel is called when done
 			defer func() {
 				if queryLimitCancel != nil {

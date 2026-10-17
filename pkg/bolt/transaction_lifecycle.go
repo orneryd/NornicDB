@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
 const (
 	transactionCleanupRequestTimeout = 5 * time.Second
-	transactionTimedOutCode          = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
-	transactionTimedOutMsg           = "The transaction has timed out according to the timeout configured by the client."
+	transactionTimedOutCode          = nornicerrors.TransactionTimedOutClientConfiguration
+	transactionTimedOutMsg           = nornicerrors.TransactionTimedOutClientConfigurationMessage
 )
 
 var (
