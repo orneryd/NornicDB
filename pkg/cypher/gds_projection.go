@@ -111,9 +111,10 @@ func lookupGraphProjection(database, name string, contexts ...context.Context) (
 	return projection, nil
 }
 
-// graphProjection is this database's projection called name.
+// graphProjection is this database's projection called name, as the
+// statement's principal may still use it (visibleGraphProjection).
 func (e *StorageExecutor) graphProjection(name string, contexts ...context.Context) (*GraphProjection, error) {
-	return lookupGraphProjection(e.databaseName(), name, contexts...)
+	return visibleGraphProjection(e.storage, e.databaseName(), name, contexts...)
 }
 
 // databaseProjections is database's projections, by name.
@@ -178,6 +179,8 @@ func (spec gdsElementSpec) merges() bool {
 // are refused with GDS's messages.
 func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
+	// Its contract (PrivilegeUnrestrictedView) refuses a restricted principal,
+	// which projects with the Cypher aggregation form from rows its view read.
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -1100,7 +1103,7 @@ func (e *StorageExecutor) callGdsGraphExists(args []interface{}, contexts ...con
 	if err != nil {
 		return nil, err
 	}
-	_, missing := e.graphProjection(name, contexts...)
+	_, missing := lookupGraphProjection(e.databaseName(), name, contexts...)
 	return &ExecuteResult{Columns: []string{"graphName", "exists"}, Rows: [][]any{{name, missing == nil}}}, nil
 }
 

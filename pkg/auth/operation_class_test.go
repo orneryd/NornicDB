@@ -10,10 +10,10 @@ import (
 // An operation contract is valid only with known effects, at least one, and
 // None alone; Has reports any of the given effects.
 func TestOperationClassContract(t *testing.T) {
-	for _, valid := range []OperationClass{OperationNone, OperationRead, OperationRead | OperationWrite, OperationAdmin | OperationDBMS | OperationSharedState, OperationFileIO | OperationRemote} {
+	for _, valid := range []OperationClass{OperationNone, OperationRead, OperationRead | OperationWrite, OperationAdmin | OperationDBMS | OperationSharedState, OperationFileIO | OperationRemote, OperationRead | OperationUnrestrictedView} {
 		require.True(t, valid.Valid(), valid)
 	}
-	for _, invalid := range []OperationClass{0, OperationNone | OperationRead, OperationRemote << 1} {
+	for _, invalid := range []OperationClass{0, OperationNone | OperationRead, OperationUnrestrictedView << 1} {
 		require.False(t, invalid.Valid(), invalid)
 	}
 	contract := OperationRead | OperationWrite

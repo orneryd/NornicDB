@@ -16,6 +16,9 @@ const (
 	PrivilegeSharedState = auth.OperationSharedState
 	PrivilegeFileIO      = auth.OperationFileIO
 	PrivilegeRemote      = auth.OperationRemote
+	// PrivilegeUnrestrictedView marks a callable that reads around a
+	// restricted principal's graph view; such a principal is refused it.
+	PrivilegeUnrestrictedView = auth.OperationUnrestrictedView
 )
 
 // requirementsForClass is the common mapping from a declared effect to the
@@ -27,11 +30,12 @@ func requirementsForClass(class PrivilegeClass) PermissionRequirements {
 		return PermissionRequirements{Unclassified: true}
 	}
 	return PermissionRequirements{
-		Read:        class.Has(PrivilegeRead),
-		Write:       class.Has(PrivilegeWrite),
-		Schema:      class.Has(PrivilegeSchema),
-		Admin:       class.Has(PrivilegeAdmin | PrivilegeDBMS | PrivilegeSharedState),
-		UpdatesDBMS: class.Has(PrivilegeDBMS),
+		Read:             class.Has(PrivilegeRead),
+		Write:            class.Has(PrivilegeWrite),
+		Schema:           class.Has(PrivilegeSchema),
+		Admin:            class.Has(PrivilegeAdmin | PrivilegeDBMS | PrivilegeSharedState),
+		UpdatesDBMS:      class.Has(PrivilegeDBMS),
+		UnrestrictedView: class.Has(PrivilegeUnrestrictedView),
 	}
 }
 

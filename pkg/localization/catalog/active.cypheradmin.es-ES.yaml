@@ -131,6 +131,45 @@
 - id: cypheradmin.impersonation_remote_database_denied
   description: Una sentencia o transacción que suplanta a un usuario en una base de datos remota o en una compuesta con un constituyente remoto. Database no se traduce.
   other: "No se admite suplantar a un usuario en la base de datos remota '{{.Database}}'."
+- id: cypheradmin.role_already_exists
+  description: Un comando de roles que nombra un rol nuevo que ya existe. Role no se traduce.
+  other: "Ya existe un rol con el nombre '{{.Role}}'."
+- id: cypheradmin.role_builtin
+  description: Un DROP o RENAME de un rol integrado. Role no se traduce.
+  other: "El rol integrado '{{.Role}}' no se puede eliminar ni renombrar."
+- id: cypheradmin.role_command_in_transaction
+  description: Un comando de roles dentro de una transacción explícita.
+  other: "Los comandos de roles se ejecutan por sí solos, no dentro de una transacción explícita."
+- id: cypheradmin.role_command_invalid
+  description: Un comando de roles mal formado. Command y Cause no se traducen.
+  other: "Comando de roles no válido '{{.Command}}': {{.Cause}}."
+- id: cypheradmin.role_name_invalid
+  description: Un nombre de rol vacío o no válido. Role no se traduce.
+  other: "'{{.Role}}' no es un nombre de rol válido."
+- id: cypheradmin.role_not_found
+  description: Un comando de roles que nombra un rol que no existe. Role no se traduce.
+  other: "No se encontró ningún rol con el nombre '{{.Role}}'."
+- id: cypheradmin.role_user_not_found
+  description: Un GRANT ROLE a un usuario que no existe. User no se traduce.
+  other: "No se encontró ningún usuario con el nombre '{{.User}}'."
+- id: cypheradmin.access_scope_exists
+  description: Un CREATE ACCESS SCOPE en un grafo que ya tiene uno. Graph no se traduce.
+  other: "El grafo '{{.Graph}}' ya tiene un ámbito de acceso."
+- id: cypheradmin.access_scope_not_found
+  description: Un DROP ACCESS SCOPE que no nombra ningún ámbito del grafo. Name y Graph no se traducen.
+  other: "El grafo '{{.Graph}}' no tiene ningún ámbito de acceso llamado '{{.Name}}'."
+- id: cypheradmin.hidden_relationship_delete
+  description: Un borrado de un nodo con relaciones que el usuario no puede ver.
+  other: "No se puede eliminar un nodo que tiene relaciones que usted no puede ver."
+- id: cypheradmin.restricted_multi_graph
+  description: Una sentencia de varios grafos de un usuario cuyos privilegios de grafo restringen lo que ve.
+  other: "Las sentencias de varios grafos no están disponibles para un usuario cuyos privilegios de grafo restringen lo que ve."
+- id: cypheradmin.restricted_operation
+  description: La llamada, por un usuario restringido, a un procedimiento o función que lee más allá de los privilegios de grafo que restringen lo que ve. Operation es el nombre sin traducir.
+  other: "{{.Operation}} lee más allá de los privilegios de grafo que restringen lo que ve este usuario, así que no está disponible para él."
+- id: cypheradmin.restricted_projection_stale
+  description: El uso, por un usuario restringido, de una proyección GDS con nodos que ya no puede ver. Graph es el nombre de la proyección.
+  other: "El grafo `{{.Graph}}` contiene nodos que ya no puede ver; elimínelo y vuelva a proyectarlo."
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

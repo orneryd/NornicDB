@@ -84,7 +84,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
 		}
 	}
-	projection, err := lookupGraphProjection(storageDatabaseName(ctx.Storage), graph, ctx.Request)
+	projection, err := visibleGraphProjection(ctx.Storage, storageDatabaseName(ctx.Storage), graph, ctx.Request)
 	if err != nil {
 		return nil, err
 	}

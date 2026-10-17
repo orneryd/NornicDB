@@ -162,7 +162,7 @@ type roleOwnedRecord struct {
 // its removal and every dependent record change commit together.
 func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwnedRecord, error) {
 	var records []roleOwnedRecord
-	for _, label := range []string{procedurePrivilegeLabel, impersonatePrivilegeLabel, dbPrivLabel, roleDbAccessLabel, roleEntitlementLabel, "_User", roleLabel} {
+	for _, label := range []string{procedurePrivilegeLabel, impersonatePrivilegeLabel, graphPrivilegeLabel, dbPrivLabel, roleDbAccessLabel, roleEntitlementLabel, "_User", roleLabel} {
 		nodes, err := view.GetNodesByLabel(label)
 		if err != nil {
 			return nil, err
@@ -185,6 +185,14 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 				}
 				privilege.Role = NormalizeRoleName(newName)
 				record.replacementID = impersonatePrivilegeNodeID(privilege)
+				record.replacementRole = privilege.Role
+			case graphPrivilegeLabel:
+				privilege, valid := graphPrivilegeNode(node)
+				if !valid || privilege.Role != NormalizeRoleName(oldName) {
+					continue
+				}
+				privilege.Role = NormalizeRoleName(newName)
+				record.replacementID = graphPrivilegeNodeID(privilege)
 				record.replacementRole = privilege.Role
 			case dbPrivLabel:
 				role, database := roleDbFromNodeID(string(node.ID))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,19 @@ func TestFilteredSearchFillsThePage(t *testing.T) {
 		"bm25 filters": func() (*SearchResponse, error) {
 			return svc.Search(ctx, "alpha", nil, options(func(o *SearchOptions) { o.Filters = map[string][]string{"collection": {"mine"}} }))
 		},
+		// A restricted reader (Restricted, #935): hidden documents are never
+		// scored, so the visible ones fill the page.
+		"bm25 visible": func() (*SearchResponse, error) {
+			return svc.Search(ctx, "alpha", nil, options(func(o *SearchOptions) {
+				o.Restricted = &RestrictedReader{Node: func(id string) bool { return strings.HasPrefix(id, "doc-") }}
+			}))
+		},
+		"bm25 visible and types": func() (*SearchResponse, error) {
+			return svc.Search(ctx, "alpha", nil, options(func(o *SearchOptions) {
+				o.Types = []string{"Doc", "Other"}
+				o.Restricted = &RestrictedReader{Node: func(id string) bool { return strings.HasPrefix(id, "doc-") }}
+			}))
+		},
 		"vector types": func() (*SearchResponse, error) {
 			return svc.Search(ctx, "", []float32{1, 0}, options(func(o *SearchOptions) { o.Types = []string{"Doc"} }))
 		},
@@ -121,6 +135,24 @@ func TestFilteredSearchFillsThePage(t *testing.T) {
 		response, err := svc.Search(ctx, "", []float32{1, 0}, options(func(o *SearchOptions) { o.Types = []string{"Missing"} }))
 		require.NoError(t, err)
 		require.Empty(t, response.Results)
+	})
+	// The same query with and without Restricted has the same cache key, so a
+	// cached page would cross between them, either way.
+	t.Run("a restricted reader's search neither reads nor fills the result cache", func(t *testing.T) {
+		svc.SetSearchResultCachePolicy(100, time.Minute)
+		unrestricted := func() {
+			response, err := svc.Search(ctx, "alpha", nil, options(func(*SearchOptions) {}))
+			require.NoError(t, err)
+			require.NotEmpty(t, response.Results)
+			require.True(t, strings.HasPrefix(response.Results[0].ID, "other-"), "an unrestricted search got a restricted page: %s", response.Results[0].ID)
+		}
+		unrestricted() // fills the cache
+		restricted, err := svc.Search(ctx, "alpha", nil, options(func(o *SearchOptions) {
+			o.Restricted = &RestrictedReader{Node: func(id string) bool { return strings.HasPrefix(id, "doc-") }}
+		}))
+		require.NoError(t, err)
+		requireAllPrefixed(t, restricted, "doc-", 50)
+		unrestricted() // and the restricted search didn't replace it
 	})
 	t.Run("an empty filter list matches nothing", func(t *testing.T) {
 		response, err := svc.Search(ctx, "alpha", []float32{1, 0}, options(func(o *SearchOptions) {

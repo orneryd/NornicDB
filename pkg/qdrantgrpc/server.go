@@ -178,6 +178,10 @@ type Config struct {
 	ResolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
 	// EntitlementsResolver uses the same role-entitlement store as HTTP/Bolt.
 	EntitlementsResolver func(roles []string) []string
+	// GraphVisibilityResolver, when set, is roles' graph visibility on a
+	// database (cypher.PrincipalAccessSources.Visibility). gRPC reads storage
+	// and search around that view, so a principal it restricts is refused.
+	GraphVisibilityResolver func(roles []string, dbName string) (*cypher.GraphVisibility, error)
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
@@ -226,6 +230,9 @@ type Server struct {
 	// Per-database RBAC (optional). When set, collection = database and access is checked before each RPC.
 	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	resolvedAccessResolver     func(roles []string, dbName string) auth.ResolvedAccess
+	// graphVisibility is roles' graph visibility; a restricted principal is
+	// refused (Config.GraphVisibilityResolver).
+	graphVisibility func(roles []string, dbName string) (*cypher.GraphVisibility, error)
 
 	grpcServer *grpc.Server
 	listener   net.Listener
@@ -253,17 +260,23 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 
 func (s *Server) AllowDatabaseOperation(ctx context.Context, database string, class cypher.PrivilegeClass) error {
 	claims, _ := ctx.Value(contextKeyClaims{}).(*auth.JWTClaims)
-	if err := cypher.AdmitOperation(ctx, s.principalAccess(claims).Allows, database, class); err != nil {
+	access := s.principalAccess(claims)
+	if err := cypher.AdmitOperation(ctx, access.Allows, database, class); err != nil {
 		if class.Has(cypher.PrivilegeWrite) {
 			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
 		}
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	}
+	// gRPC reads storage and search directly, around a restricted
+	// principal's graph view: such a principal is refused.
+	if access.RestrictedOn(database) {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
 	return nil
 }
 
 func (s *Server) principalAccess(claims *auth.JWTClaims) cypher.PrincipalAccess {
-	sources := cypher.PrincipalAccessSources{DatabaseAccess: s.resolvedAccessResolver}
+	sources := cypher.PrincipalAccessSources{DatabaseAccess: s.resolvedAccessResolver, Visibility: s.graphVisibility}
 	if s.databaseAccessModeResolver != nil {
 		var roles []string
 		if claims != nil {
@@ -344,6 +357,7 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if config != nil {
 		srv.databaseAccessModeResolver = config.DatabaseAccessModeResolver
 		srv.resolvedAccessResolver = config.ResolvedAccessResolver
+		srv.graphVisibility = config.GraphVisibilityResolver
 	}
 	return srv, nil
 }

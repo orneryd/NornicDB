@@ -89,6 +89,7 @@ func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claim
 			return cypher.UserListingsFromAuth(authenticator.ListUsers())
 		}
 	}
+	identity.Roles = s.RoleAdministration()
 	if r != nil {
 		identity.Connection.ID = "http-" + strconv.FormatUint(s.nextHTTPConnectionID.Add(1), 10)
 		identity.Connection.Address = r.RemoteAddr
@@ -1736,7 +1737,8 @@ func (s *Server) withHTTPPrincipal(ctx context.Context, claims *auth.JWTClaims, 
 	// composite constituent needs its composite and its database), and
 	// read / write are the privileges of the database its data is in: the
 	// principal's one resolver (principalAccess).
-	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
+	// WithPrincipalAccess carries its graph visibility too.
+	ctx = cypher.WithPrincipalAccess(ctx, defaultDB, s.principalAccess(claims))
 	return ctx
 }
 

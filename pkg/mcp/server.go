@@ -710,6 +710,11 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		}
 		return nil, localizedError(cypher.DatabaseAccessDeniedMessage(ctx), err)
 	}
+	// The tools search and read storage around a principal's graph view, so
+	// a principal restricted by collection rules is refused.
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok && access.RestrictedOn(database) {
+		return nil, localizedError(cypher.DatabaseAccessDeniedMessage(ctx), nil)
+	}
 	ctx = contextWithAuthorizedDatabase(admittedCtx, database)
 
 	return handler(ctx, args)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -424,6 +425,16 @@ func (s *Server) resolveGraphStorage(r *http.Request) (string, storage.Engine, e
 	engine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
 		return "", nil, err
+	}
+	// A login restricted by collection rules reads the graph routes through
+	// its view, as its Cypher does; a visibility that can't be resolved
+	// refuses.
+	if access := s.principalAccess(getClaims(r)); access.Visibility != nil {
+		restricted, err := access.VisibilityOf(dbName)
+		if err != nil {
+			return "", nil, errGraphForbidden
+		}
+		engine = cypher.RestrictedGraphView(engine, restricted)
 	}
 	return dbName, engine, nil
 }
@@ -1177,6 +1188,17 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 }
 
 func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
+	// A restricted principal sees the history of the nodes it can see now
+	// (current membership decides), and the relationships among them.
+	if inner, visible, restricted := cypher.RestrictedGraphViewParts(engine); restricted {
+		var shown []string
+		for _, id := range nodeIDs {
+			if visible(storage.NodeID(id)) {
+				shown = append(shown, id)
+			}
+		}
+		engine, nodeIDs = inner, shown
+	}
 	provider, ok := engine.(storage.MVCCVisibilityEngine)
 	if !ok {
 		return graphCollection{}, storage.ErrNotImplemented

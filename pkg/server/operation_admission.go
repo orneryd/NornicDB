@@ -52,6 +52,12 @@ func (s *Server) admitHTTPOperation(w http.ResponseWriter, r *http.Request, oper
 	}
 	access := s.principalAccess(getClaims(r))
 	for _, target := range databases {
+		// Direct operations read and change storage around a principal's
+		// graph view, so one restricted by collection rules is refused.
+		if access.RestrictedOn(target) {
+			s.writeNeo4jDatabaseAccessDenied(w, r)
+			return false
+		}
 		if err := cypher.AdmitOperation(r.Context(), access.Allows, target, contract.class); err != nil {
 			// Neo4j's refusals name the principal, never a database, so a
 			// global operation doesn't reveal which namespace refused it.

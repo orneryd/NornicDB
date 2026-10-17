@@ -304,6 +304,111 @@ func CypherAdminImpersonationRemoteDenied(database string) Message {
 	return Message{ID: MessageCypherAdminImpersonationRemoteDenied, Fallback: "Impersonating a user is not supported on remote database '" + database + "'.", Data: map[string]any{"Database": database}}
 }
 
+// Access scopes and restricted graph views.
+const (
+	MessageCypherAdminAccessScopeExists        MessageID = "cypheradmin.access_scope_exists"
+	MessageCypherAdminAccessScopeNotFound      MessageID = "cypheradmin.access_scope_not_found"
+	MessageCypherAdminHiddenRelationshipDelete MessageID = "cypheradmin.hidden_relationship_delete"
+)
+
+// CypherAdminAccessScopeExists identifies a CREATE ACCESS SCOPE on a graph
+// that has one.
+func CypherAdminAccessScopeExists(graph string) Message {
+	return Message{ID: MessageCypherAdminAccessScopeExists, Fallback: "Graph '" + graph + "' already has an access scope.", Data: map[string]any{"Graph": graph}}
+}
+
+// CypherAdminAccessScopeNotFound identifies a DROP ACCESS SCOPE naming no
+// scope of the graph.
+func CypherAdminAccessScopeNotFound(name, graph string) Message {
+	return Message{ID: MessageCypherAdminAccessScopeNotFound, Fallback: "Graph '" + graph + "' has no access scope named '" + name + "'.", Data: map[string]any{"Name": name, "Graph": graph}}
+}
+
+// CypherAdminHiddenRelationshipDelete identifies a delete of a node that has
+// relationships the principal can't see.
+func CypherAdminHiddenRelationshipDelete() Message {
+	return Message{ID: MessageCypherAdminHiddenRelationshipDelete, Fallback: "Not allowed to delete a node that has relationships you cannot see."}
+}
+
+// MessageCypherAdminRestrictedMultiGraph identifies a multi-graph statement
+// from a principal whose graph privileges restrict what it sees;
+// MessageCypherAdminRestrictedOperation its call of a callable that reads
+// around its graph view; MessageCypherAdminRestrictedProjectionStale its use
+// of a projection holding nodes it can no longer see.
+const (
+	MessageCypherAdminRestrictedMultiGraph      MessageID = "cypheradmin.restricted_multi_graph"
+	MessageCypherAdminRestrictedOperation       MessageID = "cypheradmin.restricted_operation"
+	MessageCypherAdminRestrictedProjectionStale MessageID = "cypheradmin.restricted_projection_stale"
+)
+
+// CypherAdminRestrictedProjectionStale identifies a restricted principal's
+// use of a GDS projection that holds nodes it can no longer see.
+func CypherAdminRestrictedProjectionStale(graph string) Message {
+	return Message{ID: MessageCypherAdminRestrictedProjectionStale, Fallback: "Graph `" + graph + "` holds nodes you can no longer see; drop it and project it again.", Data: map[string]any{"Graph": graph}}
+}
+
+// CypherAdminRestrictedOperation identifies a restricted principal's call of
+// a callable that reads around its graph view; operation is its name.
+func CypherAdminRestrictedOperation(operation string) Message {
+	return Message{ID: MessageCypherAdminRestrictedOperation, Fallback: operation + " reads past the graph privileges that restrict what this login sees, so it isn't available to it.", Data: map[string]any{"Operation": operation}}
+}
+
+// CypherAdminRestrictedMultiGraph identifies a multi-graph statement from a
+// restricted principal.
+func CypherAdminRestrictedMultiGraph() Message {
+	return Message{ID: MessageCypherAdminRestrictedMultiGraph, Fallback: "Multi-graph statements are not available to a login whose graph privileges restrict what it sees."}
+}
+
+// Role commands: CREATE / DROP / RENAME ROLE and GRANT / REVOKE ROLE.
+const (
+	MessageCypherAdminRoleAlreadyExists        MessageID = "cypheradmin.role_already_exists"
+	MessageCypherAdminRoleBuiltin              MessageID = "cypheradmin.role_builtin"
+	MessageCypherAdminRoleCommandInTransaction MessageID = "cypheradmin.role_command_in_transaction"
+	MessageCypherAdminRoleCommandInvalid       MessageID = "cypheradmin.role_command_invalid"
+	MessageCypherAdminRoleNameInvalid          MessageID = "cypheradmin.role_name_invalid"
+	MessageCypherAdminRoleNotFound             MessageID = "cypheradmin.role_not_found"
+	MessageCypherAdminRoleUserNotFound         MessageID = "cypheradmin.role_user_not_found"
+)
+
+// CypherAdminRoleAlreadyExists identifies a role command naming a new role
+// that already exists.
+func CypherAdminRoleAlreadyExists(role string) Message {
+	return Message{ID: MessageCypherAdminRoleAlreadyExists, Fallback: "A role with the name '" + role + "' already exists.", Data: map[string]any{"Role": role}}
+}
+
+// CypherAdminRoleBuiltin identifies a DROP or RENAME of a built-in role.
+func CypherAdminRoleBuiltin(role string) Message {
+	return Message{ID: MessageCypherAdminRoleBuiltin, Fallback: "The built-in role '" + role + "' cannot be dropped or renamed.", Data: map[string]any{"Role": role}}
+}
+
+// CypherAdminRoleCommandInTransaction identifies a role command inside an
+// explicit transaction.
+func CypherAdminRoleCommandInTransaction() Message {
+	return Message{ID: MessageCypherAdminRoleCommandInTransaction, Fallback: "Role commands run on their own, not inside an explicit transaction."}
+}
+
+// CypherAdminRoleCommandInvalid identifies a malformed role command; cause
+// is the parser's detail.
+func CypherAdminRoleCommandInvalid(command, cause string) Message {
+	return Message{ID: MessageCypherAdminRoleCommandInvalid, Fallback: "Invalid role command '" + command + "': " + cause + ".", Data: map[string]any{"Command": command, "Cause": cause}}
+}
+
+// CypherAdminRoleNameInvalid identifies an empty or invalid role name.
+func CypherAdminRoleNameInvalid(role string) Message {
+	return Message{ID: MessageCypherAdminRoleNameInvalid, Fallback: "'" + role + "' is not a valid role name.", Data: map[string]any{"Role": role}}
+}
+
+// CypherAdminRoleNotFound identifies a role command naming a role that does
+// not exist.
+func CypherAdminRoleNotFound(role string) Message {
+	return Message{ID: MessageCypherAdminRoleNotFound, Fallback: "A role with the name '" + role + "' was not found.", Data: map[string]any{"Role": role}}
+}
+
+// CypherAdminRoleUserNotFound identifies a GRANT ROLE to a user that does not
+// exist.
+func CypherAdminRoleUserNotFound(user string) Message {
+	return Message{ID: MessageCypherAdminRoleUserNotFound, Fallback: "A user with the name '" + user + "' was not found.", Data: map[string]any{"User": user}}
+}
+
 const (
 	MessageCypherAdminSystemGraphAccessUnsupported MessageID = "cypheradmin.system_graph_access_unsupported"
 	MessageCypherAdminSystemProcedureUnsupported   MessageID = "cypheradmin.system_procedure_unsupported"

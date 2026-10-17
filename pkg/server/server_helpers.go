@@ -180,6 +180,12 @@ func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, d
 		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return false
 	}
+	// These routes search or read storage around a principal's graph view,
+	// so a principal restricted by collection rules is refused.
+	if s.principalAccess(getClaims(r)).RestrictedOn(dbName) {
+		s.writeNeo4jDatabaseAccessDenied(w, r)
+		return false
+	}
 	return true
 }
 
@@ -205,6 +211,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		return access.Allows(database, string(permission))
 	})
+	// The whole resolver too, so the Cypher these routes run reads through
+	// the principal's graph visibility, and their direct reads can refuse a
+	// restricted principal.
+	ctx = cypher.WithRequestPrincipalAccess(ctx, access)
 	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	selections := make(map[string]string)
 	defaultDatabase := ""
@@ -332,11 +342,28 @@ func (s *Server) principalAccess(claims *auth.JWTClaims) cypher.PrincipalAccess 
 	if claims == nil {
 		return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{})
 	}
+	sources.Visibility = s.GraphVisibilityForRoles
 	roles := claims.Roles
 	return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{
 		Roles:       roles,
 		Entitlement: func(permission string) bool { return hasPermission(s, roles, auth.Permission(permission)) },
 	})
+}
+
+// GraphVisibilityForRoles is a set of roles' graph visibility on database
+// (cypher.PrincipalAccessSources.Visibility): their graph privileges and the
+// database's access scope, read from the system database for each
+// statement, so a change applies from the next one. Bolt uses it too. A
+// server without databases restricts no one.
+func (s *Server) GraphVisibilityForRoles(roles []string, database string) (*cypher.GraphVisibility, error) {
+	if s == nil || s.dbManager == nil {
+		return nil, nil
+	}
+	system, err := s.dbManager.GetStorage("system")
+	if err != nil {
+		return nil, err
+	}
+	return cypher.ResolveGraphVisibility(context.Background(), system, roles, database)
 }
 
 // ProcedureGrantChecker reports, for a principal's roles, whether they hold

@@ -131,6 +131,45 @@
 - id: cypheradmin.impersonation_remote_database_denied
   description: Expanded pseudo-locale impersonation on a remote database denied.
   other: "[!! Impersonating a user is not supported on remote database '{{.Database}}'. !!]"
+- id: cypheradmin.role_already_exists
+  description: Expanded pseudo-locale role already exists.
+  other: "[!! A role with the name '{{.Role}}' already exists. !!]"
+- id: cypheradmin.role_builtin
+  description: Expanded pseudo-locale built-in role.
+  other: "[!! The built-in role '{{.Role}}' cannot be dropped or renamed. !!]"
+- id: cypheradmin.role_command_in_transaction
+  description: Expanded pseudo-locale role command in transaction.
+  other: "[!! Role commands run on their own, not inside an explicit transaction. !!]"
+- id: cypheradmin.role_command_invalid
+  description: Expanded pseudo-locale role command invalid.
+  other: "[!! Invalid role command '{{.Command}}': {{.Cause}}. !!]"
+- id: cypheradmin.role_name_invalid
+  description: Expanded pseudo-locale role name invalid.
+  other: "[!! '{{.Role}}' is not a valid role name. !!]"
+- id: cypheradmin.role_not_found
+  description: Expanded pseudo-locale role not found.
+  other: "[!! A role with the name '{{.Role}}' was not found. !!]"
+- id: cypheradmin.role_user_not_found
+  description: Expanded pseudo-locale role user not found.
+  other: "[!! A user with the name '{{.User}}' was not found. !!]"
+- id: cypheradmin.access_scope_exists
+  description: Expanded pseudo-locale access scope exists.
+  other: "[!! Graph '{{.Graph}}' already has an access scope. !!]"
+- id: cypheradmin.access_scope_not_found
+  description: Expanded pseudo-locale access scope not found.
+  other: "[!! Graph '{{.Graph}}' has no access scope named '{{.Name}}'. !!]"
+- id: cypheradmin.hidden_relationship_delete
+  description: Expanded pseudo-locale hidden relationship delete.
+  other: "[!! Not allowed to delete a node that has relationships you cannot see. !!]"
+- id: cypheradmin.restricted_multi_graph
+  description: Expanded pseudo-locale restricted multi-graph.
+  other: "[!! Multi-graph statements are not available to a login whose graph privileges restrict what it sees. !!]"
+- id: cypheradmin.restricted_operation
+  description: Expanded pseudo-locale restricted operation.
+  other: "[!! {{.Operation}} reads past the graph privileges that restrict what this login sees, so it isn't available to it. !!]"
+- id: cypheradmin.restricted_projection_stale
+  description: Expanded pseudo-locale restricted projection stale.
+  other: "[!! Graph `{{.Graph}}` holds nodes you can no longer see; drop it and project it again. !!]"
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

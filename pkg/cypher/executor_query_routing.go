@@ -179,6 +179,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	switch {
+	case isRoleGrantCommand(cypher) || (isRoleCommand(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "SHOW")):
+		return e.executeRoleCommand(ctx, cypher)
+	case isGraphPrivilegeCommand(cypher):
+		return e.executeGraphPrivilegeCommand(ctx, cypher)
+	case isAccessScopeCommand(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "SHOW"):
+		return e.executeAccessScopeCommand(ctx, cypher)
 	case isProcedurePrivilegeCommand(cypher):
 		return e.executeProcedurePrivilegeCommand(ctx, cypher)
 	case isImpersonatePrivilegeCommand(cypher):
@@ -237,9 +243,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeDropProcedure(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "INDEX"):
 		return e.executeSchemaCommand(ctx, cypher)
-	case isDropRoleCommand(cypher):
-		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
-			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:
@@ -447,20 +450,12 @@ func isNornicExtensionStatement(cypher string) bool {
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
+		isPrivilegeAdministrationCommand(cypher) || isShowUserPrivilegesCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
 		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
 			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
-}
-
-// isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
-// Community refuses as an unsupported administration command; NornicDB
-// does the same on both parsers. Roles are deleted through the HTTP role
-// API, whose owner also updates the server's loaded role caches.
-func isDropRoleCommand(cypher string) bool {
-	return startsWithKeywords(cypher, "DROP", "ROLE")
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.
@@ -839,7 +834,7 @@ func hasValidStartKeyword(cypher string) bool {
 			return true
 		}
 	}
-	return isPrivilegeCommandShaped(cypher)
+	return isPrivilegeCommandShaped(cypher) || isRoleCommand(cypher) || isAccessScopeCommand(cypher)
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -1031,7 +1026,7 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "USERS"),
 		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsersWithLimits)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
 		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
@@ -1043,6 +1038,15 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		return result, true, err
 	case isShowPrivilegesCommand(cypher):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
+		return result, true, err
+	case isRoleCommand(cypher):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowRoles)
+		return result, true, err
+	case isShowUserPrivilegesCommand(cypher):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUserPrivileges)
+		return result, true, err
+	case isAccessScopeCommand(cypher):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowAccessScopes)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "ROLES"),
 		startsWithKeywords(cypher, "SHOW", "ROLE"),

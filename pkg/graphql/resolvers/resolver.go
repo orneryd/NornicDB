@@ -8,6 +8,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -218,6 +219,12 @@ func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, er
 	if err != nil {
 		return "", nil, err
 	}
+	// Search and similarity read around a principal's graph view, so a
+	// principal restricted by collection rules is refused here.
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok && access.RestrictedOn(database) {
+		denied := cypher.DatabaseAccessDeniedMessage(ctx)
+		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	}
 	// A composite's storage reads every constituent, which this one decision
 	// on the composite does not cover; the REST search and similarity routes
 	// refuse it the same way.
@@ -244,7 +251,9 @@ func (r *Resolver) executeCypher(ctx context.Context, query string, params map[s
 	// statement and every database it selects with it, and the principal's
 	// boosted procedure grants come with the request too, as on HTTP and
 	// Bolt.
-	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil {
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok {
+		ctx = cypher.WithPrincipalAccess(ctx, effectiveDb, access)
+	} else if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil {
 		ctx = cypher.WithDatabasePermissionResolver(ctx, effectiveDb, func(database, permission string) bool {
 			return allows(database, auth.Permission(permission))
 		})

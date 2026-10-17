@@ -23,10 +23,12 @@ func TestBoltDropRoleUnsupportedChangesNothing(t *testing.T) {
 	server := &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	admin := &BoltAuthResult{Authenticated: true, Username: "admin", Roles: []string{"admin"},
 		Permissions: []string{string(auth.PermRead), string(auth.PermWrite), string(auth.PermSchema), string(auth.PermAdmin)}}
+	// This server has no role owner (SetRoleAdministration), so every role
+	// command is unsupported, as in Neo4j Community, and changes nothing.
 	for query, expected := range map[string]string{
-		"CREATE ROLE new":             "Neo.ClientError.Statement.SemanticError",
+		"CREATE ROLE new":             "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"DROP ROLE ops":               "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"RENAME ROLE ops TO new":      "Neo.ClientError.Statement.SyntaxError",
+		"RENAME ROLE ops TO new":      "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"GRANT ROLE ops TO reader":    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"REVOKE ROLE ops FROM reader": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 	} {

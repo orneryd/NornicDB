@@ -862,6 +862,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 		Property:   targetProperty,
 		Similarity: similarityFunc,
 		Limit:      limit,
+		Restricted: e.restrictedReader(),
 	})
 	if err != nil {
 		return nil, false
@@ -1190,6 +1191,7 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 			Property:   targetProperty,
 			Similarity: similarityFunc,
 			Limit:      limit,
+			Restricted: e.restrictedReader(),
 		})
 		if err == nil {
 			out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(hits)))

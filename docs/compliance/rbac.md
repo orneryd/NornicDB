@@ -75,9 +75,11 @@ curl -X DELETE http://localhost:7474/auth/roles/data_analyst \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-Deleting a role removes everything the role owns — its database access
-and privileges, entitlements, procedure grants and impersonation privileges — and removes it from every user
-assigned to it, in one transaction. Those users keep their other roles. Built-in roles cannot be deleted.
+Cypher `DROP ROLE data_analyst` on the system database does the same.
+
+Deleting a role, over HTTP or with `DROP ROLE`, removes everything the role owns — its database access
+and privileges, entitlements, procedure grants, impersonation privileges and graph privileges (collection rules
+included) — and removes it from every user assigned to it, in one transaction. Those users keep their other roles. Built-in roles cannot be deleted.
 Renaming a role moves the same records and assignments to the new name.
 
 ---
@@ -214,7 +216,7 @@ SHOW ROLE cdc_reader PRIVILEGES
 - A procedure is named exactly or with a glob: `*` stands for any characters, dots included, and `?` for one. Several names and several roles can be listed, separated by commas.
 - `BOOSTED` lets the role run the matching procedures even when they need administrator rights. Ordinary `EXECUTE PROCEDURE`, `EXECUTE ADMIN`, `EXECUTE FUNCTION` (including boosted functions), and setting grants are refused with `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; they are never accepted without enforcement. These procedure privileges are administered through Cypher only.
 - The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
-- `GRANT` needs the role to exist (built-in, or created with `POST /auth/roles`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- `GRANT` needs the role to exist (built-in, or created with `CREATE ROLE`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`, except a user listing their own (`SHOW USER PRIVILEGES`).
 - Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback. They run on the system database whichever database the transaction was opened on, as in Neo4j: an administration command as a transaction's first statement makes it an administration transaction, and after a data statement (or in a statement a procedure such as `apoc.cypher.run` runs) it fails with `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
 - Grants come only from `GRANT` and `REVOKE`: the system database runs no statement that writes graph data (`CREATE`, `MERGE`, `SET`, `DELETE`, `REMOVE`, write procedures), as in Neo4j. Deleting a role removes its grants.
 - The system database runs what Neo4j 5.26.30's runs: administration and `SHOW` commands, and calls of system procedures (`worksOnSystem` in `SHOW PROCEDURES`). Any other procedure, and any other statement (`RETURN 1`, `RETURN COUNT { … }`, `EXISTS { … }`, `UNWIND …`, `CALL { … }`), fails there with `Neo.ClientError.Statement.SemanticError`, and so does a procedure call whose `YIELD`, `WHERE` or `RETURN` reads the graph (a `COUNT`, `EXISTS` or `COLLECT` subquery, a pattern comprehension or a pattern expression). A `SHOW` command's tail filters, orders, pages and projects the command's columns only: another clause after `YIELD` (`WITH`, `UNWIND`, `CALL { … }`, `MATCH`, a write) and an expression that reads the graph fail with Neo4j's `Neo.ClientError.Statement.SyntaxError` ("The COUNT expression is not valid on SHOW commands.", "Pattern expressions are not valid on SHOW commands.", "Invalid input 'WITH' …"). All of this holds on every route (directly, after `USE system`, in a statement `apoc.cypher.run` or a `CALL { }` runs, and through the embedded executor: `DB.GetCypherExecutor`, `DB.ExecuteCypher`, `DB.Cypher`). On a user database a `SHOW` tail may read the graph, as in Neo4j. A system procedure that reads the graph, such as `db.labels()`, sees none of the records the system database keeps. `EXPLAIN` of an administration command runs nothing, and `PROFILE` runs it, on both parsers.
@@ -223,14 +225,14 @@ SHOW ROLE cdc_reader PRIVILEGES
 - A role's name has one form everywhere: `ROLE_ops`, `Ops` and `ops` name the role `ops`.
 - "Admin" means the `admin` entitlement, whatever the role holding it is called: `dbms.listConnections` lists every connection only to a principal with it (any other sees its own, as in Neo4j), and creating an API token needs it.
 - A statement that selects a database with `USE`, at the top level, in `CALL { }` or in a statement a procedure runs, goes through one router: in a transaction it must stay on the transaction's database (`Neo.ClientError.Statement.AccessMode` otherwise), and on the system database the rules above apply.
-- `DROP ROLE` is Neo4j Community's `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; roles are deleted with `DELETE /auth/roles/{name}`.
+- Roles are administered in Cypher on the system database: `CREATE [OR REPLACE] ROLE name [IF NOT EXISTS]`, `DROP ROLE name [IF EXISTS]`, `RENAME ROLE name TO other`, `GRANT ROLE[S] r[, …] TO user[, …]`, `REVOKE ROLE[S] r[, …] FROM user[, …]` and `SHOW [ALL | POPULATED] ROLE[S] [WITH USER[S]]`. They need administrator rights, run outside explicit transactions, and go through the same role owner as the `/auth/roles` API. `GRANT ROLE` / `REVOKE ROLE` change each named user under one lock and transaction, so concurrent commands keep each other's changes. `IMMUTABLE` roles and `CREATE ROLE … AS COPY OF` aren't supported.
 - `GRANT IMMUTABLE` / `REVOKE IMMUTABLE` follow Neo4j: immutable privileges can be granted and revoked only while authentication is disabled; with it enabled, `GRANT IMMUTABLE` and any `REVOKE` of an immutable privilege fail with `Neo.ClientError.Security.Forbidden`. `REVOKE IMMUTABLE` removes only an immutable privilege; a plain `REVOKE` removes either. `SHOW PRIVILEGES` reports it in the `immutable` column.
 - A procedure name or glob may be backticked, whole or in parts (`` `db.cdc.*` ``, ``db.`cdc`.*``); it is stored unquoted.
-- `SHOW PRIVILEGES` lists the procedure and impersonation privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY` of anything but `IMPERSONATE`, graph privileges) aren't supported.
+- `SHOW PRIVILEGES` (and `SHOW ROLE r PRIVILEGES`, `SHOW USER [name] PRIVILEGES`) lists the procedure, impersonation and graph privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`, plus `user` for a user) and takes `YIELD` and `WHERE`. A user may list their own privileges; another user's need administrator rights. Graph privileges are `GRANT` / `DENY` / `REVOKE MATCH {*} ON GRAPH g [NODES L | FOR (n:L) WHERE …]`, including collection rules with an access scope (see [Collection access](../user-guides/collection-access.md)). `DENY` of other privileges, `TRAVERSE`, `READ` and relationship segments aren't supported.
 
 A change-feed reader, set up once:
 
-1. Create the role (`POST /auth/roles`), give it the `read` entitlement (`PUT /auth/role-entitlements`) and read access on its database only (`PUT /auth/access/privileges`), and assign it to the worker login.
+1. Create the role (`CREATE ROLE cdc_reader`), give it the `read` entitlement (`PUT /auth/role-entitlements`) and read access on its database only (`PUT /auth/access/privileges`), and assign it to the worker login (`GRANT ROLE cdc_reader TO worker`).
 2. Run `GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO cdc_reader` on the system database as an administrator.
 
 ### User Impersonation

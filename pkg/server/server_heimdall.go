@@ -270,6 +270,16 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 	return admittedCtx, dbName, nil
 }
 
+// requireUnrestricted refuses the calls that read storage or search
+// directly (Stats, Discover) for a principal whose graph privileges
+// restrict what it sees on dbName: they would read around its view.
+func (r *heimdallDBRouter) requireUnrestricted(ctx context.Context, dbName string) error {
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok && access.RestrictedOn(dbName) {
+		return r.databaseForbidden(ctx)
+	}
+	return nil
+}
+
 // databaseForbidden is Neo4j's Forbidden error for ctx's principal, which
 // Neo4j names instead of the selection (cypher.DatabaseAccessDeniedMessage).
 func (r *heimdallDBRouter) databaseForbidden(ctx context.Context) error {
@@ -329,6 +339,9 @@ func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall
 		return heimdall.DatabaseStats{}, err
 	}
 	if err := r.requireNonComposite(dbName); err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	if err := r.requireUnrestricted(ctx, dbName); err != nil {
 		return heimdall.DatabaseStats{}, err
 	}
 	dbName, engine, err := r.storageForDatabase(dbName)
@@ -403,6 +416,9 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 		return nil, err
 	}
 	if err := r.requireNonComposite(dbName); err != nil {
+		return nil, err
+	}
+	if err := r.requireUnrestricted(ctx, dbName); err != nil {
 		return nil, err
 	}
 	dbName, engine, err := r.storageForDatabase(dbName)

@@ -32,6 +32,12 @@ type PermissionRequirements struct {
 	// ("create_index", "drop_index", "create_constraint",
 	// "drop_constraint"), named by its refusal.
 	SchemaAction string
+	// UnrestrictedView is set when the query calls a callable that reads
+	// around a principal's graph view (PrivilegeUnrestrictedView), which a
+	// principal restricted on the statement's database may not;
+	// UnrestrictedViewCallable names it for the refusal.
+	UnrestrictedView         bool
+	UnrestrictedViewCallable string
 }
 
 // AdminGrantedBy reports whether a role's procedure grants satisfy the
@@ -75,6 +81,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		requirements.Write = requirements.Write || contract.Write
 		requirements.Schema = requirements.Schema || contract.Schema
 		requirements.UpdatesDBMS = requirements.UpdatesDBMS || contract.UpdatesDBMS
+		if contract.UnrestrictedView && !requirements.UnrestrictedView {
+			requirements.UnrestrictedView, requirements.UnrestrictedViewCallable = true, procedure.Name
+		}
 		if contract.Schema && requirements.SchemaAction == "" {
 			requirements.SchemaAction = schemaProcedureAction(procedure.Name)
 		}
@@ -94,6 +103,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 			requirements.Schema = requirements.Schema || contract.Schema
 			requirements.Admin = requirements.Admin || contract.Admin
 			requirements.UpdatesDBMS = requirements.UpdatesDBMS || contract.UpdatesDBMS
+			if contract.UnrestrictedView && !requirements.UnrestrictedView {
+				requirements.UnrestrictedView, requirements.UnrestrictedViewCallable = true, name
+			}
 			if contract.Admin {
 				// Procedure boosting cannot discharge an independent function
 				// requirement in the same statement.
@@ -374,6 +386,7 @@ type DatabasePermissionResolver func(database, permission string) bool
 type databaseAuthorization struct {
 	database string
 	resolver DatabasePermissionResolver
+	visible  func(database string) (*GraphVisibility, error)
 }
 
 type databaseAuthorizationKey struct{}
@@ -393,9 +406,13 @@ func WithDatabasePermissionResolver(ctx context.Context, database string, resolv
 	if resolver == nil {
 		return ctx
 	}
+	// A permission-only attachment keeps an already attached principal's
+	// graph visibility (WithPrincipalAccess).
+	previous, _ := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
 	return context.WithValue(ctx, databaseAuthorizationKey{}, databaseAuthorization{
 		database: database,
 		resolver: resolver,
+		visible:  previous.visible,
 	})
 }
 
@@ -775,6 +792,9 @@ func authorizeRequirements(ctx context.Context, requirements PermissionRequireme
 	if impersonating(ctx) && requirements.UpdatesDBMS {
 		return impersonationSystemUpdateDenied()
 	}
+	if requirements.UnrestrictedView && statementRestricted(ctx) {
+		return localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminRestrictedOperation(requirements.UnrestrictedViewCallable))
+	}
 	hasPermission := contextPermissions(ctx)
 	if hasPermission == nil {
 		return nil
@@ -871,6 +891,11 @@ type PrincipalAccess struct {
 	// Entitlement reports a global entitlement (schema, admin, and read and
 	// write when DatabaseAccess is nil); nil holds every one.
 	Entitlement func(permission string) bool
+	// Visibility is the principal's graph visibility on a database: nil
+	// when it is unrestricted there (GraphVisibility). It never grants or
+	// denies an operation; it narrows what reads see. A nil Visibility
+	// restricts nothing.
+	Visibility func(database string) (*GraphVisibility, error)
 }
 
 // PrincipalAccessSources are a transport's stores behind a principal's
@@ -884,6 +909,9 @@ type PrincipalAccessSources struct {
 	// server's database privileges); nil leaves read and write to the
 	// principal's entitlements.
 	DatabaseAccess func(roles []string, database string) auth.ResolvedAccess
+	// Visibility is a set of roles' graph visibility on a database (the
+	// server's graph privileges and access scopes); nil restricts no one.
+	Visibility func(roles []string, database string) (*GraphVisibility, error)
 }
 
 // AccessPrincipal is whose privileges a resolver applies: the executing
@@ -897,17 +925,21 @@ type AccessPrincipal struct {
 
 // NewPrincipalAccess is the one constructor of a principal's permission
 // resolver, which HTTP and Bolt both call: graph access from the sources,
-// read and write from the principal's roles' database privileges, the other
-// permissions from its entitlements. Without a principal (no
-// authentication) every permission the graph access allows is open.
+// read and write from the principal's roles' database privileges, its graph
+// visibility from those roles' graph privileges, the other permissions from
+// its entitlements. Without a principal (no authentication) every
+// permission the graph access allows is open.
 func NewPrincipalAccess(sources PrincipalAccessSources, principal *AccessPrincipal) PrincipalAccess {
 	access := PrincipalAccess{GraphAccess: sources.GraphAccess}
 	if principal == nil {
 		return access
 	}
+	roles := principal.Roles
 	if resolve := sources.DatabaseAccess; resolve != nil {
-		roles := principal.Roles
 		access.DatabaseAccess = func(database string) auth.ResolvedAccess { return resolve(roles, database) }
+	}
+	if resolve := sources.Visibility; resolve != nil {
+		access.Visibility = func(database string) (*GraphVisibility, error) { return resolve(roles, database) }
 	}
 	access.Entitlement = principal.Entitlement
 	if access.Entitlement == nil {

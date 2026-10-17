@@ -145,5 +145,10 @@ func AdmitRequestOperation(ctx context.Context, defaultDatabase, selection strin
 	}
 	resolver := func(database, permission string) bool { return allows(database, auth.Permission(permission)) }
 	ctx = WithDatabasePermissionResolver(ctx, database, resolver)
+	// The request principal's graph visibility (WithRequestPrincipalAccess)
+	// narrows the reads of every statement the operation runs.
+	if access, ok := RequestPrincipalAccess(ctx); ok && access.Visibility != nil {
+		ctx = withGraphVisibility(ctx, access.VisibilityOf)
+	}
 	return ctx, database, AdmitOperation(ctx, resolver, database, class)
 }

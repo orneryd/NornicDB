@@ -109,7 +109,14 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 	var fulltextProperties []string
 	if query.text != "" {
 		fulltextProperties = s.FulltextProperties()
-		terms = matchQueryTerms(analyzer, query.text, s.fulltext())
+		var visible func(string) bool
+		if reader := opts.Restricted; reader != nil {
+			if index, ok := s.fulltext().(visibleStatisticsIndex); ok {
+				reader.decideNodes(index.documentIDs())
+			}
+			visible = reader.nodeLookup()
+		}
+		terms = matchQueryTermsVisible(analyzer, query.text, s.fulltext(), visible)
 	}
 	for index := range results {
 		if nodes[index] == nil {
@@ -290,6 +297,29 @@ func (s *Service) SetEmbedTextOptions(opts *embeddingutil.EmbedTextOptions) {
 // termIDFReader is a BM25 index that can weigh a query term.
 type termIDFReader interface {
 	TermIDF(term string) float64
+}
+
+// matchQueryTermsVisible is matchQueryTerms for a restricted reader whose
+// visible documents visible accepts (nil: an unrestricted reader): each
+// term's IDF is over the visible documents (RestrictedReader). visible must
+// not read storage.
+func matchQueryTermsVisible(analyzer Analyzer, query string, index bm25Index, visible func(docID string) bool) map[string]*queryTerm {
+	if visible == nil {
+		return matchQueryTerms(analyzer, query, index)
+	}
+	terms := make(map[string]*queryTerm)
+	visibleIDF, _ := index.(visibleIDFReader)
+	for _, term := range analyzer.Analyze(query) {
+		if _, seen := terms[term]; seen {
+			continue
+		}
+		weighted := &queryTerm{term: term, index: len(terms)}
+		if visibleIDF != nil {
+			weighted.idf = visibleIDF.visibleTermIDF(term, visible)
+		}
+		terms[term] = weighted
+	}
+	return terms
 }
 
 // matchQueryTerms are query's distinct terms, each with its IDF in index (a

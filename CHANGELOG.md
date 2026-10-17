@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-collection read access through role membership, administered in Cypher (#935):
+  - **Role commands:** `CREATE` / `DROP` / `RENAME ROLE`, `GRANT` / `REVOKE ROLE` and `SHOW ROLES`.
+  - **Collection rules:** `GRANT` / `DENY` / `REVOKE MATCH {*} ON GRAPH … FOR (n:L) WHERE …`.
+  - **Access scopes:** `CREATE` / `DROP` / `SHOW ACCESS SCOPE` declare collection membership and how other nodes derive their visibility.
+  - **What a restricted login sees:** only what its roles allow, on every read path (Cypher, vector and fulltext search, `db.retrieve`, graph routes, GDS aggregation projections). Routes that read storage directly refuse it.
+  - **Introspection:** `SHOW USER PRIVILEGES` and `SHOW CURRENT USER YIELD collectionLimited` report the limits.
 - Regenerating or clearing embeddings can target any databases: `POST /nornicdb/embed/trigger?regenerate=true` and
   `POST /nornicdb/embed/clear` take `{"databases": [...]}` (or `?database=`), defaulting to the default database as
   before. Each named database needs write access, and an unknown, composite or `system` database rejects the request

@@ -427,6 +427,12 @@ type SearchOptions struct {
 	// the options.
 	Where func(*storage.Node) bool
 
+	// Restricted is a restricted reader's visibility (RestrictedReader; nil:
+	// an unrestricted reader). Every ranking population the search builds,
+	// node or relationship, keyword, vector or fused, holds only what the
+	// reader may see.
+	Restricted *RestrictedReader
+
 	// RelationshipWhere admits a candidate relationship of a relationship or
 	// graph search, given its start and end nodes (nil when not visible), as
 	// Where does a node; nil admits every relationship. It is applied with
@@ -4568,7 +4574,9 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
 	cacheKey := s.cacheNamespace + "\x00" + strconv.FormatUint(s.IndexRevision(), 10) + "\x00" + searchCacheKey(query, embedding, opts)
 	resultCache := s.resultCache
-	if opts.Where != nil || storage.NewQueryResultProjection(s.engine).Enabled() {
+	// A caller's own filter, or a restricted reader's visibility, can't be
+	// part of the key: such a search neither reads nor fills the cache.
+	if opts.Where != nil || opts.Restricted != nil || storage.NewQueryResultProjection(s.engine).Enabled() {
 		resultCache = nil
 	}
 	if resultCache != nil {
@@ -5212,6 +5220,33 @@ func (s *Service) adaptiveBM25Search(
 			s.indexMu.RLock()
 			defer s.indexMu.RUnlock()
 			return index.SearchAllowed(query, limit, allowed)
+		}
+	}
+	if opts != nil && opts.Restricted != nil {
+		// A restricted reader (RestrictedReader): BM25's plan, statistics and
+		// scores are those of the documents it can see. Visibility reads
+		// storage, so every indexed document is decided before any index lock
+		// is taken (once, on the first page); under the locks the index only
+		// looks the answers up. An engine without visible statistics serves a
+		// restricted reader nothing rather than whole-index statistics.
+		reader := opts.Restricted
+		visibleIndex, supported := index.(visibleStatisticsIndex)
+		var allowed func(string) bool
+		if len(opts.Types) > 0 {
+			allowed = s.indexedTypeAdmitter(opts.Types)
+		}
+		decided := false
+		search = func(query string, limit int) []indexResult {
+			if !supported {
+				return nil
+			}
+			if !decided {
+				reader.decideNodes(visibleIndex.documentIDs())
+				decided = true
+			}
+			s.indexMu.RLock()
+			defer s.indexMu.RUnlock()
+			return visibleIndex.SearchVisible(query, limit, reader.nodeLookup(), allowed)
 		}
 	}
 	filter := func(results []indexResult) []indexResult {
@@ -7212,13 +7247,14 @@ func nodeMatchesFilters(node *storage.Node, filters map[string][]string) bool {
 // filtersCandidates reports whether opts narrows the candidates: by type,
 // property filters or Where.
 func (opts *SearchOptions) filtersCandidates() bool {
-	return len(opts.Types) > 0 || len(opts.Filters) > 0 || opts.Where != nil
+	return len(opts.Types) > 0 || len(opts.Filters) > 0 || opts.Where != nil || opts.Restricted != nil
 }
 
 // admitsNode is the property test every search path applies to a candidate
 // before the top-K cut: the property filters, then Where.
 func (opts *SearchOptions) admitsNode(node *storage.Node) bool {
-	return nodeMatchesFilters(node, opts.Filters) && (opts.Where == nil || opts.Where(node))
+	return (opts.Restricted == nil || opts.Restricted.NodeVisible(string(node.ID))) &&
+		nodeMatchesFilters(node, opts.Filters) && (opts.Where == nil || opts.Where(node))
 }
 
 // propValueMatchesAny returns true if any of wantVals matches propVal.
@@ -7250,7 +7286,7 @@ func propValueMatchesAny(propVal any, wantVals []string) bool {
 
 // filterByProperties filters results to the nodes opts admits (admitsNode).
 func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) []indexResult {
-	if len(opts.Filters) == 0 && opts.Where == nil {
+	if len(opts.Filters) == 0 && opts.Where == nil && opts.Restricted == nil {
 		return results
 	}
 	var filtered []indexResult
@@ -7283,7 +7319,7 @@ func (s *Service) filterByTypeAndProperties(
 	}
 	types := opts.Types
 	// properties is whether the nodes' properties are tested too.
-	properties := len(opts.Filters) > 0 || opts.Where != nil
+	properties := len(opts.Filters) > 0 || opts.Where != nil || opts.Restricted != nil
 
 	typesResolved := false
 	if len(types) > 0 {

@@ -16,12 +16,17 @@ const (
 	OperationSharedState
 	OperationFileIO
 	OperationRemote
+	// OperationUnrestrictedView reads storage around a principal's graph
+	// view (collection rules), so a principal restricted on the database
+	// is refused it.
+	OperationUnrestrictedView
 )
 
 // Valid reports whether c is an explicit supported contract class.
 func (c OperationClass) Valid() bool {
 	const known = OperationNone | OperationRead | OperationWrite | OperationSchema |
-		OperationAdmin | OperationDBMS | OperationSharedState | OperationFileIO | OperationRemote
+		OperationAdmin | OperationDBMS | OperationSharedState | OperationFileIO | OperationRemote |
+		OperationUnrestrictedView
 	return c != 0 && c & ^known == 0 && (c == OperationNone || c&OperationNone == 0)
 }
 

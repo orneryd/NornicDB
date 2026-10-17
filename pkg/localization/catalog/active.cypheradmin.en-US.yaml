@@ -131,6 +131,45 @@
 - id: cypheradmin.impersonation_remote_database_denied
   description: A statement or transaction impersonating a user on a remote database or a composite with a remote constituent. Database is untranslated.
   other: "Impersonating a user is not supported on remote database '{{.Database}}'."
+- id: cypheradmin.role_already_exists
+  description: A role command naming a new role that already exists. Role is untranslated.
+  other: "A role with the name '{{.Role}}' already exists."
+- id: cypheradmin.role_builtin
+  description: A DROP or RENAME of a built-in role. Role is untranslated.
+  other: "The built-in role '{{.Role}}' cannot be dropped or renamed."
+- id: cypheradmin.role_command_in_transaction
+  description: A role command inside an explicit transaction.
+  other: "Role commands run on their own, not inside an explicit transaction."
+- id: cypheradmin.role_command_invalid
+  description: A malformed role command. Command and Cause are untranslated.
+  other: "Invalid role command '{{.Command}}': {{.Cause}}."
+- id: cypheradmin.role_name_invalid
+  description: An empty or invalid role name. Role is untranslated.
+  other: "'{{.Role}}' is not a valid role name."
+- id: cypheradmin.role_not_found
+  description: A role command naming a role that does not exist. Role is untranslated.
+  other: "A role with the name '{{.Role}}' was not found."
+- id: cypheradmin.role_user_not_found
+  description: A GRANT ROLE to a user that does not exist. User is untranslated.
+  other: "A user with the name '{{.User}}' was not found."
+- id: cypheradmin.access_scope_exists
+  description: A CREATE ACCESS SCOPE on a graph that has one. Graph is untranslated.
+  other: "Graph '{{.Graph}}' already has an access scope."
+- id: cypheradmin.access_scope_not_found
+  description: A DROP ACCESS SCOPE naming no scope of the graph. Name and Graph are untranslated.
+  other: "Graph '{{.Graph}}' has no access scope named '{{.Name}}'."
+- id: cypheradmin.hidden_relationship_delete
+  description: A delete of a node that has relationships the principal can't see.
+  other: "Not allowed to delete a node that has relationships you cannot see."
+- id: cypheradmin.restricted_multi_graph
+  description: A multi-graph statement from a login whose graph privileges restrict what it sees.
+  other: "Multi-graph statements are not available to a login whose graph privileges restrict what it sees."
+- id: cypheradmin.restricted_operation
+  description: A restricted login's call of a procedure or function that reads past the graph privileges that restrict what it sees. Operation is the untranslated callable name.
+  other: "{{.Operation}} reads past the graph privileges that restrict what this login sees, so it isn't available to it."
+- id: cypheradmin.restricted_projection_stale
+  description: A restricted login's use of a GDS projection that holds nodes it can no longer see. Graph is the projection's name.
+  other: "Graph `{{.Graph}}` holds nodes you can no longer see; drop it and project it again."
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

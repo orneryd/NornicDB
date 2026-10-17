@@ -42,6 +42,9 @@ type RequestIdentity struct {
 	Users func() []UserListing
 	// Connections snapshots the transport's accepted connections; nil for embedded callers.
 	Connections func() []ConnectionListing
+	// Roles is the server's role owner the role commands run through; nil
+	// without one, and the role commands are then unsupported.
+	Roles RoleAdministration
 }
 
 // ConnectionListing is an immutable accepted-connection snapshot for dbms.listConnections.

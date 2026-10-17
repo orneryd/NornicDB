@@ -31,11 +31,13 @@ func isProcedurePrivilegeCommand(cypher string) bool {
 }
 
 // isPrivilegeAdministrationCommand reports whether cypher is a GRANT, REVOKE
-// or DENY, or a SHOW of privileges, which administrators alone may run.
+// or DENY, a SHOW of privileges, a role command (isRoleCommand) or an access
+// scope command (isAccessScopeCommand), which administrators alone may run.
 func isPrivilegeAdministrationCommand(cypher string) bool {
 	trimmed := strings.TrimSpace(cypher)
 	return startsWithKeywordFold(trimmed, "GRANT") || startsWithKeywordFold(trimmed, "REVOKE") ||
-		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed)
+		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed) || isRoleCommand(trimmed) ||
+		isAccessScopeCommand(trimmed)
 }
 
 // isPrivilegeCommandShaped reports a GRANT, REVOKE or DENY shaped as a
@@ -340,15 +342,28 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 	if err != nil {
 		return nil, err
 	}
-	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
-	if err != nil {
-		return nil, err
-	}
 	only := map[string]bool{}
 	for _, role := range showPrivilegeRoles(head) {
 		only[role] = true
 	}
-	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}
+	rows, err := privilegeRecordRows(ctx, system, only)
+	if err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: rows}, nil
+}
+
+// privilegeRecordRows is the one enumerator of stored privileges, in SHOW
+// PRIVILEGES' row shape: EXECUTE procedure grants, IMPERSONATE privileges and
+// graph (MATCH) privileges, of the roles in only (every role when only is
+// empty). SHOW ROLE … PRIVILEGES and SHOW USER … PRIVILEGES both list
+// through it, so a privilege kind is listed everywhere or nowhere.
+func privilegeRecordRows(ctx context.Context, system storage.Engine, only map[string]bool) ([][]interface{}, error) {
+	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := [][]interface{}{}
 	for _, grant := range grants {
 		if len(only) > 0 && !only[grant.Role] {
 			continue
@@ -357,12 +372,16 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		if grant.Boosted {
 			action = "execute_boosted"
 		}
-		result.Rows = append(result.Rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
+		rows = append(rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
 	}
 	impersonation, err := impersonatePrivilegeRows(ctx, system, only)
 	if err != nil {
 		return nil, err
 	}
-	result.Rows = append(result.Rows, impersonation...)
-	return result, nil
+	rows = append(rows, impersonation...)
+	graphPrivileges, err := auth.NewGraphPrivilegeStore(system).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(rows, graphPrivilegeRows(graphPrivileges, only)...), nil
 }

@@ -244,6 +244,7 @@ type Server struct {
 	databaseConnectionResolve func(databaseName string) (string, error)
 	databaseConnectionAdmit   func(databaseName string) error
 	databaseConnectionRelease func(databaseName string)
+	collectionAccessHooks     // role owner and graph visibility (server_collection_access.go)
 
 	// impersonationAllowed decides IMPERSONATE (SetImpersonationResolver).
 	impersonationAllowed func(roles []string, admin bool, user string) bool

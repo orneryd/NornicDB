@@ -947,6 +947,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	boltServer.SetProcedureGrantResolver(httpServer.ProcedureGrantChecker)
 	// IMPERSONATE privileges for Bolt imp_user.
 	boltServer.SetImpersonationResolver(httpServer.ImpersonationChecker)
+	// The Cypher role commands, through the same role owner as HTTP.
+	boltServer.SetRoleAdministration(httpServer.RoleAdministration)
+	// Graph privileges: the same visibility for a login on Bolt as on HTTP.
+	boltServer.SetGraphVisibilityResolver(httpServer.GraphVisibilityForRoles)
 
 	// Phase 1 OBS-07/OBS-08: lifecycle.Run is the canonical supervisor.
 	// The previous channel-based pattern (signal.Notify + sequential

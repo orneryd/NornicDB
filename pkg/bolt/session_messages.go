@@ -278,7 +278,7 @@ func (s *Session) handleRun(data []byte) error {
 		// database (graphAccess: a composite constituent needs its composite
 		// and its database), and read / write are the privileges of the
 		// database its data is in.
-		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(mode).Allows)
+		ctx = cypher.WithPrincipalAccess(ctx, dbName, s.principalAccess(mode))
 	}
 
 	runStart := time.Now()
@@ -1936,6 +1936,9 @@ func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.Principal
 	}
 	if s.server != nil {
 		sources.DatabaseAccess = s.server.resolvedAccessResolver
+		s.server.mu.RLock()
+		sources.Visibility = s.server.graphVisibility
+		s.server.mu.RUnlock()
 	}
 	who := s.executingAuth()
 	if who == nil {
@@ -2166,6 +2169,14 @@ func (s *Session) signedInIdentity() *cypher.RequestIdentity {
 	if s.server != nil && s.server.config != nil {
 		if lister, ok := s.server.config.Authenticator.(interface{ UserListings() []cypher.UserListing }); ok {
 			identity.Users = lister.UserListings
+		}
+	}
+	if s.server != nil {
+		s.server.mu.RLock()
+		roles := s.server.roleAdministration
+		s.server.mu.RUnlock()
+		if roles != nil {
+			identity.Roles = roles()
 		}
 	}
 	if s.authResult != nil && s.authResult.Username != "" {

@@ -501,6 +501,12 @@ type StorageExecutor struct {
 	// Empty string is acceptable when the bag was constructed with the
 	// tenant flag off — Bind helpers drop the arg internally.
 	database string
+
+	// visibility is a restricted principal's statement visibility
+	// (GraphVisibility): set on the executor its statement runs on, whose
+	// storage, and every storage it clones or hands out, is a
+	// visibleGraphView. Nil for an unrestricted principal.
+	visibility *visibilityEvaluator
 }
 
 type unwindMergeChainPlanCache struct {
@@ -527,6 +533,12 @@ type syntaxValidationCacheShard struct {
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
+	// A restricted statement's clone reads through the same view: it is
+	// built over the engine beneath the view, and applyVisibility wraps it
+	// again (applyVisibility).
+	if view, ok := override.(*visibleGraphView); ok {
+		override = view.Engine
+	}
 	e.ensureNodeLookupCache()
 	// Transactional clones use the lookup cache pinned to the
 	// transactionStorageWrapper. Concurrent transactions hold distinct
@@ -551,7 +563,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCache = txWrapper.txNodeLookupCache
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
-	return &StorageExecutor{
+	return e.applyVisibility(&StorageExecutor{
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
@@ -604,7 +616,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		// Execute() see the same bag regardless of clone depth.
 		metrics:  e.metrics,
 		database: e.database,
-	}
+	})
 }
 
 func (e *StorageExecutor) nodeLookupCacheLock() *sync.RWMutex {
@@ -1640,7 +1652,7 @@ type implicitTxEngines struct {
 }
 
 func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
-	engine := e.storage
+	engine := engineBeneathView(e.storage)
 	visited := make(map[storage.Engine]bool)
 	out := implicitTxEngines{}
 
@@ -2091,6 +2103,9 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
 	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+		if e.visibility != nil {
+			return newVisibleGraphView(txWrapper, e.visibility)
+		}
 		return txWrapper
 	}
 	return e.storage
