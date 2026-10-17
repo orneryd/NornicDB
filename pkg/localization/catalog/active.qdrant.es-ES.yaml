@@ -100,3 +100,11 @@
 - id: qdrant.get_edges_failed
   description: Error al leer relaciones. Cause no se traduce.
   other: "no se pudieron obtener las relaciones: {{.Cause}}"
+
+- id: qdrant.invalid_quantization_oversampling
+  description: Invalid quantized search oversampling factor.
+  other: "el sobremuestreo de cuantización debe ser finito y al menos 1"
+
+- id: qdrant.invalid_quantization_config
+  description: Unsupported or invalid vector compression configuration.
+  other: "configuración de cuantización no válida: {{.Cause}}"

@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -70,8 +71,21 @@ func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollecti
 		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantVectorSizeMustBePositive())
 	}
 
-	// Create collection
-	if err := s.collections.Create(ctx, req.CollectionName, dims, distance); err != nil {
+	quantization, err := collectionQuantizationConfig(req)
+	if err != nil {
+		return nil, localizedStatus(ctx, s.localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationConfig(err))
+	}
+	var createErr error
+	if quantization != nil {
+		configured, ok := s.collections.(quantizedCollectionStore)
+		if !ok {
+			return nil, localizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("collection store cannot persist quantization")))
+		}
+		createErr = configured.CreateWithQuantization(ctx, req.CollectionName, dims, distance, quantization)
+	} else {
+		createErr = s.collections.Create(ctx, req.CollectionName, dims, distance)
+	}
+	if err := createErr; err != nil {
 		return nil, localizedStatus(ctx, s.localizer, codes.AlreadyExists, localization.QdrantCreateCollectionFailed(err))
 	}
 
@@ -121,6 +135,7 @@ func (s *CollectionsService) Get(ctx context.Context, req *qpb.GetCollectionInfo
 			PointsCount:         &pointsCount,
 			IndexedVectorsCount: &pointsCount,
 			Config: &qpb.CollectionConfig{
+				QuantizationConfig: meta.Quantization,
 				Params: &qpb.CollectionParams{
 					VectorsConfig: &qpb.VectorsConfig{
 						Config: &qpb.VectorsConfig_Params{
@@ -198,8 +213,9 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 	}, nil
 }
 
-// Update acknowledges the update request if the collection exists.
-// NornicDB manages tuning parameters internally.
+// Update acknowledges tuning requests for an existing collection. NornicDB
+// manages HNSW/optimizer tuning internally. Quantization changes are rejected;
+// Create owns the durable compression policy.
 func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollection) (*qpb.CollectionOperationResponse, error) {
 	start := time.Now()
 
@@ -213,6 +229,10 @@ func (s *CollectionsService) Update(ctx context.Context, req *qpb.UpdateCollecti
 	// Verify collection exists
 	if !s.collections.Exists(req.CollectionName) {
 		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
+	}
+
+	if req.QuantizationConfig != nil {
+		return nil, localizedStatus(ctx, s.localizer, codes.Unimplemented, localization.QdrantInvalidQuantizationConfig(fmt.Errorf("changing quantization requires creating a collection with the desired configuration")))
 	}
 
 	// NornicDB manages HNSW/optimizer parameters automatically

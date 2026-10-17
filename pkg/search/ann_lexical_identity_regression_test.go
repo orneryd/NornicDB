@@ -1,7 +1,9 @@
 package search
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -17,6 +19,11 @@ func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 	}
 	check := func(t *testing.T, pairs []hnswBuildPair) {
 		t.Helper()
+		got := make([]string, len(pairs))
+		for i, pair := range pairs {
+			got[i] = pair.id
+		}
+		require.Equal(t, []string{"first-chunk-0", "first-prop-features", "second-named-default", "literal-named-doc", "other"}, got, "ranked document hints must prioritize every embedding exactly once")
 		config := DefaultHNSWConfig()
 		config.UseGPUBuild = true
 		config.GPUBuildBatchSize = 2
@@ -89,8 +96,23 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				require.Len(t, svc.clusterLexicalProfiles, 2)
 			} else {
 				require.NotNil(t, svc.hnswIndex)
+				ranked := lexicalHintValues(svc.hnswBuildLexicalSeedHints(svc.fulltext(), svc.hnswIndex.Config().M))
+				slices.SortFunc(ranked, func(a, b LexicalSeedHint) int {
+					if n := cmp.Compare(a.Rank, b.Rank); n != 0 {
+						return n
+					}
+					return cmp.Compare(a.ID, b.ID)
+				})
+				expected := make([]string, 0, 2)
+				for _, hint := range ranked {
+					if hint.ID == "first-named-default" || hint.ID == "second-named-default" {
+						expected = append(expected, hint.ID)
+					}
+				}
+				require.Len(t, expected, 2)
 				svc.hnswIndex.mu.RLock()
 				defer svc.hnswIndex.mu.RUnlock()
+				require.Equal(t, expected, svc.hnswIndex.internalToID, "public construction must preserve ranked embedding insertion order")
 				for _, id := range []string{"first-named-default", "second-named-default"} {
 					hint, ok := svc.hnswIndex.buildLexicalHints[id]
 					require.True(t, ok, "public index build must bind the lexical hint to %s", id)
