@@ -40,3 +40,18 @@ func CallerDeadlineTimeout(err error) bool {
 	var marked *statementTimeoutError
 	return stderrors.As(err, &marked) && marked.callerDeadline
 }
+
+// statementDeadline is the cancellation cause a statement deadline's owner
+// installs it with (context.WithTimeoutCause).
+type statementDeadline struct {
+	text, code, message string
+}
+
+func (d *statementDeadline) Error() string { return d.text }
+
+// The owned statement deadlines.
+var (
+	ErrDatabaseQueryTimeLimit   error = &statementDeadline{"database query time limit exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	ErrServerStatementTimeout   error = &statementDeadline{"server statement timeout exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	ErrClientTransactionTimeout error = &statementDeadline{"client transaction timeout exceeded", TransactionTimedOutClientConfiguration, TransactionTimedOutClientConfigurationMessage}
+)
