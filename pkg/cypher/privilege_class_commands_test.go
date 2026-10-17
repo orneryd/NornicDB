@@ -34,7 +34,12 @@ func TestEveryAdministrationCommandHasExpectedPrivilegeClass(t *testing.T) {
 				class, found := administrationCommandClass(query)
 				require.True(t, found, query)
 				require.Equal(t, expected, class, query)
-				require.Equal(t, requirementsForClass(expected), QueryPermissionRequirements(query), query)
+				want := requirementsForClass(expected)
+				if want.Schema {
+					// A schema refusal names Neo4j's schema action.
+					want.SchemaAction = schemaCommandAction(query)
+				}
+				require.Equal(t, want, QueryPermissionRequirements(query), query)
 			}
 		})
 	}
