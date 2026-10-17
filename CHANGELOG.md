@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve global IVF-HNSW candidate budgets when nearest neighbours concentrate in one cluster, and retain lexical
+  cluster selection when a small list falls back to exact scoring. Resolve BM25 document hints to named, property and
+  chunk embedding IDs consistently for HNSW construction, k-means/PQ seeds and cluster lexical profiles.
 - Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
   order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
   vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
@@ -36,18 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
   distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
   scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
-- Make the Metal HNSW build 43x faster: on 88k 1024-d vectors the index is ready in 38 s instead of 1,660 s (the CPU
-  build: 69 s), at the same recall. The build keeps the vectors it has inserted on the GPU (4 bytes per dimension per
-  vector, for the build only), so each batch's level-0 candidates are its exact nearest inserted vectors from one pass,
-  instead of a graph search that uploaded its candidates' vectors every round. Scores come from a Metal Performance
-  Shaders matrix product, and each query's top candidates are picked on the CPU from the shared score matrix; the
-  previous kernel computed both serially per query. CUDA and Vulkan keep the graph search.
+- Use resident inserted vectors for native GPU HNSW construction. Metal scores its contiguous buffer with Metal
+  Performance Shaders; CUDA and Vulkan score immutable device shards with their existing kernels. Their graph-search
+  implementations remain available. Construction time and recall are workload/hardware measurements, not a universal
+  speedup guarantee; see the vector ANN benchmark and hardware handoff.
 - Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
-  search), then vectors are linked in order. Recall matches one-at-a-time inserts.
-- Make exact (brute-force) vector search about 8x faster: keep the best results in a bounded heap rather than sorting
-  every score, and score in parallel (24 ms to 3 ms for 50k 1024-d vectors).
-- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200: the same
-  recall@10 on 88k 1024-d vectors at a sixth of the latency.
+  search), then vectors are linked in order. Construction regressions compare recall with one-at-a-time inserts.
+- Keep exact-search results in a bounded heap and score in parallel instead of sorting the complete scored population.
+- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200. This reduces
+  exact rescoring work and can affect recall; compare explicit depths on the same corpus before choosing the tradeoff.
 - Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
   (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
 - Cluster a database with k-means soon after a bulk load finishes instead of at the next

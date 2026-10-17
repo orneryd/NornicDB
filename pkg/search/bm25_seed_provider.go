@@ -1,6 +1,9 @@
 package search
 
-import "github.com/orneryd/nornicdb/pkg/envutil"
+import (
+	"github.com/orneryd/nornicdb/pkg/envutil"
+	"slices"
+)
 
 // LexicalSeedHint is compact build metadata derived directly from the BM25
 // inverted index. Rank preserves high-IDF selection order, while Signature is
@@ -101,4 +104,29 @@ func bm25SeedDocIDs(fulltext lexicalSeedProvider) []string {
 		perTerm = 1
 	}
 	return fulltext.LexicalSeedDocIDs(maxTerms, perTerm)
+}
+
+// bm25SeedEmbeddingIDs resolves ranked BM25 documents through the existing
+// index metadata. Cluster/PQ builders own embedding IDs, including named,
+// property and chunk embeddings, rather than full-text document IDs.
+func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		start := len(ids)
+		ids = append(ids, s.nodeChunkVectors[nodeID]...)
+		for _, id := range s.nodeNamedVector[nodeID] {
+			ids = append(ids, id)
+		}
+		for _, id := range s.nodePropVector[nodeID] {
+			ids = append(ids, id)
+		}
+		if len(ids) == start {
+			ids = append(ids, nodeID)
+		}
+		// Map iteration must not change ranked construction order across backends.
+		slices.Sort(ids[start:])
+	}
+	return ids
 }
