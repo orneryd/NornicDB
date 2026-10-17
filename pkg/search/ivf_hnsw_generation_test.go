@@ -160,22 +160,20 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 // published (sol r9: TestSolR9ReplacementAfterCheck).
 func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) {
 	for _, path := range []struct {
-		name      string
-		replace   func(*Service) error
-		retired   bool // the computed-for index itself is cleared or replaced
-		replacing bool // clusterIndex points to a new index afterwards
+		name    string
+		replace func(*Service) error
 	}{
-		{name: "dimension change", replace: func(s *Service) error { s.maybeAutoSetVectorDimensions(5); return nil }, retired: true, replacing: true},
+		{name: "dimension change", replace: func(s *Service) error { s.maybeAutoSetVectorDimensions(5); return nil }},
 		{name: "clustering mode switch", replace: func(s *Service) error {
 			s.mu.Lock()
 			s.clusterUsesGPU = true // the next EnableClustering(nil) switches back to CPU
 			s.mu.Unlock()
 			s.EnableClustering(nil, 1)
 			return nil
-		}, replacing: true},
-		{name: "ClearVectorIndex", replace: func(s *Service) error { return s.ClearVectorIndex() }, retired: true},
-		{name: "ClearIndexes", replace: func(s *Service) error { return s.ClearIndexes() }, retired: true},
-		{name: "build reset", replace: func(s *Service) error { s.resetANNForBuild(); return nil }, retired: true},
+		}},
+		{name: "ClearVectorIndex", replace: func(s *Service) error { return s.ClearVectorIndex() }},
+		{name: "ClearIndexes", replace: func(s *Service) error { return s.ClearIndexes() }},
+		{name: "build reset", replace: func(s *Service) error { s.resetANNForBuild(); return nil }},
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
@@ -208,14 +206,11 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 			defer svc.clusterStateMu.RUnlock()
 			// The published generation retires with its graphs and profiles.
 			require.Nil(t, svc.clusterGen, "the published generation retires")
-			if path.retired {
-				require.False(t, original.IsClustered(), "a retired index is not left published")
-			}
-			if path.replacing {
-				require.NotSame(t, original, svc.clusterIndex)
-				require.False(t, svc.clusterIndex.IsClustered())
-				require.Nil(t, svc.clusterGen)
-			}
+			// Every retirement replaces the index (the retired one is left as
+			// it was for queries still holding it), so it is never left
+			// published.
+			require.NotSame(t, original, svc.clusterIndex)
+			require.False(t, svc.clusterIndex.IsClustered())
 		})
 	}
 }

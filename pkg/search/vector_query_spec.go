@@ -304,7 +304,8 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 		return nil, nil
 	}
 
-	pipeline, err := s.getOrCreateVectorPipeline(ctx)
+	ctx, pipeline, releaseCluster, err := s.vectorPipelineForQuery(ctx)
+	defer releaseCluster()
 	if err != nil {
 		return nil, err
 	}
