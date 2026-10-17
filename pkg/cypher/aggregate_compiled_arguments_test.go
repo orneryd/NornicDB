@@ -32,7 +32,7 @@ var aggregateArgumentModes = []struct {
 func renderOrderedValue(value interface{}, orders map[uintptr][]string) string {
 	switch typed := value.(type) {
 	case map[string]interface{}:
-		keys, ordered := orders[reflect.ValueOf(typed).UnsafePointer()]
+		keys, ordered := orders[uintptr(reflect.ValueOf(typed).UnsafePointer())]
 		if !ordered {
 			keys = make([]string, 0, len(typed))
 			for key := range typed {
