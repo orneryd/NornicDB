@@ -19,7 +19,7 @@ func TestDB_SetEmbedder_IgnoredAfterClose(t *testing.T) {
 	require.Error(t, db.LifetimeContext().Err())
 
 	m := &mockEmbedder{dims: 4, model: "late"}
-	db.SetEmbedder(m)
+	require.False(t, db.SetEmbedder(m), "a closed database refuses the embedder")
 	db.SetDefaultEmbedConfig(&embed.Config{Provider: "openai", Model: "late", Dimensions: 4})
 
 	require.Nil(t, db.GetCypherExecutor().GetEmbedder())
@@ -68,4 +68,31 @@ func TestDB_RunBackgroundTask_JoinedByClose(t *testing.T) {
 	require.NoError(t, db.Close())
 	require.True(t, finished.Load(), "Close returned before the background task did")
 	require.False(t, db.RunBackgroundTask(func() { t.Error("task ran after Close") }))
+}
+
+// closingTestEmbedder counts Close calls.
+type closingTestEmbedder struct {
+	mockEmbedder
+	closes atomic.Int32
+}
+
+func (e *closingTestEmbedder) Close() error {
+	e.closes.Add(1)
+	return nil
+}
+
+// The embedder a closed database refuses is closed, bare or behind the
+// cache wrapper: nobody else will release it (#1394 residual).
+func TestDB_SetEmbedder_RefusedEmbedderIsClosed(t *testing.T) {
+	db, err := Open("", nil)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	bare := &closingTestEmbedder{mockEmbedder: mockEmbedder{dims: 4, model: "late"}}
+	db.SetEmbedder(bare)
+	require.EqualValues(t, 1, bare.closes.Load(), "the refused embedder is closed")
+
+	wrapped := &closingTestEmbedder{mockEmbedder: mockEmbedder{dims: 4, model: "late"}}
+	db.SetEmbedder(embed.NewCachedEmbedder(wrapped, 16))
+	require.EqualValues(t, 1, wrapped.closes.Load(), "the model behind a refused cached embedder is closed")
 }

@@ -2223,7 +2223,13 @@ func (s *Server) initEmbedderWithRetry(ctx context.Context, embedConfig *embed.C
 			// DB publishes the query provider once; MCP shares its binding.
 			// Share embedder with DB for auto-embed queue.
 			// The embed worker will wait for this to be set before processing.
-			db.SetEmbedder(embedder)
+			// The database decides under its lock: a closing database (Close
+			// may begin after the check above) refuses the embedder and closes
+			// it, so it never outlives DB.Close.
+			if !db.SetEmbedder(embedder) {
+				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
+				return
+			}
 			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
 			db.SetDefaultEmbedConfig(embedConfig)
 			return
