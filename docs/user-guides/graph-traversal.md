@@ -315,6 +315,29 @@ CALL apoc.path.subgraphNodes(start, {
 RETURN node
 ```
 
+### Reference closure (NornicDB extension)
+
+`nornicdb.graph.expandReferences(seeds, config)` returns everything a set of seed nodes and relationships reaches when nodes also name other nodes by id in their properties, such as the population a backup must keep with the items it names. It applies three rules until nothing new is found:
+
+- **References:** a found node or relationship names nodes by the values of its `references` properties (a STRING or INTEGER, or a list of them). Each name finds every node of each `domains` label whose `idProperty` (default `id`) equals it, so the same id can find a node in several labels. Each name is looked up once, through an index on `(label, idProperty)` when there is one.
+- **Endpoints:** a found relationship brings in both its ends.
+- **Branches:** each `expand` entry `{relationshipFilter, where, fromSeeds}` follows the matching relationships of every found node and finds them with their other end. With `fromSeeds: false` it starts only from nodes that were reached, not seeded. Each `between` entry `{relationshipFilter, where}` finds the matching relationships whose two ends are both found, whichever end was found first, and adds no node. `relationshipFilter` is APOC's syntax (`'TYPE>|<TYPE|TYPE'`; none follows every relationship). `where` is a Cypher predicate with `relationship`, `start` and `end` bound, plus the statement's parameters, as in `db.retrieve`.
+
+`seeds` is a list of nodes, relationships and seed groups `{category, nodes, relationships}`. A bare node or relationship is in category `seed`, everything reached is in `category` (default `reached`), and an element seeded twice keeps its first category. Seed nodes are taken before seed relationships. Each element is one row, `node` or `relationship` (the other column is null), with its `category`: the seeds in order, then the rest as found. The result is a fixed point: it doesn't depend on the order things are found in, and there's no depth or size limit. The reads are the calling statement's own, so in an explicit transaction the closure sees the transaction's writes and one consistent snapshot. Cypher has no recursion over a property join, and `apoc.path.*` follows relationships by type and label only, so the closure otherwise needs a round trip per step. Build each seed list in its own `COLLECT { … }` subquery: a `WITH list, collect(x)` after an earlier `collect` groups every row by the whole earlier list.
+
+```cypher
+WITH COLLECT { MATCH (n:Item) RETURN n } AS items,
+     COLLECT { MATCH (:Item)-[r:HAS]->() RETURN r } AS has
+CALL nornicdb.graph.expandReferences(
+  [{category: 'selected', nodes: items, relationships: has}],
+  {references: ['parent_id', 'related_ids'], domains: ['Item', 'Note', 'Person'],
+   expand:  [{relationshipFilter: 'LINK>', where: "relationship.source = 'generated'", fromSeeds: false}],
+   between: [{relationshipFilter: 'LINK', where: "relationship.source = 'generated'"}],
+   category: 'referenced'})
+YIELD node, relationship, category
+RETURN coalesce(elementId(node), elementId(relationship)) AS element, category
+```
+
 ---
 
 ## Centrality and Community Detection
@@ -496,6 +519,7 @@ if ok {
 | BFS from a starting node, frontier-by-frontier  | `apoc.path.expandConfig({bfs: true})`             |
 | DFS spanning tree                               | `apoc.path.spanningTree({bfs: false})`             |
 | Pull subgraph N hops out                        | `apoc.path.subgraphNodes`                          |
+| Close over id references in properties          | `nornicdb.graph.expandReferences`                  |
 | Get neighbors at exactly N hops                 | `apoc.neighbors.byhop`                             |
 | Get neighbors within N hops                     | `apoc.neighbors.tohop`                             |
 | Rank nodes by influence                         | `apoc.algo.pageRank`                               |

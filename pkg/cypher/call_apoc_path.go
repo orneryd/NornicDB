@@ -448,14 +448,46 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 }
 
 // apocSteps lists the relationships the filter steps follow from node: no
-// steps follow every relationship. The path algorithms (dijkstra, aStar,
-// allSimplePaths) read their relTypesAndDirections through it too (#1185).
+// steps follow every relationship. It reads only the directions the steps
+// follow. The path algorithms (dijkstra, aStar, allSimplePaths) read their
+// relTypesAndDirections through it too (#1185).
 func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+	out, in := e.apocAdjacency(node, steps)
+	return apocStepsAmong(node, steps, out, in)
+}
+
+// apocStepDirections reports whether the filter steps follow outgoing and
+// incoming relationships; no steps follow both.
+func apocStepDirections(steps []apocRelationshipStep) (outgoing, incoming bool) {
+	if len(steps) == 0 {
+		return true, true
+	}
+	for _, step := range steps {
+		outgoing = outgoing || step.direction != "in"
+		incoming = incoming || step.direction != "out"
+	}
+	return outgoing, incoming
+}
+
+// apocAdjacency reads node's relationships in the directions the steps
+// follow, and only those.
+func (e *StorageExecutor) apocAdjacency(node storage.NodeID, steps []apocRelationshipStep) (out, in []*storage.Edge) {
+	outgoing, incoming := apocStepDirections(steps)
+	if outgoing {
+		out, _ = e.storage.GetOutgoingEdges(node)
+	}
+	if incoming {
+		in, _ = e.storage.GetIncomingEdges(node)
+	}
+	return out, in
+}
+
+// apocStepsAmong is apocSteps over node's relationships already read: out
+// and in hold at least the directions the steps follow.
+func apocStepsAmong(node storage.NodeID, steps []apocRelationshipStep, out, in []*storage.Edge) []*storage.Edge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
-	out, _ := e.storage.GetOutgoingEdges(node)
-	in, _ := e.storage.GetIncomingEdges(node)
 	var edges []*storage.Edge
 	seen := make(map[storage.EdgeID]bool)
 	take := func(edge *storage.Edge, step apocRelationshipStep) {

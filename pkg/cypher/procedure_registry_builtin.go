@@ -496,6 +496,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return callNornicSimilarityStream(args)
 			})
+		// The closure of seed nodes and relationships under property
+		// references, endpoints and filtered relationship branches. A
+		// NornicDB extension.
+		registerBuiltInProcedure("nornicdb.graph.expandReferences", "nornicdb.graph.expandReferences(seeds :: LIST<ANY>, config = {} :: MAP) :: (node :: NODE, relationship :: RELATIONSHIP, category :: STRING)", localization.CypherProcedureMetadata("nornicdb.graph.expandReferences"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callNornicGraphExpandReferences(ctx, args)
+			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphExists(args)

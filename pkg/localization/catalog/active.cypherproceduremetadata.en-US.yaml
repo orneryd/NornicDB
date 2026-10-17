@@ -164,6 +164,8 @@
   other: "Shows a node or relationship hidden by kp.suppress again"
 - id: cypherproceduremetadata.nornicdb_decay_info
   other: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration"
+- id: cypherproceduremetadata.nornicdb_graph_expandreferences
+  other: "Returns the closure of seed nodes and relationships under property references to ids in domain labels, relationship endpoints and filtered relationship branches, each element once with its category. A NornicDB extension."
 - id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
   other: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status"
 - id: cypherproceduremetadata.nornicdb_knowledgepolicy_info

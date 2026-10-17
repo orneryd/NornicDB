@@ -900,6 +900,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherproceduremetadata.kp_suppress", Constructor: "CypherProcedureMetadataKpSuppress", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.kp_unsuppress", Constructor: "CypherProcedureMetadataKpUnsuppress", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.nornicdb_decay_info", Constructor: "CypherProcedureMetadataNornicdbDecayInfo", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cypherproceduremetadata.nornicdb_graph_expandreferences", Constructor: "CypherProcedureMetadataNornicdbGraphExpandReferences", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus", Constructor: "CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.nornicdb_knowledgepolicy_info", Constructor: "CypherProcedureMetadataNornicdbKnowledgepolicyInfo", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.nornicdb_knowledgepolicy_policies", Constructor: "CypherProcedureMetadataNornicdbKnowledgepolicyPolicies", Fields: []string{}, PluralForms: []string{"other"}},

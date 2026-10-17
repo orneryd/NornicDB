@@ -86,6 +86,7 @@ const (
 	MessageCypherProcedureMetadataKpSuppress                                    MessageID = "cypherproceduremetadata.kp_suppress"
 	MessageCypherProcedureMetadataKpUnsuppress                                  MessageID = "cypherproceduremetadata.kp_unsuppress"
 	MessageCypherProcedureMetadataNornicdbDecayInfo                             MessageID = "cypherproceduremetadata.nornicdb_decay_info"
+	MessageCypherProcedureMetadataNornicdbGraphExpandReferences                 MessageID = "cypherproceduremetadata.nornicdb_graph_expandreferences"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus          MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyInfo                   MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_info"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyPolicies               MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_policies"
@@ -512,6 +513,11 @@ func CypherProcedureMetadataNornicdbDecayInfo() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbDecayInfo, Fallback: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration"}
 }
 
+// CypherProcedureMetadataNornicdbGraphExpandReferences describes nornicdb.graph.expandReferences in procedure listings.
+func CypherProcedureMetadataNornicdbGraphExpandReferences() Message {
+	return Message{ID: MessageCypherProcedureMetadataNornicdbGraphExpandReferences, Fallback: "Returns the closure of seed nodes and relationships under property references to ids in domain labels, relationship endpoints and filtered relationship branches, each element once with its category. A NornicDB extension."}
+}
+
 // CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus describes nornicdb.knowledgepolicy.deindexStatus in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus, Fallback: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status"}
@@ -641,6 +647,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"kp.suppress":                                      CypherProcedureMetadataKpSuppress,
 	"kp.unsuppress":                                    CypherProcedureMetadataKpUnsuppress,
 	"nornicdb.decay.info":                              CypherProcedureMetadataNornicdbDecayInfo,
+	"nornicdb.graph.expandReferences":                  CypherProcedureMetadataNornicdbGraphExpandReferences,
 	"nornicdb.knowledgepolicy.deindexStatus":           CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus,
 	"nornicdb.knowledgepolicy.info":                    CypherProcedureMetadataNornicdbKnowledgepolicyInfo,
 	"nornicdb.knowledgepolicy.policies":                CypherProcedureMetadataNornicdbKnowledgepolicyPolicies,
