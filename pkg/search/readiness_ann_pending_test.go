@@ -48,54 +48,72 @@ func searchMethodAndTop(t *testing.T, svc *Service) (string, string) {
 	return resp.SearchMethod, resp.Results[0].ID
 }
 
-// The readiness boundary after NODE admission while the ANN job is pending
-// (the base source is complete; the graph is only an accelerator).
+// The readiness boundary after NODE admission in an explicit build. The base
+// source is complete; the warmup waits for the service-owned ANN job. A build
+// whose request is cancelled before it publishes readiness leaves the service
+// not ready (search reports "building", the server's retryable 503), while the
+// ANN job is not the request's to cancel: it still installs, and the next
+// build restores readiness over the complete source.
 func TestBuildCancellationAfterNodeAdmissionWithANNPending(t *testing.T) {
-	t.Run("cancelled after the build returned", func(t *testing.T) {
-		svc, releaseANN := annPendingService(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		require.NoError(t, svc.BuildIndexes(ctx))
-		cancel()
-		// The request's cancellation neither withdraws readiness nor cancels
-		// the service-owned ANN job: search answers exactly meanwhile.
-		require.True(t, svc.IsReady())
-		method, top := searchMethodAndTop(t, svc)
-		require.Equal(t, "vector_brute", method)
-		require.Equal(t, "nornic:n0", top)
-		releaseANN()
-		requireHNSWReady(t, svc)
-		method, top = searchMethodAndTop(t, svc)
-		require.Equal(t, "vector_hnsw", method)
-		require.Equal(t, "nornic:n0", top)
-	})
-
-	t.Run("cancelled before readiness was published", func(t *testing.T) {
-		svc, releaseANN := annPendingService(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancelAtWarmup := func(s *Service) {
-			if s == svc {
-				cancel()
-			}
-		}
-		annWarmupStartedHook.Store(&cancelAtWarmup)
-		t.Cleanup(func() { annWarmupStartedHook.Store(nil) })
-		require.ErrorIs(t, svc.BuildIndexes(ctx), context.Canceled)
-		annWarmupStartedHook.Store(nil)
-		// A build cancelled after it made the service unavailable leaves it
-		// not ready: search reports "building", which the server maps to the
-		// retryable 503. Nothing is left half-published.
+	requireCancelledBuildState := func(t *testing.T, svc *Service) {
+		t.Helper()
 		require.False(t, svc.IsReady())
 		require.False(t, svc.BuildInProgress())
 		_, err := svc.Search(context.Background(), "", []float32{1, 0, 0}, DefaultSearchOptions())
 		require.ErrorIs(t, err, ErrSearchIndexBuilding)
-		// The ANN job is service-owned: the request's cancellation did not stop it.
+	}
+
+	t.Run("cancelled while the warmup waits for the graph", func(t *testing.T) {
+		svc, releaseANN := annPendingService(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		entered := make(chan struct{})
+		var once sync.Once
+		hold := hnswBeforeInstallHook
+		hnswBeforeInstallHook = func(jobCtx context.Context) {
+			once.Do(func() { close(entered) })
+			hold(jobCtx)
+		}
+		built := make(chan error, 1)
+		go func() { built <- svc.BuildIndexes(ctx) }()
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the warmup did not start the ANN job")
+		}
+		cancel()
+		select {
+		case err := <-built:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the cancelled build kept waiting for the graph")
+		}
+		requireCancelledBuildState(t, svc)
 		releaseANN()
 		requireHNSWReady(t, svc)
-		// The next build restores readiness over the complete source.
 		require.NoError(t, svc.BuildIndexes(context.Background()))
 		require.True(t, svc.IsReady())
 		_, top := searchMethodAndTop(t, svc)
 		require.Equal(t, "nornic:n0", top)
-		require.Eventually(t, func() bool { return svc.lifecycleState() == lifecycleReady }, time.Second, time.Millisecond)
+	})
+
+	t.Run("cancelled after the warmup, before readiness", func(t *testing.T) {
+		svc, releaseANN := annPendingService(t)
+		releaseANN() // the graph installs during the warmup
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelAfterWarmup := func(s *Service) {
+			if s == svc {
+				cancel()
+			}
+		}
+		annWarmupStartedHook.Store(&cancelAfterWarmup)
+		t.Cleanup(func() { annWarmupStartedHook.Store(nil) })
+		require.ErrorIs(t, svc.BuildIndexes(ctx), context.Canceled)
+		annWarmupStartedHook.Store(nil)
+		requireCancelledBuildState(t, svc)
+		require.NoError(t, svc.BuildIndexes(context.Background()))
+		require.True(t, svc.IsReady())
+		method, top := searchMethodAndTop(t, svc)
+		require.Equal(t, "vector_hnsw", method)
+		require.Equal(t, "nornic:n0", top)
 	})
 }
