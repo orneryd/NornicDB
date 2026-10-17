@@ -41,19 +41,19 @@ func TestAggregatingProjectionScope(t *testing.T) {
 		require.Contains(t, err.Error(), "it is not possible to access variables declared before the WITH/RETURN: ", query)
 	}
 	for query, rows := range map[string][][]interface{}{
-		"UNWIND [1, 2, 2] AS x RETURN x AS y, count(*) AS c ORDER BY x":                   {{int64(1), int64(1)}, {int64(2), int64(2)}},
-		"UNWIND [1, 2, 2] AS x RETURN x, count(*) AS c ORDER BY x":                        {{int64(1), int64(1)}, {int64(2), int64(2)}},
-		"UNWIND [1, 2, 2] AS x RETURN x + 1 AS y, count(*) AS c ORDER BY x + 1":           {{int64(2), int64(1)}, {int64(3), int64(2)}},
-		"UNWIND [1, 2, 2] AS x RETURN count(*) AS c ORDER BY count(*)":                    {{int64(3)}},
-		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x AS y ORDER BY x":                          {{int64(1)}, {int64(2)}},
-		"UNWIND [1, 2, 2] AS x WITH DISTINCT x AS y WHERE x > 1 RETURN y":                  {{int64(2)}},
-		"UNWIND [1, 2, 2] AS x WITH x AS y, count(*) AS c WHERE x > 1 RETURN y, c":         {{int64(2), int64(2)}},
-		"UNWIND [1, 2, 2] AS x WITH x, count(*) AS c WHERE c > 1 RETURN x, c":              {{int64(2), int64(2)}},
-		"UNWIND [{a: 1}, {a: 2}] AS m RETURN m.a AS a, count(*) AS c ORDER BY m.a":         {{int64(1), int64(1)}, {int64(2), int64(1)}},
-		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x ORDER BY x":                               {{int64(1)}, {int64(2)}},
-		"UNWIND [1, 2, 2] AS x RETURN collect(x) AS l ORDER BY size(l)":                    {{[]interface{}{int64(1), int64(2), int64(2)}}},
-		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x AS y ORDER BY y":                          {{int64(1)}, {int64(2)}},
-		"UNWIND [1, 2, 2] AS x WITH *, count(*) AS c ORDER BY x RETURN c":                  {{int64(1)}, {int64(2)}},
+		"UNWIND [1, 2, 2] AS x RETURN x AS y, count(*) AS c ORDER BY x":            {{int64(1), int64(1)}, {int64(2), int64(2)}},
+		"UNWIND [1, 2, 2] AS x RETURN x, count(*) AS c ORDER BY x":                 {{int64(1), int64(1)}, {int64(2), int64(2)}},
+		"UNWIND [1, 2, 2] AS x RETURN x + 1 AS y, count(*) AS c ORDER BY x + 1":    {{int64(2), int64(1)}, {int64(3), int64(2)}},
+		"UNWIND [1, 2, 2] AS x RETURN count(*) AS c ORDER BY count(*)":             {{int64(3)}},
+		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x AS y ORDER BY x":                  {{int64(1)}, {int64(2)}},
+		"UNWIND [1, 2, 2] AS x WITH DISTINCT x AS y WHERE x > 1 RETURN y":          {{int64(2)}},
+		"UNWIND [1, 2, 2] AS x WITH x AS y, count(*) AS c WHERE x > 1 RETURN y, c": {{int64(2), int64(2)}},
+		"UNWIND [1, 2, 2] AS x WITH x, count(*) AS c WHERE c > 1 RETURN x, c":      {{int64(2), int64(2)}},
+		"UNWIND [{a: 1}, {a: 2}] AS m RETURN m.a AS a, count(*) AS c ORDER BY m.a": {{int64(1), int64(1)}, {int64(2), int64(1)}},
+		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x ORDER BY x":                       {{int64(1)}, {int64(2)}},
+		"UNWIND [1, 2, 2] AS x RETURN collect(x) AS l ORDER BY size(l)":            {{[]interface{}{int64(1), int64(2), int64(2)}}},
+		"UNWIND [1, 2, 2] AS x RETURN DISTINCT x AS y ORDER BY y":                  {{int64(1)}, {int64(2)}},
+		"UNWIND [1, 2, 2] AS x WITH *, count(*) AS c ORDER BY x RETURN c":          {{int64(1)}, {int64(2)}},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)

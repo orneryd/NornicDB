@@ -141,7 +141,7 @@ func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (co
 func TestValidatePredictionGenerationRotates(t *testing.T) {
 	setMaxParserDFAStates(t, 1)
 	statements := map[string]bool{
-		"MATCH (n:Person) WHERE n.age > 3 RETURN n.name AS name":                               true,
+		"MATCH (n:Person) WHERE n.age > 3 RETURN n.name AS name":                              true,
 		"MATCH (a)-[:KNOWS]->(b) WITH a, collect(b) AS bs RETURN a, size(bs) AS c":            true,
 		"RETURN [x IN range(1, 5) WHERE x % 2 = 0 | CASE WHEN x > 2 THEN x ELSE 0 END] AS xs": true,
 		"MATCH (n RETURN n":    false,

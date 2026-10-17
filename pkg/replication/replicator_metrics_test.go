@@ -240,7 +240,7 @@ func (nullStorage) GetWALPosition() (uint64, error) {
 func (nullStorage) GetWALEntries(uint64, int) ([]*WALEntry, error) {
 	return nil, nil
 }
-func (nullStorage) WriteSnapshot(SnapshotWriter) error  { return nil }
+func (nullStorage) WriteSnapshot(SnapshotWriter) error   { return nil }
 func (nullStorage) RestoreSnapshot(SnapshotReader) error { return nil }
 
 // TestPerPeerRTTObservation asserts the RTT chokepoint records samples
