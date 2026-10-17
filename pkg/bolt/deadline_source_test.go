@@ -71,3 +71,44 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 		})
 	}
 }
+
+// expiredDatabaseLimit admits a statement under a database query time limit
+// that has already ended, and returns only once the RUN's own deadline (its
+// tx_timeout) has ended too.
+type expiredDatabaseLimit struct{}
+
+func (expiredDatabaseLimit) CheckQueryRate() error       { return nil }
+func (expiredDatabaseLimit) GetQueryLimits() interface{} { return nil }
+func (expiredDatabaseLimit) CheckQueryLimits(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	limited, cancel := context.WithDeadlineCause(ctx, time.Now(), nornicerrors.ErrDatabaseQueryTimeLimit)
+	<-ctx.Done()
+	return limited, cancel, nil
+}
+
+type expiredDatabaseLimitEngine struct{ *storage.NamespacedEngine }
+
+func (engine expiredDatabaseLimitEngine) GetInnerEngine() storage.Engine {
+	return engine.NamespacedEngine
+}
+func (engine expiredDatabaseLimitEngine) GetQueryLimitChecker() interface {
+	CheckQueryRate() error
+	CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
+	GetQueryLimits() interface{}
+} {
+	return expiredDatabaseLimit{}
+}
+
+// The database's limit ended the statement first; by the time it returns,
+// the client's tx_timeout has expired as well. The status is the deadline
+// that won, the server's, with its message (sol-r2-1392 P2).
+func TestBoltDatabaseDeadlineWinsAfterBothExpired(t *testing.T) {
+	store := expiredDatabaseLimitEngine{storage.NewNamespacedEngine(storage.NewMemoryEngine(), "deadline_winner")}
+	_, port := startBoltIntegrationServer(t, store)
+	conn := openBoltTestConn(t, port)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	require.NoError(t, SendRun(t, conn, "UNWIND range(1, 100000000) AS x WITH x WHERE x < 0 RETURN count(x) AS c", nil, map[string]any{"tx_timeout": int64(2000)}))
+	code, message, err := AssertFailure(t, conn)
+	require.NoError(t, err)
+	require.Equal(t, nornicerrors.TransactionTimedOut, code)
+	require.Equal(t, nornicerrors.TransactionTimedOutMessage, message)
+}
