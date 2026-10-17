@@ -386,3 +386,29 @@ func TestVectorFileQueryReadsInsideIterationAfterGrowth(t *testing.T) {
 		require.Equal(t, v.nextOrdinal, v.queryReadSlots, "an unnested query refreshes the mapping")
 	}
 }
+
+// Once copied reads are established for an unmappable file, a row that cannot
+// be read is an error from candidate scoring, not a missing candidate (sol r8:
+// TestReviewR8CopiedReadReportsIOError).
+func TestVectorFileCopiedScoringReportsReadErrors(t *testing.T) {
+	v, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = v.Close() })
+	require.NoError(t, v.Add("a", []float32{1, 0}))
+	v.mu.Lock()
+	v.mapFile = func(*os.File, int) ([]byte, func() error, error) {
+		return nil, nil, errors.New("cannot allocate memory")
+	}
+	v.mu.Unlock()
+	vec, ok := v.GetVector("a")
+	require.True(t, ok, "copied reads established")
+	require.Equal(t, []float32{1, 0}, vec)
+
+	require.NoError(t, v.file.Close()) // a genuine read failure after the fallback
+	got, err := NewCPUExactScorer(v).ScoreCandidates(context.Background(), []float32{1, 0}, []Candidate{{ID: "a"}})
+	require.Error(t, err)
+	require.Empty(t, got)
+	missing, err := NewCPUExactScorer(v).ScoreCandidates(context.Background(), []float32{1, 0}, []Candidate{{ID: "missing"}})
+	require.NoError(t, err, "an unknown ID is still just absent")
+	require.Empty(t, missing)
+}
