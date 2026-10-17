@@ -3027,6 +3027,13 @@ func (s *Service) ensureVectorFileStore() {
 // a live source, whose older persisted ANN graph must not be reused.
 // Caller holds indexMu; joining builders remains the caller's responsibility.
 func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
+	return s.admitStagedVectorFileStore(storageEmpty, nil)
+}
+
+// admitStagedVectorFileStore is admitVectorFileStore adopting a store the
+// population already loaded without indexMu, when it matches the current
+// path and dimensions; otherwise it opens and loads the file itself.
+func (s *Service) admitStagedVectorFileStore(storageEmpty bool, staged *stagedPersistedSources) bool {
 	restoreNodeMetadata := !s.nodeSources.vectorsComplete
 	if s.vectorStorageMode == "memory" {
 		return false
@@ -3062,15 +3069,22 @@ func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
 			return memoryCurrent
 		}
 	}
-	vfs, err := NewVectorFileStore(s.vectorIndexPath, dims)
-	if err != nil {
-		s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
-		return memoryCurrent
-	}
-	if err := vfs.Load(); err != nil {
-		_ = vfs.Close()
-		s.logPrintf("⚠️ VectorFileStore load failed (using in-memory index): %v", err)
-		return memoryCurrent
+	vfs := staged.takeVectors(s.vectorIndexPath, dims)
+	if vfs == nil || s.nodeSources.memoryAuthoritative {
+		if vfs != nil {
+			_ = vfs.Close()
+		}
+		var err error
+		vfs, err = NewVectorFileStore(s.vectorIndexPath, dims)
+		if err != nil {
+			s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
+			return memoryCurrent
+		}
+		if err := vfs.Load(); err != nil {
+			_ = vfs.Close()
+			s.logPrintf("⚠️ VectorFileStore load failed (using in-memory index): %v", err)
+			return memoryCurrent
+		}
 	}
 	var restoreMetadata func()
 	if restoreNodeMetadata && !memoryCurrent {
@@ -4038,14 +4052,29 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	// restored or selected; and the record is re-applied before any reader can
 	// see the step. Live writes may still be newer than the saved image after
 	// persistence was off; only the source record establishes completeness.
+	// The saved image is read from disk first, without indexMu, so live writes
+	// never wait for the decode or the vector-file load (review 4300779916).
+	staged := s.stagePersistedSources(fulltextPath)
+	defer staged.close()
 	s.indexMu.Lock()
 	s.withdrawPopulationWritesLocked()
 	runPopulationHook(&populationRestoreHook, s)
 	textComplete := s.nodeSources.textComplete
 	fulltextUnchanged := !s.fulltext().IsDirty() || s.fulltext().Count() == 0
 	if fulltextPath != "" && !textComplete && fulltextUnchanged {
-		runPopulationHook(&populationStageHook, s)
-		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
+		var accepted bool
+		var loadErr error
+		if staged.fulltextStaged {
+			// With the record withdrawn the live index holds nothing the saved
+			// image lacks, so installing the staged copy equals loading it in
+			// place; the replay below re-applies the record to it.
+			accepted, loadErr = staged.fulltextAccepted, staged.fulltextErr
+			if loadErr == nil && accepted {
+				s.setFulltext(staged.fulltext)
+			}
+		} else {
+			accepted, loadErr = s.fulltext().loadSnapshot(fulltextPath)
+		}
 		if loadErr == nil && accepted {
 			s.changeNodeSourcesLocked(nodeTextRestored)
 		}
@@ -4058,7 +4087,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	}
 	// A persistence-off snapshot remains authoritative after re-enable, and an
 	// active VFS must not be reopened with older saved query metadata.
-	liveVectorSourceSelected := s.admitVectorFileStore(storageEmptyKnown)
+	liveVectorSourceSelected := s.admitStagedVectorFileStore(storageEmptyKnown, staged)
 	replayErr := s.replayPopulationWritesLocked(ctx)
 	s.indexMu.Unlock()
 	if replayErr != nil {

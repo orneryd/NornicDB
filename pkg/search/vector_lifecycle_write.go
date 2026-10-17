@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -185,41 +186,45 @@ func (s *Service) populationWriteDimensions() int {
 // population's batches, in the same order as the public writers. A write the
 // restored budget refuses is dropped, as the live write would have been.
 // Caller holds indexMu; the records stay until the job finishes successfully.
-func (s *Service) replayPopulationWritesLocked(ctx context.Context) error {
+//
+// The replay is not cancellable (review 4300779913): it follows a withdrawal
+// or a source replacement that removed writes which already returned success,
+// so it must put every one of them back before indexMu is released, even when
+// the population is being cancelled. It attempts every record and returns the
+// first error afterwards; the record is bounded by the writes made during one
+// population.
+func (s *Service) replayPopulationWritesLocked(context.Context) error {
 	skipFulltext := !s.bm25Enabled.Load()
-	for id, node := range s.nodePopulationWrites {
-		if err := ctx.Err(); err != nil {
-			return err
+	var firstErr error
+	keep := func(err error, kind, id string) {
+		if err == nil {
+			return
 		}
+		if errors.Is(err, ErrIndexMemoryBudgetExceeded) {
+			s.logPrintf("📇 BuildIndexes: live write for %s %s exceeds the index memory budget; not indexed", kind, id)
+			return
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	for id, node := range s.nodePopulationWrites {
 		if node == nil {
 			s.removeNodeLocked(id)
 			continue
 		}
-		if err := s.indexNodeLocked(node, skipFulltext); err != nil {
-			if !errors.Is(err, ErrIndexMemoryBudgetExceeded) {
-				return err
-			}
-			s.logPrintf("📇 BuildIndexes: live write for node %s exceeds the index memory budget; not indexed", id)
-		}
+		keep(s.indexNodeLocked(node, skipFulltext), "node", id)
 	}
 	for id, edge := range s.edgePopulationWrites {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if edge == nil {
 			s.RemoveRelationship(storage.EdgeID(id))
 			s.removeEdgeLocked(id)
 			continue
 		}
 		s.IndexRelationship(edge)
-		if err := s.indexEdgeLocked(edge); err != nil {
-			if !errors.Is(err, ErrIndexMemoryBudgetExceeded) {
-				return err
-			}
-			s.logPrintf("📇 BuildIndexes: live write for relationship %s exceeds the index memory budget; not indexed", id)
-		}
+		keep(s.indexEdgeLocked(edge), "relationship", id)
 	}
-	return nil
+	return firstErr
 }
 
 func (s *Service) hasPopulationWritesLocked() bool {
@@ -347,5 +352,89 @@ var populationStageHook, populationRestoreHook atomic.Pointer[func(*Service)]
 func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
 	if fn := hook.Load(); fn != nil {
 		(*fn)(s)
+	}
+}
+
+// stagedPersistedSources is the saved image a population restores, read from
+// disk without the live-write lock (review 4300779916). Decoding the BM25
+// snapshot and loading the vector file can take the whole restore; live
+// writes must not wait for it. The population's locked step only swaps the
+// staged sources in and re-applies the recorded writes.
+type stagedPersistedSources struct {
+	fulltextStaged   bool
+	fulltext         bm25Index
+	fulltextAccepted bool
+	fulltextErr      error
+
+	vectors *VectorFileStore // nil once adopted
+}
+
+// stagePersistedSources reads the saved image for a population that may
+// restore it. Call without indexMu. What it stages is only a candidate: the
+// locked step re-checks the source record and adopts or discards it.
+func (s *Service) stagePersistedSources(fulltextPath string) *stagedPersistedSources {
+	staged := &stagedPersistedSources{}
+	runPopulationHook(&populationStageHook, s)
+	s.indexMu.RLock()
+	textComplete := s.nodeSources.textComplete
+	memoryAuthoritative := s.nodeSources.memoryAuthoritative
+	s.indexMu.RUnlock()
+	if _, disabled := s.fulltext().(disabledBM25Index); fulltextPath != "" && !textComplete && !disabled {
+		index, _ := newBM25IndexWithAnalyzer(s.bm25Engine, s.bm25Analyzer)
+		staged.fulltextAccepted, staged.fulltextErr = index.loadSnapshot(fulltextPath)
+		staged.fulltext, staged.fulltextStaged = index, true
+	}
+	if !memoryAuthoritative {
+		staged.vectors = s.stageVectorFileStore()
+	}
+	return staged
+}
+
+// stageVectorFileStore opens and loads the saved vector file when the live
+// source is not file-backed yet. Call without indexMu.
+func (s *Service) stageVectorFileStore() *VectorFileStore {
+	if s.vectorStorageMode == "memory" || !s.persistEnabled.Load() {
+		return nil
+	}
+	s.mu.RLock()
+	path, memory, current := s.vectorIndexPath, s.vectorIndex, s.vectorFileStore
+	s.mu.RUnlock()
+	if path == "" || memory == nil || current != nil {
+		return nil
+	}
+	dims := memory.GetDimensions()
+	if dims <= 0 {
+		return nil
+	}
+	if _, err := security.RootedStat(path + ".vec"); err != nil {
+		return nil
+	}
+	store, err := NewVectorFileStore(path, dims)
+	if err != nil {
+		return nil
+	}
+	if err := store.Load(); err != nil {
+		_ = store.Close()
+		return nil
+	}
+	return store
+}
+
+// takeVectors hands the staged store to a caller that adopts it, if it was
+// opened for path with dims.
+func (st *stagedPersistedSources) takeVectors(path string, dims int) *VectorFileStore {
+	if st == nil || st.vectors == nil || st.vectors.vecPath != path+".vec" || st.vectors.GetDimensions() != dims {
+		return nil
+	}
+	store := st.vectors
+	st.vectors = nil
+	return store
+}
+
+// close releases a staged store that was not adopted.
+func (st *stagedPersistedSources) close() {
+	if st != nil && st.vectors != nil {
+		_ = st.vectors.Close()
+		st.vectors = nil
 	}
 }
