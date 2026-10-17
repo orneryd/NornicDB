@@ -30,6 +30,9 @@ type lazyResult struct {
 	database string
 	start    time.Time
 	rows     int
+	// clientTimeout: the statement's deadline is its client's tx_timeout
+	// (clientTimeoutStatus).
+	clientTimeout bool
 
 	// helperDone is closed when serveLazyResult returns; nil until the
 	// statement streams.
@@ -53,8 +56,8 @@ var errStatementAborted = errors.New("statement aborted")
 // client's PULLs on a helper goroutine while the statement runs here;
 // runStreamed then returns served once both are done, with nothing left to
 // answer. Only a statement that streams starts a goroutine.
-func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time) (result *QueryResult, served bool, err error) {
-	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start}
+func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time, clientTimeout bool) (result *QueryResult, served bool, err error) {
+	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start, clientTimeout: clientTimeout}
 	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
@@ -158,9 +161,10 @@ func (s *Session) closeLazyResult() {
 // lazyStatementError is the error a lazy result's statement finished with,
 // with what cancelled it, if anything (MsgReset, MsgGoodbye or 0).
 type lazyStatementError struct {
-	err    error
-	query  string
-	reason byte
+	err           error
+	query         string
+	reason        byte
+	clientTimeout bool
 }
 
 func (e *lazyStatementError) Error() string { return e.err.Error() }
@@ -186,7 +190,7 @@ func (s *Session) fillLazyResult(stream *resultStream, n int) error {
 	s.clearActiveRun()
 	if lazy.err != nil {
 		s.logRunTiming("ERROR", stream.database, lazy.query, time.Since(lazy.start), lazy.rows, lazy.err)
-		return &lazyStatementError{err: lazy.err, query: lazy.query, reason: reason}
+		return &lazyStatementError{err: lazy.err, query: lazy.query, reason: reason, clientTimeout: lazy.clientTimeout}
 	}
 	s.logRunTiming("OK", stream.database, lazy.query, time.Since(lazy.start), lazy.rows, nil)
 	if lazy.result != nil {
@@ -207,5 +211,6 @@ func (s *Session) sendLazyFailure(failure *lazyStatementError) error {
 		return s.flushIfPending()
 	}
 	code, message := mapBoltQueryErrorForQuery(failure.err, failure.query)
+	code, message = clientTimeoutStatus(failure.err, code, message, failure.clientTimeout)
 	return s.sendRunFailureWithDetail(code, message, boltErrorDetail(failure.err))
 }

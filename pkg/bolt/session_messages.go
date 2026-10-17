@@ -107,8 +107,10 @@ func (s *Session) handleRun(data []byte) error {
 	// per-call cap is authoritative; the server cap is the fallback
 	// for clients that didn't set one).
 	var runTimeout time.Duration
+	clientTimeout := false
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		runTimeout = time.Duration(txTimeout) * time.Millisecond
+		clientTimeout = true
 	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
 		runTimeout = s.server.config.BoltStatementTimeout
 	}
@@ -242,7 +244,7 @@ func (s *Session) handleRun(data []byte) error {
 		// once it has more than lazyResultThreshold (#939); RUN and those
 		// PULLs are then already answered.
 		var served bool
-		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart, clientTimeout)
 		if served {
 			return nil
 		}
@@ -281,6 +283,7 @@ func (s *Session) handleRun(data []byte) error {
 			}
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
+		code, msg = clientTimeoutStatus(err, code, msg, clientTimeout)
 		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
 	}
 	rows := 0
@@ -1878,4 +1881,16 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 	}
 	s.identity, s.identityAuth = identity, s.authResult
 	return identity
+}
+
+// clientTimeoutStatus is a statement failure's status when the deadline that
+// stopped the statement was its client's tx_timeout (not a shorter database
+// query time limit the executor applied): Neo4j reports the timeout the client
+// configured (TransactionTimedOutClientConfiguration), on every path a
+// failure reaches the client, streamed results included.
+func clientTimeoutStatus(err error, code, message string, clientTimeout bool) (string, string) {
+	if clientTimeout && code == nornicerrors.TransactionTimedOut && nornicerrors.CallerDeadlineTimeout(err) {
+		return transactionTimedOutCode, transactionTimedOutMsg
+	}
+	return code, message
 }

@@ -69,7 +69,7 @@ func TestLazyResultStatementPanics(t *testing.T) {
 
 	func() {
 		defer func() { require.Equal(t, "statement panicked", recover()) }()
-		_, _, _ = newTestSession(&mockConn{}, panickingExecutor{}).runStreamed(context.Background(), func() {}, panickingExecutor{}, "RETURN 1", nil, "", time.Now())
+		_, _, _ = newTestSession(&mockConn{}, panickingExecutor{}).runStreamed(context.Background(), func() {}, panickingExecutor{}, "RETURN 1", nil, "", time.Now(), false)
 	}()
 }
 

@@ -2,12 +2,14 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -97,6 +99,17 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	// The statement owns its deadline: its client's tx_timeout and, once they
+	// apply, the database's query limits (deadlineCtx). An error the statement
+	// returns because that deadline passed is Neo4j's transaction timeout
+	// (#1339); a dependency's own deadline (an embedder, a remote call) is not.
+	callerCtx, deadlineCtx := ctx, ctx
+	defer func() {
+		if retErr != nil && errors.Is(retErr, context.DeadlineExceeded) && errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
+			// The caller's deadline, or only the database's query time limit.
+			retErr = nornicerrors.MarkStatementTimeout(retErr, errors.Is(callerCtx.Err(), context.DeadlineExceeded))
+		}
+	}()
 	// Every rejection of the caller's statement fails its explicit transaction,
 	// including errors before parsing, routing or the system statement policy.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
@@ -716,6 +729,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if err != nil {
 				return nil, err
 			}
+			deadlineCtx = ctx
 			// Ensure cancel is called when done
 			defer func() {
 				if queryLimitCancel != nil {
