@@ -138,10 +138,9 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Nod
 // publishUniqueValues is the one publication of a node write to the
 // unique-value registry, for engine writes, transaction commits and
 // write-behind replay: old's values (the pre-write node, nil for a create)
-// are unregistered while the node holds them, then written's (nil for a
-// delete) are registered, under every unique constraint of their labels. It
-// runs in the ordered stage, so old is what the registry holds for the node
-// (badger_publication_stage.go).
+// are unregistered, then written's (nil for a delete) are registered, under
+// every unique constraint of their labels. It runs in the ordered stage, so
+// old is what the registry holds for the node (badger_publication_stage.go).
 func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
 	if schema == nil || !schema.HasUniqueValueTracking() {
 		return
@@ -149,7 +148,7 @@ func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old
 	if old != nil {
 		for _, label := range old.Labels {
 			for property, value := range old.Properties {
-				schema.UnregisterUniqueValue(label, property, value, id)
+				schema.UnregisterUniqueValue(label, property, value)
 			}
 		}
 	}

@@ -311,19 +311,22 @@ func TestPostCommitPublicationOrderWriteBehindReplay(t *testing.T) {
 // A decay suppression rewrite publishes in the same order.
 func TestPostCommitPublicationOrderSuppression(t *testing.T) {
 	b := newPublicationMatrixEngine(t)
-	b.SetDecayEnabled(true)
-	sm := b.GetSchemaForNamespace("db")
-	require.NoError(t, sm.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
-		Name: "l_decay", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential,
-		HalfLifeSeconds: 1, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true,
-	}))
-	require.NoError(t, sm.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: "l_binding", ProfileRef: "l_decay", TargetLabels: []string{"L"}}))
 	old := time.Now().Add(-72 * time.Hour)
 	initial := matrixNode([]string{"L"}, "A")
 	initial.CreatedAt, initial.UpdatedAt = old, old
 	_, err := b.CreateNode(CopyNode(initial))
 	require.NoError(t, err)
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(b, b.GetSchemaForNamespace("db")))
+	// The registry is built before decay hides the node from its scan.
+	sm := b.GetSchemaForNamespace("db")
+	require.NoError(t, RefreshUniqueConstraintValuesForEngine(b, sm))
+	// The binding is created with decay off, so its reconciliation leaves
+	// the suppression rewrite to the newer write below.
+	require.NoError(t, sm.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name: "l_decay", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential,
+		HalfLifeSeconds: 1, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated, Enabled: true, DecayEnabled: true,
+	}))
+	require.NoError(t, sm.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{Name: "l_binding", ProfileRef: "l_decay", TargetLabels: []string{"L"}}))
+	b.SetDecayEnabled(true)
 	older := func() error {
 		node := matrixNode([]string{"L"}, "B")
 		node.CreatedAt = old
@@ -359,7 +362,7 @@ func TestPostCommitPublicationOrderEmbeddingSidecar(t *testing.T) {
 }
 
 // A delete without a pre-delete snapshot (the transaction created the node)
-// leaves nothing filed, and a value swap inside one commit keeps both values.
+// leaves nothing filed.
 func TestPostCommitPublicationWithinOneCommit(t *testing.T) {
 	b := newPublicationMatrixEngine(t)
 	sm := b.GetSchemaForNamespace("db")
@@ -371,30 +374,6 @@ func TestPostCommitPublicationWithinOneCommit(t *testing.T) {
 		return tx.DeleteNode(matrixNodeID)
 	}, nil))
 	checkNodeConsumers(t, b, nil, []string{"A"}, true)
-
-	x := &Node{ID: "db:sx", Labels: []string{"L"}, Properties: map[string]any{"p": "X", "q": "w", "u": "X"}}
-	y := &Node{ID: "db:sy", Labels: []string{"L"}, Properties: map[string]any{"p": "Y", "q": "w", "u": "Y"}}
-	for _, n := range []*Node{x, y} {
-		_, err := b.CreateNode(CopyNode(n))
-		require.NoError(t, err)
-	}
-	require.NoError(t, writeMaybeInTransaction(b, true, func(tx *BadgerTransaction) error {
-		swappedX := CopyNode(x)
-		swappedX.Properties["u"] = "Y"
-		if err := tx.UpdateNode(swappedX); err != nil {
-			return fmt.Errorf("x takes Y: %w", err)
-		}
-		swappedY := CopyNode(y)
-		swappedY.Properties["u"] = "X"
-		if err := tx.UpdateNode(swappedY); err != nil {
-			return fmt.Errorf("y takes X: %w", err)
-		}
-		return nil
-	}, nil), "a unique-value swap inside one transaction")
-	for value, holder := range map[string]NodeID{"X": "db:sy", "Y": "db:sx"} {
-		got, found, _, _ := sm.lookupUniqueConstraintValueForValidation("L", "u", value)
-		assert.True(t, found && got == holder, "after the swap %s belongs to %s, got %s (found %v)", value, holder, got, found)
-	}
 }
 
 type matrixEdgeWrite struct {

@@ -2,10 +2,11 @@ package storage
 
 import (
 	"go/ast"
+	"go/build"
+	"go/importer"
 	"go/parser"
-	"go/printer"
 	"go/token"
-	"os"
+	"go/types"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -16,59 +17,43 @@ import (
 )
 
 // The publication boundary (F-PUBLISH), extracted from this package's
-// source so it stays complete as the code changes:
+// type-checked source so it stays complete as the code changes:
 //   - the publishing commit paths: every function that hands the ordered
 //     stage a publication (badger_publication_stage.go);
 //   - every function a publication can reach, and every lock it takes there;
 //   - the operation types a commit carries.
 //
 // TestPublicationStageBoundary fails when the extraction finds a publishing
-// path, a lock (a consumer) or an operation type that the tables below don't
+// path, a lock (a consumer) or an operation type the tables below don't
 // classify, or a commit a publication could reach: the stage must never wait
 // on itself.
 
 // publishingPaths maps each function that hands the stage a publication to
 // the test that runs it under a held older publication.
 var publishingPaths = map[string]string{
-	"CreateNode":                        "TestPostCommitPublicationOrder (create)",
-	"UpdateNode":                        "TestPostCommitPublicationOrder (update, restore, label add/remove)",
-	"DeleteNode":                        "TestPostCommitPublicationOrder (delete)",
-	"CreateEdge":                        "TestPostCommitEdgePublicationOrder (create)",
-	"UpdateEdge":                        "TestPostCommitEdgePublicationOrder (update, restore, type change)",
-	"DeleteEdge":                        "TestPostCommitEdgePublicationOrder (delete)",
-	"Commit":                            "TestPostCommitPublicationOrder, TestPostCommitEdgePublicationOrder (older-tx/newer-tx)",
-	"publication":                       "the transaction's and the commit writer's publication",
+	"CreateNode":                 "TestPostCommitPublicationOrder (create)",
+	"UpdateNode":                 "TestPostCommitPublicationOrder (update, restore, label add and remove)",
+	"DeleteNode":                 "TestPostCommitPublicationOrder (delete)",
+	"CreateEdge":                 "TestPostCommitEdgePublicationOrder (create)",
+	"UpdateEdge":                 "TestPostCommitEdgePublicationOrder (update, restore, type change)",
+	"DeleteEdge":                 "TestPostCommitEdgePublicationOrder (delete)",
+	"publication":                "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx); the commit writer's pending-embedding candidates",
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
-	"EnqueueDeindexIfSuppressed":        "TestPostCommitPublicationOrderSuppression",
-	"UpdateNodeEmbeddingSidecar":        "TestPostCommitPublicationOrderEmbeddingSidecar",
+	"EnqueueDeindexIfSuppressed": "TestPostCommitPublicationOrderSuppression",
+	"UpdateNodeEmbeddingSidecar": "TestPostCommitPublicationOrderEmbeddingSidecar",
 }
 
-// stageLocks classifies every lock a publication takes: the consumer it
-// guards. A publishing committer must not hold any of them across its
-// commit (the deadlock analysis in the PR body); a new one fails the test.
-var stageLocks = map[string]string{
-	"b.nodeCacheMu":                  "node and query-node caches",
-	"b.edgeCacheMu":                  "edge cache",
-	"b.labelFirstCacheMu":            "label index cache",
-	"b.edgeTypeCacheMu":              "edge-type index cache",
-	"b.adjCacheMu":                   "adjacency cache",
-	"b.namespaceCountsMu":            "node and edge counts",
-	"b.schemasMu":                    "schema lookup (read lock)",
-	"sm.mu":                          "schema: index and constraint lookup (read lock)",
-	"idx.mu":                         "property and composite indexes",
-	"constraint.mu":                  "unique-value registry",
-	"set.mu":                         "relationship-uniqueness index",
-	"p.mu":                           "pending-embedding candidates",
-	"o.mu":                           "the stage's pending set (oracle)",
-	"publicationStageHookMu":         "test seam",
-	"commitTailHookMu":               "test seam",
-}
+// stageLocks classifies every lock a publication takes, by the struct field
+// that holds it: the consumer it guards. A publishing committer must not
+// hold any of them across its commit (the deadlock analysis in the PR body);
+// a new one fails the test.
+var stageLocks = map[string]string{}
 
 // commitFunctions must never be reachable from a publication.
 var commitFunctions = []string{
 	"commitEngineWrite", "commitEngineWriteWithRead", "commitEngineWriteHeld", "withUpdate", "withNotifyingUpdate",
-	"withPublishingUpdate", "withUpdateUnits", "commitPublishing", "commitShared", "commitBatch", "beginLargeCommit",
-	"applyThrough", "waitPublished", "CommitAt", "Commit", "CommitContext",
+	"withPublishingUpdate", "withUpdateUnits", "commit", "commitPublishing", "commitShared", "commitBatch",
+	"beginLargeCommit", "applyThrough", "waitPublished", "CommitAt", "Commit", "CommitContext",
 }
 
 // operationCoverage maps every operation type to the matrix rows that cover
@@ -85,40 +70,47 @@ var operationCoverage = map[string]string{
 
 type packageSource struct {
 	fset  *token.FileSet
-	funcs map[string][]*ast.FuncDecl // by function or method name
 	files []*ast.File
+	info  *types.Info
+	decls map[*types.Func]*ast.FuncDecl
 }
 
-func parsePackageSource(t *testing.T) *packageSource {
+func checkPackageSource(t *testing.T) *packageSource {
 	t.Helper()
-	src := &packageSource{fset: token.NewFileSet(), funcs: map[string][]*ast.FuncDecl{}}
+	src := &packageSource{fset: token.NewFileSet(), decls: map[*types.Func]*ast.FuncDecl{}}
+	ctxt := build.Default
+	ctxt.BuildTags = append(ctxt.BuildTags, "noui", "nolocalllm")
 	paths, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	for _, path := range paths {
 		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
-		data, err := os.ReadFile(path)
-		require.NoError(t, err)
-		file, err := parser.ParseFile(src.fset, path, data, 0)
+		if match, err := ctxt.MatchFile(".", path); err != nil || !match {
+			continue
+		}
+		file, err := parser.ParseFile(src.fset, path, nil, 0)
 		require.NoError(t, err)
 		src.files = append(src.files, file)
+	}
+	src.info = &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Types: map[ast.Expr]types.TypeAndValue{}}
+	var typeErrors []string
+	conf := types.Config{Importer: importer.ForCompiler(src.fset, "source", nil), Error: func(err error) { typeErrors = append(typeErrors, err.Error()) }}
+	_, _ = conf.Check("github.com/orneryd/nornicdb/pkg/storage", src.fset, src.files, src.info)
+	require.Empty(t, typeErrors, "type-checking pkg/storage")
+	for _, file := range src.files {
 		for _, decl := range file.Decls {
 			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-				src.funcs[fn.Name.Name] = append(src.funcs[fn.Name.Name], fn)
+				if obj, ok := src.info.Defs[fn.Name].(*types.Func); ok {
+					src.decls[obj] = fn
+				}
 			}
 		}
 	}
 	return src
 }
 
-func (src *packageSource) text(node ast.Node) string {
-	var b strings.Builder
-	_ = printer.Fprint(&b, src.fset, node)
-	return b.String()
-}
-
-// stageRoots returns the publications in the source, with the function each
+// stageRoots returns the publications in the source, by the function each
 // is handed over in: closures assigned to a commit writer's publish field or
 // to a local named publish, closures passed to withPublishingUpdate, and the
 // publication methods.
@@ -169,21 +161,59 @@ func (src *packageSource) stageRoots() map[string][]ast.Node {
 	return roots
 }
 
-func calledName(call *ast.CallExpr) string {
+// callee resolves the function or method call calls, nil for a call of a
+// function value (a closure, a func field) or a conversion.
+func (src *packageSource) callee(call *ast.CallExpr) *types.Func {
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
-		return fun.Name
+		obj, _ := src.info.Uses[fun].(*types.Func)
+		return obj
 	case *ast.SelectorExpr:
-		return fun.Sel.Name
+		if sel := src.info.Selections[fun]; sel != nil {
+			obj, _ := sel.Obj().(*types.Func)
+			return obj
+		}
+		obj, _ := src.info.Uses[fun.Sel].(*types.Func)
+		return obj
+	case *ast.IndexExpr:
+		if ident, ok := fun.X.(*ast.Ident); ok {
+			obj, _ := src.info.Uses[ident].(*types.Func)
+			return obj
+		}
 	}
-	return ""
+	return nil
 }
 
-// reach walks the package call graph (by function name, an
-// over-approximation) from roots, returning the functions reached and the
-// locks taken, each lock with the functions taking it.
-func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, locks map[string][]string) {
+// lockName names the mutex a Lock or RLock call takes by the struct field
+// that holds it ("BadgerEngine.nodeCacheMu"), or the package variable.
+func (src *packageSource) lockName(x ast.Expr) string {
+	switch x := x.(type) {
+	case *ast.SelectorExpr:
+		if sel := src.info.Selections[x]; sel != nil && sel.Kind() == types.FieldVal {
+			recv := sel.Recv()
+			if ptr, ok := recv.(*types.Pointer); ok {
+				recv = ptr.Elem()
+			}
+			name := types.TypeString(recv, func(*types.Package) string { return "" })
+			return name + "." + x.Sel.Name
+		}
+	case *ast.Ident:
+		if obj := src.info.Uses[x]; obj != nil {
+			return obj.Name()
+		}
+	case *ast.UnaryExpr:
+		return src.lockName(x.X)
+	}
+	var b strings.Builder
+	ast.Fprint(&b, nil, x, nil)
+	return "unresolved " + b.String()
+}
+
+// reach walks the type-resolved call graph from roots: the package's own
+// functions are followed, others recorded by name.
+func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, locks map[string][]string, dynamic []string) {
 	reached, locks = map[string]bool{}, map[string][]string{}
+	seen := map[*types.Func]bool{}
 	var visit func(owner string, node ast.Node)
 	visit = func(owner string, node ast.Node) {
 		ast.Inspect(node, func(n ast.Node) bool {
@@ -191,20 +221,27 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 			if !ok {
 				return true
 			}
-			name := calledName(call)
+			fn := src.callee(call)
+			if fn == nil {
+				if _, isLit := call.Fun.(*ast.FuncLit); !isLit && !isConversion(src.info, call) {
+					entry := owner + ": " + exprString(call.Fun)
+					if !slices.Contains(dynamic, entry) {
+						dynamic = append(dynamic, entry)
+					}
+				}
+				return true
+			}
+			name := fn.Name()
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (name == "Lock" || name == "RLock" || name == "TryLock" || name == "TryRLock") {
-				lock := src.text(sel.X)
+				lock := src.lockName(sel.X)
 				if !slices.Contains(locks[lock], owner) {
 					locks[lock] = append(locks[lock], owner)
 				}
 				return true
 			}
-			decls, declared := src.funcs[name]
-			if !declared || reached[name] {
-				return true
-			}
 			reached[name] = true
-			for _, decl := range decls {
+			if decl, own := src.decls[fn]; own && !seen[fn] {
+				seen[fn] = true
 				visit(name, decl.Body)
 			}
 			return true
@@ -213,11 +250,32 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 	for _, root := range roots {
 		visit("publication", root)
 	}
-	return reached, locks
+	return reached, locks, dynamic
+}
+
+func isConversion(info *types.Info, call *ast.CallExpr) bool {
+	tv, ok := info.Types[call.Fun]
+	return ok && tv.IsType()
+}
+
+func exprString(e ast.Expr) string {
+	switch e := e.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.SelectorExpr:
+		return exprString(e.X) + "." + e.Sel.Name
+	case *ast.CallExpr:
+		return exprString(e.Fun) + "()"
+	case *ast.IndexExpr:
+		return exprString(e.X) + "[]"
+	case *ast.ParenExpr:
+		return exprString(e.X)
+	}
+	return "?"
 }
 
 func TestPublicationStageBoundary(t *testing.T) {
-	src := parsePackageSource(t)
+	src := checkPackageSource(t)
 	roots := src.stageRoots()
 
 	var paths []string
@@ -233,18 +291,19 @@ func TestPublicationStageBoundary(t *testing.T) {
 		require.True(t, known, "publishing path %s has no case in the publication matrix (publishingPaths)", path)
 	}
 	for path := range publishingPaths {
-		if _, found := roots[path]; !found && path != "Commit" {
-			t.Errorf("publishingPaths lists %s, which no longer hands the stage a publication", path)
-		}
+		_, found := roots[path]
+		require.True(t, found, "publishingPaths lists %s, which no longer hands the stage a publication", path)
 	}
 
-	reached, locks := src.reach(all)
+	reached, locks, dynamic := src.reach(all)
 	var names []string
 	for name := range reached {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	t.Logf("functions a publication reaches (%d): %s", len(names), strings.Join(names, ", "))
+	sort.Strings(dynamic)
+	t.Logf("calls of function values inside publications (%d): %s", len(dynamic), strings.Join(dynamic, "; "))
 	for _, name := range commitFunctions {
 		require.False(t, reached[name], "a publication reaches %s: the stage could wait on itself", name)
 	}
@@ -255,7 +314,9 @@ func TestPublicationStageBoundary(t *testing.T) {
 	}
 	sort.Strings(lockNames)
 	for _, lock := range lockNames {
-		t.Logf("stage lock %-28s taken in %s", lock, strings.Join(locks[lock], ", "))
+		t.Logf("stage lock %-40s taken in %s", lock, strings.Join(locks[lock], ", "))
+	}
+	for _, lock := range lockNames {
 		_, known := stageLocks[lock]
 		require.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
 	}
@@ -263,6 +324,9 @@ func TestPublicationStageBoundary(t *testing.T) {
 	// Every operation type a commit carries is covered.
 	var ops []string
 	for _, file := range src.files {
+		if src.fset.Position(file.Pos()).Filename != "transaction.go" {
+			continue
+		}
 		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.CONST {
@@ -274,9 +338,7 @@ func TestPublicationStageBoundary(t *testing.T) {
 					continue
 				}
 				for _, name := range value.Names {
-					if src.fset.Position(name.Pos()).Filename == "transaction.go" {
-						ops = append(ops, name.Name)
-					}
+					ops = append(ops, name.Name)
 				}
 			}
 		}

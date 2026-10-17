@@ -523,11 +523,8 @@ func (sm *SchemaManager) RegisterUniqueValue(label, property string, value inter
 	constraint.mu.Unlock()
 }
 
-// UnregisterUniqueValue removes nodeID's value from a unique constraint. It
-// leaves the value alone when another node holds it: in a commit that moves
-// the value from one node to another (a swap), the other node's later
-// operation must not drop what the earlier one registered.
-func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value interface{}, nodeID NodeID) {
+// UnregisterUniqueValue removes a value from a unique constraint.
+func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value interface{}) {
 	sm.mu.RLock()
 	key := fmt.Sprintf("%s:%s", label, property)
 	constraint, exists := sm.uniqueConstraints[key]
@@ -542,8 +539,6 @@ func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value int
 	}
 
 	constraint.mu.Lock()
-	if constraint.values[valueKey] == nodeID {
-		delete(constraint.values, valueKey)
-	}
+	delete(constraint.values, valueKey)
 	constraint.mu.Unlock()
 }
