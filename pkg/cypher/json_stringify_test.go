@@ -68,13 +68,17 @@ func TestJSONStringifyProfilesAreByteExact(t *testing.T) {
 	require.Equal(t, "{\"B\":3,\"a\":2,\"b\":1,\"ä\":4,\"\uffff\":6,\"😀\":5}", keys)
 
 	// Literal floats stay floats, integers integers; null is the text null.
-	for query, want := range map[string]interface{}{
-		"RETURN nornicdb.json.stringify({b: 1, a: 1.0}, {profile: 'python-canonical'}) AS v":  `{"a":1.0,"b":1}`,
-		"RETURN nornicdb.json.stringify([1, 2.0, 'x'], {profile: 'python-sorted'}) AS v":       `[1, 2.0, "x"]`,
-		"RETURN nornicdb.json.stringify(null, {profile: 'python-canonical'}) AS v":             `null`,
-		"RETURN nornicdb.json.stringify('a\"b', {profile: 'python-canonical'}) AS v":           `"a\"b"`,
-		"UNWIND [1.0, 1e16] AS f RETURN nornicdb.json.stringify(collect(f), {profile: 'python-canonical'}) AS v": `[1.0,1e+16]`,
+	for _, c := range []struct {
+		query string
+		want  interface{}
+	}{
+		{"RETURN nornicdb.json.stringify({b: 1, a: 1.0}, {profile: 'python-canonical'}) AS v", `{"a":1.0,"b":1}`},
+		{"RETURN nornicdb.json.stringify([1, 2.0, 'x'], {profile: 'python-sorted'}) AS v", `[1, 2.0, "x"]`},
+		{"RETURN nornicdb.json.stringify(null, {profile: 'python-canonical'}) AS v", `null`},
+		{"RETURN nornicdb.json.stringify('a\"b', {profile: 'python-canonical'}) AS v", `"a\"b"`},
+		{"UNWIND [1.0, 1e16] AS f RETURN nornicdb.json.stringify(collect(f), {profile: 'python-canonical'}) AS v", `[1.0,1e+16]`},
 	} {
+		query, want := c.query, c.want
 		require.Equal(t, want, jsonStringifyValue(t, exec, query, nil), query)
 	}
 
@@ -95,23 +99,27 @@ func TestJSONStringifyProfilesAreByteExact(t *testing.T) {
 // driver's tuples, lists in both profiles.
 func TestJSONStringifyDriverValues(t *testing.T) {
 	exec := newJSONStringifyExecutor(t)
-	for query, want := range map[string]interface{}{
-		"RETURN nornicdb.json.stringify(date('2024-03-05'), {profile: 'python-sorted'}) AS v":                         `"2024-03-05"`,
-		"RETURN nornicdb.json.stringify(localtime('09:08:07.000000123'), {profile: 'python-sorted'}) AS v":            `"09:08:07.000000123"`,
-		"RETURN nornicdb.json.stringify(time('09:08:07+05:30'), {profile: 'python-sorted'}) AS v":                     `"09:08:07.000000000+05:30"`,
-		"RETURN nornicdb.json.stringify(time('09:08:07-03:30'), {profile: 'python-sorted'}) AS v":                     `"09:08:07.000000000-03:30"`,
-		"RETURN nornicdb.json.stringify(localdatetime('2024-03-05T09:08:07.5'), {profile: 'python-sorted'}) AS v":     `"2024-03-05T09:08:07.500000000"`,
-		"RETURN nornicdb.json.stringify(datetime('2024-03-05T09:08:07Z'), {profile: 'python-sorted'}) AS v":           `"2024-03-05T09:08:07.000000000+00:00"`,
-		"RETURN nornicdb.json.stringify(datetime('2024-03-05T09:08:07-03:30'), {profile: 'python-sorted'}) AS v":      `"2024-03-05T09:08:07.000000000-03:30"`,
-		"RETURN nornicdb.json.stringify(datetime('2024-07-01T12:00:00[Europe/London]'), {profile: 'python-sorted'}) AS v": `"2024-07-01T12:00:00.000000000+01:00"`,
+	for _, c := range []struct {
+		query string
+		want  interface{}
+	}{
+		{"RETURN nornicdb.json.stringify(date('2024-03-05'), {profile: 'python-sorted'}) AS v", `"2024-03-05"`},
+		{"RETURN nornicdb.json.stringify(localtime('09:08:07.000000123'), {profile: 'python-sorted'}) AS v", `"09:08:07.000000123"`},
+		{"RETURN nornicdb.json.stringify(time('09:08:07+05:30'), {profile: 'python-sorted'}) AS v", `"09:08:07.000000000+05:30"`},
+		{"RETURN nornicdb.json.stringify(time('09:08:07-03:30'), {profile: 'python-sorted'}) AS v", `"09:08:07.000000000-03:30"`},
+		{"RETURN nornicdb.json.stringify(localdatetime('2024-03-05T09:08:07.5'), {profile: 'python-sorted'}) AS v", `"2024-03-05T09:08:07.500000000"`},
+		{"RETURN nornicdb.json.stringify(datetime('2024-03-05T09:08:07Z'), {profile: 'python-sorted'}) AS v", `"2024-03-05T09:08:07.000000000+00:00"`},
+		{"RETURN nornicdb.json.stringify(datetime('2024-03-05T09:08:07-03:30'), {profile: 'python-sorted'}) AS v", `"2024-03-05T09:08:07.000000000-03:30"`},
+		{"RETURN nornicdb.json.stringify(datetime('2024-07-01T12:00:00[Europe/London]'), {profile: 'python-sorted'}) AS v", `"2024-07-01T12:00:00.000000000+01:00"`},
 		// A named zone's negative half-hour offset: the driver floors it.
-		"RETURN nornicdb.json.stringify(datetime('2024-01-15T12:00:00[America/St_Johns]'), {profile: 'python-sorted'}) AS v": `"2024-01-15T12:00:00.000000000-04:30"`,
-		"RETURN nornicdb.json.stringify(duration({months: 14, days: 3, hours: 1, seconds: 5, nanoseconds: 7}), {profile: 'python-sorted'}) AS v": `[14, 3, 3605, 7]`,
-		"RETURN nornicdb.json.stringify(duration('-PT1.5S'), {profile: 'python-canonical'}) AS v":                    `[0,0,-1,-500000000]`,
-		"RETURN nornicdb.json.stringify(point({x: 1, y: 2}), {profile: 'python-sorted'}) AS v":                         `[1.0, 2.0]`,
-		"RETURN nornicdb.json.stringify(point({x: 1, y: 2, z: 3}), {profile: 'python-canonical'}) AS v":                `[1.0,2.0,3.0]`,
-		"RETURN nornicdb.json.stringify({d: date('2024-03-05')}, {profile: 'python-sorted'}) AS v":                    `{"d": "2024-03-05"}`,
+		{"RETURN nornicdb.json.stringify(datetime('2024-01-15T12:00:00[America/St_Johns]'), {profile: 'python-sorted'}) AS v", `"2024-01-15T12:00:00.000000000-04:30"`},
+		{"RETURN nornicdb.json.stringify(duration({months: 14, days: 3, hours: 1, seconds: 5, nanoseconds: 7}), {profile: 'python-sorted'}) AS v", `[14, 3, 3605, 7]`},
+		{"RETURN nornicdb.json.stringify(duration('-PT1.5S'), {profile: 'python-canonical'}) AS v", `[0,0,-1,-500000000]`},
+		{"RETURN nornicdb.json.stringify(point({x: 1, y: 2}), {profile: 'python-sorted'}) AS v", `[1.0, 2.0]`},
+		{"RETURN nornicdb.json.stringify(point({x: 1, y: 2, z: 3}), {profile: 'python-canonical'}) AS v", `[1.0,2.0,3.0]`},
+		{"RETURN nornicdb.json.stringify({d: date('2024-03-05')}, {profile: 'python-sorted'}) AS v", `{"d": "2024-03-05"}`},
 	} {
+		query, want := c.query, c.want
 		require.Equal(t, want, jsonStringifyValue(t, exec, query, nil), query)
 	}
 	bytes := map[string]interface{}{"value": []byte{0, 'a', '\'', '\\', 0xff, '\n'}}
@@ -173,19 +181,23 @@ func TestApocUtilHashFunctions(t *testing.T) {
 		sum := sha256.Sum256([]byte(text))
 		return hex.EncodeToString(sum[:])
 	}
-	for query, want := range map[string]interface{}{
+	for _, c := range []struct {
+		query string
+		want  interface{}
+	}{
 		// FIPS 180-2 and RFC 1321 test vectors.
-		"RETURN apoc.util.sha256(['abc']) AS v":            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-		"RETURN apoc.util.sha256(['a', 'b', null, 'c']) AS v": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-		"RETURN apoc.util.sha1(['abc']) AS v":              "a9993e364706816aba3e25717850c26c9cd0d89d",
-		"RETURN apoc.util.md5(['abc']) AS v":               "900150983cd24fb0d6963f7d28e17f72",
-		"RETURN apoc.util.sha256('abc') AS v":              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-		"RETURN apoc.util.sha256(null) AS v":               nil,
-		"RETURN apoc.util.sha256(['é']) AS v":              digest("é"),
-		"RETURN apoc.util.sha256(['ab', 1, true, 2.5, 1.0, 1e7, null]) AS v": digest("ab1true2.51.01.0E7"),
-		"RETURN apoc.util.sha256([[1, 'a', null], {k: 2}]) AS v":             digest("[1, a, null]{k=2}"),
-		"UNWIND ['abc'] AS s RETURN apoc.util.sha256([s]) AS v":              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+		{"RETURN apoc.util.sha256(['abc']) AS v", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+		{"RETURN apoc.util.sha256(['a', 'b', null, 'c']) AS v", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+		{"RETURN apoc.util.sha1(['abc']) AS v", "a9993e364706816aba3e25717850c26c9cd0d89d"},
+		{"RETURN apoc.util.md5(['abc']) AS v", "900150983cd24fb0d6963f7d28e17f72"},
+		{"RETURN apoc.util.sha256('abc') AS v", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+		{"RETURN apoc.util.sha256(null) AS v", nil},
+		{"RETURN apoc.util.sha256(['é']) AS v", digest("é")},
+		{"RETURN apoc.util.sha256(['ab', 1, true, 2.5, 1.0, 1e7, null]) AS v", digest("ab1true2.51.01.0E7")},
+		{"RETURN apoc.util.sha256([[1, 'a', null], {k: 2}]) AS v", digest("[1, a, null]{k=2}")},
+		{"UNWIND ['abc'] AS s RETURN apoc.util.sha256([s]) AS v", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
 	} {
+		query, want := c.query, c.want
 		require.Equal(t, want, jsonStringifyValue(t, exec, query, nil), query)
 	}
 	require.Equal(t, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", util.SHA256([]interface{}{"abc"}), "plugin handler")

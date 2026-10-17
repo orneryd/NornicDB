@@ -32,7 +32,7 @@ func jsonStringifySummaryInput() map[string]interface{} {
 	}
 	record := map[string]interface{}{
 		"id": "record-0001", "version_id": "version-0001", "source_id": "source-0001",
-		"content_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		"content_hash":   "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 		"section_starts": starts, "section_ends": ends, "section_roles": roles,
 		"collections": []interface{}{"c1", "c2", "c3"}, "generation": int64(2),
 		"corrections": []interface{}{[]interface{}{"k1", int64(3), "accepted"}, []interface{}{"k2", int64(1), "open"}},
@@ -80,4 +80,3 @@ func BenchmarkJSONStringifyPayloadHash64KiB(b *testing.B) {
 		"RETURN apoc.util.sha256([nornicdb.json.stringify($payload, {profile: 'python-canonical'})]) AS hash",
 		map[string]interface{}{"payload": payload})
 }
-
