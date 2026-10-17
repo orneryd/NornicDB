@@ -96,6 +96,7 @@ func TestSearchService_IndexNodeRemovesClosedTemporalVersion(t *testing.T) {
 
 	// A historical version remains excluded even when its old model's
 	// embedding dimension differs from the current search index.
+	svc.FixVectorDimensions()
 	closed.ChunkEmbeddings = [][]float32{{1, 0}}
 	require.NoError(t, svc.IndexNode(closed))
 	require.Zero(t, svc.EmbeddingCount())
