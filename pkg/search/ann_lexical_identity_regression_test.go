@@ -15,18 +15,25 @@ func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 		"second":            {ID: "second", Rank: 1, Signature: 2},
 		"literal-named-doc": {ID: "literal-named-doc", Rank: 2, Signature: 3},
 	}
-	want := []string{"first-chunk-0", "first-prop-features", "second-named-default", "literal-named-doc", "other"}
 	check := func(t *testing.T, pairs []hnswBuildPair) {
 		t.Helper()
-		got := make([]string, len(pairs))
-		for i, pair := range pairs {
-			got[i] = pair.id
-			if pair.id != "other" {
-				require.True(t, pair.hasHint)
-				require.Equal(t, pair.id, pair.hint.ID, "the graph stores hints under the embedding ID")
+		config := DefaultHNSWConfig()
+		config.UseGPUBuild = true
+		config.GPUBuildBatchSize = 2
+		built, _, err := buildHNSWWithOptionalGPU(context.Background(), 2, config, nil, len(pairs), hnswPairSliceIterator(pairs), NewCPUHNSWBuildAccelerator())
+		require.NoError(t, err)
+		built.mu.RLock()
+		defer built.mu.RUnlock()
+		for _, pair := range pairs {
+			if !pair.hasHint {
+				continue
 			}
+			require.Contains(t, hints, pair.hint.ID, "iterator metadata keeps its BM25 document identity")
+			bound, ok := built.buildLexicalHints[pair.id]
+			require.True(t, ok, "construction must bind the hint to embedding %s", pair.id)
+			require.Equal(t, pair.id, bound.ID)
+			require.Equal(t, pair.hint.Signature, bound.Signature)
 		}
-		require.Equal(t, want, got)
 	}
 	t.Run("chunked file iterator", func(t *testing.T) {
 		iterate := func(_ int, fn func([]string, [][]float32) error) error {
@@ -102,5 +109,7 @@ func TestBM25SeedEmbeddingIDsUsesIndexedMetadata(t *testing.T) {
 		NamedEmbeddings: map[string][]float32{"default": {1, 0}, "alternate": {0, 1}},
 		ChunkEmbeddings: [][]float32{{1, 0}, {0, 1}},
 	}))
-	require.Equal(t, []string{"missing", "seed", "seed-chunk-1", "seed-named-alternate", "seed-named-default", "seed-prop-features"}, svc.bm25SeedEmbeddingIDs([]string{"missing", "seed"}))
+	require.Equal(t, []string{"missing", "seed"}, svc.bm25SeedEmbeddingIDs([]string{"missing", "seed"}))
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "encoded", Properties: map[string]any{"features": []float32{0, 1}}, NamedEmbeddings: map[string][]float32{"default": {1, 0}, "alternate": {0, 1}}}))
+	require.Equal(t, []string{"encoded-named-alternate", "encoded-named-default", "encoded-prop-features"}, svc.bm25SeedEmbeddingIDs([]string{"encoded"}))
 }
