@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# nornic-code-intelligence-managed
 set -euo pipefail
 if [ "$(git config --bool --get codeIntelligence.enabled || true)" != "true" ]; then
     exit 0

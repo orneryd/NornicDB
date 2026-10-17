@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# nornic-code-intelligence-managed
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
