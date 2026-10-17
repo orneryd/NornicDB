@@ -62,6 +62,7 @@ class RunnerContracts(unittest.TestCase):
         self.assertNotEqual("999999999", captured.get("NORNICDB_VECTOR_CPU_BRUTE_MAX_N"))
         self.assertNotEqual("true", captured.get("NORNICDB_KMEANS_CLUSTERING_ENABLED"))
         self.assertEqual("fast", captured["NORNICDB_VECTOR_ANN_QUALITY"])
+        self.assertEqual("none", captured["NORNICDB_VECTOR_HNSW_QUANTIZATION"])
 
     def test_preset_ef_is_explicit_on_qdrant(self):
         engine = run.QdrantEngine(None)
