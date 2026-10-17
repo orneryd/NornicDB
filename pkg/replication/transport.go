@@ -96,6 +96,12 @@ type ClusterMessage struct {
 	Timestamp int64
 	Signature string
 	Payload   []byte
+
+	// Nonce and SignatureV2 carry replay protection (transport_replay.go).
+	// Nodes without them ignore the fields, so the encoding stays
+	// compatible in both directions.
+	Nonce       []byte
+	SignatureV2 string
 }
 
 // ClusterTransport handles cluster-to-cluster communication.
@@ -125,6 +131,11 @@ type ClusterTransport struct {
 	logger       *slog.Logger
 	localizer    *localization.Manager
 
+	// replay records message nonces for every connection of this transport;
+	// requireReplay refuses messages without one.
+	replay        *replayCache
+	requireReplay bool
+
 	// Message handlers
 	handlers map[ClusterMessageType]MessageHandler
 }
@@ -146,6 +157,11 @@ type ClusterTransportConfig struct {
 	AuthMaxSkew  time.Duration
 	Logger       *slog.Logger
 	Localizer    *localization.Manager
+
+	// RequireReplayProtection refuses signed messages without a nonce
+	// (ReplayProtectionRequire); otherwise they're accepted from peers not
+	// yet upgraded (ReplayProtectionCompat).
+	RequireReplayProtection bool
 }
 
 // DefaultClusterTransportConfig returns production defaults.
@@ -195,7 +211,10 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		authMaxSkew:  config.AuthMaxSkew,
 		logger:       config.Logger,
 		localizer:    config.Localizer,
+		replay:       newReplayCache(),
 		handlers:     make(map[ClusterMessageType]MessageHandler),
+
+		requireReplay: config.RequireReplayProtection,
 	}
 }
 
@@ -420,6 +439,10 @@ type ClusterConnection struct {
 	// onAuthenticated runs once, after the first verified message on an
 	// inbound connection. Only the read loop uses it.
 	onAuthenticated func()
+
+	// replay is used only by a connection without a transport.
+	replayOnce sync.Once
+	replay     *replayCache
 }
 
 func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*ClusterMessage, error) {
@@ -782,22 +805,61 @@ func (c *ClusterConnection) signMessage(msg *ClusterMessage) {
 	if msg.Timestamp == 0 {
 		msg.Timestamp = time.Now().UnixNano()
 	}
-	msg.Signature = computeMessageSignature(c.authSecret, msg)
+	// Every send gets a fresh nonce, a resent message object included.
+	msg.Nonce = newMessageNonce()
+	msg.SignatureV2 = computeMessageSignatureV2(c.authSecret, msg)
+	if c.transport != nil && c.transport.requireReplay {
+		msg.Signature = ""
+	} else {
+		msg.Signature = computeMessageSignature(c.authSecret, msg)
+	}
+}
+
+// replayState returns the replay cache shared by the transport's
+// connections, or this connection's own when it has no transport.
+func (c *ClusterConnection) replayState() *replayCache {
+	if c.transport != nil && c.transport.replay != nil {
+		return c.transport.replay
+	}
+	c.replayOnce.Do(func() { c.replay = newReplayCache() })
+	return c.replay
 }
 
 func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 	if len(c.authSecret) == 0 {
 		return nil
 	}
-	if msg.Signature == "" || msg.Timestamp == 0 || msg.NodeID == "" {
+	if (msg.Signature == "" && msg.SignatureV2 == "") || msg.Timestamp == 0 || msg.NodeID == "" {
 		return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
 	}
-	if c.authMaxSkew > 0 {
-		now := time.Now()
-		ts := time.Unix(0, msg.Timestamp)
-		if now.Sub(ts) > c.authMaxSkew || ts.Sub(now) > c.authMaxSkew {
-			return localizedError(localization.ReplicationRPCTimestampOutsideAllowedSkew(), nil)
+	// The skew window also bounds the replay cache, so it always applies.
+	skew := c.authMaxSkew
+	if skew <= 0 {
+		skew = defaultAuthMaxSkew
+	}
+	now := time.Now()
+	ts := time.Unix(0, msg.Timestamp)
+	if now.Sub(ts) > skew || ts.Sub(now) > skew {
+		return localizedError(localization.ReplicationRPCTimestampOutsideAllowedSkew(), nil)
+	}
+
+	replay := c.replayState()
+	if msg.SignatureV2 != "" {
+		if len(msg.Nonce) != messageNonceSize {
+			return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
 		}
+		expected := computeMessageSignatureV2(c.authSecret, msg)
+		if !hmac.Equal([]byte(expected), []byte(msg.SignatureV2)) {
+			return localizedError(localization.ReplicationRPCInvalidSignature(), nil)
+		}
+		return replay.admit(msg.NodeID, msg.Nonce, ts.Add(skew).UnixNano(), now.UnixNano())
+	}
+
+	// A message signed the original way only: a node from before replay
+	// protection. Accepted in compat mode, unless the sender has already
+	// shown it signs with nonces.
+	if (c.transport != nil && c.transport.requireReplay) || replay.isUpgraded(msg.NodeID) {
+		return localizedError(localization.ReplicationRPCReplayProtectionRequired(), nil)
 	}
 	expected := computeMessageSignature(c.authSecret, msg)
 	if !hmac.Equal([]byte(expected), []byte(msg.Signature)) {

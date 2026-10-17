@@ -707,6 +707,28 @@ The cluster transport listens on its own port (default `7000`) — separate from
 | `NORNICDB_CLUSTER_CROSS_REGION_MODE` | `async`           | Cross-region sync mode: `async`, `quorum` |
 | `NORNICDB_CLUSTER_CONFLICT_STRATEGY` | `last_write_wins` | Conflict resolution          |
 
+### Securing Replication Traffic
+
+The cluster port carries WAL batches, Raft votes and appends, fencing and forwarded writes. Protect it with a shared secret and TLS on every node:
+
+| Variable                                    | Default  | Description |
+| ------------------------------------------- | -------- | ----------- |
+| `NORNICDB_CLUSTER_REPLICATION_SECRET`       | -        | Shared secret, at least 32 characters, identical on every node. Every cluster message is signed with it, and messages without a valid signature are refused. |
+| `NORNICDB_CLUSTER_TLS_ENABLED`              | `false`  | TLS on the cluster port and on connections to peers. Needs `NORNICDB_CLUSTER_TLS_CERT_FILE` and `NORNICDB_CLUSTER_TLS_KEY_FILE`. |
+| `NORNICDB_CLUSTER_TLS_CA_FILE`              | -        | CA that peer certificates must chain to. |
+| `NORNICDB_CLUSTER_TLS_VERIFY_CLIENT`        | `true`   | Peers must present a client certificate from the CA (mutual TLS). Needs `NORNICDB_CLUSTER_TLS_CA_FILE`. |
+| `NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY` | `false`  | Skip verification of peer server certificates. Testing only. |
+| `NORNICDB_CLUSTER_REPLAY_PROTECTION`        | `compat` | `compat` or `require`; see below. |
+
+Boolean settings accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`. Any other value, or a certificate, key or CA that can't be read, stops replication from starting rather than letting it run unprotected.
+
+**Replay protection.** Each signed message carries a random nonce covered by its signature, and a node accepts each nonce from a given peer only once while the message's timestamp is within the 30-second window. Nodes that predate replay protection don't send nonces, so `NORNICDB_CLUSTER_REPLAY_PROTECTION` controls them:
+
+- `compat` (default): messages are signed both the new and the original way, so older nodes still accept them, and messages from older nodes are still accepted. Once a peer has sent a message with a nonce, its messages without one are refused.
+- `require`: only messages with a nonce are sent and accepted. Needs `NORNICDB_CLUSTER_REPLICATION_SECRET`.
+
+**Rolling upgrade.** Upgrade the nodes one at a time with the default `compat`; the cluster keeps replicating throughout. When every node runs the new version, set `NORNICDB_CLUSTER_REPLAY_PROTECTION=require` on each node and restart them one at a time. Until then, messages from nodes that haven't been upgraded have no replay protection.
+
 ---
 
 ## Best Practices

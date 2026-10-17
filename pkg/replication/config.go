@@ -198,6 +198,13 @@ type Config struct {
 	// Environment: NORNICDB_CLUSTER_REPLICATION_SECRET
 	ReplicationSecret string
 
+	// ReplayProtection decides whether signed messages without a nonce are
+	// accepted: "compat" (default) accepts them from peers not yet upgraded,
+	// for rolling upgrades; "require" refuses them. Set "require" once every
+	// node runs a version with replay protection.
+	// Environment: NORNICDB_CLUSTER_REPLAY_PROTECTION
+	ReplayProtection string
+
 	// DataDir for replication state (Raft logs, snapshots).
 	// Defaults to main database DataDir + "/replication"
 	// Environment: NORNICDB_CLUSTER_DATA_DIR
@@ -532,6 +539,7 @@ func LoadFromEnv() *Config {
 	config.AdvertiseAddr = envutil.Get("NORNICDB_CLUSTER_ADVERTISE_ADDR", config.BindAddr)
 	config.DataDir = envutil.Get("NORNICDB_CLUSTER_DATA_DIR", "./data/replication")
 	config.ReplicationSecret = envutil.Get("NORNICDB_CLUSTER_REPLICATION_SECRET", "")
+	config.ReplayProtection = strings.ToLower(strings.TrimSpace(envutil.Get("NORNICDB_CLUSTER_REPLAY_PROTECTION", ReplayProtectionCompat)))
 
 	// HA Standby settings
 	config.HAStandby.Role = envutil.Get("NORNICDB_CLUSTER_HA_ROLE", "")
@@ -655,6 +663,15 @@ func (c *Config) Validate() error {
 		if err := c.validateTLS(); err != nil {
 			return err
 		}
+	}
+
+	switch c.ReplayProtection {
+	case "", ReplayProtectionCompat, ReplayProtectionRequire:
+	default:
+		return localizedError(localization.ReplicationConfigInvalidReplayProtection(c.ReplayProtection), nil)
+	}
+	if c.ReplayProtection == ReplayProtectionRequire && c.ReplicationSecret == "" {
+		return localizedError(localization.ReplicationConfigReplayProtectionNeedsSecret(), nil)
 	}
 
 	if c.ReplicationSecret != "" && len(c.ReplicationSecret) < 32 {
