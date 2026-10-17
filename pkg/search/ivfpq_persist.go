@@ -214,7 +214,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if vfs == nil {
 		return nil, localizedError(localization.SearchIVFPQVectorStoreUnavailable(), nil)
 	}
-	seedIDs := bm25SeedDocIDs(fulltext)
+	seedIDs := nodeMainVectorKeys(bm25SeedDocIDs(fulltext))
 	built, stats, err := BuildIVFPQFromVectorStore(ctx, vfs, profile, seedIDs)
 	if err != nil {
 		return nil, err

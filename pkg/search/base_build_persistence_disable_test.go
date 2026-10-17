@@ -124,11 +124,11 @@ func TestBaseBuildPersistenceDisablePreservesCurrentFulltext(t *testing.T) {
 					if kind == "transfer_refused" {
 						assert.True(t, svc.persistEnabled.Load())
 						require.NotNil(t, svc.vectorFileStore)
-						assert.True(t, svc.vectorFileStore.Has("nornic:a-named-v"))
+						assert.True(t, svc.vectorFileStore.Has(nodeNamedVectorKey("nornic:a", "v")))
 					} else if kind != "enabled" {
 						assert.False(t, svc.persistEnabled.Load())
 						assert.Nil(t, svc.vectorFileStore)
-						vector, ok := svc.vectorIndex.GetVector("nornic:a-named-v")
+						vector, ok := svc.vectorIndex.GetVector(nodeNamedVectorKey("nornic:a", "v"))
 						assert.True(t, ok)
 						assert.Equal(t, []float32{1, 0, 0}, vector)
 					}

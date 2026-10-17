@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	ivfpqBundleFormatVersion = 2
+	ivfpqBundleFormatVersion = 3 // 3: vector-entry keys (vectorEntryKeyFormat)
 )
 
 // IVFPQProfile is the concrete runtime profile used to build/query compressed ANN.

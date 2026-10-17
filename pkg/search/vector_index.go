@@ -460,7 +460,7 @@ func (v *VectorIndex) GetDimensions() int {
 
 // vectorIndexFormatVersion is the semver written into saved index files (Qdrant-style).
 // On load, if the file's version is not equal to this, the file is not loaded (caller rebuilds).
-const vectorIndexFormatVersion = "1.0.0"
+const vectorIndexFormatVersion = "1.1.0" // 1.1: vector-entry keys (vectorEntryKeyFormat)
 
 // vectorIndexSnapshot is the serializable form of the vector index (no mutex).
 type vectorIndexSnapshot struct {

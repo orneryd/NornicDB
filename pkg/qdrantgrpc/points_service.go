@@ -1468,10 +1468,9 @@ func (s *PointsService) searchCollection(ctx context.Context, store storage.Engi
 		if err == nil && len(cands) > 0 {
 			results := make([]searchResult, 0, len(cands))
 			for _, r := range cands {
+				// Candidates are owning node IDs (search decodes vector-entry
+				// keys once, at collapse), so every point node here is a point.
 				if !strings.HasPrefix(r.ID, prefix) {
-					continue
-				}
-				if strings.Contains(r.ID, "-chunk-") {
 					continue
 				}
 				if filter != nil {

@@ -84,8 +84,6 @@ package inference
 import (
 	"context"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -257,40 +255,13 @@ type coAccessKey struct {
 	NodeB string
 }
 
-// SimilarityResult from vector search.
+// SimilarityResult from vector search. ID is the owning node's ID: the search
+// function returns node-level results (for example
+// search.Service.VectorSearchCandidates), never vector-entry keys, so a node
+// whose own ID looks like "<id>-chunk-<i>" is that node.
 type SimilarityResult struct {
 	ID    string
 	Score float64
-}
-
-func normalizeVectorResultIDToNodeID(id string) string {
-	// Chunk IDs are formatted as: "{nodeID}-chunk-{i}"
-	// Named IDs are formatted as: "{nodeID}-named-{vectorName}"
-	// Property-vector IDs are formatted as: "{nodeID}-prop-{propertyKey}"
-	//
-	// Node IDs can contain '-' (UUIDs etc.), so only treat these as suffixes when they match
-	// the known patterns (and for chunks: when the suffix is an integer).
-	if idx := strings.LastIndex(id, "-chunk-"); idx >= 0 {
-		suffix := id[idx+len("-chunk-"):]
-		if suffix != "" {
-			if _, err := strconv.Atoi(suffix); err == nil {
-				return id[:idx]
-			}
-		}
-	}
-	if idx := strings.LastIndex(id, "-named-"); idx >= 0 {
-		suffix := id[idx+len("-named-"):]
-		if suffix != "" {
-			return id[:idx]
-		}
-	}
-	if idx := strings.LastIndex(id, "-prop-"); idx >= 0 {
-		suffix := id[idx+len("-prop-"):]
-		if suffix != "" {
-			return id[:idx]
-		}
-	}
-	return id
 }
 
 // New creates a new inference Engine with the given configuration.
@@ -580,7 +551,7 @@ func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, e
 			}
 
 			for _, result := range similar {
-				targetID := normalizeVectorResultIDToNodeID(result.ID)
+				targetID := result.ID
 				if targetID == nodeID {
 					continue // Skip self
 				}
