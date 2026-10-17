@@ -1,0 +1,24 @@
+== nornicdb / pq-x16: HNSW + product quantization x16 (rescore)
+   preset beam      recall@10 0.9892  p50   0.823 ms  p95   0.976 ms    6895.8 qps
+   load 13.0s (6756/s), index ready 40.0s, disk 1630 MB, RSS 3386 MB, strategy: HNSW PQ x16 (23616256 encoded bytes)
+== nornicdb / bq: HNSW + binary quantization (rescore, 2x oversampling)
+   preset beam      recall@10 0.9803  p50   0.396 ms  p95   0.473 ms    9017.2 qps
+   load 13.2s (6661/s), index ready 35.8s, disk 1630 MB, RSS 3454 MB, strategy: HNSW binary (11283840 encoded bytes)
+== nornicdb / bq-asym4: HNSW + binary storage, int4 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9925  p50   0.439 ms  p95   0.516 ms    9228.6 qps
+   load 13.0s (6800/s), index ready 35.7s, disk 1631 MB, RSS 3508 MB, strategy: HNSW binary query int4 (11283840 encoded bytes)
+== nornicdb / bq-asym8: HNSW + binary storage, int8 query (rescore, 2x oversampling)
+   preset beam      recall@10 0.9939  p50   0.495 ms  p95   0.580 ms    9363.7 qps
+   load 13.0s (6792/s), index ready 35.3s, disk 1629 MB, RSS 3279 MB, strategy: HNSW binary query int8 (11283840 encoded bytes)
+== nornicdb / pq-x4: HNSW + product quantization x4 (rescore)
+   preset beam      recall@10 0.9958  p50   1.698 ms  p95   2.068 ms    4056.1 qps
+   load 13.0s (6789/s), index ready 45.6s, disk 1629 MB, RSS 3425 MB, strategy: HNSW PQ x4 (91319296 encoded bytes)
+== nornicdb / pq-x8: HNSW + product quantization x8 (rescore)
+   preset beam      recall@10 0.9947  p50   1.170 ms  p95   1.391 ms    5153.8 qps
+   load 12.9s (6811/s), index ready 42.3s, disk 1630 MB, RSS 3407 MB, strategy: HNSW PQ x8 (46183936 encoded bytes)
+== nornicdb / pq-x32: HNSW + product quantization x32 (rescore)
+   preset beam      recall@10 0.9528  p50   0.600 ms  p95   0.701 ms    8703.6 qps
+   load 12.9s (6812/s), index ready 38.5s, disk 1631 MB, RSS 3398 MB, strategy: HNSW PQ x32 (12332416 encoded bytes)
+== nornicdb / pq-x64: HNSW + product quantization x64 (rescore)
+   preset beam      recall@10 0.8571  p50   0.512 ms  p95   0.583 ms    8464.0 qps
+   load 12.9s (6854/s), index ready 37.8s, disk 1630 MB, RSS 3394 MB, strategy: HNSW PQ x64 (6690496 encoded bytes)

@@ -1,0 +1,4 @@
+== nornicdb / sq-int8: HNSW + scalar int8 quantization (rescore)
+Profile captured bench-data/vector_ann/profiling/hnsw-cost/trace-case-1 5393 requests
+   preset beam      recall@10 0.9959  p50   0.499 ms  p95   0.629 ms    9364.5 qps
+   load 13.1s (6743/s), index ready 35.8s, disk 1632 MB, RSS 3385 MB, strategy: HNSW scalar int8 (90623340 encoded bytes)
