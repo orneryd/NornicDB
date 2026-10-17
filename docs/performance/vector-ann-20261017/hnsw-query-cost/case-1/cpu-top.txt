@@ -1,0 +1,32 @@
+File: nornicdb-hnsw-profile
+Type: cpu
+Time: 2026-10-17 06:56:38 MST
+Duration: 30.13s, Total samples = 26.72s (88.68%)
+Showing nodes accounting for 24.81s, 92.85% of 26.72s total
+Dropped 212 nodes (cum <= 0.13s)
+Showing top 24 nodes out of 121
+      flat  flat%   sum%        cum   cum%
+    13.27s 49.66% 49.66%     13.27s 49.66%  runtime.pthread_cond_signal
+     5.05s 18.90% 68.56%      5.57s 20.85%  runtime.cgocall
+     1.10s  4.12% 72.68%      1.10s  4.12%  syscall.rawsyscalln
+        1s  3.74% 76.42%         1s  3.74%  runtime.kevent
+        1s  3.74% 80.16%      2.03s  7.60%  runtime.mapaccess2_faststr
+     0.86s  3.22% 83.38%      0.86s  3.22%  aeshashbody
+     0.55s  2.06% 85.44%      0.55s  2.06%  runtime.pthread_cond_wait
+     0.35s  1.31% 86.75%      8.26s 30.91%  github.com/orneryd/nornicdb/pkg/search.searchLayerHeapKernel[go.shape.struct {}]
+     0.31s  1.16% 87.91%      2.59s  9.69%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).vectorAtLocked
+     0.26s  0.97% 88.88%      0.26s  0.97%  internal/runtime/atomic.(*Uint32).CompareAndSwap (inline)
+     0.22s  0.82% 89.71%      0.22s  0.82%  sync/atomic.(*Int32).Add (inline)
+     0.18s  0.67% 90.38%      0.18s  0.67%  runtime.memclrNoHeapPointers
+     0.17s  0.64% 91.02%      0.17s  0.64%  runtime.memmove
+     0.15s  0.56% 91.58%      0.19s  0.71%  runtime.reentersyscall
+     0.05s  0.19% 91.77%      2.10s  7.86%  github.com/orneryd/nornicdb/pkg/search.(*VectorIndex).getVectorRef
+     0.05s  0.19% 91.95%      0.30s  1.12%  runtime.exitsyscall
+     0.05s  0.19% 92.14%      0.15s  0.56%  runtime.mallocgcSmallScanNoHeader
+     0.04s  0.15% 92.29%      0.21s  0.79%  runtime.mallocgcSmallScanHeader
+     0.03s  0.11% 92.40%      0.15s  0.56%  github.com/orneryd/nornicdb/pkg/config/dbconfig.Settings
+     0.03s  0.11% 92.51%      0.19s  0.71%  github.com/orneryd/nornicdb/pkg/search.cloneStringMap
+     0.03s  0.11% 92.63%      0.19s  0.71%  runtime.scanObject
+     0.02s 0.075% 92.70%      2.28s  8.53%  github.com/orneryd/nornicdb/pkg/search.(*Service).getOrCreateHNSWIndex.(*Service).getVectorLookup.func4
+     0.02s 0.075% 92.78%      5.58s 20.88%  github.com/orneryd/nornicdb/pkg/simd._Cfunc_neon_dot_product
+     0.02s 0.075% 92.85%      0.16s   0.6%  runtime.(*sweepLocked).sweep
