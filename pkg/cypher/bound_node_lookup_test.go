@@ -116,3 +116,32 @@ func TestBoundNodeLookupShape(t *testing.T) {
 	_, ok = exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o, "s": s}, false)
 	require.False(t, ok, "a bound variable is a join, the pipeline's")
 }
+
+// A null an OPTIONAL MATCH leaves in the row gives the semi-joins (one
+// relationship, one node looked up by property) what the pipeline gives the
+// same body with a RETURN, which both decline.
+func TestSemiJoinsOverOptionalNulls(t *testing.T) {
+	exec := boundNodeLookupGraph(t)
+	ctx := context.Background()
+	for _, body := range []string{
+		"MATCH (o)-[r]-(z)",
+		"MATCH (o)-[r]-(z) WHERE r.w = 1",
+		"MATCH (s:S {id: z.id})",
+		"MATCH (s:S {id: o.ref}) WHERE s.n > coalesce(z.n, 0)",
+	} {
+		pipeline := body + " RETURN 1 AS one"
+		query := fmt.Sprintf(`MATCH (o:O) OPTIONAL MATCH (o)-[:NONE]->(z)
+RETURN o.name AS name, EXISTS { %[1]s } AS e, EXISTS { %[2]s } AS pe,
+  NOT EXISTS { %[1]s } AS ne, NOT EXISTS { %[2]s } AS pne,
+  COUNT { %[1]s } AS c, COUNT { %[2]s } AS pc
+ORDER BY name`, body, pipeline)
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Len(t, result.Rows, 8, query)
+		for _, row := range result.Rows {
+			require.Equal(t, row[2], row[1], "%s EXISTS %v", body, row)
+			require.Equal(t, row[4], row[3], "%s NOT EXISTS %v", body, row)
+			require.Equal(t, row[6], row[5], "%s COUNT %v", body, row)
+		}
+	}
+}

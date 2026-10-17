@@ -25,6 +25,8 @@ func TestCallSubqueryClausePlanMatchesNeo4j(t *testing.T) {
 		"count_in_call":             {{int64(1200)}},
 		"where_fold":                {{int64(440)}},
 		"limit_body":                {{int64(800), "q0"}},
+		"relationship_equality":     {{int64(400)}},
+		"node_lookup":               {{int64(400)}},
 	}
 	for _, tc := range callPlanBenchQueries {
 		result, err := exec.Execute(ctx, tc.query, nil)
@@ -97,6 +99,8 @@ func TestCallSubqueryClausePlanParsesOncePerStatement(t *testing.T) {
 		"count_in_call":             {clauseAnalysisCallSubquery, clauseAnalysisBoundChain},
 		"where_fold":                {clauseAnalysisCallSubquery, clauseAnalysisMaySubquery, clauseAnalysisOperandFacts},
 		"limit_body":                {clauseAnalysisCallSubquery, clauseAnalysisLimitModifier, clauseAnalysisReturnSourceColumns},
+		"relationship_equality":     {clauseAnalysisCallSubquery, clauseAnalysisRelationshipEqualities},
+		"node_lookup":               {clauseAnalysisBoundNode},
 	}
 	for _, tc := range callPlanBenchQueries {
 		mu.Lock()

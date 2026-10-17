@@ -57,6 +57,10 @@ var callPlanBenchQueries = []struct{ name, query string }{
 	// LIMIT.
 	{"where_fold", "MATCH (p:P) CALL (p) { MATCH (p)-[r:R]->(q:Q) WHERE (q.k = 1 OR EXISTS { (q)<-[:R {w: 3}]-(:P {i: 7}) }) AND coalesce(q.name, 'callplan-once') <> 'none' RETURN count(q) AS c } RETURN sum(c) AS total"},
 	{"limit_body", "MATCH (p:P) CALL (p) { MATCH (p)-[r:R]->(q:Q) RETURN coalesce(q.name, 'callplan-once') AS name ORDER BY name LIMIT 2 } RETURN count(name) AS names, min(name) AS first"},
+	// A relationship equality the expansion tests before reading the far
+	// node, and a correlated node lookup by a property of the outer row.
+	{"relationship_equality", "MATCH (p:P) CALL (p) { MATCH (p)-[r:R]->(q:Q) WHERE r.w = 1 AND coalesce(q.name, 'callplan-once') <> 'none' RETURN count(q) AS c } RETURN sum(c) AS total"},
+	{"node_lookup", "MATCH (p:P) RETURN sum(COUNT { MATCH (q:Q {name: 'q' + toString(p.i % 40)}) WHERE coalesce(q.name, 'callplan-once') <> 'none' }) AS total"},
 }
 
 // BenchmarkCallSubqueryClausePlan measures a correlated CALL subquery run
