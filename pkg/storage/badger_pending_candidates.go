@@ -147,19 +147,21 @@ func (cw *commitWriter) collectPendingEmbeddingAdds(txn *badger.Txn) {
 	}
 }
 
-func (cw *commitWriter) publishPendingEmbeddingAdds() {
-	if len(cw.pendingEmbeddingIDs) == 0 {
+// publishPendingEmbeddingAdds adds a commit's pending-embedding candidates;
+// the commit's publication runs it in the ordered stage
+// (commitWriter.publication).
+func (b *BadgerEngine) publishPendingEmbeddingAdds(ids map[NodeID]struct{}) {
+	if len(ids) == 0 {
 		return
 	}
-	p := &cw.engine.pendingCandidates
+	p := &b.pendingCandidates
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.loaded {
-		for id := range cw.pendingEmbeddingIDs {
+		for id := range ids {
 			p.add(id)
 		}
 	}
-	cw.pendingEmbeddingIDs = nil
 }
 
 // discard also releases unpublished hints when an engine write fails before

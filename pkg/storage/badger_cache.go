@@ -566,13 +566,16 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int6
 	}
 }
 
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []string, edgesDeleted int64) {
-	b.cacheOnNodeDeletedWithLabelsAndCounts(nodeID, labels, edgesDeleted, true)
+// cacheOnNodeDeletedWithNode applies a delete whose pre-delete snapshot
+// (deleted) is known: it also unfiles the node's label and property-index
+// entries.
+func (b *BadgerEngine) cacheOnNodeDeletedWithNode(nodeID NodeID, deleted *Node, edgesDeleted int64) {
+	b.cacheOnNodeDeletedWithNodeAndCounts(nodeID, deleted, edgesDeleted, true)
 }
 
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
+func (b *BadgerEngine) cacheOnNodeDeletedWithNodeAndCounts(nodeID NodeID, deleted *Node, edgesDeleted int64, publishCounts bool) {
 	b.cacheDeleteNode(nodeID)
-	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
+	b.labelCacheInvalidateForNodeLabels(deleted.Labels, nodeID)
 
 	// Decrement cached node count for O(1) stats.
 	if publishCounts {
@@ -590,11 +593,12 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labe
 		b.InvalidateEdgeTypeCache()
 	}
 
-	// Remove stale property-index entries. Without labels + properties of
-	// the deleted node we can't do targeted removal, so the narrower
-	// cacheOnNodeDeleted (without labels) leaves the index potentially
-	// dangling — callers MUST use this variant when property indexes exist.
-	b.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, labels)
+	// Remove the node's property-index entries from the snapshot: the node
+	// cache was just cleared and may never have held it. Without a snapshot
+	// targeted removal is impossible, so the narrower cacheOnNodeDeleted
+	// leaves the index dangling; callers MUST use this variant when property
+	// indexes exist.
+	b.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, deleted)
 }
 
 func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
@@ -686,51 +690,6 @@ func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 		b.namespaceEdgeCounts[prefix] += delta
 	}
 	b.namespaceCountsMu.Unlock()
-}
-
-func (b *BadgerEngine) cacheOnNodesDeleted(deletedNodeIDs []NodeID, deletedNodeCount, totalEdgesDeleted int64) {
-	if deletedNodeCount <= 0 {
-		return
-	}
-
-	for _, nodeID := range deletedNodeIDs {
-		b.cacheDeleteNode(nodeID)
-	}
-	b.nodeCount.Add(-deletedNodeCount)
-
-	// Update per-namespace node counts.
-	namespaces := make(map[string]int64)
-	for _, nodeID := range deletedNodeIDs {
-		prefix, ok := namespacePrefixFromID(string(nodeID))
-		if !ok {
-			continue
-		}
-		namespaces[prefix]--
-	}
-	if len(namespaces) > 0 {
-		b.namespaceCountsMu.Lock()
-		for prefix, delta := range namespaces {
-			b.namespaceNodeCounts[prefix] += delta
-		}
-		b.namespaceCountsMu.Unlock()
-	}
-
-	if totalEdgesDeleted > 0 {
-		b.edgeCount.Add(-totalEdgesDeleted)
-
-		// We only have an aggregate edge delete count. If the deleted nodes span
-		// multiple namespaces, we can't attribute edges precisely.
-		if len(namespaces) == 1 {
-			for prefix := range namespaces {
-				b.namespaceCountsMu.Lock()
-				b.namespaceEdgeCounts[prefix] -= totalEdgesDeleted
-				b.namespaceCountsMu.Unlock()
-				break
-			}
-		}
-
-		b.InvalidateEdgeTypeCache()
-	}
 }
 
 func (b *BadgerEngine) addNamespaceNodeCount(id NodeID, delta int64) {

@@ -164,6 +164,12 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 				return err
 			}
 		}
+		// The full-node cache may hold a copy without the new embedding
+		// state; drop it, in commit order (badger_publication_stage.go), so
+		// the next read re-hydrates from the sidecar. Body cache and counts
+		// are untouched: the node record did not change.
+		cw.publish = func() { b.cacheDeleteNode(node.ID) }
+		cw.publishKeys = []any{node.ID}
 		return nil
 	})
 	if errors.Is(err, badger.ErrConflict) {
@@ -173,10 +179,6 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		return err
 	}
 
-	// The full-node cache may hold a copy without the new embedding state;
-	// drop it so the next read re-hydrates from the sidecar. Body cache and
-	// counts are untouched: the node record did not change.
-	b.cacheDeleteNode(node.ID)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
 	notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}

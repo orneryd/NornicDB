@@ -137,26 +137,25 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 			return err
 		}
 		if persistSeparateEmbeddings {
-			return cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist)
+			if err := cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist); err != nil {
+				return err
+			}
 		}
+		// The unique-value registry and the caches, in commit order
+		// (badger_publication_stage.go).
+		cw.publish = func() {
+			node.embeddingKeysPresent = persistSeparateEmbeddings
+			node.embeddingKeysKnown = true
+			b.publishUniqueValues(schema, node.ID, nil, node)
+			b.cacheOnNodeCreated(node)
+		}
+		cw.publishKeys = appendNodePublicationKeys(nil, schema, node.ID, nil, node)
 		return nil
 	}, notification)
+	releaseUniqueLocks()
 	if err != nil {
-		releaseUniqueLocks()
 		return "", err
 	}
-
-	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-		}
-	}
-	releaseUniqueLocks()
-
-	node.embeddingKeysPresent = persistSeparateEmbeddings
-	node.embeddingKeysKnown = true
-	b.cacheOnNodeCreated(node)
 
 	// Notify listeners (e.g., search service) to index the new node
 	notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
@@ -618,44 +617,35 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			return err
 		}
 		if persistSeparateEmbeddings {
-			return cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist)
+			if err := cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist); err != nil {
+				return err
+			}
 		}
+		// The unique-value registry and the caches, in commit order
+		// (badger_publication_stage.go).
+		cw.publish = func() {
+			node.embeddingKeysPresent = persistSeparateEmbeddings
+			node.embeddingKeysKnown = true
+			if wasInsert {
+				b.publishUniqueValues(schema, node.ID, nil, node)
+				b.cacheOnNodeCreated(node)
+				return
+			}
+			b.publishUniqueValues(schema, node.ID, existingNode, node)
+			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
+		}
+		cw.publishKeys = appendNodePublicationKeys(nil, schema, node.ID, existingNode, node)
 		return nil
 	}, notification)
 
-	// Update cache on successful operation
 	if err == nil {
-		node.embeddingKeysPresent = persistSeparateEmbeddings
-		node.embeddingKeysKnown = true
 		if existingNode != nil && existingNode.embeddingKeysPresent {
 			b.embeddingSidecarWrites.Delete(node.ID)
 		}
 		if wasInsert {
-			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
-			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
 			notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
-			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 			// Notify listeners to re-index the updated node
 			notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
 		}
@@ -707,7 +697,28 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
-	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
+	// The unique-value registry and the caches, in commit order
+	// (badger_publication_stage.go).
+	var uniqueSchema *SchemaManager
+	if dbName, _, ok := ParseDatabasePrefix(string(id)); ok {
+		uniqueSchema = b.GetSchemaForNamespace(dbName)
+	}
+	publish := func() {
+		if deletedNode == nil {
+			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
+			return
+		}
+		b.publishUniqueValues(uniqueSchema, deletedNode.ID, deletedNode, nil)
+		b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
+	}
+	keys := func() []any {
+		keys := appendNodePublicationKeys(nil, uniqueSchema, id, deletedNode, nil)
+		for _, edgeID := range deletedEdgeIDs {
+			keys = append(keys, edgeID)
+		}
+		return keys
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {
 			return allocErr
@@ -784,28 +795,9 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			}
 		}
 		return nil
-	}, notification)
+	}, publish, keys, notification)
 
-	// Invalidate cache on successful delete
 	if err == nil {
-		if deletedNode != nil {
-			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
-			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-
-		if deletedNode != nil {
-			b.cacheOnNodeDeletedWithLabels(id, deletedNode.Labels, totalEdgesDeleted)
-		} else {
-			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
-		}
-
 		// Notify listeners about deleted edges
 		if deletedNode != nil && deletedNode.embeddingKeysPresent {
 			b.embeddingSidecarWrites.Delete(id)
