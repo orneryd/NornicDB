@@ -1330,21 +1330,12 @@ func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBin
 
 func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	result := make(map[string]struct{})
-	for index := 0; index < len(pattern); index++ {
-		if pattern[index] != '[' {
-			continue
-		}
-		end := strings.IndexByte(pattern[index+1:], ']')
-		if end < 0 {
-			break
-		}
-		end += index + 1
-		inner := strings.TrimSpace(pattern[index+1 : end])
-		name, next, ok := scanIdentifierToken(inner, 0)
-		if ok && strings.Contains(inner[next:], "*") {
+	for open, end := nextRelationshipBracket(pattern, 0); open >= 0; open, end = nextRelationshipBracket(pattern, end+1) {
+		head := strings.TrimSpace(relationshipBracketHead(pattern[open+1 : end]))
+		name, next, ok := scanIdentifierToken(head, 0)
+		if ok && strings.Contains(blankQuotedText(head[next:]), "*") {
 			result[name] = struct{}{}
 		}
-		index = end
 	}
 	return result
 }
@@ -1376,26 +1367,23 @@ func entityListLiteralKind(expression string, scope matchSemanticScope) (matchBi
 	return matchBindingRelationshipList, true
 }
 
+// invalidRelationshipPattern reports a relationship bracket that is not closed
+// or whose range is malformed. Only relationship brackets are read: a '[' in
+// a property map ($ids[i * 20 + 1], $ws[0..2]) is a subscript or a slice.
 func invalidRelationshipPattern(pattern string) bool {
-	for index := 0; index < len(pattern); index++ {
-		if pattern[index] != '[' {
-			continue
-		}
-		end := findMatchingDelimiter(pattern, index, '[', ']')
+	for open, end := scanRelationshipBracket(pattern, 0); open >= 0; open, end = scanRelationshipBracket(pattern, end+1) {
 		if end < 0 {
 			return true
 		}
-		// Quoted names and values can hold * and .. (#879).
-		inner := strings.TrimSpace(blankQuotedText(pattern[index+1 : end]))
+		// Quoted names and values can hold * and .. (#879), and so can
+		// property values.
+		inner := strings.TrimSpace(blankQuotedText(relationshipBracketHead(pattern[open+1 : end])))
 		star := strings.IndexByte(inner, '*')
 		if strings.Contains(inner, "..") && star < 0 {
 			return true
 		}
 		if star >= 0 {
 			spec := strings.TrimSpace(inner[star+1:])
-			if property := strings.IndexByte(spec, '{'); property >= 0 {
-				spec = strings.TrimSpace(spec[:property])
-			}
 			for _, character := range spec {
 				if (character < '0' || character > '9') && character != '.' {
 					return true
@@ -1405,7 +1393,6 @@ func invalidRelationshipPattern(pattern string) bool {
 				return true
 			}
 		}
-		index = end
 	}
 	return false
 }
