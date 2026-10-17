@@ -25,7 +25,7 @@ type pipelineClausePlans struct {
 // pipelineClausePlanLimit bounds a statement's plans: a body that builds a
 // new text for each row gets no plan beyond it, and parses that text as it
 // would without plans.
-const pipelineClausePlanLimit = 4096
+const pipelineClausePlanLimit = 1024
 
 type pipelineClausePlansKey struct{}
 
@@ -69,10 +69,26 @@ const (
 	clauseAnalysisCount
 )
 
-// pipelineClausePlan holds the analyses of one clause text.
+// pipelineClausePlan holds the analyses of one clause text. A text is read
+// by few of the analyses, so each one's slot is allocated on its first use:
+// a plan costs a pointer per analysis, not a built value per analysis.
 type pipelineClausePlan struct {
-	once   [clauseAnalysisCount]sync.Once
-	values [clauseAnalysisCount]any
+	slots [clauseAnalysisCount]atomic.Pointer[pipelineClauseAnalysisSlot]
+}
+
+// pipelineClauseAnalysisSlot is one analysis of a plan, built once.
+type pipelineClauseAnalysisSlot struct {
+	once  sync.Once
+	value any
+}
+
+// slot returns kind's slot, allocating it on first use.
+func (plan *pipelineClausePlan) slot(kind pipelineClauseAnalysis) *pipelineClauseAnalysisSlot {
+	if slot := plan.slots[kind].Load(); slot != nil {
+		return slot
+	}
+	plan.slots[kind].CompareAndSwap(nil, &pipelineClauseAnalysisSlot{})
+	return plan.slots[kind].Load()
 }
 
 // withPipelineClausePlans returns ctx with a statement's clause plans,
@@ -124,13 +140,14 @@ func clauseAnalysisFor[T any](ctx context.Context, kind pipelineClauseAnalysis, 
 
 // plannedAnalysis is clauseAnalysisFor with text's plan in hand.
 func plannedAnalysis[T any](plan *pipelineClausePlan, kind pipelineClauseAnalysis, text string, parse func(string) T) T {
-	plan.once[kind].Do(func() {
+	slot := plan.slot(kind)
+	slot.once.Do(func() {
 		if hook := pipelineClausePlanBuildHook.Load(); hook != nil {
 			(*hook)(kind, text)
 		}
-		plan.values[kind] = parse(text)
+		slot.value = parse(text)
 	})
-	value, _ := plan.values[kind].(T)
+	value, _ := slot.value.(T)
 	return value
 }
 
