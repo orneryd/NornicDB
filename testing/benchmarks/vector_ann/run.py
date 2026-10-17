@@ -242,6 +242,9 @@ class NornicEngine(Engine):
                "NORNICDB_QDRANT_GRPC_MAX_TOP_K": "10000",
                "NORNICDB_VECTOR_CPU_BRUTE_MAX_N": "0",
                "NORNICDB_KMEANS_CLUSTERING_ENABLED": "false",
+               # Float modes stay float when the application default changes;
+               # compressed modes explicitly configure their collection policy.
+               "NORNICDB_VECTOR_HNSW_QUANTIZATION": "none",
                # Off the default :9090, which another process may hold.
                "NORNICDB_TELEMETRY_LISTEN": f"127.0.0.1:{self.args.nornic_telemetry_port}"}
         if not self.args.nornic_gpu:
