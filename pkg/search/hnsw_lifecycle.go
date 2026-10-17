@@ -216,6 +216,13 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 		return built, stats, err
 	}
 	pairs := hnswOrderedVectorIndexPairs(vi, hints)
+	if hnswAfterBuildSnapshotHook != nil {
+		ids := make([]string, len(pairs))
+		for index := range pairs {
+			ids[index] = pairs[index].id
+		}
+		hnswAfterBuildSnapshotHook(ids)
+	}
 	s.logPrintf("[HNSW] Building from in-memory index: %d vectors", len(pairs))
 	return buildHNSWWithOptionalGPU(ctx, dimensions, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs), nil)
 }
@@ -224,6 +231,12 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 // and before the graph is installed: where a vector stored during the build
 // used to be lost.
 var hnswBeforeInstallHook func(context.Context)
+
+// hnswAfterBuildSnapshotHook, set by tests only, receives the insertion order
+// of an in-memory HNSW build once its vector snapshot is taken and before any
+// vector is inserted: where a vector removed from the store used to leave the
+// graph without edges.
+var hnswAfterBuildSnapshotHook func(ids []string)
 
 // buildInitialHNSWIndex constructs and publishes one service-owned generation.
 func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {

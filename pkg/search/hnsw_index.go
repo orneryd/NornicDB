@@ -108,6 +108,10 @@ type HNSWIndex struct {
 	neighborsOff        []int32
 	neighborCountsArena []uint16
 	neighborCountsOff   []int32
+	// reverseEdges[slot] lists the nodes linking to a node at one level, where
+	// slot is that node's neighborCountsArena slot for the level. Removal uses
+	// it to repair those links (hnsw_repair.go). Rebuilt on load, never saved.
+	reverseEdges [][]uint32
 
 	idToInternal map[string]uint32
 	internalToID []string
@@ -161,6 +165,7 @@ type hnswDistNode struct {
 	hasHint      bool
 	minDiversity int
 	hasDiversity bool
+	picked       bool
 }
 
 type hnswDistanceCacheEntry struct {
@@ -187,6 +192,7 @@ func newHNSWIndex(dimensions int, config HNSWConfig, lookup VectorLookup) *HNSWI
 		neighborsOff:        make([]int32, 0, 1024),
 		neighborCountsArena: make([]uint16, 0, 1024),
 		neighborCountsOff:   make([]int32, 0, 1024),
+		reverseEdges:        make([][]uint32, 0, 1024),
 		idToInternal:        make(map[string]uint32, 1024),
 		internalToID:        make([]string, 0, 1024),
 		deleted:             make([]bool, 0, 1024),
@@ -222,8 +228,8 @@ func newHNSWIndex(dimensions int, config HNSWConfig, lookup VectorLookup) *HNSWI
 }
 
 // SetVectorLookup sets an optional lookup so vectors are resolved by ID at search time
-// instead of from the in-memory slice. When set, Add does not store vectors (vecOff = -1);
-// Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
+// instead of from the in-memory slice. When set, Add does not store vectors the lookup
+// resolves (vecOff = -1); Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
 func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -307,6 +313,7 @@ func (h *HNSWIndex) Add(id string, vec []float32) error {
 func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint32) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	defer h.debugCheckEdgesLocked()
 	h.buildDistanceGen++
 	if h.buildDistanceGen == 0 {
 		clear(h.buildDistances)
@@ -346,8 +353,19 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 		return nil
 	}
 
+	// Lookup-mode nodes resolve their vector by ID. A vector the source no
+	// longer holds (removed after a build snapshot read it) cannot resolve, so
+	// the node keeps its own copy: an unresolvable node can't seed a layer
+	// search, and as the entry point it would leave every later insertion
+	// without neighbours. The replayed removal then tombstones it.
 	var normalized []float32
+	var resolved []float32
+	resolvedOK := false
 	if h.vectorLookup != nil {
+		resolved, resolvedOK = h.vectorLookup(id)
+		resolvedOK = resolvedOK && len(resolved) == h.dimensions
+	}
+	if resolvedOK {
 		if cap(h.addQueryScratch) < h.dimensions {
 			h.addQueryScratch = make([]float32, h.dimensions)
 		}
@@ -387,6 +405,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 
 	countsOff := len(h.neighborCountsArena)
 	h.neighborCountsArena = append(h.neighborCountsArena, make([]uint16, level+1)...)
+	h.reverseEdges = append(h.reverseEdges, make([][]uint32, level+1)...)
 	countsOff32, ok := util.SafeIntToInt32(countsOff)
 	if !ok {
 		return errHNSWIndexFull
@@ -394,8 +413,10 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.neighborCountsOff = append(h.neighborCountsOff, countsOff32)
 	h.internalToID = append(h.internalToID, id)
 	if h.buildVectors != nil && len(h.buildVectors) < h.buildVectorLimit {
-		vec, _ := h.vectorLookup(id)
-		h.buildVectors = append(h.buildVectors, vec)
+		if !resolvedOK {
+			resolved = normalized
+		}
+		h.buildVectors = append(h.buildVectors, resolved)
 	}
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
@@ -500,6 +521,7 @@ func (h *HNSWIndex) Update(id string, vec []float32) error {
 func (h *HNSWIndex) Remove(id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	defer h.debugCheckEdgesLocked()
 
 	internalID, ok := h.idToInternal[id]
 	if !ok || !validHNSWIndex(internalID, len(h.nodeLevel)) || h.deleted[internalID] {
@@ -522,6 +544,7 @@ func (h *HNSWIndex) Clear() {
 	h.neighborsOff = make([]int32, 0, 1024)
 	h.neighborCountsArena = make([]uint16, 0, 1024)
 	h.neighborCountsOff = make([]int32, 0, 1024)
+	h.reverseEdges = make([][]uint32, 0, 1024)
 	h.idToInternal = make(map[string]uint32, 1024)
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
@@ -898,6 +921,21 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	}
 	h.vectorLookup = vectorLookup
 	h.vecOff = vecOff
+	// Graphs saved before removal repaired links still hold tombstone links.
+	h.rebuildReverseEdgesLocked()
+	var tombs []uint32
+	for id, deleted := range h.deleted {
+		if deleted && validHNSWIndex(uint32(id), len(h.nodeLevel)) {
+			tombs = append(tombs, uint32(id))
+		}
+	}
+	if len(tombs) > 0 {
+		h.repairTombstonesLocked(tombs)
+		if h.hasEntryPoint && validHNSWIndex(h.entryPoint, len(h.deleted)) && h.deleted[h.entryPoint] {
+			h.reselectEntryPointLocked()
+		}
+	}
+	h.debugCheckEdgesLocked()
 	h.mu.Unlock()
 	return h, nil
 }
@@ -1073,6 +1111,7 @@ func (h *HNSWIndex) removeLocked(internalID uint32) {
 
 	h.deleted[internalID] = true
 	h.liveCount--
+	h.repairRemovedLocked(internalID)
 
 	if validHNSWIndex(internalID, len(h.internalToID)) {
 		delete(h.idToInternal, h.internalToID[internalID])
@@ -1238,31 +1277,16 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // closest-first; the returned slice belongs to its pool until the caller
 // releases it).
 //
-// Entry seeding validates validity, deletion, prior visits and vector
-// dimensions. The build path always passes a live entry point, so those
-// probes never fire there; on the query path they guard the caller-supplied
-// entry IDs.
+// Entry seeding validates validity, prior visits and vector dimensions. The
+// build path always passes a live entry point, so those probes never fire
+// there; on the query path they guard the caller-supplied entry IDs.
+// Tombstones are never scored or returned. Removal repairs the links around
+// them (hnsw_repair.go), so the beam never walks through one; a tombstoned
+// caller-supplied entry only lends its own live neighbours as seeds.
 func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
 	var mode M
-	visited := h.visitedPool.Get().(*visitedGenState)
+	visited, curGen := h.acquireVisitedLocked()
 	defer h.visitedPool.Put(visited)
-	if len(visited.gen) < len(h.nodeLevel) {
-		oldLen := len(visited.gen)
-		if cap(visited.gen) < len(h.nodeLevel) {
-			next := make([]uint16, len(h.nodeLevel))
-			copy(next, visited.gen)
-			visited.gen = next
-		} else {
-			visited.gen = visited.gen[:len(h.nodeLevel)]
-			clear(visited.gen[oldLen:])
-		}
-	}
-	visited.cur++
-	if visited.cur == 0 {
-		clear(visited.gen)
-		visited.cur = 1
-	}
-	curGen := visited.cur
 
 	candidates := h.heapPool.Get().(*distHeap)
 	candidates.Reset(false, ef*2)
@@ -1272,9 +1296,17 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	results.Reset(true, ef*2)
 	defer h.heapPool.Put(results)
 
-	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID)
+	if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID) {
+		if err := relaxLayerNeighbors[M](h, ctx, query, entryID, ef, level, candidates, results, visited, curGen); err != nil {
+			return nil, nil, err
+		}
+	}
 	for _, id := range extraEntries {
-		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id)
+		if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id) {
+			if err := relaxLayerNeighbors[M](h, ctx, query, id, ef, level, candidates, results, visited, curGen); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 
 	for candidates.Len() > 0 {
@@ -1294,37 +1326,8 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
-		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
-		if !ok {
-			continue
-		}
-
-		// Reverse iteration: order doesn't matter when checking all neighbors
-		for i := len(neighbors) - 1; i >= 0; i-- {
-			if i&31 == 0 {
-				if err := mode.neighborProbe(ctx); err != nil {
-					return nil, nil, err
-				}
-			}
-			neighborID := neighbors[i]
-			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
-				continue
-			}
-			if visited.gen[neighborID] == curGen {
-				continue
-			}
-			visited.gen[neighborID] = curGen
-
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
-
-			if results.Len() < ef || dist < results.Peek().dist {
-				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				results.Push(hnswDistItem{id: neighborID, dist: dist})
-
-				if results.Len() > ef {
-					_ = results.Pop()
-				}
-			}
+		if err := relaxLayerNeighbors[M](h, ctx, query, nodeID, ef, level, candidates, results, visited, curGen); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -1357,16 +1360,68 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	return nil, buf, nil
 }
 
+// hnswLayerExpansionHook, set by tests only, observes every node whose
+// neighbours a layer search relaxes.
+var hnswLayerExpansionHook func(nodeID uint32, deleted bool)
+
+// relaxLayerNeighbors pushes the unvisited live neighbours of nodeID that
+// improve the result set. Tombstoned neighbours are skipped: removal repairs
+// the links around a tombstone, so no live node depends on one for reach.
+func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, nodeID uint32, ef int, level int, candidates, results *distHeap, visited *visitedGenState, curGen uint16) error {
+	var mode M
+	if hnswLayerExpansionHook != nil {
+		hnswLayerExpansionHook(nodeID, h.deleted[nodeID])
+	}
+	neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
+	if !ok {
+		return nil
+	}
+
+	// Reverse iteration: order doesn't matter when checking all neighbors
+	for i := len(neighbors) - 1; i >= 0; i-- {
+		if i&31 == 0 {
+			if err := mode.neighborProbe(ctx); err != nil {
+				return err
+			}
+		}
+		neighborID := neighbors[i]
+		if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
+			continue
+		}
+		if visited.gen[neighborID] == curGen {
+			continue
+		}
+		visited.gen[neighborID] = curGen
+
+		dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+
+		if results.Len() < ef || dist < results.Peek().dist {
+			candidates.Push(hnswDistItem{id: neighborID, dist: dist})
+			results.Push(hnswDistItem{id: neighborID, dist: dist})
+
+			if results.Len() > ef {
+				_ = results.Pop()
+			}
+		}
+	}
+	return nil
+}
+
 // seedLayerEntry validates and seeds one entry point into the candidate and
 // result heaps. It is a small helper (one call per entry point, not per
-// neighbor) shared by the single- and multi-entry instantiations.
-func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) {
-	if !validHNSWIndex(entryID, len(h.nodeLevel)) || h.deleted[entryID] || visited.gen[entryID] == curGen {
-		return
+// neighbor) shared by the single- and multi-entry instantiations. It reports
+// a tombstoned entry, whose live neighbours the caller seeds instead.
+func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) bool {
+	if !validHNSWIndex(entryID, len(h.nodeLevel)) || visited.gen[entryID] == curGen {
+		return false
+	}
+	if h.deleted[entryID] {
+		visited.gen[entryID] = curGen
+		return true
 	}
 	entryVector := h.vectorAtLocked(entryID)
 	if len(entryVector) != h.dimensions {
-		return
+		return false
 	}
 	visited.gen[entryID] = curGen
 	entryDist := float32(1.0) - vector.DotProductSIMD(query, entryVector)
@@ -1376,9 +1431,40 @@ func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visit
 	if results.Len() > ef {
 		_ = results.Pop()
 	}
+	return false
+}
+
+// acquireVisitedLocked takes a visited state from the pool, sized to the
+// graph, with a fresh generation. The caller returns it to visitedPool.
+func (h *HNSWIndex) acquireVisitedLocked() (*visitedGenState, uint16) {
+	visited := h.visitedPool.Get().(*visitedGenState)
+	if len(visited.gen) < len(h.nodeLevel) {
+		oldLen := len(visited.gen)
+		if cap(visited.gen) < len(h.nodeLevel) {
+			next := make([]uint16, len(h.nodeLevel))
+			copy(next, visited.gen)
+			visited.gen = next
+		} else {
+			visited.gen = visited.gen[:len(h.nodeLevel)]
+			clear(visited.gen[oldLen:])
+		}
+	}
+	visited.cur++
+	if visited.cur == 0 {
+		clear(visited.gen)
+		visited.cur = 1
+	}
+	return visited, visited.cur
 }
 
 func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m int, out []uint32) []uint32 {
+	return h.selectNeighbors(query, candidates, m, out, false)
+}
+
+// selectNeighbors applies the diversity heuristic. With keepPruned, slots the
+// heuristic leaves free take the closest candidates it dropped, so a repaired
+// node keeps as many links as it has room for.
+func (h *HNSWIndex) selectNeighbors(query []float32, candidates []uint32, m int, out []uint32, keepPruned bool) []uint32 {
 	if m <= 0 || len(candidates) == 0 {
 		return out[:0]
 	}
@@ -1440,6 +1526,7 @@ func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m 
 			}
 		}
 		if diverse {
+			candidate.picked = true
 			out = append(out, candidate.id)
 			selectedVectors = append(selectedVectors, candidate.vec)
 			// Each accepted hint updates every remaining candidate once. Repeated
@@ -1453,6 +1540,11 @@ func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m 
 					}
 				}
 			}
+		}
+	}
+	for i := 0; keepPruned && i < len(dists) && len(out) < m; i++ {
+		if !dists[i].picked {
+			out = append(out, dists[i].id)
 		}
 	}
 	clear(dists)
@@ -1640,6 +1732,7 @@ func (h *HNSWIndex) setNeighborsAtLevelLocked(nodeID uint32, level int, neighbor
 		return
 	}
 
+	h.relinkReverseLocked(nodeID, level, h.neighborsArena[neighborsBase:neighborsBase+int(h.neighborCountsArena[countsBase])], neighbors)
 	copy(h.neighborsArena[neighborsBase:neighborsBase+len(neighbors)], neighbors)
 	if neighborCount, ok := util.SafeIntToUint16(len(neighbors)); ok {
 		h.neighborCountsArena[countsBase] = neighborCount
@@ -1686,6 +1779,7 @@ func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, ne
 		if nextCount, ok := util.SafeIntToUint16(cnt + 1); ok {
 			h.neighborCountsArena[countsBase] = nextCount
 		}
+		h.addReverseLocked(newNeighborID, level, neighborID)
 		return
 	}
 
@@ -1694,6 +1788,7 @@ func (h *HNSWIndex) insertNeighborAtLevelLocked(neighborID uint32, level int, ne
 	all = append(all, h.neighborsArena[neighborsBase:neighborsBase+capacity]...)
 	all = append(all, newNeighborID)
 	best := h.selectNeighborsInto(h.vectorAtLocked(neighborID), all, capacity, h.insertBestScratch[:0])
+	h.relinkReverseLocked(neighborID, level, all[:capacity], best)
 	copy(h.neighborsArena[neighborsBase:neighborsBase+capacity], best)
 	clear(h.neighborsArena[neighborsBase+len(best) : neighborsBase+capacity])
 	if bestCount, ok := util.SafeIntToUint16(min(len(best), capacity)); ok {
