@@ -216,7 +216,7 @@ func TestIndexCapacityAccountingIsReleasedOnRemoval(t *testing.T) {
 	}
 	require.NoError(t, service.IndexNode(node))
 	require.Equal(t, int64(24), service.vectorResidentBytes)
-	require.Equal(t, int64(54), service.vectorMetadataBytes)
+	require.Equal(t, nodeVectorMetadataBytes("node", nil)+vectorEntryMetadataBytes(nodeNamedVectorKey("node", "default")), service.vectorMetadataBytes)
 	require.Contains(t, service.indexCapacityByNode, "node")
 
 	require.NoError(t, service.RemoveNode(node.ID))

@@ -18,7 +18,9 @@ func TestVectorClearReleasesNodeMetadataBeforeDifferentIDInsertion(t *testing.T)
 		}
 		for _, bm25 := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/bm25=%t", name, bm25), func(t *testing.T) {
-				svc := NewServiceWithDimensionsAndBM25EngineAndOptions(newNamespacedEngine(t), 3, "v2", &ServiceOptions{MetadataMemoryMaxBytes: 42})
+				// The budget fits exactly one single-letter node with one named vector.
+				oneNode := nodeVectorMetadataBytes("a", nil) + vectorEntryMetadataBytes(nodeNamedVectorKey("a", "v"))
+				svc := NewServiceWithDimensionsAndBM25EngineAndOptions(newNamespacedEngine(t), 3, "v2", &ServiceOptions{MetadataMemoryMaxBytes: oneNode})
 				t.Cleanup(func() { _ = svc.Close() })
 				svc.SetIndexFlags(bm25, true)
 				if fileBacked {
@@ -26,7 +28,7 @@ func TestVectorClearReleasesNodeMetadataBeforeDifferentIDInsertion(t *testing.T)
 					svc.SetPersistenceEnabled(true)
 				}
 				require.NoError(t, svc.IndexNode(&storage.Node{ID: "a", NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}, Properties: map[string]any{"text": "needle"}}))
-				require.Equal(t, int64(42), svc.vectorMetadataBytes)
+				require.Equal(t, oneNode, svc.vectorMetadataBytes)
 				fulltextResident, fulltextMetadata := svc.bm25ResidentBytes, svc.bm25MetadataBytes
 				svc.ClearVectorIndex()
 				assert.Zero(t, svc.vectorMetadataBytes, "Clear left removed node metadata charged")
@@ -46,7 +48,7 @@ func TestVectorClearReleasesNodeMetadataBeforeDifferentIDInsertion(t *testing.T)
 				require.NoError(t, svc.RemoveNode("a"))
 				require.Zero(t, svc.bm25ResidentBytes)
 				require.Zero(t, svc.bm25MetadataBytes)
-				require.Equal(t, int64(42), svc.vectorMetadataBytes)
+				require.Equal(t, oneNode, svc.vectorMetadataBytes)
 				require.NoError(t, svc.RemoveNode("b"))
 				require.Zero(t, svc.vectorMetadataBytes)
 			})
