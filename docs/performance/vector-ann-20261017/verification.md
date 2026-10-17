@@ -2,8 +2,10 @@
 
 Runtime and timed harness: `7c201376d1203a651fc625869fb98df7be746ac4`.
 PR base checked locally: `f2ddd27cfae3788076778a0a0d48c827df046a3b`
-(`release/v1.4.4`). Subsequent changes affect benchmark source preflight,
-captions, tests and reports; runtime source remains identical to the timed head.
+(`release/v1.4.4`). Through report snapshot `511e33769fb33a02a91ffc454e3cc030e7413fcf`, subsequent
+changes affected benchmark source preflight, captions, tests and reports; runtime
+source remained identical to the timed head. Later scalar-default and concurrent
+IVF-HNSW work is recorded separately in [the follow-up](ivf-parallel/README.md).
 
 ## Product proof
 
