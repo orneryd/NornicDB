@@ -1,0 +1,12 @@
+{
+  "source": "Soraban/code-intelligence",
+  "files": {
+    "graphify_ingest.py": "d5db12a4c91cf04e35b4b5c241ce3d6caab968005950f5345dbe553b724a6860",
+    "pr_duplicates.py": "14d7ce39aa4f8ef5e3e8c3ee9323911397b050a36d5ec05dc92e68f696c5f6b2"
+  },
+  "local_adaptations": [
+    "graphify_ingest.py lives as graphify_local.py; local repo/database/main and enriched export preserved",
+    "URLs and credentials require explicit environment configuration; no default password",
+    "pr_duplicates.py imports graphify_local; detection logic unchanged"
+  ]
+}
