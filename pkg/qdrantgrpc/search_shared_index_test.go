@@ -386,3 +386,51 @@ func TestSharedIndexPersistedScoresUseOriginalMagnitudes(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
+	for _, lower := range []bool{false, true} {
+		t.Run(fmt.Sprint(lower), func(t *testing.T) {
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			dbm, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			var svc *search.Service
+			provider := func(_ string, store storage.Engine) (*search.Service, error) {
+				if svc == nil {
+					svc = search.NewServiceWithDimensionsAndBM25EngineAndOptions(store, 4, "v2", &search.ServiceOptions{VectorMemoryMaxBytes: 32})
+					require.NoError(t, svc.BuildIndexes(ctx))
+				}
+				return svc, nil
+			}
+			cfg := DefaultConfig()
+			cfg.ListenAddr = "127.0.0.1:0"
+			cfg.AllowVectorMutations = true
+			var srv *Server
+			if lower {
+				collections, e := NewDatabaseCollectionStore(dbm, nil)
+				require.NoError(t, e)
+				srv, err = NewServer(cfg, collections, base, provider, nil)
+			} else {
+				srv, err = NewServerWithDatabaseManager(cfg, dbm, base, provider, nil)
+			}
+			require.NoError(t, err)
+			require.NoError(t, srv.Start())
+			defer srv.Stop()
+			conn, err := grpc.NewClient(srv.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			require.NoError(t, err)
+			defer conn.Close()
+			collections := qpb.NewCollectionsClient(conn)
+			points := qpb.NewPointsClient(conn)
+			createCosineCollection(t, ctx, collections, "retire", 4)
+			upsertPoint(t, ctx, points, "retire", 1, unitVector(4, 0), map[string]*qpb.Value{"text": {Kind: &qpb.Value_StringValue{StringValue: "obsoleteword"}}})
+			_, err = collections.Delete(ctx, &qpb.DeleteCollection{CollectionName: "retire"})
+			require.NoError(t, err)
+			createCosineCollection(t, ctx, collections, "retire", 4)
+			upsertPoint(t, ctx, points, "retire", 2, unitVector(4, 1), nil)
+			require.Equal(t, []uint64{2}, searchIDs(t, ctx, points, &qpb.SearchPoints{CollectionName: "retire", Vector: unitVector(4, 1), Limit: 10}))
+			results, err := svc.Search(ctx, "obsoleteword", nil, &search.SearchOptions{Limit: 10})
+			require.NoError(t, err)
+			require.Empty(t, results.Results)
+		})
+	}
+}

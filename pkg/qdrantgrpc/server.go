@@ -310,6 +310,30 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if collections == nil {
 		return nil, fmt.Errorf("collection store required")
 	}
+	// Both exported constructor assemblies pair default storage retirement
+	// with complete derived-state retirement. Preserve custom lifecycle hooks.
+	if store, ok := collections.(*databaseCollectionStore); ok && store.defaultDrop && searchProvider != nil {
+		paired := *store
+		paired.defaultDrop = false
+		paired.dropDatabase = func(name string) error {
+			engine, err := store.dbManager.GetStorage(name)
+			if err != nil {
+				return err
+			}
+			svc, err := searchProvider(name, engine)
+			if err != nil {
+				return err
+			}
+			if err := store.dropDatabase(name); err != nil {
+				return err
+			}
+			if svc != nil {
+				return svc.ClearIndexes()
+			}
+			return nil
+		}
+		collections = &paired
+	}
 
 	srv := &Server{
 		config:         config,
@@ -836,25 +860,6 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	var dropDatabase func(name string) error
 	if config != nil {
 		dropDatabase = config.DropDatabase
-	}
-	if dropDatabase == nil && searchProvider != nil {
-		dropDatabase = func(name string) error {
-			store, err := dbManager.GetStorage(name)
-			if err != nil {
-				return err
-			}
-			svc, err := searchProvider(name, store)
-			if err != nil {
-				return err
-			}
-			if err := dbManager.DropDatabase(name); err != nil {
-				return err
-			}
-			if svc != nil {
-				return svc.ClearVectorIndex()
-			}
-			return nil
-		}
 	}
 	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {
