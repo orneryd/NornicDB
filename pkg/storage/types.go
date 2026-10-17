@@ -225,6 +225,10 @@ type Node struct {
 	// Internal storage flags (not exposed to users, used during encode/decode)
 	EmbeddingsStoredSeparately bool `json:"-"` // True when embeddings are stored in separate keys (large node optimization)
 	VisibilitySuppressed       bool `json:"-"` // Set by deindex cleanup when decay score falls below visibility threshold
+	// Read provenance, retained after hydration. Never serialized: inline
+	// vectors alone do not imply any separately stored keys need cleanup.
+	embeddingKeysPresent bool
+	embeddingKeysKnown   bool
 }
 
 // Edge represents a directed graph relationship (arc) between two nodes.

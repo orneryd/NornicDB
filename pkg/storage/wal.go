@@ -242,15 +242,16 @@ type WALPropKeyEntry struct {
 // committed entities after replay (crash recovery is rare, so the full
 // rebuild is acceptable).
 type WALBufferedCommitData struct {
-	TxID        string            `json:"tx_id"`
-	Namespace   string            `json:"namespace,omitempty"`
-	Ops         []Operation       `json:"ops"`
-	Writes      map[string][]byte `json:"writes,omitempty"`
-	Deletes     []string          `json:"deletes,omitempty"`
-	Version     MVCCVersion       `json:"version"`
-	NodeMax     uint64            `json:"node_max,omitempty"`
-	EdgeMax     uint64            `json:"edge_max,omitempty"`
-	HasCounters bool              `json:"has_counters,omitempty"`
+	TxID            string            `json:"tx_id"`
+	Namespace       string            `json:"namespace,omitempty"`
+	Ops             []Operation       `json:"ops"`
+	Writes          map[string][]byte `json:"writes,omitempty"`
+	Deletes         []string          `json:"deletes,omitempty"`
+	Version         MVCCVersion       `json:"version"`
+	NodeMax         uint64            `json:"node_max,omitempty"`
+	EdgeMax         uint64            `json:"edge_max,omitempty"`
+	HasCounters     bool              `json:"has_counters,omitempty"`
+	EmbeddingRanges []NodeID          `json:"embedding_ranges,omitempty"`
 
 	// PropKeys / PropKeyCounters are the property-key dictionary tokens the
 	// commit staged; replay persists them before materializing the bodies.
@@ -708,14 +709,15 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 		return nil
 	}
 	data := WALBufferedCommitData{
-		TxID:        c.txID,
-		Namespace:   c.namespace,
-		Ops:         c.ops,
-		Writes:      c.writes,
-		Version:     c.version,
-		NodeMax:     c.counterNodeMax,
-		EdgeMax:     c.counterEdgeMax,
-		HasCounters: c.hasCounters,
+		TxID:            c.txID,
+		Namespace:       c.namespace,
+		Ops:             c.ops,
+		Writes:          c.writes,
+		Version:         c.version,
+		NodeMax:         c.counterNodeMax,
+		EdgeMax:         c.counterEdgeMax,
+		HasCounters:     c.hasCounters,
+		EmbeddingRanges: c.embeddingRanges,
 	}
 	if len(c.deletes) > 0 {
 		data.Deletes = make([]string, 0, len(c.deletes))
@@ -2345,25 +2347,11 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
+		c := data.bufferedCommit()
+		if err := b.applyBufferedCommits([]bufferedCommit{c}); err != nil {
+			return err
 		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
-			}
-		}
-		return b.applyBufferedCommits([]bufferedCommit{c})
+		return nil
 
 	case OpCheckpoint:
 		// Checkpoints are markers, no action needed

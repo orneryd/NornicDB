@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -778,24 +779,15 @@ const (
 )
 
 // embeddingKey creates a key for storing a chunk embedding separately.
-// Format: prefix + nodeID + 0x00 + chunkIndex (as bytes)
+// The shared codec owns the format, including JSON-safe length/index fields.
 func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
-	key := []byte{prefixEmbedding}
-	key = append(key, []byte(nodeID)...)
-	key = append(key, 0x00) // Separator
-	// Encode chunk index as 4 bytes (big-endian)
-	key = append(key, byte(chunkIndex>>24), byte(chunkIndex>>16), byte(chunkIndex>>8), byte(chunkIndex))
-	return key
+	return appendEmbeddingHex(embeddingPrefix(nodeID), uint32(chunkIndex), 8)
 }
 
 // embeddingChunkPartKey creates a key for a sharded embedding payload part.
-// Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
+// The shared codec also hydrates parts belonging to compatibility base keys.
 func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
-	base := embeddingKey(nodeID, chunkIndex)
-	key := append([]byte(nil), base...)
-	key = append(key, 0x00)
-	key = append(key, byte(partIndex>>8), byte(partIndex))
-	return key
+	return embeddingPartKey(embeddingKey(nodeID, chunkIndex), partIndex)
 }
 
 func embeddingChunkPartPrefix(nodeID NodeID, chunkIndex int) []byte {
@@ -866,11 +858,61 @@ func schemaKey(namespace string) []byte {
 
 // embeddingPrefix returns the prefix for scanning all embeddings for a node.
 // Format: prefix + nodeID + 0x00
-func embeddingPrefix(nodeID NodeID) []byte {
-	key := []byte{prefixEmbedding}
-	key = append(key, []byte(nodeID)...)
-	key = append(key, 0x00)
-	return key
+func embeddingPrefix(nodeID NodeID) []byte { return embeddingOwnerPrefix(nodeID) }
+
+// deleteEmbeddingKeysInTxn deletes every separately stored embedding key of
+// node nodeID in txn: its chunk vectors, their shard parts and the embedding
+// metadata record. txn.Delete keeps the key slice it is given until the
+// transaction ends, while the iterator reuses its key buffer on Next, so each
+// key is copied; deleting the iterator's own slice deleted only some of the
+// keys and left the rest behind (#1218).
+func deleteEmbeddingKeysInTxn(txn *badger.Txn, nodeID NodeID) error {
+	return visitEmbeddingKeys(txn, nodeID, txn.Delete)
+}
+
+// visitEmbeddingKeys is the single reader of a node's embedding key range.
+// The callback owns each key, including when it stages deletion until commit.
+// An empty range copies no keys and allocates no per-key work.
+func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	var scan embeddingKeyScanOptions
+	if len(options) > 0 {
+		scan = options[0]
+	}
+	if hook := embeddingKeyScanHook.Load(); hook != nil {
+		(*hook)(nodeID)
+	}
+	for _, prefix := range embeddingPrefixes(nodeID) {
+		err := func() error {
+			opts := badgerIteratorOptions()
+			opts.Prefix = prefix
+			it := txn.NewIterator(opts)
+			defer it.Close()
+			start := prefix
+			if bytes.Compare(scan.after, start) > 0 {
+				start = scan.after
+			}
+			for it.Seek(start); it.Valid(); it.Next() {
+				key := it.Item().Key()
+				if prefix[0] == prefixEmbedding {
+					belongs, err := embeddingKeyBelongsTo(txn, key, nodeID, scan.references)
+					if err != nil {
+						return err
+					}
+					if !belongs {
+						continue
+					}
+				}
+				if err := visit(it.Item().KeyCopy(nil)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // extractEdgeNumIDFromOutgoingKey pulls the trailing 8-byte edge numID from
@@ -1008,7 +1050,7 @@ func (b *BadgerEngine) encodeNodeInTxn(txn *badger.Txn, namespace string, n *Nod
 	}
 	data := assemble(bodyBytes)
 
-	if len(data) <= maxNodeSize {
+	if len(data) <= maxNodeSize || len(bodyCopy.ChunkEmbeddings) == 0 {
 		return data, false, nil
 	}
 
@@ -1099,31 +1141,40 @@ func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) 
 // properties (all of them when include is nil). A scan that tests properties
 // before keeping a node uses projectedNodeDecoder instead (#857).
 func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
+	node, properties, err := decodeNodePayload(data)
+	if err != nil {
+		return nil, err
+	}
+	node.Properties, err = b.decodeTokenizedPropertiesProjected(namespace, properties, include)
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// decodeNodePayload is the single reader of the tokenized body envelope.
+// Reference checks need the stored flags, without resolving property tokens.
+func decodeNodePayload(data []byte) (*Node, []byte, error) {
 	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
+		return nil, nil, fmt.Errorf("node body empty")
 	}
 	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
+		return nil, nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
 	}
 	rest := data[1:]
 	propsLen, n := binary.Uvarint(rest)
 	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
+		return nil, nil, fmt.Errorf("node body: malformed properties length varint")
 	}
 	rest = rest[n:]
 	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
-	}
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, rest[:propsLen], include)
-	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("node body: properties payload truncated")
 	}
 	node := &Node{}
 	if err := decodeValue(rest[propsLen:], node); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	node.Properties = props
-	return node, nil
+	return node, rest[:propsLen], nil
 }
 
 // decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
@@ -1148,6 +1199,8 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 // is ignored, leaving the node embedding-free so the worker re-embeds the
 // new content.
 func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
+	node.embeddingKeysKnown = true
+	node.embeddingKeysPresent = node.EmbeddingsStoredSeparately
 	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, nodeID); err != nil {
 		return nil, err
 	} else if fresh {
@@ -1225,6 +1278,9 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 type embeddingRecordReader struct {
 	txn    *badger.Txn
 	commit *bufferedCommit
+	// A captured full replacement retires missing old records even before
+	// its range is physically removed. Explicit final point state wins.
+	rangeReplaced bool
 }
 
 func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
@@ -1235,6 +1291,9 @@ func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
 		if data, ok := r.commit.writes[string(key)]; ok {
 			return append(dst, data...), nil
 		}
+	}
+	if r.rangeReplaced {
+		return nil, badger.ErrKeyNotFound
 	}
 	item, err := r.txn.Get(key)
 	if err != nil {
@@ -1259,8 +1318,9 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 
 	// Load each chunk embedding
 	for i := 0; i < chunkCount; i++ {
-		embKey := embeddingKey(nodeID, i)
-		embData, err := read.read(embKey, nil)
+		embData, embKey, err := readEmbeddingRecord(nodeID, i, func(key []byte) ([]byte, error) {
+			return read.read(key, nil)
+		})
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
 				continue
@@ -1277,7 +1337,7 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 			assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
 			for part := 0; part < partCount; part++ {
 				var getErr error
-				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
+				assembled, getErr = read.read(embeddingPartKey(embKey, part), assembled)
 				if getErr != nil {
 					return fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
 				}
