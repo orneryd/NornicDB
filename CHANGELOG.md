@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   integer type that fits (`int8` for 4 dimensions), which the collection reader rejected once roughly 10,000 points had
   pushed the metadata out of the node cache: the collection then reported "not found", or a Dot/Euclid collection fell
   back to Cosine. `convert.ToInt64` now accepts `int8`, `int16`, `uint8` and `uint16`.
+- A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
+  limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
+  `Neo.ClientError.Statement.SyntaxError` (#1339).
 
 ## [1.4.3] - 2026-10-15
 
