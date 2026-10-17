@@ -148,9 +148,13 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 	}
 	s.mu.Lock()
 	s.hnswQuantizationOverride = &cfg
+	if s.resultCache != nil {
+		s.resultCache.Invalidate()
+	}
 	s.mu.Unlock()
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
+	s.indexChanged()
 	return nil
 }
