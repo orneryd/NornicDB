@@ -489,6 +489,15 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(ctx, args, true)
 			})
+		// WCC's nodeId is Louvain's: an aggregation row's INTEGER or the stored ID.
+		registerBuiltInProcedure("gds.wcc.stream", "gds.wcc.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: ANY, componentId :: INTEGER)", localization.CypherProcedureMetadata("gds.wcc.stream"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsWCCStream(args)
+			})
+		registerBuiltInProcedure("gds.wcc.stats", "gds.wcc.stats(graphName :: STRING, configuration = {} :: MAP) :: (componentCount :: INTEGER, componentDistribution :: MAP, postProcessingMillis :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.wcc.stats"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsWCCStats(args)
+			})
 		// Node similarity over the statement's own incidence rows (B9): no
 		// projection, nothing read from storage, so it follows the graph as the
 		// statement sees it. A NornicDB extension.

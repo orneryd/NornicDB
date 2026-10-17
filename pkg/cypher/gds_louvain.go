@@ -97,28 +97,11 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false); err != nil {
+	if _, err := c.algorithmBase(); err != nil {
 		return nil, err
 	}
-	if _, err := c.jobID(); err != nil {
+	if err := projection.validateSeedProperty(nodeLabels, seedProperty); err != nil {
 		return nil, err
-	}
-	for _, key := range []string{"logProgress", "sudo"} {
-		if _, _, err := c.boolean(key); err != nil {
-			return nil, err
-		}
-	}
-	if seedProperty != "" {
-		selected, available := projection.nodePropertyAvailability(nodeLabels)
-		if !containsString(selected, seedProperty) {
-			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
-		}
-		// Ask the shared typed reader to validate the requested type even
-		// when the selection is empty; translate its error into GDS's
-		// community-seeding message without a second schema/type reader.
-		if _, err := projection.nodePropertyValue("", seedProperty, "Integer"); err != nil {
-			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
-		}
 	}
 
 	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested, includeTypes: true})
@@ -146,15 +129,14 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		run.Seed = make([]int, size)
 		seeds := make(map[int]int64)
 		largest := int64(0)
-		for i, id := range graph.nodes {
+		// Integer reads preserve exact Long values and supply GDS's
+		// missing sentinel through the single projected-property owner.
+		values, err := projection.seedValues(graph, seedProperty)
+		if err != nil {
+			return nil, err
+		}
+		for i, seed := range values {
 			run.Seed[i] = i
-			// Integer reads preserve exact Long values and supply GDS's
-			// missing sentinel through the single projected-property owner.
-			value, err := projection.nodePropertyValue(id, seedProperty, "Integer")
-			if err != nil {
-				return nil, err
-			}
-			seed := value.(int64)
 			if seed == math.MinInt64 {
 				continue // GDS's missing Integer property sentinel.
 			}

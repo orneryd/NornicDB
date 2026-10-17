@@ -212,18 +212,7 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
 		return config, err
 	}
-	concurrency, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false)
-	if err != nil {
-		return config, err
-	}
-	logProgress, given, err := c.boolean("logProgress")
-	if err != nil {
-		return config, err
-	}
-	if !given {
-		logProgress = true
-	}
-	sudo, _, err := c.boolean("sudo")
+	base, err := c.algorithmBase()
 	if err != nil {
 		return config, err
 	}
@@ -231,10 +220,6 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 		return config, err
 	}
 
-	jobID, err := c.jobID()
-	if err != nil {
-		return config, err
-	}
 	config.Configuration = map[string]interface{}{
 		"embeddingDimension":    int64(config.EmbeddingDimension),
 		"iterationWeights":      floatsToInterfaces(config.IterationWeights),
@@ -245,11 +230,8 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 		"nodeLabels":            namesOrAll(config.NodeLabels),
 		"relationshipTypes":     namesOrAll(config.RelationshipTypes),
 		"randomSeed":            config.RandomSeed,
-		"concurrency":           concurrency,
-		"logProgress":           logProgress,
-		"sudo":                  sudo,
-		"jobId":                 jobID,
 	}
+	base.echo(config.Configuration)
 	if config.RelationshipWeightProperty != "" {
 		config.Configuration["relationshipWeightProperty"] = config.RelationshipWeightProperty
 	}

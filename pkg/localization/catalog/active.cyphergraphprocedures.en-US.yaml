@@ -205,6 +205,9 @@
 - id: cyphergraphprocedures.louvain_seeding_consecutive
   description: GDS's message for Louvain's seedProperty with consecutiveIds.
   other: 'Seeding and the `consecutiveIds` option cannot be used at the same time.'
+- id: cyphergraphprocedures.threshold_requires_weight
+  description: GDS's message for WCC's threshold without relationshipWeightProperty.
+  other: 'Specifying a threshold requires `relationshipWeightProperty` to be set.'
 - id: cyphergraphprocedures.seed_property_not_long
   description: GDS's message for a seedProperty not holding exclusively Integer values. Property untranslated.
   other: 'Provided seeding property `{{.Property}}` does not comprise exclusively of long values'

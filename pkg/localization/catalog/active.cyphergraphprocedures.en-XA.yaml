@@ -205,6 +205,9 @@
 - id: cyphergraphprocedures.louvain_seeding_consecutive
   description: Expanded pseudo-locale louvain seeding consecutive.
   other: '[!! Seeding and the `consecutiveIds` option cannot be used at the same time. !!]'
+- id: cyphergraphprocedures.threshold_requires_weight
+  description: Expanded pseudo-locale threshold requires weight.
+  other: '[!! Specifying a threshold requires `relationshipWeightProperty` to be set. !!]'
 - id: cyphergraphprocedures.seed_property_not_long
   description: Expanded pseudo-locale seed property not long.
   other: '[!! Provided seeding property `{{.Property}}` does not comprise exclusively of long values !!]'

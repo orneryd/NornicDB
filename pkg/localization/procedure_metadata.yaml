@@ -365,6 +365,16 @@
     es: "Devuelve la versión de GDS",
   }
 - {
+    name: gds.wcc.stats,
+    en: "Executes the algorithm and returns result statistics without writing the result to Neo4j.",
+    es: "Ejecuta el algoritmo y devuelve estadísticas del resultado sin escribirlo en Neo4j.",
+  }
+- {
+    name: gds.wcc.stream,
+    en: "The WCC algorithm finds sets of connected nodes in an undirected graph, where all nodes in the same set form a connected component.",
+    es: "El algoritmo WCC encuentra conjuntos de nodos conectados en un grafo no dirigido, donde todos los nodos de un mismo conjunto forman una componente conexa.",
+  }
+- {
     name: kp.decayInfo,
     en: "Returns knowledge-layer scoring configuration",
     es: "Devuelve la configuración de puntuación de la capa de conocimiento",

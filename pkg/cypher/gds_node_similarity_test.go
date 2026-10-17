@@ -199,7 +199,7 @@ func TestNodeSimilarityArgumentBranches(t *testing.T) {
 		"relationshipWeightProperty: 5": "The value of `relationshipWeightProperty` must be of type `String` but was `Long`.",
 		"nodeLabels: 5":                 "The value of `nodeLabels` must be of type `List` but was `Long`.",
 		"relationshipTypes: 5":          "The value of `relationshipTypes` must be of type `List` but was `Long`.",
-		"concurrency: 0":                "Value for `concurrency` was `0`, but must be within the range [1, 2147483647].",
+		"concurrency: 0":                "Valid values for Concurrency are int[1..], Value provided was `0`.",
 		"jobId: 7":                      "Expected JobId or String. Got Long.",
 		"logProgress: 'x'":              "The value of `logProgress` must be of type `Boolean` but was `String`.",
 	} {

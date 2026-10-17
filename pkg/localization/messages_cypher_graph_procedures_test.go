@@ -54,6 +54,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresLouvainSeedingConsecutive(), "Seeding and the `consecutiveIds` option cannot be used at the same time."},
 		{CypherGraphProceduresSeedPropertyNotLong("fl"), "Provided seeding property `fl` does not comprise exclusively of long values"},
 		{CypherGraphProceduresSeedNegative(), "Seeded values should be non-negative"},
+		{CypherGraphProceduresThresholdRequiresWeight(), "Specifying a threshold requires `relationshipWeightProperty` to be set."},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
@@ -85,7 +86,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 68)
+	require.Len(t, testCases, 69)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {
