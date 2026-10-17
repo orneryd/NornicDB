@@ -12,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -639,4 +640,39 @@ func TestBoltImpersonationRefusesRemoteGraphs(t *testing.T) {
 	f.session.impersonated = &BoltAuthResult{Username: "alice936"}
 	require.Empty(t, f.session.forwardedAuth(), "no login credential while impersonating")
 	f.session.impersonated = nil
+}
+
+// An impersonated statement stopped at its deadline gets Neo4j's timeout for
+// the deadline's owner (#1392), as the signed-in user's would; a refusal
+// stays a refusal, decided before the statement runs, however short the
+// client's tx_timeout: impersonation without the privilege, a database the
+// target may not use, a write the target may not make.
+func TestBoltImpersonationDeadlineStatus(t *testing.T) {
+	f := newImpersonationFixture(t)
+	f.grant("svc", auth.ImpersonateAllUsers, false)
+	f.grant("svc", auth.ImpersonateUser("bob936"), true)
+	slow := "UNWIND range(1, 100000000) AS x WITH x WHERE x < 0 RETURN count(x) AS c"
+	with := func(user string, txTimeout int64) map[string]any {
+		return map[string]any{"imp_user": user, "tx_timeout": txTimeout}
+	}
+
+	_, code := f.run(slow, with("alice936", 100))
+	require.Equal(t, nornicerrors.TransactionTimedOutClientConfiguration, code, "the impersonated statement times out by the client's tx_timeout")
+
+	for name, refused := range map[string]struct {
+		query string
+		user  string
+	}{
+		"impersonation denied":    {slow, "bob936"},
+		"database not allowed":    {slow, "walled936"},
+		"write without the right": {"CREATE (:Imp936Deadline) RETURN 1 AS one", "alice936"},
+	} {
+		_, code := f.run(refused.query, with(refused.user, 1))
+		require.Equal(t, "Neo.ClientError.Security.Forbidden", code, name)
+	}
+	require.Zero(t, f.labelCount("Imp936Deadline"))
+
+	// Signed in as the service account, the same deadline gives the same code.
+	_, code = f.run(slow, map[string]any{"tx_timeout": int64(100)})
+	require.Equal(t, nornicerrors.TransactionTimedOutClientConfiguration, code)
 }

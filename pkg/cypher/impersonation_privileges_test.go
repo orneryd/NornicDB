@@ -440,6 +440,59 @@ func TestImpersonationRefusesSharedStateProcedures(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// recordingEmbeddingController records the pauses and resumes that reach it.
+type recordingEmbeddingController struct {
+	status  EmbeddingStatus
+	changes []bool
+}
+
+func (c *recordingEmbeddingController) SetEmbeddingPaused(_ context.Context, paused bool) (EmbeddingStatus, error) {
+	c.changes = append(c.changes, paused)
+	c.status.Paused = paused
+	return c.status, nil
+}
+
+func (c *recordingEmbeddingController) EmbeddingStatus() EmbeddingStatus { return c.status }
+
+// Automatic embedding's pause is DBMS-wide (#1021): while impersonating,
+// even an administrator's pause and resume are refused before they reach
+// the embedder, directly or from dynamic Cypher; reading the status needs
+// the impersonated user's admin, as it does signed in.
+func TestImpersonationAndEmbeddingControl(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	controller := &recordingEmbeddingController{status: EmbeddingStatus{Pending: 3}}
+	exec.SetEmbeddingController(controller)
+	ctx := impersonatingContext("alice")
+	for _, call := range []string{"CALL db.embedding.pause()", "CALL db.embedding.resume()"} {
+		for _, query := range []string{call, "CALL apoc.cypher.run(\"" + call + "\", {}) YIELD value RETURN value"} {
+			_, err := exec.Execute(ctx, query, nil)
+			requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
+			require.Contains(t, err.Error(), "impersonating a user", query)
+		}
+	}
+	require.Empty(t, controller.changes, "a refused pause or resume never reaches the embedder")
+	status, err := exec.Execute(ctx, "CALL db.embedding.status()", nil)
+	require.NoError(t, err, "an impersonated administrator reads the status")
+	require.Equal(t, [][]interface{}{{false, int64(3)}}, status.Rows)
+
+	// An impersonated user without admin may not read it either.
+	nonAdmin := WithPermissionChecker(WithRequestIdentity(context.Background(), &RequestIdentity{
+		User:           &AuthenticatedUser{Name: "bob", Roles: []string{"reader"}},
+		ImpersonatedBy: &AuthenticatedUser{Name: "root", Roles: []string{"admin"}},
+	}), func(permission string) bool { return permission != "admin" })
+	_, err = exec.Execute(nonAdmin, "CALL db.embedding.status()", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
+	require.Contains(t, err.Error(), "Executing admin procedure 'db.embedding.status' permission has not been granted for user 'bob' with roles [reader].")
+
+	// Signed in, the administrator pauses and resumes.
+	admin := WithPermissionChecker(context.Background(), func(string) bool { return true })
+	for _, call := range []string{"CALL db.embedding.pause()", "CALL db.embedding.resume()"} {
+		_, err := exec.Execute(admin, call, nil)
+		require.NoError(t, err, call)
+	}
+	require.Equal(t, []bool{true, false}, controller.changes)
+}
+
 // Every built-in procedure that changes state other sessions share is
 // marked UpdatesDBMS, and only those: a new built-in must be classified
 // here. The others change one database's data or schema, the calling
@@ -457,6 +510,8 @@ func TestBuiltInProceduresUpdatingTheDBMS(t *testing.T) {
 		"apoc.custom.dropProcedure",
 		"apoc.custom.installProcedure",
 		"db.clearQueryCaches",
+		"db.embedding.pause",
+		"db.embedding.resume",
 		"db.stats.clear",
 		"db.stats.collect",
 		"db.stats.stop",
