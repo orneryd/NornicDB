@@ -319,3 +319,15 @@
   other: "no se pudo leer la entrada: {{.Cause}}"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "no se pudieron cargar los nodos: {{.Cause}}"
+- id: nornicdbcli.stemmer.short
+  other: Operaciones con plugins de lematización
+- id: nornicdbcli.stemmer.check.short
+  other: Comprueba que un plugin de lematización se carga en este binario, igual que al arrancar
+- id: nornicdbcli.flag.stemmer_check_timeout
+  other: Tiempo máximo para cargar el plugin
+- id: nornicdbcli.stemmer.check.ok
+  other: "El plugin de lematización {{.ID}} {{.Version}} se carga: {{.Path}}"
+- id: nornicdbcli.stemmer.check_failed
+  other: "el plugin de lematización {{.Manifest}} no se carga: {{.Cause}}"
+- id: nornicdbcli.stemmer.check_timed_out
+  other: "el plugin de lematización {{.Manifest}} no terminó de cargarse en {{.Timeout}}"

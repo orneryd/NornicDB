@@ -45,6 +45,57 @@ The examples use the current stable Snowball v3.1.1 compiler and Go runtime.
 Keep both on the same release so generated code and runtime APIs stay aligned.
 The plugin version passed to `nornicdb-snowball` should identify that build.
 
+## Match The Server Binary
+
+Go loads a plugin only if every package the plugin shares with the server was
+built identically. That depends on the Go release, on build settings such as
+`-trimpath`, `-race`, `GOEXPERIMENT`, compiler flags and the CPU architecture
+level, and on the exact source of every shared dependency (for example
+`golang.org/x/text`). Release binaries are built with `-trimpath` (Homebrew),
+others without it, so a plugin built for one is refused by the other: "plugin
+was built with a different version of package ...".
+
+Pass the exact `nornicdb` binary that will load the plugin with `--target`:
+
+1. `nornicdb-snowball` reads that binary's recorded build settings (the ones
+   `go version -m <binary>` prints) and builds the plugin with them, ignoring
+   your own `GOFLAGS`, `GOEXPERIMENT` and `go env -w` settings. It refuses to
+   package when your `go` is a different release from the one that built the
+   binary; `go version <binary>` shows which release you need.
+2. It then runs `<binary> stemmer check <manifest>`, which loads the plugin
+   exactly as server startup does, without opening a database or the network.
+   The plugin and its manifest are kept only if the server binary accepts the
+   plugin. If the server binary refuses it, the check times out or crashes, or
+   the binary is too old to have `stemmer check`, both files are removed and
+   packaging fails. On a refusal the error lists the recorded differences
+   between the two builds, such as a shared module at another version. These
+   explain the refusal; only the server binary decides.
+
+The examples below use `./bin/nornicdb`; replace it with your server binary's
+path, for example `"$(command -v nornicdb)"` for a Homebrew install.
+
+Without `--target` the plugin is built with your toolchain's defaults and
+nothing checks it: the command prints `packaged <id> (unverified: ...)`. Check
+such a plugin yourself before deploying it:
+
+```bash
+nornicdb stemmer check ./plugins/stemmers/snowball-french.stemmer.json
+```
+
+### Docker and other machines
+
+`--target` runs the server binary, so package on a machine that can run it:
+the same operating system and CPU architecture, with the Go release that built
+it. A plugin built on another machine is checked only if you run
+`nornicdb stemmer check` where the server runs.
+
+For a Docker deployment, package inside a container from the server image's
+platform that has the image's `nornicdb` binary and the matching Go release
+(`go version <binary>` inside the image shows it), then copy the plugin and its
+manifest into the server's stemmer plugin directory. Running
+`nornicdb stemmer check` in the server container before switching
+`bm25_stemmer` to the new plugin confirms it loads there.
+
 ## Package A Snowball Algorithm
 
 This example packages the official French Snowball algorithm. The same pattern
@@ -74,7 +125,8 @@ cd ../../..
   --version 3.1.1 \
   --module ./build/stemmers/french \
   --source ./build/stemmers/french/stemmer.go \
-  --output ./plugins/stemmers/snowball-french.so
+  --output ./plugins/stemmers/snowball-french.so \
+  --target ./bin/nornicdb
 ```
 
 The package command writes two files:
@@ -108,7 +160,8 @@ label, and output name:
   --version 3.1.1 \
   --module ./build/stemmers/spanish \
   --source ./build/stemmers/spanish/stemmer.go \
-  --output ./plugins/stemmers/snowball-spanish.so
+  --output ./plugins/stemmers/snowball-spanish.so \
+  --target ./bin/nornicdb
 ```
 
 Chinese and Ukrainian are not official upstream Snowball algorithms in the
@@ -130,7 +183,8 @@ third-party source you have reviewed. Package it the same way:
   --version local-2026.09 \
   --module ./build/stemmers/ukrainian \
   --source ./build/stemmers/ukrainian/stemmer.go \
-  --output ./plugins/stemmers/snowball-ukrainian.so
+  --output ./plugins/stemmers/snowball-ukrainian.so \
+  --target ./bin/nornicdb
 ```
 
 ```bash
@@ -147,7 +201,8 @@ third-party source you have reviewed. Package it the same way:
   --version local-2026.09 \
   --module ./build/stemmers/chinese \
   --source ./build/stemmers/chinese/stemmer.go \
-  --output ./plugins/stemmers/snowball-chinese.so
+  --output ./plugins/stemmers/snowball-chinese.so \
+  --target ./bin/nornicdb
 ```
 
 Chinese search often needs segmentation more than suffix stemming. NornicDB's

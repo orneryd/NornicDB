@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -289,7 +290,7 @@ func loadDir(dir string, continueOnPluginError bool) ([]error, error) {
 	slices.Sort(matches)
 	var diagnostics []error
 	for _, manifestPath := range matches {
-		if err := loadManifest(manifestPath); err != nil {
+		if _, err := LoadManifest(manifestPath); err != nil {
 			diagnostic := fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
 			if !continueOnPluginError {
 				return diagnostics, diagnostic
@@ -300,20 +301,22 @@ func loadDir(dir string, continueOnPluginError bool) ([]error, error) {
 	return diagnostics, nil
 }
 
-func loadManifest(manifestPath string) error {
+// LoadManifest is the per-plugin step of LoadDir: it validates one manifest,
+// verifies its adjacent library, opens the Go plugin and registers it.
+func LoadManifest(manifestPath string) (Registration, error) {
 	manifest, err := ReadManifest(manifestPath)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
 	libraryPath, err := VerifyLibrary(manifestPath, manifest)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
 	pluginImpl, err := openPlugin(libraryPath, manifest.Entrypoint)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
-	return Register(Registration{
+	if err := Register(Registration{
 		APIVersion: manifest.APIVersion,
 		ID:         manifest.ID,
 		Version:    manifest.Version,
@@ -322,7 +325,40 @@ func loadManifest(manifestPath string) error {
 		Path:       libraryPath,
 		Stem:       pluginImpl.Stem,
 		StemTokens: batchStemFunc(pluginImpl),
-	})
+	}); err != nil {
+		return Registration{}, err
+	}
+	registration, _ := Lookup(manifest.ID)
+	return registration, nil
+}
+
+// ErrCheckTimedOut is returned by CheckManifest when loading does not finish
+// within its timeout.
+var ErrCheckTimedOut = errors.New("stemmer plugin check timed out")
+
+// CheckManifest loads one plugin exactly as server startup does (LoadManifest)
+// and returns its registration, or ErrCheckTimedOut if loading, including the
+// plugin's init functions, takes longer than timeout. It backs
+// `nornicdb stemmer check`, which nornicdb-snowball runs against the target
+// server binary before it reports a packaged plugin as usable.
+func CheckManifest(manifestPath string, timeout time.Duration) (Registration, error) {
+	type result struct {
+		registration Registration
+		err          error
+	}
+	done := make(chan result, 1)
+	go func() {
+		registration, err := LoadManifest(manifestPath)
+		done <- result{registration, err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.registration, r.err
+	case <-timer.C:
+		return Registration{}, ErrCheckTimedOut
+	}
 }
 
 type batchPlugin interface {
