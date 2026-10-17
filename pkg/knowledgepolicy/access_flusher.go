@@ -242,32 +242,35 @@ func (f *AccessFlusher) flush() {
 		appliedFixed := f.applyOnAccessMutations(entityID, entry, meta, now)
 
 		if !appliedFixed["accessCount"] {
-			entry.Fixed.AccessCount += delta.accessCount
+			entry.Fixed.AccessCount = int64(counter(entry.Fixed.AccessCount).merge(delta.accessCount))
 		}
 		if !appliedFixed["traversalCount"] {
-			entry.Fixed.TraversalCount += delta.traversalCount
+			entry.Fixed.TraversalCount = int64(counter(entry.Fixed.TraversalCount).merge(delta.traversalCount))
 		}
-		if !appliedFixed["lastAccessedAt"] && delta.lastAccessedAt > entry.Fixed.LastAccessedAt {
-			entry.Fixed.LastAccessedAt = delta.lastAccessedAt
+		if !appliedFixed["lastAccessedAt"] {
+			entry.Fixed.LastAccessedAt = int64(timestamp(entry.Fixed.LastAccessedAt).merge(delta.lastAccessedAt))
 		}
-		if !appliedFixed["lastTraversedAt"] && delta.lastTraversedAt > entry.Fixed.LastTraversedAt {
-			entry.Fixed.LastTraversedAt = delta.lastTraversedAt
+		if !appliedFixed["lastTraversedAt"] {
+			entry.Fixed.LastTraversedAt = int64(timestamp(entry.Fixed.LastTraversedAt).merge(delta.lastTraversedAt))
 		}
 
-		if delta.overflow != nil {
+		// Custom values merge onto the stored ones by their own kind's rule. A
+		// stored value that isn't an int64 is replaced, as before.
+		if len(delta.counters) > 0 || len(delta.timestamps) > 0 {
 			if entry.Overflow == nil {
 				entry.Overflow = make(map[string]interface{})
 			}
-			for k, v := range delta.overflow {
-				if existing, ok := entry.Overflow[k]; ok {
-					if ev, ok := existing.(int64); ok {
-						entry.Overflow[k] = ev + v
-					} else {
-						entry.Overflow[k] = v
-					}
-				} else {
-					entry.Overflow[k] = v
+			for k, v := range delta.counters {
+				stored, _ := entry.Overflow[k].(int64)
+				entry.Overflow[k] = int64(counter(stored).merge(v))
+			}
+			for k, v := range delta.timestamps {
+				stored, ok := entry.Overflow[k].(int64)
+				if !ok {
+					entry.Overflow[k] = int64(v)
+					continue
 				}
+				entry.Overflow[k] = int64(timestamp(stored).merge(v))
 			}
 		}
 
