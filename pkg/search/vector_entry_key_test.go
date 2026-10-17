@@ -66,22 +66,22 @@ func TestVectorEntryKeyRoundTripsAndIsInjective(t *testing.T) {
 func TestDecodeVectorEntryKeyRejectsNonCanonicalKeys(t *testing.T) {
 	encoded := nodeChunkVectorKey("x", 3)
 	for name, key := range map[string]string{
-		"empty":                      "",
-		"marker only":                "\x00",
-		"marker and kind":            "\x00c",
-		"unknown kind":               "\x00z\x01x",
-		"length past end":            "\x00n\x05ab",
-		"over-long length":           "\x00n\x81\x00x",
-		"empty node ID":              "\x00n\x00v",
-		"chunk zero":                 "\x00c\x01x0",
-		"chunk leading zero":         "\x00c\x01x01",
-		"chunk sign":                 "\x00c\x01x+1",
-		"chunk negative":             "\x00c\x01x-1",
-		"chunk not a number":         "\x00c\x01xa",
-		"chunk overflow":             "\x00c\x01x99999999999999999999",
-		"main with suffix":           "\x00m\x01xy",
-		"main escape of a plain ID":  "\x00m\x01x",
-		"truncated valid chunk key":  encoded[:len(encoded)-1],
+		"empty":                     "",
+		"marker only":               "\x00",
+		"marker and kind":           "\x00c",
+		"unknown kind":              "\x00z\x01x",
+		"length past end":           "\x00n\x05ab",
+		"over-long length":          "\x00n\x81\x00x",
+		"empty node ID":             "\x00n\x00v",
+		"chunk zero":                "\x00c\x01x0",
+		"chunk leading zero":        "\x00c\x01x01",
+		"chunk sign":                "\x00c\x01x+1",
+		"chunk negative":            "\x00c\x01x-1",
+		"chunk not a number":        "\x00c\x01xa",
+		"chunk overflow":            "\x00c\x01x99999999999999999999",
+		"main with suffix":          "\x00m\x01xy",
+		"main escape of a plain ID": "\x00m\x01x",
+		"truncated valid chunk key": encoded[:len(encoded)-1],
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, ok := decodeVectorEntryKey(key)
@@ -162,4 +162,13 @@ func FuzzVectorEntryKey(f *testing.F) {
 			t.Fatalf("%+v and %+v share key %q", a, b, keyA)
 		}
 	})
+}
+
+// mustVectorEntryOwner decodes a raw vector-entry key a test got from an
+// index (HNSW, candidate generators) into its owning node.
+func mustVectorEntryOwner(t testing.TB, key string) string {
+	t.Helper()
+	owner, ok := vectorEntryOwner(key)
+	require.True(t, ok, "vector-entry key %q has no owner", key)
+	return owner
 }
