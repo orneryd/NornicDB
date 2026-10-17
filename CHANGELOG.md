@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Admit managed model-space chunks before dimension validation and restrict persisted exact queries to admitted
+  vector identities. Retire fulltext and capacity accounting through both default Qdrant server constructors on drop.
+  Serialize the first GPU brute-force snapshot/upload/publication with live index mutations before pipeline locking.
+
 - Preserve global IVF-HNSW candidate budgets when nearest neighbours concentrate in one cluster, and retain lexical
   cluster selection when a small list falls back to exact scoring. Resolve BM25 document hints to named, property and
   chunk embedding IDs consistently for HNSW construction, k-means/PQ seeds and cluster lexical profiles.

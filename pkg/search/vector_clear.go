@@ -15,6 +15,17 @@ import (
 //
 //	if err := svc.ClearVectorIndex(); err != nil { return err }
 func (s *Service) ClearVectorIndex() error {
+	return s.clearIndexes(false)
+}
+
+// ClearIndexes retires all collection-owned search data and capacity accounting.
+// Use after dropping a database when its provider may reuse this service.
+// Example: after dropping storage, call svc.ClearIndexes() before recreation.
+func (s *Service) ClearIndexes() error {
+	return s.clearIndexes(true)
+}
+
+func (s *Service) clearIndexes(all bool) error {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
 	// Persistence and clearing own the same file resources. Retire on-disk
@@ -50,6 +61,25 @@ func (s *Service) ClearVectorIndex() error {
 	clear(s.nodeChunkSpans)
 	clear(s.edgeTypes)
 	clear(s.edgePropVector)
+	for id, usage := range s.indexCapacityByNode {
+		usage.vectorResident = 0
+		usage.vectorMetadata = 0
+		s.indexCapacityByNode[id] = usage
+	}
+	clear(s.indexCapacityByEdge)
+	s.vectorResidentBytes = 0
+	s.vectorMetadataBytes = 0
+	if all {
+		if ft := s.fulltext(); ft != nil {
+			ft.Clear()
+		}
+		clear(s.indexCapacityByNode)
+		s.bm25ResidentBytes = 0
+		s.bm25MetadataBytes = 0
+	}
+	if s.resultCache != nil {
+		s.resultCache.Invalidate()
+	}
 	s.mu.Unlock()
 	s.indexMu.Unlock()
 
@@ -71,6 +101,9 @@ func (s *Service) ClearVectorIndex() error {
 	}
 	s.hnswMu.Unlock()
 	paths := []string{}
+	if all && s.fulltextIndexPath != "" {
+		paths = append(paths, s.fulltextIndexPath)
+	}
 	if s.vectorIndexPath != "" {
 		paths = append(paths, s.vectorIndexPath+".vec", s.vectorIndexPath+".meta")
 	}

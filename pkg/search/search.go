@@ -2937,9 +2937,11 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 				return ErrDimensionMismatch
 			}
 		}
-		for _, embedding := range node.ChunkEmbeddings {
-			if len(embedding) > 0 && len(embedding) != dims {
-				return ErrDimensionMismatch
+		if s.managedEmbeddingEligible(node) {
+			for _, embedding := range node.ChunkEmbeddings {
+				if len(embedding) > 0 && len(embedding) != dims {
+					return ErrDimensionMismatch
+				}
 			}
 		}
 	}
@@ -5338,6 +5340,12 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		return pipeline, nil
 	}
 
+	// Initial GPU upload must own mutation admission through publication. Do
+	// this before pipelineMu: transition publication takes indexMu first.
+	if err := s.prepareGPUIndexForCurrentStrategy(); err != nil {
+		s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
+	}
+
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
 
@@ -5540,7 +5548,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 	}
 	s.hnswRebuildOverlay.Reset()
 	if target == strategyModeBruteGPU {
-		_ = s.ensureGPUIndexSynced(vi, vfs)
+		_ = s.ensureGPUIndexSyncedLocked(vi, vfs)
 	}
 
 	var p *VectorSearchPipeline
@@ -5599,7 +5607,7 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	if target == strategyModeBruteGPU {
-		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
+		if err := s.ensureGPUIndexSyncedLocked(vi, vfs); err != nil {
 			s.logPrintf("⚠️ Runtime CPU->GPU brute switch skipped: %v", err)
 			return false
 		}
@@ -5657,7 +5665,28 @@ func hnswPairSliceIterator(pairs []hnswBuildPair) hnswBuildIterator {
 	}
 }
 
+func (s *Service) prepareGPUIndexForCurrentStrategy() error {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	count, vi, vfs := s.snapshotStrategyInputs()
+	if s.desiredRuntimeStrategy(count) != strategyModeBruteGPU {
+		return nil
+	}
+	return s.ensureGPUIndexSyncedLocked(vi, vfs)
+}
+
 func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) error {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	// Re-read the canonical owner after admission: a reset may have replaced
+	// the inputs while the caller waited for an ongoing mutation.
+	_, vi, vfs = s.snapshotStrategyInputs()
+	return s.ensureGPUIndexSyncedLocked(vi, vfs)
+}
+
+// Caller owns indexMu; no acknowledged mutation can fall between snapshot
+// and GPU publication. Existing transition callers already own this boundary.
+func (s *Service) ensureGPUIndexSyncedLocked(vi *VectorIndex, vfs *VectorFileStore) error {
 	if s.gpuManager == nil || !s.gpuManager.IsEnabled() {
 		return localizedError(localization.SearchGPUNotEnabled(), nil)
 	}
@@ -5882,15 +5911,12 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 
 	// Prefer GPU brute-force (exact) when enabled and within configured thresholds.
 	// This path is exact and typically highest-throughput within its tuned N range.
-	// Its GPU copy of the vectors is built here, the first time it is chosen.
+	// The first pipeline read prepares its GPU copy before taking pipelineMu.
 	if s.desiredRuntimeStrategy(vectorCount) == strategyModeBruteGPU {
-		_, vi, _ := s.snapshotStrategyInputs()
-		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
-			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
-		} else {
-			s.mu.RLock()
-			gi := s.gpuEmbeddingIndex
-			s.mu.RUnlock()
+		s.mu.RLock()
+		gi := s.gpuEmbeddingIndex
+		s.mu.RUnlock()
+		if gi != nil {
 			return &vectorStrategyDescriptor{
 				name:         "GPU brute-force",
 				candidateGen: NewGPUBruteForceCandidateGen(gi),

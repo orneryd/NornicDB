@@ -5,6 +5,7 @@ import (
 	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -740,20 +741,26 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVectorQuery, spec VectorQuerySpec, vectorName string) ([]vectorQueryScoredNode, error) {
 	s.indexMu.RLock()
 	s.mu.RLock()
-	ids := make([]string, 0, len(s.nodeLabels))
+	// Snapshot admitted source fields, not just labels: excluded managed chunks
+	// still have text/labels but must never re-enter exact search via storage.
+	metadata := make(map[string]vectorQueryCandidateMeta, len(s.nodeLabels))
 	for id, labels := range s.nodeLabels {
 		matches := spec.Label == ""
 		for _, label := range labels {
 			matches = matches || label == spec.Label
 		}
 		if matches {
-			ids = append(ids, id)
+			metadata[id] = vectorQueryCandidateMeta{
+				named:  cloneStringMap(s.nodeNamedVector[id]),
+				props:  cloneStringMap(s.nodePropVector[id]),
+				chunks: append([]string(nil), s.nodeChunkVectors[id]...),
+			}
 		}
 	}
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
-	out := make([]vectorQueryScoredNode, 0, min(len(ids), spec.Limit))
-	for _, id := range ids {
+	out := make([]vectorQueryScoredNode, 0, min(len(metadata), spec.Limit))
+	for id, admitted := range metadata {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -764,8 +771,32 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		if err != nil {
 			return nil, err
 		}
+		// Restrict the durable node to the identities admitted at indexing time.
+		eligible := *node
+		eligible.NamedEmbeddings = make(map[string][]float32, len(admitted.named))
+		for name := range admitted.named {
+			eligible.NamedEmbeddings[name] = node.NamedEmbeddings[name]
+		}
+		eligible.Properties = make(map[string]any, len(admitted.props))
+		for name := range admitted.props {
+			eligible.Properties[name] = node.Properties[name]
+		}
+		eligible.ChunkEmbeddings = nil
+		for _, chunkID := range admitted.chunks {
+			chunk := 0
+			if chunkID != id {
+				var err error
+				chunk, err = strconv.Atoi(strings.TrimPrefix(chunkID, id+"-chunk-"))
+				if err != nil {
+					continue
+				}
+			}
+			if chunk >= 0 && chunk < len(node.ChunkEmbeddings) {
+				eligible.ChunkEmbeddings = append(eligible.ChunkEmbeddings, node.ChunkEmbeddings[chunk])
+			}
+		}
 		best := math.Inf(-1)
-		for _, value := range resolveCypherCandidateEmbeddings(node, spec.Property, vectorName) {
+		for _, value := range resolveCypherCandidateEmbeddings(&eligible, spec.Property, vectorName) {
 			best = math.Max(best, prepared.score(value))
 		}
 		if !math.IsInf(best, -1) {
