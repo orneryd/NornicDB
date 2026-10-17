@@ -266,7 +266,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
-	require.Equal(t, 78, coreCount) // Includes GDS Louvain, both similarity procedures and nornicdb.similarity.stream.
+	require.Equal(t, 80, coreCount) // Includes GDS Louvain, gds.wcc.stream / stats, both similarity procedures and nornicdb.similarity.stream.
 	require.Equal(t, 31, apocCount) // Retains the canonical apoc.cypher.doIt and aliases.
 	require.Equal(t, 5, customCount)
 	require.Equal(t, 6, kpAliasCount)

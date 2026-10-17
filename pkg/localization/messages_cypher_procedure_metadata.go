@@ -77,6 +77,8 @@ const (
 	MessageCypherProcedureMetadataGdsNodeSimilarityFilteredStream               MessageID = "cypherproceduremetadata.gds_nodesimilarity_filtered_stream"
 	MessageCypherProcedureMetadataGdsNodeSimilarityStream                       MessageID = "cypherproceduremetadata.gds_nodesimilarity_stream"
 	MessageCypherProcedureMetadataGdsVersion                                    MessageID = "cypherproceduremetadata.gds_version"
+	MessageCypherProcedureMetadataGdsWccStats                                   MessageID = "cypherproceduremetadata.gds_wcc_stats"
+	MessageCypherProcedureMetadataGdsWccStream                                  MessageID = "cypherproceduremetadata.gds_wcc_stream"
 	MessageCypherProcedureMetadataKpDecayInfo                                   MessageID = "cypherproceduremetadata.kp_decayinfo"
 	MessageCypherProcedureMetadataKpDeindexStatus                               MessageID = "cypherproceduremetadata.kp_deindexstatus"
 	MessageCypherProcedureMetadataKpInfo                                        MessageID = "cypherproceduremetadata.kp_info"
@@ -467,6 +469,16 @@ func CypherProcedureMetadataGdsVersion() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsVersion, Fallback: "Returns GDS version"}
 }
 
+// CypherProcedureMetadataGdsWccStats describes gds.wcc.stats in procedure listings.
+func CypherProcedureMetadataGdsWccStats() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsWccStats, Fallback: "Executes the algorithm and returns result statistics without writing the result to Neo4j."}
+}
+
+// CypherProcedureMetadataGdsWccStream describes gds.wcc.stream in procedure listings.
+func CypherProcedureMetadataGdsWccStream() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsWccStream, Fallback: "The WCC algorithm finds sets of connected nodes in an undirected graph, where all nodes in the same set form a connected component."}
+}
+
 // CypherProcedureMetadataKpDecayInfo describes kp.decayInfo in procedure listings.
 func CypherProcedureMetadataKpDecayInfo() Message {
 	return Message{ID: MessageCypherProcedureMetadataKpDecayInfo, Fallback: "Returns knowledge-layer scoring configuration"}
@@ -632,6 +644,8 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"gds.nodeSimilarity.filtered.stream":               CypherProcedureMetadataGdsNodeSimilarityFilteredStream,
 	"gds.nodeSimilarity.stream":                        CypherProcedureMetadataGdsNodeSimilarityStream,
 	"gds.version":                                      CypherProcedureMetadataGdsVersion,
+	"gds.wcc.stats":                                    CypherProcedureMetadataGdsWccStats,
+	"gds.wcc.stream":                                   CypherProcedureMetadataGdsWccStream,
 	"kp.decayInfo":                                     CypherProcedureMetadataKpDecayInfo,
 	"kp.deindexStatus":                                 CypherProcedureMetadataKpDeindexStatus,
 	"kp.info":                                          CypherProcedureMetadataKpInfo,

@@ -893,24 +893,43 @@ func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
 			}
 		},
 	})
-	sort.Slice(degrees, func(i, j int) bool { return degrees[i] < degrees[j] })
+	return gdsDistribution(degrees, gdsDegreePercentiles)
+}
+
+// gdsPercentile is one percentile GDS reports in a distribution map.
+type gdsPercentile struct {
+	name    string
+	percent float64
+}
+
+var (
+	gdsDegreePercentiles    = []gdsPercentile{{"p50", 50}, {"p75", 75}, {"p90", 90}, {"p95", 95}, {"p99", 99}, {"p999", 99.9}}
+	gdsComponentPercentiles = append([]gdsPercentile{{"p1", 1}, {"p5", 5}, {"p10", 10}, {"p25", 25}}, gdsDegreePercentiles...)
+)
+
+// gdsDistribution is the min, max, mean and percentiles of values (sorted
+// in place) as GDS's histograms report them: a percentile is the least value
+// that at least that share of the values does not exceed, its count rounded
+// as HdrHistogram rounds it (just below the percentile, then up). No values
+// report zeros.
+func gdsDistribution(values []int64, percentiles []gdsPercentile) map[string]interface{} {
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 	distribution := map[string]interface{}{"min": int64(0), "max": int64(0), "mean": 0.0}
-	percentile := func(p float64) int64 {
-		if len(degrees) == 0 {
-			return 0
+	for _, percentile := range percentiles {
+		distribution[percentile.name] = int64(0)
+		if len(values) > 0 {
+			below := math.Nextafter(percentile.percent, math.Inf(-1))
+			count := max(int(math.Ceil(below/100*float64(len(values)))), 1)
+			distribution[percentile.name] = values[count-1]
 		}
-		return degrees[int(math.Ceil(p*float64(len(degrees))))-1]
 	}
-	for name, p := range map[string]float64{"p50": 0.5, "p75": 0.75, "p90": 0.9, "p95": 0.95, "p99": 0.99, "p999": 0.999} {
-		distribution[name] = percentile(p)
-	}
-	if len(degrees) > 0 {
+	if len(values) > 0 {
 		sum := int64(0)
-		for _, degree := range degrees {
-			sum += degree
+		for _, value := range values {
+			sum += value
 		}
-		distribution["min"], distribution["max"] = degrees[0], degrees[len(degrees)-1]
-		distribution["mean"] = float64(sum) / float64(len(degrees))
+		distribution["min"], distribution["max"] = values[0], values[len(values)-1]
+		distribution["mean"] = float64(sum) / float64(len(values))
 	}
 	return distribution
 }
@@ -1217,6 +1236,59 @@ func (c *gdsConfig) jobID() (string, error) {
 		return "", localizedError(localization.CypherGraphProceduresJobIDType(gdsJavaType(value)), nil)
 	}
 	return text, nil
+}
+
+// gdsAlgorithmBase is the configuration every GDS algorithm takes, with
+// GDS's defaults. concurrency is validated and reported but not used:
+// NornicDB's algorithms run on the calling goroutine.
+type gdsAlgorithmBase struct {
+	concurrency int64
+	jobID       string
+	logProgress bool
+	sudo        bool
+}
+
+// algorithmBase reads concurrency, jobId, logProgress and sudo.
+func (c *gdsConfig) algorithmBase() (gdsAlgorithmBase, error) {
+	base := gdsAlgorithmBase{logProgress: true}
+	var err error
+	if base.concurrency, err = c.concurrency("concurrency"); err != nil {
+		return base, err
+	}
+	if base.jobID, err = c.jobID(); err != nil {
+		return base, err
+	}
+	logProgress, given, err := c.boolean("logProgress")
+	if err != nil {
+		return base, err
+	}
+	if given {
+		base.logProgress = logProgress
+	}
+	if base.sudo, _, err = c.boolean("sudo"); err != nil {
+		return base, err
+	}
+	return base, nil
+}
+
+// concurrency is key's concurrency setting as GDS parses one: a positive
+// integer, 4 when absent, refused with GDS's concurrency messages.
+func (c *gdsConfig) concurrency(key string) (int64, error) {
+	return c.integerWithErrors(key, 1, 1<<63-1, 4, false,
+		func() error {
+			return localizedError(localization.CypherGraphProceduresUnsupportedConcurrency(gdsJavaType(c.value(key))), nil)
+		},
+		func(number int64) error {
+			return localizedError(localization.CypherGraphProceduresConcurrencyBelowOne(strconv.FormatInt(number, 10)), nil)
+		})
+}
+
+// echo adds the base settings to configuration, as GDS reports them.
+func (b gdsAlgorithmBase) echo(configuration map[string]interface{}) {
+	configuration["concurrency"] = b.concurrency
+	configuration["jobId"] = b.jobID
+	configuration["logProgress"] = b.logProgress
+	configuration["sudo"] = b.sudo
 }
 
 // names is key's label or type names: a STRING or a list of them; nil

@@ -6,6 +6,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/louvain"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/wcc"
 )
 
 // =============================================================================
@@ -197,75 +198,36 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 	}, nil
 }
 
+// computeWCC is the stored graph's weakly connected components over nodes:
+// every stored relationship between two of them, either way, joins them in
+// the shared union-find. Components are numbered 0, 1, … by first node in the
+// given order; a node listed twice is one node.
 func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
-
-	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
-	}
-
-	// Union-Find structure
-	parent := make(map[storage.NodeID]storage.NodeID)
-	rank := make(map[storage.NodeID]int)
-
-	for _, node := range nodes {
-		parent[node.ID] = node.ID
-		rank[node.ID] = 0
-	}
-
-	// Find with path compression
-	var find func(x storage.NodeID) storage.NodeID
-	find = func(x storage.NodeID) storage.NodeID {
-		if parent[x] != x {
-			parent[x] = find(parent[x])
-		}
-		return parent[x]
-	}
-
-	// Union by rank
-	union := func(x, y storage.NodeID) {
-		px, py := find(x), find(y)
-		if px == py {
-			return
-		}
-		if rank[px] < rank[py] {
-			parent[px] = py
-		} else if rank[px] > rank[py] {
-			parent[py] = px
-		} else {
-			parent[py] = px
-			rank[px]++
+	index := make(map[storage.NodeID]int, len(nodes))
+	for i, node := range nodes {
+		if _, listed := index[node.ID]; !listed {
+			index[node.ID] = i
 		}
 	}
-
-	// Process all edges
-	for _, node := range nodes {
-		edges := e.getNodeEdges(node.ID)
-		for _, edge := range edges {
+	forest := wcc.New(len(nodes))
+	for i, node := range nodes {
+		if index[node.ID] != i {
+			continue
+		}
+		for _, edge := range e.getNodeEdges(node.ID) {
 			neighbor := edge.EndNode
 			if edge.StartNode != node.ID {
 				neighbor = edge.StartNode
 			}
-			if _, exists := parent[neighbor]; exists {
-				union(node.ID, neighbor)
+			if j, listed := index[neighbor]; listed {
+				forest.Union(i, j)
 			}
 		}
 	}
-
-	// Assign component IDs
-	componentMap := make(map[storage.NodeID]int)
-	nextID := 0
-	result := make(map[storage.NodeID]int)
-
-	for _, node := range nodes {
-		root := find(node.ID)
-		if id, exists := componentMap[root]; exists {
-			result[node.ID] = id
-		} else {
-			componentMap[root] = nextID
-			result[node.ID] = nextID
-			nextID++
-		}
+	lowest := forest.Lowest()
+	components := make(map[storage.NodeID]int, len(index))
+	for id, i := range index {
+		components[id] = lowest[i]
 	}
-
-	return result
+	return renumberInNodeOrder(nodes, components)
 }

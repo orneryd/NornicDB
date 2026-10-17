@@ -74,6 +74,8 @@ const (
 
 	MessageCypherGraphProceduresPropertyReadType    MessageID = "cyphergraphprocedures.property_read_type"
 	MessageCypherGraphProceduresPropertyTypeUnknown MessageID = "cyphergraphprocedures.property_type_unknown"
+
+	MessageCypherGraphProceduresThresholdRequiresWeight MessageID = "cyphergraphprocedures.threshold_requires_weight"
 )
 
 // CypherGraphProceduresStreamNodesFailed identifies a wrapped projection node-stream failure.
@@ -421,6 +423,11 @@ func CypherGraphProceduresSeedPropertyNotFound(property, available string) Messa
 // CypherGraphProceduresLouvainSeedingConsecutive is GDS's message for Louvain's seedProperty with consecutiveIds.
 func CypherGraphProceduresLouvainSeedingConsecutive() Message {
 	return Message{ID: MessageCypherGraphProceduresLouvainSeedingConsecutive, Fallback: "Seeding and the `consecutiveIds` option cannot be used at the same time."}
+}
+
+// CypherGraphProceduresThresholdRequiresWeight is GDS's message for WCC's threshold without relationshipWeightProperty.
+func CypherGraphProceduresThresholdRequiresWeight() Message {
+	return Message{ID: MessageCypherGraphProceduresThresholdRequiresWeight, Fallback: "Specifying a threshold requires `relationshipWeightProperty` to be set."}
 }
 
 // CypherGraphProceduresSeedPropertyNotLong is GDS's message for a seedProperty not holding exclusively Integer values.

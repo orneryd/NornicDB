@@ -213,7 +213,7 @@ func TestFastRPAsGDS(t *testing.T) {
 	refused("w", "embeddingDimension: 4, relationshipTypes: ['Nope']", "Could not find the specified `relationshipTypes` of ['Nope']. Available relationship types are ['K'].")
 	refused("w", "embeddingDimension: 4, nodeLabels: 5", "The value of `nodeLabels` must be of type `List` but was `Long`.")
 	refused("w", "embeddingDimension: 4, nodeLabels: [5]", "The value of `nodeLabels` must be of type `List` but was `List`.")
-	refused("w", "embeddingDimension: 4, concurrency: 0", "Value for `concurrency` was `0`, but must be within the range [1, 2147483647].")
+	refused("w", "embeddingDimension: 4, concurrency: 0", "Valid values for Concurrency are int[1..], Value provided was `0`.")
 	refused("w", "embeddingDimension: 4, logProgress: 'x'", "The value of `logProgress` must be of type `Boolean` but was `String`.")
 	refused("w", "embeddingDimension: 4, sudo: 'x'", "The value of `sudo` must be of type `Boolean` but was `String`.")
 	refused("missing", "embeddingDimension: 4", "Graph with name `missing` does not exist on database `gds`. It might exist on another database.")

@@ -359,13 +359,7 @@ func gdsAggregationConfiguration(value interface{}) (map[string]interface{}, []s
 			inverse = names
 		}
 	}
-	concurrency, err := c.integerWithErrors("readConcurrency", 1, 1<<63-1, 4, false,
-		func() error {
-			return localizedError(localization.CypherGraphProceduresUnsupportedConcurrency(gdsJavaType(c.value("readConcurrency"))), nil)
-		},
-		func(number int64) error {
-			return localizedError(localization.CypherGraphProceduresConcurrencyBelowOne(strconv.FormatInt(number, 10)), nil)
-		})
+	concurrency, err := c.concurrency("readConcurrency")
 	if err != nil {
 		return nil, nil, nil, err
 	}

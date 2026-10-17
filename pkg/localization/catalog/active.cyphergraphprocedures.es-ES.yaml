@@ -205,6 +205,9 @@
 - id: cyphergraphprocedures.louvain_seeding_consecutive
   description: Mensaje de GDS (louvain seeding consecutive).
   other: 'La siembra y la opción `consecutiveIds` no se pueden usar al mismo tiempo.'
+- id: cyphergraphprocedures.threshold_requires_weight
+  description: Mensaje de GDS (threshold requires weight).
+  other: 'Indicar un umbral requiere establecer `relationshipWeightProperty`.'
 - id: cyphergraphprocedures.seed_property_not_long
   description: Mensaje de GDS (seed property not long).
   other: 'La propiedad semilla `{{.Property}}` no contiene exclusivamente valores enteros'

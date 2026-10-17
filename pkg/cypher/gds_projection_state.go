@@ -197,6 +197,40 @@ func (p *GraphProjection) matchesNodeLabels(id string, labels []string) bool {
 	return len(labels) == 0 || containsString(labels, "*") || anyString(p.NodeLabels[id], labels)
 }
 
+// validateSeedProperty refuses a seedProperty the selected labels don't all
+// project, or that isn't Integer, with GDS's community-seeding messages.
+// No seedProperty passes.
+func (p *GraphProjection) validateSeedProperty(labels []string, seedProperty string) error {
+	if seedProperty == "" {
+		return nil
+	}
+	selected, available := p.nodePropertyAvailability(labels)
+	if !containsString(selected, seedProperty) {
+		return localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
+	}
+	// Ask the shared typed reader to validate the requested type even
+	// when the selection is empty; translate its error into GDS's
+	// community-seeding message without a second schema/type reader.
+	if _, err := p.nodePropertyValue("", seedProperty, "Integer"); err != nil {
+		return localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
+	}
+	return nil
+}
+
+// seedValues is each of graph's nodes' seedProperty value, as exact Integer
+// values; math.MinInt64 is GDS's missing value.
+func (p *GraphProjection) seedValues(graph *gdsSubgraph, seedProperty string) ([]int64, error) {
+	seeds := make([]int64, len(graph.nodes))
+	for i, id := range graph.nodes {
+		value, err := p.nodePropertyValue(id, seedProperty, "Integer")
+		if err != nil {
+			return nil, err
+		}
+		seeds[i] = value.(int64)
+	}
+	return seeds, nil
+}
+
 // nodePropertyAvailability owns label-aware schema validation for algorithms.
 // A usable property must be projected for every selected label. GDS's errors
 // still list the union from the whole projection, including unselected labels.

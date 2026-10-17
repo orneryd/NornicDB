@@ -146,6 +146,10 @@
   other: "The Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. Node Similarity computes pair-wise similarities based on the Jaccard metric."
 - id: cypherproceduremetadata.gds_version
   other: "Returns GDS version"
+- id: cypherproceduremetadata.gds_wcc_stats
+  other: "Executes the algorithm and returns result statistics without writing the result to Neo4j."
+- id: cypherproceduremetadata.gds_wcc_stream
+  other: "The WCC algorithm finds sets of connected nodes in an undirected graph, where all nodes in the same set form a connected component."
 - id: cypherproceduremetadata.kp_decayinfo
   other: "Returns knowledge-layer scoring configuration"
 - id: cypherproceduremetadata.kp_deindexstatus

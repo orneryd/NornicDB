@@ -9,6 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/wcc"
 )
 
 // nodeSimilarityConfigKeys are the configuration keys gds.nodeSimilarity.stream
@@ -179,16 +180,8 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 	if config.relationshipTypes, err = c.names("relationshipTypes"); err != nil {
 		return config, err
 	}
-	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false); err != nil {
+	if _, err := c.algorithmBase(); err != nil {
 		return config, err
-	}
-	if _, err := c.jobID(); err != nil {
-		return config, err
-	}
-	for _, key := range []string{"logProgress", "sudo"} {
-		if _, _, err := c.boolean(key); err != nil {
-			return config, err
-		}
 	}
 	// useComponents compares nodes within one component only: by a
 	// projected property's values, or (true) by connected components, as
@@ -418,26 +411,14 @@ func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config 
 			component[i] = value.(int64)
 		}
 	case config.connectedOnly:
-		parent := make([]int, size)
-		for i := range parent {
-			parent[i] = i
-		}
-		find := func(i int) int {
-			for parent[i] != i {
-				parent[i] = parent[parent[i]]
-				i = parent[i]
-			}
-			return i
-		}
+		forest := wcc.New(size)
 		for source, edges := range graph.outgoing {
 			for _, edge := range edges {
-				if a, b := find(source), find(edge.target); a != b {
-					parent[a] = b
-				}
+				forest.Union(source, edge.target)
 			}
 		}
-		for i := range component {
-			component[i] = int64(find(i))
+		for i, lowest := range forest.Lowest() {
+			component[i] = int64(lowest)
 		}
 	default:
 		return nil, nil
