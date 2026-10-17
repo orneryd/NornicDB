@@ -33,13 +33,13 @@ import (
 // publishingPaths maps each function that hands the stage a publication to
 // the test that runs it under a held older publication.
 var publishingPaths = map[string]string{
-	"CreateNode":  "TestPostCommitPublicationOrder (create)",
-	"UpdateNode":  "TestPostCommitPublicationOrder (update, restore, label add and remove)",
-	"DeleteNode":  "TestPostCommitPublicationOrder (delete)",
-	"CreateEdge":  "TestPostCommitEdgePublicationOrder (create)",
-	"UpdateEdge":  "TestPostCommitEdgePublicationOrder (update, restore, type change)",
-	"DeleteEdge":  "TestPostCommitEdgePublicationOrder (delete)",
-	"publication": "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx)",
+	"CreateNode":            "TestPostCommitPublicationOrder (create)",
+	"UpdateNode":            "TestPostCommitPublicationOrder (update, restore, label add and remove)",
+	"DeleteNode":            "TestPostCommitPublicationOrder (delete)",
+	"CreateEdge":            "TestPostCommitEdgePublicationOrder (create)",
+	"UpdateEdge":            "TestPostCommitEdgePublicationOrder (update, restore, type change)",
+	"DeleteEdge":            "TestPostCommitEdgePublicationOrder (delete)",
+	"publication":           "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx)",
 	"commitPublication.run": "every publication: the commit's pending-embedding candidates (commutative, TestPendingCandidates*), then the writer's publish",
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
 	"EnqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
