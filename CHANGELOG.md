@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional local code-intelligence Git hooks: block staged reuse/refactor findings, refresh the
+  existing code graph after main pulls, and align Graphify ingestion with the reference action.
+  Endpoints and credentials use environment configuration with setup guidance.
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed
