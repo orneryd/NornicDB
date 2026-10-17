@@ -7,6 +7,9 @@
   "local_adaptations": [
     "graphify_ingest.py lives as graphify_local.py; local repo/database/main and enriched export preserved",
     "URLs and credentials require explicit environment configuration; no default password",
-    "pr_duplicates.py imports graphify_local; matching logic unchanged; local candidate selection includes small code edits and excludes unchanged bodies"
+    "pr_duplicates.py imports graphify_local; matching logic unchanged; local candidate selection includes small code edits and excludes unchanged bodies",
+    "global installation derives per-repository databases with explicit local overrides",
+    "local duplicate checks exhaust ranked_then_id continuation, require collection exhaustion and discard abandoned cursors",
+    "incomplete HTTP response reads use the existing bounded transient retry path"
   ]
 }

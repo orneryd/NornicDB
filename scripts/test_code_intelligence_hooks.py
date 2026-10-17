@@ -33,14 +33,15 @@ class HookTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "repo"
         self.root.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("NORNICDB_", "CODE_INTEL_", "GIT_"))}
+        self.env["GIT_CONFIG_GLOBAL"] = str(Path(self.temp.name) / "global.gitconfig")
         self.env.update(GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.invalid",
                         GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.invalid")
         self.git("init", "-b", "main")
         (self.root / "scripts").mkdir()
         (self.root / ".githooks").mkdir()
-        for name in ["graphify_local.py", "pr_duplicates.py", "code_intelligence.py", "code-intelligence-hook.sh", "install-git-hooks.sh"]:
+        for name in ["graphify_local.py", "pr_duplicates.py", "code_intelligence.py", "code-intelligence-hook.sh", "install-git-hooks.sh", "install_code_intelligence_global.py", "code-intelligence-global-hook.sh", "requirements-code-intelligence.txt"]:
             shutil.copy2(SCRIPTS / name, self.root / "scripts" / name)
-        for name in ["pre-commit", "post-merge", "post-rewrite"]:
+        for name in ["pre-commit", "post-merge", "post-rewrite", "reference-transaction"]:
             shutil.copy2(SCRIPTS.parent / ".githooks" / name, self.root / ".githooks" / name)
         (self.root / "candidate.py").write_text("# baseline\n")
         self.git("add", ".")
@@ -52,6 +53,9 @@ class HookTests(unittest.TestCase):
         self.auth = []
         self.paths = []
         self.search_databases = []
+        self.truncate_commit_once = False
+        self.search_pages = None
+        self.search_requests = []
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -60,12 +64,20 @@ class HookTests(unittest.TestCase):
                 fixture.auth.append(self.headers.get("Authorization"))
                 data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if self.path == "/nornicdb/search":
-                    fixture.searches.append(data["query"])
+                    fixture.searches.append(data.get("query", ""))
                     fixture.search_databases.append(data["database"])
+                    fixture.search_requests.append(data)
                     payload = {"results": [{"node": {"properties": {
                         "id": f"existing-{i}", "label": "existing()", "body": BODY,
                         "source_file": f"existing{i}.py", "source_location": "L1",
                         "symbol_kind": "function", "repo": "test/repo"}}} for i in range(fixture.hits)]}
+                    payload.update(has_more=False, collection_exhausted=True,
+                                   completion="eligible_population_exhausted")
+                    if data.get("discard"):
+                        payload = {"results": [], "has_more": False, "collection_exhausted": True}
+                    elif fixture.search_pages is not None:
+                        index = int(data.get("qid", "page-0").split("-")[-1])
+                        payload = fixture.search_pages[index]
                 else:
                     statement = data["statements"][0]
                     query = statement["statement"]
@@ -78,9 +90,13 @@ class HookTests(unittest.TestCase):
                         fixture.stored_commit = statement["parameters"]["commit"]
                     payload = {"results": [{"columns": columns, "data": [{"row": r} for r in rows]}], "errors": []}
                 raw = json.dumps(payload).encode()
-                self.send_response(200)
+                self.send_response(payload.get("_http_status", 200) if isinstance(payload, dict) else 200)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
+                truncate = fixture.truncate_commit_once and self.path.endswith("/tx/commit") and "MERGE (r:CodeRepository" in data["statements"][0]["statement"]
+                if truncate:
+                    fixture.truncate_commit_once = False
+                    self.close_connection = True
+                self.send_header("Content-Length", str(len(raw) + (10 if truncate else 0)))
                 self.end_headers()
                 self.wfile.write(raw)
 
@@ -162,6 +178,49 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertIn("Commit blocked", result.stderr)
         self.assertTrue(self.searches)
 
+    def test_duplicate_on_later_cursor_page_blocks_commit(self):
+        self.search_pages = [
+            {"results": [], "has_more": True, "qid": "page-1"},
+            {"results": [{"node": {"properties": {"id": "later-copy", "body": BODY,
+              "source_file": "lib/existing.py", "symbol_kind": "function", "repo": "test/repo"}}}],
+             "has_more": False, "collection_exhausted": True, "completion": "eligible_population_exhausted"},
+        ]
+        self.stage()
+        result = self.git("commit", "-m", "later-page duplicate", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Commit blocked", result.stderr)
+        self.assertEqual(self.search_requests[0]["mode"], "ranked_then_id")
+        self.assertEqual(self.search_requests[1]["qid"], "page-1")
+        self.assertEqual(self.search_requests[1]["database"], "nornicdbcode")
+        self.assertNotIn("/db/nornic/tx/commit", self.paths)
+
+    def test_incomplete_or_expired_cursor_never_passes_commit(self):
+        cases = [
+            [{"results": [], "has_more": False, "collection_exhausted": False, "completion": "candidate_pool_exhausted"}],
+            [{"results": [], "has_more": True, "qid": "page-1"},
+             {"_http_status": 410, "request_status": "continuation_gone", "results": []}],
+            [{"results": [], "has_more": True, "qid": "page-1"},
+             {"results": [], "has_more": True, "qid": "page-1"}],
+        ]
+        self.stage()
+        for pages in cases:
+            with self.subTest(pages=pages):
+                self.search_pages = pages
+                result = self.git("commit", "-m", "incomplete cursor", check=False)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
+                if pages[0].get("has_more"):
+                    self.assertTrue(self.search_requests[-1].get("discard"))
+
+    def test_ingest_retries_a_truncated_commit_response(self):
+        self.truncate_commit_once = True
+        result = subprocess.run([sys.executable, str(self.root / "scripts/code_intelligence.py"),
+                                 "ingest", "--repo-root", str(self.root), "--force"],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.truncate_commit_once)
+        self.assertEqual(self.stored_commit, self.baseline)
+
     def test_no_match_allows_commit(self):
         self.stage()
         self.git("commit", "-m", "unique addition")
@@ -221,6 +280,45 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
                                 capture_output=True, text=True, env=self.env, cwd=self.root)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_global_install_checks_repo_database_chains_native_and_refreshes_main_reset(self):
+        for hook in ["pre-commit", "post-merge", "post-rewrite", "reference-transaction"]:
+            (self.root / ".git/hooks" / hook).unlink()
+        native = self.root / ".git/hooks/pre-commit"
+        native.write_text("#!/bin/sh\necho native-hook-ran\n")
+        native.chmod(0o755)
+        destination = Path(self.temp.name) / "standalone"
+        result = subprocess.run([sys.executable, str(self.root / "scripts/install_code_intelligence_global.py"),
+                                 "--python", sys.executable, "--destination", str(destination)],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.stage()
+        self.hits = 1
+        result = self.git("commit", "-m", "global duplicate", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("native-hook-ran", result.stdout + result.stderr)
+        self.assertEqual(set(self.search_databases), {"repo"})
+        self.hits = 0
+        self.git("commit", "-m", "global main update")
+        updated = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(self.stored_commit, updated)
+        self.assertIn("/db/repo/tx/commit", self.paths)
+        self.git("reset", "--hard", self.baseline)
+        self.assertEqual(self.stored_commit, self.baseline)
+        self.assertEqual(self.git("config", "--global", "core.hooksPath").stdout.strip(), str(destination / "hooks"))
+        self.git("checkout", "-b", "feature")
+        self.git("update-ref", "refs/heads/main", updated)
+        self.assertEqual(self.stored_commit, updated)
+        self.assertEqual(self.git("branch", "--show-current").stdout.strip(), "feature")
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
+
+    def test_global_repo_database_can_preserve_existing_nornicdbcode(self):
+        self.git("config", "codeIntelligence.databaseFromRepo", "true")
+        self.git("config", "codeIntelligence.database", "nornicdbcode")
+        self.stage()
+        self.git("commit", "-m", "keep existing database")
+        self.assertEqual(set(self.search_databases), {"nornicdbcode"})
+        self.assertNotIn("/db/repo/tx/commit", self.paths)
 
 
 if __name__ == "__main__":
