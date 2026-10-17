@@ -1592,7 +1592,9 @@ func (s *Service) resetANNForBuild() {
 	// it (re)loads: the build's own admissions and the warmup's backfill.
 	s.clusterStateMu.Lock()
 	s.mu.Lock()
-	s.retireClusterGeneration(nil, true)
+	if s.clusterIndex != nil {
+		s.retireClusterGeneration(s.clusterIndex.Empty())
+	}
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
 	s.publishClusterServing()
@@ -1712,7 +1714,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	embConfig := gpu.DefaultEmbeddingIndexConfig(dimensions)
 
 	// The replaced index's generation retires with it.
-	s.retireClusterGeneration(gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig), false)
+	s.retireClusterGeneration(gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig))
 	s.clusterEnabled = true
 	s.clusterUsesGPU = gpuManager != nil && gpuManager.IsEnabled()
 
@@ -2781,7 +2783,7 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		s.gpuEmbeddingIndex = nil
 	}
 	if s.clusterIndex != nil {
-		s.retireClusterGeneration(s.clusterIndex.EmptyWithDimensions(dimensions), true)
+		s.retireClusterGeneration(s.clusterIndex.EmptyWithDimensions(dimensions))
 	}
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
@@ -4782,7 +4784,8 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		}
 	}
 
-	pipeline, pipelineErr := s.getOrCreateVectorPipeline(ctx)
+	ctx, pipeline, releaseCluster, pipelineErr := s.vectorPipelineForQuery(ctx)
+	defer releaseCluster()
 	usesLexicalEntries := false
 	if pipeline != nil {
 		_, usesLexicalEntries = pipeline.candidateGen.(candidateGeneratorWithLexicalEntries)
@@ -4959,7 +4962,8 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 	}
 
 	// Use unified vector search pipeline
-	pipeline, err := s.getOrCreateVectorPipeline(ctx)
+	ctx, pipeline, releaseCluster, err := s.vectorPipelineForQuery(ctx)
+	defer releaseCluster()
 	if err != nil {
 		return nil, localizedError(localization.SearchVectorPipelineFailed(err), err)
 	}
@@ -6095,9 +6099,9 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seed
 		}, nil
 	}
 	s.clusterStateMu.RLock()
-	clustered, _ := s.clusterServingLocked()
+	clustered := s.clusterGen != nil
 	s.clusterStateMu.RUnlock()
-	if clustered != nil && clustered.IsClustered() {
+	if clustered {
 		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
 	}
 	// Large dataset: use HNSW (lazy-initialize if needed)
@@ -6116,11 +6120,10 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 	// If clustering is enabled and clusters are built, use centroid routing on CPU
 	// (GPU subset scoring when GPU is enabled but full brute is out-of-range, else IVF-HNSW when available,
 	// else CPU k-means candidate generation).
-	// The generators read the published cluster generation per query under
-	// clusterStateMu (clusterServingLocked): its routing index and the
-	// clusters a query searches (NORNICDB_KMEANS_NPROBE, by default the IVF
-	// rule over its clusters). The pipeline holds no copy of either, so a
-	// publication or retirement is seen by the next query.
+	// The generators hold no cluster generation: each query serves from the
+	// one it took at its start (clusterQueryView): its routing, probe count
+	// (NORNICDB_KMEANS_NPROBE, by default the IVF rule over its clusters),
+	// graphs and population.
 	serving := s.clusterStateMu.RLocker()
 	// When GPU is enabled but full brute-force is not selected (e.g. N too large),
 	// still use k-means centroids to route and score only the cluster subset.
@@ -6130,7 +6133,7 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 			name: "GPU k-means (cluster routing)",
 			candidateGen: NewGPUKMeansCandidateGen(nil, 0).
 				SetClusterSelector(s.selectHybridClustersLocked).
-				SetServing(serving, s.clusterServingLocked),
+				SetServing(serving, s.clusterQueryView),
 			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
@@ -6140,12 +6143,11 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 		hasClusterHNSW := s.clusterGen != nil && len(s.clusterGen.graphs) > 0
 		s.clusterStateMu.RUnlock()
 		if hasClusterHNSW {
-			// The generator holds clusterStateMu while it routes and reads
-			// graphs, so the lookup and the selector do not lock; both read the
-			// generation current at query time.
-			gen := NewIVFHNSWCandidateGen(nil, s.clusterGraphLocked, 0).
+			// The generator routes and takes graphs from the query's generation;
+			// the selector runs in its routing section and does not lock.
+			gen := NewIVFHNSWCandidateGen(nil, nil, 0).
 				SetClusterSelector(s.selectHybridClustersLocked).
-				SetServing(serving, s.clusterServingLocked)
+				SetServing(serving, s.clusterQueryView)
 			return &vectorStrategyDescriptor{
 				name:         "IVF-HNSW (per-cluster HNSW)",
 				candidateGen: gen,
@@ -6156,7 +6158,7 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 
 	gen := NewKMeansCandidateGen(nil, s.vectorIndex, 0).
 		SetClusterSelector(s.selectHybridClustersLocked).
-		SetServing(serving, s.clusterServingLocked)
+		SetServing(serving, s.clusterQueryView)
 	return &vectorStrategyDescriptor{
 		name:         "CPU k-means (cluster routing)",
 		candidateGen: gen,
@@ -7250,7 +7252,8 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
 	totalStart := time.Now()
 	searchStart := time.Now()
-	pipeline, pipelineErr := s.getOrCreateVectorPipeline(ctx)
+	ctx, pipeline, releaseCluster, pipelineErr := s.vectorPipelineForQuery(ctx)
+	defer releaseCluster()
 	if pipelineErr != nil {
 		return nil, pipelineErr
 	}
