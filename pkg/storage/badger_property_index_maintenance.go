@@ -28,6 +28,8 @@ package storage
 
 import (
 	"log/slog"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // maintainPropertyIndexesOnNodeCreated inserts the freshly-created node into
@@ -78,18 +80,33 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 	b.maintainCompositeIndexesOnNodeUpdated(node, oldNode, sm)
 }
 
-// maintainCompositeIndexesOnNodeUpdated removes the node's stale entries
-// (from oldNode, when available) and inserts its current entries.
+// maintainCompositeIndexesOnNodeUpdated moves the node's entries from
+// oldNode to its current state in every index of an old or new label whose
+// entries change (refileFromCommitted). Without oldNode it only inserts the
+// written node's entries.
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node, sm *SchemaManager) {
 	if oldNode != nil {
-		for _, label := range oldNode.Labels {
-			for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
+		seen := make(map[*CompositeIndex]bool)
+		for _, labels := range [][]string{oldNode.Labels, node.Labels} {
+			for _, label := range labels {
+				for _, idx := range sm.GetCompositeIndexesForLabel(label) {
+					if idx == nil || seen[idx] {
+						continue
+					}
+					seen[idx] = true
+					wasIn, isIn := hasLabel(oldNode.Labels, idx.Label), hasLabel(node.Labels, idx.Label)
+					if wasIn && isIn && idx.filesSameEntries(oldNode.Properties, node.Properties) {
+						continue
+					}
+					var old map[string]interface{}
+					if wasIn {
+						old = oldNode.Properties
+					}
+					b.refileFromCommitted(idx, node.ID, old)
 				}
-				idx.RemoveNode(oldNode.ID, oldNode.Properties)
 			}
 		}
+		return
 	}
 	for _, label := range node.Labels {
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
@@ -123,16 +140,69 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeI
 }
 
 // maintainCompositeIndexesOnNodeDeleted removes the node from every equality
-// index its pre-delete snapshot could have been filed under.
+// index its pre-delete snapshot could have been filed under, keeping what a
+// later recreation of the ID holds (refileFromCommitted).
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Node, sm *SchemaManager) {
 	for _, label := range old.Labels {
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 			if idx == nil {
 				continue
 			}
-			idx.RemoveNode(id, old.Properties)
+			b.refileFromCommitted(idx, id, old.Properties)
 		}
 	}
+}
+
+// refileFromCommitted replaces the entries old filed for id in idx with
+// those of the node's latest committed state. Index publication follows the
+// commit, so a later write of the node (an update, or a create of a deleted
+// ID) can publish before an earlier one; filing from the committed state,
+// read under the index lock that publication also takes, converges on it
+// in any order instead of removing the newer state's entries. If the read
+// fails, old's entries are kept: a stale entry is re-checked by every read,
+// a missing one hides the node.
+func (b *BadgerEngine) refileFromCommitted(idx *CompositeIndex, id NodeID, old map[string]interface{}) {
+	idx.RefileNode(id, old, func() (map[string]interface{}, bool) {
+		current, err := b.committedNodeProperties(id, idx.Properties)
+		if err != nil {
+			b.log.Warn("composite index refile read failed",
+				slog.String("component", "storage"),
+				slog.String("index", idx.Name),
+				slog.String("error", err.Error()))
+			return old, old != nil
+		}
+		if current == nil || !hasLabel(current.Labels, idx.Label) {
+			return nil, false
+		}
+		return current.Properties, true
+	})
+}
+
+// committedNodeProperties reads the node's latest committed body, decoding
+// only the given properties; nil when the node does not exist. It bypasses
+// the node caches, which publication updates after the commit.
+func (b *BadgerEngine) committedNodeProperties(id NodeID, properties []string) (*Node, error) {
+	include := make(map[string]struct{}, len(properties))
+	for _, property := range properties {
+		include[property] = struct{}{}
+	}
+	namespace, _, _ := ParseDatabasePrefix(string(id))
+	var node *Node
+	err := b.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(id))
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			var decodeErr error
+			node, decodeErr = b.decodeNodeProjected(namespace, val, include)
+			return decodeErr
+		})
+	})
+	return node, err
 }
 
 // schemaForNodeID returns the SchemaManager for the namespace extracted

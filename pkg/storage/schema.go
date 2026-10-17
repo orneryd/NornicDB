@@ -1037,15 +1037,60 @@ func compositeLookupKeyValues(values []interface{}) ([]interface{}, bool) {
 func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interface{}) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.indexNodeLocked(nodeID, properties)
+	return nil
+}
 
+// RefileNode replaces the entries old filed for nodeID with those of the
+// node's current state, which current reads inside the index's critical
+// section (false when the node is gone or out of the index's label). A
+// write's index publication runs after its commit, so a later write of the
+// same node may publish first; reading the current state under the lock its
+// publication also takes keeps an older write from removing entries the
+// newer state holds, in either order.
+func (idx *CompositeIndex) RefileNode(nodeID NodeID, old map[string]interface{}, current func() (map[string]interface{}, bool)) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if old != nil {
+		idx.removeNodeLocked(nodeID, old)
+	}
+	if properties, ok := current(); ok {
+		idx.indexNodeLocked(nodeID, properties)
+	}
+}
+
+// filesSameEntries reports whether a and b give a node the same entries in
+// this index.
+func (idx *CompositeIndex) filesSameEntries(a, b map[string]interface{}) bool {
+	for _, property := range idx.Properties {
+		av, aok := a[property]
+		bv, bok := b[property]
+		if aok != bok {
+			return false
+		}
+		if !aok {
+			continue
+		}
+		ak, akeyed := indexValueKey(av)
+		bk, bkeyed := indexValueKey(bv)
+		if akeyed != bkeyed || (akeyed && ak != bk) {
+			return false
+		}
+	}
+	return true
+}
+
+// indexNodeLocked files nodeID under the entries of properties. The caller
+// holds idx.mu for writing.
+func (idx *CompositeIndex) indexNodeLocked(nodeID NodeID, properties map[string]interface{}) {
 	if len(idx.Properties) == 1 {
 		value, exists := properties[idx.Properties[0]]
 		if !exists {
-			return nil
+			return
 		}
 		valueKey, ok := indexValueKey(value)
 		if !ok {
-			return nil // null / byte array / non-comparable: no key to file
+			return // null / byte array / non-comparable: no key to file
 		}
 		if idx.values == nil {
 			idx.values = make(map[interface{}][]NodeID)
@@ -1054,7 +1099,7 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 			idx.keysDirty = true
 		}
 		idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
-		return nil
+		return
 	}
 
 	values := compositeIndexValues(idx, properties)
@@ -1070,8 +1115,6 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 		prefixKey := NewCompositeKey(values[:i]...)
 		idx.prefixIndex[prefixKey.Hash] = appendUnique(idx.prefixIndex[prefixKey.Hash], nodeID)
 	}
-
-	return nil
 }
 
 // RemoveNode removes a node from the composite index.
@@ -1079,7 +1122,12 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]interface{}) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.removeNodeLocked(nodeID, properties)
+}
 
+// removeNodeLocked removes the entries properties filed for nodeID. The
+// caller holds idx.mu for writing.
+func (idx *CompositeIndex) removeNodeLocked(nodeID NodeID, properties map[string]interface{}) {
 	if len(idx.Properties) == 1 {
 		value, exists := properties[idx.Properties[0]]
 		if !exists {

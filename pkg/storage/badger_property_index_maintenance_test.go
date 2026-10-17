@@ -7,10 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Node writes keep an index current through the public write paths: the
+// create files the value, the update moves it, the delete removes it.
 func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	engine := newTestEngine(t)
-	ns := "tenant"
-	sm := engine.GetSchemaForNamespace(ns)
+	sm := engine.GetSchemaForNamespace("tenant")
 	require.NoError(t, sm.AddPropertyIndex("idx_person_name", "Person", []string{"name"}))
 
 	node := &Node{
@@ -18,21 +19,19 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 		Labels:     []string{"Person"},
 		Properties: map[string]any{"name": "Alice", "age": int64(41)},
 	}
-
-	engine.maintainPropertyIndexesOnNodeCreated(node)
+	_, err := engine.CreateNode(node)
+	require.NoError(t, err)
 	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alice"))
 
-	oldNode := &Node{
-		ID:         node.ID,
-		Labels:     []string{"Person"},
-		Properties: map[string]any{"name": "Alice"},
-	}
-	node.Properties["name"] = "Alicia"
-	engine.maintainPropertyIndexesOnNodeUpdated(node, oldNode)
+	require.NoError(t, engine.UpdateNode(&Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia", "age": int64(41)}}))
 	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alice"))
 	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 
-	engine.maintainPropertyIndexesOnNodeDeletedWithNode(node.ID, &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}})
+	// An update that leaves the indexed value alone keeps its entry.
+	require.NoError(t, engine.UpdateNode(&Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia", "age": int64(42)}}))
+	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alicia"))
+
+	require.NoError(t, engine.DeleteNode(node.ID))
 	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 }
 
