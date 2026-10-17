@@ -138,10 +138,11 @@ func (db *DB) SetEmbeddingPaused(_ context.Context, paused bool) (cypher.Embeddi
 			return db.EmbeddingStatus(), err
 		}
 		db.embeddingPause.set(paused)
-		db.mu.RLock()
-		queue := db.embedQueue
-		db.mu.RUnlock()
-		if queue != nil {
+		// Not db.mu: this runs inside DB.Cypher's read lock (see embedQueueMu).
+		// A queue being created reads the pause in the same embedQueueMu
+		// section that publishes it, so it either starts in this state or
+		// is the queue read here.
+		if queue := db.GetEmbedQueue(); queue != nil {
 			queue.SetPaused(paused)
 		}
 		if paused {
@@ -161,7 +162,8 @@ func (db *DB) EmbeddingStatus() cypher.EmbeddingStatus {
 
 // newEmbedQueue creates the embed queue in the current pause state, so no
 // queue created later (a provider loaded or reloaded) starts unpaused. Call
-// it with db.mu held, as SetEmbeddingPaused reads the queue under it.
+// it with db.embedQueueMu held for writing and publish the queue in the same
+// section, as SetEmbeddingPaused reads the queue under embedQueueMu.
 func (db *DB) newEmbedQueue(embedder embed.Embedder, config *EmbedWorkerConfig) *EmbedQueue {
 	if config == nil {
 		config = DefaultEmbedWorkerConfig() // as NewEmbedWorker defaults it
