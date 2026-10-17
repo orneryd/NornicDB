@@ -262,8 +262,8 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 	if _, _, projection := rowMapProjectionSplit(expr); projection {
 		return rowTextValue(expr)
 	}
-	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
-		return rowTextValue(expr)
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+		return c.compileMap(expr, inner)
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
@@ -468,6 +468,36 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		return c.compileReduce(expr, form)
 	}
 	return rowTextValue(expr)
+}
+
+// compileMap compiles a map literal as evaluateRowValueText evaluates it:
+// each pair's key normalized and its value compiled once, instead of the
+// literal split and its keys read again on every row. A pair without a key
+// is read from the text, which leaves it unresolved.
+func (c *rowValueCompiler) compileMap(expr, inner string) (rowValueNode, rowValueInfo) {
+	node := &rowMapNode{}
+	if inner == "" {
+		return bound(expr, node, impureRowValue())
+	}
+	pairs := splitTopLevelComma(inner)
+	node.keys = make([]string, len(pairs))
+	node.values = make([]rowValueNode, len(pairs))
+	infos := make([]rowValueInfo, len(pairs))
+	for i, pair := range pairs {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			return rowTextValue(expr)
+		}
+		node.keys[i] = normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		node.values[i], infos[i] = c.part(strings.TrimSpace(pair[separator+1:]))
+		if !containsString(node.order, node.keys[i]) {
+			node.order = append(node.order, node.keys[i])
+		}
+	}
+	// The map is new on every evaluation (the caller's to change, its key
+	// order recorded): it is never memoized itself, only its parts.
+	c.compose(impureRowValue(), node.values, infos)
+	return bound(expr, node, impureRowValue())
 }
 
 // compileLoopBody compiles a per-element part of a list evaluation over
@@ -730,6 +760,37 @@ func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interf
 		return nil, false, nil
 	}
 	return value, true, nil
+}
+
+// rowMapNode is a map literal: its pairs' keys and compiled values, and
+// its keys in first-occurrence order, recorded for every map it builds as
+// evaluateRowValueText records them (the recorded orders are only read, so
+// one slice serves every map).
+type rowMapNode struct {
+	keys   []string
+	values []rowValueNode
+	order  []string
+}
+
+func (n *rowMapNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+	result := make(map[string]interface{}, len(n.order))
+	if len(n.values) == 0 {
+		return result, true, nil
+	}
+	for i, part := range n.values {
+		value, ok, err := part.eval(e, values, frames)
+		if err != nil {
+			return nil, false, err
+		}
+		if !ok {
+			return nil, false, nil
+		}
+		result[n.keys[i]] = value
+	}
+	if failure, ok := values["\x00mapKeyOrders"].(*expressionFailure); ok {
+		failure.recordMapKeyOrder(result, n.order)
+	}
+	return result, true, nil
 }
 
 type rowListNode struct{ items []rowValueNode }

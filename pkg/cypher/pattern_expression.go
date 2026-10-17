@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -404,15 +405,21 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		return matched, true
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
-	// expression is unresolved.
+	// expression is unresolved. The map key order slot goes into the copy
+	// made above, or into a copy of the caller's row; a row that already
+	// holds this slot needs neither.
 	if shape.brace {
 		if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
-			scope := make(pipelineRow, len(values)+1)
-			for name, value := range values {
-				scope[name] = value
+			if current, _ := values["\x00mapKeyOrders"].(*expressionFailure); current != failure {
+				if extended == nil {
+					extended = make(pipelineRow, len(values)+1)
+					for name, value := range values {
+						extended[name] = value
+					}
+					values = extended
+				}
+				values["\x00mapKeyOrders"] = failure
 			}
-			scope["\x00mapKeyOrders"] = failure
-			values = scope
 		}
 	}
 	value, resolved, err := e.evaluateRowValue(expr, values)
@@ -442,6 +449,98 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	}
 
 	return value, resolved
+}
+
+// rowEvaluationScope evaluates expressions on one row after another, as an
+// aggregation evaluates each row's grouping keys and aggregate arguments.
+// evaluateRowExpressionWithContext copies the row for every expression to
+// add the statement's value bindings and parameters, and for a map literal
+// the map key order slot. The scope adds them once per row instead, into
+// maps it reuses from row to row, and evaluates there the expressions that
+// read nothing but the row through the row evaluator: their scope is never
+// kept past the evaluation. Any other expression (a pattern, subquery,
+// identity or comprehension form) is evaluated on the row itself, as
+// before.
+type rowEvaluationScope struct {
+	bindings, parameters map[string]interface{}
+	failure              *expressionFailure
+	row                  pipelineRow
+	plain, keyed         pipelineRow
+	plainBuilt           bool
+	keyedBuilt           bool
+}
+
+// rowEvaluationScopesDisabled makes every scope evaluate on the row itself.
+// Tests use it to compare the two.
+var rowEvaluationScopesDisabled atomic.Bool
+
+func newRowEvaluationScope(ctx context.Context) *rowEvaluationScope {
+	scope := &rowEvaluationScope{bindings: valueBindingsFromContext(ctx), parameters: parameterRowValues(ctx)}
+	scope.failure, _ = ctx.Value(expressionFailureKey{}).(*expressionFailure)
+	return scope
+}
+
+// reset makes row the scope's row.
+func (scope *rowEvaluationScope) reset(row pipelineRow) {
+	scope.row = row
+	scope.plainBuilt, scope.keyedBuilt = false, false
+}
+
+func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string) (interface{}, bool) {
+	return e.evaluateRowExpressionWithContext(ctx, expr, scope.valuesFor(expr))
+}
+
+// valuesFor is the map expr is evaluated on: the row with what
+// evaluateRowExpressionWithContext would add to it for expr, or the row.
+func (scope *rowEvaluationScope) valuesFor(expr string) pipelineRow {
+	if rowEvaluationScopesDisabled.Load() {
+		return scope.row
+	}
+	binds := len(scope.bindings) > 0 || len(scope.parameters) > 0
+	if !binds && scope.failure == nil {
+		return scope.row
+	}
+	shape := rowContextShapeOf(expr)
+	if shape.pattern || shape.isSubquery || shape.identity || shape.comprehension || shape.exists || mayContainSubqueryExpression(expr) {
+		return scope.row
+	}
+	if shape.brace && scope.failure != nil {
+		if !scope.keyedBuilt {
+			scope.keyed = scope.fill(scope.keyed)
+			scope.keyed["\x00mapKeyOrders"] = scope.failure
+			scope.keyedBuilt = true
+		}
+		return scope.keyed
+	}
+	if !binds {
+		return scope.row
+	}
+	if !scope.plainBuilt {
+		scope.plain = scope.fill(scope.plain)
+		scope.plainBuilt = true
+	}
+	return scope.plain
+}
+
+// fill refills values with the row, then the value bindings and parameters
+// the row doesn't bind, as evaluateRowExpressionWithContext binds them.
+func (scope *rowEvaluationScope) fill(values pipelineRow) pipelineRow {
+	if values == nil {
+		values = make(pipelineRow, len(scope.row)+len(scope.bindings)+len(scope.parameters)+1)
+	} else {
+		clear(values)
+	}
+	for name, value := range scope.row {
+		values[name] = value
+	}
+	for _, names := range []map[string]interface{}{scope.bindings, scope.parameters} {
+		for name, value := range names {
+			if _, exists := scope.row[name]; !exists {
+				values[name] = value
+			}
+		}
+	}
+	return values
 }
 
 // evaluateRowEntityIdentity resolves id(entity) and elementId(entity) at the
