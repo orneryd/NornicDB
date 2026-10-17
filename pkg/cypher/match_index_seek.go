@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1202,6 +1203,75 @@ func whereLabelDisjunctionConjunct(variable string, conjuncts []string) []string
 	return nil
 }
 
+// seekPatternLabels returns nodePattern with the labels its WHERE requires
+// (whereRequiredLabels) added to the pattern's own. Every node the MATCH
+// returns carries all of them, so a property index on any of them lists every
+// match, and a seek may read the index of whichever has one: MATCH (n:A
+// {id: $id}) WHERE n:B seeks B's index on id when A has none. The candidates
+// are then checked for all of the labels. A label the statement does not
+// require (n:A OR n:B, NOT n:B) is never added: the node may lack it.
+func seekPatternLabels(nodePattern nodePatternInfo, whereClause string) nodePatternInfo {
+	required := whereRequiredLabels(nodePattern.variable, whereClause)
+	if len(required) == 0 {
+		return nodePattern
+	}
+	labels := append([]string(nil), nodePattern.labels...)
+	for _, label := range required {
+		if !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	nodePattern.labels = labels
+	return nodePattern
+}
+
+// whereRequiredLabels returns the labels a WHERE requires variable to carry:
+// those of each top-level AND conjunct that is a label test v:A, v:A:B or
+// v:A&B, with labels plain or backtick-quoted.
+func whereRequiredLabels(variable, whereClause string) []string {
+	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	if clause == "" || !strings.Contains(clause, ":") {
+		return nil
+	}
+	want, ok := isOneSymbolicName(variable)
+	if !ok {
+		return nil
+	}
+	var labels []string
+	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
+		term := unwrapOuterParens(strings.TrimSpace(conjunct))
+		written, end, ok := scanSymbolicName(term, 0)
+		if !ok || symbolicNameValue(written) != want {
+			continue
+		}
+		names := strings.TrimSpace(term[end:])
+		if !strings.HasPrefix(names, ":") {
+			continue
+		}
+		names = strings.TrimSpace(names[1:])
+		var conjunctLabels []string
+		for {
+			written, end, ok := scanSymbolicName(names, 0)
+			if !ok {
+				conjunctLabels = nil
+				break
+			}
+			conjunctLabels = append(conjunctLabels, symbolicNameValue(written))
+			names = strings.TrimSpace(names[end:])
+			if names == "" {
+				break
+			}
+			if names[0] != ':' && names[0] != '&' {
+				conjunctLabels = nil
+				break
+			}
+			names = strings.TrimSpace(names[1:])
+		}
+		labels = append(labels, conjunctLabels...)
+	}
+	return labels
+}
+
 // whereLabelDisjunction parses a WHERE term that requires variable to carry
 // one of a set of labels: v:A, v:A OR v:B …, or the label expression v:A|B,
 // with labels plain or backtick-quoted. A conjunction of labels (v:A:B) or any
@@ -2074,6 +2144,7 @@ func mirroredComparison(operator string) string {
 // (#820).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
 	params := getParamsFromContext(ctx)
+	nodePattern = seekPatternLabels(nodePattern, whereClause)
 	if hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {

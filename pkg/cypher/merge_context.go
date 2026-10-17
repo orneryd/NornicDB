@@ -49,9 +49,12 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	// is far narrower than intersecting one set per property. Use the longest
 	// covered leading prefix: all index properties → LookupFull, otherwise
 	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
-	// step still enforces every non-indexed predicate.
-	if len(nodeInfo.labels) > 0 {
-		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+	// step still enforces every non-indexed predicate. A node the pattern
+	// matches carries every one of its labels, so the index of any of them
+	// lists it, in whatever order the labels are written; the caller checks
+	// the other labels on the candidates.
+	for _, label := range nodeInfo.labels {
+		for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
 			if idx == nil || len(idx.Properties) < 2 {
 				// Arity-1 indexes are served by the per-property loop below,
 				// whose authoritative-miss logic handles values an index can't
@@ -99,10 +102,14 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		var ids []storage.NodeID
 		probed := false
 		if len(nodeInfo.labels) > 0 {
-			// Labelled: probe the (label, prop) index when one exists.
-			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
-				probed = true
+			// Labelled: probe the (label, prop) index of the first pattern
+			// label that has one.
+			for _, label := range nodeInfo.labels {
+				if _, ok := schema.GetPropertyIndex(label, prop); ok {
+					ids = propertyIndexLookup(store, schema, label, prop, val)
+					probed = true
+					break
+				}
 			}
 		} else {
 			labels := e.indexCandidateLabels(schema, nil, prop)
