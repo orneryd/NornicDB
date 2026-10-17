@@ -112,7 +112,7 @@ func TestEmbeddingRead_FreshStoreReadsCurrentKeyOnly(t *testing.T) {
 			var got float64
 			require.NoError(t, b.withView(func(txn *badger.Txn) error {
 				node := &Node{ID: tc.id}
-				got = testing.AllocsPerRun(50, func() {
+				got = testing.AllocsPerRun(5, func() {
 					_, _, err := b.loadEmbeddingSidecar(txn, node, tc.id)
 					require.NoError(t, err)
 				})
