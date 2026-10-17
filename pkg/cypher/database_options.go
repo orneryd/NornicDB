@@ -51,7 +51,7 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 // clause (searched from from): the statement before it, and the options it
 // sets, validated. No clause is no options.
 func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher string, from int) (string, map[string]string, error) {
-	at := keywordIndexFromWithCancellation(cypher, "OPTIONS", from, defaultKeywordScanOpts(), contextPipelineProbe(ctx))
+	at := keywordIndexFrom(cypher, "OPTIONS", from, defaultKeywordScanOpts())
 	if at < 0 {
 		return cypher, nil, nil
 	}

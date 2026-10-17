@@ -41,7 +41,7 @@ func pipelineClauseAggregatesWithCancellation(clause pipelineClause, probe *pipe
 	if clause.kind == pipelineClauseWith {
 		keyword = "WITH"
 	}
-	body := pipelineClauseBodyWithCancellation(clause.text, keyword, probe)
+	body := pipelineClauseBody(clause.text, keyword)
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 	if where := keywordIndexFromWithCancellation(body, "WHERE", 0, opts, probe); where >= 0 {
@@ -316,7 +316,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			complexity += 2
 			continue
 		}
-		spans := findAggregateSpansWithCancellation(projection.expr, preparationProbe)
+		spans := findAggregateSpans(projection.expr)
 		if len(spans) == 0 {
 			return nil, false, nil
 		}

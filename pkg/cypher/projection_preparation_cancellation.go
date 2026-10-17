@@ -46,7 +46,7 @@ func parseReturnProjectionPlanWithCancellation(clause string, probe *pipelineCan
 		return plan
 	}
 	plan.modifiers = trimSpaceWithCancellation(body[modifierStart:], probe)
-	body, plan.distinct = cutDistinctWithCancellation(pipelineClauseBodyWithCancellation(body[:modifierStart], "RETURN", probe), probe)
+	body, plan.distinct = cutDistinctWithCancellation(pipelineClauseBody(body[:modifierStart], "RETURN"), probe)
 	items := splitTopLevelCommaWithCancellation(body, probe)
 	if probe != nil && probe.err != nil {
 		return plan

@@ -25,7 +25,7 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 		return probe.err
 	}
 
-	upper := upperASCIIWithCancellation(trimSpaceWithCancellation(cypher, probe), probe)
+	upper := upperASCII(trimSpaceWithCancellation(cypher, probe))
 	if strings.HasPrefix(upper, "ALTER DATABASE ") && containsTextWithCancellation(upper, " SET LIMIT ", probe) {
 		return nil
 	}
@@ -36,7 +36,7 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 
 		switch cypher[index] {
 		case '\'', '"', '`':
-			index = numericValidationSkipQuotedWithCancellation(cypher, index, probe)
+			index = numericValidationSkipQuoted(cypher, index)
 			continue
 		case '/':
 			if index+1 < len(cypher) && cypher[index+1] == '/' {
@@ -88,7 +88,7 @@ func validateNumericLiteralAtWithCancellation(cypher string, start int, probe *p
 		return 0, probe.err
 	}
 
-	negative := numericLiteralHasUnaryMinusWithCancellation(cypher, start, probe)
+	negative := numericLiteralHasUnaryMinus(cypher, start)
 	end := start
 	base := 10
 

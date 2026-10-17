@@ -174,7 +174,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	}
 
 	// Handle booleans
-	upper := upperASCIIWithCancellation(s, contextPipelineProbe(ctx))
+	upper := upperASCII(s)
 	if upper == "TRUE" {
 		return true
 	}

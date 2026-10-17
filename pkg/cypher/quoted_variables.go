@@ -232,7 +232,7 @@ func canonicalizeQuotedVariablesWithCancellation(query string, probe *pipelineCa
 			return identifier
 		}
 		identifier := token.name
-		if !isPlainVariableNameWithCancellation(identifier, probe) {
+		if !isPlainVariableName(identifier) {
 			identifier = newIdentifier(token.name)
 			if !remember(identifier, token) {
 				return ""
@@ -257,7 +257,7 @@ func canonicalizeQuotedVariablesWithCancellation(query string, probe *pipelineCa
 		switch {
 		case token.parameter:
 			replacement = token.name
-			if !isPlainVariableNameWithCancellation(token.name, probe) {
+			if !isPlainVariableName(token.name) {
 				key := concatPipelineStrings("$", token.name, probe)
 				if identifier, ok := identifiers.get(key, probe); ok {
 					replacement = identifier
@@ -270,7 +270,7 @@ func canonicalizeQuotedVariablesWithCancellation(query string, probe *pipelineCa
 				}
 			}
 		case token.procColumn:
-			if !isPlainVariableNameWithCancellation(token.name, probe) {
+			if !isPlainVariableName(token.name) {
 				continue
 			}
 			replacement = token.name
@@ -470,7 +470,7 @@ func scanQuotedTokensWithCancellation(query string, probe *pipelineCancellation)
 		}
 		switch c := query[i]; c {
 		case '\'', '"':
-			i = skipCypherQuotedTextWithCancellation(query, i, query[i], probe)
+			i = skipCypherQuotedText(query, i, query[i])
 			continue
 		case '(', '[', '{':
 			brackets = appendPipelineItem(brackets, c, probe)
@@ -483,7 +483,7 @@ func scanQuotedTokensWithCancellation(query string, probe *pipelineCancellation)
 			// quoted variable.
 			if i+1 < len(query) && query[i+1] == '`' {
 				if written, end, ok := scanSymbolicNameWithCancellation(query, i+1, probe); ok {
-					tokens = appendPipelineItem(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValueWithCancellation(written, probe), parameter: true}, probe)
+					tokens = appendPipelineItem(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValue(written), parameter: true}, probe)
 					i = end
 					continue
 				}
@@ -498,7 +498,7 @@ func scanQuotedTokensWithCancellation(query string, probe *pipelineCancellation)
 			if len(brackets) > 0 {
 				inner = brackets[len(brackets)-1]
 			}
-			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValueWithCancellation(written, probe)}
+			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written)}
 			classifyQuotedTokenWithCancellation(query, &token, inner, probe)
 			tokens = appendPipelineItem(tokens, token, probe)
 			i = end
@@ -518,10 +518,10 @@ func classifyQuotedTokenWithCancellation(query string, token *quotedToken, inner
 	if probe != nil && !probe.check() {
 		return
 	}
-	prev, prevIndex := previousSignificantWithCancellation(query, token.start, probe)
-	next, nextIndex := nextSignificantWithCancellation(query, token.end, probe)
-	prevWord := upperASCIIWithCancellation(previousWordWithCancellation(query, token.start, probe), probe)
-	nextWord := upperASCIIWithCancellation(nextWordAtWithCancellation(query, nextIndex, probe), probe)
+	prev, prevIndex := previousSignificant(query, token.start)
+	next, nextIndex := nextSignificant(query, token.end)
+	prevWord := upperASCII(previousWord(query, token.start))
+	nextWord := upperASCII(nextWordAt(query, nextIndex))
 	switch {
 	case prev == '.' && !(prevIndex > 0 && query[prevIndex-1] == '.'):
 		return // property key (n.`p q`) or map projection property selector
@@ -569,11 +569,11 @@ func callParenthesisWithCancellation(query string, index int, probe *pipelineCan
 	if probe != nil && !probe.check() {
 		return false
 	}
-	before, _ := previousSignificantWithCancellation(query, index, probe)
+	before, _ := previousSignificant(query, index)
 	if before == '`' {
 		return true
 	}
-	word := previousWordWithCancellation(query, index, probe)
+	word := previousWord(query, index)
 	return word != "" && !isCypherKeywordWithCancellation(word, probe)
 }
 
@@ -670,7 +670,7 @@ func dottedNameCallWithCancellation(query string, dot int, probe *pipelineCancel
 		if !ok {
 			return false
 		}
-		next, nextIndex := nextSignificantWithCancellation(query, end, probe)
+		next, nextIndex := nextSignificant(query, end)
 		if next == '(' {
 			return true
 		}
@@ -691,7 +691,7 @@ func isLabelColonWithCancellation(query string, colon int, inner byte, probe *pi
 	if inner != '{' {
 		return true
 	}
-	before, beforeIndex := previousSignificantWithCancellation(query, colon, probe)
+	before, beforeIndex := previousSignificant(query, colon)
 	if before == 0 {
 		return true
 	}
@@ -710,7 +710,7 @@ func isLabelColonWithCancellation(query string, colon int, inner byte, probe *pi
 			start--
 		}
 	}
-	keyPrev, _ := previousSignificantWithCancellation(query, start, probe)
+	keyPrev, _ := previousSignificant(query, start)
 	return !(keyPrev == '{' || keyPrev == ',')
 }
 
@@ -723,7 +723,7 @@ func inLabelExpressionWithCancellation(query string, index int, inner byte, prob
 	if probe != nil && !probe.check() {
 		return false
 	}
-	before, beforeIndex := previousSignificantWithCancellation(query, index, probe)
+	before, beforeIndex := previousSignificant(query, index)
 	if before == ':' {
 		return isLabelColonWithCancellation(query, beforeIndex, inner, probe)
 	}
@@ -744,7 +744,7 @@ func inLabelExpressionWithCancellation(query string, index int, inner byte, prob
 	} else {
 		return false
 	}
-	operator, operatorIndex := previousSignificantWithCancellation(query, start, probe)
+	operator, operatorIndex := previousSignificant(query, start)
 	switch operator {
 	case ':':
 		return isLabelColonWithCancellation(query, operatorIndex, inner, probe)
@@ -790,7 +790,7 @@ func mapProjectionBraceWithCancellation(query string, index int, probe *pipeline
 				depth--
 				continue
 			}
-			before, _ := previousSignificantWithCancellation(query, i, probe)
+			before, _ := previousSignificant(query, i)
 			return before == '`' || isIdentByte(before)
 		}
 	}
@@ -805,7 +805,7 @@ func inYieldListWithCancellation(query string, index int, probe *pipelineCancell
 	if probe != nil && !probe.check() {
 		return false
 	}
-	yield := lastKeywordBeforeWithCancellation(query, index, "YIELD", probe)
+	yield := lastKeywordBefore(query, index, "YIELD")
 	if yield < 0 {
 		return false
 	}
@@ -814,7 +814,7 @@ func inYieldListWithCancellation(query string, index int, probe *pipelineCancell
 		if probe != nil && !probe.check() {
 			return false
 		}
-		if keywordIndexFromDefaultWithCancellation(between, keyword, 0, probe) >= 0 {
+		if keywordIndexFromDefault(between, keyword, 0) >= 0 {
 			return false
 		}
 	}
@@ -833,7 +833,7 @@ func lastKeywordBeforeWithCancellation(query string, index int, keyword string, 
 		if probe != nil && !probe.check() {
 			return -1
 		}
-		rel := keywordIndexFromDefaultWithCancellation(query[from:index], keyword, 0, probe)
+		rel := keywordIndexFromDefault(query[from:index], keyword, 0)
 		if rel < 0 {
 			break
 		}
@@ -862,7 +862,7 @@ func isCypherKeywordWithCancellation(name string, probe *pipelineCancellation) b
 	if probe != nil && !probe.check() {
 		return false
 	}
-	switch upperASCIIWithCancellation(name, probe) {
+	switch upperASCII(name) {
 	case "ALL", "AND", "ANY", "AS", "ASC", "ASCENDING", "BY", "CALL", "CASE", "CONTAINS", "CREATE", "DELETE", "DESC", "DESCENDING",
 		"DETACH", "DISTINCT", "ELSE", "END", "ENDS", "EXISTS", "FALSE", "FOREACH", "IN", "IS", "LIMIT", "MATCH", "MERGE", "NONE",
 		"NOT", "NULL", "ON", "OPTIONAL", "OR", "ORDER", "REMOVE", "RETURN", "SET", "SINGLE", "SKIP", "STARTS", "THEN", "TRUE",
@@ -906,7 +906,7 @@ func (names *quotedVariableNames) restoreWithCancellation(result *ExecuteResult,
 				if probe != nil && !probe.check() {
 					return
 				}
-				restored.Columns[i] = names.restoreColumnWithCancellation(column, probe)
+				restored.Columns[i] = names.restoreColumn(column)
 			}
 		}
 		if len(result.Metadata) > 0 {
@@ -919,11 +919,11 @@ func (names *quotedVariableNames) restoreWithCancellation(result *ExecuteResult,
 			// and its truncation of long descriptions.
 			if plan, ok := restored.Metadata["plan"].(*ExecutionPlan); ok && plan != nil {
 				if _, rendered := restored.Metadata["planString"]; rendered {
-					restored.Metadata["planString"] = formatPlanWithCancellation(plan, probe)
+					restored.Metadata["planString"] = formatPlan(plan)
 				}
 			}
 		}
-		if isExplainOrProfileWithCancellation(names.original, probe) {
+		if isExplainOrProfile(names.original) {
 			restored.Rows, _ = names.restoreValueWithCancellation(result.Rows, probe).([][]interface{})
 		} else if len(restored.Columns) > 0 {
 			names.restoreProjectionWithCancellation(&restored, parseItems, probe)
@@ -935,7 +935,7 @@ func (names *quotedVariableNames) restoreWithCancellation(result *ExecuteResult,
 	}
 	if err != nil && len(names.internalOrder) > 0 {
 		message := err.Error()
-		text := names.restoreTextWithCancellation(message, probe)
+		text := names.restoreText(message)
 		if comparePipelineStrings(text, message, probe) != 0 {
 			restoredErr = &quotedVariableError{cause: err, message: text}
 		}
@@ -956,7 +956,7 @@ func (names *quotedVariableNames) restoreColumnWithCancellation(column string, p
 	if internal, ok := names.internalName(column, probe); ok {
 		return internal.name
 	}
-	if isPlainVariableNameWithCancellation(column, probe) || !names.touchesWithCancellation(column, probe) {
+	if isPlainVariableName(column) || !names.touches(column) {
 		return column
 	}
 	// The final RETURN names the columns, so its text is the last
@@ -1073,7 +1073,7 @@ func (names *quotedVariableNames) restoreValueWithCancellation(value interface{}
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			key = names.restoreTextWithCancellation(key, probe)
+			key = names.restoreText(key)
 			item = names.restoreValueWithCancellation(item, probe)
 			if probe != nil && probe.err != nil {
 				return nil
@@ -1095,7 +1095,7 @@ func (names *quotedVariableNames) restoreValueWithCancellation(value interface{}
 			return value
 		}
 		plan := *typed
-		plan.Query = names.restoreStatementTextWithCancellation(typed.Query, probe)
+		plan.Query = names.restoreStatementText(typed.Query)
 		plan.Root, _ = names.restoreValueWithCancellation(typed.Root, probe).(*PlanOperator)
 		return &plan
 	case *PlanOperator:
@@ -1232,7 +1232,7 @@ func finalReturnBodyWithCancellation(text string, probe *pipelineCancellation) (
 	if probe != nil && !probe.check() {
 		return 0, 0, false
 	}
-	positions := findAllTopLevelPipelineKeywordPositionsWithCancellation(text, "RETURN", probe)
+	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
 	if len(positions) == 0 {
 		return 0, 0, false
 	}
@@ -1257,7 +1257,7 @@ func (names *quotedVariableNames) restoreProjectionWithCancellation(result *Exec
 	}
 	body := trimSpaceWithCancellation(names.canonical[start:end], probe)
 	body, _ = cutDistinctWithCancellation(body, probe)
-	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && keywordIndexFromWithCancellation(body, "UNION", 0, keywordScanOpts{SkipParens: true, SkipBrackets: true, SkipBraces: true, SkipStrings: true, SkipBackticks: true, SkipComments: true, Boundary: keywordBoundaryWord}, probe) < 0 {
+	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && keywordIndexFrom(body, "UNION", 0, keywordScanOpts{SkipParens: true, SkipBrackets: true, SkipBraces: true, SkipStrings: true, SkipBackticks: true, SkipComments: true, Boundary: keywordBoundaryWord}) < 0 {
 		sortColumnsByNameWithCancellation(result, probe)
 		return
 	}

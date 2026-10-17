@@ -186,7 +186,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	qid := stringOr(req["qid"], "")
 	discard, _ := toBool(req["discard"])
 	n, nPresent := toInt(req["n"])
-	mode := search.SearchContinuationMode(lowerASCIIWithCancellation(strings.TrimSpace(stringOr(req["mode"], "")), contextPipelineProbe(ctx)))
+	mode := search.SearchContinuationMode(lowerASCII(strings.TrimSpace(stringOr(req["mode"], ""))))
 	groupBy := stringOr(firstPresent(req, "groupBy", "group_by"), "")
 	rankedLimit, rankedLimitPresent := toInt(firstPresent(req, "rankedLimit", "ranked_limit"))
 	continuationRequested := qid != "" || discard || nPresent || mode != "" || groupBy != "" || rankedLimitPresent

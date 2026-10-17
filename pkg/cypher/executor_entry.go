@@ -234,14 +234,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, preparationProbe.err
 	}
 	cypher = trimSpaceWithCancellation(cypher, preparationProbe)
-	cypher = trimTrailingStatementDelimitersWithCancellation(cypher, preparationProbe)
+	cypher = trimTrailingStatementDelimiters(cypher)
 	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreambleWithCancellation(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
 	if config.IsANTLRParser() {
 		body, _ := stripCypherPreambleWithCancellation(cypher, preparationProbe)
-		if cypherGrammarVersionWithCancellation(cypher, preparationProbe) != "25" && usesSharedGrammarClauses(body) {
+		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
 	}
@@ -256,7 +256,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// In Cypher 25 a '$' after a name starts a parameter (L$props is
 	// L $props); Cypher 5 reads a$b as one name.
 	if cypher25 {
-		if separated, separateRewrite := separateCypher25ParametersWithCancellation(cypher, preparationProbe); separateRewrite != nil {
+		if separated, separateRewrite := separateCypher25Parameters(cypher); separateRewrite != nil {
 			cypher = separated
 			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
 		}
@@ -427,7 +427,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		rowsRewritten = true
 		defer func() {
 			result, retErr = names.restoreWithCancellation(result, retErr, func(text string) []returnItem {
-				return e.parseReturnItemsWithCancellation(text, preparationProbe)
+				return e.parseReturnItems(text)
 			}, preparationProbe)
 		}()
 	}
@@ -708,13 +708,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
 	if !finishTerminated {
-		last := lastTopLevelClauseWordWithCancellation(cypher, preparationProbe)
+		last := lastTopLevelClauseWord(cypher)
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt
 		// it when the text before the trailer is itself a complete statement.
 		if last == "WITH" {
 			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
-				switch lastTopLevelClauseWordWithCancellation(scope, preparationProbe) {
+				switch lastTopLevelClauseWord(scope) {
 				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
 				default:
 					last = ""

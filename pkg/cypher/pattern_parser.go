@@ -164,12 +164,12 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 	pairs := e.splitPropertyPairs(propsStr)
 
 	for _, pair := range pairs {
-		colonIdx := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 {
 			continue
 		}
 
-		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
+		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
 		value := e.parsePropertyValue(ctx, valueStr)
@@ -236,7 +236,7 @@ func findTopLevelMapKeyValueSeparatorWithCancellation(pair string, probe *pipeli
 					i++
 					continue
 				}
-				if !isBackslashEscapedWithCancellation(pair, i, probe) {
+				if !isBackslashEscaped(pair, i) {
 					inSingle = false
 				}
 			}
@@ -246,7 +246,7 @@ func findTopLevelMapKeyValueSeparatorWithCancellation(pair string, probe *pipeli
 					i++
 					continue
 				}
-				if !isBackslashEscapedWithCancellation(pair, i, probe) {
+				if !isBackslashEscaped(pair, i) {
 					inDouble = false
 				}
 			}
@@ -428,7 +428,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// literal. A leading quote is not enough: 'a' + 'b' is an expression, and
 	// decoding it as one string produced "a' + 'b" instead of "ab" (#514).
 	if len(valueStr) >= 2 && (valueStr[0] == '\'' || valueStr[0] == '"') {
-		if end := skipCypherQuotedTextWithCancellation(valueStr, 0, valueStr[0], contextPipelineProbe(ctx)); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
+		if end := skipCypherQuotedText(valueStr, 0, valueStr[0]); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
 			if decoded, ok := decodeCypherQuotedStringWithCancellation(valueStr, contextPipelineProbe(ctx)); ok {
 				return decoded
 			}
@@ -436,7 +436,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	}
 
 	// Handle booleans
-	lowerVal := lowerASCIIWithCancellation(valueStr, contextPipelineProbe(ctx))
+	lowerVal := lowerASCII(valueStr)
 	if lowerVal == "true" {
 		return true
 	}
@@ -469,7 +469,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	}
 
 	// Check for malformed values (unquoted colon indicates injection attempt or syntax error)
-	if findTopLevelMapKeyValueSeparatorWithCancellation(valueStr, contextPipelineProbe(ctx)) >= 0 && !strings.HasPrefix(valueStr, "{") {
+	if findTopLevelMapKeyValueSeparator(valueStr) >= 0 && !strings.HasPrefix(valueStr, "{") {
 		// Return a special marker that will trigger validation error
 		return invalidPropertyValue{raw: valueStr}
 	}

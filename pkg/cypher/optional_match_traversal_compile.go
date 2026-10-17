@@ -94,18 +94,18 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 	}
 
 	// Literals — replicate evaluateExpressionFastLeaf's order and results.
-	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+	if isWholeCypherQuotedString(expr) {
 		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return func(traversalOptRow) interface{} { return decoded }, true
 		}
 	}
-	if equalFoldASCIIWithCancellation(expr, "true", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "true") {
 		return func(traversalOptRow) interface{} { return true }, true
 	}
-	if equalFoldASCIIWithCancellation(expr, "false", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "false") {
 		return func(traversalOptRow) interface{} { return false }, true
 	}
-	if equalFoldASCIIWithCancellation(expr, "null", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "null") {
 		// fastLeaf declines null and the props/literals branch resolves it to
 		// nil; the compiled result is identical.
 		return func(traversalOptRow) interface{} { return nil }, true

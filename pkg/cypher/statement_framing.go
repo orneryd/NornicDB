@@ -17,12 +17,12 @@ func (e *StorageExecutor) validateStatementFramingWithCancellation(cypher string
 			resultErr = probe.err
 		}
 	}()
-	if containsOutsideStringsWithCancellation(cypher, ";", probe) {
-		statements := e.splitBySemicolonWithCancellation(cypher, probe)
+	if containsOutsideStrings(cypher, ";") {
+		statements := e.splitBySemicolon(cypher)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherCommandRoutingMultipleStatements(len(statements)))
 	}
-	if explainProfileConflictWithCancellation(cypher, probe) {
+	if explainProfileConflict(cypher) {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
 			"Can't specify multiple conflicting values for execution mode"))
 	}
@@ -39,7 +39,7 @@ func (e *StorageExecutor) validateStatementFramingWithCancellation(cypher string
 			_, finishes := stripTrailingFinishWithCancellation(branch, probe)
 			if finishes {
 				hasFinish = true
-			} else if len(e.StatementColumnsWithCancellation(branch, probe)) > 0 {
+			} else if len(e.StatementColumns(branch)) > 0 {
 				hasColumns = true
 			}
 		}
@@ -154,7 +154,7 @@ func validateCypherPreambleWithCancellation(query string, probe *pipelineCancell
 				}
 				end++
 			}
-			name := lowerASCIIWithCancellation(rest[:end], probe)
+			name := lowerASCII(rest[:end])
 			rest = trimSpaceWithCancellation(rest[end:], probe)
 			if end == 0 || rest == "" || rest[0] != '=' {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected name=value")
@@ -170,7 +170,7 @@ func validateCypherPreambleWithCancellation(query string, probe *pipelineCancell
 			if end == 0 {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
 			}
-			value := lowerASCIIWithCancellation(rest[:end], probe)
+			value := lowerASCII(rest[:end])
 			rest = trimSpaceWithCancellation(rest[end:], probe)
 			allowed, known := "", false
 			for key, options := range cypherPreambleOptionValues {
@@ -245,7 +245,7 @@ func stripCypherPreambleWithCancellation(query string, probe *pipelineCancellati
 				return "", false
 			}
 			if rest[0] == '\'' || rest[0] == '"' {
-				end := skipCypherQuotedTextWithCancellation(rest, 0, rest[0], probe)
+				end := skipCypherQuotedText(rest, 0, rest[0])
 				rest = trimSpaceWithCancellation(rest[end:], probe)
 				continue
 			}
@@ -289,7 +289,7 @@ func trailingBareFinish(cypher string) (string, bool) {
 	return trailingBareFinishWithCancellation(cypher, nil)
 }
 func trailingBareFinishWithCancellation(cypher string, probe *pipelineCancellation) (string, bool) {
-	last := lastLiveByteWithCancellation(cypher, len(cypher), probe)
+	last := lastLiveByte(cypher, len(cypher))
 	if last < 0 || !isIdentByte(cypher[last]) {
 		return "", false
 	}
@@ -306,7 +306,7 @@ func trailingBareFinishWithCancellation(cypher string, probe *pipelineCancellati
 	}
 	remainder := trimSpaceWithCancellation(cypher[:start], probe)
 	// A FINISH with nothing before it is the whole statement, the clause.
-	if remainder != "" && clauseKeywordUsedAsNameWithCancellation(cypher, start, end, "FINISH", probe) {
+	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
 		return "", false
 	}
 	return remainder, true
@@ -327,7 +327,7 @@ func stripTrailingFinishWithCancellation(cypher string, probe *pipelineCancellat
 	if !ok {
 		return cypher, false
 	}
-	if finishProhibitedClauses[lastTopLevelClauseWordWithCancellation(remainder, probe)] {
+	if finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
 		return cypher, false
 	}
 	return remainder, true
@@ -430,7 +430,7 @@ func stripUnionBranchFinishesWithCancellation(cypher string, probe *pipelineCanc
 	if probe != nil && !probe.check() {
 		return cypher, false
 	}
-	cut := topLevelUnionCutWithCancellation(cypher, probe)
+	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
 		return stripTrailingFinishWithCancellation(cypher, probe)
 	}
@@ -509,7 +509,7 @@ func explainProfileConflictWithCancellation(cypher string, probe *pipelineCancel
 		if probe != nil && !probe.check() {
 			return false
 		}
-		query = trimSpaceWithCancellation(query[queryGapEndWithCancellation(query, 0, probe):], probe)
+		query = trimSpaceWithCancellation(query[queryGapEnd(query, 0):], probe)
 		query, _ = stripCypherPreambleWithCancellation(query, probe)
 		mode := ""
 		if matchKeywordAt(query, 0, "EXPLAIN") {

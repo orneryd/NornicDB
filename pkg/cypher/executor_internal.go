@@ -82,7 +82,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
-	cypher = trimTrailingStatementDelimitersWithCancellation(cypher, preparationProbe)
+	cypher = trimTrailingStatementDelimiters(cypher)
 	if err := e.validateStatementFramingWithCancellation(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateSyntaxWithCancellation(cypher, cypherVersionFromContext(ctx) == "25", parameterCancellationForContext(ctx)); err != nil {
 		return nil, err
 	}
-	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesForWithCancellation(ctx, cypher, preparationProbe)); err != nil {
+	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {

@@ -18,11 +18,11 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 		return probe.err
 	}
 
-	upper := upperASCIIWithCancellation(trimSpaceWithCancellation(query, probe), probe)
-	if strings.HasPrefix(upper, "CREATE ") && containsTextWithCancellation(upper, "INDEX", probe) && keywordIndexFromWithCancellation(query, "OPTIONS", 0, defaultKeywordScanOpts(), probe) >= 0 {
+	upper := upperASCII(trimSpaceWithCancellation(query, probe))
+	if strings.HasPrefix(upper, "CREATE ") && containsTextWithCancellation(upper, "INDEX", probe) && keywordIndexFrom(query, "OPTIONS", 0, defaultKeywordScanOpts()) >= 0 {
 		return nil
 	}
-	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && keywordIndexFromWithCancellation(query, "REQUIRE", 0, defaultKeywordScanOpts(), probe) >= 0 {
+	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && keywordIndexFrom(query, "REQUIRE", 0, defaultKeywordScanOpts()) >= 0 {
 		return nil
 	}
 	var patternContext *mapPatternContext
@@ -35,12 +35,12 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 		}
 
 		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
-			index = numericValidationSkipQuotedWithCancellation(query, index, probe) - 1
+			index = numericValidationSkipQuoted(query, index) - 1
 			lastLive = index
 			continue
 		}
 		if query[index] == '/' {
-			if end := queryCommentEndWithCancellation(query, index, probe); end >= 0 {
+			if end := queryCommentEnd(query, index); end >= 0 {
 				index = end - 1
 				continue
 			}
@@ -54,10 +54,10 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 		if query[index] != '{' {
 			continue
 		}
-		if subqueryExpressionAfterLiveByteWithCancellation(query, index, previous, probe) {
+		if subqueryExpressionAfterLiveByte(query, index, previous) {
 			// Validate in the nearest statement scope: an outer RETURN must
 			// not turn a nested MATCH property map into a map projection.
-			if close := findMatchingDelimiterWithCancellation(query, index, '{', '}', probe); close >= 0 {
+			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
 				if err := validateStaticMapKeysWithCancellation(query[index+1:close], probe); err != nil {
 					return err
 				}
@@ -68,21 +68,21 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 		}
 		// A {m,n} after a parenthesised path quantifies it
 		// ((a)-[r]-(b)){1,6}; it is not a map.
-		if quantifiedGroupQuantifierAtWithCancellation(query, index, probe) {
+		if quantifiedGroupQuantifierAt(query, index) {
 			continue
 		}
-		close := findMatchingDelimiterWithCancellation(query, index, '{', '}', probe)
+		close := findMatchingDelimiter(query, index, '{', '}')
 		if close < 0 {
 			continue
 		}
-		parts := splitTopLevelCommaWithCancellation(query[index+1:close], probe)
+		parts := splitTopLevelComma(query[index+1:close])
 		mapLiteral := false
 		for _, part := range parts {
 			if probe != nil && !probe.check() {
 				return probe.err
 			}
 
-			if findTopLevelMapKeyValueSeparatorWithCancellation(part, probe) >= 0 {
+			if findTopLevelMapKeyValueSeparator(part) >= 0 {
 				mapLiteral = true
 				break
 			}
@@ -100,7 +100,7 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 			if probe != nil && !probe.check() {
 				return probe.err
 			}
-			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClauseWithCancellation(query, index, probe) {
+			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -118,8 +118,8 @@ func validateStaticMapKeysWithCancellation(query string, probe *pipelineCancella
 			if _, selector := mapProjectionPropertySelectorWithCancellation(trimmedPart, probe); trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && selector) {
 				continue
 			}
-			separator := findTopLevelMapKeyValueSeparatorWithCancellation(part, probe)
-			if separator <= 0 || !validMapLiteralKeyWithCancellation(trimSpaceWithCancellation(part[:separator], probe), probe) {
+			separator := findTopLevelMapKeyValueSeparator(part)
+			if separator <= 0 || !validMapLiteralKey(trimSpaceWithCancellation(part[:separator], probe)) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -235,7 +235,7 @@ func subqueryExpressionKeywordBeforeBraceWithCancellation(query string, start, e
 		return false
 	}
 
-	switch upperASCIIWithCancellation(query[start:end], probe) {
+	switch upperASCII(query[start:end]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
 	default:
 		return false
@@ -257,7 +257,7 @@ func subqueryExpressionKeywordBeforeBraceWithCancellation(query string, start, e
 		case ':':
 			// Label/type name (`:Count {bad}`), unless the colon separates
 			// a map key from its value ({k: COUNT { … }}).
-			if !colonIsMapKeySeparatorWithCancellation(query, precedingToken, probe) {
+			if !colonIsMapKeySeparator(query, precedingToken) {
 				return false
 			}
 		}
@@ -277,7 +277,7 @@ func subqueryBraceBodyStartsLikeClauseWithCancellation(query string, braceIndex 
 		return false
 	}
 
-	index := queryGapEndWithCancellation(query, braceIndex+1, probe)
+	index := queryGapEnd(query, braceIndex+1)
 	if index >= len(query) {
 		return false
 	}
@@ -296,11 +296,11 @@ func subqueryBraceBodyStartsLikeClauseWithCancellation(query string, braceIndex 
 		return false
 	}
 	// A clause keyword can name a map key or a standalone projection selector.
-	if next := queryGapEndWithCancellation(query, index, probe); next < len(query) && (query[next] == ':' || query[next] == ',' || query[next] == '}') {
+	if next := queryGapEnd(query, index); next < len(query) && (query[next] == ':' || query[next] == ',' || query[next] == '}') {
 		return false
 	}
 
-	switch upperASCIIWithCancellation(query[start:index], probe) {
+	switch upperASCII(query[start:index]) {
 	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET":
 		return true
 	default:
@@ -354,10 +354,10 @@ func validMapLiteralKeyWithCancellation(key string, probe *pipelineCancellation)
 		return false
 	}
 
-	if isValidIdentifierWithCancellation(key, probe) {
+	if isValidIdentifier(key) {
 		return true
 	}
-	if isWholeCypherQuotedStringWithCancellation(key, probe) {
+	if isWholeCypherQuotedString(key) {
 		return true
 	}
 	if len(key) < 2 || key[0] != '`' || key[len(key)-1] != '`' {
@@ -484,12 +484,12 @@ func (scanner *subqueryBraceScanner) atWithCancellation(brace int, probe *pipeli
 		i := scanner.position
 		c := scanner.query[i]
 		if c == '\'' || c == '"' || c == '`' {
-			scanner.position = skipCypherQuotedTextWithCancellation(scanner.query, i, c, probe)
+			scanner.position = skipCypherQuotedText(scanner.query, i, c)
 			scanner.lastLive = scanner.position - 1
 			continue
 		}
 		if c == '/' {
-			if end := queryCommentEndWithCancellation(scanner.query, i, probe); end > i {
+			if end := queryCommentEnd(scanner.query, i); end > i {
 				scanner.position = end
 				continue
 			}

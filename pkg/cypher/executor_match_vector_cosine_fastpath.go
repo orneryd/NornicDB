@@ -85,7 +85,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItemsWithCancellation(returnPart, contextPipelineProbe(ctx))
+	returnItems := e.parseReturnItems(returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -275,7 +275,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	_ = withProjectionEnd
 	withProjection := strings.TrimSpace(withProjectionRaw)
 	withProjection, _ = cutDistinctWithCancellation(withProjection, contextPipelineProbe(ctx))
-	withItems := e.parseReturnItemsWithCancellation(withProjection, contextPipelineProbe(ctx))
+	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 {
 		return nil, false
 	}
@@ -313,7 +313,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		returnEndIdx = len(trimmed)
 	}
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : returnEndIdx])
-	returnItems := e.parseReturnItemsWithCancellation(returnPart, contextPipelineProbe(ctx))
+	returnItems := e.parseReturnItems(returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -518,7 +518,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItemsWithCancellation(returnPart, contextPipelineProbe(ctx))
+	returnItems := e.parseReturnItems(returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -654,7 +654,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	withProjection, _ := cutDistinctWithCancellation(withProjectionRaw, contextPipelineProbe(ctx))
-	withItems := e.parseReturnItemsWithCancellation(withProjection, contextPipelineProbe(ctx))
+	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
 		return nil, false
 	}
@@ -676,7 +676,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItemsWithCancellation(returnPart, contextPipelineProbe(ctx))
+	returnItems := e.parseReturnItems(returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -1607,7 +1607,7 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 	if clause == "" {
 		return "", 0, false
 	}
-	if hasTopLevelLogicalOperator(clause) || topLevelKeywordIndexWithCancellation(clause, " NOT ", contextPipelineProbe(ctx)) >= 0 {
+	if hasTopLevelLogicalOperator(clause) || topLevelKeywordIndex(clause, " NOT ") >= 0 {
 		return "", 0, false
 	}
 

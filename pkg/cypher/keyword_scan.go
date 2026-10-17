@@ -35,7 +35,7 @@ func cutDistinctWithCancellation(text string, probe *pipelineCancellation) (stri
 		return text, false
 	}
 	rest := trimSpaceWithCancellation(text[len(keyword):], probe)
-	if rest == "" || distinctFollowsAsNameWithCancellation(rest, probe) {
+	if rest == "" || distinctFollowsAsName(rest) {
 		return text, false
 	}
 	return rest, true
@@ -106,7 +106,7 @@ func startsWithClauseAfterDistinctWithCancellation(text string, probe *pipelineC
 
 		end++
 	}
-	if end == 0 || !isNameableClauseKeywordWithCancellation(text[:end], probe) {
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
 		return false
 	}
 	rest := trimSpaceWithCancellation(text[end:], probe)
@@ -139,7 +139,7 @@ func startsWithClauseAfterNameWithCancellation(text string, probe *pipelineCance
 
 		end++
 	}
-	if end == 0 || !isNameableClauseKeywordWithCancellation(text[:end], probe) {
+	if end == 0 || !isNameableClauseKeyword(text[:end]) {
 		return false
 	}
 	rest := trimSpaceWithCancellation(text[end:], probe)
@@ -149,7 +149,7 @@ func startsWithClauseAfterNameWithCancellation(text string, probe *pipelineCance
 	case strings.EqualFold(text[:end], "OPTIONAL"):
 		return matchKeywordAt(rest, 0, "MATCH")
 	}
-	if rest == "" || nameContinuesExpressionWithCancellation(rest, probe) {
+	if rest == "" || nameContinuesExpression(rest) {
 		return false
 	}
 	return strings.EqualFold(text[:end], "UNION") || !startsWithClauseAfterNameWithCancellation(rest, probe)
@@ -321,19 +321,19 @@ func isOperatorWithWithCancellation(s string, pos int, probe *pipelineCancellati
 	}
 
 	// The WITH in TIME WITH TIME ZONE and TIMESTAMP WITH TIME ZONE is not a clause.
-	if (prevWordEqualsIgnoreCaseWithCancellation(s, pos, "TIME", probe) || prevWordEqualsIgnoreCaseWithCancellation(s, pos, "TIMESTAMP", probe)) && followedByTimeZoneWithCancellation(s, pos+len("WITH"), probe) {
+	if (prevWordEqualsIgnoreCase(s, pos, "TIME") || prevWordEqualsIgnoreCase(s, pos, "TIMESTAMP")) && followedByTimeZone(s, pos+len("WITH")) {
 		return true
 	}
 	var wordStart int
 	switch {
 	case prevWordEqualsIgnoreCaseWithCancellation(s, pos, "STARTS", probe):
-		wordStart = prevWordStartWithCancellation(s, pos, probe)
+		wordStart = prevWordStart(s, pos)
 	case prevWordEqualsIgnoreCaseWithCancellation(s, pos, "ENDS", probe):
-		wordStart = prevWordStartWithCancellation(s, pos, probe)
+		wordStart = prevWordStart(s, pos)
 	default:
 		return false
 	}
-	i := lastLiveByteWithCancellation(s, wordStart, probe)
+	i := lastLiveByte(s, wordStart)
 	if i < 0 {
 		return false
 	}
@@ -385,7 +385,7 @@ func clauseKeywordUsedAsNameWithCancellation(s string, pos, end int, keyword str
 		return false
 	}
 
-	if !isNameableClauseKeywordWithCancellation(keyword, probe) {
+	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
 	return clauseKeywordNamedByContextWithCancellation(s, pos, end, keyword, probe) || insideCaseBlockWithCancellation(s, pos, probe)
@@ -401,7 +401,7 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 		return false
 	}
 
-	i := lastLiveByteWithCancellation(s, pos, probe)
+	i := lastLiveByte(s, pos)
 	if i >= 0 {
 		switch s[i] {
 		case '.', ':':
@@ -487,7 +487,7 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 	}
 	// The word before is a keyword only when it isn't itself a name
 	// (WITH 1 AS set RETURN …: set is an alias, so RETURN is a clause).
-	if wordIsNameWithCancellation(s, i+1, probe) {
+	if wordIsName(s, i+1) {
 		return false
 	}
 	if strings.EqualFold(s[i+1:wordEnd], "DISTINCT") {
@@ -512,7 +512,7 @@ func wordIsNameWithCancellation(s string, wordStart int, probe *pipelineCancella
 		return false
 	}
 
-	i := lastLiveByteWithCancellation(s, wordStart, probe)
+	i := lastLiveByte(s, wordStart)
 	if i < 0 {
 		return false
 	}
@@ -588,7 +588,7 @@ func isNameableClauseKeywordWithCancellation(keyword string, probe *pipelineCanc
 		return false
 	}
 
-	start, end := trimKeywordWSBoundsWithCancellation(keyword, probe)
+	start, end := trimKeywordWSBounds(keyword)
 	word := keyword[start:end]
 	if space := indexAnyWithCancellation(word, " \t", probe); space >= 0 {
 		word = word[:space]
@@ -616,7 +616,7 @@ func isNameableClauseKeywordWithCancellation(keyword string, probe *pipelineCanc
 			return false
 		}
 
-		if clause[0] == first && equalFoldASCIIWithCancellation(word, clause, probe) {
+		if clause[0] == first && equalFoldASCII(word, clause) {
 			return true
 		}
 	}
@@ -673,7 +673,7 @@ func labelWildcardAtWithCancellation(s string, i int, probe *pipelineCancellatio
 		return false
 	}
 
-	j := lastLiveByteWithCancellation(s, i, probe)
+	j := lastLiveByte(s, i)
 	return j >= 0 && indexByteWithCancellation(":|&!(", s[j], probe) >= 0
 }
 
@@ -795,7 +795,7 @@ func keywordIndexFromWithCancellation(s, keyword string, from int, opts keywordS
 		return cachedKeywordIndexFromDefault(s, keyword, from)
 	}
 
-	ks, ke := trimKeywordWSBoundsWithCancellation(keyword, probe)
+	ks, ke := trimKeywordWSBounds(keyword)
 	if ks >= ke {
 		return -1
 	}
@@ -955,10 +955,10 @@ func keywordIndexFromWithCancellation(s, keyword string, from int, opts keywordS
 		if !keywordRightBoundaryOK(s, endPos, opts.Boundary) {
 			continue
 		}
-		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWithWithCancellation(s, i, probe) {
+		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
-		if clauseKeywordUsedAsNameWithCancellation(s, i, endPos, keyword, probe) {
+		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
 			continue
 		}
 		return i
@@ -1021,7 +1021,7 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 			return -1
 		}
 
-		ks, ke := trimKeywordWSBoundsWithCancellation(keyword, probe)
+		ks, ke := trimKeywordWSBounds(keyword)
 		if ks < ke {
 			bounds[k] = keywordBounds{ks: ks, ke: ke, first: asciiUpper(keyword[ks])}
 		}
@@ -1177,10 +1177,10 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 			if !keywordRightBoundaryOK(s, endPos, keywordBoundaryWord) {
 				continue
 			}
-			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWithWithCancellation(s, i, probe) {
+			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 				continue
 			}
-			if clauseKeywordUsedAsNameWithCancellation(s, i, endPos, keyword, probe) {
+			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
 				continue
 			}
 			return i
@@ -1419,7 +1419,7 @@ func indexASCIIFoldWithCancellation(text, lowerSub string, probe *pipelineCancel
 		if asciiLowerByte(text[i]) != first {
 			continue
 		}
-		if equalFoldASCIIWithCancellation(text[i:i+len(lowerSub)], lowerSub, probe) {
+		if equalFoldASCII(text[i:i+len(lowerSub)], lowerSub) {
 			return i
 		}
 	}
@@ -1593,7 +1593,7 @@ func queryGapEndWithCancellation(query string, index int, probe *pipelineCancell
 			return len(query)
 		}
 
-		if commentEnd := queryCommentEndWithCancellation(query, end, probe); commentEnd >= 0 {
+		if commentEnd := queryCommentEnd(query, end); commentEnd >= 0 {
 			end = commentEnd
 			continue
 		}
@@ -2103,7 +2103,7 @@ func findMatchingDelimiterWithCancellation(text string, start int, opener, close
 			}
 			index = end - 1
 		case character == '/' && index+1 < len(text) && (text[index+1] == '/' || text[index+1] == '*'):
-			if end := queryCommentEndWithCancellation(text, index, probe); end >= 0 {
+			if end := queryCommentEnd(text, index); end >= 0 {
 				index = end - 1
 			}
 		}
@@ -2141,7 +2141,7 @@ func followedByTimeZoneWithCancellation(s string, pos int, probe *pipelineCancel
 			return false
 		}
 
-		pos = skipSpacesWithCancellation(s, pos, probe)
+		pos = skipSpaces(s, pos)
 		if pos+len(word) > len(s) || !strings.EqualFold(s[pos:pos+len(word)], word) ||
 			(pos+len(word) < len(s) && isIdentByte(s[pos+len(word)])) {
 			return false

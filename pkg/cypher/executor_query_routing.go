@@ -86,7 +86,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
-	if startsWithMatch && topLevelKeywordIndexWithCancellation(cypher, "CALL", contextPipelineProbe(ctx)) > 0 {
+	if startsWithMatch && topLevelKeywordIndex(cypher, "CALL") > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
@@ -307,14 +307,14 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 
 	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
 	items := body
-	if cut := firstTopLevelModifierIndexWithCancellation(items, contextPipelineProbe(ctx)); cut >= 0 {
+	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
 		items = strings.TrimSpace(items[:cut])
 	}
 	items, _ = cutDistinctWithCancellation(items, contextPipelineProbe(ctx))
-	parts := splitTopLevelCommaWithCancellation(items, contextPipelineProbe(ctx))
+	parts := splitTopLevelComma(items)
 	for index, part := range parts {
 		// Same alias parsing as every projection (parseProjectionExprAlias).
-		part, _ = parseProjectionExprAliasWithCancellation(strings.TrimSpace(part), contextPipelineProbe(ctx))
+		part, _ = parseProjectionExprAlias(strings.TrimSpace(part))
 		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
@@ -516,7 +516,7 @@ func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, pr
 	if probe != nil && probe.err != nil {
 		return probe.err
 	}
-	if containsNotInOperatorWithCancellation(cypher, probe) {
+	if containsNotInOperator(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
 	}
@@ -540,7 +540,7 @@ func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, pr
 	if probe != nil && probe.err != nil {
 		return probe.err
 	}
-	if explainProfileConflictWithCancellation(cypher, probe) {
+	if explainProfileConflict(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
 	}
 	if _, ok := trailingBareFinishWithCancellation(cypher, probe); ok {
@@ -561,7 +561,7 @@ func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, pr
 		return err
 	}
 
-	if isGraphQueryStatement(cypher) && hasAdjacentOperandsWithCancellation(cypher, probe) {
+	if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
 	}
 
@@ -580,7 +580,7 @@ func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, pr
 		if inString {
 			// A backtick-quoted name has no backslash escapes (a doubled
 			// backtick closes and reopens it); string literals do.
-			if c == stringChar && (c == '`' || !isBackslashEscapedWithCancellation(cypher, i, probe)) {
+			if c == stringChar && (c == '`' || !isBackslashEscaped(cypher, i)) {
 				inString = false
 			}
 			continue
@@ -712,7 +712,7 @@ func hasAdjacentOperandsWithCancellation(cypher string, probe *pipelineCancellat
 				if probe != nil && !probe.check() {
 					return false
 				}
-				if cypher[end] == c && !isBackslashEscapedWithCancellation(cypher, end, probe) {
+				if cypher[end] == c && !isBackslashEscaped(cypher, end) {
 					if end+1 < len(cypher) && cypher[end+1] == c {
 						end += 2 // a doubled quote is an escaped quote
 						continue
@@ -773,7 +773,7 @@ func hasAdjacentOperandsWithCancellation(cypher string, probe *pipelineCancellat
 			if operandEnded && !property && !startsProperty && !isSyntaxBoundaryKeyword(cypher[start:index]) {
 				return true
 			}
-			if !property && !startsProperty && bareWordBeforeLiteralWithCancellation(cypher, start, index, probe) {
+			if !property && !startsProperty && bareWordBeforeLiteral(cypher, start, index) {
 				return true
 			}
 			operandEnded = property
@@ -828,7 +828,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	return bareWordBeforeLiteralWithCancellation(cypher, start, end, nil)
 }
 func bareWordBeforeLiteralWithCancellation(cypher string, start, end int, probe *pipelineCancellation) bool {
-	next := skipSpacesWithCancellation(cypher, end, probe)
+	next := skipSpaces(cypher, end)
 	if next == end || next >= len(cypher) {
 		return false
 	}
@@ -859,7 +859,7 @@ func bareWordBeforeLiteralWithCancellation(cypher string, start, end int, probe 
 	if end-start > 32 {
 		return true
 	}
-	_, keyword := literalLeadingKeywords[upperASCIIWithCancellation(cypher[start:end], probe)]
+	_, keyword := literalLeadingKeywords[upperASCII(cypher[start:end])]
 	return !keyword
 }
 

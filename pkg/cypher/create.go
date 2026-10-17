@@ -135,7 +135,7 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
-	for _, fragment := range splitTopLevelCommaWithCancellation(pattern, contextPipelineProbe(ctx)) {
+	for _, fragment := range splitTopLevelComma(pattern) {
 		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
 		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
 			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Invalid CREATE pattern")
@@ -497,11 +497,11 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		return nil
 	}
 	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
+		separator := findTopLevelMapKeyValueSeparator(pair)
 		if separator <= 0 {
 			continue
 		}
-		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:separator]), contextPipelineProbe(ctx))
+		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
 		expression := strings.TrimSpace(pair[separator+1:])
 		if expression == "" {
 			continue
@@ -514,7 +514,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		if !isString || text != expression {
 			continue
 		}
-		if isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
+		if isWholeCypherQuotedString(expression) {
 			continue
 		}
 		values := make(map[string]interface{}, len(nodes)+len(relationships)+len(valueBindingsFromContext(ctx)))
@@ -557,13 +557,13 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 		return
 	}
 	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
+		separator := findTopLevelMapKeyValueSeparator(pair)
 		if separator <= 0 {
 			continue
 		}
-		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:separator]), contextPipelineProbe(ctx))
+		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
 		expression := strings.TrimSpace(pair[separator+1:])
-		if expression == "" || isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
+		if expression == "" || isWholeCypherQuotedString(expression) {
 			continue
 		}
 		dot := strings.IndexByte(expression, '.')
@@ -862,7 +862,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	// rejects a relationship without exactly one type.
 	declaration := relationshipDeclarationOf(relStr)
 	if declaration.properties != "" {
-		if propsEnd := findMatchingDelimiterWithCancellation(declaration.properties, 0, '{', '}', contextPipelineProbe(ctx)); propsEnd > 0 {
+		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
 			relProps = e.parseProperties(ctx, declaration.properties[:propsEnd+1])
 		}
 	}

@@ -129,7 +129,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expr, probe); ok {
 		return e.evaluateRowValueWithCancellation(inner, values, probe)
 	}
-	if caseEnd := leadingCaseExpressionEndWithCancellation(expr, probe); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
+	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
 		caseValue, ok, err := e.evaluateRowCaseExpressionWithCancellation(strings.TrimSpace(expr[:caseEnd]), values, probe)
 		if err != nil || !ok {
 			return nil, false, err
@@ -169,7 +169,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
 	// unquoted form, which is how projection aliases are keyed.
-	if name := normalizeProjectionColumnNameWithCancellation(expr, probe); name != expr {
+	if name := normalizeProjectionColumnName(expr); name != expr {
 		if value, ok := values[name]; ok {
 			return value, true, nil
 		}
@@ -202,11 +202,11 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if probe != nil && !probe.check() {
 				return nil, false, probe.err
 			}
-			separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, probe)
+			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 {
 				return nil, false, nil
 			}
-			key := normalizePropertyKeyWithCancellation(trimSpaceWithCancellation(pair[:separator], probe), probe)
+			key := normalizePropertyKey(trimSpaceWithCancellation(pair[:separator], probe))
 			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(pair[separator+1:]), values, probe)
 			if err != nil {
 				return nil, false, err
@@ -380,7 +380,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			}
 			return result, true, nil
 		case "head", "last", "reverse", "size":
-			if equalFoldASCIIWithCancellation(function, "size", probe) {
+			if equalFoldASCII(function, "size") {
 				argument = sizeArgumentExpression(argument)
 			}
 			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
@@ -393,7 +393,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if strings.EqualFold(function, "size") {
 				return evaluateCypherSizeWithCancellation(value, probe)
 			}
-			result, err := evaluateListAccessFunctionWithCancellation(lowerASCIIWithCancellation(function, probe), value, probe)
+			result, err := evaluateListAccessFunctionWithCancellation(lowerASCII(function), value, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -1228,8 +1228,8 @@ func parseListComprehensionWithCancellation(inner string, probe *pipelineCancell
 		return "", "", "", "", false
 	}
 	rest := inner[listStart:]
-	whereIndex := findListComprehensionTokenWithCancellation(rest, " WHERE ", probe)
-	pipeIndex := findListComprehensionTokenWithCancellation(rest, "|", probe)
+	whereIndex := findListComprehensionToken(rest, " WHERE ")
+	pipeIndex := findListComprehensionToken(rest, "|")
 	endList := len(rest)
 	if whereIndex >= 0 && whereIndex < endList {
 		endList = whereIndex
@@ -1338,7 +1338,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 		probe = budgets[0]
 	}
 	function, inner, isFunction := parseFunctionCallWSWithCancellation(expr, probe)
-	function = lowerASCIIWithCancellation(function, probe)
+	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
@@ -1528,7 +1528,7 @@ func stripEnclosingExpressionParenthesesWithCancellation(expr string, probe *pip
 		}
 		character := expr[i]
 		if quote != 0 {
-			if character == quote && !isBackslashEscapedWithCancellation(expr, i, probe) {
+			if character == quote && !isBackslashEscaped(expr, i) {
 				quote = 0
 			}
 			continue

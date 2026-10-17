@@ -99,7 +99,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// String literal (single or double quotes)
-	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+	if isWholeCypherQuotedString(expr) {
 		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return decoded
 		}
@@ -156,7 +156,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// Check if this is an aggregation function - they should not be evaluated in expression context
-	exprLower := lowerASCIIWithCancellation(expr, contextPipelineProbe(ctx))
+	exprLower := lowerASCII(expr)
 	if strings.HasPrefix(exprLower, "count(") ||
 		strings.HasPrefix(exprLower, "sum(") ||
 		strings.HasPrefix(exprLower, "avg(") ||

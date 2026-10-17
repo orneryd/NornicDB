@@ -24,7 +24,7 @@ type gdsProjectionRow struct {
 type statementTextKey struct{}
 
 func withStatementText(ctx context.Context, statement string) context.Context {
-	if indexASCIIFoldWithCancellation(statement, "gds.graph.project", contextPipelineProbe(ctx)) < 0 {
+	if indexASCIIFold(statement, "gds.graph.project") < 0 {
 		return ctx
 	}
 	return context.WithValue(ctx, statementTextKey{}, statement)

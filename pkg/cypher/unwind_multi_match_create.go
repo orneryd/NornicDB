@@ -114,7 +114,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		return nil, false, nil
 	}
 
-	upper := upperASCIIWithCancellation(mutationPart, contextPipelineProbe(ctx))
+	upper := upperASCII(mutationPart)
 	// nested UNWIND / SET / MERGE / DELETE / REMOVE / FOREACH disqualify
 	// this fast path. RETURN and a simple passthrough WITH are handled above.
 	disqualifiers := []string{"SET", "MERGE", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"}

@@ -27,10 +27,10 @@ func (e *StorageExecutor) splitBySemicolonWithCancellation(s string, probe *pipe
 		}
 		switch s[position] {
 		case '\'', '"', '`':
-			position = skipCypherQuotedTextWithCancellation(s, position, s[position], probe) - 1
+			position = skipCypherQuotedText(s, position, s[position]) - 1
 		case '/':
 			if position+1 < len(s) && (s[position+1] == '/' || s[position+1] == '*') {
-				position = queryCommentEndWithCancellation(s, position, probe) - 1
+				position = queryCommentEnd(s, position) - 1
 			}
 		case ';':
 			result = appendPipelineItem(result, s[start:position], probe)

@@ -315,7 +315,7 @@ func pipelineClauseAggregatesFor(ctx context.Context, clause pipelineClause, pro
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
-	aggregates := func(string) bool { return pipelineClauseAggregatesWithCancellation(clause, probe) }
+	aggregates := func(string) bool { return pipelineClauseAggregates(clause) }
 	plan := pipelineClausePlanFor(ctx, clause.text)
 	if plan == nil {
 		return aggregates(clause.text)
@@ -347,7 +347,7 @@ func pipelineMatchPartsFor(ctx context.Context, body string) pipelineMatchParts 
 // a MATCH clause's whole body.
 func pipelineMatchBodyPartCountFor(ctx context.Context, clause string) int {
 	return clauseAnalysisFor(ctx, clauseAnalysisMatchBodyPartCount, clause, func(clause string) int {
-		return len(splitTopLevelCommaWithCancellation(pipelineClauseBodyWithCancellation(clause, "MATCH", contextPipelineProbe(ctx)), contextPipelineProbe(ctx)))
+		return len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH")))
 	})
 }
 
@@ -382,7 +382,7 @@ func simpleIndexedEqualityShapeFor(ctx context.Context, variable, where string) 
 // COUNT / COLLECT subquery expression, whose body every row runs again. A
 // statement without one runs without plans.
 func withStatementClausePlans(ctx context.Context, cypher string) context.Context {
-	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFoldWithCancellation(cypher, "CALL", contextPipelineProbe(ctx)) {
+	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFold(cypher, "CALL") {
 		return ctx
 	}
 	return withPipelineClausePlans(ctx)

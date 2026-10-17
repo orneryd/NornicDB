@@ -96,7 +96,7 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
-	if indexASCIIFoldWithCancellation(query, "shortestpath", contextPipelineProbe(ctx)) >= 0 {
+	if indexASCIIFold(query, "shortestpath") >= 0 {
 		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	}
 	plan.Mode = ModeExplain
 	result := &ExecuteResult{
-		Columns: e.inferExplainColumnsWithCancellation(query, contextPipelineProbe(ctx)),
+		Columns: e.inferExplainColumns(query),
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
@@ -859,7 +859,7 @@ func (e *StorageExecutor) inferExplainColumnsWithCancellation(query string, prob
 				if probe != nil && !probe.check() {
 					return nil
 				}
-				if index := topLevelKeywordIndexWithCancellation(returnExpr, keyword, probe); index >= 0 {
+				if index := topLevelKeywordIndex(returnExpr, keyword); index >= 0 {
 					returnExpr = trimSpaceWithCancellation(returnExpr[:index], probe)
 				}
 			}
@@ -906,7 +906,7 @@ func (e *StorageExecutor) inferExplainColumnsWithCancellation(query string, prob
 		}
 	}
 
-	if cols := e.inferTopLevelReturnColumnsWithCancellation(query, probe); cols != nil {
+	if cols := e.inferTopLevelReturnColumns(query); cols != nil {
 		return cols
 	}
 	return []string{}

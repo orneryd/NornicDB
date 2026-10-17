@@ -37,7 +37,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
-		if _, builtIn := builtInCypherFunctions[lowerASCIIWithCancellation(normalizeProjectionColumnNameWithCancellation(strings.TrimSpace(name), contextPipelineProbe(ctx)), contextPipelineProbe(ctx))]; builtIn {
+		if _, builtIn := builtInCypherFunctions[lowerASCII(normalizeProjectionColumnName(strings.TrimSpace(name)))]; builtIn {
 			return nil, false, nil
 		}
 	}
@@ -256,7 +256,7 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 	}
 
 	// Split by commas, respecting nesting and quoted values.
-	pairs := splitTopLevelCommaWithCancellation(inner, contextPipelineProbe(ctx))
+	pairs := splitTopLevelComma(inner)
 
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
@@ -264,14 +264,14 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 			continue
 		}
 
-		colonIdx := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx == -1 {
 			continue
 		}
 
 		// Keep map-literal key normalization aligned with property/map parsing:
 		// supports backticked and quoted keys like `foo`, 'foo', "foo".
-		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
+		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Evaluate the value expression in context with full path info

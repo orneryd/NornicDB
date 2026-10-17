@@ -260,7 +260,7 @@ func insideCaseBlockWithCancellation(s string, at int, probe *pipelineCancellati
 		return false
 	}
 
-	end := enclosingCaseBlockEndWithCancellation(s, at, probe)
+	end := enclosingCaseBlockEnd(s, at)
 	return end >= 2 && caseKeywordAtWithCancellation(s, end-2, "END", probe) && bracketDepthAtWithCancellation(s, at, probe) == 0
 }
 
@@ -280,7 +280,7 @@ func bracketDepthAtWithCancellation(s string, at int, probe *pipelineCancellatio
 
 		switch c := s[i]; c {
 		case '\'', '"', '`':
-			i = skipCypherQuotedTextWithCancellation(s, i, c, probe) - 1
+			i = skipCypherQuotedText(s, i, c) - 1
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -314,7 +314,7 @@ func enclosingCaseBlockEndWithCancellation(expr string, at int, probe *pipelineC
 		}
 		c := expr[i]
 		if quote != 0 {
-			if c == quote && !isBackslashEscapedWithCancellation(expr, i, probe) {
+			if c == quote && !isBackslashEscaped(expr, i) {
 				quote = 0
 			}
 			continue

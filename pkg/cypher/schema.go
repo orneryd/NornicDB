@@ -78,7 +78,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		return nil, err
 	}
 
-	upper := upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx))
+	upper := upperASCII(cypher)
 
 	// Order matters: check more specific patterns first
 	var run func(context.Context, string) (*ExecuteResult, error)
@@ -174,8 +174,8 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 //
 //	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
 func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	onPosition := keywordIndexFromWithCancellation(cypher, "ON", 0, defaultKeywordScanOpts(), contextPipelineProbe(ctx))
-	forPosition := keywordIndexFromWithCancellation(cypher, "FOR", 0, defaultKeywordScanOpts(), contextPipelineProbe(ctx))
+	onPosition := keywordIndexFrom(cypher, "ON", 0, defaultKeywordScanOpts())
+	forPosition := keywordIndexFrom(cypher, "FOR", 0, defaultKeywordScanOpts())
 	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 	}
@@ -198,7 +198,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
-	ifNotExists := strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), "IF NOT EXISTS")
+	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
 	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
 		return result, err
 	}
@@ -406,8 +406,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), " IS ::") || strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), " IS TYPED")) &&
-		strings.Contains(upperASCIIWithCancellation(err.Error(), contextPipelineProbe(ctx)), "UNSUPPORTED PROPERTY TYPE") {
+		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
+		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
 		return nil, err
 	}
 
@@ -442,14 +442,14 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), "REQUIRE MAX COUNT") {
+		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
 		return nil, err
 	}
 
 	if parsed, err := e.parseCreateConstraintPolicyDDL(cypher); err == nil {
 		constraintName := parsed.name
 		if constraintName == "" {
-			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCIIWithCancellation(parsed.policyMode, contextPipelineProbe(ctx)))
+			constraintName = fmt.Sprintf("constraint_%s_%s_%s_%s", parsed.sourceLabel, parsed.relType, parsed.targetLabel, lowerASCII(parsed.policyMode))
 		}
 		constraint := storage.Constraint{
 			Name:        constraintName,
@@ -468,7 +468,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), "REQUIRE ALLOWED") || strings.Contains(upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx)), "REQUIRE DISALLOWED")) {
+		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
 		return nil, err
 	}
 
@@ -624,7 +624,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 // executeDropConstraint handles DROP CONSTRAINT commands.
 func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
-	upper := upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx))
+	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}

@@ -124,7 +124,7 @@ func semanticAggregateCalls(expression string) []string {
 	return semanticAggregateCallsWithCancellation(expression, nil)
 }
 func semanticAggregateCallsWithCancellation(expression string, probe *pipelineCancellation) []string {
-	spans := findAggregateSpansWithCancellation(expression, probe)
+	spans := findAggregateSpans(expression)
 	calls := make([]string, 0, pipelineInitialCapacity(len(spans), probe))
 	for _, span := range spans {
 		if probe != nil && !probe.check() {

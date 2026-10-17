@@ -76,7 +76,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
-	lowerExpr := lowerASCIIWithCancellation(expr, probe)
+	lowerExpr := lowerASCII(expr)
 
 	// ========================================
 	// Plugin Functions (loaded dynamically from .so files)
@@ -94,7 +94,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	if name, inner, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
 		args := e.splitFunctionArgs(inner)
-		if equalFoldASCIIWithCancellation(name, "size", probe) && len(args) == 1 {
+		if equalFoldASCII(name, "size") && len(args) == 1 {
 			args[0] = sizeArgumentExpression(args[0])
 		}
 		fnCtx := cypherfn.Context{
@@ -645,7 +645,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				// An argument the evaluator can't resolve comes back as its own
 				// text; that is not a value to parse.
-				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedStringWithCancellation(text, probe) {
+				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
 					input = nil
 				}
 				if err := temporalConstructorError(function, input); err != nil {
@@ -665,7 +665,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// row evaluator reads them (temporalComponent), so both evaluators give
 	// the same value for every accessor (#1105).
 	if name, inner, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
-		if kind, component, dotted := strings.Cut(lowerASCIIWithCancellation(name, probe), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
+		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
 			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return value
 		}

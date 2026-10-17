@@ -104,7 +104,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 	}
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
-	upper := upperASCIIWithCancellation(strings.TrimSpace(cypher), contextPipelineProbe(ctx))
+	upper := upperASCII(strings.TrimSpace(cypher))
 	indexTypeFilter := ""
 	switch {
 	case strings.HasPrefix(upper, "SHOW FULLTEXT INDEX"):
@@ -180,7 +180,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 					config["vector.dimensions"] = int64(dimensions)
 				}
 				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
-					config["vector.similarity_function"] = upperASCIIWithCancellation(similarity, contextPipelineProbe(ctx))
+					config["vector.similarity_function"] = upperASCII(similarity)
 				}
 			}
 
@@ -526,7 +526,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		where := strings.TrimSpace(tail[len("WHERE"):])
 		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
-			if topLevelKeywordIndexWithCancellation(where, keyword, contextPipelineProbe(ctx)) >= 0 {
+			if topLevelKeywordIndex(where, keyword) >= 0 {
 				return nil, invalid()
 			}
 		}
@@ -549,7 +549,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	positions := make([]int, len(segments))
 	itemsEnd := len(body)
 	for i, keyword := range segments {
-		positions[i] = topLevelKeywordIndexWithCancellation(body, keyword, contextPipelineProbe(ctx))
+		positions[i] = topLevelKeywordIndex(body, keyword)
 		if positions[i] >= 0 && positions[i] < itemsEnd {
 			itemsEnd = positions[i]
 		}
@@ -560,13 +560,13 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		head4 = body[:returnIndex]
 	}
 	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
-		if topLevelKeywordIndexWithCancellation(head4, keyword, contextPipelineProbe(ctx)) >= 0 {
+		if topLevelKeywordIndex(head4, keyword) >= 0 {
 			return nil, invalid()
 		}
 	}
 	last := -1
 	for i := 0; i < 4; i++ {
-		position := topLevelKeywordIndexWithCancellation(head4, segments[i], contextPipelineProbe(ctx))
+		position := topLevelKeywordIndex(head4, segments[i])
 		if position < 0 {
 			continue
 		}
@@ -576,13 +576,13 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		last = position
 	}
 	segmentText := func(i int) string {
-		start := topLevelKeywordIndexWithCancellation(head4, segments[i], contextPipelineProbe(ctx))
+		start := topLevelKeywordIndex(head4, segments[i])
 		if start < 0 {
 			return ""
 		}
 		end := len(head4)
 		for j := 0; j < 4; j++ {
-			if position := topLevelKeywordIndexWithCancellation(head4, segments[j], contextPipelineProbe(ctx)); position > start && position < end {
+			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
 				end = position
 			}
 		}
@@ -599,7 +599,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClauseWithCancellation("CALL show() YIELD "+items, contextPipelineProbe(ctx))
+	yield := parseYieldClause("CALL show() YIELD "+items)
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}
@@ -1883,7 +1883,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 			return nil, localizedError(localization.CypherAdminInvalidLimitAssignment(assignment), nil)
 		}
 
-		limitName := strings.TrimSpace(lowerASCIIWithCancellation(parts[0], contextPipelineProbe(ctx)))
+		limitName := strings.TrimSpace(lowerASCII(parts[0]))
 		limitValue := strings.TrimSpace(parts[1])
 
 		// Parse and set the limit based on name

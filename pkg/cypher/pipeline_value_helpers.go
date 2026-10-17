@@ -121,7 +121,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	}
 
 	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
-	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedStringWithCancellation(expr, probe) {
+	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false
 	}
 	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {

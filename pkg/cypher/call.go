@@ -86,7 +86,7 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 	}
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
 	normalized := replaceTextWithCancellation(replaceTextWithCancellation(cypher, "\n", " ", probe), "\t", " ", probe)
-	yieldIdx := topLevelKeywordIndexWithCancellation(normalized, "YIELD", probe)
+	yieldIdx := topLevelKeywordIndex(normalized, "YIELD")
 	if yieldIdx == -1 {
 		return nil
 	}
@@ -100,14 +100,14 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 
 	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
 	// outer clause boundary (and a RETURN) belongs to the subsequent query.
-	yieldScope := scopeYieldToCallClauseWithCancellation(afterYield, probe)
-	if returnIdx := topLevelKeywordIndexWithCancellation(yieldScope, "RETURN", probe); returnIdx >= 0 {
+	yieldScope := scopeYieldToCallClause(afterYield)
+	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
 		yieldScope = trimSpaceWithCancellation(yieldScope[:returnIdx], probe)
 	}
-	whereIdx := topLevelKeywordIndexWithCancellation(yieldScope, "WHERE", probe)
-	orderIdx := topLevelKeywordIndexWithCancellation(yieldScope, "ORDER", probe)
-	skipIdx := topLevelKeywordIndexWithCancellation(yieldScope, "SKIP", probe)
-	limitIdx := topLevelKeywordIndexWithCancellation(yieldScope, "LIMIT", probe)
+	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
+	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
+	skipIdx := topLevelKeywordIndex(yieldScope, "SKIP")
+	limitIdx := topLevelKeywordIndex(yieldScope, "LIMIT")
 	positions := []int{whereIdx, orderIdx, skipIdx, limitIdx}
 
 	// part returns the text of the keyword at start, up to the next keyword.
@@ -182,7 +182,7 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 					continue
 				}
 				yi := yieldItem{}
-				upperItem := upperASCIIWithCancellation(item, probe)
+				upperItem := upperASCII(item)
 				if asIdx := indexTextWithCancellation(upperItem, " AS ", probe); asIdx != -1 {
 					yi.name = trimSpaceWithCancellation(item[:asIdx], probe)
 					yi.alias = trimSpaceWithCancellation(item[asIdx+4:], probe)
@@ -206,7 +206,7 @@ func scopeYieldToCallClause(afterYield string) string {
 	return scopeYieldToCallClauseWithCancellation(afterYield, nil)
 }
 func scopeYieldToCallClauseWithCancellation(afterYield string, probe *pipelineCancellation) string {
-	scopeEnd := findYieldOuterBoundaryWithCancellation(afterYield, probe)
+	scopeEnd := findYieldOuterBoundary(afterYield)
 	if scopeEnd < 0 {
 		scopeEnd = len(afterYield)
 	}
@@ -224,7 +224,7 @@ func findYieldOuterBoundaryWithCancellation(afterYield string, probe *pipelineCa
 		if probe != nil && !probe.check() {
 			return -1
 		}
-		if idx := topLevelKeywordIndexWithCancellation(afterYield, kw, probe); idx != -1 && idx < scopeEnd {
+		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
 	}
@@ -1587,7 +1587,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	tailCypher := parts.tail
 
 	// Parse YIELD clause for post-processing
-	yield := parseYieldClauseWithCancellation(callCypher, contextPipelineProbe(ctx))
+	yield := parseYieldClause(callCypher)
 	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}

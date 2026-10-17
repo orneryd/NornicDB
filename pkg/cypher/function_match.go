@@ -149,7 +149,7 @@ func isFunctionCallWSWithCancellation(expr, funcName string, probe *pipelineCanc
 		if !matchFuncStart(expr, funcName) {
 			return false
 		}
-	} else if !hasFuncStartWithCancellation(expr, funcName, probe) {
+	} else if !hasFuncStart(expr, funcName) {
 		return false
 	}
 	open := indexByteWithCancellation(expr, '(', probe)

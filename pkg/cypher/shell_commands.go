@@ -191,7 +191,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, quer
 		return nil, ctx, localizedError(localization.CypherCommandRoutingEmptyCommand(), nil)
 	}
 
-	name := lowerASCIIWithCancellation(parts[0], contextPipelineProbe(ctx))
+	name := lowerASCII(parts[0])
 	args := ""
 	if len(trimmed) > len(parts[0]) {
 		args = strings.TrimSpace(trimmed[len(parts[0]):])
@@ -377,7 +377,7 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
 
-		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
+		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 		if key == "" || valueExpr == "" {
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
@@ -385,7 +385,7 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 
 		result, err := e.executeInternal(ctx, "RETURN "+valueExpr+" AS value", params)
 		if err != nil {
-			if isValidIdentifierWithCancellation(valueExpr, contextPipelineProbe(ctx)) {
+			if isValidIdentifier(valueExpr) {
 				return nil, localizedError(localization.CypherCommandRoutingParameterExpressionUnresolved(key, valueExpr), nerrors.ErrExpressionEvaluationFailed)
 			}
 			cause := fmt.Errorf("%w: parameter %s: %w", nerrors.ErrExpressionEvaluationFailed, key, err)

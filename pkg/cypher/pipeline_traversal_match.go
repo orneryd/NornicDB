@@ -26,7 +26,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	// components. The single traversal operator cannot consume only one
 	// component without losing rows; leave the complete product to the shared
 	// multi-pattern operator.
-	if len(splitTopLevelCommaWithCancellation(pattern, cancellation)) != 1 {
+	if len(splitTopLevelComma(pattern)) != 1 {
 		return nil, false, nil
 	}
 
@@ -247,12 +247,12 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
 		clause := remaining[0].text
-		if topLevelKeywordIndexWithCancellation(clause, "WHERE", contextPipelineProbe(ctx)) >= 0 {
+		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
 			return hint
 		}
 		end := len(clause)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndexWithCancellation(clause, keyword, contextPipelineProbe(ctx)); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}
@@ -281,8 +281,8 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if _, distinct := cutDistinctWithCancellation(body, contextPipelineProbe(ctx)); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItemsWithCancellation(body, contextPipelineProbe(ctx)) {
-		if pipelineExpressionContainsAggregateWithCancellation(item.expr, contextPipelineProbe(ctx)) {
+	for _, item := range e.parseReturnItems(body) {
+		if pipelineExpressionContainsAggregate(item.expr) {
 			return hint
 		}
 	}
@@ -295,11 +295,11 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		return hint
 	}
 	hint.limit = limit
-	if orderIndex := topLevelKeywordIndexWithCancellation(body, "ORDER BY", contextPipelineProbe(ctx)); orderIndex >= 0 {
+	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
 		orderExpr := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
 		end := len(orderExpr)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndexWithCancellation(orderExpr, keyword, contextPipelineProbe(ctx)); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(orderExpr, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}

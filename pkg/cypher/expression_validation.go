@@ -274,16 +274,16 @@ func namedPathDeclarationWithCancellation(text string, from int, probe *pipeline
 	if probe != nil && !probe.check() {
 		return "", 0, 0, false
 	}
-	at = queryGapEndWithCancellation(text, from, probe)
+	at = queryGapEnd(text, from)
 	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEndWithCancellation(text, end, probe)
+	next := queryGapEnd(text, end)
 	if next+1 >= len(text) || text[next] != '=' || text[next+1] == '~' {
 		return "", 0, 0, false
 	}
-	pattern = queryGapEndWithCancellation(text, next+1, probe)
+	pattern = queryGapEnd(text, next+1)
 	if pattern >= len(text) || text[pattern] != '(' {
 		return "", 0, 0, false
 	}
@@ -303,12 +303,12 @@ func bindingDeclarationWithCancellation(text string, from int, probe *pipelineCa
 	if probe != nil && !probe.check() {
 		return "", 0, 0, false
 	}
-	at = queryGapEndWithCancellation(text, from, probe)
+	at = queryGapEnd(text, from)
 	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEndWithCancellation(text, end, probe)
+	next := queryGapEnd(text, end)
 	if next+2 > len(text) || !strings.EqualFold(text[next:next+2], "IN") || next+2 < len(text) && isIdentByte(text[next+2]) {
 		return "", 0, 0, false
 	}
@@ -831,7 +831,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 			return true, true
 		}
 	}
-	upper := upperASCIIWithCancellation(expression, contextPipelineProbe(ctx))
+	upper := upperASCII(expression)
 	if strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") || strings.HasPrefix(upper, "NOT ") {
 		return true, true
 	}
@@ -839,7 +839,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if !defined {
 		return nil, false
 	}
-	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
+	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedString(expression) {
 		return nil, false
 	}
 	return value, true

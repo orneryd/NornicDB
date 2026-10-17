@@ -106,13 +106,13 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 			if close < 0 {
 				return nil, false
 			}
-			if parenthesisedPathAtWithCancellation(pattern, at, close, contextPipelineProbe(ctx)) {
-				quantifier, ok := relationshipQuantifierAt(pattern, skipASCIISpacesWithCancellation(pattern, close+1, len(pattern), contextPipelineProbe(ctx)), len(pattern))
+			if parenthesisedPathAt(pattern, at, close) {
+				quantifier, ok := relationshipQuantifierAt(pattern, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern))
 				if nested || !ok {
 					return nil, false
 				}
 				inner, where := pattern[at+1:close], ""
-				if index := topLevelKeywordIndexWithCancellation(inner, "WHERE", contextPipelineProbe(ctx)); index >= 0 {
+				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
 					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
 				}
 				members, ok := parsePathPatternItemsContext(ctx, inner, true)

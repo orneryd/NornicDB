@@ -64,7 +64,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldBody = strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
 	}
 	where := ""
-	if whereIndex := topLevelKeywordIndexWithCancellation(yieldBody, "WHERE", contextPipelineProbe(ctx)); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {
 		where = strings.TrimSpace(yieldBody[whereIndex+len("WHERE"):])
 		yieldBody = strings.TrimSpace(yieldBody[:whereIndex])
 	}
@@ -89,7 +89,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 
 	var yielded []string
 	if yieldIndex >= 0 {
-		yield := parseYieldClauseWithCancellation(clause, contextPipelineProbe(ctx))
+		yield := parseYieldClause(clause)
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}

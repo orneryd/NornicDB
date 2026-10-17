@@ -670,7 +670,7 @@ func quantifiedGroupQuantifierAtWithCancellation(s string, at int, probe *pipeli
 		return false
 	}
 
-	close := trimRightIndexWithCancellation(s, 0, at, probe) - 1
+	close := trimRightIndex(s, 0, at) - 1
 	if close < 0 || s[close] != ')' {
 		return false
 	}
@@ -702,15 +702,15 @@ func parenthesisedPathAtWithCancellation(s string, open, close int, probe *pipel
 		return false
 	}
 
-	inner := skipASCIISpacesWithCancellation(s, open+1, close, probe)
+	inner := skipASCIISpaces(s, open+1, close)
 	if inner >= close || s[inner] != '(' {
 		return false
 	}
-	nodeEnd := findMatchingDelimiterWithCancellation(s[:close], inner, '(', ')', probe)
+	nodeEnd := findMatchingDelimiter(s[:close], inner, '(', ')')
 	if nodeEnd < 0 {
 		return false
 	}
-	arrow := skipASCIISpacesWithCancellation(s, nodeEnd+1, close, probe)
+	arrow := skipASCIISpaces(s, nodeEnd+1, close)
 	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && indexByteWithCancellation("-[>", s[arrow+1], probe) >= 0
 }
 

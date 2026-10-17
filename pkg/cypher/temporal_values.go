@@ -287,7 +287,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 	if !ok {
 		return nil, false, nil
 	}
-	kind := lowerASCIIWithCancellation(name, contextPipelineProbe(ctx))
+	kind := lowerASCII(name)
 	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {

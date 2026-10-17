@@ -122,7 +122,7 @@ func parseProjectionExprAliasWithCancellation(item string, probe *pipelineCancel
 		return trimmed, trimmed
 	}
 	expr := trimSpaceWithCancellation(trimmed[:asIdx], probe)
-	alias := normalizeProjectionColumnNameWithCancellation(trimmed[asIdx+len("AS"):], probe)
+	alias := normalizeProjectionColumnName(trimmed[asIdx+len("AS"):])
 	return expr, alias
 }
 
@@ -139,7 +139,7 @@ func projectionAliasIndexWithCancellation(item string, probe *pipelineCancellati
 		if probe != nil && !probe.check() {
 			return -1
 		}
-		index := keywordIndexFromWithCancellation(item, "AS", from, opts, probe)
+		index := keywordIndexFrom(item, "AS", from, opts)
 		if index < 0 {
 			return -1
 		}

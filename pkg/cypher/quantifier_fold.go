@@ -13,7 +13,7 @@ func parseQuantifierArgumentsWithCancellation(inner string, probe *pipelineCance
 	rest := inner[listStart:]
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
-	whereIndex := keywordIndexFromWithCancellation(rest, "WHERE", 0, opts, probe)
+	whereIndex := keywordIndexFrom(rest, "WHERE", 0, opts)
 	if whereIndex < 0 {
 		return "", "", "", false
 	}

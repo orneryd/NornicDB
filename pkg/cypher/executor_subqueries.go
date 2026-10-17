@@ -114,7 +114,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				}
 			}
 			optionalPart = strings.TrimSpace(optionalPart[:end])
-			if strings.HasPrefix(upperASCIIWithCancellation(optionalPart, contextPipelineProbe(ctx)), "OPTIONAL MATCH") {
+			if strings.HasPrefix(upperASCII(optionalPart), "OPTIONAL MATCH") {
 				requiredPart := optionalPart
 				if len(requiredPart) >= len("OPTIONAL MATCH") {
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
@@ -365,7 +365,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	}
 
 	seedQuery := trimmedOuter
-	if topLevelKeywordIndexWithCancellation(seedQuery, "RETURN", contextPipelineProbe(ctx)) < 0 {
+	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
 		seedQuery += " RETURN " + variable
 	}
 	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
@@ -483,7 +483,7 @@ func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe
 
 	// The matching closing brace; a brace in quoted text isn't one
 	// (CALL () { RETURN '}' AS y } …).
-	braceEnd := findMatchingDelimiterWithCancellation(trimmed, braceStart, '{', '}', probe)
+	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
 	if braceEnd < 0 {
 		return "", "", false, batchSize
 	}
@@ -498,18 +498,18 @@ func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe
 	afterCall = trimSpaceWithCancellation(trimmed[braceEnd+1:], probe)
 
 	// Check for IN TRANSACTIONS
-	upperAfter := upperASCIIWithCancellation(afterCall, probe)
+	upperAfter := upperASCII(afterCall)
 	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
 		inTransactions = true
 		afterTx := trimSpaceWithCancellation(afterCall[15:], probe)
-		upperAfterTx := upperASCIIWithCancellation(afterTx, probe)
+		upperAfterTx := upperASCII(afterTx)
 
 		// Check for OF n ROWS
 		if strings.HasPrefix(upperAfterTx, "OF ") {
 			// Parse batch size
 			ofPart := afterTx[3:]
 			// Find ROWS keyword
-			rowsIdx := indexTextWithCancellation(upperASCIIWithCancellation(ofPart, probe), " ROWS", probe)
+			rowsIdx := indexTextWithCancellation(upperASCII(ofPart), " ROWS", probe)
 			if rowsIdx > 0 {
 				sizeStr := trimSpaceWithCancellation(ofPart[:rowsIdx], probe)
 				if size, ok := callSubqueryBatchSizeWithCancellation(sizeStr, probe); ok {
@@ -1352,7 +1352,7 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 		switch ch {
 		case '\'', '"', '`':
 			// A string or a backticked name (`union`) holds no UNION.
-			i = skipCypherQuotedTextWithCancellation(trimmed, i, ch, probe) - 1
+			i = skipCypherQuotedText(trimmed, i, ch) - 1
 			continue
 		case '(':
 			depthParen++
@@ -1384,14 +1384,14 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 			continue
 		}
 		// A variable named union is a name, not the operator (#894).
-		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsNameWithCancellation(trimmed, i, i+len("UNION"), "UNION", probe) {
+		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsName(trimmed, i, i+len("UNION"), "UNION") {
 			continue
 		}
-		j := skipSpacesWithCancellation(trimmed, i+len("UNION"), probe)
+		j := skipSpaces(trimmed, i+len("UNION"))
 		all := false
 		if matchKeywordAt(trimmed, j, "ALL") {
 			all = true
-			j = skipSpacesWithCancellation(trimmed, j+len("ALL"), probe)
+			j = skipSpaces(trimmed, j+len("ALL"))
 		}
 		seps = appendPipelineItem(seps, sep{pos: i, end: j, all: all}, probe)
 		if probe != nil && probe.err != nil {
@@ -1542,10 +1542,10 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	}
 
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(innerBody), ";"))
-	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFoldWithCancellation(trimmed, "RETURN ", contextPipelineProbe(ctx)) || callSubqueryQueryIsWrite(trimmed) {
+	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFold(trimmed, "RETURN ") || callSubqueryQueryIsWrite(trimmed) {
 		return nil, false, nil
 	}
-	if containsFoldWithCancellation(trimmed, "OPTIONAL MATCH", contextPipelineProbe(ctx)) {
+	if containsFold(trimmed, "OPTIONAL MATCH") {
 		return nil, false, nil
 	}
 
@@ -2166,7 +2166,7 @@ func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *Exec
 	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
-	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTermsWithCancellation(modifiers, contextPipelineProbe(ctx)), skip, limit)
+	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
 }
 
 // applyOrderByToResult applies ORDER BY to a result set
@@ -2242,7 +2242,7 @@ func parseOrderByTerms(modifiers string) []orderByTerm {
 func parseOrderByTermsWithCancellation(modifiers string, probe *pipelineCancellation) []orderByTerm {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
-	orderByIndex := keywordIndexFromWithCancellation(modifiers, "ORDER BY", 0, opts, probe)
+	orderByIndex := keywordIndexFrom(modifiers, "ORDER BY", 0, opts)
 	if orderByIndex < 0 {
 		return nil
 	}
@@ -2273,7 +2273,7 @@ func parseOrderByClauseWithCancellation(clause string, probe *pipelineCancellati
 		}
 	}
 	clause = trimSpaceWithCancellation(clause[:end], probe)
-	parts := splitTopLevelCommaWithCancellation(clause, probe)
+	parts := splitTopLevelComma(clause)
 	terms := make([]orderByTerm, 0, pipelineInitialCapacity(len(parts), probe))
 	for _, part := range parts {
 		if probe != nil && !probe.check() {
@@ -2291,7 +2291,7 @@ func parseOrderByClauseWithCancellation(clause string, probe *pipelineCancellati
 		if len(fields) > 1 {
 			direction := ""
 			if len(fields[len(fields)-1]) <= len("DESCENDING") {
-				direction = upperASCIIWithCancellation(fields[len(fields)-1], probe)
+				direction = upperASCII(fields[len(fields)-1])
 			}
 			switch direction {
 			case "DESC", "DESCENDING":

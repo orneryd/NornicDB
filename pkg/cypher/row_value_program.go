@@ -768,7 +768,7 @@ func (e *StorageExecutor) rowValueFallbackProbed(expr string, values map[string]
 	if err != nil {
 		return nil, false, err
 	}
-	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedStringWithCancellation(expr, probe) {
+	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false, nil
 	}
 	return value, true, nil

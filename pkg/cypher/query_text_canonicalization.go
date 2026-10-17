@@ -49,8 +49,8 @@ func hasOwnStatementSyntaxWithCancellation(query string, probe *pipelineCancella
 		return true
 	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
 		// A constraint contract: REQUIRE { one predicate per line }.
-		if require := keywordIndexFromWithCancellation(query, "REQUIRE", 0, defaultKeywordScanOpts(), probe); require >= 0 {
-			if open := queryGapEndWithCancellation(query, require+len("REQUIRE"), probe); open < len(query) && query[open] == '{' {
+		if require := keywordIndexFrom(query, "REQUIRE", 0, defaultKeywordScanOpts()); require >= 0 {
+			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
 				return true
 			}
 		}
@@ -86,7 +86,7 @@ func leadingShellCommandsEndWithCancellation(query string, probe *pipelineCancel
 				return len(query)
 			}
 
-			if commentEnd := queryCommentEndWithCancellation(query, index, probe); commentEnd >= 0 {
+			if commentEnd := queryCommentEnd(query, index); commentEnd >= 0 {
 				index = commentEnd
 				continue
 			}
@@ -123,7 +123,7 @@ func classificationTextWithCancellation(query string, probe *pipelineCancellatio
 		return ""
 	}
 
-	canonical, _ := canonicalizeQueryTextWithCancellation(query, probe)
+	canonical, _ := canonicalizeQueryText(query)
 	return canonical
 }
 
@@ -186,7 +186,7 @@ func canonicalizeQueryTextWithCancellation(query string, probe *pipelineCancella
 		return "", nil
 	}
 
-	if !queryMayNeedCanonicalRewriteWithCancellation(query, probe) {
+	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil
 	}
 	return scanCanonicalQueryTextWithCancellation(query, probe)
@@ -248,7 +248,7 @@ func scanCanonicalQueryTextWithCancellation(query string, probe *pipelineCancell
 	// query[:verbatimEnd] keeps its text but for its comments: the whole of
 	// a statement with its own syntax, or the leading shell command lines
 	// (:USE db, :param …), which end at their line breaks.
-	verbatimEnd := leadingShellCommandsEndWithCancellation(query, probe)
+	verbatimEnd := leadingShellCommandsEnd(query)
 	if hasOwnStatementSyntaxWithCancellation(query[verbatimEnd:], probe) {
 		verbatimEnd = len(query)
 	}
@@ -265,7 +265,7 @@ func scanCanonicalQueryTextWithCancellation(query string, probe *pipelineCancell
 					return memoized.canonical, memoized
 				}
 			}
-			index = skipCypherQuotedTextWithCancellation(query, index, c, probe)
+			index = skipCypherQuotedText(query, index, c)
 			if index >= verbatimEnd && gluedAliasKeywordAt(query, index) {
 				replace(index, index, " ")
 				if memoized != nil {
@@ -290,8 +290,8 @@ func scanCanonicalQueryTextWithCancellation(query string, probe *pipelineCancell
 			continue
 		}
 		if index < verbatimEnd {
-			if end := queryCommentEndWithCancellation(query, index, probe); end >= 0 {
-				replace(index, end, commentReplacementWithCancellation(query[index:end], probe))
+			if end := queryCommentEnd(query, index); end >= 0 {
+				replace(index, end, commentReplacement(query[index:end]))
 				if memoized != nil {
 					return memoized.canonical, memoized
 				}
@@ -301,8 +301,8 @@ func scanCanonicalQueryTextWithCancellation(query string, probe *pipelineCancell
 			index++
 			continue
 		}
-		if end := queryGapEndWithCancellation(query, index, probe); end > index {
-			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClauseWithCancellation(query, index, probe) {
+		if end := queryGapEnd(query, index); end > index {
+			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClause(query, index) {
 				replace(index, end, "")
 				if memoized != nil {
 					return memoized.canonical, memoized
@@ -360,10 +360,10 @@ func inPatternClauseWithCancellation(query string, index int, probe *pipelineCan
 		c := query[i]
 		switch {
 		case c == '\'' || c == '"' || c == '`':
-			i = skipCypherQuotedTextWithCancellation(query, i, c, probe)
+			i = skipCypherQuotedText(query, i, c)
 			continue
 		case c == '/':
-			if end := queryCommentEndWithCancellation(query, i, probe); end >= 0 {
+			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end
 				continue
 			}
@@ -390,7 +390,7 @@ func inPatternClauseWithCancellation(query string, index int, probe *pipelineCan
 
 				end++
 			}
-			word := upperASCIIWithCancellation(query[i:end], probe)
+			word := upperASCII(query[i:end])
 			switch word {
 			case "MATCH", "MERGE", "CREATE":
 				if previous == "ON" {
@@ -432,10 +432,10 @@ func StripCommentsWithCancellation(query string, probe *pipelineCancellation) st
 
 		switch c := query[index]; c {
 		case '\'', '"', '`':
-			index = skipCypherQuotedTextWithCancellation(query, index, c, probe) - 1
+			index = skipCypherQuotedText(query, index, c) - 1
 		case '/':
-			if end := queryCommentEndWithCancellation(query, index, probe); end >= 0 {
-				if !appendPipelineString(&out, query[last:index], probe) || !appendPipelineString(&out, commentReplacementWithCancellation(query[index:end], probe), probe) {
+			if end := queryCommentEnd(query, index); end >= 0 {
+				if !appendPipelineString(&out, query[last:index], probe) || !appendPipelineString(&out, commentReplacement(query[index:end]), probe) {
 					return ""
 				}
 				last = end

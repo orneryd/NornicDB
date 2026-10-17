@@ -30,7 +30,7 @@ func extractFuncInnerWithCancellation(expr string, probe *pipelineCancellation) 
 	if open < 0 {
 		return ""
 	}
-	close := findMatchingDelimiterWithCancellation(expr, open, '(', ')', probe)
+	close := findMatchingDelimiter(expr, open, '(', ')')
 	if close < 0 {
 		return ""
 	}

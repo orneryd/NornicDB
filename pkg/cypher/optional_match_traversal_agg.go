@@ -162,7 +162,7 @@ func subqueryExpressionEndWithCancellation(expr string, i int, probe *pipelineCa
 	// Use the shared reader so comments between the keyword and brace do
 	// not expose the subquery's aggregates to the outer projection.
 	if _, open, ok := subqueryExpressionKeywordAtWithCancellation(expr, i, probe); ok {
-		if closing := findMatchingDelimiterWithCancellation(expr, open, '{', '}', probe); closing > open {
+		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
 			return closing + 1
 		}
 	}

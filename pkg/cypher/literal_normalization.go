@@ -191,7 +191,7 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 				}
 				// $( ... ) dynamic label expressions are copied verbatim.
 				if i+1 < len(s) && s[i+1] == '(' {
-					closing := findMatchingDelimiterWithCancellation(s, i+1, '(', ')', probe)
+					closing := findMatchingDelimiter(s, i+1, '(', ')')
 					if closing > 0 {
 						i = closing
 						if !flushAt(i + 1) {
@@ -259,7 +259,7 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 				// Only normalize numbers whose value cannot change validity:
 				// out-of-range integers and leading-zero forms keep their text
 				// so their canonical form stays distinct from valid ones.
-				if normNumberSafeWithCancellation(s[i:j], probe) {
+				if normNumberSafe(s[i:j]) {
 					if containsAnyWithCancellation(s[i:j], ".eE", probe) && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
 						if !appendPipelineString(&out, normFloatMarker, probe) {
 							return "", false

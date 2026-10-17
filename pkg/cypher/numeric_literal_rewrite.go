@@ -32,7 +32,7 @@ func canonicalizeNumericLiteralsWithCancellation(query string, probe *pipelineCa
 		return "", nil
 	}
 
-	if !mayHaveGroupedNumericLiteralWithCancellation(query, probe) {
+	if !mayHaveGroupedNumericLiteral(query) {
 		return query, nil
 	}
 	var (
@@ -48,10 +48,10 @@ func canonicalizeNumericLiteralsWithCancellation(query string, probe *pipelineCa
 		c := query[index]
 		switch {
 		case c == '\'' || c == '"' || c == '`':
-			index = skipCypherQuotedTextWithCancellation(query, index, c, probe)
+			index = skipCypherQuotedText(query, index, c)
 			continue
 		case c == '/':
-			if end := queryCommentEndWithCancellation(query, index, probe); end >= 0 {
+			if end := queryCommentEnd(query, index); end >= 0 {
 				index = end
 				continue
 			}

@@ -91,7 +91,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 			return nil, true
 		}
 	}
-	upper := upperASCIIWithCancellation(expr, contextPipelineProbe(ctx))
+	upper := upperASCII(expr)
 	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
 		return nil, true
 	}
@@ -111,7 +111,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		if len(head) > len("allShortestPaths") {
 			head = head[:len("allShortestPaths")]
 		}
-		if equalFoldASCIIWithCancellation(head[:len("shortestPath")], "shortestpath", contextPipelineProbe(ctx)) || equalFoldASCIIWithCancellation(head, "allshortestpaths", contextPipelineProbe(ctx)) {
+		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
 			if name, inner, ok := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx)); ok &&
 				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
 				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
@@ -320,19 +320,19 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 }
 
 func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
-	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+	if isWholeCypherQuotedString(expr) {
 		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return decoded, true
 		}
 	}
 
-	if equalFoldASCIIWithCancellation(expr, "null", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "null") {
 		return nil, false
 	}
-	if equalFoldASCIIWithCancellation(expr, "true", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "true") {
 		return true, true
 	}
-	if equalFoldASCIIWithCancellation(expr, "false", contextPipelineProbe(ctx)) {
+	if equalFoldASCII(expr, "false") {
 		return false, true
 	}
 

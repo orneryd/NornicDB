@@ -1735,7 +1735,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	executionCypher, executionUpperQuery := cypher, upperQuery
 	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
 		executionCypher = parsedCypher
-		executionUpperQuery = upperASCIIWithCancellation(parsedCypher, contextPipelineProbe(ctx))
+		executionUpperQuery = upperASCII(parsedCypher)
 	}
 	return e.executeWithImplicitTransactionCallback(ctx, cypher, upperQuery, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
 		return txExec.executeWithoutTransaction(txCtx, executionCypher, executionUpperQuery)
@@ -1746,7 +1746,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
-		upperQuery = upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx))
+		upperQuery = upperASCII(cypher)
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)
@@ -2331,7 +2331,7 @@ func statementReadsGraphText(cypher string) bool {
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfileWithCancellation(cypher, contextPipelineProbe(ctx)) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
+	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfile(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
 		return nil
 	}
 	shellParams := e.mergeShellParams(ctx, params)
@@ -2346,9 +2346,9 @@ func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher s
 	if len(missing) == 0 {
 		return nil
 	}
-	names := quotedVariableNamesForWithCancellation(ctx, cypher, contextPipelineProbe(ctx))
+	names := quotedVariableNamesFor(ctx, cypher)
 	for i, name := range missing {
-		missing[i] = names.parameterNameWithCancellation(name, contextPipelineProbe(ctx))
+		missing[i] = names.parameterName(name)
 	}
 	return parameterMissingError(missing)
 }

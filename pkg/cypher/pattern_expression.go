@@ -160,7 +160,7 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 // which isn't "no rows" (#1055).
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(upperASCIIWithCancellation(pattern, contextPipelineProbe(ctx)), "MATCH ") {
+	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
 	}
 	clauses := splitOptionalMatchClauses(pattern)
@@ -481,7 +481,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
-		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedStringWithCancellation(trimmed, probe) {
+		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedString(trimmed) {
 			return nil, false
 		}
 	}

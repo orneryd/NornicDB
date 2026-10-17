@@ -449,7 +449,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		// An aggregate inside a larger expression, or one this path doesn't
 		// compute itself (stDev, percentiles, gds.graph.project), goes through
 		// the aggregate projection.
-		if containsAggregateFunc(item.expr) && (!isAggregateFuncWithCancellation(item.expr, contextPipelineProbe(ctx)) || !traversalComputesAggregate(upperASCIIWithCancellation(item.expr, contextPipelineProbe(ctx)))) {
+		if containsAggregateFunc(item.expr) && (!isAggregateFunc(item.expr) || !traversalComputesAggregate(upperASCII(item.expr))) {
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
@@ -469,7 +469,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	upperExprs := make([]string, len(returnItems))
 	isAggFlags := make([]bool, len(returnItems))
 	for i, item := range returnItems {
-		upperExprs[i] = upperASCIIWithCancellation(item.expr, contextPipelineProbe(ctx))
+		upperExprs[i] = upperASCII(item.expr)
 		isAggFlags[i] = traversalComputesAggregate(upperExprs[i])
 	}
 
@@ -502,16 +502,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 					row[i] = e.aggregatePathCount(ctx, paths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)))
+					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, paths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)))
+					row[i] = e.aggregatePathAvg(ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)), false)
+					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)), true)
+					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
 					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
@@ -574,16 +574,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 					row[i] = e.aggregatePathCount(ctx, groupPaths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)))
+					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, groupPaths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)))
+					row[i] = e.aggregatePathAvg(ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)), false)
+					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx)), true)
+					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
 					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
@@ -1038,7 +1038,7 @@ func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathR
 }
 
 func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string) int64 {
-	inner := strings.TrimSpace(extractFuncInnerWithCancellation(expr, contextPipelineProbe(ctx)))
+	inner := strings.TrimSpace(extractFuncInner(expr))
 	if inner == "*" {
 		return int64(len(paths))
 	}
@@ -1245,7 +1245,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 		c := pattern[i]
 
 		// Handle quotes
-		if (c == '\'' || c == '"') && !isBackslashEscapedWithCancellation(pattern, i, contextPipelineProbe(ctx)) {
+		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
 			if !inQuote {
 				inQuote = true
 				quoteChar = c

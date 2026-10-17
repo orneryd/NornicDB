@@ -42,7 +42,7 @@ func canonicalizeFunctionAliasesWithCancellation(query string, probe *pipelineCa
 			canonical, result = "", nil
 		}
 	}()
-	if !mayCallFunctionAliasWithCancellation(query, probe) {
+	if !mayCallFunctionAlias(query) {
 		return query, nil
 	}
 	var (
@@ -57,10 +57,10 @@ func canonicalizeFunctionAliasesWithCancellation(query string, probe *pipelineCa
 		c := query[index]
 		switch {
 		case c == '\'' || c == '"' || c == '`':
-			index = skipCypherQuotedTextWithCancellation(query, index, c, probe)
+			index = skipCypherQuotedText(query, index, c)
 			continue
 		case c == '/':
-			if end := queryCommentEndWithCancellation(query, index, probe); end >= 0 {
+			if end := queryCommentEnd(query, index); end >= 0 {
 				index = end
 				continue
 			}
@@ -76,7 +76,7 @@ func canonicalizeFunctionAliasesWithCancellation(query string, probe *pipelineCa
 			}
 			end++
 		}
-		next := skipSpacesWithCancellation(query, end, probe)
+		next := skipSpaces(query, end)
 		if next >= len(query) || query[next] != '(' {
 			index = end
 			continue
@@ -87,10 +87,10 @@ func canonicalizeFunctionAliasesWithCancellation(query string, probe *pipelineCa
 			index = end
 			continue
 		}
-		name := lowerASCIIWithCancellation(query[index:end], probe)
+		name := lowerASCII(query[index:end])
 		start, stop, replacement := index, end, cypherFunctionAliases[name]
 		if name == "property_exists" {
-			start, stop, replacement = propertyExistsKeyNameWithCancellation(query, next, probe)
+			start, stop, replacement = propertyExistsKeyName(query, next)
 		}
 		if replacement == "" {
 			index = end
@@ -132,14 +132,14 @@ func propertyExistsKeyName(query string, open int) (start, end int, literal stri
 }
 
 func propertyExistsKeyNameWithCancellation(query string, open int, probe *pipelineCancellation) (start, end int, literal string) {
-	_, after, ok := scanIdentifierTokenWithCancellation(query, skipSpacesWithCancellation(query, open+1, probe), probe)
-	comma := skipSpacesWithCancellation(query, after, probe)
+	_, after, ok := scanIdentifierTokenWithCancellation(query, skipSpaces(query, open+1), probe)
+	comma := skipSpaces(query, after)
 	if !ok || comma >= len(query) || query[comma] != ',' {
 		return 0, 0, ""
 	}
-	start = skipSpacesWithCancellation(query, comma+1, probe)
+	start = skipSpaces(query, comma+1)
 	key, end, ok := scanIdentifierTokenWithCancellation(query, start, probe)
-	if closing := skipSpacesWithCancellation(query, end, probe); !ok || closing >= len(query) || query[closing] != ')' {
+	if closing := skipSpaces(query, end); !ok || closing >= len(query) || query[closing] != ')' {
 		return 0, 0, ""
 	}
 	if probe == nil {

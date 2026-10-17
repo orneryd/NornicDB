@@ -80,11 +80,11 @@ func containsNotInOperatorWithCancellation(cypher string, probe *pipelineCancell
 		}
 		c := cypher[i]
 		if c == '\'' || c == '"' || c == '`' {
-			i = skipCypherQuotedTextWithCancellation(cypher, i, c, probe) - 1
+			i = skipCypherQuotedText(cypher, i, c) - 1
 			continue
 		}
 		if c == '/' && i+1 < len(cypher) && (cypher[i+1] == '/' || cypher[i+1] == '*') {
-			i = queryCommentEndWithCancellation(cypher, i, probe) - 1
+			i = queryCommentEnd(cypher, i) - 1
 			continue
 		}
 		// NOT is a valid local iterator name, read by the same declaration
@@ -99,7 +99,7 @@ func containsNotInOperatorWithCancellation(cypher string, probe *pipelineCancell
 		if !matchKeywordAt(cypher, i, "NOT") {
 			continue
 		}
-		next := queryGapEndWithCancellation(cypher, i+len("NOT"), probe)
+		next := queryGapEnd(cypher, i+len("NOT"))
 		if matchKeywordAt(cypher, next, "IN") {
 			return true
 		}
@@ -120,20 +120,20 @@ func containsTrailingListCommaWithCancellation(cypher string, probe *pipelineCan
 		}
 		c := cypher[i]
 		if c == '\'' || c == '"' || c == '`' {
-			i = skipCypherQuotedTextWithCancellation(cypher, i, c, probe) - 1
+			i = skipCypherQuotedText(cypher, i, c) - 1
 			continue
 		}
 		if c == '/' && i+1 < len(cypher) && (cypher[i+1] == '/' || cypher[i+1] == '*') {
-			i = queryCommentEndWithCancellation(cypher, i, probe) - 1
+			i = queryCommentEnd(cypher, i) - 1
 			continue
 		}
 		switch c {
 		case ',':
-			if next := queryGapEndWithCancellation(cypher, i+1, probe); next < len(cypher) && cypher[next] == ']' {
+			if next := queryGapEnd(cypher, i+1); next < len(cypher) && cypher[next] == ']' {
 				return true
 			}
 		case '[':
-			if next := queryGapEndWithCancellation(cypher, i+1, probe); next < len(cypher) && cypher[next] == ',' {
+			if next := queryGapEnd(cypher, i+1); next < len(cypher) && cypher[next] == ',' {
 				return true
 			}
 		}
@@ -302,19 +302,19 @@ func lastTopLevelClauseWordWithCancellation(s string, probe *pipelineCancellatio
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
-				!clauseKeywordUsedAsNameWithCancellation(s, i, i+len(keyword), keyword, probe) {
+				!clauseKeywordUsedAsName(s, i, i+len(keyword), keyword) {
 				// A WITH inside an expression is not a clause start:
 				// `x STARTS WITH 'a'`, `x ENDS WITH 'a'` and the type
 				// predicate `IS :: TIME WITH TIME ZONE`. A real WITH clause
 				// cannot follow STARTS/ENDS or precede TIME ZONE.
-				if keyword == "WITH" && isExpressionWithWithCancellation(s, i, i+len(keyword), probe) {
+				if keyword == "WITH" && isExpressionWith(s, i, i+len(keyword)) {
 					continue
 				}
 				// FOR is only an iteration clause in the shared grammar: in
 				// schema and alias DDL it is a specifier (CREATE INDEX …
 				// FOR (n:Label), CREATE ALIAS … FOR DATABASE …), not a
 				// dangling reading clause.
-				if keyword == "FOR" && !forIterationClauseAtWithCancellation(s, i, probe) {
+				if keyword == "FOR" && !forIterationClauseAt(s, i) {
 					continue
 				}
 				last = keyword
@@ -334,12 +334,12 @@ func forIterationClauseAt(s string, pos int) bool {
 	return forIterationClauseAtWithCancellation(s, pos, nil)
 }
 func forIterationClauseAtWithCancellation(s string, pos int, probe *pipelineCancellation) bool {
-	end := skipSpacesWithCancellation(s, pos+len("FOR"), probe)
+	end := skipSpaces(s, pos+len("FOR"))
 	_, end, ok := scanSymbolicNameWithCancellation(s, end, probe)
 	if !ok {
 		return false
 	}
-	end = skipSpacesWithCancellation(s, end, probe)
+	end = skipSpaces(s, end)
 	if end+2 > len(s) || !strings.EqualFold(s[end:end+2], "IN") {
 		return false
 	}
@@ -354,10 +354,10 @@ func isExpressionWith(s string, start, end int) bool {
 	return isExpressionWithWithCancellation(s, start, end, nil)
 }
 func isExpressionWithWithCancellation(s string, start, end int, probe *pipelineCancellation) bool {
-	if previous := previousSignificantWordWithCancellation(s, start, probe); strings.EqualFold(previous, "STARTS") || strings.EqualFold(previous, "ENDS") {
+	if previous := previousSignificantWord(s, start); strings.EqualFold(previous, "STARTS") || strings.EqualFold(previous, "ENDS") {
 		return true
 	}
-	next := nextSignificantWordsWithCancellation(s, end, probe)
+	next := nextSignificantWords(s, end)
 	return strings.EqualFold(next[0], "TIME") && strings.EqualFold(next[1], "ZONE")
 }
 

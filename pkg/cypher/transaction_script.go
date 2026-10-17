@@ -41,7 +41,7 @@ func transactionScriptShape(cypher string) bool {
 // - BEGIN TRANSACTION ... CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT
 func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
-	upper := upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx))
+	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "BEGIN") {
 		return nil, nil
 	}
@@ -56,7 +56,7 @@ func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher s
 	}
 
 	// CASE rollback script form.
-	if strings.HasPrefix(upperASCIIWithCancellation(strings.TrimSpace(bodyAfterBegin), contextPipelineProbe(ctx)), "CALL") && strings.Contains(upperASCIIWithCancellation(bodyAfterBegin, contextPipelineProbe(ctx)), "CASE") {
+	if strings.HasPrefix(upperASCII(strings.TrimSpace(bodyAfterBegin)), "CALL") && strings.Contains(upperASCII(bodyAfterBegin), "CASE") {
 		return e.executeCaseRollbackTransactionScript(ctx, bodyAfterBegin)
 	}
 
@@ -104,7 +104,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		return nil, err
 	}
 
-	queryUpper := upperASCIIWithCancellation(strings.TrimSpace(queryBody), contextPipelineProbe(ctx))
+	queryUpper := upperASCII(strings.TrimSpace(queryBody))
 	result, err := e.executeInTransaction(ctx, queryBody, queryUpper)
 	if err != nil {
 		return nil, e.abortTransaction(err)
@@ -124,7 +124,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 }
 
 func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Context, scriptBody string) (*ExecuteResult, error) {
-	upper := upperASCIIWithCancellation(scriptBody, contextPipelineProbe(ctx))
+	upper := upperASCII(scriptBody)
 	caseIdx := strings.Index(upper, "CASE")
 	if caseIdx <= 0 {
 		return nil, localizedError(localization.CypherTransactionsCaseBlockMissing(), nil)
@@ -143,7 +143,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return nil, err
 	}
 
-	callUpper := upperASCIIWithCancellation(strings.TrimSpace(callQuery), contextPipelineProbe(ctx))
+	callUpper := upperASCII(strings.TrimSpace(callQuery))
 	callResult, err := e.executeInTransaction(ctx, callQuery, callUpper)
 	if err != nil {
 		return nil, e.abortTransaction(err)

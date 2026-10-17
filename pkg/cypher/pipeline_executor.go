@@ -483,10 +483,10 @@ func findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword stri
 		character := query[i]
 		switch character {
 		case '\'', '"', '`':
-			i = skipCypherQuotedTextWithCancellation(query, i, character, probe) - 1
+			i = skipCypherQuotedText(query, i, character) - 1
 			continue
 		case '/':
-			if end := queryCommentEndWithCancellation(query, i, probe); end >= 0 {
+			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 				continue
 			}
@@ -495,7 +495,7 @@ func findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword stri
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !isIdentByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isIdentByte(query[i+len(keyword)])) {
-			if (!withSearch || !isOperatorWithWithCancellation(query, i, probe)) && !clauseKeywordUsedAsNameWithCancellation(query, i, i+len(keyword), keyword, probe) {
+			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
 				if positions == nil {
 					positions = make([]int, 0, 4)
 				}
@@ -999,7 +999,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				if cancellation.err != nil {
 					return nil, true, cancellation.err
 				}
-				columns := e.inferTopLevelReturnColumnsWithCancellation(body, cancellation)
+				columns := e.inferTopLevelReturnColumns(body)
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(ctx, rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
@@ -1029,7 +1029,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCIIWithCancellation(clause.text, cancellation), "IN TRANSACTIONS") {
+			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCII(clause.text), "IN TRANSACTIONS") {
 				wrote = true
 			}
 		case pipelineClauseForeach:
@@ -1064,9 +1064,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			plan := returnProjectionPlanForWithCancellation(clause.text, pipelineCancellationForContext(ctx))
+			plan := returnProjectionPlanFor(clause.text)
 			if plan.star && len(rows) == 0 {
-				plan = plan.withStarExpandedWithCancellation(pipelineScopeColumnsWithCancellation(scope, cancellation), cancellation)
+				plan = plan.withStarExpanded(pipelineScopeColumnsWithCancellation(scope, cancellation))
 			}
 			final, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated)
 			source = nil
@@ -1104,7 +1104,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		if cancellation.err != nil {
 			return nil, true, cancellation.err
 		}
-		if topLevelKeywordIndexWithCancellation(body, "RETURN", cancellation) >= 0 {
+		if topLevelKeywordIndex(body, "RETURN") >= 0 {
 			result = callPipelineResultFromRows(ctx, rows, nil, result.Stats, terminalCallColumns)
 		}
 	}
@@ -1161,17 +1161,17 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 		return nil, false, nil
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
-	if topLevelKeywordIndexWithCancellation(matchBody, "WHERE", contextPipelineProbe(ctx)) >= 0 {
+	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
 		return nil, false, nil
 	}
-	if len(splitTopLevelCommaWithCancellation(matchBody, contextPipelineProbe(ctx))) != 1 {
+	if len(splitTopLevelComma(matchBody)) != 1 {
 		return nil, false, nil
 	}
 	matches := e.parseTraversalPattern(ctx, matchBody)
 	if matches == nil {
 		return nil, false, nil
 	}
-	items := e.parseReturnItemsWithCancellation(strings.TrimSpace(clauses[1].text[len("RETURN"):]), contextPipelineProbe(ctx))
+	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1200,7 +1200,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
 	whereClause := ""
-	if whereIndex := topLevelKeywordIndexWithCancellation(matchBody, "WHERE", contextPipelineProbe(ctx)); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndex(matchBody, "WHERE"); whereIndex >= 0 {
 		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
 		matchBody = strings.TrimSpace(matchBody[:whereIndex])
 	}
@@ -1214,7 +1214,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 
-	items := e.parseReturnItemsWithCancellation(strings.TrimSpace(clauses[1].text[len("RETURN"):]), contextPipelineProbe(ctx))
+	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1445,7 +1445,7 @@ func projectPipelineSimpleNodeRead(ctx context.Context, nodes []*storage.Node, i
 				row[index] = node
 				continue
 			}
-			property := normalizeProjectionColumnNameWithCancellation(strings.TrimSpace(expression[len(prefix):]), probe)
+			property := normalizeProjectionColumnName(strings.TrimSpace(expression[len(prefix):]))
 			row[index] = node.Properties[property]
 		}
 		result.Rows = append(result.Rows, row)
@@ -1624,7 +1624,7 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 }
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
-	body := pipelineClauseBodyWithCancellation(clause, "MATCH", contextPipelineProbe(ctx))
+	body := pipelineClauseBody(clause, "MATCH")
 	if stripped, repeatable := stripRepeatableElements(body); repeatable {
 		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
 	}
@@ -2070,7 +2070,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	// executeChainedMatch runs one pattern part. A MATCH of several parts
 	// ((a)-->(x), (b)-->(x)) needs its relationships distinct across the
 	// parts, which the MATCH executor below enforces.
-	if len(splitTopLevelCommaWithCancellation(pattern, cancellation)) != 1 || !containsRelationshipPattern(pattern) {
+	if len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) {
 		return nil, false
 	}
 	out := make([]pipelineRow, 0, len(rows))

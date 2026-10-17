@@ -53,16 +53,16 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
 	body := strings.TrimSpace(clause)
-	orderTerms := parseOrderByTermsWithCancellation(body, probe)
+	orderTerms := parseOrderByTerms(body)
 	withSkip, withLimit := 0, -1
-	if skipIndex := topLevelKeywordIndexWithCancellation(body, "SKIP", probe); skipIndex >= 0 {
+	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
 		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 		withSkip = value
 	}
-	if limitIndex := topLevelKeywordIndexWithCancellation(body, "LIMIT", probe); limitIndex >= 0 {
+	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
 		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
 		if !ok {
 			return nil, false
@@ -70,7 +70,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		withLimit = value
 	}
 	postWithWhere := ""
-	if whereIdx := topLevelKeywordIndexWithCancellation(body, "WHERE", probe); whereIdx >= 0 {
+	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
 		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		body = strings.TrimSpace(body[:whereIdx])
 	}
@@ -86,7 +86,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !probe.check() {
 			return nil, false
 		}
-		if index := topLevelKeywordIndexWithCancellation(body, keyword, probe); index >= 0 {
+		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
@@ -131,7 +131,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	}
 	if strings.TrimSpace(items[0]) == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItemsWithCancellation(pipelineWildcardColumns(ctx, rows), items[1:], probe)
+		items = starProjectionItems(pipelineWildcardColumns(ctx, rows), items[1:])
 	}
 
 	type withProjection struct {
@@ -153,13 +153,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if item == "" || item == "{}" {
 			continue
 		}
-		expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
+		expr, alias := parseProjectionExprAlias(item)
 		if expr == "" {
 			return nil, false
 		}
 		projection := withProjection{expr: expr, alias: alias}
 		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregateWithCancellation(expr, probe); aggregate {
-			if !containsFoldWithCancellation(item, " AS ", probe) {
+			if !containsFold(item, " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -167,8 +167,8 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			projection.aggregateExpr = aggregateExpr
 			projection.distinct = distinct
 			hasAggregate = true
-		} else if pipelineExpressionContainsAggregateWithCancellation(expr, probe) {
-			if !containsFoldWithCancellation(item, " AS ", probe) {
+		} else if pipelineExpressionContainsAggregate(expr) {
+			if !containsFold(item, " AS ") {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -204,7 +204,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				}
 				expressions[index] = projection.expr
 			}
-			orderTerms = alignOrderTermsWithCancellation(orderTerms, expressions, probe)
+			orderTerms = alignOrderTerms(orderTerms, expressions)
 		}
 
 		out := make([]pipelineRow, 0, pipelineInitialCapacity(len(groups), probe))
@@ -630,8 +630,8 @@ func aggregateCallKeyWithCancellation(call string, probe *pipelineCancellation) 
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
 		arguments = concatPipelineStrings("DISTINCT ", arguments[len("DISTINCT"):], probe)
 	}
-	name := upperASCIIWithCancellation(trimSpaceWithCancellation(call[:open], probe), probe)
-	normalized := stripExpressionWhitespaceWithCancellation(arguments, probe)
+	name := upperASCII(trimSpaceWithCancellation(call[:open], probe))
+	normalized := stripExpressionWhitespace(arguments)
 	return concatPipelineStrings(concatPipelineStrings(name, "(", probe), normalized, probe)
 }
 
@@ -845,11 +845,11 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 }
 func parsePipelineAggregateWithCancellation(expr string, probe *pipelineCancellation) (name, inner string, distinct, ok bool) {
 	open := indexByteWithCancellation(expr, '(', probe)
-	if open < 0 || !isAggregateFuncWithCancellation(expr, probe) {
+	if open < 0 || !isAggregateFunc(expr) {
 		return "", "", false, false
 	}
-	name = lowerASCIIWithCancellation(trimSpaceWithCancellation(expr[:open], probe), probe)
-	inner = trimSpaceWithCancellation(extractFuncInnerWithCancellation(expr, probe), probe)
+	name = lowerASCII(trimSpaceWithCancellation(expr[:open], probe))
+	inner = trimSpaceWithCancellation(extractFuncInner(expr), probe)
 	inner, distinct = cutDistinctArgumentWithCancellation(inner, probe)
 	if inner == "" || probe != nil && probe.err != nil {
 		return "", "", false, false
@@ -896,11 +896,11 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			if probe != nil && !probe.check() {
 				return nil, false
 			}
-			separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, probe)
+			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 {
 				return nil, false
 			}
-			key := normalizePropertyKeyWithCancellation(trimSpaceWithCancellation(pair[:separator], probe), probe)
+			key := normalizePropertyKey(trimSpaceWithCancellation(pair[:separator], probe))
 			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, pair[separator+1:])
 			if !ok {
 				return nil, false
@@ -1182,7 +1182,7 @@ func starProjectionItemsWithCancellation(columns, items []string, probe *pipelin
 			return nil
 		}
 		if !exists {
-			variable := projectionVariableTextWithCancellation(column, probe)
+			variable := projectionVariableText(column)
 			item := concatPipelineStrings(concatPipelineStrings(variable, " AS ", probe), variable, probe)
 			if probe != nil && probe.err != nil {
 				return nil
@@ -1260,7 +1260,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
-		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpandedWithCancellation(pipelineWildcardColumns(ctx, rows), probe), source, rowsValidated)
+		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(ctx, rows)), source, rowsValidated)
 	}
 	if plan.star {
 		columns := pipelineWildcardColumns(ctx, rows)
@@ -1324,7 +1324,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 				}
 				expressions[index] = projection.expr
 			}
-			orderTerms = alignOrderTermsWithCancellation(orderTerms, expressions, probe)
+			orderTerms = alignOrderTerms(orderTerms, expressions)
 		}
 		var projectedRows, orderScopes []pipelineRow
 		for _, group := range groups {
@@ -1415,7 +1415,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 
 	// ORDER BY and DISTINCT see the incoming row with the projection over
 	// it; the merged scope is built only when one of them needs it.
-	orderTerms := parseOrderByTermsWithCancellation(modifiers, probe)
+	orderTerms := parseOrderByTerms(modifiers)
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
 		return projs[index].expr, projs[index].alias
 	})
@@ -1583,7 +1583,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 // client already has rows and no other route may run the statement again.
 func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
 	clause := clauses[idx]
-	plan := returnProjectionPlanForWithCancellation(clause.text, pipelineCancellationForContext(ctx))
+	plan := returnProjectionPlanFor(clause.text)
 	// The statement only reads, so no row holds an entity it deleted
 	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
@@ -1661,7 +1661,7 @@ func streamableReturnPlan(plan *returnProjectionPlan) bool {
 // source.
 func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool {
 	return clauses[idx].kind == pipelineClauseReturn && boundResultStream(ctx, &clauses[idx]) != nil &&
-		streamableReturnPlan(returnProjectionPlanForWithCancellation(clauses[idx].text, pipelineCancellationForContext(ctx)))
+		streamableReturnPlan(returnProjectionPlanFor(clauses[idx].text))
 }
 
 func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) [][]interface{} {

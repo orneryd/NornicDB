@@ -17,7 +17,7 @@ func splitTopLevelCommaWithCancellation(input string, probe *pipelineCancellatio
 	}
 
 	var buffer [8]string
-	parts := appendTopLevelCommaWithCancellation(buffer[:0], input, probe)
+	parts := appendTopLevelComma(buffer[:0], input)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -66,7 +66,7 @@ func appendTopLevelCommaWithCancellation(parts []string, input string, probe *pi
 
 		switch input[i] {
 		case '\'', '"', '`':
-			i = skipCypherQuotedTextWithCancellation(input, i, input[i], probe) - 1
+			i = skipCypherQuotedText(input, i, input[i]) - 1
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':

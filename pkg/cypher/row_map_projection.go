@@ -110,9 +110,9 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 			}
 			result[name] = value
 		default:
-			separator := findTopLevelMapKeyValueSeparatorWithCancellation(item, probe)
+			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
-				name := normalizePropertyKeyWithCancellation(strings.TrimSpace(item[:separator]), probe)
+				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
 				value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(item[separator+1:]), values, probe)
 				if err != nil {
 					return nil, true, false, err
@@ -123,7 +123,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 				result[name] = value
 				continue
 			}
-			if !isValidIdentifierWithCancellation(item, probe) && !isBacktickQuotedNameWithCancellation(item, probe) {
+			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
 			value, ok, err := e.evaluateRowValueWithCancellation(item, values, probe)
@@ -133,7 +133,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKeyWithCancellation(item, probe)] = value
+			result[normalizePropertyKey(item)] = value
 		}
 	}
 	return result, true, true, nil

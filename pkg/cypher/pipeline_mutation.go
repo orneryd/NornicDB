@@ -459,7 +459,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 	}
 	for _, clause := range clauses {
 		rowCtx := withValueBindings(ctx, newRow)
-		pattern := pipelineClauseBodyWithCancellation(clause.text, "CREATE", contextPipelineProbe(ctx))
+		pattern := pipelineClauseBody(clause.text, "CREATE")
 		dynamic := hasDynamicToken(pattern)
 		if dynamic {
 			// Labels and types whose values depend on the row.

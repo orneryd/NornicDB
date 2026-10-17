@@ -86,7 +86,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	if plan.remainder == "" {
 		return nil, false, nil
 	}
-	upperRest := upperASCIIWithCancellation(strings.TrimSpace(plan.remainder), contextPipelineProbe(ctx))
+	upperRest := upperASCII(strings.TrimSpace(plan.remainder))
 	matchMutation := (strings.HasPrefix(upperRest, "MATCH") || strings.HasPrefix(upperRest, "OPTIONAL MATCH")) &&
 		(findKeywordIndexInContext(plan.remainder, "MERGE") >= 0 || findKeywordIndexInContext(plan.remainder, "CREATE") >= 0 || findKeywordIndexInContext(plan.remainder, "SET") >= 0)
 	if matchMutation {
@@ -183,7 +183,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 			if clause.kind != pipelineClauseMatch {
 				break
 			}
-			patterns = append(patterns, pipelineClauseBodyWithCancellation(clause.text, "MATCH", contextPipelineProbe(ctx)))
+			patterns = append(patterns, pipelineClauseBody(clause.text, "MATCH"))
 		}
 		if len(patterns) > 1 {
 			combined := "MATCH " + strings.Join(patterns, ", ")

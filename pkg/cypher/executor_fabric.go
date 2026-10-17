@@ -178,7 +178,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	if len(stream.Columns) == 0 {
-		if inferred := e.inferTopLevelReturnColumnsWithCancellation(cypher, contextPipelineProbe(ctx)); len(inferred) > 0 {
+		if inferred := e.inferTopLevelReturnColumns(cypher); len(inferred) > 0 {
 			stream.Columns = inferred
 		}
 	}
@@ -490,7 +490,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 		if probe != nil && !probe.check() {
 			return nil
 		}
-		idx := keywordIndexFromWithCancellation(query, "RETURN", searchFrom, opts, probe)
+		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
 		if idx < 0 {
 			break
 		}
@@ -512,7 +512,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 		if probe != nil && !probe.check() {
 			return nil
 		}
-		if idx := topLevelKeywordIndexWithCancellation(clause, kw, probe); idx >= 0 && idx < end {
+		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
@@ -523,7 +523,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 		return nil
 	}
 
-	items := e.parseReturnItemsWithCancellation(clause, probe)
+	items := e.parseReturnItems(clause)
 	if len(items) == 0 {
 		return nil
 	}

@@ -39,7 +39,7 @@ func parseFunctionCallWSWithCancellation(expr string, probe *pipelineCancellatio
 		}
 		ch := rune(expr[i])
 		if inQuote {
-			if ch == quoteChar && !isBackslashEscapedWithCancellation(expr, i, probe) {
+			if ch == quoteChar && !isBackslashEscaped(expr, i) {
 				inQuote = false
 				quoteChar = 0
 			}
@@ -131,7 +131,7 @@ func canonicalCallableNameWithCancellation(text string, probe *pipelineCancellat
 		return name, true
 	}
 	parts, end := dottedNameParts(text, end, true)
-	if end != len(text) && queryGapEndWithCancellation(text, end, probe) != len(text) {
+	if end != len(text) && queryGapEnd(text, end) != len(text) {
 		return "", false
 	}
 	if len(name)+len(parts) == len(text) {

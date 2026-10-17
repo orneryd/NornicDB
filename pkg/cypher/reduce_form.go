@@ -105,7 +105,7 @@ func runReduceFormWithCancellation(form reduceForm, accumulator interface{}, ite
 		default:
 			// A parameter predicate is checked with the statement, as Neo4j
 			// types parameters; any other value fails when it is met.
-			if parameter := strings.TrimSpace(form.predicate); parameter[0] == '$' && simpleSemanticIdentifierWithCancellation(parameter[1:], probe) != "" {
+			if parameter := strings.TrimSpace(form.predicate); parameter[0] == '$' && simpleSemanticIdentifier(parameter[1:]) != "" {
 				operand := staticParameterOperand(holds)
 				operand.parameter = parameter[1:]
 				return nil, operandMismatch(operand, "Boolean")

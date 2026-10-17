@@ -24,7 +24,7 @@ func validateUnicodeOperatorsWithCancellation(query string, probe *pipelineCance
 		return probe.err
 	}
 	const unicodeMinus = '−'
-	if isLikelyPlainASCIICypherWithCancellation(query, probe) {
+	if isLikelyPlainASCIICypher(query) {
 		return nil
 	}
 

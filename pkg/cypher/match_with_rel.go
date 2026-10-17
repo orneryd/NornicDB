@@ -172,7 +172,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// the text reader directly so an unresolved expression cannot recurse
 	// through the compiled fallback into this context reader.
 	if name, end, ok := scanSymbolicNameWithCancellation(expr, 0, contextPipelineProbe(ctx)); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
-		if _, bound := values[normalizePropertyKeyWithCancellation(name, contextPipelineProbe(ctx))]; bound {
+		if _, bound := values[normalizePropertyKey(name)]; bound {
 			if value, resolved, err := e.evaluateRowValueText(expr, values); resolved || err != nil {
 				recordExpressionFailure(ctx, err)
 				return value

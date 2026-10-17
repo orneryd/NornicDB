@@ -36,7 +36,7 @@ func validateArrowOperatorsWithCancellation(query string, probe *pipelineCancell
 			end, _ := scanCypherQuotedTextWithCancellation(query, i, c, probe)
 			i = end - 1
 		case '/':
-			if end := queryCommentEndWithCancellation(query, i, probe); end >= 0 {
+			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 			}
 		case '-':
@@ -85,7 +85,7 @@ func validatePlaceholderOperandsWithCancellation(query string, probe *pipelineCa
 			end, _ := scanCypherQuotedTextWithCancellation(query, i, c, probe)
 			i = end - 1
 		case '/':
-			if end := queryCommentEndWithCancellation(query, i, probe); end >= 0 {
+			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
 			}
 		case '<':

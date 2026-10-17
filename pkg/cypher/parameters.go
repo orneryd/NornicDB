@@ -170,7 +170,7 @@ func scanParameterReferencesWithCancellation(query string, visit func(dollar, st
 		if probe != nil && !probe.check() {
 			return
 		}
-		next := nextUnquotedDollarWithCancellation(query, i, quoted, probe)
+		next := nextUnquotedDollar(query, i, quoted)
 		if next < 0 {
 			return
 		}
@@ -246,7 +246,7 @@ func nextUnquotedDollarWithCancellation(query string, from int, quoted bool, pro
 		if query[next] == '$' {
 			return next
 		}
-		from = skipCypherQuotedTextWithCancellation(query, next, query[next], probe)
+		from = skipCypherQuotedText(query, next, query[next])
 	}
 	return -1
 }
@@ -355,7 +355,7 @@ func replaceParameterReferencesWithCancellation(query string, replace func(name 
 // backslash escapes the next character in a string literal; a doubled quote
 // continues the quoted text.
 func skipQuotedText(query string, start int) int {
-	return skipCypherQuotedTextWithCancellation(query, start, query[start], nil)
+	return skipCypherQuotedText(query, start, query[start])
 }
 
 // validateStatementParameters is Neo4j's ParameterMissing check: every
