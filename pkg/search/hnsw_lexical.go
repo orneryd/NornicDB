@@ -23,7 +23,7 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 			seedPairs := make([]hnswBuildPair, 0, len(seedHints))
 			if err := iterate(batchSize, func(ids []string, vecs [][]float32) error {
 				for i := range ids {
-					hint, ok := seedHints[ids[i]]
+					hint, ok := lexicalHintForVectorID(ids[i], seedHints)
 					if !ok {
 						continue
 					}
@@ -46,11 +46,10 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		return iterate(batchSize, func(ids []string, vecs [][]float32) error {
 			batch := make([]hnswBuildPair, 0, len(ids))
 			for i := range ids {
-				if _, seeded := seedHints[ids[i]]; seeded {
+				if _, seeded := lexicalHintForVectorID(ids[i], seedHints); seeded {
 					continue
 				}
-				hint, hasHint := lexicalHintForVectorID(ids[i], seedHints)
-				batch = append(batch, hnswBuildPair{id: ids[i], vec: vecs[i], hint: hint, hasHint: hasHint})
+				batch = append(batch, hnswBuildPair{id: ids[i], vec: vecs[i]})
 			}
 			if len(batch) == 0 {
 				return nil
@@ -73,13 +72,10 @@ func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedHints map[string]LexicalSe
 	seedPairs := make([]hnswBuildPair, 0, len(seedHints))
 	otherPairs := make([]hnswBuildPair, 0, len(pairs))
 	for _, pair := range pairs {
-		if hint, ok := seedHints[pair.id]; ok {
+		if hint, ok := lexicalHintForVectorID(pair.id, seedHints); ok {
 			pair.hint, pair.hasHint = hint, true
 			seedPairs = append(seedPairs, pair)
 			continue
-		}
-		if hint, ok := lexicalHintForVectorID(pair.id, seedHints); ok {
-			pair.hint, pair.hasHint = hint, true
 		}
 		otherPairs = append(otherPairs, pair)
 	}
@@ -135,7 +131,14 @@ func lexicalHintForVectorID(vectorID string, hints map[string]LexicalSeedHint) (
 	if len(hints) == 0 || vectorID == "" {
 		return LexicalSeedHint{}, false
 	}
-	hint, ok := hints[normalizeVectorResultIDToNodeID(vectorID)]
+	hint, ok := hints[vectorID]
+	if !ok {
+		hint, ok = hints[normalizeVectorResultIDToNodeID(vectorID)]
+	}
+	// Graph metadata is keyed by embedding ID, while BM25 owns document IDs.
+	if ok {
+		hint.ID = vectorID
+	}
 	return hint, ok
 }
 
