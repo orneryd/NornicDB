@@ -368,7 +368,7 @@ class GraphifyLocalTest(unittest.TestCase):
                  self.assertRaises(SystemExit):
                 main()
             with patch("sys.argv", ["graphify_local.py", "--graph", str(graph), "--main", "none", "--batch-size", "2"]), \
-                 patch.dict("os.environ", {"NEO4J_PASSWORD": "test"}, clear=True), \
+                 patch.dict("os.environ", {"NORNICDB_URI": "http://localhost:7474", "NORNICDB_USER": "admin", "NORNICDB_PASSWORD": "test"}, clear=True), \
                  patch("scripts.graphify_local.repo_from_git", return_value=REPO), \
                  patch("scripts.graphify_local.git_output", return_value="abc123"), \
                  patch("scripts.graphify_local.import_graph") as importer:
@@ -379,9 +379,10 @@ class GraphifyLocalTest(unittest.TestCase):
                              ("abc123", "abc123", True, None, "none"))
             with patch("sys.argv", ["graphify_local.py", "--graph", str(graph), "--main", "none"]), \
                  patch.dict("os.environ", {}, clear=True), \
-                 patch("scripts.graphify_local.import_graph") as importer:
+                 patch("scripts.graphify_local.import_graph") as importer, \
+                 self.assertRaisesRegex(SystemExit, "2"):
                 main()
-            self.assertEqual(importer.call_args[0][1:4], ("http://localhost:7474", "admin", "password"))
+            importer.assert_not_called()
         self.assertEqual(DEFAULT_MAIN, "cmd/nornicdb/main.go:main")
 
     def test_import_empty_graph_never_deletes(self):
