@@ -115,6 +115,14 @@ func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {
 //	vec, _ := embedder.Embed(ctx, "semantic search")
 //	fmt.Printf("Dimensions: %d\n", len(vec)) // 1024
 func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
+	return NewLocalGGUFContext(context.Background(), config)
+}
+
+// NewLocalGGUFContext is NewLocalGGUF for a caller that may stop waiting. The
+// native model load itself can't be interrupted, so ctx is checked before it
+// starts and after it returns: a model loaded after ctx ended is closed and
+// ctx's error returned.
+func NewLocalGGUFContext(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
 	// Resolve model path: model name → {modelsDir}/{name}.gguf
 	modelsDir := config.ModelsDir
 	if modelsDir == "" {
@@ -159,12 +167,20 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 		opts.Features.FlashAttn = config.FlashAttn
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	fmt.Printf("🧠 Loading local embedding model: %s\n", modelPath)
 	fmt.Printf("   GPU layers: %d (-1 = auto/all)\n", opts.GPULayers)
 
 	model, err := localllm.LoadModel(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load model %s: %w", modelPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		model.Close()
+		return nil, err
 	}
 
 	// Verify dimensions match if specified

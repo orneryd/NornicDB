@@ -40,7 +40,7 @@ func TestInitEmbedderWithRetryStopsWhenContextDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var attempts atomic.Int32
-	s.newEmbedder = func(*embed.Config) (embed.Embedder, error) {
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
 		attempts.Add(1)
 		return &countingEmbedder{dims: 4}, nil
 	}
@@ -56,7 +56,7 @@ func TestInitEmbedderWithRetryBacksOffUntilHealthy(t *testing.T) {
 	s.embedderRetryInitialBackoff = time.Millisecond
 	s.embedderRetryMaxBackoff = 3 * time.Millisecond
 	var attempts atomic.Int32
-	s.newEmbedder = func(*embed.Config) (embed.Embedder, error) {
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
 		switch attempts.Add(1) {
 		case 1, 2:
 			return nil, errors.New("forced constructor failure")
@@ -78,7 +78,7 @@ func TestInitEmbedderWithRetryStopsDuringCappedWait(t *testing.T) {
 	s.embedderRetryInitialBackoff = 10 * time.Second
 	s.embedderRetryMaxBackoff = 10 * time.Second
 	var attempts atomic.Int32
-	s.newEmbedder = func(*embed.Config) (embed.Embedder, error) {
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
 		attempts.Add(1)
 		return nil, errors.New("forced constructor failure")
 	}

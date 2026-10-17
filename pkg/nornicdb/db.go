@@ -1937,6 +1937,14 @@ func (db *DB) startBackgroundTask(fn func()) bool {
 	return true
 }
 
+// RunBackgroundTask runs fn in a goroutine that Close waits for, so work
+// started for the database can't outlive it. fn should return once
+// LifetimeContext ends. It returns false, without running fn, once the
+// database is closing.
+func (db *DB) RunBackgroundTask(fn func()) bool {
+	return db.startBackgroundTask(fn)
+}
+
 // GetRetentionManager returns the retention manager or nil when retention is disabled.
 func (db *DB) GetRetentionManager() *retention.Manager {
 	return db.retentionManager

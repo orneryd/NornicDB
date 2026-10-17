@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestEmbedderInitEndsWithoutInstallingWhenClosed(t *testing.T) {
 				s.embedderRetryMaxBackoff = time.Hour
 				entered := make(chan struct{})
 				var once sync.Once
-				s.newEmbedder = func(*embed.Config) (embed.Embedder, error) {
+				s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
 					if phase == "health check" {
 						return &shutdownHealthEmbedder{countingEmbedder: countingEmbedder{dims: 4}, entered: entered}, nil
 					}
@@ -64,7 +65,7 @@ func TestEmbedderInitEndsWithoutInstallingWhenClosed(t *testing.T) {
 					require.NoError(t, s.db.Close())
 					select {
 					case <-s.embedderInitDone:
-					case <-time.After(10 * time.Second):
+					default:
 						t.Fatal("embedder initialisation still running after the database closed")
 					}
 					require.NoError(t, s.Stop(context.Background()))
@@ -75,4 +76,74 @@ func TestEmbedderInitEndsWithoutInstallingWhenClosed(t *testing.T) {
 			})
 		}
 	}
+}
+
+// closeTrackingEmbedder records Close, so a test can check that an embedder
+// built during shutdown is released rather than installed.
+type closeTrackingEmbedder struct {
+	countingEmbedder
+	closed atomic.Bool
+}
+
+func (e *closeTrackingEmbedder) Close() error {
+	e.closed.Store(true)
+	return nil
+}
+
+// DB.Close waits for embedder initialisation even when Server.Stop is never
+// called and the constructor ignores cancellation, as a native model load does.
+// The embedder built during shutdown is released, not installed.
+func TestDBCloseJoinsEmbedderInit(t *testing.T) {
+	s, _ := setupTestServer(t)
+	s.embedderRetryInitialBackoff = time.Hour
+	s.embedderRetryMaxBackoff = time.Hour
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var constructorReturned atomic.Bool
+	built := &closeTrackingEmbedder{countingEmbedder: countingEmbedder{dims: 4}}
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
+		close(entered)
+		<-release
+		constructorReturned.Store(true)
+		return built, nil
+	}
+
+	s.startEmbedderInit(&embed.Config{Provider: "openai", APIURL: "http://127.0.0.1:1", Model: "m", Dimensions: 4}, 0, nil, s.db)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("embedder initialisation didn't start")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- s.db.Close() }()
+	// Close has begun once the lifetime context ends; it can't finish while
+	// the constructor is blocked.
+	select {
+	case <-s.db.LifetimeContext().Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("DB.Close didn't begin")
+	}
+	select {
+	case <-closeDone:
+		t.Fatal("DB.Close returned while the embedder constructor was still running")
+	default:
+	}
+
+	close(release)
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("DB.Close didn't return after the constructor did")
+	}
+	require.True(t, constructorReturned.Load())
+	select {
+	case <-s.embedderInitDone:
+	default:
+		t.Fatal("embedder initialisation still running after DB.Close returned")
+	}
+	require.True(t, built.closed.Load(), "the embedder built during shutdown wasn't closed")
+	require.Nil(t, s.db.GetCypherExecutor().GetEmbedder())
+	require.NoError(t, s.Stop(context.Background()))
 }
