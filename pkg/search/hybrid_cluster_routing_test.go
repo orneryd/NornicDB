@@ -163,12 +163,6 @@ func BenchmarkSelectHybridClusters(b *testing.B) {
 	}
 	_ = svc.TriggerClustering(context.Background())
 
-	svc.clusterLexicalMu.Lock()
-	if len(svc.clusterLexicalProfiles) == 0 {
-		svc.rebuildClusterLexicalProfiles()
-	}
-	svc.clusterLexicalMu.Unlock()
-
 	ctx := withQueryText(context.Background(), "alpha beta")
 	query := []float32{1, 0}
 	b.ResetTimer()
