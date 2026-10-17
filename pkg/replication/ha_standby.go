@@ -990,8 +990,12 @@ func (a *WALApplier) Flush() error {
 	return nil
 }
 
-// NewDefaultTransport creates a ClusterTransport for production use.
+// NewDefaultTransport creates a ClusterTransport from a transport config.
 // See transport.go for the full implementation.
+//
+// Deprecated: it applies only what config carries, not the replication
+// secret or TLS settings of a replication Config. Build a node's transport
+// with NewDefaultTransportFromConfig.
 func NewDefaultTransport(config *ClusterTransportConfig) Transport {
 	return NewClusterTransport(config)
 }

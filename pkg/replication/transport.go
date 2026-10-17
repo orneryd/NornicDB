@@ -305,6 +305,14 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 
 	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Listening on %s", listener.Addr().String())
 
+	// Cancelling ctx closes the listener, so a blocked Accept returns. Only
+	// a TCP listener gets the accept deadline below; a TLS listener's
+	// Accept would otherwise wait until the transport closed, and an HA
+	// standby, which cancels ctx and waits for this loop before closing
+	// the transport, could never shut down.
+	stopClose := context.AfterFunc(ctx, func() { _ = listener.Close() })
+	defer stopClose()
+
 	for {
 		select {
 		case <-ctx.Done():
