@@ -45,6 +45,7 @@ type databaseCollectionStore struct {
 	// dropDatabase drops a collection's database and the state derived from
 	// it (Config.DropDatabase); it defaults to dbManager.DropDatabase.
 	dropDatabase func(name string) error
+	defaultDrop  bool
 
 	// reserved database names that must not be used for Qdrant collections.
 	reserved map[string]struct{}
@@ -64,13 +65,15 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 	// Reserve the default database name as well; Qdrant collections are dedicated namespaces.
 	reserved[strings.ToLower(dbManager.DefaultDatabaseName())] = struct{}{}
 
-	if dropDatabase == nil {
+	defaultDrop := dropDatabase == nil
+	if defaultDrop {
 		dropDatabase = dbManager.DropDatabase
 	}
 
 	return &databaseCollectionStore{
 		dbManager:    dbManager,
 		dropDatabase: dropDatabase,
+		defaultDrop:  defaultDrop,
 		reserved:     reserved,
 	}, nil
 }
