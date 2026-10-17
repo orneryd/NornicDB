@@ -12,6 +12,10 @@ These reports record the cached 88,155-vector workload used to finish #1370, #13
 - Corpus integrity: all vectors/queries are finite and normalized, all ground-truth IDs are in range, and the top-100 boundary was recomputed against every stored vector for all 1,000 queries with zero discrepancies at tolerance 1e-5. No AWS/Titan calls were made.
 - This legacy corpus has **no lexical payloads**. These timings do not measure lexical construction gains. Real BM25/document-to-embedding identity, construction seeds and hybrid cluster routing are covered by public regression tests, separately from these vector-only measurements.
 
+## ARM64 scoring follow-up
+
+A later CPU balanced-HNSW measurement at `cd5e02461` records approximately 11% lower preset p50 and 17% lower beam-512 p50. See the [source analysis, before/after results and limits](arm64-dot/README.md). The original sweep below retains its actual measured source.
+
 ## Read the results
 
 - [Final NornicDB measurements](final/nornicdb.md)
@@ -68,4 +72,4 @@ The separate BEIR SciFact corpus/model is not cached here, so that retrieval bas
 
 The final fallback fixture initially used corrupt metadata, which the normal build correctly rebuilt instead of failing; it was replaced with a canceled training attempt to exercise the existing fallback. The superseded package attempt was stopped and its failing fixture/race logs were preserved, not counted as passing. The original unused-allocation reproduction failed before the fix and now passes.
 
-Fail-first, canceled and final local test logs remain under `/tmp/nornic-1372-*` and `/tmp/nornic-1375-*`; raw server timing logs remain under `/private/tmp/nornic-ann-real-20261016-YeAi7Q`. Per-mode temporary server data was cleaned by the runner. Only reviewable JSON/Markdown is committed here, not source chunks, vector corpora, binaries or raw server logs.
+During the requested temporary-directory cleanup, fail-first, canceled and final local logs were archived to `.verify/ann-evidence-6yg0lqks/temporary-evidence.tar.gz` in the primary workspace. Raw timing logs were preserved in that archive before removing their temporary paths. Per-mode temporary server data was cleaned by the runner. Only reviewable JSON/Markdown is committed here, not source chunks, vector corpora, binaries or raw server logs.
