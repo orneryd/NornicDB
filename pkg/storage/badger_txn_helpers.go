@@ -85,7 +85,21 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 }
 
 func (b *BadgerEngine) withNotifyingUpdate(fn func(txn *badger.Txn) error, notification ...*commitNotification) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) }, notification...)
+	return b.withPublishingUpdate(fn, nil, notification...)
+}
+
+// withPublishingUpdate is withNotifyingUpdate with the commit's derived-state
+// publication (nil for none), which the ordered stage runs once the commit
+// is visible and before this returns (badger_publication_stage.go). publish
+// may read what fn recorded: it runs after fn.
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), notification ...*commitNotification) error {
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		if err := cw.writeOnce(fn); err != nil {
+			return err
+		}
+		cw.publish = publish
+		return nil
+	}, notification...)
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each

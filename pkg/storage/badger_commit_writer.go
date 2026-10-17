@@ -32,6 +32,10 @@ type commitWriter struct {
 	large               *largeCommit
 	pendingEmbeddingIDs map[NodeID]struct{}
 	notification        *commitNotification
+	// publish, when set, is the commit's derived-state publication: the
+	// writer fills it before finish, and the ordered stage runs it after the
+	// commit is visible (badger_publication_stage.go).
+	publish func()
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -111,20 +115,31 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.db.commit(cw.txn, cw.reserveNotification); err != nil {
-			return err
-		}
-		cw.publishPendingEmbeddingAdds()
-		return nil
+		return cw.db.commitPublishing(cw.txn, cw.publication(), cw.reserveNotification)
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
-	}
-	if err == nil {
-		cw.publishPendingEmbeddingAdds()
+		err = cw.large.finish(&cw.batchWriter, cw.publication())
 	}
 	return err
+}
+
+// publication is what the ordered stage runs for this commit: the
+// pending-embedding candidates it added, then the writer's publish. Nil
+// when there is neither.
+func (cw *commitWriter) publication() func() {
+	ids, publish := cw.pendingEmbeddingIDs, cw.publish
+	cw.pendingEmbeddingIDs = nil
+	if len(ids) == 0 && publish == nil {
+		return nil
+	}
+	engine := cw.engine
+	return func() {
+		engine.publishPendingEmbeddingAdds(ids)
+		if publish != nil {
+			publish()
+		}
+	}
 }
 
 func (cw *commitWriter) reserveNotification() {

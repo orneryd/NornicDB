@@ -402,6 +402,23 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// label, edge type, total; callbacks execute after all three unlock.
 	b.totalCountWriteMu.Lock()
 
+	// The caches, indexes and unique-value registry, in commit order
+	// (badger_publication_stage.go). publishCommitOperations advances the
+	// node-cache generation per written node (cacheStoreNode) and
+	// invalidates per deleted node, the same protection the sync tail uses;
+	// clearing the whole cache would only destroy warm entries.
+	schemas := make(map[string]*SchemaManager, 1)
+	for _, c := range commits {
+		if _, known := schemas[c.namespace]; !known && c.namespace != "" {
+			schemas[c.namespace] = b.GetSchemaForNamespace(c.namespace)
+		}
+	}
+	cw.publish = func() {
+		for _, c := range commits {
+			b.publishCommitOperations(c.namespace, schemas[c.namespace], c.ops)
+		}
+	}
+
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
 	b.idDict.flushTxnCounters(cw.txn)
@@ -484,27 +501,16 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if holdLabel {
 		b.labelCountWriteMu.Unlock()
 	}
-	// publishCommitOperations below advances the node-cache generation per
-	// written node (cacheStoreNode) and invalidates per deleted node, the
-	// same protection the sync tail uses; clearing the whole cache here
-	// would only destroy warm entries and re-decode work for readers.
-	schemas := make(map[string]*SchemaManager, 1)
-	for _, c := range commits {
-		schema := schemas[c.namespace]
-		if schema == nil && c.namespace != "" {
-			schema = b.GetSchemaForNamespace(c.namespace)
-			schemas[c.namespace] = schema
-		}
-		b.publishCommitOperations(c.namespace, schema, c.ops)
-	}
 	for _, publish := range beforeNotifications {
 		publish()
 	}
 	return nil
 }
 
-// publishCommitOperations mirrors the commit tail's entity and unique-value
-// cache updates. The replay caller dispatches notifications after retirement.
+// publishCommitOperations is a replayed commit's publication: the entity
+// caches, indexes and unique-value registry, which the ordered stage runs
+// (badger_publication_stage.go). The replay caller dispatches notifications
+// after retirement.
 func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
 	for _, op := range ops {
 		switch op.Type {
@@ -536,45 +542,8 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
 		}
 	}
-
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
+	if namespace != "" {
+		b.publishUniqueValuesForOps(schema, ops)
 	}
 }
 

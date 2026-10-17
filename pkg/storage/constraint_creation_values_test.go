@@ -72,7 +72,7 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	a, _ = uniqueConstraintValueKey(values[0])
 	b, _ = uniqueConstraintValueKey(values[1])
 	require.NotEqual(t, a, b)
-	schema.UnregisterUniqueValue("N", "v", values[1])
+	schema.UnregisterUniqueValue("N", "v", values[1], "odd")
 	_, found, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
 	require.False(t, found)
 	got, found, _ := schema.LookupUniqueConstraintValue("N", "v", float64(9007199254740992))

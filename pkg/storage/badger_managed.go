@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -181,14 +182,26 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 // under the shared commit gate, writes, and waits until the published
 // timestamp covers the write so the caller reads its own write afterwards.
 func (m *managedBadgerDB) commit(txn *badger.Txn, onAssign ...func()) error {
-	ts, err := m.commitShared(txn, onAssign...)
+	return m.commitPublishing(txn, nil, onAssign...)
+}
+
+// commitPublishing is commit for a commit with a derived-state publication
+// (nil for none): the publication runs in the ordered stage, and the commit
+// returns once the stage has applied every commit up to its own
+// (commitOracle.applyThrough).
+func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish func(), onAssign ...func()) error {
+	ts, err := m.commitShared(txn, publish, onAssign...)
 	if err != nil {
 		return err
 	}
-	return m.oracle.waitPublished(ts)
+	if err := m.oracle.waitPublished(ts); err != nil {
+		return err
+	}
+	m.oracle.applyThrough(ts)
+	return nil
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn, onAssign ...func()) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish func(), onAssign ...func()) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
 	m.advanceDiscardTs()
@@ -197,7 +210,12 @@ func (m *managedBadgerDB) commitShared(txn *badger.Txn, onAssign ...func()) (uin
 		return 0, err
 	}
 	defer m.oracle.finish(ts)
-	return ts, txn.CommitAt(ts, nil)
+	if err := txn.CommitAt(ts, nil); err != nil {
+		return ts, err
+	}
+	// Registered before finish, so the stage finds it once ts is published.
+	m.oracle.publishAt(ts, publish)
+	return ts, nil
 }
 
 // advanceDiscardTs lets compaction drop versions no open read can see any
@@ -462,9 +480,11 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 }
 
 // finish writes the last batch together with the intent's deletion,
-// publishes the whole commit and releases the gate. On error the caller must
-// abort.
-func (lc *largeCommit) finish(w *batchWriter) error {
+// publishes the whole commit and releases the gate. The commit's
+// derived-state publication (nil for none) runs in the ordered stage under
+// the intent's timestamp, and finish returns once the stage has applied
+// every commit up to the last batch. On error the caller must abort.
+func (lc *largeCommit) finish(w *batchWriter, publish func()) error {
 	// Every earlier batch must be durable before the intent's deletion is.
 	err := lc.db.syncIfPersistent()
 	if err == nil {
@@ -476,7 +496,11 @@ func (lc *largeCommit) finish(w *batchWriter) error {
 	if err != nil {
 		return err
 	}
+	lc.db.oracle.publishAt(lc.intentTs, publish)
 	lc.release()
+	// The gate was exclusive, so nothing is assigned below lastTs that is
+	// still unfinished: releasing the intent published every batch.
+	lc.db.oracle.applyThrough(lc.lastTs)
 	return nil
 }
 
@@ -604,17 +628,89 @@ type commitOracle struct {
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
 	readsHeld bool
+
+	// The ordered publication stage (applyThrough). publications holds each
+	// written commit's derived-state publication by commit timestamp until
+	// the stage runs it; applied is the timestamp through which the stage
+	// has run every one, and applyMu serializes the stage.
+	publications map[uint64]func()
+	applyMu      sync.Mutex
+	applied      atomic.Uint64
 }
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
 	o := &commitOracle{
-		nextTs:   maxVersion + 1,
-		inflight: make(map[uint64]struct{}),
-		readers:  make(map[uint64]int),
+		nextTs:       maxVersion + 1,
+		inflight:     make(map[uint64]struct{}),
+		readers:      make(map[uint64]int),
+		publications: make(map[uint64]func()),
 	}
 	o.changed.L = &o.mu
 	o.published.Store(maxVersion)
+	o.applied.Store(maxVersion)
 	return o
+}
+
+// publishAt registers the derived-state publication of the commit written at
+// ts (nil registers nothing). The committer registers it after its write and
+// before ts is finished, so it is in place before ts can be published.
+func (o *commitOracle) publishAt(ts uint64, publish func()) {
+	if publish == nil {
+		return
+	}
+	o.mu.Lock()
+	o.publications[ts] = publish
+	o.mu.Unlock()
+}
+
+// applyThrough is the ordered publication stage: it runs, in commit
+// timestamp order and once each, the publications of every commit up to ts,
+// which the caller has seen published. Every committer with a publication
+// calls it before returning, so a write returns only once the derived state
+// (caches, indexes, registries, counts) holds every commit up to its own:
+// that state is always the result of the commits in commit order up to some
+// timestamp, whichever goroutine runs a publication. Publications only
+// update in-memory structures; they never commit, so the stage never waits
+// on itself.
+func (o *commitOracle) applyThrough(ts uint64) {
+	if o.applied.Load() >= ts {
+		return
+	}
+	o.applyMu.Lock()
+	defer o.applyMu.Unlock()
+	from := o.applied.Load()
+	if from >= ts {
+		return
+	}
+	// The pending set only holds commits still publishing, so it is small;
+	// the timestamps in between published nothing.
+	var dueBuf [4]uint64
+	o.mu.Lock()
+	due := dueBuf[:0]
+	for at := range o.publications {
+		if at > from && at <= ts {
+			due = append(due, at)
+		}
+	}
+	o.mu.Unlock()
+	slices.Sort(due)
+	for _, at := range due {
+		o.applyOne(at)
+	}
+	o.applied.Store(ts)
+}
+
+// applyOne takes ts's publication out of the pending set, runs it and marks
+// ts applied. When it panics, ts still counts as applied and the panic
+// surfaces in this caller; later publications stay pending for the next one.
+func (o *commitOracle) applyOne(ts uint64) {
+	o.mu.Lock()
+	publish := o.publications[ts]
+	delete(o.publications, ts)
+	o.mu.Unlock()
+	defer o.applied.Store(ts)
+	runPublicationStageHook(ts)
+	publish()
 }
 
 // beginRead returns the published timestamp and registers it as read. While
@@ -740,6 +836,13 @@ func (o *commitOracle) advanceTo(ts uint64) {
 		o.changed.Broadcast()
 	}
 	o.mu.Unlock()
+	// Restored data has no publications: the in-memory state is rebuilt
+	// from the restored store.
+	o.applyMu.Lock()
+	if published := o.published.Load(); published > o.applied.Load() {
+		o.applied.Store(published)
+	}
+	o.applyMu.Unlock()
 }
 
 // waitPublished waits until ts is published, so a committer reads its own

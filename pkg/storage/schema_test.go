@@ -124,7 +124,7 @@ func TestSchemaManager(t *testing.T) {
 		err := sm.CheckUniqueConstraint("User", "age", float64(1), "")
 		require.Error(t, err)
 
-		sm.UnregisterUniqueValue("User", "age", int64(1))
+		sm.UnregisterUniqueValue("User", "age", int64(1), "node1")
 		err = sm.CheckUniqueConstraint("User", "age", float64(1), "")
 		require.NoError(t, err)
 	})
@@ -153,7 +153,7 @@ func TestSchemaManager(t *testing.T) {
 		}
 
 		// Unregister
-		sm.UnregisterUniqueValue("Node", "id", "test-1")
+		sm.UnregisterUniqueValue("Node", "id", "test-1", "node1")
 
 		// Should succeed after unregister
 		err = sm.CheckUniqueConstraint("Node", "id", "test-1", "")

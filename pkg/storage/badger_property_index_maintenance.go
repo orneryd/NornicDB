@@ -135,6 +135,57 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Nod
 	}
 }
 
+// publishUniqueValues is the one publication of a node write to the
+// unique-value registry, for engine writes, transaction commits and
+// write-behind replay: old's values (the pre-write node, nil for a create)
+// are unregistered while the node holds them, then written's (nil for a
+// delete) are registered, under every unique constraint of their labels. It
+// runs in the ordered stage, so old is what the registry holds for the node
+// (badger_publication_stage.go).
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	if old != nil {
+		for _, label := range old.Labels {
+			for property, value := range old.Properties {
+				schema.UnregisterUniqueValue(label, property, value, id)
+			}
+		}
+	}
+	if written != nil {
+		for _, label := range written.Labels {
+			for property, value := range written.Properties {
+				schema.RegisterUniqueValue(label, property, value, id)
+			}
+		}
+	}
+}
+
+// publishUniqueValuesForOps applies publishUniqueValues to a commit's node
+// operations, in order.
+func (b *BadgerEngine) publishUniqueValuesForOps(schema *SchemaManager, ops []Operation) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, nil, op.Node)
+			}
+		case OpUpdateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, op.OldNode, op.Node)
+			}
+		case OpDeleteNode:
+			if op.OldNode != nil {
+				b.publishUniqueValues(schema, op.NodeID, op.OldNode, nil)
+			}
+		}
+	}
+}
+
 // schemaForNodeID returns the SchemaManager for the namespace extracted
 // from a node ID (e.g. "nornic:abc" → "nornic"). Unnamespaced IDs fall
 // back to the default namespace.

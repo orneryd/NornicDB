@@ -103,7 +103,8 @@ func TestBadgerCache_BulkCacheHooks_Extra(t *testing.T) {
 	b.cacheOnEdgesDeleted([]EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2"))})
 	assert.EqualValues(t, 1, b.edgeCount.Load())
 
-	b.cacheOnNodesDeleted([]NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))}, 2, 1)
+	b.cacheOnNodeDeleted(NodeID(prefixTestID("bn-1")), 1)
+	b.cacheOnNodeDeleted(NodeID(prefixTestID("bn-2")), 0)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
@@ -121,7 +122,6 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b.cacheOnEdgeCreated(nil)
 	b.cacheOnEdgeUpdated("", nil)
 	b.cacheOnEdgesDeleted(nil)
-	b.cacheOnNodesDeleted(nil, 0, 0)
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())

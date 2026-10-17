@@ -298,6 +298,6 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
 
-	schema.UnregisterUniqueValue("Person", "name", "Alice")
+	schema.UnregisterUniqueValue("Person", "name", "Alice", nodeID)
 	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))
 }
