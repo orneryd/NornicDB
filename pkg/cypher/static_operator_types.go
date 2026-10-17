@@ -132,6 +132,8 @@ var staticFunctionResultTypes = map[string]string{
 	"vector": "Vector", "__nornic_vector": "Vector", "vector_distance": "Float", "__nornic_vector_distance": "Float",
 	"vector_norm": "Float", "__nornic_vector_norm": "Float", "vector_dimension_count": "Integer",
 	"uuid": "UUID", "uuid.mostsignificantbits": "Integer", "uuid.leastsignificantbits": "Integer", "uuid.v5": "UUID",
+	// NornicDB's text key (functions_text_key.go).
+	"nornicdb.text.key": "String",
 }
 
 // staticFunctionResultType is the result type of a call to function with
