@@ -957,23 +957,6 @@ func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string {
 	return result
 }
 
-// parseStringArray parses a string that may be an array ['a', 'b'] or single value 'a'
-func (e *StorageExecutor) parseStringArray(s string) []string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-		s = s[1 : len(s)-1]
-		var result []string
-		for _, item := range strings.Split(s, ",") {
-			item = strings.Trim(strings.TrimSpace(item), "'\"")
-			if item != "" {
-				result = append(result, item)
-			}
-		}
-		return result
-	}
-	return []string{strings.Trim(s, "'\"")}
-}
-
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {

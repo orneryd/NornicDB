@@ -1348,7 +1348,7 @@ func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 // other expression.
 func entityListLiteralKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
 	expression = strings.TrimSpace(expression)
-	if len(expression) < 2 || expression[0] != '[' || expression[len(expression)-1] != ']' {
+	if !isListLiteral(expression) {
 		return matchBindingUnknown, false
 	}
 	items := splitTopLevelComma(expression[1 : len(expression)-1])

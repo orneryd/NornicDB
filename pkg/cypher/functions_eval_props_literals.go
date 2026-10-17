@@ -128,9 +128,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 		}
 		return result
 	}
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		return e.parseArrayValue(ctx, expr)
-	}
 
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
