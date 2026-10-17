@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/plugintest"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/stretchr/testify/require"
 )
@@ -157,12 +158,13 @@ func TestPackageSnowballBuildsPluginAndManifest(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "plugins", "stemmers", "snowball-ukrainian.so")
 
 	err := packageSnowball(packageOptions{
-		Language: "ukrainian",
-		ID:       "snowball.ukrainian",
-		Version:  "1.0.0",
-		Module:   moduleDir,
-		Source:   filepath.Join(moduleDir, "stemmer.go"),
-		Output:   output,
+		Language:   "ukrainian",
+		ID:         "snowball.ukrainian",
+		Version:    "1.0.0",
+		Module:     moduleDir,
+		Source:     filepath.Join(moduleDir, "stemmer.go"),
+		Output:     output,
+		BuildFlags: plugintest.BuildFlags(),
 	})
 	require.NoError(t, err)
 
@@ -205,12 +207,13 @@ func TestPackagedStemmersWithSharedRuntimeLoadTogether(t *testing.T) {
 	for _, id := range []string{"snowball.first", "snowball.second"} {
 		output := filepath.Join(pluginDir, strings.ReplaceAll(id, ".", "-")+".so")
 		require.NoError(t, packageSnowball(packageOptions{
-			Language: id,
-			ID:       id,
-			Version:  "1.0.0",
-			Module:   moduleDir,
-			Source:   filepath.Join(moduleDir, "stemmer.go"),
-			Output:   output,
+			Language:   id,
+			ID:         id,
+			Version:    "1.0.0",
+			Module:     moduleDir,
+			Source:     filepath.Join(moduleDir, "stemmer.go"),
+			Output:     output,
+			BuildFlags: plugintest.BuildFlags(),
 		}))
 	}
 
