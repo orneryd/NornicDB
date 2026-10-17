@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/pluginbuild"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
-	"github.com/orneryd/nornicdb/pkg/internal/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,10 +24,12 @@ func buildTestPluginSO(t *testing.T, dir, baseName, source string) string {
 	soPath := filepath.Join(dir, baseName+".so")
 	require.NoError(t, os.WriteFile(srcPath, []byte(source), 0o600))
 
-	args := append([]string{"build"}, plugintest.BuildFlags()...)
+	buildConfig, err := pluginbuild.Running()
+	require.NoError(t, err)
+	args := append([]string{"build"}, buildConfig.Flags...)
 	args = append(args, "-buildmode=plugin", "-o", soPath, srcPath)
 	cmd := exec.Command("go", args...)
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), buildConfig.Env...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "go build plugin failed: %s", string(out))
 	return soPath

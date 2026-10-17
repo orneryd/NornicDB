@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"debug/buildinfo"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,7 +18,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/orneryd/nornicdb/internal/pluginbuild"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 )
 
@@ -27,6 +31,16 @@ type packageOptions struct {
 	Module   string
 	Source   string
 	Output   string
+
+	// Target is the nornicdb binary that will load the plugin. The plugin is
+	// built with the target's recorded build settings (a best effort, see
+	// internal/pluginbuild), then kept only if `<Target> stemmer check`
+	// accepts it: the target's own loader decides. Empty builds with the
+	// toolchain defaults and does not verify the plugin.
+	Target string
+
+	// CheckTimeout bounds the target's check; zero means defaultCheckTimeout.
+	CheckTimeout time.Duration
 }
 
 func parsePackageArgs(args []string) (packageOptions, error) {
@@ -39,6 +53,7 @@ func parsePackageArgs(args []string) (packageOptions, error) {
 	fs.StringVar(&opts.Module, "module", "", "local vendored Go module directory")
 	fs.StringVar(&opts.Source, "source", "", "generated Snowball Go source file")
 	fs.StringVar(&opts.Output, "output", "", "output .so plugin path")
+	fs.StringVar(&opts.Target, "target", "", "nornicdb binary that will load the plugin; the plugin is built to match it and verified by it")
 	if err := fs.Parse(args); err != nil {
 		return packageOptions{}, err
 	}
@@ -113,6 +128,20 @@ func packageSnowball(opts packageOptions) error {
 	if err != nil {
 		return err
 	}
+	var target *pluginbuild.Config
+	if opts.Target != "" {
+		// The check runs from a temporary directory, so the target is
+		// resolved once, here, and that one file is both read and run.
+		opts.Target, err = resolveTarget(opts.Target)
+		if err != nil {
+			return fmt.Errorf("--target: %w", err)
+		}
+		cfg, err := pluginbuild.FromBinary(opts.Target)
+		if err != nil {
+			return fmt.Errorf("--target: %w", err)
+		}
+		target = &cfg
+	}
 	tmpRoot, err := os.MkdirTemp("", "nornicdb-snowball-*")
 	if err != nil {
 		return err
@@ -133,9 +162,29 @@ func packageSnowball(opts packageOptions) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "build", "-mod=vendor", "-buildmode=plugin", "-o", outputPath, ".")
+	// From here on a failure of any kind (the build, the manifest, a refusal,
+	// a timeout or a crash of the target's check) leaves neither the plugin
+	// nor its manifest behind.
+	packaged := false
+	defer func() {
+		if !packaged {
+			_ = os.Remove(outputPath)
+			_ = os.Remove(manifestPath(outputPath))
+		}
+	}()
+	args := []string{"build", "-mod=vendor", "-buildmode=plugin"}
+	env := append(os.Environ(), "GOPROXY=off")
+	if target != nil {
+		env = append(env, target.Env...)
+		if err := requireTargetGoVersion(buildDir, env, opts.Target, target.GoVersion); err != nil {
+			return err
+		}
+		args = append(args, target.Flags...)
+	}
+	args = append(args, "-o", outputPath, ".")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = buildDir
-	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -161,7 +210,102 @@ func packageSnowball(opts packageOptions) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return os.WriteFile(manifestPath(outputPath), raw, 0o644)
+	if err := os.WriteFile(manifestPath(outputPath), raw, 0o644); err != nil {
+		return err
+	}
+	if target != nil {
+		if err := verifyWithTarget(opts.Target, outputPath, manifest, tmpRoot, opts.CheckTimeout); err != nil {
+			return err
+		}
+	}
+	packaged = true
+	return nil
+}
+
+// defaultCheckTimeout bounds `<target> stemmer check` when CheckTimeout is
+// zero. checkGrace is extra time for the target process to start and exit.
+const (
+	defaultCheckTimeout = 2 * time.Minute
+	checkGrace          = 30 * time.Second
+)
+
+// resolveTarget returns the absolute path of the --target binary. A name
+// without a path separator is looked up in PATH, as a shell would run it.
+func resolveTarget(target string) (string, error) {
+	if !strings.ContainsRune(target, '/') && !strings.ContainsRune(target, filepath.Separator) {
+		found, err := exec.LookPath(target)
+		if err != nil {
+			return "", err
+		}
+		target = found
+	}
+	return filepath.Abs(target)
+}
+
+// verifyWithTarget runs `<target> stemmer check` on the packaged plugin, from
+// workDir, and fails unless the target's loader accepts it within timeout:
+// the check must exit 0 and print a result line for this manifest's plugin
+// and library digest. On a refusal it adds the recorded build differences
+// between the target and the plugin, which explain the refusal but never
+// decide it.
+func verifyWithTarget(targetPath, outputPath string, manifest stemmer.Manifest, workDir string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultCheckTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+checkGrace)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, targetPath, "stemmer", "check", "--timeout", timeout.String(), manifestPath(outputPath))
+	cmd.Dir = workDir
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	switch {
+	case err == nil:
+		want := stemmer.CheckResult{ID: manifest.ID, Version: manifest.Version, APIVersion: manifest.APIVersion, SHA256: manifest.SHA256}
+		if got, ok := stemmer.ParseCheckResult(output); !ok || got != want {
+			return fmt.Errorf("--target %s exited without confirming that it loaded the plugin, which was removed (a plugin init function may have ended the process): %s", targetPath, output)
+		}
+		return nil
+	case ctx.Err() != nil:
+		return fmt.Errorf("--target %s did not finish checking the plugin within %s; the plugin was removed", targetPath, timeout+checkGrace)
+	case strings.Contains(output, `unknown command "stemmer"`):
+		return fmt.Errorf("--target %s cannot verify plugins (it has no `stemmer check` command); the plugin was removed. Upgrade the server, or package without --target to get an unverified plugin", targetPath)
+	}
+	message := fmt.Sprintf("--target %s refuses the plugin, which was removed: %v: %s", targetPath, err, output)
+	if differences := recordedDifferences(targetPath, outputPath); len(differences) > 0 {
+		message += "\nrecorded build differences (target vs plugin; they explain, the target decides):\n  " + strings.Join(differences, "\n  ")
+	}
+	return errors.New(message)
+}
+
+// recordedDifferences explains a refusal from both binaries' build
+// information, when both are readable.
+func recordedDifferences(targetPath, pluginPath string) []string {
+	targetInfo, err := buildinfo.ReadFile(targetPath)
+	if err != nil {
+		return nil
+	}
+	pluginInfo, err := buildinfo.ReadFile(pluginPath)
+	if err != nil {
+		return nil
+	}
+	return pluginbuild.Differences(targetInfo, pluginInfo)
+}
+
+// requireTargetGoVersion fails unless the go command that builds the plugin is
+// the release that built the target: plugin.Open refuses any other.
+func requireTargetGoVersion(buildDir string, env []string, targetPath, targetVersion string) error {
+	cmd := exec.Command("go", "env", "GOVERSION")
+	cmd.Dir = buildDir
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("go env GOVERSION: %w", err)
+	}
+	if have := strings.TrimSpace(string(out)); have != targetVersion {
+		return fmt.Errorf("--target %s was built with %s, but go is %s; build the plugin with %s", targetPath, targetVersion, have, targetVersion)
+	}
+	return nil
 }
 
 // isolateSnowballRuntime gives each generated plugin its own import identity.

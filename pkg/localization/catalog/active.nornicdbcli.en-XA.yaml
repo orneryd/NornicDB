@@ -319,3 +319,15 @@
   other: "[!! Réádíng ínpút: {{.Cause}} !!]"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "[!! Lóádíng nódés: {{.Cause}} !!]"
+- id: nornicdbcli.stemmer.short
+  other: "[!! Stémmér plúgín ópérátíóns !!]"
+- id: nornicdbcli.stemmer.check.short
+  other: "[!! Chéck thát á stémmér plúgín lóáds íntó thís bínárý, ás ít wóúld át stártúp !!]"
+- id: nornicdbcli.flag.stemmer_check_timeout
+  other: "[!! Máxímúm tímé tó lóád thé plúgín !!]"
+- id: nornicdbcli.stemmer.check.ok
+  other: "[!! Stémmér plúgín {{.ID}} {{.Version}} lóáds: {{.Path}} !!]"
+- id: nornicdbcli.stemmer.check_failed
+  other: "[!! stémmér plúgín {{.Manifest}} dóés nót lóád: {{.Cause}} !!]"
+- id: nornicdbcli.stemmer.check_timed_out
+  other: "[!! stémmér plúgín {{.Manifest}} díd nót fínísh lóádíng wíthín {{.Timeout}} !!]"
