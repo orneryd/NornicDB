@@ -619,7 +619,7 @@ func (a *databaseInfoAdapter) CreatedAt() time.Time {
 func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if err := cypher.AdmitOperation(r.Context(), s.principalAccess(getClaims(r)).Allows, dbName, cypher.PrivilegeRead); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 
@@ -864,7 +864,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if err := cypher.AdmitOperation(r.Context(), s.principalAccess(getClaims(r)).Allows, dbName, cypher.PrivilegeRead); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 	response := map[string]interface{}{
@@ -1845,7 +1845,7 @@ func (s *Server) runOneShotTransaction(
 	if err := s.admitGraph(claims, dbName); err != nil {
 		response.Errors = append(response.Errors, QueryError{
 			Code:    "Neo.ClientError.Security.Forbidden",
-			Message: localize(localization.DatabaseAccessDenied(dbName)),
+			Message: localize(databaseAccessDeniedFor(claims)),
 		})
 		return
 	}
@@ -1988,7 +1988,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if err := s.admitGraph(claims, dbName); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 
@@ -2032,7 +2032,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	claims := getClaims(r)
 	if err := s.admitGraph(claims, dbName); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 
@@ -2072,7 +2072,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if err := s.admitGraph(claims, dbName); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 
@@ -2111,7 +2111,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
 	if err := s.admitGraph(getClaims(r), dbName); err != nil {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return
 	}
 

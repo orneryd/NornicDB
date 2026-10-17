@@ -3063,7 +3063,7 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 		require.Len(t, response.Errors, 1)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", response.Errors[0].Code)
-		require.Contains(t, response.Errors[0].Message, "Access to database")
+		require.Equal(t, "Database access is not allowed for user '' with no roles.", response.Errors[0].Message)
 	})
 
 	// A BOM and a comment are an empty statement: Neo4j's SyntaxError,

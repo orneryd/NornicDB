@@ -703,7 +703,7 @@ func WithProcedureGrantChecker(ctx context.Context, allowsBoosted func(procedure
 // supplied procedure statements cannot bypass transport authorization.
 func AuthorizeQuery(ctx context.Context, query string) error {
 	if authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); ok {
-		if err := AdmitGraph(authorization.resolver, authorization.database); err != nil {
+		if err := AdmitGraph(ctx, authorization.resolver, authorization.database); err != nil {
 			return err
 		}
 	}

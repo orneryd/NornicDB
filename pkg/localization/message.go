@@ -1,6 +1,11 @@
 package localization
 
-import "strconv"
+import (
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // MessageID is a stable, language-independent catalog key.
 type MessageID string
@@ -521,12 +526,22 @@ func HTTPDatabaseNotFound(name string) Message {
 	}
 }
 
-// DatabaseAccessDenied identifies an authorization failure for a database.
-func DatabaseAccessDenied(name string) Message {
+// DatabaseAccessDenied identifies a principal refused a database it may not
+// access, in Neo4j 5's words: "Database access is not allowed for user
+// 'alice' with roles [editor, reader]." (roles sorted, each once) or "...
+// with no roles.". Neo4j names the principal, never the database.
+func DatabaseAccessDenied(user string, roles []string) Message {
+	sorted := append([]string(nil), roles...)
+	sort.Strings(sorted)
+	sorted = slices.Compact(sorted)
+	described := "no roles"
+	if len(sorted) > 0 {
+		described = "roles [" + strings.Join(sorted, ", ") + "]"
+	}
 	return Message{
 		ID:       MessageDatabaseAccessDenied,
-		Fallback: "Access to database '" + name + "' is not allowed.",
-		Data:     map[string]any{"Name": name},
+		Fallback: "Database access is not allowed for user '" + user + "' with " + described + ".",
+		Data:     map[string]any{"User": user, "Roles": strings.Join(sorted, ", "), "HasRoles": len(sorted) > 0},
 	}
 }
 

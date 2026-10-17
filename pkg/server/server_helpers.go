@@ -177,7 +177,7 @@ func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (acce
 // whether the request may go on.
 func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
 	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return false
 	}
 	return true
@@ -196,6 +196,7 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx := r.Context()
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
+	ctx = auth.WithRequestPrincipalName(ctx, claims.Username)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
 	// The principal's one permission resolver (principalAccess), which
 	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
@@ -386,7 +387,10 @@ func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
 // admitGraph takes the common selection decision before any route resolves,
 // opens, configures or publishes resources for the requested graph.
 func (s *Server) admitGraph(claims *auth.JWTClaims, graph string) error {
-	return cypher.AdmitGraph(s.principalAccess(claims).Allows, graph)
+	if claims == nil {
+		return cypher.AdmitGraphFor("", nil, s.principalAccess(claims).Allows, graph)
+	}
+	return cypher.AdmitGraphFor(claims.Username, claims.Roles, s.principalAccess(claims).Allows, graph)
 }
 
 // graphAccess reports whether mode allows graph and the database its data

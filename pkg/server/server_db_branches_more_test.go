@@ -32,7 +32,7 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", resp.Errors[0].Code)
 		// Without a principal the database itself is refused, before the
 		// statement's write permission is considered.
-		require.Contains(t, resp.Errors[0].Message, "Access to database 'nornic' is not allowed.")
+		require.Equal(t, "Database access is not allowed for user '' with no roles.", resp.Errors[0].Message)
 	})
 
 	t.Run("mutation denied when role has no write privilege", func(t *testing.T) {

@@ -85,8 +85,10 @@ func TestBoltAdmissionBeforeResolution(t *testing.T) {
 		missingCode, missingMessage := failure("tenantmissing", explicit)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", existingCode, "explicit=%v", explicit)
 		require.Equal(t, existingCode, missingCode, "explicit=%v", explicit)
-		require.Equal(t, existingMessage, fmt.Sprintf("Access to database '%s' is not allowed.", "tenantsecret"))
-		require.Equal(t, missingMessage, fmt.Sprintf("Access to database '%s' is not allowed.", "tenantmissing"))
+		// Neo4j 5.26's text names the principal, not the database, so an existing
+		// and a missing database read the same.
+		require.Equal(t, "Database access is not allowed for user 'limited' with roles [limited].", existingMessage, "explicit=%v", explicit)
+		require.Equal(t, existingMessage, missingMessage, "explicit=%v", explicit)
 	}
 	mu.Lock()
 	require.Zero(t, admitted["tenantsecret"], "no connection admitted for a refused database")

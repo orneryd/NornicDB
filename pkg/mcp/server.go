@@ -708,7 +708,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		if errors.As(err, &denied) && denied.Permission == "write" {
 			return nil, localizedError(localization.DatabaseWriteDenied(database), err)
 		}
-		return nil, localizedError(localization.DatabaseAccessDenied("requested database"), err)
+		return nil, localizedError(cypher.DatabaseAccessDeniedMessage(ctx), err)
 	}
 	ctx = contextWithAuthorizedDatabase(admittedCtx, database)
 

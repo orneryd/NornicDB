@@ -234,8 +234,8 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // server attaches the principal to the request (withBifrostRBAC): its one
 // permission resolver, which HTTP, Bolt and GraphQL use, and the databases
 // and aliases it may select. A selection outside that scope, or one where
-// the principal lacks permission, gets the same Forbidden error naming the
-// selection as given. Otherwise it returns the canonical name and ctx
+// the principal lacks permission, gets the same Forbidden error, Neo4j's,
+// which names the principal. Otherwise it returns the canonical name and ctx
 // carrying the resolver for the executor, which then authorizes each
 // statement as on the other transports. A context the server marked as
 // served with authentication disabled resolves the name as given; a context
@@ -243,12 +243,12 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // (auth.WithRequestPrincipal attaches both), or no context at all is refused.
 func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
 	if ctx == nil {
-		return nil, "", r.databaseForbidden(database)
+		return nil, "", r.databaseForbidden(ctx)
 	}
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
-			return nil, "", r.databaseForbidden(database)
+			return nil, "", r.databaseForbidden(ctx)
 		}
 		dbName, err := r.ResolveDatabase(database)
 		if err != nil {
@@ -265,19 +265,15 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 	}
 	admittedCtx, dbName, err := cypher.AdmitRequestOperation(ctx, r.DefaultDatabaseName(), database, class)
 	if err != nil {
-		return nil, "", r.databaseForbidden(database)
+		return nil, "", r.databaseForbidden(ctx)
 	}
 	return admittedCtx, dbName, nil
 }
 
-// databaseForbidden is Neo4j's Forbidden error for the selection as the
-// caller gave it (the default database's name when it gave none).
-func (r *heimdallDBRouter) databaseForbidden(database string) error {
-	if database == "" {
-		database = r.DefaultDatabaseName()
-	}
-	denied := localization.DatabaseAccessDenied(database)
-	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+// databaseForbidden is Neo4j's Forbidden error for ctx's principal, which
+// Neo4j names instead of the selection (cypher.DatabaseAccessDeniedMessage).
+func (r *heimdallDBRouter) databaseForbidden(ctx context.Context) error {
+	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", cypher.DatabaseAccessDeniedMessage(ctx), nil)
 }
 
 // requireNonComposite refuses a composite database for the calls that read

@@ -68,7 +68,7 @@ func TestExplicitTransaction_UsesEffectiveGraphForAuthorization(t *testing.T) {
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", firstErr["code"])
 	// "private" is outside the role's allowlist: the selection itself is
 	// refused, before its read permission.
-	require.Equal(t, "Access to database 'private' is not allowed.", firstErr["message"])
+	require.Equal(t, "Database access is not allowed for user 'reader' with roles [viewer].", firstErr["message"])
 }
 
 func TestInlineShellUseExecutesStatementAndChecksDatabase(t *testing.T) {

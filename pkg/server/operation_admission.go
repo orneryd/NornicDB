@@ -63,7 +63,7 @@ func (s *Server) admitHTTPOperation(w http.ResponseWriter, r *http.Request, oper
 			if errors.As(err, &missing) && missing.Permission == "write" {
 				s.writeNeo4jDatabaseWriteDenied(w, r, label)
 			} else {
-				s.writeNeo4jDatabaseAccessDenied(w, r, label)
+				s.writeNeo4jDatabaseAccessDenied(w, r)
 			}
 			return false
 		}

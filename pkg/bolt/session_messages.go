@@ -189,7 +189,7 @@ func (s *Session) handleRun(data []byte) error {
 	// so an existing one and a missing one look the same.
 	mode := s.accessMode()
 	if err := s.admitGraph(mode, dbName); err != nil {
-		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", databaseAccessDenied(s.executingAuth()))
 	}
 	admissionCtx := s.withSessionIdentity(parentCtx)
 	if mode != nil || s.authResult != nil {
@@ -1079,7 +1079,7 @@ func (s *Session) handleRoute(data []byte) error {
 		}
 		if mode := s.accessModeFor(impersonated); mode != nil {
 			if _, allowed := s.graphAccess(mode, routedDatabase); !allowed {
-				return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(routedDatabase))
+				return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", databaseAccessDenied(impersonated))
 			}
 		}
 	}
@@ -1217,7 +1217,7 @@ func (s *Session) handleBegin(data []byte) error {
 	// principal may not use is refused before an executor is resolved or a
 	// connection bound, whether or not it exists.
 	if err := s.admitGraph(s.accessMode(), txDatabase); err != nil {
-		return s.sendTransactionControlFailure("Neo.ClientError.Security.Forbidden", s.localize(localization.DatabaseAccessDenied(txDatabase)))
+		return s.sendTransactionControlFailure("Neo.ClientError.Security.Forbidden", s.localize(databaseAccessDenied(s.executingAuth())))
 	}
 	if s.server != nil && s.server.dbManager != nil {
 		dbName := txDatabase
@@ -1925,7 +1925,11 @@ func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.Principal
 // under mode: the one admission decision, taken before the graph is checked
 // for existence, bound or opened.
 func (s *Session) admitGraph(mode auth.DatabaseAccessMode, graph string) error {
-	return cypher.AdmitGraph(s.principalAccess(mode).Allows, graph)
+	who := s.executingAuth()
+	if who == nil {
+		return cypher.AdmitGraphFor("", nil, s.principalAccess(mode).Allows, graph)
+	}
+	return cypher.AdmitGraphFor(who.Username, who.Roles, s.principalAccess(mode).Allows, graph)
 }
 
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's

@@ -160,3 +160,13 @@ func (s *Session) remoteImpersonationFailure(impersonated *BoltAuthResult, graph
 	}
 	return &impersonationFailure{code: "Neo.ClientError.Security.Forbidden", message: localization.CypherAdminImpersonationRemoteDenied(graph)}
 }
+
+// databaseAccessDenied is Neo4j's refusal of a database for who, the
+// executing principal (the impersonated user while impersonating), named
+// with its roles; no principal is a user with no name and no roles.
+func databaseAccessDenied(who *BoltAuthResult) localization.Message {
+	if who == nil {
+		return localization.DatabaseAccessDenied("", nil)
+	}
+	return localization.DatabaseAccessDenied(who.Username, who.Roles)
+}

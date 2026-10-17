@@ -50,7 +50,7 @@ func TestHTTPAdmissionBeforeResolution(t *testing.T) {
 				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response), recorder.Body.String())
 				require.Len(t, response.Errors, 1, recorder.Body.String())
 				require.Equal(t, "Neo.ClientError.Security.Forbidden", response.Errors[0].Code)
-				require.Equal(t, "Access to database '"+database+"' is not allowed.", response.Errors[0].Message)
+				require.Equal(t, "Database access is not allowed for user 'admission_limited' with roles [editor].", response.Errors[0].Message)
 				if existingStatus == 0 {
 					existingStatus = recorder.Code
 				} else {

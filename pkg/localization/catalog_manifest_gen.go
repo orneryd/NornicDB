@@ -1760,7 +1760,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "search.vulkan_device_not_initialized", Constructor: "SearchVulkanDeviceNotInitialized", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.vulkan_not_available", Constructor: "SearchVulkanNotAvailable", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "security.admin_permission_required", Constructor: "AdminPermissionRequired", Fields: []string{}, PluralForms: []string{"other"}},
-	{ID: "security.database_access_denied", Constructor: "DatabaseAccessDenied", Fields: []string{"Name"}, PluralForms: []string{"other"}},
+	{ID: "security.database_access_denied", Constructor: "DatabaseAccessDenied", Fields: []string{"HasRoles", "Roles", "User"}, PluralForms: []string{"other"}},
 	{ID: "security.database_write_denied", Constructor: "DatabaseWriteDenied", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "security.insufficient_permissions", Constructor: "InsufficientPermissions", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "security.invalid_authorization_token", Constructor: "InvalidAuthorizationToken", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

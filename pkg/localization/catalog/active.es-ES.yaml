@@ -183,8 +183,8 @@
   description: Respuesta HTTP y Neo4j cuando no existe la base de datos solicitada.
   other: "No se encontró la base de datos '{{.Name}}'"
 - id: security.database_access_denied
-  description: Respuesta de autorización cuando no se permite acceder a una base de datos.
-  other: "No se permite el acceso a la base de datos '{{.Name}}'."
+  description: Respuesta de Neo4j cuando el principal no puede acceder a una base de datos. User y Roles no se traducen.
+  other: "No se permite el acceso a la base de datos al usuario '{{.User}}' con {{if .HasRoles}}los roles [{{.Roles}}]{{else}}ningún rol{{end}}."
 - id: security.database_write_denied
   description: Respuesta de autorización cuando no se permite escribir en una base de datos.
   other: "No se permite escribir en la base de datos '{{.Name}}'."

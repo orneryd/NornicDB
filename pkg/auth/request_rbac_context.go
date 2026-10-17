@@ -14,6 +14,7 @@ type requestRBACKey string
 var (
 	requestRBACKeyResolvedAccessResolver = requestRBACKey("resolved_access_resolver")
 	requestRBACKeyPrincipalRoles         = requestRBACKey("principal_roles")
+	requestRBACKeyPrincipalName          = requestRBACKey("principal_name")
 	requestRBACKeyDatabaseAccessMode     = requestRBACKey("database_access_mode")
 	requestRBACKeyEntitlementResolver    = requestRBACKey("entitlement_resolver")
 	requestRBACKeyDatabaseScope          = requestRBACKey("database_scope")
@@ -142,6 +143,19 @@ func WithRequestDatabaseScope(ctx context.Context, scope *RequestDatabaseScope) 
 // RequestPrincipalRolesFromContext returns the principal's roles from the request context, or nil.
 func RequestPrincipalRolesFromContext(ctx context.Context) []string {
 	v, _ := ctx.Value(requestRBACKeyPrincipalRoles).([]string)
+	return v
+}
+
+// WithRequestPrincipalName attaches the principal's user name to the
+// context, for the messages that name it (Neo4j's access refusal).
+func WithRequestPrincipalName(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, requestRBACKeyPrincipalName, name)
+}
+
+// RequestPrincipalNameFromContext returns the principal's user name from the
+// request context, or "".
+func RequestPrincipalNameFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(requestRBACKeyPrincipalName).(string)
 	return v
 }
 

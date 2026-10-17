@@ -202,7 +202,7 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
 	_, database, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), "", cypher.PrivilegeRead)
 	if err != nil {
-		denied := localization.DatabaseAccessDenied(database)
+		denied := cypher.DatabaseAccessDeniedMessage(ctx)
 		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, err)
 	}
 	// A composite's storage reads every constituent, which this one decision

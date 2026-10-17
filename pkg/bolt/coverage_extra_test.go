@@ -1215,7 +1215,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Access to database 'allowed' is not allowed")
+			assert.Equal(t, "Database access is not allowed for user 'reader' with no roles.", msg)
 
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
@@ -1392,7 +1392,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Access to database 'nornic' is not allowed")
+			assert.Equal(t, "Database access is not allowed for user 'reader' with no roles.", msg)
 
 			serverConn3, clientConn3 := net.Pipe()
 			defer serverConn3.Close()

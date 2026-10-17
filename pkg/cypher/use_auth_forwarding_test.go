@@ -106,7 +106,8 @@ func TestUseClause_RejectsUnauthorizedTargetBeforeRouting(t *testing.T) {
 	})
 
 	manager.lastAuthToken = ""
-	_, err := exec.Execute(WithAuthToken(ctx, "Bearer should-not-route"), "USE cmp RETURN 1 AS value", nil)
+	// A statement that reads the graph: RETURN 1 needs only access, as in Neo4j.
+	_, err := exec.Execute(WithAuthToken(ctx, "Bearer should-not-route"), "USE cmp MATCH (n) RETURN count(n) AS value", nil)
 	var denied *PermissionDeniedError
 	require.True(t, errors.As(err, &denied))
 	require.Equal(t, "read", denied.Permission)
