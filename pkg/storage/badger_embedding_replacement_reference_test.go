@@ -193,6 +193,8 @@ func TestEmbeddingCleanup_DualSeparateBuffered(t *testing.T) {
 
 // Historical captured point writes may deliberately use the released codec.
 // Replay must keep them, while a final point deletion still wins over a write.
+// The reopen upgrades the store to V4, so replay applies them at their
+// current addresses.
 func TestEmbeddingCleanup_CapturedCompatibilityPointWrites(t *testing.T) {
 	for _, removeLong := range []bool{false, true} {
 		t.Run(fmt.Sprintf("removeLong=%v", removeLong), func(t *testing.T) {
@@ -249,8 +251,8 @@ func TestEmbeddingCleanup_CapturedCompatibilityPointWrites(t *testing.T) {
 				require.ErrorIs(t, err, ErrNotFound)
 				require.Zero(t, r7AExtensionLegacyKeys(t, b), "explicit point deletes win historical writes")
 			} else {
-				require.Equal(t, longNode.ChunkEmbeddings, embeddingCleanupColdNode(t, b, long).ChunkEmbeddings)
-				require.Equal(t, 16, r7AExtensionLegacyKeys(t, b), "exact historical final range survives replay")
+				require.Equal(t, longNode.ChunkEmbeddings, embeddingCleanupColdNode(t, b, long).ChunkEmbeddings, "exact historical final range survives replay")
+				require.Zero(t, r7AExtensionLegacyKeys(t, b), "replay writes the range at its current addresses")
 			}
 		})
 	}

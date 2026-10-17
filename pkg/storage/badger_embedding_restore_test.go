@@ -34,9 +34,6 @@ func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 				if err = txn.Set(nodeKey(id), body); err != nil {
 					return err
 				}
-				if err = txn.Delete(embeddingRepairReadyKey); err != nil {
-					return err
-				}
 				prefix := embeddingPrefix(id)
 				if legacy {
 					prefix = legacyEmbeddingPrefix(id)
@@ -64,6 +61,7 @@ func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 					require.NoError(t, err)
 					defer func() { require.NoError(t, b.Close()) }()
 					require.NoError(t, b.Restore(backup))
+					require.Equal(t, storageVersionEmbeddingKeysV4, b.storageVersion, "a V3 backup takes the V4 arm on restore")
 					require.Zero(t, separatorIDKeyCount(t, b, id), "repair precedes admission of reads")
 					require.Equal(t, live.ChunkEmbeddings, embeddingCleanupColdNode(t, b, live.ID).ChunkEmbeddings)
 					next, err := b.GetNode(id)

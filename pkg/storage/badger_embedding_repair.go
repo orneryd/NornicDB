@@ -4,36 +4,17 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+// prefixMVCCMetaEmbeddingRepairReady is reserved: development builds before
+// storage V4 wrote a repair marker under it. The V3→V4 arm now owns that
+// repair, and nothing reads the marker.
 const prefixMVCCMetaEmbeddingRepairReady = byte(0x13)
 const embeddingRepairBatchSize = 128
-
-var embeddingRepairReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEmbeddingRepairReady}
-
-// Called at open or during offline Restore, before readers or writers resume.
-func (b *BadgerEngine) ensureEmbeddingKeyRepair() error {
-	ready := false
-	if err := b.db.viewHeld(func(txn *badger.Txn) error {
-		_, err := txn.Get(embeddingRepairReadyKey)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		ready = err == nil
-		return err
-	}); err != nil {
-		return err
-	}
-	if ready {
-		return nil
-	}
-	_, err := b.repairOrphanedEmbeddingKeysLocked()
-	return err
-}
 
 // RepairOrphanedEmbeddingKeys removes separately stored keys with no owning
 // node, or with an inline owner and no sidecar metadata. It preserves ranges
 // referenced by a separate body or a sidecar, including stale sidecars.
-// Open and Restore run this once for stores written before the #1218 cleanup
-// fix; it can also be run explicitly, for example:
+// The V3→V4 storage migration runs it for stores written before the #1218
+// cleanup fix; it can also be run explicitly, for example:
 //
 //	removed, err := engine.RepairOrphanedEmbeddingKeys()
 //
@@ -135,13 +116,6 @@ func (b *BadgerEngine) repairOrphanedEmbeddingKeysLocked() (int, error) {
 				}
 			}
 		}
-	}
-	if err := b.commitEngineWriteHeld(func(cw *commitWriter) error {
-		return cw.writeOnce(func(txn *badger.Txn) error {
-			return txn.Set(embeddingRepairReadyKey, []byte{1})
-		})
-	}); err != nil {
-		return removed, err
 	}
 	return removed, nil
 }

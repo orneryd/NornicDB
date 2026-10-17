@@ -338,7 +338,7 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 // changed after the embedding was generated). Sidecar state takes precedence
 // over body-inline embedding state when present and fresh.
 func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
-	item, _, err := getEmbeddingItem(txn, nodeID, reservedEmbeddingMetaChunkIndex)
+	item, _, err := getEmbeddingItem(txn, nodeID, reservedEmbeddingMetaChunkIndex, b.compatibilityEmbeddingKeys())
 	if err == badger.ErrKeyNotFound {
 		return nil, false, nil
 	}

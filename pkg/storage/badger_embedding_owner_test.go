@@ -20,6 +20,7 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					_, err = b.CreateNode(n)
 					require.NoError(t, err, "public storage API accepts this ID")
 					if legacy {
+						storeBeforeV4(t, b)
 						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
 							for i := 0; i < 16; i++ {
 								key := embeddingKey(id, i)
@@ -43,10 +44,9 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					}
 					require.Equal(t, 16, separatorIDKeyCount(t, b, id))
 					if reopen {
-						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(embeddingRepairReadyKey) }))
+						storeBeforeV4(t, b)
 						require.NoError(t, b.Close())
-						b, err = NewBadgerEngine(dir)
-						require.NoError(t, err)
+						b = openWithStorageUpgrade(t, dir)
 					} else {
 						removed, repairErr := b.RepairOrphanedEmbeddingKeys()
 						require.NoError(t, repairErr)
@@ -80,6 +80,7 @@ func TestEmbeddingCleanup_DoesNotDeleteOtherLegacyOwner(t *testing.T) {
 	n := separatelyStoredNode(long)
 	_, err = b.CreateNode(n)
 	require.NoError(t, err)
+	storeBeforeV4(t, b)
 	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
 		for i := 0; i < 16; i++ {
 			item, e := txn.Get(embeddingKey(long, i))

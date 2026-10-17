@@ -68,7 +68,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if err != nil {
 			return fmt.Errorf("recover final node %s: %w", id, err)
 		}
-		readFinal := embeddingRecordReader{txn: txn, commit: commit}
+		readFinal := embeddingRecordReader{txn: txn, commit: commit, compatibility: b.compatibilityEmbeddingKeys()}
 		_, readFinal.rangeReplaced = references.replaced[id]
 		if err := restoreBufferedNodeVectors(node, id, readFinal); err != nil {
 			return err
@@ -151,7 +151,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 // transaction. Legacy operation JSON omits all vectors and embedding metadata.
 func restoreBufferedNodeVectors(node *Node, id NodeID, read embeddingRecordReader) error {
 	fresh := false
-	data, _, err := readEmbeddingRecord(id, reservedEmbeddingMetaChunkIndex, func(key []byte) ([]byte, error) {
+	data, _, err := readEmbeddingRecord(id, reservedEmbeddingMetaChunkIndex, read.compatibility, func(key []byte) ([]byte, error) {
 		return read.read(key, nil)
 	})
 	if err != nil && err != badger.ErrKeyNotFound {

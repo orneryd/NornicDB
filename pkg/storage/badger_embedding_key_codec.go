@@ -132,17 +132,29 @@ func embeddingPrefixes(id NodeID) [][]byte {
 	return [][]byte{prefix, binaryEmbeddingPrefix(id), embeddingPrefix(id)}
 }
 
-// Newly written chunks take one point read. Compatibility probes run only
-// when the current key is missing; its returned base selects matching parts.
-func getEmbeddingItem(txn *badger.Txn, id NodeID, index int) (*badger.Item, []byte, error) {
-	return readEmbeddingRecord(id, index, txn.Get)
+// A V4 store reads each record with one point read. Compatibility probes run
+// only for a store that may hold compatibility keys, when the current key is
+// missing; the returned base selects matching parts.
+func getEmbeddingItem(txn *badger.Txn, id NodeID, index int, compatibility bool) (*badger.Item, []byte, error) {
+	return readEmbeddingRecord(id, index, compatibility, txn.Get)
+}
+
+// compatibilityEmbeddingKeys reports whether this store may still hold
+// embedding records in a compatibility family. The persisted storage version
+// decides it: the V4 migration moves every record to the current family, and
+// a fresh store starts at V4.
+func (b *BadgerEngine) compatibilityEmbeddingKeys() bool {
+	return b.storageVersion < storageVersionEmbeddingKeysV4
 }
 
 // readEmbeddingRecord owns compatibility selection for both persisted point
 // readers and recovered commit overlays. The returned base also selects shards.
-func readEmbeddingRecord[T any](id NodeID, index int, read func([]byte) (T, error)) (T, []byte, error) {
+func readEmbeddingRecord[T any](id NodeID, index int, compatibility bool, read func([]byte) (T, error)) (T, []byte, error) {
 	key := embeddingKey(id, index)
 	item, err := read(key)
+	if !compatibility {
+		return item, key, err
+	}
 	if err == badger.ErrKeyNotFound && strings.IndexByte(string(id), 0) >= 0 {
 		key = binary.BigEndian.AppendUint32(binaryEmbeddingPrefix(id), uint32(index))
 		item, err = read(key)

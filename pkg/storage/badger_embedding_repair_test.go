@@ -20,6 +20,8 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 			id := NodeID("test:r3-old-shrink")
 			_, err = b.CreateNode(separatelyStoredNode(id))
 			require.NoError(t, err)
+			// Old binaries wrote storage version V3.
+			storeBeforeV4(t, b)
 			require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
 				body, separate, err := b.encodeNodeInTxn(txn, "test", &Node{
 					ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"k": "v2"}, ChunkEmbeddings: [][]float32{{7, 8}},
@@ -29,10 +31,6 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 				}
 				require.False(t, separate)
 				if err = txn.Set(nodeKey(id), body); err != nil {
-					return err
-				}
-				// Old binaries did not write the new repair-completion marker.
-				if err := txn.Delete(embeddingRepairReadyKey); err != nil {
 					return err
 				}
 				// Run the pre-#1218 cleanup verbatim: Badger retains each borrowed
@@ -50,10 +48,9 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 			}))
 			require.Equal(t, 14, countEmbeddingKeys(t, b, id))
 			require.NoError(t, b.Close())
-			b, err = NewBadgerEngine(dir)
-			require.NoError(t, err)
+			b = openWithStorageUpgrade(t, dir)
 			defer b.Close()
-			require.Zero(t, countEmbeddingKeys(t, b, id), "open repairs the legacy range before absence can be trusted")
+			require.Zero(t, countEmbeddingKeys(t, b, id), "the V4 upgrade repairs the legacy range before absence can be trusted")
 			next, err := b.GetNode(id)
 			require.NoError(t, err)
 			require.True(t, next.embeddingKeysKnown)

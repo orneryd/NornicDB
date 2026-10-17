@@ -2347,7 +2347,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
-		c := data.bufferedCommit()
+		c := data.bufferedCommit(b)
 		if err := b.applyBufferedCommits([]bufferedCommit{c}); err != nil {
 			return err
 		}

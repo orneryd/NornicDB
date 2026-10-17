@@ -1295,7 +1295,7 @@ func chunkCountFromMeta(meta map[string]any) int {
 // tolerated (readers see a partial set only while a replacement is in
 // flight).
 func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID NodeID, chunkCount int) error {
-	return loadEmbeddingChunksFrom(embeddingRecordReader{txn: txn}, node, nodeID, chunkCount)
+	return loadEmbeddingChunksFrom(embeddingRecordReader{txn: txn, compatibility: b.compatibilityEmbeddingKeys()}, node, nodeID, chunkCount)
 }
 
 // embeddingRecordReader uses the ordinary transaction directly for normal reads.
@@ -1307,6 +1307,8 @@ type embeddingRecordReader struct {
 	// A captured full replacement retires missing old records even before
 	// its range is physically removed. Explicit final point state wins.
 	rangeReplaced bool
+	// compatibility also probes the compatibility key families.
+	compatibility bool
 }
 
 func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
@@ -1344,7 +1346,7 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 
 	// Load each chunk embedding
 	for i := 0; i < chunkCount; i++ {
-		embData, embKey, err := readEmbeddingRecord(nodeID, i, func(key []byte) ([]byte, error) {
+		embData, embKey, err := readEmbeddingRecord(nodeID, i, read.compatibility, func(key []byte) ([]byte, error) {
 			return read.read(key, nil)
 		})
 		if err != nil {
