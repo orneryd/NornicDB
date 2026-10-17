@@ -9,7 +9,6 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // gdsProjectionRow is one row of gds.graph.project's Cypher aggregation
