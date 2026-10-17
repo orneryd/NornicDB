@@ -357,3 +357,67 @@ func TestClusterIndexLiveMembership(t *testing.T) {
 		t.Fatalf("stats = %+v", stats)
 	}
 }
+
+// Live updates through OnNodeUpdate track members that change cluster, and
+// UpdateCentroidsBatch moves those clusters' centroids to their members' mean.
+func TestClusterIndexNodeUpdatesMoveCentroids(t *testing.T) {
+	ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 10, InitMethod: "kmeans++"})
+	requireNoError(t, ci.OnNodeUpdate("a1", []float32{1, 0})) // unclustered: embedding only
+	if _, ok := ci.ClusterOf("a1"); ok {
+		t.Fatalf("an unclustered index has no membership")
+	}
+	requireNoError(t, ci.AddBatch([]string{"a2", "b1", "b2"}, [][]float32{{0.9, 0.1}, {0, 1}, {0.1, 0.9}}))
+	requireNoError(t, ci.Cluster())
+	if got := sortedIDs(ci.NodeIDs()); !reflect.DeepEqual(got, []string{"a1", "a2", "b1", "b2"}) {
+		t.Fatalf("NodeIDs = %v", got)
+	}
+	aCluster, _ := ci.ClusterOf("a1")
+	bCluster, _ := ci.ClusterOf("b1")
+
+	requireNoError(t, ci.OnNodeUpdate("a2", []float32{0.05, 0.95})) // moves to b
+	if cid, _ := ci.ClusterOf("a2"); cid != bCluster {
+		t.Fatalf("a2 in cluster %d, want %d", cid, bCluster)
+	}
+	requireNoError(t, ci.OnNodeUpdate("b3", []float32{0, 1})) // new member: no move recorded
+	if len(ci.pendingUpdates) != 1 {
+		t.Fatalf("pending updates = %v, want one move", ci.pendingUpdates)
+	}
+	ci.UpdateCentroidsBatch()
+	ci.UpdateCentroidsBatch() // nothing pending
+	centroids := ci.GetCentroids()
+	assertFloat32Near(t, centroids[aCluster][0], 1)
+	assertFloat32Near(t, centroids[aCluster][1], 0)
+	if centroids[bCluster][0] > 0.1 || centroids[bCluster][1] < 0.9 {
+		t.Fatalf("cluster b centroid = %v, want near [0.04 0.96]", centroids[bCluster])
+	}
+
+	// A move out of a cluster that leaves it empty keeps its centroid; a
+	// member whose embedding is gone does not count toward the mean's sum.
+	ci.EmbeddingIndex.Remove("b3")
+	requireNoError(t, ci.OnNodeUpdate("a1", []float32{0, 1}))
+	ci.UpdateCentroidsBatch()
+	assertFloat32Near(t, ci.GetCentroids()[aCluster][0], 1)
+	stats := ci.ClusterStats()
+	if stats.MinClusterSize != 5 || stats.MaxClusterSize != 5 {
+		t.Fatalf("stats over the one populated cluster = %+v", stats)
+	}
+
+	ci.Clear()
+	if ci.IsClustered() || len(ci.NodeIDs()) != 0 {
+		t.Fatalf("Clear leaves an empty, unclustered index")
+	}
+	if _, ok := ci.ClusterOf("b1"); ok {
+		t.Fatalf("Clear drops the membership")
+	}
+}
+
+// An unpublished clustering answers membership by ID.
+func TestClusteringClusterOf(t *testing.T) {
+	c := newClustering([][]float32{{1, 0}, {0, 1}}, []string{"a", "b"}, []int{0, 1})
+	if cid, ok := c.ClusterOf("b"); !ok || cid != 1 {
+		t.Fatalf("ClusterOf(b) = %d %t", cid, ok)
+	}
+	if _, ok := c.ClusterOf("missing"); ok {
+		t.Fatalf("an absent id has no cluster")
+	}
+}
