@@ -352,3 +352,126 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 		}
 	}
 }
+
+// The publication boundary derives lexical routing profiles from the final
+// population too: a document added, moved, removed or re-texted while a
+// generation is computed or built is reflected in the published profiles of
+// exactly the clusters it belongs to, and hybrid routing reaches it (sol r10:
+// TestSolR10ReplayIncludesLexicalRouting).
+func TestIVFHNSWReplayReachesLexicalRouting(t *testing.T) {
+	type change struct {
+		node    *storage.Node // indexed during the run (nil: remove)
+		remove  string
+		term    string // the term whose routing is checked
+		holder  string // the node whose cluster's profile must hold term ("" none)
+		routeTo string // public routing for term must find this node ("" skip)
+	}
+	for _, tc := range []struct {
+		name   string
+		phase  string
+		change change
+	}{
+		{"add during build", "build", change{node: &storage.Node{ID: "late", Properties: map[string]any{"text": "zebraword"}, ChunkEmbeddings: [][]float32{{0.1, 0.99}}}, term: "zebraword", holder: "late", routeTo: "late"}},
+		{"add during compute", "compute", change{node: &storage.Node{ID: "late", Properties: map[string]any{"text": "zebraword"}, ChunkEmbeddings: [][]float32{{0.1, 0.99}}}, term: "zebraword", holder: "late", routeTo: "late"}},
+		{"text-only update during build", "build", change{node: &storage.Node{ID: "b", Properties: map[string]any{"text": "zebraword"}, ChunkEmbeddings: [][]float32{{0, 1}}}, term: "zebraword", holder: "b", routeTo: "b"}},
+		{"vector move during build", "build", change{node: &storage.Node{ID: "a2", Properties: map[string]any{"text": "alpha movedword"}, ChunkEmbeddings: [][]float32{{0, 1}}}, term: "movedword", holder: "b"}},
+		{"removal during build", "build", change{remove: "a2", term: "anchorword"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
+			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "none")
+			t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", "0.1")
+			t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
+			engine := newNamespacedEngine(t)
+			svc := NewServiceWithDimensions(engine, 2)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			svc.EnableClustering(nil, 2)
+			svc.SetMinEmbeddingsForClustering(1)
+			for _, node := range []*storage.Node{
+				{ID: "a", Properties: map[string]any{"text": "alpha topic"}, ChunkEmbeddings: [][]float32{{1, 0}}},
+				{ID: "a2", Properties: map[string]any{"text": "alpha anchorword"}, ChunkEmbeddings: [][]float32{{0.99, 0.1}}},
+				{ID: "b", Properties: map[string]any{"text": "beta topic"}, ChunkEmbeddings: [][]float32{{0, 1}}},
+			} {
+				_, err := engine.CreateNode(node)
+				require.NoError(t, err)
+				require.NoError(t, svc.IndexNode(node))
+			}
+			require.NoError(t, svc.TriggerClustering(context.Background()))
+
+			apply := func() error {
+				if tc.change.remove != "" {
+					return svc.RemoveNode(storage.NodeID(tc.change.remove))
+				}
+				if _, err := engine.CreateNode(tc.change.node); err != nil {
+					if err := engine.UpdateNode(tc.change.node); err != nil {
+						return err
+					}
+				}
+				return svc.IndexNode(tc.change.node)
+			}
+			var applyErr error
+			ctx := &pauseAfterSnapshotContext{Context: context.Background(), paused: make(chan struct{}), resume: make(chan struct{})}
+			if tc.phase == "build" {
+				close(ctx.resume)
+				ctx.calls.Store(-1 << 20)
+				ivfHNSWBuildHook = func() { applyErr = apply() }
+				t.Cleanup(func() { ivfHNSWBuildHook = nil })
+			}
+			done := make(chan error, 1)
+			go func() { done <- svc.TriggerClustering(ctx) }()
+			if tc.phase == "compute" {
+				select {
+				case <-ctx.paused:
+				case err := <-done:
+					t.Fatalf("clustering finished without pausing after its snapshot: %v", err)
+				case <-time.After(time.Minute):
+					t.Fatal("clustering did not reach its snapshot")
+				}
+				applyErr = apply()
+				close(ctx.resume)
+			}
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(time.Minute):
+				t.Fatal("reclustering did not finish")
+			}
+			require.NoError(t, applyErr)
+			ivfHNSWBuildHook = nil
+
+			terms := normalizeAnalyzer(svc.bm25Analyzer).Analyze(tc.change.term)
+			require.NotEmpty(t, terms)
+			holderCluster := -1
+			for cid := 0; cid < svc.clusterIndex.NumClusters(); cid++ {
+				for _, id := range svc.clusterIndex.GetClusterMemberIDsForCluster(cid) {
+					if id == tc.change.holder {
+						holderCluster = cid
+					}
+				}
+			}
+			svc.clusterLexicalMu.RLock()
+			for cid, profile := range svc.clusterLexicalProfiles {
+				_, has := profile[terms[0]]
+				require.Equal(t, cid == holderCluster, has, "cluster %d profile holds %q only where its document is a member", cid, terms[0])
+			}
+			if tc.change.holder != "" {
+				require.Contains(t, svc.clusterLexicalProfiles, holderCluster)
+			}
+			svc.clusterLexicalMu.RUnlock()
+
+			if tc.change.routeTo == "" {
+				return
+			}
+			queryCtx := withQueryText(context.Background(), tc.change.term)
+			hits, err := svc.VectorQueryNodesWithOptions(queryCtx, []float32{1, 0}, VectorQuerySpec{Limit: 1}, &SearchOptions{HNSWEf: 64})
+			require.NoError(t, err)
+			ids := make([]string, len(hits))
+			for i, hit := range hits {
+				ids[i] = hit.ID
+			}
+			require.Contains(t, ids, tc.change.routeTo, "hybrid routing reaches the cluster of the changed document")
+		})
+	}
+}
