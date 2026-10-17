@@ -64,7 +64,6 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "3")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
-	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "scalar")
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", "0.1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
@@ -92,7 +91,6 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 	require.NotEqual(t, semantic, selected, "the real BM25-derived profile must select the lexical topic")
 	require.NotNil(t, svc.clusterHNSW[selected[0]], "small lexical-selected cluster must have a graph")
 	require.Len(t, svc.clusterHNSW, svc.clusterIndex.NumClusters())
-	require.Positive(t, svc.clusterHNSW[selected[0]].QuantizationBytes())
 	options := DefaultSearchOptions()
 	options.Limit = 6
 	options.MinRRFScore = 0.001

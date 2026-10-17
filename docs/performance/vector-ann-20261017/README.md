@@ -161,7 +161,7 @@ and compare CPU/GPU on the same machine. CUDA/Vulkan skips remain unverified.
 
 ## Default selected from these measurements
 
-Application HNSW configuration now defaults to scalar int8, retaining the fast
+Application single-graph HNSW configuration now defaults to scalar int8, retaining the fast
 graph preset and exact original-vector rescoring. Set
 `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` to disable compression, or select
 `pq`/`binary` explicitly. Explicit collection policies (including no quantization)
