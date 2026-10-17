@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/plugintest"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
-	"github.com/orneryd/nornicdb/pkg/internal/plugintest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
