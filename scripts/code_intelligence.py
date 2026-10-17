@@ -122,7 +122,7 @@ def check_staged(root):
         graph = extract(source, directory / "extract")
         db = pd.NornicDB(uri, user, password, token, database)
         report = pd.analyze(db, repo, graph, source, diff, head_sha=head, base_sha=head,
-                            options={"max_candidates": sys.maxsize,
+                            options={"max_candidates": sys.maxsize, "min_added_fraction": 0.0,
                                      "deadline_seconds": int(os.environ.get("CODE_INTEL_DEADLINE_SECONDS", "300"))},
                             ignore=pd.DEFAULT_IGNORE)
         print(pd.render_summary(report, max_findings=sys.maxsize))

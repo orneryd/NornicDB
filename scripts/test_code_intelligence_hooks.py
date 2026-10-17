@@ -145,6 +145,17 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertEqual((self.root / "candidate.py").read_text(), unstaged)
         self.assertEqual(self.git("write-tree").stdout, index_before)
 
+    def test_small_leaf_edit_is_checked_against_existing_owner(self):
+        self.stage()
+        self.git("commit", "-m", "baseline function")
+        self.searches.clear()
+        self.hits = 1
+        self.stage(BODY.replace("subtotal = 0", "subtotal = 1"))
+        result = self.git("commit", "-m", "small duplicate leaf patch", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Commit blocked", result.stderr)
+        self.assertTrue(self.searches)
+
     def test_no_match_allows_commit(self):
         self.stage()
         self.git("commit", "-m", "unique addition")
