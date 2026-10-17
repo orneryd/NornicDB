@@ -3488,6 +3488,11 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
 	}
+	// Like node writes: the explicit build's relationship stream applies a
+	// snapshot of stored edges, so a live edge write waits for the build and
+	// lands after it.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	s.IndexRelationship(edge)
 	if !s.vectorEnabled.Load() {
 		return nil
@@ -3581,6 +3586,10 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
+	// Like node writes (see IndexEdge): a removal waits for the explicit
+	// build, so its relationship stream cannot re-add the edge.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	s.RemoveRelationship(edgeID)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
