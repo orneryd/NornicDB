@@ -317,6 +317,30 @@ func TestParkedBM25CloseDuringWarmupRestart(t *testing.T) {
 	}
 }
 
+// A population that rebuilds BM25 from storage is saved even when it indexed
+// nothing: after the last node is removed before any population, the persist
+// replaces the older snapshot instead of keeping its removed documents.
+func TestRebuiltEmptyBM25ReplacesTheSavedSnapshot(t *testing.T) {
+	parkedLifetimeBackends(t, func(t *testing.T, backend string) {
+		engine := storage.NewMemoryEngine()
+		t.Cleanup(func() { require.NoError(t, engine.Close()) })
+		a := admissionNode("nornic:a", "alpha", []float32{1, 0, 0}, "named")
+		_, err := engine.CreateNode(a)
+		require.NoError(t, err)
+		dir := t.TempDir()
+		seed := configureNodeAdmissionService(t, engine, dir, backend, nil)
+		require.NoError(t, seed.BuildIndexes(context.Background()))
+		require.NoError(t, seed.Close())
+		require.Equal(t, 1, checkpointDocs(t, engine, dir, backend))
+
+		live := configureNodeAdmissionService(t, engine, dir, backend, nil)
+		require.NoError(t, engine.DeleteNode(a.ID))
+		require.NoError(t, live.RemoveNode(a.ID))
+		live.PersistIndexesToDisk()
+		require.Equal(t, 0, checkpointDocs(t, engine, dir, backend), "the saved snapshot no longer holds the removed node")
+	})
+}
+
 // P1-P3 backstop: no persist entry point serializes a parked placeholder; each
 // keeps the checkpoint, and the next writer restores BM25 from it.
 func TestParkedBM25PlaceholderIsNeverPersisted(t *testing.T) {
