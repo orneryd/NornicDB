@@ -33,8 +33,8 @@ type nodeSourceRecord struct {
 	fulltextCheckpoint      string
 	fulltextCheckpointCount int
 	// unpopulatedLiveWrites: node writes applied while the sources were
-	// incomplete and no population ran. Persistence then populates first, and
-	// that population never restores the saved node images over them.
+	// incomplete and no population ran (nodeWriteUnpopulated). Persistence then
+	// populates first, and the population never loads the BM25 checkpoint.
 	unpopulatedLiveWrites bool
 }
 
@@ -50,6 +50,13 @@ const (
 	nodeVectorReset
 	nodeVectorFileMoved
 	nodeFulltextReset
+	// nodeWriteUnpopulated: a node write applied while the sources are
+	// incomplete. Unless a saved vector image is already open (the write then
+	// applied to it), the saved node images are retired now: the resident
+	// indexes become the authority, so no later admission, live or population,
+	// restores an image over this write, and the population completes them
+	// from storage.
+	nodeWriteUnpopulated
 )
 
 // changeNodeSourcesLocked is the sole completion/authority writer. The
@@ -79,6 +86,11 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 		s.nodeSources.memoryAuthoritative = false
 	case nodeFulltextReset:
 		s.nodeSources.textComplete = false
+	case nodeWriteUnpopulated:
+		s.nodeSources.unpopulatedLiveWrites = true
+		if s.vectorFileStore == nil {
+			s.nodeSources.memoryAuthoritative = true
+		}
 	}
 }
 
@@ -177,7 +189,7 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 		s.baseBuildControlMu.Unlock()
 		if !pending {
 			if nodeWrite && !s.nodeSourcesCompleteLocked() {
-				s.nodeSources.unpopulatedLiveWrites = true
+				s.changeNodeSourcesLocked(nodeWriteUnpopulated)
 			}
 			if err := s.materializeNodeFulltextLocked(); err != nil {
 				s.indexMu.Unlock()

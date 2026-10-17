@@ -4019,19 +4019,14 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 
 	// Live writes may be newer than the saved image after persistence was off.
 	// Only the source record establishes initial population completeness.
-	// Node writes applied before any population are missing from the saved
-	// images, and a removal or an emptied node leaves no trace in the empty
-	// resident indexes. Neither image is restored over them: the resident
-	// writes are kept, the vector file is replaced by them, and storage
-	// completes both sources.
-	s.indexMu.Lock()
+	// Node writes applied before any population retired the saved node images
+	// (nodeWriteUnpopulated): the BM25 checkpoint is not loaded over them and
+	// the graph is rebuilt; vector admission follows the same record.
+	s.indexMu.RLock()
 	textComplete := s.nodeSources.textComplete
 	unpopulatedWrites := s.nodeSources.unpopulatedLiveWrites
-	if unpopulatedWrites {
-		s.changeNodeSourcesLocked(nodeVectorMemoryMoved)
-		forceHNSWRebuild = true
-	}
-	s.indexMu.Unlock()
+	s.indexMu.RUnlock()
+	forceHNSWRebuild = forceHNSWRebuild || unpopulatedWrites
 	if fulltextPath != "" && !textComplete && !unpopulatedWrites && !s.fulltext().IsDirty() {
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
 		if loadErr == nil && accepted {
