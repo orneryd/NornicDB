@@ -114,8 +114,14 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
+		chunks := s.nodeChunkVectors[nodeID]
+		if len(chunks) > 0 && chunks[0] == nodeID {
+			// Preserve the existing document anchor when it is indexed directly.
+			ids = append(ids, nodeID)
+			continue
+		}
 		start := len(ids)
-		ids = append(ids, s.nodeChunkVectors[nodeID]...)
+		ids = append(ids, chunks...)
 		for _, id := range s.nodeNamedVector[nodeID] {
 			ids = append(ids, id)
 		}
