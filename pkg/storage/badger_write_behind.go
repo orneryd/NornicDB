@@ -448,11 +448,8 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
-				// indexes: buffered nodes never entered the engine node
-				// cache, so the cache-based maintenance would leave their
-				// committed index entries dangling.
-				b.maintainPropertyIndexesOnNodeDeletedWithNode(op.NodeID, op.OldNode)
-				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false)
+				// indexes: buffered nodes never entered the engine node cache.
+				b.cacheOnNodeDeletedWithNodeAndCounts(op.NodeID, op.OldNode, op.EdgesDeleted, false)
 			} else {
 				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
 			}

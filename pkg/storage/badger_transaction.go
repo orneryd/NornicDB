@@ -3050,7 +3050,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 		case OpDeleteNode:
 			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
+				tx.engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
 			} else {
 				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
 			}
