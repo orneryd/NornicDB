@@ -248,11 +248,8 @@ func (h *HNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, q
 }
 
 func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, bool, error) {
-	candidateLimit := boundCandidateLimit(k)
 	quantized := h.quantizationActive(ctx)
-	if quantized && quantizationOptions(ctx).rescore {
-		candidateLimit = scaledCandidateLimit(candidateLimit, quantizationOptions(ctx).oversampling, boundCandidateLimit(int(^uint(0)>>1)))
-	}
+	candidateLimit := quantizedCandidateLimit(ctx, k, quantized)
 	searchBeam := h.searchBeam(ctx, candidateLimit)
 	if quantized {
 		searchBeam = max(searchBeam, candidateLimit)
