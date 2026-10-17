@@ -184,7 +184,13 @@ type DB struct {
 	inferenceServices   map[string]*inference.Engine
 
 	// Async embedding queue for auto-generating embeddings
-	embedQueue        *EmbedQueue
+	embedQueue *EmbedQueue
+	// embedQueueMu guards embedQueue for readers that may already hold mu:
+	// the embedding procedures run inside DB.Cypher's read lock, and taking
+	// mu again there deadlocks behind a pending writer. Writers hold mu and
+	// then embedQueueMu; GetEmbedQueue takes only embedQueueMu. Never take mu
+	// while holding it.
+	embedQueueMu      sync.RWMutex
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
 	embedQueueYieldFn func() bool
 	// embeddingPause is an administrator's pause of automatic embedding
@@ -1197,7 +1203,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if config.Memory.EmbeddingEnabled && db.baseStorage != nil && db.embedWorkerConfig != nil {
 		workerCfg := *db.embedWorkerConfig
 		workerCfg.DeferWorkerStart = true
+		db.embedQueueMu.Lock()
 		db.embedQueue = db.newEmbedQueue(nil, &workerCfg)
+		db.embedQueueMu.Unlock()
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
@@ -1638,7 +1646,9 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
 	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
+	db.embedQueueMu.Lock()
 	db.embedQueue = db.newEmbedQueue(embedder, db.embedWorkerConfig)
+	db.embedQueueMu.Unlock()
 	if db.embedQueueYieldFn != nil {
 		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 	}
@@ -1932,8 +1942,10 @@ func (db *DB) GetBaseStorageForManager() storage.Engine {
 // before the server is torn down. Safe to call if already stopped or never started.
 func (db *DB) StopEmbedQueue() {
 	db.mu.Lock()
+	db.embedQueueMu.Lock()
 	q := db.embedQueue
 	db.embedQueue = nil
+	db.embedQueueMu.Unlock()
 	db.mu.Unlock()
 	if q != nil {
 		q.Close()
@@ -2312,9 +2324,12 @@ func (db *DB) GetCypherExecutor() *cypher.StorageExecutor {
 // GetEmbedQueue returns the embedding queue for this database.
 // This is used by GraphQL and other integrations that need to wire up
 // embedding callbacks for namespaced executors.
+//
+// It takes only embedQueueMu, never mu, so it is safe for a caller that
+// already holds mu (an embedding procedure inside DB.Cypher).
 func (db *DB) GetEmbedQueue() *EmbedQueue {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	db.embedQueueMu.RLock()
+	defer db.embedQueueMu.RUnlock()
 	return db.embedQueue
 }
 
