@@ -242,3 +242,64 @@ func TestQuantizedDropRecreateUsesDefaultAndPreservesOtherCollection(t *testing.
 		})
 	}
 }
+
+// A restarted server reloads an explicit collection compression policy from
+// its durable configuration while another collection without one follows the
+// global default, in the same server and across fresh search services.
+func TestMixedCompressionPoliciesSurviveRestart(t *testing.T) {
+	for _, global := range []string{"", "none"} {
+		t.Run("global="+global, func(t *testing.T) {
+			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", global)
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			dbm, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			first := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+			_, err = first.collections.Create(ctx, &qpb.CreateCollection{CollectionName: "override",
+				QuantizationConfig: &qpb.QuantizationConfig{Quantization: &qpb.QuantizationConfig_Binary{Binary: &qpb.BinaryQuantization{}}},
+				VectorsConfig:      &qpb.VectorsConfig{Config: &qpb.VectorsConfig_Params{Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine}}}})
+			require.NoError(t, err)
+			createCosineCollection(t, ctx, first.collections, "default", 4)
+			for _, name := range []string{"override", "default"} {
+				upsertPoint(t, ctx, first.points, name, 1, []float32{.3, .7, .1, .5}, nil)
+			}
+			exact := (.3 + .7) / math.Sqrt(.84) / math.Sqrt(2)
+			// Rescore=false returns the score of the coordinates the graph traverses.
+			approximate := func(srv sharedIndexServer, name string) float64 {
+				no := false
+				response, err := srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: name, Vector: []float32{1, 1, 0, 0}, Limit: 1,
+					Params: &qpb.SearchParams{Quantization: &qpb.QuantizationSearchParams{Rescore: &no}}})
+				require.NoError(t, err)
+				require.Len(t, response.Result, 1)
+				require.Equal(t, uint64(1), response.Result[0].Id.GetNum())
+				return float64(response.Result[0].Score)
+			}
+			check := func(srv sharedIndexServer) (float64, float64) {
+				override, defaulted := approximate(srv, "override"), approximate(srv, "default")
+				require.Greater(t, math.Abs(override-exact), 1e-3, "the binary override scores sign bits")
+				if global == "none" {
+					require.InDelta(t, exact, defaulted, 1e-6, "no global compression: float coordinates")
+				} else {
+					require.InDelta(t, exact, defaulted, 0.02, "scalar default: int8 coordinates near the exact score")
+					require.Greater(t, math.Abs(defaulted-exact), 1e-6, "scalar default: not the float score")
+				}
+				info, err := srv.collections.Get(ctx, &qpb.GetCollectionInfoRequest{CollectionName: "override"})
+				require.NoError(t, err)
+				require.NotNil(t, info.Result.Config.QuantizationConfig.GetBinary())
+				info, err = srv.collections.Get(ctx, &qpb.GetCollectionInfoRequest{CollectionName: "default"})
+				require.NoError(t, err)
+				require.Nil(t, info.Result.Config.QuantizationConfig)
+				return override, defaulted
+			}
+			override, defaulted := check(first)
+			first.stop()
+			second := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+			restartedOverride, restartedDefault := check(second)
+			require.InDelta(t, override, restartedOverride, 1e-6)
+			require.InDelta(t, defaulted, restartedDefault, 1e-6)
+		})
+	}
+}
