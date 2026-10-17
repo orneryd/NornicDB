@@ -151,9 +151,16 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 		return normalizePropValue(v)
 	}
 
-	// Handle arrays: [0.1, 0.2, 0.3]
-	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+	// Handle arrays: [0.1, 0.2, 0.3]. An expression over a list literal
+	// ([1, 0] + [0], [[1], [0]][1], [1, 0, 0][0..2]) is evaluated: split as
+	// one literal, it lost or garbled elements.
+	if isListLiteral(s) {
 		return e.parseArrayValue(ctx, s)
+	}
+	if strings.HasPrefix(s, "[") {
+		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
+			return normalizePropValue(evaluated)
+		}
 	}
 	// Handle map literals: {key: value}
 	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
