@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -60,4 +61,43 @@ func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !svc.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
 	require.Equal(t, 3, index.Size())
+}
+
+// A build whose source no longer resolves a vector it was handed (the vector
+// was removed after the build's snapshot) still links that node. As the
+// entry point, an unresolvable node used to leave every later insertion
+// without neighbours, so searches found only one vector. Both with and
+// without the build's vector cache.
+func TestHNSWBuildLinksVectorTheSourceNoLongerResolves(t *testing.T) {
+	for _, cached := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cached=%t", cached), func(t *testing.T) {
+			source := NewVectorIndex(2)
+			pairs := make([]hnswBuildPair, 0, 6)
+			for i := 0; i < 6; i++ {
+				id := fmt.Sprintf("v-%d", i)
+				require.NoError(t, source.Add(id, []float32{1, float32(i) / 10}))
+				stored, ok := source.getVectorRef(id)
+				require.True(t, ok)
+				pairs = append(pairs, hnswBuildPair{id: id, vec: stored})
+			}
+			source.Remove("v-0")
+			built := newHNSWBuildIndex(2, DefaultHNSWConfig(), source.getVectorRef, len(pairs))
+			if !cached {
+				built.buildVectorLimit = 0
+			}
+			for _, pair := range pairs {
+				require.NoError(t, built.Add(pair.id, pair.vec))
+			}
+			built.finishBuild()
+			built.Remove("v-0")
+
+			results, err := built.Search(context.Background(), []float32{1, 0}, 10, -1)
+			require.NoError(t, err)
+			ids := make([]string, 0, len(results))
+			for _, result := range results {
+				ids = append(ids, result.ID)
+			}
+			require.ElementsMatch(t, []string{"v-1", "v-2", "v-3", "v-4", "v-5"}, ids)
+		})
+	}
 }
