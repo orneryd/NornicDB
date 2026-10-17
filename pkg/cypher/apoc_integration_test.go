@@ -278,5 +278,3 @@ func TestAPOCNeighborsTerminalErrors(t *testing.T) {
 		})
 	}
 }
-
-

@@ -31,16 +31,16 @@ func TestWithOrderBySemanticScopeTracksPriorHorizons(t *testing.T) {
 	executor := &StorageExecutor{}
 	requireSemanticPatternDetail(t, executor.validateMatchSemanticScopes(
 		"WITH 1 AS a, 2 AS b, 3 AS c WITH a, b WITH a ORDER BY a, c RETURN a",
-	false), "UndefinedVariable")
+		false), "UndefinedVariable")
 	requireSemanticPatternDetail(t, executor.validateMatchSemanticScopes(
 		"MATCH (a) WITH a, a AS b WITH a ORDER BY c RETURN a",
-	false), "UndefinedVariable")
+		false), "UndefinedVariable")
 	requireSemanticPatternDetail(t, executor.validateMatchSemanticScopes(
 		"MATCH (a) WITH a, a AS b WITH a ORDER BY d DESC RETURN a",
-	false), "UndefinedVariable")
+		false), "UndefinedVariable")
 	require.NoError(t, executor.validateMatchSemanticScopes(
 		"MATCH (a) WITH a, a AS b WITH a ORDER BY b RETURN a",
-	false))
+		false))
 }
 
 func TestWithOrderByCannotIntroduceAggregation(t *testing.T) {
@@ -57,11 +57,11 @@ func TestWithOrderByAggregationUsesProjectedGroupingScope(t *testing.T) {
 	executor := &StorageExecutor{}
 	requireSemanticPatternDetail(t, executor.validateMatchSemanticScopes(
 		"MATCH (a) WITH a.num2 % 3 AS mod, min(a.num + a.num2) AS minimum ORDER BY sum(a.num + a.num2) RETURN mod",
-	false), "UndefinedVariable")
+		false), "UndefinedVariable")
 	requireSemanticPatternDetail(t, executor.validateMatchSemanticScopes(
 		"MATCH (me)--(you) WITH me.age + you.age AS ages, count(*) AS cnt ORDER BY me.age + you.age + count(*) RETURN ages",
-	false), "AmbiguousAggregationExpression")
+		false), "AmbiguousAggregationExpression")
 	require.NoError(t, executor.validateMatchSemanticScopes(
 		"MATCH (a) WITH a.num2 % 3 AS mod, sum(a.num + a.num2) AS total ORDER BY sum(a.num + a.num2) RETURN mod",
-	false))
+		false))
 }

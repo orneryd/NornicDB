@@ -41,7 +41,7 @@ import (
 //   - success: credentials validated; user identity established
 //   - failure: credentials presented but rejected (bad password, expired token)
 //   - denied:  request rejected before credential evaluation (auth required
-//              but absent, unsupported scheme, account locked, role denied)
+//     but absent, unsupported scheme, account locked, role denied)
 //
 // Adding a new result requires an ADR amendment AND callers must update
 // classifyAuthResult in pkg/auth.

@@ -120,9 +120,9 @@ func TestInstrumentedMux_PanicSafe(t *testing.T) {
 // reflects the handler-written status code (not just the default 200).
 func TestInstrumentedMux_StatusRecorder(t *testing.T) {
 	cases := []struct {
-		name       string
-		writeCode  int
-		wantClass  string
+		name      string
+		writeCode int
+		wantClass string
 	}{
 		{"200_implicit", 0 /* no WriteHeader → implicit 200 via Write */, "2xx"},
 		{"201_explicit", http.StatusCreated, "2xx"},
