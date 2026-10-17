@@ -391,8 +391,10 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 	if shape.statementContext {
 		bind(rowStatementContextKey, ctx)
 	}
-	if extended != nil || prepared {
+	if extended != nil {
 		values = extended
+	}
+	if extended != nil || prepared {
 		// A row variable, or a plain property chain on one (e.uuid),
 		// resolves without the graph-expression checks below, which can't
 		// match it.
