@@ -5502,28 +5502,8 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 			strategy.name = "compressed-fallback -> " + strategy.name
 		}
 	}
-	if strategy.pendingHNSW {
-		// The graph is published before an ANN read answers, so the read gets
-		// the configured graph scoring (approximate scores when rescoring is
-		// off). Wait for the shared construction job outside pipelineMu:
-		// installation takes it. A construction paused by a clear or close, or
-		// retired by a build (its cancellation, while this caller's context
-		// is live), keeps the unpublished exact fallback.
-		s.pipelineMu.Unlock()
-		_, waitErr := s.getOrCreateHNSWIndex(ctx, dimensions)
-		s.pipelineMu.Lock()
-		if s.vectorPipeline != nil {
-			return s.vectorPipeline, nil
-		}
-		retired := ctx.Err() == nil && (errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded))
-		if waitErr != nil && !errors.Is(waitErr, ErrSearchIndexBuilding) && !retired {
-			return nil, waitErr
-		}
-		strategy, err = s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, seedIDs, vectorCount, dimensions, vfs, vi)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// While the graph builds in the background the exact fallback answers at
+	// once and is not published (#1230): a read never waits for construction.
 
 	s.logPrintf("🔍 Vector search strategy: %s (N=%d vectors)", strategy.name, vectorCount)
 
@@ -5740,6 +5720,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 			}
 		}
 	}
+	s.invalidateAnswersForPublishedGraph()
 	s.pipelineMu.Lock()
 	s.vectorPipeline = p
 	s.pipelineMu.Unlock()
@@ -5794,6 +5775,7 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	s.invalidateHNSWLocked()
 	s.hnswMu.Unlock()
 	p := s.buildPipelineForMode(target, vi, vfs)
+	s.invalidateAnswersForPublishedGraph()
 	s.pipelineMu.Lock()
 	s.vectorPipeline = p
 	s.pipelineMu.Unlock()
@@ -5943,7 +5925,7 @@ type vectorStrategyDescriptor struct {
 	name         string
 	candidateGen CandidateGenerator
 	scorerPolicy exactScorerPolicy
-	pendingHNSW  bool // Exact fallback while construction is paused (clear, close); never published.
+	pendingHNSW  bool // Exact fallback while the graph builds or construction is paused; never published.
 	// needsGPUUpload is resolved outside pipelineMu, under mutation admission.
 	needsGPUUpload bool
 }

@@ -242,6 +242,20 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 	return built, stats, err
 }
 
+// invalidateAnswersForPublishedGraph is the one owner of retiring cached
+// search answers when a new graph or strategy is published (initial build,
+// rebuild swap, restore from disk, runtime transitions): answers cached before,
+// including the exact fallback's during a build (decision B, 17 Oct), must not
+// outlive it. Same rule as a quantization policy change. Caller must not hold
+// mu; indexMu may be held (lock order indexMu -> mu).
+func (s *Service) invalidateAnswersForPublishedGraph() {
+	s.mu.Lock()
+	if s.resultCache != nil {
+		s.resultCache.Invalidate()
+	}
+	s.mu.Unlock()
+}
+
 // hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
 // and before the graph is installed: where a vector stored during the build
 // used to be lost.
@@ -333,6 +347,7 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 
 	s.hnswIndex = built
 	s.hnswMu.Unlock()
+	s.invalidateAnswersForPublishedGraph()
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
@@ -501,6 +516,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	s.indexMu.Unlock()
 
 	if swapped {
+		s.invalidateAnswersForPublishedGraph()
 		// Invalidate pipeline after releasing hnswMu so lock order remains consistent.
 		s.pipelineMu.Lock()
 		s.vectorPipeline = nil

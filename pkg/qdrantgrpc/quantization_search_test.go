@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -30,6 +31,26 @@ func TestQuantizationControlsReachPublicSearchAndQuery(t *testing.T) {
 	yes, no := true, false
 	over := 2.0
 	exactScore := float64(1.1) / math.Sqrt(2*1.01)
+	// While the graph builds in the background a search answers exactly at
+	// once (#1230; integration of develop's background construction with
+	// #1372). Wait for the graph before asserting its approximate scores.
+	approximate := &qpb.SearchParams{Quantization: &qpb.QuantizationSearchParams{Rescore: &no}}
+	graphReady := false
+	for deadline := time.Now().Add(10 * time.Second); !graphReady && time.Now().Before(deadline); {
+		start := time.Now()
+		response, e := srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: "quantized", Vector: []float32{1, 1}, Limit: 1, Params: approximate})
+		require.NoError(t, e)
+		require.Less(t, time.Since(start), time.Second, "a search during the build must not wait for it")
+		require.Len(t, response.Result, 1)
+		require.Equal(t, uint64(1), response.Result[0].Id.GetNum())
+		if math.Abs(float64(response.Result[0].Score)-1) < 1e-6 {
+			graphReady = true
+			break
+		}
+		require.InDelta(t, exactScore, response.Result[0].Score, 1e-6, "before the graph, the exact score")
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.True(t, graphReady, "the graph was not published")
 	for _, queryAPI := range []bool{false, true} {
 		for _, tc := range []struct {
 			name   string

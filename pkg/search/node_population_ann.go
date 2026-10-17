@@ -47,6 +47,7 @@ func (s *Service) restoreNodePopulationANN(ctx context.Context, plan nodePopulat
 				s.hnswMu.Lock()
 				s.hnswIndex = loaded
 				s.hnswMu.Unlock()
+				s.invalidateAnswersForPublishedGraph()
 				hnswLoadedFromDisk = true
 				s.logPrintf("📇 HNSW index loaded from disk: vectors=%d tombstone_ratio=%.2f", loaded.Size(), loaded.TombstoneRatio())
 			}
