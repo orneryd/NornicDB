@@ -1568,10 +1568,14 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 // SetEmbedder configures the auto-embed queue with the given embedder.
 // This should be called by the server after creating a working embedder.
 // The embedder is shared with the MCP server and Cypher executor for consistency.
-// A closing or closed database ignores it.
-func (db *DB) SetEmbedder(embedder embed.Embedder) {
+// It reports whether the database took the embedder. A closing or closed
+// database refuses it and closes it, so a caller can't be left holding a
+// model (and its warmup goroutine) after DB.Close: the decision is made
+// under db.mu, where Close sets closed, not by a cancellation check made
+// before the call.
+func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
-		return
+		return false
 	}
 
 	db.mu.Lock()
@@ -1579,7 +1583,10 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 		// Close has stopped, or is stopping, the queue and timers this
 		// would start.
 		db.mu.Unlock()
-		return
+		if closer, ok := embedder.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return false
 	}
 	// Relationships whose embedding failed for want of an embedder are
 	// embedded now, not after the retry delay (#1065).
@@ -1613,7 +1620,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 				db.startClusteringTimer(interval)
 			}
 		}
-		return
+		return true
 	}
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
@@ -1659,6 +1666,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if startClusterTimer {
 		db.startClusteringTimer(clusterInterval)
 	}
+	return true
 }
 
 // SetEmbedQueueShouldYield sets an optional foreground-pressure callback used to
