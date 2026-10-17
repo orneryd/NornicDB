@@ -83,7 +83,8 @@ type TransactionContext struct {
 // and returns err. The first failure wins: it is the cause COMMIT reports. It
 // is the one rule for a statement that fails inside a transaction, whether it
 // ran through Execute or an inline transaction script (#683). A composite
-// transaction's local participants fail with it, with the same cause.
+// transaction's participants end their part with it: each local one fails
+// with the same cause, and each remote sub-transaction is rolled back.
 func (e *StorageExecutor) failTransaction(err error) error {
 	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
 		tx.failed = err
@@ -96,6 +97,11 @@ func (e *StorageExecutor) failTransaction(err error) error {
 		}
 		for _, participant := range tx.fabricLocalTxExec {
 			participant.failTransaction(err)
+		}
+		if tx.fabricRemoteExe != nil {
+			// A remote participant records its own rollback error; the
+			// transaction keeps reporting err.
+			_ = tx.fabricRemoteExe.RollbackParticipants(context.Background())
 		}
 	}
 	return err
