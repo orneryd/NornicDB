@@ -5497,15 +5497,17 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		// The graph is published before an ANN read answers, so the read gets
 		// the configured graph scoring (approximate scores when rescoring is
 		// off). Wait for the shared construction job outside pipelineMu:
-		// installation takes it. A construction paused by a clear or close
-		// keeps the unpublished exact fallback.
+		// installation takes it. A construction paused by a clear or close, or
+		// retired by a build (its cancellation, while this caller's context
+		// is live), keeps the unpublished exact fallback.
 		s.pipelineMu.Unlock()
 		_, waitErr := s.getOrCreateHNSWIndex(ctx, dimensions)
 		s.pipelineMu.Lock()
 		if s.vectorPipeline != nil {
 			return s.vectorPipeline, nil
 		}
-		if waitErr != nil && !errors.Is(waitErr, ErrSearchIndexBuilding) {
+		retired := ctx.Err() == nil && (errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded))
+		if waitErr != nil && !errors.Is(waitErr, ErrSearchIndexBuilding) && !retired {
 			return nil, waitErr
 		}
 		strategy, err = s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, seedIDs, vectorCount, dimensions, vfs, vi)
