@@ -382,9 +382,15 @@ func (src *packageSource) publishingCommits() map[*types.Func]bool {
 		ast.Inspect(decl.Body, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.AssignStmt:
-				for _, lhs := range n.Lhs {
-					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "publish" {
-						publishes = true
+				for i, lhs := range n.Lhs {
+					// A closure or a built publication (tx.publication());
+					// forwarding a variable (withPublishingUpdate's own
+					// parameter) publishes only what its caller passed.
+					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "publish" && i < len(n.Rhs) {
+						switch n.Rhs[i].(type) {
+						case *ast.FuncLit, *ast.CallExpr:
+							publishes = true
+						}
 					}
 				}
 			case *ast.CallExpr:
