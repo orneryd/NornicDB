@@ -183,6 +183,13 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	}
 	s.ivfpqMu.RUnlock()
 
+	// The BM25 seeds read the node metadata under indexMu, which ranks before
+	// ivfpqMu (persistIVFPQBackground), so they are resolved first.
+	s.mu.RLock()
+	fulltext := s.fulltext()
+	s.mu.RUnlock()
+	seedIDs := s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
+
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()
 	if s.ivfpqIndex != nil && s.ivfpqEpoch == sourceEpoch && s.ivfpqIndex.compatibleProfile(profile) {
@@ -193,7 +200,6 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	s.mu.RLock()
 	vectorPath := s.vectorIndexPath
 	hnswPath := s.hnswIndexPath
-	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	basePath := s.ivfpqPersistenceBasePath(vectorPath, hnswPath)
 
@@ -214,7 +220,6 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if vfs == nil {
 		return nil, localizedError(localization.SearchIVFPQVectorStoreUnavailable(), nil)
 	}
-	seedIDs := s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
 	built, stats, err := BuildIVFPQFromVectorStore(ctx, vfs, profile, seedIDs)
 	if err != nil {
 		return nil, err

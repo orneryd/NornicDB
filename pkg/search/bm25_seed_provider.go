@@ -109,7 +109,12 @@ func bm25SeedDocIDs(fulltext lexicalSeedProvider) []string {
 // bm25SeedEmbeddingIDs resolves ranked BM25 documents through the existing
 // index metadata. Cluster/PQ builders own embedding IDs, including named,
 // property and chunk embeddings, rather than full-text document IDs.
+// Clustering and compressed builds run beside live writes, which change the
+// metadata under indexMu; indexMu ranks before ivfpqMu, so no caller may hold
+// ivfpqMu.
 func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(nodeIDs))
