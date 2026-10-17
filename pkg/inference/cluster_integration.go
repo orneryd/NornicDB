@@ -16,6 +16,7 @@ package inference
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -118,9 +119,10 @@ type ClusterIntegration struct {
 	clusterIndex *gpu.ClusterIndex
 	mu           sync.RWMutex
 
-	// Stats tracking
-	searchesTotal     int64
-	searchesClustered int64
+	// Stats tracking. Searches run under the read lock, concurrently, so the
+	// search counters are atomic rather than guarded by mu.
+	searchesTotal     atomic.Int64
+	searchesClustered atomic.Int64
 	lastReclusterAt   int64 // embedding count at last recluster
 }
 
@@ -270,14 +272,14 @@ func (ci *ClusterIntegration) Search(ctx context.Context, query []float32, topK 
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
-	ci.searchesTotal++
+	ci.searchesTotal.Add(1)
 
 	if !ci.config.Enabled || !ci.clusterIndex.IsClustered() {
 		// Fall back to brute-force search
 		return ci.clusterIndex.Search(query, topK)
 	}
 
-	ci.searchesClustered++
+	ci.searchesClustered.Add(1)
 	return ci.clusterIndex.SearchWithClusters(query, topK, ci.config.NumClustersSearch)
 }
 
@@ -399,8 +401,8 @@ func (ci *ClusterIntegration) Stats() ClusterIntegrationStats {
 
 	return ClusterIntegrationStats{
 		ClusterStats:      clusterStats,
-		SearchesTotal:     ci.searchesTotal,
-		SearchesClustered: ci.searchesClustered,
+		SearchesTotal:     ci.searchesTotal.Load(),
+		SearchesClustered: ci.searchesClustered.Load(),
 		Enabled:           ci.config.Enabled,
 	}
 }
