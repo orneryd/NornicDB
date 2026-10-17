@@ -4480,11 +4480,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		mode = "relationships"
 		return s.SearchRelationships(ctx, query, embedding, opts)
 	}
-	if err := s.EnsureWarm(ctx); err != nil {
+	if err := s.prepareSearchRead(ctx); err != nil {
 		return nil, err
-	}
-	if s.buildAttempted.Load() && !s.IsReady() {
-		return nil, localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
 	}
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
