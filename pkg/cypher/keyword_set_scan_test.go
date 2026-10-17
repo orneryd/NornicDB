@@ -34,7 +34,6 @@ func TestFirstKeywordIndexFromDefault(t *testing.T) {
 	require.Equal(t, 9, firstKeywordIndexFromDefault("RETURN 1 RETURN 2", 1, "RETURN"))
 }
 
-
 // TestCachedPipelineClausesVariants: one cached parse serves both splits; a
 // text with a CALL of its own is unsupported without procedure calls,
 // whichever split is asked for first.

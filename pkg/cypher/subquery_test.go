@@ -3165,9 +3165,6 @@ RETURN promptId, systemPrompt
 	require.Equal(t, "one", result.Rows[0][1])
 }
 
-
-
-
 func TestSubqueryHelpers_IterativeCallInTransactionsBranch(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
@@ -3319,8 +3316,6 @@ func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "test", res.Rows[0][0])
 }
-
-
 
 func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)

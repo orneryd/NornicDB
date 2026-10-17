@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 // TestWithExpressionFailureSlotOutsideAStatement: outside a running
 // statement a context gets its own expression-failure slot, which it then
 // keeps.

@@ -6,9 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
-
 func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
 	require.True(t, callSubqueryQueryIsWrite("MATCH (n) SET n.x = 1"))
@@ -19,4 +16,3 @@ func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 	require.False(t, isSimpleIdentifier("1bad"))
 	require.False(t, isSimpleIdentifier("bad-char"))
 }
-

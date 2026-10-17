@@ -139,7 +139,6 @@ func TestSchemaParsingHelpers_Branches(t *testing.T) {
 	require.ErrorIs(t, err, nerrors.ErrInvalidFulltextRelationshipTypes)
 }
 
-
 func TestAggregatePathSum_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "agg_sum")

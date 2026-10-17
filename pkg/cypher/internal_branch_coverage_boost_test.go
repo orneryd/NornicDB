@@ -82,7 +82,6 @@ func TestApplyUnwindMergeChainEdgeSetAssignment_Branches(t *testing.T) {
 	require.Equal(t, 0, changed)
 }
 
-
 func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_delete")
@@ -348,7 +347,6 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	require.True(t, converted)
 }
 
-
 func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "cov_helpers")
@@ -423,5 +421,3 @@ func TestExecuteDeleteStreaming_FallbackNoDeletes(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, verify.Rows[0][0])
 }
-
-

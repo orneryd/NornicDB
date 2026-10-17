@@ -8,8 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
 func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 

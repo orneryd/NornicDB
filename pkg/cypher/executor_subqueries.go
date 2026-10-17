@@ -16,17 +16,12 @@ import (
 
 // ===== CALL {} Subquery Support (Neo4j 4.0+) =====
 
-
 // startsWithCallSubquery reports whether cypher begins with a CALL { } or
 // CALL (vars) { } subquery clause (as opposed to a procedure CALL, or a
 // subquery later in the statement).
 func startsWithCallSubquery(cypher string) bool {
 	return callSubqueryAt(strings.TrimSpace(cypher), 0)
 }
-
-
-
-
 
 // isCallSubqueryPureReturn checks whether innerBody is a pure RETURN projection
 // with no MATCH/CALL/UNWIND/write clauses. Precomputed once per branch to avoid
@@ -49,12 +44,6 @@ func isCallSubqueryPureReturn(innerBody string) bool {
 		findKeywordIndex(trimmed, "WITH") < 0 &&
 		findKeywordIndex(trimmed, "UNION") < 0
 }
-
-
-
-
-
-
 
 // parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
 // Returns: body, afterCall, inTransactions bool, batchSize int
@@ -115,7 +104,6 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 	return body, afterCall, inTransactions, batchSize
 }
 
-
 type callSubqueryScopeClause struct {
 	names      []string
 	scoped     bool
@@ -164,9 +152,6 @@ func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	return scope
 }
 
-
-
-
 // executeCallInTransactions executes a CALL {} IN TRANSACTIONS query
 // This batches operations for large datasets by processing results in separate transactions.
 //
@@ -206,9 +191,6 @@ func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
 	}
 	return nil
 }
-
-
-
 
 // withImportClauseKeywords are the clauses that can follow a subquery's
 // importing WITH list (parseLeadingWithImports).
@@ -512,7 +494,6 @@ func nextNonSpace(text string, index int) byte {
 	return 0
 }
 
-
 // splitLeadingWhereNullGuard detects a leading correlated guard shape:
 //
 //	WITH <imports> WHERE <expr> <write/query-clause...>
@@ -569,8 +550,6 @@ func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok
 	}
 	return whereExpr, rest, true
 }
-
-
 
 // parseTopLevelUnionBranches preserves whether a composition mixes UNION and
 // UNION ALL so callers can report the Cypher semantic error rather than
@@ -676,19 +655,6 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 	return branches, unionAllMode, mixed, true
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 func callSubqueryQueryIsWrite(query string) bool {
 	// Single-pass: check each write keyword once with findKeywordIndex from position 0.
 	// Previous implementation was O(n*m) — called findKeywordIndex from every byte offset.
@@ -718,8 +684,6 @@ func isSimpleIdentifier(s string) bool {
 	}
 	return true
 }
-
-
 
 // processCallSubqueryReturn processes the RETURN clause after CALL {}
 func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
@@ -766,7 +730,6 @@ func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *Exec
 	}
 	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
 }
-
 
 func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(result.Rows))
@@ -992,7 +955,6 @@ func compareOrderedInts(left, right int) int {
 	return 0
 }
 
-
 // parseIntModifier returns the SKIP or LIMIT value in a RETURN/WITH modifier
 // tail. A plain integer is read directly; anything else (1 + 1, $s + 1 after
 // parameter substitution, toInteger('2')) is evaluated as a constant
@@ -1024,12 +986,6 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 	}
 	return e.evaluatePipelinePagination(ctx, vs, nil)
 }
-
-
-
-
-
-
 
 // Patterns compiled once (#591).
 var (

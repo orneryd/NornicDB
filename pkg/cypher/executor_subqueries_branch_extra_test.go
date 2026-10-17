@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestExecuteChainedCallSubquery_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "chain_call")
@@ -95,4 +94,3 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 	require.Len(t, a2Orders, 0)
 	require.EqualValues(t, 0, rowByID["a2"][3])
 }
-
