@@ -55,6 +55,13 @@ NORNIC_GPU=1 ./scripts/benchmark_vector_vs_qdrant.sh
 VECTOR_CORPUS_MAX_CHUNKS=20000 VECTOR_CORPUS_DIR=bench-data/vector_ann/corpus-20k ./scripts/benchmark_vector_vs_qdrant.sh
 ```
 
+NornicDB runs require an embedded `vcs.revision` and `vcs.modified` status.
+The script requests these with `-buildvcs=true`, and the runner rejects missing
+provenance before starting an engine. Check `go version -m <binary>`; if your
+Go toolchain omits VCS information for a worktree, build from a regular clone.
+Explicit quantization-oversampling overrides are reflected in run/report
+captions; raw result parameters remain authoritative.
+
 ### Running the steps yourself
 
 The script runs three Python programs, which you can also run directly. For example, to try a NornicDB setting on one mode without a full sweep:
@@ -63,7 +70,7 @@ The script runs three Python programs, which you can also run directly. For exam
 PY=bench-data/vector_ann/.venv/bin/python   # created by the script on its first run
 
 # Prepare binaries for direct runs (the shell driver's private binaries are cleaned on exit).
-go build -tags "noui nolocalllm" -o bench-data/vector_ann/nornicdb ./cmd/nornicdb
+go build -buildvcs=true -tags "noui nolocalllm" -o bench-data/vector_ann/nornicdb ./cmd/nornicdb
 $PY testing/benchmarks/vector_ann/fetch_qdrant.py --cache bench-data/vector_ann/downloads \
   --destination bench-data/vector_ann/qdrant-v1.19.2/qdrant --asset qdrant-aarch64-apple-darwin.tar.gz
 # Choose the matching asset from fetch_qdrant.py on another OS/architecture.
