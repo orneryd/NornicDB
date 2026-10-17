@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,31 +123,35 @@ func TestPostCommitPublicationOrder(t *testing.T) {
 				publishOutOfOrder(t, func() error { return scenario.older(b, explicit) }, func() error { return scenario.newer(b) })
 
 				live := scenario.live
-				require.Equal(t, live, committedValue(t, b, id, "p"))
+				assert.Equal(t, live, committedValue(t, b, id, "p"))
 				for name, read := range map[string]func(NodeID) (*Node, error){"GetNode": b.GetNode, "GetQueryNode": b.GetQueryNode} {
 					got, err := read(id)
-					require.NoError(t, err, name)
-					require.Equal(t, live, got.Properties["p"], "%s must return the committed node", name)
+					if !assert.NoError(t, err, name) {
+						continue
+					}
+					assert.Equal(t, live, got.Properties["p"], "%s must return the committed node", name)
 				}
 
-				require.Equal(t, []NodeID{id}, sm.PropertyIndexLookup("L", "p", live), "the live node must stay findable")
+				assert.Equal(t, []NodeID{id}, sm.PropertyIndexLookup("L", "p", live), "the live node must stay findable")
 				composite, ok := sm.GetCompositeIndex("idx_l_pq")
-				require.True(t, ok)
-				require.Equal(t, []NodeID{id}, composite.LookupFull(live, "w"))
-				require.Equal(t, []NodeID{id}, composite.LookupPrefix(live))
+				assert.True(t, ok)
+				assert.Equal(t, []NodeID{id}, composite.LookupFull(live, "w"))
+				assert.Equal(t, []NodeID{id}, composite.LookupPrefix(live))
 
 				holder, found, complete, constrained := sm.lookupUniqueConstraintValueForValidation("L", "u", live)
-				require.True(t, constrained && complete)
-				require.True(t, found, "the unique registry must hold the live value")
-				require.Equal(t, id, holder)
+				assert.True(t, constrained && complete)
+				assert.True(t, found, "the unique registry must hold the live value")
+				assert.Equal(t, id, holder)
 				_, err := b.CreateNode(&Node{ID: "db:other", Labels: []string{"L"}, Properties: map[string]any{"u": live}})
-				require.Error(t, err, "a second node with the live unique value must be rejected")
+				assert.Error(t, err, "a second node with the live unique value must be rejected")
 
 				for _, stale := range scenario.stale {
-					require.Empty(t, sm.PropertyIndexLookup("L", "p", stale), "a replaced value must not stay filed")
-					require.Empty(t, composite.LookupFull(stale, "w"))
+					assert.Empty(t, sm.PropertyIndexLookup("L", "p", stale), "a replaced value must not stay filed")
+					assert.Empty(t, composite.LookupFull(stale, "w"))
 					holder, found, _, _ := sm.lookupUniqueConstraintValueForValidation("L", "u", stale)
-					require.False(t, found && holder == id, "the registry must not keep a replaced value")
+					assert.False(t, found && holder == id, "the registry must not keep a replaced value")
+					_, err := b.CreateNode(&Node{ID: NodeID("db:free-" + stale), Labels: []string{"L"}, Properties: map[string]any{"u": stale}})
+					assert.NoError(t, err, "a replaced unique value must be free for another node")
 				}
 			})
 		}
@@ -202,14 +207,23 @@ func TestPostCommitEdgePublicationOrder(t *testing.T) {
 
 				publishOutOfOrder(t, func() error { return scenario.older(b, explicit) }, func() error { return scenario.newer(b) })
 
-				require.Equal(t, scenario.live, committedEdgeValue(t, b, id, "token"))
+				assert.Equal(t, scenario.live, committedEdgeValue(t, b, id, "token"))
 				if cached, ok := b.cacheLoadEdge(id); ok {
-					require.Equal(t, scenario.live, cached.Properties["token"], "the edge cache must not hold a replaced edge")
+					assert.Equal(t, scenario.live, cached.Properties["token"], "the edge cache must not hold a replaced edge")
 				}
-				require.Error(t, createEdgeInTransaction(b, &Edge{ID: "db:dup", StartNode: "db:b", EndNode: "db:a", Type: "LINK", Properties: map[string]any{"token": scenario.live}}),
+				// The second read is served from the adjacency and edge caches.
+				for read := 0; read < 2; read++ {
+					edges, err := b.GetOutgoingEdges("db:a")
+					assert.NoError(t, err)
+					if !assert.Len(t, edges, 1) {
+						continue
+					}
+					assert.Equal(t, scenario.live, edges[0].Properties["token"], "read %d must return the committed edge", read)
+				}
+				assert.Error(t, createEdgeInTransaction(b, &Edge{ID: "db:dup", StartNode: "db:b", EndNode: "db:a", Type: "LINK", Properties: map[string]any{"token": scenario.live}}),
 					"a second edge with the live unique value must be rejected")
 				if scenario.stale != "" {
-					require.NoError(t, createEdgeInTransaction(b, &Edge{ID: "db:free", StartNode: "db:b", EndNode: "db:a", Type: "LINK", Properties: map[string]any{"token": scenario.stale}}),
+					assert.NoError(t, createEdgeInTransaction(b, &Edge{ID: "db:free", StartNode: "db:b", EndNode: "db:a", Type: "LINK", Properties: map[string]any{"token": scenario.stale}}),
 						"a replaced value must be free again")
 				}
 			})
