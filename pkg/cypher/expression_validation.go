@@ -22,9 +22,10 @@ import (
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
 func validateListOperands(cypher string, params map[string]interface{}) error {
+	declarations := iterationDeclarations{text: cypher}
 	return forEachListOperand(cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if foreachDeclaration(cypher, in) || forIterationDeclaration(cypher, in) {
+		if declarations.declares(in) {
 			return nil
 		}
 		end, typeName, parameter := staticListOperand(cypher, start, params)
@@ -92,6 +93,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 	if len(scope.kinds) == 0 && len(scope.values) == 0 {
 		return nil
 	}
+	declarations := iterationDeclarations{text: text}
 	return forEachListOperand(text, func(start, in int) error {
 		end := start
 		for end < len(text) && isIdentByte(text[end]) {
@@ -105,7 +107,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
+		if declarations.declares(in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -123,56 +125,70 @@ func mayBeListType(typeName string) bool {
 	return false
 }
 
-// foreachDeclaration reports whether the IN at offset in is FOREACH's own
-// (`FOREACH (x IN …`).
-func foreachDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOREACH") {
-		return false
-	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOREACH", from, opts)
-		if start < 0 || start >= in {
-			return false
-		}
-		open := queryGapEnd(text, start+len("FOREACH"))
-		if open < len(text) && text[open] == '(' {
-			_, end, ok := scanIdentifierToken(text, queryGapEnd(text, open+1))
-			if ok && queryGapEnd(text, end) == in {
-				return true
-			}
-		}
-		from = start + len("FOREACH")
-	}
-	return false
+// iterationDeclarations reports whether an IN of text is FOREACH's own
+// (`FOREACH (x IN …`) or a FOR iteration clause's own (`FOR x IN …`; FOR
+// iterates like UNWIND, coercing a non-list operand to a single item), so
+// its operand is not a list type error. The declaring INs are found once per
+// text, in one pass over its FOREACH and FOR keywords: looking back from
+// every IN made validating a large statement quadratic in its length.
+type iterationDeclarations struct {
+	text  string
+	ins   map[int]struct{}
+	found bool
 }
 
-// forIterationDeclaration reports whether the IN at offset in is a FOR
-// iteration clause's own (`FOR x IN …`). FOR iterates like UNWIND, coercing a
-// non-list operand to a single item, so its operand is not a list type error.
-func forIterationDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOR") {
-		return false
+func (d *iterationDeclarations) declares(in int) bool {
+	if !d.found {
+		d.ins = iterationDeclarationINs(d.text)
+		d.found = true
+	}
+	_, ok := d.ins[in]
+	return ok
+}
+
+// iterationDeclarationINs returns the offsets of the INs in text that
+// declare a FOREACH or FOR iteration variable.
+func iterationDeclarationINs(text string) map[int]struct{} {
+	var ins map[int]struct{}
+	add := func(in int) {
+		if ins == nil {
+			ins = map[int]struct{}{}
+		}
+		ins[in] = struct{}{}
 	}
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOR", from, opts)
-		if start < 0 || start >= in {
-			return false
-		}
-		nameStart := queryGapEnd(text, start+len("FOR"))
-		if nameStart < in {
-			if _, nameEnd, ok := scanIdentifierToken(text, nameStart); ok && queryGapEnd(text, nameEnd) == in {
-				return true
+	if containsFold(text, "FOREACH") {
+		for from := 0; from < len(text); {
+			start := keywordIndexFrom(text, "FOREACH", from, opts)
+			if start < 0 {
+				break
 			}
+			open := queryGapEnd(text, start+len("FOREACH"))
+			if open < len(text) && text[open] == '(' {
+				if _, end, ok := scanIdentifierToken(text, queryGapEnd(text, open+1)); ok {
+					add(queryGapEnd(text, end))
+				}
+			}
+			from = start + len("FOREACH")
 		}
-		from = start + len("FOR")
 	}
-	return false
+	if containsFold(text, "FOR") {
+		for from := 0; from < len(text); {
+			start := keywordIndexFrom(text, "FOR", from, opts)
+			if start < 0 {
+				break
+			}
+			if nameStart := queryGapEnd(text, start+len("FOR")); nameStart < len(text) {
+				if _, nameEnd, ok := scanIdentifierToken(text, nameStart); ok {
+					add(queryGapEnd(text, nameEnd))
+				}
+			}
+			from = start + len("FOR")
+		}
+	}
+	return ins
 }
 
 // localBinding is an expression that binds variables of its own, closing at

@@ -1314,6 +1314,12 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		return nil
 	}
 	is := skipASCIISpaces(q, wordEnd, end)
+	// Only a word before IS can be a label test. Checked first: the word
+	// checks below look back through the statement, and running them for
+	// every keyword of a large statement made this rewrite quadratic.
+	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) {
+		return nil
+	}
 	// A label test's word is an operand: after a keyword an expression
 	// follows (THEN is ELSE, CASE is WHEN), is is a variable, as a clause
 	// keyword there is a name (#1162). A CASE grammar word is a keyword only
@@ -1332,7 +1338,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 			return nil
 		}
 	}
-	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) || !isLabelIsKeyword(q[:end], is+2) {
+	if !isLabelIsKeyword(q[:end], is+2) {
 		return nil
 	}
 	if handled := r.isLabeledTest(wordStart, wordEnd, is+2, end); handled {
