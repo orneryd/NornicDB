@@ -109,8 +109,8 @@ func TestNewClusterIndex(t *testing.T) {
 		if ci.config == nil {
 			t.Error("config should not be nil")
 		}
-		if ci.clusterMap == nil {
-			t.Error("clusterMap should not be nil")
+		if ci.membership.idToCluster == nil {
+			t.Error("membership should not be nil")
 		}
 	})
 
@@ -864,23 +864,7 @@ func TestClusterIndexSeedAndIndexHelpers(t *testing.T) {
 	}
 }
 
-func TestBuildClusterMapAndNearestCentroidHelpers(t *testing.T) {
-	clusterMap := buildClusterMapFromAssignments([]int{2, 1, 2, 1, 2})
-	if len(clusterMap) != 2 {
-		t.Fatalf("buildClusterMapFromAssignments() produced %d clusters, want 2", len(clusterMap))
-	}
-	for cluster, want := range map[int][]int{1: {1, 3}, 2: {0, 2, 4}} {
-		got := clusterMap[cluster]
-		if len(got) != len(want) {
-			t.Fatalf("cluster %d indices = %v, want %v", cluster, got, want)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("cluster %d indices = %v, want %v", cluster, got, want)
-			}
-		}
-	}
-
+func TestNearestCentroidHelpers(t *testing.T) {
 	if got := nearestCentroidFromList([]float32{0.2, 0.1}, [][]float32{{0, 0}, {5, 5}}); got != 0 {
 		t.Fatalf("nearestCentroidFromList() = %d, want 0", got)
 	}

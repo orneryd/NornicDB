@@ -74,16 +74,24 @@ func TestSelectHybridClusters_UsesLexicalSignal(t *testing.T) {
 	semFirst, semSecond := sem[0], sem[1]
 
 	// Force lexical preference to second cluster via profile weights.
-	svc.clusterLexicalMu.Lock()
-	svc.clusterLexicalProfiles = map[int]map[string]float64{
+	setClusterProfilesForTest(t, svc, map[int]map[string]float64{
 		semFirst:  {"alpha": 1.0},
 		semSecond: {"beta": 1.0},
-	}
-	svc.clusterLexicalMu.Unlock()
+	})
 
 	out := svc.selectHybridClusters(withQueryText(context.Background(), "beta auth"), []float32{1, 0}, 1)
 	require.Len(t, out, 1)
 	require.Equal(t, semSecond, out[0], "lexical signal should override semantic top cluster when weighted higher")
+}
+
+// setClusterProfilesForTest replaces the published generation's lexical
+// routing profiles.
+func setClusterProfilesForTest(t *testing.T, svc *Service, profiles map[int]map[string]float64) {
+	t.Helper()
+	svc.clusterStateMu.Lock()
+	defer svc.clusterStateMu.Unlock()
+	require.NotNil(t, svc.clusterGen, "a published cluster generation")
+	svc.clusterGen.profiles = profiles
 }
 
 func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {

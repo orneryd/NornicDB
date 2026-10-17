@@ -5,7 +5,6 @@ import (
 	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -379,7 +378,7 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode, quantizedIndex *HNSWIndex) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
+		candidateNodes[decodeVectorKey(candidate.ID).node] = struct{}{}
 	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
@@ -807,11 +806,11 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		for _, chunkID := range admitted.chunks {
 			chunk := 0
 			if chunkID != id {
-				var err error
-				chunk, err = strconv.Atoi(strings.TrimPrefix(chunkID, id+"-chunk-"))
-				if err != nil {
+				key := decodeVectorKey(chunkID)
+				if key.kind != vectorKeyChunk || key.node != id {
 					continue
 				}
+				chunk = key.chunk
 			}
 			if chunk >= 0 && chunk < len(node.ChunkEmbeddings) {
 				eligible.ChunkEmbeddings = append(eligible.ChunkEmbeddings, node.ChunkEmbeddings[chunk])

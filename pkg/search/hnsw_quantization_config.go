@@ -130,20 +130,32 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 	if err != nil {
 		return err
 	}
+	if changed, err := s.setHNSWQuantizationOverride(ctx, cfg); err != nil || !changed {
+		return err
+	}
+	// The cluster generation's graphs take the policy through the owner,
+	// which also republishes the pipeline and advances the index revision.
+	return s.publishClusterGeneration(ctx, clusterPublication{policy: true})
+}
+
+// setHNSWQuantizationOverride re-encodes the global graph, records cfg as
+// the configured policy and drops the pipeline, under the admission
+// boundary (indexMu, then pipelineMu: the known exception to the lock order).
+func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuantizationConfig) (bool, error) {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.mu.RLock()
 	same := s.hnswQuantizationOverride != nil && *s.hnswQuantizationOverride == cfg
 	s.mu.RUnlock()
 	if same {
-		return nil
+		return false, nil
 	}
 	s.hnswMu.RLock()
 	idx := s.hnswIndex
 	s.hnswMu.RUnlock()
 	if idx != nil {
 		if err := idx.SetQuantization(ctx, cfg); err != nil {
-			return err
+			return false, err
 		}
 	}
 	s.mu.Lock()
@@ -156,5 +168,5 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
 	s.indexChanged()
-	return nil
+	return true, nil
 }

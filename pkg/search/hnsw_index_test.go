@@ -697,7 +697,10 @@ func TestHNSW_IVFClusterPersistenceAndDeriveCentroids(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, loadedNil)
 
-	memberIDs, err := loadIVFClusterMemberIDs(filepath.Join(tmp, "hnsw_ivf"), 0)
+	manifest, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	memberIDs, err := loadIVFClusterMemberIDs(manifest.clusterPath(0))
 	require.NoError(t, err)
 	require.NotEmpty(t, memberIDs)
 
@@ -711,6 +714,91 @@ func TestHNSW_IVFClusterPersistenceAndDeriveCentroids(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, centroids)
 	require.Nil(t, idToCluster)
+}
+
+// A saved IVF-HNSW generation is current only once its manifest is written;
+// a restore reads exactly the files the manifest names, and saving a new
+// generation deletes every file it does not name.
+func TestIVFHNSWManifestGenerations(t *testing.T) {
+	tmp := t.TempDir()
+	hnswPath := filepath.Join(tmp, "hnsw")
+	ivfDir := ivfHNSWDir(hnswPath)
+	vectors := map[string][]float32{"a": {1, 0, 0}, "b": {0, 1, 0}, "c": {0, 0, 1}}
+	lookup := func(id string) ([]float32, bool) { v, ok := vectors[id]; return v, ok }
+	graph := func(ids ...string) *HNSWIndex {
+		g := NewHNSWIndex(3, DefaultHNSWConfig())
+		for _, id := range ids {
+			require.NoError(t, g.Add(id, vectors[id]))
+		}
+		return g
+	}
+
+	require.NoError(t, SaveIVFHNSW(hnswPath, map[int]*HNSWIndex{0: graph("a"), 1: graph("b"), 2: graph("c")}))
+	first, err := readIVFHNSWManifest(ivfDir)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), first.Seq)
+	require.Equal(t, 3, first.Dimensions)
+	require.Equal(t, []string{"g1-0", "g1-1", "g1-2"}, first.Files)
+
+	// A legacy numeric file and a stray temp file are not part of any generation.
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, "7"), []byte("legacy"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, "g9-0.tmp"), []byte("torn"), 0o644))
+	require.NoError(t, SaveIVFHNSW(hnswPath, map[int]*HNSWIndex{0: graph("a", "c"), 1: graph("b")}))
+	second, err := readIVFHNSWManifest(ivfDir)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), second.Seq)
+	require.Equal(t, []string{"g2-0", "g2-1"}, second.Files)
+	entries, err := os.ReadDir(ivfDir)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	require.ElementsMatch(t, []string{ivfHNSWManifestName, "g2-0", "g2-1"}, names, "files of older generations, beyond K and legacy files are deleted")
+
+	loaded, err := LoadIVFHNSWCluster(hnswPath, 2, lookup)
+	require.NoError(t, err)
+	require.Nil(t, loaded, "a cluster beyond the generation's K is not loaded")
+
+	// A crash after the next generation's files, before its manifest: the
+	// restore reads the current generation.
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, "g3-0"), []byte("torn"), 0o644))
+	centroids, idToCluster, err := DeriveIVFCentroidsFromClusters(hnswPath, lookup)
+	require.NoError(t, err)
+	require.Len(t, centroids, 2)
+	require.Equal(t, map[string]int{"a": 0, "c": 0, "b": 1}, idToCluster)
+	loaded, err = LoadIVFHNSWCluster(hnswPath, 0, lookup)
+	require.NoError(t, err)
+	require.NotNil(t, loaded)
+	require.ElementsMatch(t, []string{"a", "c"}, loaded.liveIDs())
+
+	// No graph to save writes no generation.
+	require.NoError(t, SaveIVFHNSW(hnswPath, map[int]*HNSWIndex{0: nil}))
+	unchanged, err := readIVFHNSWManifest(ivfDir)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), unchanged.Seq)
+
+	// An unreadable or unsafe manifest restores nothing.
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, ivfHNSWManifestName), []byte("{"), 0o644))
+	_, err = readIVFHNSWManifest(ivfDir)
+	require.Error(t, err)
+	centroids, idToCluster, err = DeriveIVFCentroidsFromClusters(hnswPath, lookup)
+	require.NoError(t, err)
+	require.Nil(t, centroids)
+	require.Nil(t, idToCluster)
+	loaded, err = LoadIVFHNSWCluster(hnswPath, 0, lookup)
+	require.NoError(t, err)
+	require.Nil(t, loaded)
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, ivfHNSWManifestName), []byte(`{"seq":4,"dimensions":3,"files":["../hnsw"]}`), 0o644))
+	_, err = readIVFHNSWManifest(ivfDir)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, ivfHNSWManifestName), []byte(`{"seq":4,"dimensions":3,"files":["MANIFEST"]}`), 0o644))
+	_, err = readIVFHNSWManifest(ivfDir)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(ivfDir, ivfHNSWManifestName), []byte(`{"seq":4,"dimensions":3,"files":[]}`), 0o644))
+	centroids, _, err = DeriveIVFCentroidsFromClusters(hnswPath, lookup)
+	require.NoError(t, err)
+	require.Nil(t, centroids, "a generation with no clusters derives nothing")
 }
 
 func TestHNSWIndex_InternalGuardBranches(t *testing.T) {
@@ -771,13 +859,13 @@ func TestHNSWIndex_InternalGuardBranches(t *testing.T) {
 
 func TestLoadIVFClusterMemberIDs_Branches(t *testing.T) {
 	t.Run("empty directory argument returns nil slice", func(t *testing.T) {
-		memberIDs, err := loadIVFClusterMemberIDs("", 0)
+		memberIDs, err := loadIVFClusterMemberIDs("")
 		require.NoError(t, err)
 		require.Nil(t, memberIDs)
 	})
 
 	t.Run("missing cluster file returns error", func(t *testing.T) {
-		_, err := loadIVFClusterMemberIDs(filepath.Join(t.TempDir(), "hnsw_ivf"), 7)
+		_, err := loadIVFClusterMemberIDs(filepath.Join(t.TempDir(), "hnsw_ivf", "7"))
 		require.Error(t, err)
 	})
 
@@ -785,7 +873,7 @@ func TestLoadIVFClusterMemberIDs_Branches(t *testing.T) {
 		ivfDir := filepath.Join(t.TempDir(), "hnsw_ivf")
 		require.NoError(t, os.MkdirAll(ivfDir, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(ivfDir, "3"), []byte("not-msgpack"), 0o644))
-		_, err := loadIVFClusterMemberIDs(ivfDir, 3)
+		_, err := loadIVFClusterMemberIDs(filepath.Join(ivfDir, "3"))
 		require.Error(t, err)
 	})
 
@@ -810,7 +898,7 @@ func TestLoadIVFClusterMemberIDs_Branches(t *testing.T) {
 		require.NoError(t, msgpack.NewEncoder(of).Encode(&snap))
 		require.NoError(t, of.Close())
 
-		memberIDs, err := loadIVFClusterMemberIDs(outPath, 0)
+		memberIDs, err := loadIVFClusterMemberIDs(outFile)
 		require.NoError(t, err)
 		require.Nil(t, memberIDs)
 	})
