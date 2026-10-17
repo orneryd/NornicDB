@@ -25,6 +25,9 @@ type IVFHNSWCandidateGen struct {
 	getClusterHNSW      clusterHNSWLookup
 	numClustersToSearch int
 	clusterSelector     func(ctx context.Context, query []float32, defaultN int) []int
+	// generation, when set, is held while routing and taking graphs, so both
+	// come from one published cluster generation.
+	generation sync.Locker
 }
 
 func NewIVFHNSWCandidateGen(clusterIndex *gpu.ClusterIndex, getClusterHNSW clusterHNSWLookup, numClustersToSearch int) *IVFHNSWCandidateGen {
@@ -44,41 +47,26 @@ func (g *IVFHNSWCandidateGen) SetClusterSelector(fn func(ctx context.Context, qu
 	return g
 }
 
+// SetGenerationLock sets the lock that publication of a new cluster generation
+// takes exclusively; the lookup must then read graphs without locking.
+func (g *IVFHNSWCandidateGen) SetGenerationLock(generation sync.Locker) *IVFHNSWCandidateGen {
+	g.generation = generation
+	return g
+}
+
 func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
-	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
-	}
-	if g.getClusterHNSW == nil {
-		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	clusterIDs := []int(nil)
-	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+	indexes, err := g.routedGraphs(ctx, query)
+	if err != nil {
+		return nil, err
 	}
-	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
-	}
-	if len(clusterIDs) == 0 {
+	if len(indexes) == 0 {
 		return []Candidate{}, nil
 	}
 
 	totalLimit := boundCandidateLimit(k)
-	// Snapshot every required graph before starting workers. Missing graphs are
-	// incomplete ANN state, not permission to scan the entire routed population.
-	indexes := make([]*HNSWIndex, len(clusterIDs))
-	for i, cid := range clusterIDs {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		indexes[i] = g.getClusterHNSW(cid)
-		if indexes[i] == nil {
-			return nil, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
-		}
-	}
 	results := make([][]ANNResult, len(indexes))
 	errors := make([]error, len(indexes))
 	ef := hnswEfFromContext(ctx)
@@ -127,4 +115,39 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		out = out[:totalLimit]
 	}
 	return out, nil
+}
+
+// routedGraphs routes query and snapshots the routed clusters' graphs from one
+// cluster generation. Missing graphs are incomplete ANN state, not permission
+// to scan the entire routed population.
+func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32) ([]*HNSWIndex, error) {
+	if g.generation != nil {
+		g.generation.Lock()
+		defer g.generation.Unlock()
+	}
+	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
+		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
+	}
+	if g.getClusterHNSW == nil {
+		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
+	}
+
+	clusterIDs := []int(nil)
+	if g.clusterSelector != nil {
+		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+	}
+	if len(clusterIDs) == 0 {
+		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+	}
+	indexes := make([]*HNSWIndex, len(clusterIDs))
+	for i, cid := range clusterIDs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		indexes[i] = g.getClusterHNSW(cid)
+		if indexes[i] == nil {
+			return nil, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
+		}
+	}
+	return indexes, nil
 }
