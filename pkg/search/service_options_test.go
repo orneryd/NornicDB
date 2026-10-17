@@ -274,11 +274,11 @@ func TestCollapseCandidatesByNodeIDKeepsHighestScore(t *testing.T) {
 	require.Nil(t, collapseCandidatesByNodeID(nil))
 
 	collapsed := collapseCandidatesByNodeID([]SearchCandidate{
-		{ID: "node-a-chunk-0", Score: 0.4},
-		{ID: "node-b-prop-embedding", Score: 0.8},
-		{ID: "node-a-named-summary", Score: 0.9},
+		{ID: nodeChunkVectorKey("node-a", 0), Score: 0.4},
+		{ID: nodePropertyVectorKey("node-b", "embedding"), Score: 0.8},
+		{ID: nodeNamedVectorKey("node-a", "summary"), Score: 0.9},
 		{ID: "node-c", Score: 0.6},
-		{ID: "node-b-chunk-2", Score: 0.7},
+		{ID: nodeChunkVectorKey("node-b", 2), Score: 0.7},
 	})
 
 	require.Equal(t, []SearchCandidate{

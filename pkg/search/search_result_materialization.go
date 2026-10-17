@@ -49,7 +49,8 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 }
 
 // enrichIndexResults converts raw index results to SearchResult.
-// Maps chunk IDs (e.g., "node-id-chunk-0") back to the original node ID.
+// Every result ID is already an owning node ID: vector results were decoded
+// once at collapse, and fulltext document IDs are node IDs. Nothing here decodes.
 func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
 	resultLimit := boundedResultLimit(len(indexResults), opts.Limit)
 	if resultLimit == 0 {
@@ -67,7 +68,7 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 			break
 		}
 
-		nodeIDStr := normalizeVectorResultIDToNodeID(ir.ID)
+		nodeIDStr := ir.ID
 		if seen != nil {
 			if _, exists := seen[nodeIDStr]; exists {
 				continue
