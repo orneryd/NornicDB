@@ -3074,6 +3074,9 @@ func (s *Service) admitStagedVectorFileStore(storageEmpty bool, staged *stagedPe
 		if vfs != nil {
 			_ = vfs.Close()
 		}
+		if info, statErr := security.RootedStat(s.vectorIndexPath + ".vec"); statErr == nil && info.Size() > 0 {
+			runPopulationHook(&vectorStoreLockedLoadHook, s)
+		}
 		var err error
 		vfs, err = NewVectorFileStore(s.vectorIndexPath, dims)
 		if err != nil {

@@ -349,6 +349,10 @@ func (s *Service) awaitBudgetAdmissionLocked() error {
 // after the recorded writes are withdrawn. Nil outside tests.
 var populationStageHook, populationRestoreHook atomic.Pointer[func(*Service)]
 
+// vectorStoreLockedLoadHook runs where vector-store admission loads an existing,
+// non-empty saved file itself, under indexMu. Nil outside tests.
+var vectorStoreLockedLoadHook atomic.Pointer[func(*Service)]
+
 func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
 	if fn := hook.Load(); fn != nil {
 		(*fn)(s)
