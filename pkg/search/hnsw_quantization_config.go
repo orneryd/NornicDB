@@ -8,10 +8,10 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 )
 
-// HNSWQuantizationConfigFromEnv resolves opt-in coordinate compression without
+// HNSWQuantizationConfigFromEnv resolves coordinate compression (scalar int8 by default) without
 // changing the fast/balanced/accurate graph preset or the legacy IVF-PQ mode.
 //
-// NORNICDB_VECTOR_HNSW_QUANTIZATION selects none, scalar, pq or binary.
+// NORNICDB_VECTOR_HNSW_QUANTIZATION selects none, scalar (default), pq or binary.
 // NORNICDB_VECTOR_HNSW_BINARY_QUERY_BITS selects 1 (default), 4 or 8.
 // NORNICDB_VECTOR_HNSW_PQ_COMPRESSION selects 4/8/16/32/64 (default 16).
 // NORNICDB_VECTOR_HNSW_PQ_TRAINING_SAMPLE_MAX and _TRAINING_ITERATIONS control
@@ -21,7 +21,7 @@ import (
 // Example: NORNICDB_VECTOR_HNSW_QUANTIZATION=scalar keeps the chosen graph
 // preset and uses int8 coordinates for candidate discovery, then exact reranking.
 func HNSWQuantizationConfigFromEnv() HNSWQuantizationConfig {
-	mode := strings.ToLower(strings.TrimSpace(envutil.Get("NORNICDB_VECTOR_HNSW_QUANTIZATION", "")))
+	mode := strings.ToLower(strings.TrimSpace(envutil.Get("NORNICDB_VECTOR_HNSW_QUANTIZATION", "scalar")))
 	switch mode {
 	case "none":
 		mode = ""
