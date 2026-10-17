@@ -224,6 +224,10 @@
   other: "Especificación de trim desconocida. Los valores válidos son: LEADING, TRAILING, BOTH."
 - id: cyphercore.normalize_form_invalid
   other: "la forma normal de normalize() debe ser NFC, NFD, NFKC o NFKD; se recibió: {{.Form}}"
+- id: cyphercore.json_stringify_profile_unknown
+  other: "el perfil de nornicdb.json.stringify() debe ser python-canonical o python-sorted; se recibió: {{.Profile}}"
+- id: cyphercore.json_stringify_value_unsupported
+  other: "nornicdb.json.stringify() no puede escribir {{.Type}} en el perfil {{.Profile}}"
 - id: cyphercore.procedure_output_shadows_variable
   other: "la salida del procedimiento {{.Variable}} oculta una variable existente"
 - id: cyphercore.variable_declared_in_outer_scope

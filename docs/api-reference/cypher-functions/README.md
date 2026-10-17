@@ -242,6 +242,25 @@ RETURN reduce(out = '', i IN range(0, size(lines) - 1) |
 
 Each overlap list scans all intervals, so a span costs O(intervals). For many spans over one source, bind the lists once (`WITH s.starts AS starts, s.ends AS ends UNWIND $spans AS q …`).
 
+### #️⃣ Exact JSON Text and Digests (4 functions)
+
+`nornicdb.json.stringify(value, {profile})` writes a value as the exact JSON text another program's serializer writes, so a digest or name-based UUID computed in a statement equals the one computed outside the database. It is a NornicDB extension; `apoc.convert.toJson` writes APOC's JSON, whose number forms and spacing differ.
+
+- `python-canonical` is Python's `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)`: keys sorted by code point, no spaces, non-ASCII as itself, control characters escaped (`\b \f \n \r \t`, other ones `\u00xx`), floats as Python's repr (`1.0`, `0.0001`, `1e+16`, `1.5e-05`). NaN, infinities, temporal values, byte arrays, UUIDs, vectors and graph entities are an error, as `json.dumps` raises.
+- `python-sorted` is `json.dumps(value, sort_keys=True, default=str)` on the values the Neo4j Python driver (6.x) reads: `", "` and `": "` separators, everything outside `' '..'~'` escaped as `\uXXXX` (astral characters as surrogate pairs), `NaN`, `Infinity`, `-Infinity`. Temporal values are the driver's `str()`: `2024-03-05`, `09:08:07.000000000+05:30`, `2024-03-05T09:08:07.000000000+00:00`. A named zone writes only its offset, which the driver takes from pytz, rounded to the minute, and writes with floor division (a `-03:30` zone writes `-04:30`). A byte array is Python's `bytes` repr (`b'\x00a'`).
+- In both, a duration is the list `[months, days, seconds, nanoseconds]` and a point the list of its coordinates, as the driver's tuples are written; null is the text `null`.
+
+`apoc.util.sha256(values)`, `apoc.util.sha1(values)` and `apoc.util.md5(values)` are APOC's, built in: the lower-case hex digest of the values' strings concatenated (null adds nothing), so `apoc.util.sha256([text])` is the SHA-256 of `text`'s UTF-8 bytes. The APOC plugin's handlers give the same digests.
+
+```cypher
+// A payload digest, a name-based ID over canonical parts, and a fingerprint over python-sorted text
+RETURN apoc.util.sha256([nornicdb.json.stringify($payload, {profile: 'python-canonical'})]) AS payloadHash,
+       toString(uuid.v5('6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+                        $prefix + $namespace + ':' + nornicdb.json.stringify($parts, {profile: 'python-canonical'}))) AS id,
+       toString(uuid.v5('6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+                        $prefix + 'fingerprint:' + nornicdb.json.stringify([nornicdb.json.stringify($value, {profile: 'python-sorted'})], {profile: 'python-canonical'}))) AS fingerprint
+```
+
 ### ⏰ Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |

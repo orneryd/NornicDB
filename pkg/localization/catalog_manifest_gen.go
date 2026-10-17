@@ -395,6 +395,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.invalid_label_reserved", Constructor: "CypherCoreInvalidLabelReserved", Fields: []string{"Label"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_property_key", Constructor: "CypherCoreInvalidPropertyKey", Fields: []string{"Key"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_property_value", Constructor: "CypherCoreInvalidPropertyValue", Fields: []string{"Key"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.json_stringify_profile_unknown", Constructor: "CypherCoreJSONStringifyProfileUnknown", Fields: []string{"Profile"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.json_stringify_value_unsupported", Constructor: "CypherCoreJSONStringifyValueUnsupported", Fields: []string{"Profile", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.label_target_type_mismatch", Constructor: "CypherCoreLabelTargetTypeMismatch", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.list_coercion_to_boolean", Constructor: "CypherCoreListCoercionToBoolean", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.list_index_boolean", Constructor: "CypherCoreListIndexBoolean", Fields: []string{"Class", "List", "Value"}, PluralForms: []string{"other"}},
