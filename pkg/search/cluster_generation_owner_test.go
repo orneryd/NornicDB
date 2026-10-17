@@ -143,6 +143,11 @@ var clusterMutators = map[string]map[string]bool{
 	"Clustering": {"Remove": true},
 }
 
+// clusterPopulationReads are the population handle's methods that code
+// outside the owner may reach through the cluster index (reads only); any
+// other promoted method, mutating or new, is the owner's.
+var clusterPopulationReads = map[string]bool{"Count": true, "Get": true, "ScoreSubset": true, "Search": true}
+
 // clusterGraphMutators may not be referenced by a routing reader.
 var clusterGraphMutators = map[string]bool{"Add": true, "Update": true, "Remove": true, "Clear": true,
 	"SetQuantization": true, "SetVectorLookup": true, "SetBuildLexicalHints": true, "setBuildLexicalHint": true,
@@ -246,6 +251,22 @@ func fixtureStagedRemove(c *gpu.Clustering, id string)       { c.Remove(id) }
 var fixtureVar = func(s *Service) { s.clusterGen = nil }
 
 type fixtureHelperInterface interface{ admitLocked(clusterAdmission) }
+
+// Named access (sol r13): a wrapper's promoted mutator and its method value,
+// the embedded population handle, and a method expression through an alias.
+type clusterWrapper struct{ *gpu.ClusterIndex }
+type clusterAlias = gpu.ClusterIndex
+
+func (s *Service) fixturePromotedRemove(id string) { w := clusterWrapper{s.currentClusterIndex()}; w.Remove(id) }
+func (s *Service) fixturePromotedMethodValue(id string) {
+	w := clusterWrapper{s.currentClusterIndex()}
+	f := w.Remove
+	f(id)
+}
+func (s *Service) fixtureEmbeddingRemove(id string)  { s.currentClusterIndex().EmbeddingIndex.Remove(id) }
+func (s *Service) fixtureEmbeddingClear()            { s.currentClusterIndex().EmbeddingIndex.Clear() }
+func (s *Service) fixtureAliasExpression(id string)  { (*clusterAlias).Remove(s.currentClusterIndex(), id) }
+func (s *Service) fixturePromotedAdd(id string)       { w := clusterWrapper{s.currentClusterIndex()}; _ = w.Add(id, nil) }
 `
 
 const clusterGuardGPUFixture = `package gpu
@@ -364,8 +385,9 @@ func namedOf(t types.Type) string {
 	if t == nil {
 		return ""
 	}
+	t = types.Unalias(t)
 	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
+		t = types.Unalias(p.Elem())
 	}
 	if n, ok := t.(*types.Named); ok && n.Obj().Pkg() != nil {
 		switch n.Obj().Pkg().Path() {
@@ -405,6 +427,9 @@ type clusterGuard struct {
 	fields     map[*types.Var]string // protected fields
 	violations map[string][]string   // declaration -> problems
 	edges      map[string]map[string]bool
+
+	// population is the cluster index's embedded EmbeddingIndex field.
+	population *types.Var
 }
 
 func newClusterGuard(t *testing.T, p *clusterTypedPkg, gpu bool) *clusterGuard {
@@ -435,6 +460,20 @@ func newClusterGuard(t *testing.T, p *clusterTypedPkg, gpu bool) *clusterGuard {
 	for typeName := range clusterStateTypes {
 		protect(typeName, nil)
 	}
+	for _, imported := range p.pkg.Imports() {
+		if imported.Path() != "github.com/orneryd/nornicdb/pkg/gpu" {
+			continue
+		}
+		ci, ok := imported.Scope().Lookup("ClusterIndex").(*types.TypeName)
+		require.True(t, ok, "gpu.ClusterIndex")
+		st := ci.Type().Underlying().(*types.Struct)
+		for i := 0; i < st.NumFields(); i++ {
+			if f := st.Field(i); f.Embedded() && f.Name() == "EmbeddingIndex" {
+				g.population = f
+			}
+		}
+	}
+	require.NotNil(t, g.population, "the cluster index embeds its population handle")
 	return g
 }
 
@@ -476,19 +515,33 @@ func (g *clusterGuard) check(where string, root ast.Node, accessor bool) {
 			if sel == nil || g.gpu {
 				break
 			}
-			fn, ok := sel.Obj().(*types.Func)
-			if !ok {
+			fn, isFunc := sel.Obj().(*types.Func)
+			// The cluster index's embedded population handle is the owner's:
+			// selecting it, or reaching it through embedding, is reported
+			// outside the owner, except its read methods.
+			if !owner {
+				if field, ok := sel.Obj().(*types.Var); ok && field == g.population {
+					g.flag(where, "selects the cluster index's population handle")
+				} else if g.throughPopulation(sel) && !(isFunc && clusterPopulationReads[fn.Name()]) {
+					g.flag(where, "reaches the cluster index's population through %s", sel.Obj().Name())
+				}
+			}
+			if !isFunc {
 				break
 			}
-			recv := namedOf(sel.Recv())
-			if clusterMutators[recv][fn.Name()] && !owner {
-				g.flag(where, "references mutator %s.%s", recv, fn.Name())
+			// Methods by their declaring object: a wrapper's promoted method,
+			// a method value and a method expression through a type alias
+			// all name the same function.
+			fn = fn.Origin()
+			recv, name := namedOf(fn.Type().(*types.Signature).Recv().Type()), fn.Name()
+			if clusterMutators[recv][name] && !owner {
+				g.flag(where, "references mutator %s.%s", recv, name)
 			}
-			if reader && recv == "HNSWIndex" && clusterGraphMutators[fn.Name()] {
-				g.flag(where, "routing reader references graph mutator %s", fn.Name())
+			if reader && recv == "HNSWIndex" && clusterGraphMutators[name] {
+				g.flag(where, "routing reader references graph mutator %s", name)
 			}
-			if recv == "ClusterIndex" && clusterIndexRoutingReaders[fn.Name()] && !(fn.Name() == "PublishedClustering" && where == "ownClusterView") {
-				g.flag(where, "routes on the cluster index (%s) instead of a generation's routing", fn.Name())
+			if recv == "ClusterIndex" && clusterIndexRoutingReaders[name] && !(name == "PublishedClustering" && where == "ownClusterView") {
+				g.flag(where, "routes on the cluster index (%s) instead of a generation's routing", name)
 			}
 		case *ast.CompositeLit:
 			name := namedOf(g.p.info.TypeOf(x))
@@ -516,6 +569,29 @@ func (g *clusterGuard) check(where string, root ast.Node, accessor bool) {
 // type's method: those are covered by isHelper).
 func (g *clusterGuard) isOwnerFuncObject(key string) bool {
 	return !g.gpu && clusterOwnerFuncs[key]
+}
+
+// throughPopulation reports whether sel is promoted through the cluster
+// index's embedded population handle (a method or field reached via
+// ClusterIndex.EmbeddingIndex, from any wrapper or alias).
+func (g *clusterGuard) throughPopulation(sel *types.Selection) bool {
+	t, path := sel.Recv(), sel.Index()
+	for _, i := range path[:len(path)-1] {
+		t = types.Unalias(t)
+		if p, ok := t.(*types.Pointer); ok {
+			t = types.Unalias(p.Elem())
+		}
+		st, ok := t.Underlying().(*types.Struct)
+		if !ok {
+			return false
+		}
+		field := st.Field(i)
+		if field == g.population {
+			return true
+		}
+		t = field.Type()
+	}
+	return false
 }
 
 // isHelper reports a function only the owner may reference.
