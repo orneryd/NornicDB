@@ -67,7 +67,7 @@
 - id: nornicdbcli.flag.search_vector_warming
   other: "[!! Véctór búíld tríggér: startup ór lazy. Défáúlt: startup. !!]"
 - id: nornicdbcli.flag.gpu_backend
-  other: "[!! GPU báckénd: vulkan, cuda, metal, opencl (émptý=áútó-détéct) !!]"
+  other: "[!! GPU báckénd: cpu, vulkan, cuda, metal, opencl (émptý=áútó-détéct) !!]"
 - id: nornicdbcli.flag.no_auth
   other: "[!! Dísáblé áúthéntícátíón !!]"
 - id: nornicdbcli.flag.admin_password

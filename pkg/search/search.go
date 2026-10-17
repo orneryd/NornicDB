@@ -826,8 +826,10 @@ type Service struct {
 	fulltextLabels []string
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
-	indexMu        sync.RWMutex
-	buildMu        sync.Mutex
+	indexMu sync.RWMutex
+	// buildMu orders live node mutations and derived builds against full
+	// population/checkpoint restoration and vector-source clearing.
+	buildMu        sync.RWMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
 	embeddingSpace atomic.Value
@@ -1792,6 +1794,14 @@ func (s *Service) ensureClusterIndexBackfilled(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
+	return s.triggerClustering(ctx)
+}
+
+// triggerClustering runs with the base operation already owned, either by
+// BuildIndexes or the public TriggerClustering wrapper.
+func (s *Service) triggerClustering(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2659,7 +2669,10 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		s.gpuEmbeddingIndex = nil
 	}
 	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
+		old := s.clusterIndex
+		s.clusterIndex = old.EmptyWithDimensions(dimensions)
+		old.Clear()
+		old.Release()
 	}
 	s.mu.Unlock()
 
@@ -2680,64 +2693,13 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	s.hnswMu.Unlock()
 }
 
-// ClearVectorIndex removes all embeddings from the vector index.
-// This is used when regenerating all embeddings to reset the index count.
-// Also frees memory from HNSW tombstones which can accumulate over time.
-func (s *Service) ClearVectorIndex() {
-	defer s.indexChanged()
-	// Lock order: pipelineMu -> mu -> hnswMu, matching pipeline construction paths.
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-
-	s.indexMu.Lock()
-	s.mu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
-	if s.vectorIndex != nil {
-		s.vectorIndex.Clear()
-	}
-	if s.gpuEmbeddingIndex != nil {
-		s.gpuEmbeddingIndex.Clear()
-	}
-	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
-	}
-	clear(s.nodeLabels)
-	clear(s.nodeTypes)
-	clear(s.nodeNamedVector)
-	clear(s.nodePropVector)
-	clear(s.nodeChunkVectors)
-	clear(s.nodeChunkSpans)
-	clear(s.edgeTypes)
-	clear(s.edgePropVector)
-	s.mu.Unlock()
-	s.indexMu.Unlock()
-
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
-
-	// Also clear HNSW index if it exists (frees memory from tombstones).
-	// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-		s.hnswIndex = nil // Reset to nil so it can be recreated lazily
-	}
-	s.hnswMu.Unlock()
-}
-
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	// Population and checkpoint restoration must finish before a live mutation
+	// can be acknowledged; their snapshots may contain older node state.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2757,10 +2719,7 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
 
 	s.indexMu.Lock()
-	// skipFulltext piggybacks the bm25-disabled signal so the inner code
-	// paths that read `skipFulltext` (already exercised by checkpoint rewrites)
-	// also drop fulltext mutations when BM25 is disabled.
-	err := s.indexNodeLocked(node, !bm25On)
+	err := s.indexNodeLocked(node, false)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -2964,6 +2923,22 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
+	// Explicit embeddings are vectors, unlike ordinary numeric properties.
+	// Validate before removing the previous entries so a failed update cannot
+	// silently discard acknowledged vectors (including fixed embedder dimensions).
+	if s.vectorEnabled.Load() {
+		dims := s.VectorIndexDimensions()
+		for _, embedding := range node.NamedEmbeddings {
+			if len(embedding) > 0 && len(embedding) != dims {
+				return ErrDimensionMismatch
+			}
+		}
+		for _, embedding := range node.ChunkEmbeddings {
+			if len(embedding) > 0 && len(embedding) != dims {
+				return ErrDimensionMismatch
+			}
+		}
+	}
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
 	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
@@ -2972,7 +2947,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		return err
 	}
 	var fulltext nodeFulltext
-	if !skipFulltext {
+	if !skipFulltext && s.bm25Enabled.Load() {
 		fulltext.text = s.extractSearchableText(node)
 		fulltext.index = s.bm25Enabled.Load()
 		if index := s.fulltext(); index != nil && nodeIDStr != "" && shouldIndex {
@@ -3413,6 +3388,10 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
+	// Population and checkpoint restoration must finish before a live mutation
+	// can be acknowledged; their snapshots may contain older node state.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -4120,7 +4099,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				_ = s.indexNodeLocked(n, true)
+				if err := s.indexNodeLocked(n, true); err != nil {
+					s.indexMu.Unlock()
+					return err
+				}
 			}
 			s.indexMu.Unlock()
 			count += len(batch)
@@ -4241,7 +4223,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			_ = s.indexNodeLocked(n, true)
+			if err := s.indexNodeLocked(n, true); err != nil {
+				s.indexMu.Unlock()
+				return err
+			}
 		}
 		s.indexMu.Unlock()
 		count += len(batch)
@@ -4375,7 +4360,7 @@ func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int) 
 	if s.tryRestoreClusteredWarmupFromDisk(ctx, clusterIndex, hnswPath) {
 		return nil
 	}
-	if err := s.TriggerClustering(ctx); err != nil {
+	if err := s.triggerClustering(ctx); err != nil {
 		return err
 	}
 	return nil
@@ -5489,6 +5474,8 @@ func (s *Service) launchScheduledStrategyTransition() {
 }
 
 func (s *Service) runStrategyTransition(target strategyMode) {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	defer func() {
 		s.strategyTransitionMu.Lock()
 		s.strategyTransitionInProgress = false
@@ -6208,6 +6195,8 @@ func (s *Service) stopHNSWMaintenance() {
 }
 
 func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}

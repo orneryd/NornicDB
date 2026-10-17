@@ -2197,7 +2197,9 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
 	if svc, _ := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
-		svc.ClearVectorIndex()
+		if err := svc.ClearVectorIndex(); err != nil {
+			return 0, err
+		}
 	}
 
 	// Unwrap storage layers to find the BadgerEngine

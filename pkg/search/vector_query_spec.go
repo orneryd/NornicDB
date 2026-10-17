@@ -43,6 +43,9 @@ type VectorQuerySpec struct {
 	// ScoreScale is the scale of each hit's Score: Neo4j's (the zero value, for
 	// Cypher) or the raw similarity (for the Qdrant API).
 	ScoreScale VectorScoreScale
+
+	// Exact evaluates every indexed node instead of an approximate candidate set.
+	Exact bool
 }
 
 // VectorScoreScale is the scale a vector query reports its scores on. It never
@@ -133,6 +136,12 @@ func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbeddin
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := s.EnsureWarm(ctx); err != nil {
+		return nil, err
+	}
+	if s.buildAttempted.Load() && !s.IsReady() {
+		return nil, localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
+	}
 	if spec.Limit <= 0 {
 		spec.Limit = 10
 	}
@@ -146,6 +155,10 @@ func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbeddin
 		similarity = "cosine"
 	}
 
+	if !s.vectorEnabled.Load() {
+		return nil, nil
+	}
+
 	// If the query dimensions don't match the configured index dimensions, Cypher expects
 	// an empty result set (not an error). The active vector backing may be either the
 	// in-memory VectorIndex or the file-backed VectorFileStore.
@@ -154,7 +167,7 @@ func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbeddin
 	}
 
 	// Fast path: cosine queries can use the indexed vector pipeline.
-	if strings.EqualFold(similarity, "cosine") {
+	if strings.EqualFold(similarity, "cosine") && !spec.Exact {
 		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName, opts)
 		if spec.ScoreScale == VectorScoreNeo4j {
 			for i := range hits {
@@ -585,14 +598,10 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 	prepared.scale = spec.ScoreScale
 
-	type scoredNode struct {
-		id    string
-		score float64
-	}
 	// scoreAll scores every node under the metadata read locks; the Where
 	// filter below reads storage, so it runs after they are released.
-	scoreAll := func() ([]scoredNode, error) {
-		scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
+	scoreAll := func() ([]vectorQueryScoredNode, error) {
+		scored := make([]vectorQueryScoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
 		// The node and relationship metadata is written under indexMu (index
 		// writes): lock order indexMu -> mu.
@@ -666,13 +675,22 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			}
 
 			if !math.IsInf(bestScore, -1) {
-				scored = append(scored, scoredNode{id: nodeID, score: bestScore})
+				scored = append(scored, vectorQueryScoredNode{id: nodeID, score: bestScore})
 			}
 		}
 
 		return scored, nil
 	}
-	scored, err := scoreAll()
+	s.mu.RLock()
+	fileBacked := s.vectorFileStore != nil
+	s.mu.RUnlock()
+	var scored []vectorQueryScoredNode
+	var err error
+	if fileBacked {
+		scored, err = s.exactStoredNodeScores(ctx, prepared, spec, vectorName)
+	} else {
+		scored, err = scoreAll()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -702,6 +720,47 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	out := make([]VectorQueryHit, 0, len(scored))
 	for _, s := range scored {
 		out = append(out, VectorQueryHit{ID: s.id, Score: s.score})
+	}
+	return out, nil
+}
+
+// exactStoredNodeScores uses the indexed population to resolve original node
+// vectors from storage. The file store retains normalized coordinates only;
+// reading the durable values preserves magnitudes without a second vector copy.
+func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVectorQuery, spec VectorQuerySpec, vectorName string) ([]vectorQueryScoredNode, error) {
+	s.indexMu.RLock()
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.nodeLabels))
+	for id, labels := range s.nodeLabels {
+		matches := spec.Label == ""
+		for _, label := range labels {
+			matches = matches || label == spec.Label
+		}
+		if matches {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.RUnlock()
+	s.indexMu.RUnlock()
+	out := make([]vectorQueryScoredNode, 0, min(len(ids), spec.Limit))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		node, err := s.engine.GetNode(storage.NodeID(id))
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		best := math.Inf(-1)
+		for _, value := range resolveCypherCandidateEmbeddings(node, spec.Property, vectorName) {
+			best = math.Max(best, prepared.score(value))
+		}
+		if !math.IsInf(best, -1) {
+			out = append(out, vectorQueryScoredNode{id: id, score: best})
+		}
 	}
 	return out, nil
 }

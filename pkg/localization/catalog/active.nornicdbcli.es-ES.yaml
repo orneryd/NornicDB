@@ -67,7 +67,7 @@
 - id: nornicdbcli.flag.search_vector_warming
   other: "Inicio vectorial: startup o lazy. Predeterminado: startup."
 - id: nornicdbcli.flag.gpu_backend
-  other: "Backend de GPU: vulkan, cuda, metal, opencl (vacío=detección automática)"
+  other: "Backend de GPU: cpu, vulkan, cuda, metal, opencl (vacío=detección automática)"
 - id: nornicdbcli.flag.no_auth
   other: Desactiva la autenticación
 - id: nornicdbcli.flag.admin_password
