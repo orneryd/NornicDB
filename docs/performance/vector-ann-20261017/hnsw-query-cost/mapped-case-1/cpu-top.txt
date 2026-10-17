@@ -1,0 +1,127 @@
+File: nornicdb-hnsw-mapped
+Type: cpu
+Time: 2026-10-17 07:40:22 MST
+Duration: 30.11s, Total samples = 25.80s (85.68%)
+Showing nodes accounting for 23.75s, 92.05% of 25.80s total
+Dropped 227 nodes (cum <= 0.13s)
+      flat  flat%   sum%        cum   cum%
+    16.09s 62.36% 62.36%     16.09s 62.36%  runtime.pthread_cond_signal
+     1.71s  6.63% 68.99%      1.71s  6.63%  syscall.rawsyscalln
+     1.67s  6.47% 75.47%      1.99s  7.71%  runtime.cgocall
+     1.52s  5.89% 81.36%      1.52s  5.89%  runtime.kevent
+     0.85s  3.29% 84.65%      0.85s  3.29%  runtime.pthread_cond_wait
+     0.29s  1.12% 85.78%      0.29s  1.12%  runtime.madvise
+     0.28s  1.09% 86.86%      0.33s  1.28%  github.com/orneryd/nornicdb/pkg/search.(*VectorFileStore).scoreCandidatesDot
+     0.24s  0.93% 87.79%      0.29s  1.12%  github.com/orneryd/nornicdb/pkg/config/dbconfig.CanonicalSettingName
+     0.20s  0.78% 88.57%      2.25s  8.72%  github.com/orneryd/nornicdb/pkg/search.searchLayerHeapKernel[go.shape.struct {}]
+     0.19s  0.74% 89.30%      0.19s  0.74%  github.com/orneryd/nornicdb/pkg/search.encodeHNSWInt8 (inline)
+     0.14s  0.54% 89.84%      0.21s  0.81%  runtime.tryDeferToSpanScan
+     0.10s  0.39% 90.23%      0.19s  0.74%  runtime.reentersyscall
+     0.09s  0.35% 90.58%      0.19s  0.74%  github.com/orneryd/nornicdb/pkg/config/dbconfig.Settings (inline)
+     0.07s  0.27% 90.85%      0.91s  3.53%  github.com/orneryd/nornicdb/pkg/config/dbconfig.Resolve
+     0.07s  0.27% 91.12%      0.25s  0.97%  runtime.scanObject
+     0.06s  0.23% 91.36%         2s  7.75%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedQuery).dot
+     0.06s  0.23% 91.59%      0.16s  0.62%  runtime.mapaccess2_faststr
+     0.03s  0.12% 91.71%      0.21s  0.81%  runtime.mallocgcSmallScanHeader
+     0.02s 0.078% 91.78%      0.26s  1.01%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchLayerSingleWithContext
+     0.01s 0.039% 91.82%      0.50s  1.94%  github.com/orneryd/nornicdb/pkg/config/dbconfig.effectiveFromGlobal
+     0.01s 0.039% 91.86%      0.34s  1.32%  github.com/orneryd/nornicdb/pkg/config/dbconfig.effectiveFromGlobal.func1 (inline)
+     0.01s 0.039% 91.90%      4.62s 17.91%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*Server).unaryLoggingInterceptor
+     0.01s 0.039% 91.94%      2.74s 10.62%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchWithEfExhaustionFromEntries
+     0.01s 0.039% 91.98%      3.67s 14.22%  github.com/orneryd/nornicdb/pkg/search.(*Service).VectorQueryNodesWithOptions (inline)
+     0.01s 0.039% 92.02%      0.24s  0.93%  github.com/orneryd/nornicdb/pkg/search.(*Service).snapshotVectorQueryCandidateMeta
+     0.01s 0.039% 92.05%      0.17s  0.66%  runtime.mapassign_faststr
+         0     0% 92.05%      0.71s  2.75%  bufio.(*Reader).Read
+         0     0% 92.05%      0.91s  3.53%  github.com/orneryd/nornicdb/pkg/nornicdb.(*DB).GetOrCreateSearchService
+         0     0% 92.05%      0.91s  3.53%  github.com/orneryd/nornicdb/pkg/nornicdb.(*DB).getOrCreateSearchService
+         0     0% 92.05%      4.61s 17.87%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*PointsService).Search
+         0     0% 92.05%      0.92s  3.57%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*PointsService).getSearchService
+         0     0% 92.05%      3.67s 14.22%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.searchCollection
+         0     0% 92.05%      0.35s  1.36%  github.com/orneryd/nornicdb/pkg/search.(*CPUExactScorer).ScoreCandidates
+         0     0% 92.05%      2.82s 10.93%  github.com/orneryd/nornicdb/pkg/search.(*HNSWCandidateGen).searchCandidatesWithExhaustion
+         0     0% 92.05%      2.82s 10.93%  github.com/orneryd/nornicdb/pkg/search.(*HNSWCandidateGen).searchCandidatesWithLexicalEntries
+         0     0% 92.05%      0.26s  1.01%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).descendLocked
+         0     0% 92.05%      1.99s  7.71%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).graphDistanceLocked
+         0     0% 92.05%      2.51s  9.73%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).levelZeroSearchLocked
+         0     0% 92.05%      2.25s  8.72%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchLayerHeapPooledFromEntriesWithContext
+         0     0% 92.05%      3.62s 14.03%  github.com/orneryd/nornicdb/pkg/search.(*Service).adaptiveVectorSearch
+         0     0% 92.05%      0.36s  1.40%  github.com/orneryd/nornicdb/pkg/search.(*Service).scoreVectorQueryCandidates
+         0     0% 92.05%      3.66s 14.19%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodes
+         0     0% 92.05%      3.66s 14.19%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexed
+         0     0% 92.05%      3.66s 14.19%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions
+         0     0% 92.05%      0.36s  1.40%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions.func1
+         0     0% 92.05%      3.17s 12.29%  github.com/orneryd/nornicdb/pkg/search.(*VectorSearchPipeline).searchWithExhaustionFromEntries
+         0     0% 92.05%      0.19s  0.74%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedVectors).query
+         0     0% 92.05%      0.91s  3.53%  github.com/orneryd/nornicdb/pkg/server.(*Server).startQdrantGRPC.func1
+         0     0% 92.05%      0.23s  0.89%  github.com/orneryd/nornicdb/pkg/server.New.func16
+         0     0% 92.05%      0.68s  2.64%  github.com/orneryd/nornicdb/pkg/server.New.func6
+         0     0% 92.05%      0.68s  2.64%  github.com/orneryd/nornicdb/pkg/server.New.func8
+         0     0% 92.05%      1.94s  7.52%  github.com/orneryd/nornicdb/pkg/simd.DotProductInt8
+         0     0% 92.05%      1.94s  7.52%  github.com/orneryd/nornicdb/pkg/simd._Cfunc_nornic_int8_dot
+         0     0% 92.05%      1.94s  7.52%  github.com/orneryd/nornicdb/pkg/simd.dotProductInt8 (inline)
+         0     0% 92.05%      4.63s 17.95%  github.com/qdrant/go-client/qdrant._Points_Search_Handler
+         0     0% 92.05%      4.61s 17.87%  github.com/qdrant/go-client/qdrant._Points_Search_Handler.func1
+         0     0% 92.05%      0.71s  2.75%  golang.org/x/net/http2.(*Framer).ReadFrameHeader
+         0     0% 92.05%      0.71s  2.75%  golang.org/x/net/http2.readFrameHeader
+         0     0% 92.05%      0.74s  2.87%  google.golang.org/grpc.(*Server).handleRawConn.func1
+         0     0% 92.05%      4.66s 18.06%  google.golang.org/grpc.(*Server).handleStream
+         0     0% 92.05%      4.66s 18.06%  google.golang.org/grpc.(*Server).processUnaryRPC
+         0     0% 92.05%      0.74s  2.87%  google.golang.org/grpc.(*Server).serveStreams
+         0     0% 92.05%      4.66s 18.06%  google.golang.org/grpc.(*Server).serveStreams.func2.1
+         0     0% 92.05%         1s  3.88%  google.golang.org/grpc/internal/transport.(*bufWriter).Flush
+         0     0% 92.05%         1s  3.88%  google.golang.org/grpc/internal/transport.(*bufWriter).flushKeepBuffer
+         0     0% 92.05%      0.71s  2.75%  google.golang.org/grpc/internal/transport.(*framer).readFrame
+         0     0% 92.05%      0.74s  2.87%  google.golang.org/grpc/internal/transport.(*http2Server).HandleStreams
+         0     0% 92.05%         1s  3.88%  google.golang.org/grpc/internal/transport.(*loopyWriter).run
+         0     0% 92.05%         1s  3.88%  google.golang.org/grpc/internal/transport.NewServerTransport.func3
+         0     0% 92.05%      0.71s  2.75%  internal/poll.(*FD).Read
+         0     0% 92.05%         1s  3.88%  internal/poll.(*FD).Write
+         0     0% 92.05%      1.71s  6.63%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 92.05%      0.13s   0.5%  internal/runtime/maps.(*table).grow
+         0     0% 92.05%      0.13s   0.5%  internal/runtime/maps.(*table).rehash
+         0     0% 92.05%      0.13s   0.5%  internal/runtime/maps.newGroups (inline)
+         0     0% 92.05%      0.13s   0.5%  internal/runtime/maps.newarray
+         0     0% 92.05%      0.71s  2.75%  io.ReadAtLeast
+         0     0% 92.05%      0.71s  2.75%  io.ReadFull (inline)
+         0     0% 92.05%      0.71s  2.75%  net.(*conn).Read
+         0     0% 92.05%         1s  3.88%  net.(*conn).Write
+         0     0% 92.05%      0.71s  2.75%  net.(*netFD).Read
+         0     0% 92.05%         1s  3.88%  net.(*netFD).Write
+         0     0% 92.05%      0.31s  1.20%  runtime.(*mheap).alloc.func1
+         0     0% 92.05%      0.31s  1.20%  runtime.(*mheap).allocSpan
+         0     0% 92.05%      0.20s  0.78%  runtime.entersyscall
+         0     0% 92.05%      2.11s  8.18%  runtime.findRunnable
+         0     0% 92.05%      0.45s  1.74%  runtime.gcBgMarkWorker
+         0     0% 92.05%      0.75s  2.91%  runtime.gcBgMarkWorker.func2
+         0     0% 92.05%      0.75s  2.91%  runtime.gcDrain
+         0     0% 92.05%      0.23s  0.89%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0% 92.05%      0.52s  2.02%  runtime.gcDrainMarkWorkerIdle (inline)
+         0     0% 92.05%      0.84s  3.26%  runtime.mPark (inline)
+         0     0% 92.05%      0.13s   0.5%  runtime.makeslice
+         0     0% 92.05%      0.32s  1.24%  runtime.mallocgc
+         0     0% 92.05%      2.29s  8.88%  runtime.mcall
+         0     0% 92.05%      1.52s  5.89%  runtime.netpoll
+         0     0% 92.05%      0.13s   0.5%  runtime.newarray
+         0     0% 92.05%      0.84s  3.26%  runtime.notesleep
+         0     0% 92.05%     16.09s 62.36%  runtime.notewakeup
+         0     0% 92.05%      2.22s  8.60%  runtime.park_m
+         0     0% 92.05%      0.30s  1.16%  runtime.pollWork
+         0     0% 92.05%     15.81s 61.28%  runtime.ready
+         0     0% 92.05%      0.15s  0.58%  runtime.resetspinning
+         0     0% 92.05%      0.18s   0.7%  runtime.scanSpan
+         0     0% 92.05%      2.26s  8.76%  runtime.schedule
+         0     0% 92.05%      0.85s  3.29%  runtime.semasleep
+         0     0% 92.05%     16.09s 62.36%  runtime.semawakeup
+         0     0% 92.05%     15.81s 61.28%  runtime.send.goready.func1
+         0     0% 92.05%     16.01s 62.05%  runtime.startm
+         0     0% 92.05%      0.84s  3.26%  runtime.stopm
+         0     0% 92.05%      0.29s  1.12%  runtime.sysUsed (inline)
+         0     0% 92.05%      0.29s  1.12%  runtime.sysUsedOS (inline)
+         0     0% 92.05%     17.11s 66.32%  runtime.systemstack
+         0     0% 92.05%     16.01s 62.05%  runtime.wakep
+         0     0% 92.05%      0.71s  2.75%  syscall.Read (inline)
+         0     0% 92.05%         1s  3.88%  syscall.Write (inline)
+         0     0% 92.05%      0.71s  2.75%  syscall.read
+         0     0% 92.05%      1.71s  6.63%  syscall.syscall
+         0     0% 92.05%      1.71s  6.63%  syscall.syscalln
+         0     0% 92.05%         1s  3.88%  syscall.write
