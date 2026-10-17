@@ -797,8 +797,8 @@ type Service struct {
 	vectorFileStore *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
 	// indexMu protects which complete source owns live membership, including
 	// an empty source after clear or a persistence-off interval.
-	nodeSources            nodeSourceRecord
-	nodeAdmission          *nodePopulationAdmission
+	nodeSources   nodeSourceRecord
+	nodeAdmission *nodePopulationAdmission
 
 	// Live writes a running NODE population folds in, latest state per ID
 	// (nil: removed); indexMu protects them (see applyWrite).
