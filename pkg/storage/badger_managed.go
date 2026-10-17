@@ -188,7 +188,9 @@ func (m *managedBadgerDB) commit(txn *badger.Txn, onAssign ...func()) error {
 // commitPublishing is commit for a commit with a derived-state publication
 // (nil for none): the publication runs in the ordered stage, and the commit
 // returns once the stage has applied every commit up to its own
-// (commitOracle.applyThrough).
+// (commitOracle.applyThrough). A commit without one changes no derived
+// state and does not run the stage: its caller may hold a lock that another
+// commit's publication takes.
 func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish func(), onAssign ...func()) error {
 	ts, err := m.commitShared(txn, publish, onAssign...)
 	if err != nil {
@@ -197,7 +199,9 @@ func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish func(), onAs
 	if err := m.oracle.waitPublished(ts); err != nil {
 		return err
 	}
-	m.oracle.applyThrough(ts)
+	if publish != nil {
+		m.oracle.applyThrough(ts)
+	}
 	return nil
 }
 
@@ -498,9 +502,11 @@ func (lc *largeCommit) finish(w *batchWriter, publish func()) error {
 	}
 	lc.db.oracle.publishAt(lc.intentTs, publish)
 	lc.release()
-	// The gate was exclusive, so nothing is assigned below lastTs that is
-	// still unfinished: releasing the intent published every batch.
-	lc.db.oracle.applyThrough(lc.lastTs)
+	if publish != nil {
+		// The gate was exclusive, so nothing is assigned below lastTs that
+		// is still unfinished: releasing the intent published every batch.
+		lc.db.oracle.applyThrough(lc.lastTs)
+	}
 	return nil
 }
 
