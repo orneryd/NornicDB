@@ -505,6 +505,17 @@ func (v *VectorFileStore) Count() int {
 	return len(v.idToOrdinal)
 }
 
+// IDs returns the IDs of the vectors in the store, without reading them.
+func (v *VectorFileStore) IDs() []string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	ids := make([]string, 0, len(v.idToOrdinal))
+	for id := range v.idToOrdinal {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (v *VectorFileStore) vectorStride() (int64, bool) {
 	bytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	return int64(bytes), ok

@@ -501,7 +501,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 
 	// No embeddings: warmup is a no-op.
 	var nilCtx context.Context
-	svc.warmupVectorPipeline(nilCtx)
+	svc.warmupVectorPipeline(nilCtx, nil)
 	svc.pipelineMu.RLock()
 	require.Nil(t, svc.vectorPipeline)
 	svc.pipelineMu.RUnlock()
@@ -516,7 +516,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
 	// Embeddings present: warmup builds a ready pipeline.
-	svc.warmupVectorPipeline(context.Background())
+	svc.warmupVectorPipeline(context.Background(), nil)
 	svc.pipelineMu.RLock()
 	require.NotNil(t, svc.vectorPipeline)
 	svc.pipelineMu.RUnlock()
@@ -2705,8 +2705,8 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 	s := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 
 	// Restore shortcut branches.
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, ""))
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope"))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "", nil))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope", nil))
 
 	// maybeRebuild: no index and min-interval path should no-op.
 	require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.1, 1.1, time.Second))
@@ -2735,15 +2735,15 @@ func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
 	// Force lagging cluster state so backfill branch executes from in-memory vectors.
 	svc.clusterIndex.Clear()
 	require.Equal(t, 0, svc.clusterIndex.Count())
-	svc.ensureClusterIndexBackfilled(2)
+	svc.reconcileClusterPopulation(2)
 	require.GreaterOrEqual(t, svc.clusterIndex.Count(), 2)
 
 	// Invalid/missing IVF-HNSW path should deterministically return false (no panic).
 	svc.hnswIndexPath = filepath.Join(t.TempDir(), "missing_hnsw")
-	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath))
+	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath, nil))
 
 	// With clustering enabled and enough vectors, warmup should run clustering path.
-	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2))
+	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2, nil))
 	require.True(t, svc.clusterIndex.IsClustered())
 }
 
@@ -3033,7 +3033,7 @@ func TestSearchHelpers_TryRestoreClusteredWarmupFromDisk_Success(t *testing.T) {
 		1: cluster1,
 	}))
 
-	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath)
+	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath, nil)
 	require.True(t, restored)
 	require.True(t, svc.clusterIndex.IsClustered())
 	require.Equal(t, 2, svc.clusterIndex.NumClusters())

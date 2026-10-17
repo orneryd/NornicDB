@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -22,6 +23,7 @@ type GPUKMeansCandidateGen struct {
 	clusterIndex        *gpu.ClusterIndex
 	numClustersToSearch int
 	clusterSelector     func(ctx context.Context, query []float32, defaultN int) []int
+	serving             *clusterServing // when set: the published generation, per query
 }
 
 func NewGPUKMeansCandidateGen(clusterIndex *gpu.ClusterIndex, numClustersToSearch int) *GPUKMeansCandidateGen {
@@ -40,28 +42,40 @@ func (g *GPUKMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, 
 	return g
 }
 
+// SetServing makes the generator route each query on the published cluster
+// generation (see IVFHNSWCandidateGen.SetServing); the selector is then
+// called with lock held.
+func (g *GPUKMeansCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.ClusterIndex, int)) *GPUKMeansCandidateGen {
+	g.serving = &clusterServing{lock: lock, resolve: resolve}
+	return g
+}
+
 func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
-	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
+	// The routing and the routed members come from one cluster generation;
+	// scoring runs after its lock is released.
+	clusterIndex, probes, release := g.serving.route(g.clusterIndex, g.numClustersToSearch)
+	if clusterIndex == nil || !clusterIndex.IsClustered() {
+		release()
 		return nil, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
 	}
 
 	clusterIDs := []int(nil)
 	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+		clusterIDs = g.clusterSelector(ctx, query, probes)
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+		clusterIDs = clusterIndex.FindNearestClusters(query, probes)
 	}
-	if len(clusterIDs) == 0 {
-		return []Candidate{}, nil
+	var ids []string
+	if len(clusterIDs) > 0 {
+		ids = clusterIndex.GetClusterMemberIDs(clusterIDs)
 	}
-
-	ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
+	release()
 	if len(ids) == 0 {
 		return []Candidate{}, nil
 	}
 
-	results, err := g.clusterIndex.ScoreSubset(query, ids)
+	results, err := clusterIndex.ScoreSubset(query, ids)
 	if err != nil {
 		return nil, err
 	}
