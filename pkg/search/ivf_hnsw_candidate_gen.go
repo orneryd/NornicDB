@@ -73,6 +73,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 			if err != nil {
 				return nil, err
 			}
+			// ScoreSubset orders the selected population by similarity. Bound
+			// it before conversion, including an empty/non-positive budget.
+			results = results[:min(len(results), boundCandidateLimit(k))]
 			out := make([]Candidate, 0, len(results))
 			for _, r := range results {
 				score := float64(r.Score)
@@ -80,9 +83,6 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 					continue
 				}
 				out = append(out, Candidate{ID: r.ID, Score: score})
-				if len(out) == boundCandidateLimit(k) {
-					break
-				}
 			}
 			return out, nil
 		}
