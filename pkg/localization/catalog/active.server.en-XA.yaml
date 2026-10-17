@@ -211,6 +211,9 @@
 - id: server.log.database_config_store_load_failed
   description: Pseudo-locale per-database config store warning.
   other: "[!! failed to load per-DB config store !!]"
+- id: server.log.apoc_triggers_load_failed
+  description: Pseudo-locale APOC trigger store warning.
+  other: "[!! failed to load APOC triggers !!]"
 - id: server.log.http_serve_failed
   description: Pseudo-locale HTTP serving error.
   other: "[!! http server error !!]"

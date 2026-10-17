@@ -18,7 +18,7 @@ import (
 // namespace.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
 	if len(nodes) > 0 && nodes[0] != nil {
-		if handled, err := b.inCaptureTransaction(string(nodes[0].ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(nodes[0].ID), func(tx *BadgerTransaction) error {
 			for _, node := range nodes {
 				if _, err := tx.CreateNode(node); err != nil {
 					return err
@@ -172,7 +172,7 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 // a missing endpoint with ErrNotFound; nothing is written.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 	if len(edges) > 0 && edges[0] != nil {
-		if handled, err := b.inCaptureTransaction(string(edges[0].ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(edges[0].ID), func(tx *BadgerTransaction) error {
 			for _, edge := range edges {
 				if err := tx.CreateEdge(edge); err != nil {
 					return err

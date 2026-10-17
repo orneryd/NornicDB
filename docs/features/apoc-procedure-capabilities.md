@@ -9,6 +9,12 @@ procedures.
 
 Of those 118 historical entries, 16 have a registered native procedure contract
 (including the new `apoc.cypher.doIt`); 102 have no bundled procedure declaration.
+
+**Since v1.4.5:** the nine `apoc.trigger.*` procedures have native contracts
+([APOC triggers](apoc-triggers.md)), and the library catalog no longer lists
+them or the 15 other `apoc.trigger.*` names, which were not APOC and never
+fired. The catalog has 959 names; the plugin exports 850; 109 procedure-only
+entries remain, 93 of them without a bundled procedure declaration.
 The table names every remaining gap. A registered contract is not certification
 of full Neo4j/APOC parity. The new `doIt` read/write, parameter/result, exact-case,
 and caller-rollback controls were checked independently against the reference.
@@ -150,15 +156,15 @@ contracts. It does not synthesize them from function registrations.
 | `apoc.search.nodeReduced` | Core procedure | **Not implemented by bundled runtime/plugin** |
 | `apoc.stats.degrees` | Core procedure | **Not implemented by bundled runtime/plugin** |
 | `apoc.text.phoneticDelta` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.add` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.drop` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.install` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.list` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.pause` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.remove` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.removeAll` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.resume` | Core procedure | **Not implemented by bundled runtime/plugin** |
-| `apoc.trigger.show` | Core procedure | **Not implemented by bundled runtime/plugin** |
+| `apoc.trigger.add` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.drop` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.install` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.list` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.pause` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.remove` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.removeAll` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.resume` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
+| `apoc.trigger.show` | Core procedure | Registered native contract (v1.4.5, [APOC triggers](apoc-triggers.md)) |
 | `apoc.util.sleep` | Core procedure | **Not implemented by bundled runtime/plugin** |
 | `apoc.util.validate` | Core procedure | **Not implemented by bundled runtime/plugin** |
 | `apoc.warmup.run` | Core procedure | **Not implemented by bundled runtime/plugin** |

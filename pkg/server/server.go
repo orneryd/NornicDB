@@ -186,6 +186,7 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	"github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -751,6 +752,10 @@ type Server struct {
 	// Cached Cypher executors per database (thread-safe, reusable)
 	executorsMu sync.RWMutex
 	executors   map[string]*cypher.StorageExecutor
+
+	// triggerRuntime runs the databases' APOC triggers; nil when the
+	// system database is unavailable.
+	triggerRuntime *cypher.TriggerRuntime
 
 	// Explicit transaction sessions shared across transports.
 	txSessions *txsession.Manager
@@ -1699,6 +1704,24 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		} else {
 			s.roleStore = roleStore
 		}
+		// APOC triggers (apoc.trigger.*): kept in the system database, they
+		// run at the commits of the database they're installed on.
+		triggerRuntime, triggerErr := cypher.NewTriggerRuntime(ctx, cypher.TriggerRuntimeConfig{
+			Engine:      systemStorage,
+			System:      systemStorage,
+			ExecutorFor: s.getExecutorForDatabase,
+			DatabaseExists: func(name string) bool {
+				return dbManager.Exists(name) && !dbManager.IsCompositeDatabase(name)
+			},
+			SystemDatabase: "system",
+			Enabled:        apoc.LoadFromEnv().Trigger.Enabled,
+			Logger:         slog.Default(),
+		})
+		if triggerErr != nil {
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerAPOCTriggersLoadFailedEvent(triggerErr))
+		} else {
+			s.triggerRuntime = triggerRuntime
+		}
 		allowlistStore := auth.NewAllowlistStore(systemStorage)
 		if loadErr := allowlistStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACAllowlistLoadFailedEvent(loadErr))
@@ -2031,6 +2054,11 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	}
 
 	s.stopQdrantGRPC()
+
+	// No trigger fires once the server stops; queued afterAsync work ends.
+	if s.triggerRuntime != nil {
+		s.triggerRuntime.Close()
+	}
 
 	// Stop rate limiter cleanup goroutine
 	if s.rateLimiter != nil {

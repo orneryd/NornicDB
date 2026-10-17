@@ -343,6 +343,13 @@ func (a *databaseManagerAdapter) DropDatabase(name string) error {
 		a.db.DropSearchServiceState(name)
 		a.db.ResetInferenceService(name)
 	}
+	// A database created later with the same name starts without the
+	// dropped one's triggers.
+	if a.server != nil && a.server.triggerRuntime != nil {
+		if err := a.server.triggerRuntime.DropDatabase(name); err != nil {
+			return err
+		}
+	}
 	// Invalidate cached executor for dropped database
 	if a.server != nil {
 		a.server.invalidateExecutor(name)

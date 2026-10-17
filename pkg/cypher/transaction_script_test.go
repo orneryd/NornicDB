@@ -223,12 +223,13 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
-	res, err := exec.parseTransactionStatement("MATCH (n) RETURN n")
+	res, err := exec.parseTransactionStatement(ctx, "MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
-	res, err = exec.parseTransactionStatement("BEGIN")
+	res, err = exec.parseTransactionStatement(ctx, "BEGIN")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, []string{"status"}, res.Columns)
@@ -284,15 +285,16 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 
 	store := storage.NewNamespacedEngine(asyncEngine, "test")
 	exec := NewStorageExecutor(store)
+	ctx := context.Background()
 
-	beginRes, err := exec.parseTransactionStatement("BEGIN TRANSACTION")
+	beginRes, err := exec.parseTransactionStatement(ctx, "BEGIN TRANSACTION")
 	require.NoError(t, err)
 	require.Equal(t, "Transaction started", beginRes.Rows[0][0])
 	require.NotNil(t, exec.txContext)
 	assert.NotNil(t, exec.txContext.wal)
 	assert.Greater(t, exec.txContext.walSeqStart, uint64(0))
 
-	commitRes, err := exec.parseTransactionStatement("COMMIT TRANSACTION")
+	commitRes, err := exec.parseTransactionStatement(ctx, "COMMIT TRANSACTION")
 	require.NoError(t, err)
 	require.Equal(t, "Transaction committed", commitRes.Rows[0][0])
 	require.NotNil(t, commitRes.Metadata)

@@ -16,7 +16,7 @@ import (
 // CreateEdge creates a new edge between two nodes.
 func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if edge != nil {
-		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(edge)
 		}); handled {
 			return err
@@ -247,7 +247,7 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 // UpdateEdge updates an existing edge.
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	if edge != nil {
-		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.UpdateEdge(edge)
 		}); handled {
 			return err
@@ -472,7 +472,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
-	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+	if handled, err := b.inCommitTransaction(string(id), func(tx *BadgerTransaction) error {
 		return tx.DeleteEdge(id)
 	}); handled {
 		return err
@@ -732,7 +732,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 // the call, are skipped.
 func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 	if len(ids) > 0 {
-		if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
 			for _, id := range ids {
 				if err := tx.DeleteNode(id); err != nil && !errors.Is(err, ErrNotFound) {
 					return err
@@ -765,7 +765,7 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
 func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
 	if len(ids) > 0 {
-		if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
+		if handled, err := b.inCommitTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
 			for _, id := range ids {
 				if err := tx.DeleteEdge(id); err != nil && !errors.Is(err, ErrNotFound) {
 					return err

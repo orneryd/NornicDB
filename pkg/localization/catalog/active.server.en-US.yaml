@@ -211,6 +211,9 @@
 - id: server.log.database_config_store_load_failed
   description: Per-database configuration store load failure warning.
   other: failed to load per-DB config store
+- id: server.log.apoc_triggers_load_failed
+  description: APOC trigger store load failure warning.
+  other: failed to load APOC triggers
 - id: server.log.http_serve_failed
   description: Unexpected HTTP serving failure log.
   other: http server error

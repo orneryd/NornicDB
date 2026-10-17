@@ -42,6 +42,9 @@ var (
 	ErrTransactionActive   = errors.New("transaction already active")
 	ErrTransactionClosed   = errors.New("transaction already closed")
 	ErrTransactionRollback = errors.New("transaction rolled back")
+	// ErrCommitHookReentry: a commit hook called Commit or Rollback on the
+	// transaction it runs for (commit_hooks.go).
+	ErrCommitHookReentry = errors.New("commit hook cannot end its own transaction")
 )
 
 // generateTxID generates a unique transaction ID using UUID v4.

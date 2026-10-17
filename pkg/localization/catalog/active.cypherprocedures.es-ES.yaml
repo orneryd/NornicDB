@@ -122,3 +122,23 @@
   other: "el cuerpo del procedimiento READ contiene operaciones de escritura"
 - id: cypherprocedures.argument_count
   other: "el procedimiento {{.Procedure}} requiere {{.Expected}} argumentos; se recibieron {{.Actual}}"
+- id: cypherprocedures.trigger_not_enabled
+  other: "Los triggers no están habilitados. Establezca 'apoc.trigger.enabled=true' (NORNICDB_APOC_TRIGGER_ENABLED=true) en la configuración."
+- id: cypherprocedures.trigger_system_database_required
+  other: "El procedimiento debe ejecutarse en la base de datos system."
+- id: cypherprocedures.trigger_database_not_found
+  other: "La base de datos de usuario con nombre '{{.Database}}' no existe"
+- id: cypherprocedures.trigger_bad_target
+  other: "Los triggers solo se pueden instalar en bases de datos de usuario."
+- id: cypherprocedures.trigger_statement_invalid
+  other: "trigger {{.Name}}: sentencia no válida: {{.Cause}}"
+- id: cypherprocedures.trigger_phase_invalid
+  other: "fase de trigger no válida '{{.Phase}}': se esperaba before, after, rollback o afterAsync"
+- id: cypherprocedures.trigger_params_invalid
+  other: "parámetros de trigger no válidos: {{.Cause}}"
+- id: cypherprocedures.trigger_not_found
+  other: "trigger no encontrado: {{.Name}}"
+- id: cypherprocedures.trigger_store_failed
+  other: "almacén de triggers: {{.Cause}}"
+- id: cypherprocedures.trigger_failed
+  other: "Error al ejecutar los triggers {{.Failures}}"

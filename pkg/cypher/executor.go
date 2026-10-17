@@ -1646,7 +1646,7 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(cypher)
-	needsTransaction := info.IsWriteQuery || (matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
+	needsTransaction := statementNeedsTransaction(info, cypher)
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
@@ -1666,6 +1666,16 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+}
+
+// statementNeedsTransaction is the one decision whether an auto-commit
+// statement (or an auto-commit Fabric fragment) runs in an implicit
+// transaction: one that writes, by a write clause or by calling a procedure
+// that writes data, and tx.setMetaData, which sets the transaction's
+// metadata.
+func statementNeedsTransaction(info *QueryInfo, cypher string) bool {
+	return info.IsWriteQuery || (info.HasCall && callsDataWriteProcedure(cypher)) ||
+		(matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
 }
 
 // executeWithImplicitTransaction wraps a write query in a single implicit
@@ -1846,7 +1856,9 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
-	if err := tx.CommitContext(ctx); err != nil {
+	// It carries the statement's transaction view, so the database's before
+	// triggers run over it (apoc_trigger_runtime.go).
+	if err := tx.CommitContext(txCtx); err != nil {
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())

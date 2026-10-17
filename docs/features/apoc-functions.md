@@ -3,7 +3,7 @@
 NornicDB has `apoc.*` functions and procedures from two sources:
 
 - **Built into the executor**, always available: inspect `SHOW FUNCTIONS` and `SHOW PROCEDURES` for the current registered surface.
-- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 983 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
+- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 959 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
 
 Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
 
@@ -83,7 +83,7 @@ to their declared element types. Null binds to nullable Go interfaces, pointers,
 slices, or maps; it does not silently become an integer or other scalar zero.
 
 This removes the previous 18-signature dispatcher ceiling, not every capability
-limitation in the 983-name inventory. Cypher does not supply Go callbacks,
+limitation in the 959-name inventory. Cypher does not supply Go callbacks,
 `io.Reader` instances, or private APOC entity structs. Multiple non-error return
 values and function/channel return types are unsupported handler contracts.
 Transporting an arbitrary Go object is not guaranteed by accepting its Go
@@ -166,7 +166,7 @@ docker run \
 | `apoc.search.*`    | 30+       | Full-text search (fuzzy, regex, autocomplete)           |
 | `apoc.spatial.*`   | 25+       | Geographic functions (distance, bearing)                |
 | `apoc.stats.*`     | 30+       | Statistics (mean, median, correlation)                  |
-| `apoc.trigger.*`   | 20+       | Trigger management (onCreate, onUpdate)                 |
+| `apoc.trigger.*`   | 9         | Triggers: native procedures ([APOC triggers](apoc-triggers.md)) |
 | `apoc.warmup.*`    | 15+       | Database warmup (cache, indexes)                        |
 | `apoc.xml.*`       | 25+       | XML processing (parse, query, transform)                |
 
@@ -965,26 +965,21 @@ RETURN apoc.temporal.age(birthdate) AS age
 RETURN apoc.temporal.timezone(datetime(), 'America/New_York') AS nyTime
 ```
 
-### Trigger Management (`apoc.trigger.*`)
+### Triggers (`apoc.trigger.*`)
+
+Triggers are native procedures, as in Neo4j 5 APOC; see [APOC triggers](apoc-triggers.md).
 
 ```cypher
-// Add trigger
-CALL apoc.trigger.add('onPersonCreate',
-  'MATCH (n:Person) SET n.created = timestamp()',
-  {phase: 'after'}
+// On the system database: stamp every created :Person in the same transaction
+CALL apoc.trigger.install('nornic', 'onPersonCreate',
+  'UNWIND $createdNodes AS n WITH n WHERE n:Person SET n.created = timestamp()',
+  {phase: 'before'}
 )
 
-// List triggers
-CALL apoc.trigger.list()
-YIELD name, statement, enabled
-RETURN name, statement, enabled
-
-// Pause/resume triggers
-CALL apoc.trigger.pause('onPersonCreate')
-CALL apoc.trigger.resume('onPersonCreate')
-
-// Remove trigger
-CALL apoc.trigger.remove('onPersonCreate')
+CALL apoc.trigger.show('nornic')
+CALL apoc.trigger.stop('nornic', 'onPersonCreate')
+CALL apoc.trigger.start('nornic', 'onPersonCreate')
+CALL apoc.trigger.drop('nornic', 'onPersonCreate')
 ```
 
 ### Warmup Functions (`apoc.warmup.*`)
@@ -1118,8 +1113,8 @@ Build plugins on the same platform/architecture as your NornicDB deployment.
 What carries over from Neo4j with APOC, and what doesn't:
 
 - **Built-in functions:** `SHOW FUNCTIONS` lists 48 built-in `apoc.*` functions (49 beside a loaded plugin's case-distinct `apoc.coll.SUM`). Of the original 36, 31 are real APOC functions, four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function. The twelve [native graph, path and temporal functions](#native-graph-and-temporal-values) — `apoc.node.id`, `apoc.node.labels`, `apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`, `apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`, `apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` — bring the total to 48. `apoc.node.id` and `apoc.rel.id` keep NornicDB's accepted string-ID design exception; they do not implement Neo4j's numeric internal IDs.
-- **Built-in procedures:** `SHOW PROCEDURES` lists the current registered surface. The GDS-named graph catalog — `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, and `gds.graph.project` — now takes GDS's parameters and returns GDS's columns, as do `gds.fastRP.stream` / `gds.fastRP.stats` (#1161 closed); `gds.version` answers as a function. The `gds.linkPrediction.*.stream` names and the `apoc.algo.*` family remain [NornicDB extensions](#nornicdb-extensions). The remaining procedure capability gaps — the 102 of 118 historical procedure-only catalog entries with no bundled `CALL` contract — are tracked in the [versioned procedure capability audit](apoc-procedure-capabilities.md) and [#1318](https://github.com/orneryd/NornicDB/issues/1318).
-- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports, exporting the other 865. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
+- **Built-in procedures:** `SHOW PROCEDURES` lists the current registered surface. The GDS-named graph catalog — `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, and `gds.graph.project` — now takes GDS's parameters and returns GDS's columns, as do `gds.fastRP.stream` / `gds.fastRP.stats` (#1161 closed); `gds.version` answers as a function. The `gds.linkPrediction.*.stream` names and the `apoc.algo.*` family remain [NornicDB extensions](#nornicdb-extensions). The remaining procedure capability gaps — the 93 of 118 historical procedure-only catalog entries with no bundled `CALL` contract (the nine `apoc.trigger.*` procedures are native since v1.4.5, see [APOC triggers](apoc-triggers.md)) — are tracked in the [versioned procedure capability audit](apoc-procedure-capabilities.md) and [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+- **The APOC plugin:** the Go library catalog has 959 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 109 confirmed procedure-only entries from scalar function exports, exporting the other 850. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
 - File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
 ## NornicDB extensions
@@ -1138,7 +1133,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 **Built-in functions (4, and one procedure offered as a function):** `apoc.coll.containsAny`, `apoc.coll.reverse`, `apoc.meta.isType` and `apoc.meta.type` (APOC 5's are `apoc.meta.cypher.isType` / `apoc.meta.cypher.type`); `apoc.coll.split` is an APOC procedure.
 
-**The APOC plugin:** the historical catalog includes NornicDB extensions and 118 procedure-only entries, now excluded from function exports. The following historical inventory is not a declaration that every listed capability is implemented:
+**The APOC plugin:** the historical catalog includes NornicDB extensions and 118 procedure-only entries (109 since the `apoc.trigger.*` procedures became native), now excluded from function exports. The following historical inventory is not a declaration that every listed capability is implemented:
 
 <details><summary>The plugin's names that aren't APOC names: 689 (historical inventory; the original audit's 55 measured-callable names are in <b>bold</b> and are not a current capability claim)</summary>
 
@@ -1165,7 +1160,6 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 - `apoc.merge` (17): batch, conditional, conflict, deepMerge, labels, mergeNode, mergeRelationship, nodeEager, nodes, pattern, preview, properties, relationshipEager, rollback, snapshot, strategy, validate
 - `apoc.hashing` (16): cityHash64, consistentHash, fnv1, fnv164, fnv1a, fnv1a64, jumpHash, md5, murmurHash3, rendezvousHash, sha1, sha256, sha384, sha512, xxHash32, xxHash64
 - `apoc.import` (16): batch, convertType, csvData, cypher, cypherData, file, filter, graphMLData, jsonData, merge, parseCsvLine, parseJsonLine, stream, transform, url, validateSchema
-- `apoc.trigger` (15): after, afterAsync, before, count, disable, enable, export, import, isEnabled, nodeByLabel, onCreate, onDelete, onUpdate, relationshipByType, stats
 - `apoc.bitwise` (14): and, clearBit, countBits, leftShift, not, or, reverseBits, rightShift, rotateLeft, rotateRight, setBit, testBit, toggleBit, xor
 - `apoc.export` (14): csv, csvAll, csvData, cypher, cypherAll, cypherData, graphML, graphMLAll, graphMLData, json, jsonAll, jsonData, toFile, toString
 - `apoc.nodes` (14): batch, difference, distinct, distinctRels, filter, fromMap, intersect, map, partition, reduce, relationships, sort, toMap, union
@@ -1189,7 +1183,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 </details>
 
-<details><summary>Historical procedure-only catalog entries: 118 (16 have registered native contracts; 102 have no bundled CALL contract — see the capability audit)</summary>
+<details><summary>Historical procedure-only catalog entries: 118 (16 have registered native contracts, and the nine apoc.trigger procedures since v1.4.5; 93 have no bundled CALL contract — see the capability audit)</summary>
 
 - `apoc.create` (13): addLabels, node, nodes, relationship, removeLabels, removeProperties, removeRelProperties, setProperties, setProperty, setRelProperties, setRelProperty, uuids, vNodes
 - `apoc.load` (12): csv, directory, driver, html, jdbc, jdbcUpdate, json, jsonArray, jsonParams, ldap, parquet, xml

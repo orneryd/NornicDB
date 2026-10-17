@@ -130,6 +130,8 @@
   other: "confirmación: la transacción tiene escrituras pero no un espacio de nombres fijado"
 - id: storage.transaction.commit_conflict
   other: "conflicto detectado: una transacción simultánea modificó los datos antes de la confirmación: {{.Cause}}"
+- id: storage.transaction.commit_hook_reentry
+  other: "un hook de confirmación no puede confirmar ni revertir la transacción para la que se ejecuta"
 - id: storage.transaction.large_commit_unrecoverable
   other: "el almacenamiento rechaza escrituras hasta reiniciar: no se pudo revertir una confirmación grande fallida: {{.Cause}}"
 - id: storage.transaction.metadata_too_large

@@ -19,6 +19,7 @@
 //	NORNICDB_APOC_SECURITY_ALLOW_REMOTE_URL_ACCESS - Allow APOC load/import HTTP(S) fetches (default: false)
 //	NORNICDB_APOC_SECURITY_FILE_ACCESS_ROOT - Rebase local APOC file URLs under this directory when set
 //	NORNICDB_APOC_SECURITY_MAX_COLLECTION_SIZE - Max collection size (default: 100000)
+//	NORNICDB_APOC_TRIGGER_ENABLED   - Enable apoc.trigger.* triggers (default: false)
 //
 // Example Docker Usage:
 //
@@ -60,6 +61,9 @@ type Config struct {
 	// Security settings
 	Security SecurityConfig `yaml:"security"`
 
+	// Trigger settings (apoc.trigger.*)
+	Trigger TriggerConfig `yaml:"trigger"`
+
 	// PluginsDir is the directory to auto-load .so plugins from (optional)
 	// If set, all .so files in this directory are loaded on Initialize()
 	// Can be set via NORNICDB_PLUGINS_DIR environment variable
@@ -90,6 +94,14 @@ type SecurityConfig struct {
 	FileAccessRoot string `yaml:"file_access_root"`
 	// MaxCollectionSize limits collection function input sizes
 	MaxCollectionSize int `yaml:"max_collection_size"`
+}
+
+// TriggerConfig is APOC's apoc.trigger.* configuration.
+type TriggerConfig struct {
+	// Enabled is apoc.trigger.enabled: the trigger procedures work and
+	// installed triggers fire. False by default, as in APOC.
+	// NORNICDB_APOC_TRIGGER_ENABLED sets it.
+	Enabled bool `yaml:"enabled"`
 }
 
 // DefaultConfig returns a configuration with all functions enabled.
@@ -204,6 +216,9 @@ func LoadFromEnv() *Config {
 			cfg.Security.MaxCollectionSize = size
 		}
 	}
+	if val := os.Getenv("NORNICDB_APOC_TRIGGER_ENABLED"); val != "" {
+		cfg.Trigger.Enabled = parseBool(val, false)
+	}
 
 	return cfg
 }
@@ -301,6 +316,9 @@ func LoadFromEnvOrFile(filePath string) *Config {
 		if size, err := strconv.Atoi(val); err == nil {
 			cfg.Security.MaxCollectionSize = size
 		}
+	}
+	if val := os.Getenv("NORNICDB_APOC_TRIGGER_ENABLED"); val != "" {
+		cfg.Trigger.Enabled = parseBool(val, cfg.Trigger.Enabled)
 	}
 
 	return cfg

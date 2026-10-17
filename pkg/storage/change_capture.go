@@ -20,7 +20,7 @@ import (
 // written in the same Badger commit as the change, by BadgerTransaction.Commit
 // alone: the commit's states (newCommitStates) give each entity's state
 // before and after. A write that would bypass a transaction runs in one for
-// such a database (BadgerEngine.inCaptureTransaction). Events are keyed in
+// such a database (BadgerEngine.inCommitTransaction). Events are keyed in
 // the database's commit order: commits of one capturing database take its
 // change log in turn, from before their writes until they end.
 
@@ -592,6 +592,18 @@ func keyValues(names []string, properties map[string]any) map[string]any {
 		values[name] = value
 	}
 	return values
+}
+
+// ChangedProperties is the change-capture property diff, for commit hooks
+// (commit_hooks.go): the keys whose value differs between before and after.
+func ChangedProperties(before, after map[string]any) []string {
+	return changedProperties(before, after)
+}
+
+// LabelChanges is the change-capture label diff, for commit hooks: the
+// labels after lacks and the labels before lacks.
+func LabelChanges(before, after []string) (removed, added []string) {
+	return labelChanges(before, after)
 }
 
 // changedProperties returns the keys whose value differs between before and
