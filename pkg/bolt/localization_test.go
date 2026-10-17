@@ -51,7 +51,7 @@ func TestSessionLocalizesHelloAuthenticationMessagesFromProcessDefault(t *testin
 	require.Equal(t, "No hay ninguna transacción que confirmar", session.localize(localization.BoltNoTransactionToCommit()))
 	require.Equal(t, "Database access is not allowed for user 'analytics' with roles [admin, reader].", localization.DatabaseAccessDenied("analytics", []string{"reader", "admin", "reader"}).Fallback)
 	require.Equal(t, "Database access is not allowed for user 'analytics' with no roles.", localization.DatabaseAccessDenied("analytics", nil).Fallback)
-	require.Equal(t, "Write on database 'analytics' is not allowed.", localization.DatabaseWriteDenied("analytics").Fallback)
+	require.Equal(t, "Write operations are not allowed for user 'analytics' with no roles.", localization.DatabaseWriteDenied("analytics", nil).Fallback)
 	require.Equal(t, "Authentication required", localization.BoltAuthenticationRequired().Fallback)
 	require.Equal(t, "Invalid credentials", localization.BoltInvalidCredentials().Fallback)
 	require.Equal(t, "Invalid or expired token", localization.BoltInvalidOrExpiredToken().Fallback)

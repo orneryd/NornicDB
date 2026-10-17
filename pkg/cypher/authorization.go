@@ -28,6 +28,10 @@ type PermissionRequirements struct {
 	// DBMS rather than a database (ProcedureSpec.UpdatesDBMS), which no
 	// statement may do while impersonating a user.
 	UpdatesDBMS bool
+	// SchemaAction is Neo4j's action for a statement needing schema
+	// ("create_index", "drop_index", "create_constraint",
+	// "drop_constraint"), named by its refusal.
+	SchemaAction string
 }
 
 // AdminGrantedBy reports whether a role's procedure grants satisfy the
@@ -59,6 +63,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		requirements.Write = keywords["CREATE"] || keywords["DELETE"] || keywords["SET"] ||
 			keywords["MERGE"] || keywords["REMOVE"]
 	}
+	if requirements.Schema {
+		requirements.SchemaAction = schemaCommandAction(query)
+	}
 	// Callable effects compose with the enclosing command/data operation.
 	adminCommand := requirements.Admin
 	for _, procedure := range registeredProceduresForCalls(query) {
@@ -68,6 +75,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		requirements.Write = requirements.Write || contract.Write
 		requirements.Schema = requirements.Schema || contract.Schema
 		requirements.UpdatesDBMS = requirements.UpdatesDBMS || contract.UpdatesDBMS
+		if contract.Schema && requirements.SchemaAction == "" {
+			requirements.SchemaAction = schemaProcedureAction(procedure.Name)
+		}
 		if contract.Admin {
 			if !adminCommand {
 				requirements.BoostedProcedures = append(requirements.BoostedProcedures, procedure.Name)
@@ -572,9 +582,23 @@ func admitSelectedDatabase(ctx context.Context, manager DatabaseManagerInterface
 	return listErr
 }
 
-// PermissionDeniedError identifies the entitlement needed for a query.
+// PermissionDeniedError identifies the entitlement needed for a query, and
+// what its message names in Neo4j's words: the refused principal
+// (localization.PrincipalDescription; empty for a bare check, then a user
+// with no name and no roles), and for schema the action and database, for
+// an admin procedure its name.
 type PermissionDeniedError struct {
 	Permission string
+	// Principal is the refused principal's description.
+	Principal string
+	// SchemaAction is Neo4j's schema action ("create_index", "drop_index",
+	// "create_constraint", "drop_constraint") and Database the database it
+	// was refused on.
+	SchemaAction string
+	Database     string
+	// Procedure is the admin procedure refused, when the statement needs
+	// admin only for procedures.
+	Procedure string
 }
 
 // BoltErrorCode is the Neo4j status of a permission failure, on Bolt and
@@ -583,23 +607,67 @@ func (e *PermissionDeniedError) BoltErrorCode() string {
 	return "Neo.ClientError.Security.Forbidden"
 }
 
-// StatusMessage is the message clients see for a permission failure: the
-// missing permission only, whatever statement or procedure it was found in.
+// StatusMessage is the message clients see for a permission failure, in
+// Neo4j 5.26's words where Neo4j has one (Error).
 func (e *PermissionDeniedError) StatusMessage() string {
 	return e.Error()
 }
 
+// Error is the refusal in Neo4j 5.26's words:
+//   - schema: "Schema operation 'create_index' on database 'neo4j' is not
+//     allowed for user 'alice' with roles [reader]."
+//     (SecurityAuthorizationHandler.assertSchemaWrites);
+//   - admin, for an admin procedure: "Executing admin procedure
+//     'dbms.listConfig' permission has not been granted for user ..."
+//     (ProcedureRegistry); for an administration command: "Permission
+//     denied." (AuthorizationViolationException.PERMISSION_DENIED);
+//   - write: "Write operations are not allowed for user ...", Neo4j's
+//     static access-mode wording (Neo4j 5 refuses each write operation
+//     separately, which a statement-level check can't name);
+//   - read keeps NornicDB's message: Neo4j 5 hides what a principal may not
+//     read instead of failing.
 func (e *PermissionDeniedError) Error() string {
+	principal := e.Principal
+	if principal == "" {
+		principal = localization.PrincipalDescription("", nil)
+	}
 	switch e.Permission {
 	case "schema":
-		return "Schema operations require schema permission"
+		action := e.SchemaAction
+		if action == "" {
+			action = "create_index"
+		}
+		return "Schema operation '" + action + "' on database '" + e.Database + "' is not allowed for " + principal + "."
 	case "admin":
-		return "Admin operations require admin permission"
+		if e.Procedure != "" {
+			return "Executing admin procedure '" + e.Procedure + "' permission has not been granted for " + principal + "."
+		}
+		return "Permission denied."
 	case "write":
-		return "Write operations require write permission"
+		return "Write operations are not allowed for " + principal + "."
 	default:
 		return "Read operations require read permission"
 	}
+}
+
+// permissionDenied is the refusal of permission for ctx's executing
+// principal on the statement's database, with requirements' schema action
+// and admin procedure.
+func permissionDenied(ctx context.Context, permission string, requirements PermissionRequirements) *PermissionDeniedError {
+	user, roles := principalOf(ctx)
+	denied := &PermissionDeniedError{Permission: permission, Principal: localization.PrincipalDescription(user, roles)}
+	if authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); ok {
+		denied.Database = authorization.database
+	}
+	switch permission {
+	case "schema":
+		denied.SchemaAction = requirements.SchemaAction
+	case "admin":
+		if len(requirements.BoostedProcedures) > 0 {
+			denied.Procedure = requirements.BoostedProcedures[0]
+		}
+	}
+	return denied
 }
 
 // statementAdmittedKey carries WithStatementAdmitted's executor and callback.
@@ -713,7 +781,7 @@ func authorizeRequirements(ctx context.Context, requirements PermissionRequireme
 	}
 	allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
 	if missing := MissingPermission(requirements, hasPermission, allowsBoosted); missing != "" {
-		return &PermissionDeniedError{Permission: missing}
+		return permissionDenied(ctx, missing, requirements)
 	}
 	return nil
 }
@@ -893,5 +961,37 @@ func authorizeDatabase(ctx context.Context, database, permission string) error {
 	if !ok || authorization.resolver(database, permission) {
 		return nil
 	}
-	return &PermissionDeniedError{Permission: permission}
+	denied := permissionDenied(ctx, permission, PermissionRequirements{})
+	denied.Database = database
+	return denied
+}
+
+// schemaCommandAction is Neo4j's schema action for a schema command:
+// create_ or drop_, then index or constraint.
+func schemaCommandAction(query string) string {
+	offset := firstExecutableCypherOffset(query)
+	if offset < 0 || offset > len(query) {
+		offset = 0
+	}
+	command := query[offset:]
+	verb := "create"
+	if startsWithKeywordFold(command, "DROP") {
+		verb = "drop"
+	}
+	object := "index"
+	if constraint := findKeywordIndex(command, "CONSTRAINT"); constraint >= 0 {
+		if index := findKeywordIndex(command, "INDEX"); index < 0 || constraint < index {
+			object = "constraint"
+		}
+	}
+	return verb + "_" + object
+}
+
+// schemaProcedureAction is Neo4j's schema action for a schema procedure: the
+// index procedures create an index, or drop one.
+func schemaProcedureAction(name string) string {
+	if strings.Contains(lowerASCII(name), ".drop") {
+		return "drop_index"
+	}
+	return "create_index"
 }

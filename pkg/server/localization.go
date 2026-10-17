@@ -159,8 +159,15 @@ func databaseAccessDeniedFor(claims *auth.JWTClaims) localization.Message {
 	return localization.DatabaseAccessDenied(claims.Username, claims.Roles)
 }
 
-func (s *Server) writeNeo4jDatabaseWriteDenied(w http.ResponseWriter, r *http.Request, name string) {
-	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(name))
+// writeNeo4jDatabaseWriteDenied writes the refusal of a write by the
+// request principal's privileges (its claims' user and roles).
+func (s *Server) writeNeo4jDatabaseWriteDenied(w http.ResponseWriter, r *http.Request) {
+	claims := getClaims(r)
+	message := localization.DatabaseWriteDenied("", nil)
+	if claims != nil {
+		message = localization.DatabaseWriteDenied(claims.Username, claims.Roles)
+	}
+	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", message)
 }
 
 func (s *Server) writeAuthenticationNotConfigured(w http.ResponseWriter, r *http.Request) {

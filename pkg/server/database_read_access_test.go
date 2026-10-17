@@ -82,7 +82,7 @@ func TestHTTPDatabaseSelectionRefusesWritesWithoutWriteAccess(t *testing.T) {
 			body, _ := systemProcedureResponse(t, server, token, "nornic", prefix+"CREATE (:DeniedSelection)", false)
 			require.Len(t, body.Errors, 1, access.role+": "+prefix)
 			require.Equal(t, "Neo.ClientError.Security.Forbidden", body.Errors[0].Code)
-			require.Contains(t, body.Errors[0].Message, "Write operations require write permission")
+			require.Equal(t, "Write operations are not allowed for user '"+access.role+"' with roles ["+access.role+"].", body.Errors[0].Message)
 			require.Empty(t, body.Results)
 		}
 	}

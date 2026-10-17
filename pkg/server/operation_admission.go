@@ -53,15 +53,11 @@ func (s *Server) admitHTTPOperation(w http.ResponseWriter, r *http.Request, oper
 	access := s.principalAccess(getClaims(r))
 	for _, target := range databases {
 		if err := cypher.AdmitOperation(r.Context(), access.Allows, target, contract.class); err != nil {
-			// An unnamed global operation does not reveal which inaccessible
-			// namespace exists. Explicit selections retain their own name.
-			label := target
-			if contract.allDatabases {
-				label = "requested database"
-			}
+			// Neo4j's refusals name the principal, never a database, so a
+			// global operation doesn't reveal which namespace refused it.
 			var missing *cypher.PermissionDeniedError
 			if errors.As(err, &missing) && missing.Permission == "write" {
-				s.writeNeo4jDatabaseWriteDenied(w, r, label)
+				s.writeNeo4jDatabaseWriteDenied(w, r)
 			} else {
 				s.writeNeo4jDatabaseAccessDenied(w, r)
 			}

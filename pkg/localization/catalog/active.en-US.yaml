@@ -186,8 +186,8 @@
   description: Neo4j's refusal of a database the principal may not access. User is the principal's name, Roles its sorted role names joined with ", " (HasRoles false when it has none); neither is translated.
   other: "Database access is not allowed for user '{{.User}}' with {{if .HasRoles}}roles [{{.Roles}}]{{else}}no roles{{end}}."
 - id: security.database_write_denied
-  description: Authorization response when the principal cannot write to a database. Name is the database identifier.
-  other: "Write on database '{{.Name}}' is not allowed."
+  description: A write refused by the principal's privileges, in Neo4j's words. User is the principal's name, Roles its sorted role names joined with ", " (HasRoles false when it has none); neither is translated.
+  other: "Write operations are not allowed for user '{{.User}}' with {{if .HasRoles}}roles [{{.Roles}}]{{else}}no roles{{end}}."
 - id: server.authentication_not_configured
   description: HTTP response when authentication services are unavailable or disabled.
   other: authentication not configured

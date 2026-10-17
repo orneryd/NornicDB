@@ -1177,8 +1177,8 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				query   string
 				message string
 			}{
-				{name: "write", query: "CREATE (n)", message: "Write operations require write permission"},
-				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operations require schema permission"},
+				{name: "write", query: "CREATE (n)", message: "Write operations are not allowed for user 'viewer' with no roles."},
+				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operation 'create_index' on database 'nornic' is not allowed for user 'viewer' with no roles."},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
@@ -1193,7 +1193,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, <-done)
 					assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-					assert.Contains(t, msg, tc.message)
+					assert.Equal(t, tc.message, msg)
 				})
 			}
 		})
@@ -1292,7 +1292,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Write operations require write permission")
+			assert.Equal(t, "Write operations are not allowed for user 'editor' with roles [editor].", msg)
 		})
 
 		t.Run("returns executor error and success metadata", func(t *testing.T) {

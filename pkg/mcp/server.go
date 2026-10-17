@@ -706,7 +706,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 	if err != nil {
 		var denied *cypher.PermissionDeniedError
 		if errors.As(err, &denied) && denied.Permission == "write" {
-			return nil, localizedError(localization.DatabaseWriteDenied(database), err)
+			return nil, localizedError(cypher.DatabaseWriteDeniedMessage(ctx), err)
 		}
 		return nil, localizedError(cypher.DatabaseAccessDeniedMessage(ctx), err)
 	}

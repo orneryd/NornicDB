@@ -51,7 +51,7 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		require.NotEmpty(t, resp.Errors)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", resp.Errors[0].Code)
-		require.Contains(t, resp.Errors[0].Message, "Write operations require write permission")
+		require.Equal(t, "Write operations are not allowed for user 'reader' with roles [reader].", resp.Errors[0].Message)
 	})
 
 	// An empty statement is Neo4j's SyntaxError (#683).

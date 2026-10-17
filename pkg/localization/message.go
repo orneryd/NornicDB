@@ -526,31 +526,51 @@ func HTTPDatabaseNotFound(name string) Message {
 	}
 }
 
-// DatabaseAccessDenied identifies a principal refused a database it may not
-// access, in Neo4j 5's words: "Database access is not allowed for user
-// 'alice' with roles [editor, reader]." (roles sorted, each once) or "...
-// with no roles.". Neo4j names the principal, never the database.
-func DatabaseAccessDenied(user string, roles []string) Message {
+// PrincipalDescription is a principal in Neo4j 5's words
+// (SecurityContext.description): "user 'alice' with roles [editor, reader]"
+// (roles sorted, each once) or "user 'alice' with no roles".
+func PrincipalDescription(user string, roles []string) string {
+	sorted := sortedRoles(roles)
+	if len(sorted) == 0 {
+		return "user '" + user + "' with no roles"
+	}
+	return "user '" + user + "' with roles [" + strings.Join(sorted, ", ") + "]"
+}
+
+func sortedRoles(roles []string) []string {
 	sorted := append([]string(nil), roles...)
 	sort.Strings(sorted)
-	sorted = slices.Compact(sorted)
-	described := "no roles"
-	if len(sorted) > 0 {
-		described = "roles [" + strings.Join(sorted, ", ") + "]"
-	}
+	return slices.Compact(sorted)
+}
+
+// principalData is the template data naming a principal: User, Roles (its
+// sorted roles joined with ", ") and HasRoles.
+func principalData(user string, roles []string) map[string]any {
+	sorted := sortedRoles(roles)
+	return map[string]any{"User": user, "Roles": strings.Join(sorted, ", "), "HasRoles": len(sorted) > 0}
+}
+
+// DatabaseAccessDenied identifies a principal refused a database it may not
+// access, in Neo4j 5's words: "Database access is not allowed for user
+// 'alice' with roles [editor, reader]." or "... with no roles.". Neo4j
+// names the principal, never the database.
+func DatabaseAccessDenied(user string, roles []string) Message {
 	return Message{
 		ID:       MessageDatabaseAccessDenied,
-		Fallback: "Database access is not allowed for user '" + user + "' with " + described + ".",
-		Data:     map[string]any{"User": user, "Roles": strings.Join(sorted, ", "), "HasRoles": len(sorted) > 0},
+		Fallback: "Database access is not allowed for " + PrincipalDescription(user, roles) + ".",
+		Data:     principalData(user, roles),
 	}
 }
 
-// DatabaseWriteDenied identifies an authorization failure for writing to a database.
-func DatabaseWriteDenied(name string) Message {
+// DatabaseWriteDenied identifies a principal refused a write by its
+// privileges: "Write operations are not allowed for user 'alice' with roles
+// [reader]." (Neo4j's static access-mode wording, with Neo4j 5's principal
+// description; Neo4j 5 itself refuses each write operation separately).
+func DatabaseWriteDenied(user string, roles []string) Message {
 	return Message{
 		ID:       MessageDatabaseWriteDenied,
-		Fallback: "Write on database '" + name + "' is not allowed.",
-		Data:     map[string]any{"Name": name},
+		Fallback: "Write operations are not allowed for " + PrincipalDescription(user, roles) + ".",
+		Data:     principalData(user, roles),
 	}
 }
 

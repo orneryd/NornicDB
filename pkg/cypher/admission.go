@@ -44,17 +44,30 @@ func DatabaseAccessDeniedError(ctx context.Context) error {
 }
 
 // DatabaseAccessDeniedMessage is Neo4j's refusal of a database for ctx's
-// executing principal: the statement's executing user (the impersonated one
-// while impersonating), else the request's principal; with neither, a user
-// with no name and no roles.
+// executing principal (principalOf).
 func DatabaseAccessDeniedMessage(ctx context.Context) localization.Message {
+	user, roles := principalOf(ctx)
+	return localization.DatabaseAccessDenied(user, roles)
+}
+
+// DatabaseWriteDeniedMessage is the refusal of a write by the privileges of
+// ctx's executing principal (principalOf).
+func DatabaseWriteDeniedMessage(ctx context.Context) localization.Message {
+	user, roles := principalOf(ctx)
+	return localization.DatabaseWriteDenied(user, roles)
+}
+
+// principalOf is the principal a refusal names: the statement's executing
+// user (the impersonated one while impersonating), else the request's
+// principal; with neither, a user with no name and no roles.
+func principalOf(ctx context.Context) (user string, roles []string) {
 	if ctx == nil {
-		return localization.DatabaseAccessDenied("", nil)
+		return "", nil
 	}
-	if user, ok := authenticatedUserFromContext(ctx); ok {
-		return localization.DatabaseAccessDenied(user.Name, user.Roles)
+	if executing, ok := authenticatedUserFromContext(ctx); ok {
+		return executing.Name, executing.Roles
 	}
-	return localization.DatabaseAccessDenied(auth.RequestPrincipalNameFromContext(ctx), auth.RequestPrincipalRolesFromContext(ctx))
+	return auth.RequestPrincipalNameFromContext(ctx), auth.RequestPrincipalRolesFromContext(ctx)
 }
 
 func databaseAccessDenied(user string, roles []string) error {
