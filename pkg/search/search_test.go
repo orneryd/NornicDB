@@ -222,7 +222,7 @@ func TestInMemoryHNSWReusesVectorIndexStorage(t *testing.T) {
 		require.NoError(t, svc.vectorIndex.Add(id, vec))
 	}
 
-	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx.vectorLookup)
 	require.Empty(t, idx.vectors, "HNSW graph must resolve vectors from the in-memory vector index")
@@ -2826,7 +2826,7 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	svc.vectorIndex = nil
 	svc.vectorFileStore = nil
 	svc.mu.Unlock()
-	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.Error(t, err)
 
 	// Context-canceled branch during in-memory build.
@@ -2837,14 +2837,14 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	require.NoError(t, svc.vectorIndex.Add("n2", []float32{0, 1}))
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = svc.getOrCreateHNSWIndex(cancelled, 2)
+	_, err = svc.getOrCreateHNSWIndex(cancelled, 2, svc.pipelineBuildSeeds().hnswHints)
 	require.ErrorIs(t, err, context.Canceled)
 
 	// Successful build + existing-index fast path.
-	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx)
-	idx2, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx2, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.Same(t, idx, idx2)
 
@@ -2868,7 +2868,7 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	svc.hnswIndex = nil
 	svc.hnswMu.Unlock()
 
-	idx, err = svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx, err = svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx)
 	require.Equal(t, 2, idx.Size())

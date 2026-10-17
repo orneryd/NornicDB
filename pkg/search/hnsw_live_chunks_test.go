@@ -16,7 +16,7 @@ func TestHNSWLiveIndexTakesEveryChunk(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "first", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
-	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !svc.hnswRebuildInFlight.Load() }, 5e9, 1e6)
 
