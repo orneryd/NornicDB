@@ -15,7 +15,7 @@ import (
 // starts with its variable, so an IN in the WHERE doesn't make one (#1109).
 func splitPatternComprehension(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
-	if len(expr) < 3 || expr[0] != '[' || expr[len(expr)-1] != ']' {
+	if len(expr) < 3 || !isListLiteral(expr) {
 		return "", "", false
 	}
 
