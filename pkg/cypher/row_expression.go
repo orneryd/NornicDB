@@ -1445,42 +1445,12 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
 
+// stripEnclosingRowDelimiter returns the inside of expr when expr is one
+// open … close group: its first delimiter closes at its end, matched by
+// findMatchingDelimiter (quoted text, escaped quotes and comments skipped).
+// For '[' it is isListLiteral.
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
-	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close {
-		return "", false
-	}
-	depth := 0
-	quote := byte(0)
-	for index := 0; index < len(expr); index++ {
-		current := expr[index]
-		if quote != 0 {
-			if current == quote {
-				if index+1 < len(expr) && expr[index+1] == quote {
-					index++
-					continue
-				}
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			continue
-		}
-		switch current {
-		case open:
-			depth++
-		case close:
-			depth--
-			if depth == 0 && index != len(expr)-1 {
-				return "", false
-			}
-			if depth < 0 {
-				return "", false
-			}
-		}
-	}
-	if depth != 0 || quote != 0 {
+	if len(expr) < 2 || expr[0] != open || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
 		return "", false
 	}
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
