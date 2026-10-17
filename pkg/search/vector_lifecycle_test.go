@@ -157,3 +157,22 @@ func TestGraphInstallRetiresCachedFallbackAnswers(t *testing.T) {
 	require.Equal(t, "vector_hnsw", after.SearchMethod, "the installed graph answers once ready")
 	require.Equal(t, "nornic:n0", after.Results[0].ID, "the graph's answer ranks like the exact one")
 }
+
+// A cancelled request reports its cancellation from every search entry point,
+// also while a build is attempted and not ready: the build state must not
+// mask the caller's own cancellation.
+func TestCancelledSearchReportsCancellationWhileBuilding(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.buildAttempted.Store(true) // a build was started and has not published readiness
+	require.False(t, svc.IsReady())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := svc.Search(ctx, "q", []float32{1, 0, 0}, DefaultSearchOptions())
+	require.ErrorIs(t, err, context.Canceled, "Search")
+	_, err = svc.VectorSearchCandidates(ctx, []float32{1, 0, 0}, DefaultSearchOptions())
+	require.ErrorIs(t, err, context.Canceled, "VectorSearchCandidates")
+	_, err = svc.VectorQueryNodes(ctx, []float32{1, 0, 0}, VectorQuerySpec{Limit: 1})
+	require.ErrorIs(t, err, context.Canceled, "VectorQueryNodes")
+}
