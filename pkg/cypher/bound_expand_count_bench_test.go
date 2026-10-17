@@ -57,7 +57,9 @@ RETURN count(*) AS n`
 // their one-row answer on holderBenchExecutor's graph: for each relationship
 // of a hub, the owning document by an indexed key and a correlated
 // [NOT] EXISTS between two bound nodes (Expand(Into)), with a nested
-// citation check; and the zero-hop quantified merge path from a bound hub.
+// citation check or a WHERE reading the relationship's endpoints; the
+// citation check of each relationship (a node looked up by an indexed key);
+// and the zero-hop quantified merge path from a bound hub.
 var holderReadShapes = []struct {
 	name, query string
 	want        interface{}
@@ -65,6 +67,8 @@ var holderReadShapes = []struct {
 	{"exists_into", fmt.Sprintf(holderReadStatement, "EXISTS { MATCH (d)-[own:LINK]-(near) WHERE own.kind = 'contains' }"), int64(4000)},
 	{"not_exists_into", fmt.Sprintf(holderReadStatement, "NOT EXISTS { MATCH (d)-[own:LINK]-(near) WHERE own.kind = 'other' }"), int64(4000)},
 	{"exists_into_cited", fmt.Sprintf(holderReadStatement, "EXISTS { MATCH (d)-[own:LINK]-(near) WHERE own.kind = 'contains' AND NOT EXISTS { MATCH (s:Source {key: own.src}) WHERE s.quoted } }"), int64(4000)},
+	{"exists_into_endpoints", fmt.Sprintf(holderReadStatement, "EXISTS { MATCH (d)-[own:LINK]-(near) WHERE startNode(own).key = d.key AND endNode(own).key = near.key AND coalesce(startNode(own).quoted, false) = false AND coalesce(endNode(own).quoted, false) = false }"), int64(4000)},
+	{"not_exists_cited", "MATCH (t:Item {key: 'hub'})-[l:LINK]-(near:Part) WHERE NOT EXISTS { MATCH (s:Source {key: l.src}) WHERE s.quoted OR any(i IN range(0, size(coalesce(s.roles, [])) - 1) WHERE s.roles[i] <> 'own') } RETURN count(*) AS n", int64(4000)},
 	{"qpp_zero_hop_hub", "MATCH (s:Item {key: 'hub'}) MATCH (s)(()-[r:LINK WHERE r.kind = 'merged']-())*(m:Item) RETURN collect(DISTINCT m.key) AS keys", []interface{}{"hub"}},
 	{"qpp_zero_hop_hub_incoming", "MATCH (s:Item {key: 'hub'}) OPTIONAL MATCH (s)(()<-[r:LINK WHERE r.kind = 'merged']-())*(m:Item) RETURN count(m) AS n", int64(1)},
 }
