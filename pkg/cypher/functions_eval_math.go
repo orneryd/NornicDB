@@ -1275,7 +1275,13 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
 		}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	var appender *reduceAppender
+	if plan := form.appendPlan(); plan.usable(values) {
+		appender = &reduceAppender{plan: plan, term: func(index int, accumulator, item interface{}) (interface{}, error) {
+			return evaluate(plan.terms[index])(accumulator, item)
+		}}
+	}
+	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate), appender)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
