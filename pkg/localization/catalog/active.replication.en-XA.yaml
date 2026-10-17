@@ -58,6 +58,9 @@
 - id: replication.config.invalid_tls_min_version
   description: Expanded pseudo-locale invalid TLS version error.
   other: "[!! invalid TLS min version: {{.Version}} (must be '{{.TLS12}}' or '{{.TLS13}}') !!]"
+- id: replication.config.invalid_boolean
+  description: Expanded pseudo-locale invalid boolean setting error.
+  other: '[!! invalid value "{{.Value}}" for {{.EnvVar}} (use true or false) !!]'
 - id: replication.transport.closed
   description: Expanded pseudo-locale closed transport error.
   other: "[!! transport closed !!]"

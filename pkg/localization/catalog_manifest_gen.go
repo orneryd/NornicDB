@@ -1532,6 +1532,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "replication.closed", Constructor: "ReplicationClosed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "replication.config.ha_peer_address_required", Constructor: "ReplicationConfigHAPeerAddressRequired", Fields: []string{"EnvVar", "Mode"}, PluralForms: []string{"other"}},
 	{ID: "replication.config.ha_role_required", Constructor: "ReplicationConfigHARoleRequired", Fields: []string{"EnvVar", "Mode", "PrimaryRole", "StandbyRole"}, PluralForms: []string{"other"}},
+	{ID: "replication.config.invalid_boolean", Constructor: "ReplicationConfigInvalidBoolean", Fields: []string{"EnvVar", "Value"}, PluralForms: []string{"other"}},
 	{ID: "replication.config.invalid_cross_region_sync_mode", Constructor: "ReplicationConfigInvalidCrossRegionSyncMode", Fields: []string{"AsyncMode", "QuorumMode", "SyncMode"}, PluralForms: []string{"other"}},
 	{ID: "replication.config.invalid_ha_role", Constructor: "ReplicationConfigInvalidHARole", Fields: []string{"PrimaryRole", "Role", "StandbyRole"}, PluralForms: []string{"other"}},
 	{ID: "replication.config.invalid_ha_sync_mode", Constructor: "ReplicationConfigInvalidHASyncMode", Fields: []string{"AsyncMode", "QuorumMode", "SyncMode"}, PluralForms: []string{"other"}},
