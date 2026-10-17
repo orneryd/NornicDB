@@ -144,3 +144,37 @@ func TestEmbeddingPauseWithoutEmbedQueue(t *testing.T) {
 	require.True(t, db.EmbeddingStatus().Paused)
 	require.True(t, db.GetEmbedQueue().Paused())
 }
+
+// The status surfaces read the queue pointer under db.mu, so a status
+// request racing StopEmbedQueue neither races nor reads a nil queue. The DB
+// holds only a queue: Open's background goroutines would order the two
+// sides through shared locks and hide the race from the detector.
+func TestEmbeddingStatusRacesQueueStop(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	db := &DB{embedQueue: NewEmbedQueue(nil, engine, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true})}
+	started, stop, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for first := true; ; first = false {
+			_ = db.EmbeddingStatus()
+			_ = db.EmbedQueueStats()
+			if first {
+				close(started)
+			}
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+	<-started
+	time.Sleep(20 * time.Millisecond)
+	db.StopEmbedQueue()
+	time.Sleep(20 * time.Millisecond)
+	close(stop)
+	<-done
+	require.Nil(t, db.EmbedQueueStats())
+	require.Zero(t, db.EmbeddingStatus().Pending)
+}

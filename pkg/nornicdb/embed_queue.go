@@ -340,14 +340,15 @@ func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
 // no new node and sleep until resumed; a node already claimed is embedded and
 // written. Resuming wakes every worker to take the pending nodes.
 func (ew *EmbedWorker) SetPaused(paused bool) {
-	if ew.operatorPaused.Swap(paused) != paused {
-		if paused {
-			// Wait out a claim already past its pause check: once this
-			// returns, the claimed nodes (Stats().InFlight) are all that
-			// will be embedded until the resume.
-			ew.claimMu.Lock()
-			ew.claimMu.Unlock() //nolint:staticcheck // A barrier, not a critical section.
-		}
+	changed := ew.operatorPaused.Swap(paused) != paused
+	if paused {
+		// Wait out a claim already past its pause check, even when another
+		// caller set the flag: once this returns, the claimed nodes
+		// (Stats().InFlight) are all that will be embedded until the resume.
+		ew.claimMu.Lock()
+		ew.claimMu.Unlock() //nolint:staticcheck // A barrier, not a critical section.
+	}
+	if changed {
 		ew.signalAllWorkers()
 	}
 }

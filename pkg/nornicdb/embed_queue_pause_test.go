@@ -234,3 +234,69 @@ func TestEmbedWorkerPauseStopsBatchFill(t *testing.T) {
 		})
 	}
 }
+
+// blockingQueue holds the first queue read, inside a claim (claimMu held,
+// past its pause check), until released.
+type blockingQueue struct {
+	*sequenceEmbeddingEngine
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (q *blockingQueue) FindNodeNeedingEmbedding() *storage.Node {
+	if q.next == 0 {
+		close(q.entered)
+		<-q.release
+	}
+	return q.sequenceEmbeddingEngine.FindNodeNeedingEmbedding()
+}
+
+func (q *blockingQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
+
+// A pause that finds the flag already set still waits out a claim in
+// progress: no SetPaused(true) returns while a node can still be claimed.
+func TestEmbedWorkerRepeatedPauseWaitsForClaim(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	nodes := []*storage.Node{{ID: "docs:first", Properties: map[string]any{"content": "first"}}}
+	_, err := engine.CreateNode(nodes[0])
+	require.NoError(t, err)
+	queue := &blockingQueue{sequenceEmbeddingEngine: &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}, entered: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(queue.release) }) }
+	t.Cleanup(release)
+	provider := &resolvedDocumentBatchEmbedder{}
+	worker := NewEmbedWorker(provider, queue, &EmbedWorkerConfig{NumWorkers: 0, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 8, DeferWorkerStart: true})
+	t.Cleanup(worker.Close)
+
+	worked := make(chan bool, 1)
+	go func() { worked <- worker.processNextBatch() }()
+	<-queue.entered
+	first, second := make(chan struct{}), make(chan struct{})
+	go func() {
+		worker.SetPaused(true)
+		close(first)
+	}()
+	require.Eventually(t, worker.Paused, 3*time.Second, time.Millisecond)
+	go func() {
+		worker.SetPaused(true) // the flag is already set
+		close(second)
+	}()
+	select {
+	case <-second:
+		t.Fatal("a repeated pause returned while a claim was still in progress")
+	case <-first:
+		t.Fatal("the pause returned while a claim was still in progress")
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	for _, done := range []chan struct{}{first, second} {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("a pause never returned after the claim finished")
+		}
+	}
+	require.True(t, <-worked)
+	require.Equal(t, []int{1}, provider.batchSizes, "the claim already under way is finished, and nothing after it")
+}

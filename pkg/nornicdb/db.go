@@ -1971,10 +1971,12 @@ func (db *DB) SetRetentionAuditCallback(fn func(action, recordID, category strin
 // EmbedQueueStats returns statistics about the async embedding queue.
 // Returns nil if auto-embed is not enabled.
 func (db *DB) EmbedQueueStats() *QueueStats {
-	if db.embedQueue == nil {
+	// Read once under db.mu: StopEmbedQueue and SetEmbedder replace it.
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return nil
 	}
-	stats := db.embedQueue.Stats()
+	stats := queue.Stats()
 	return &stats
 }
 
@@ -2005,8 +2007,8 @@ func (db *DB) PendingEmbeddingsCount() int {
 			pending = counter.PendingEmbeddingsCount()
 		}
 	}
-	if db.embedQueue != nil {
-		pending += db.embedQueue.Stats().InFlight
+	if queue := db.GetEmbedQueue(); queue != nil {
+		pending += queue.Stats().InFlight
 	}
 	return pending
 }
