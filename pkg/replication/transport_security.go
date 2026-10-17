@@ -47,15 +47,22 @@ func buildTLSConfigs(cfg TLSConfig) (*tls.Config, *tls.Config, error) {
 		return nil, nil, localizedError(localization.ReplicationTransportLoadTLSCertKeyFailed(err), err)
 	}
 
-	rootCAs := x509.NewCertPool()
+	// A configured CA file is the only trust root for peers, both ways. With
+	// none, outbound connections verify peers against the system roots (a
+	// nil pool; an empty one would trust nothing). Client verification has
+	// no system-root fallback: it needs the CA file.
+	var rootCAs *x509.CertPool
 	if cfg.CAFile != "" {
 		caBytes, err := os.ReadFile(cfg.CAFile)
 		if err != nil {
 			return nil, nil, localizedError(localization.ReplicationTransportReadTLSCAFailed(err), err)
 		}
+		rootCAs = x509.NewCertPool()
 		if !rootCAs.AppendCertsFromPEM(caBytes) {
 			return nil, nil, localizedError(localization.ReplicationTransportInvalidTLSCA(), nil)
 		}
+	} else if cfg.VerifyClient {
+		return nil, nil, localizedError(localization.ReplicationConfigTLSCARequired(), nil)
 	}
 
 	minVersion, err := parseTLSVersion(cfg.MinVersion)

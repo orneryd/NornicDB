@@ -26,6 +26,7 @@ const (
 	MessageReplicationConfigTLSKeyRequired             MessageID = "replication.config.tls_key_required"
 	MessageReplicationConfigTLSCARequired              MessageID = "replication.config.tls_ca_required"
 	MessageReplicationConfigInvalidTLSMinVersion       MessageID = "replication.config.invalid_tls_min_version"
+	MessageReplicationConfigInvalidBoolean             MessageID = "replication.config.invalid_boolean"
 	MessageReplicationTransportClosed                  MessageID = "replication.transport.closed"
 	MessageReplicationTransportConnectFailed           MessageID = "replication.transport.connect_failed"
 	MessageReplicationTransportListenFailed            MessageID = "replication.transport.listen_failed"
@@ -193,6 +194,11 @@ func ReplicationConfigTLSCARequired() Message {
 // ReplicationConfigInvalidTLSMinVersion identifies an unsupported TLS minimum version.
 func ReplicationConfigInvalidTLSMinVersion(version string) Message {
 	return Message{ID: MessageReplicationConfigInvalidTLSMinVersion, Fallback: fmt.Sprintf("invalid TLS min version: %s (must be '1.2' or '1.3')", version), Data: map[string]any{"Version": version, "TLS12": "1.2", "TLS13": "1.3"}}
+}
+
+// ReplicationConfigInvalidBoolean identifies a security setting whose value is not a boolean.
+func ReplicationConfigInvalidBoolean(envVar, value string) Message {
+	return Message{ID: MessageReplicationConfigInvalidBoolean, Fallback: fmt.Sprintf("invalid value \"%s\" for %s (use true or false)", value, envVar), Data: map[string]any{"EnvVar": envVar, "Value": value}}
 }
 
 // ReplicationTransportClosed identifies an operation on a closed transport.
