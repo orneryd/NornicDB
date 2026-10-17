@@ -8,7 +8,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -212,10 +211,12 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 // resolves it (resolveCypherDatabase), on which the principal must hold read
 // (the request's entitlement resolver), as a Cypher read there needs.
 func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
+	// Admission's refusal stands as given: a database the principal may not
+	// use is refused with Neo4j's database-access text, a missing read with
+	// the read refusal.
 	_, database, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), "", cypher.PrivilegeRead)
 	if err != nil {
-		denied := cypher.DatabaseAccessDeniedMessage(ctx)
-		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, err)
+		return "", nil, err
 	}
 	// A composite's storage reads every constituent, which this one decision
 	// on the composite does not cover; the REST search and similarity routes
