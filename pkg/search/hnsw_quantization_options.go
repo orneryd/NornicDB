@@ -27,6 +27,11 @@ func withQuantizationOptions(ctx context.Context, opts *SearchOptions) (context.
 	if !opts.QuantizationIgnore && opts.QuantizationRescore == nil && opts.QuantizationOversampling == 0 {
 		return ctx, nil
 	}
+	return context.WithValue(ctx, hnswQuantizationOptionsKey{}, effectiveHNSWQuantizationOptions(opts)), nil
+}
+
+// Cache identity and pipeline scoring must resolve the same request defaults.
+func effectiveHNSWQuantizationOptions(opts *SearchOptions) hnswQuantizationOptions {
 	q := hnswQuantizationOptions{ignore: opts.QuantizationIgnore, rescore: true, oversampling: opts.QuantizationOversampling}
 	if q.oversampling == 0 {
 		q.oversampling = 1
@@ -34,7 +39,7 @@ func withQuantizationOptions(ctx context.Context, opts *SearchOptions) (context.
 	if opts.QuantizationRescore != nil {
 		q.rescore = *opts.QuantizationRescore
 	}
-	return context.WithValue(ctx, hnswQuantizationOptionsKey{}, q), nil
+	return q
 }
 
 func (h *HNSWCandidateGen) quantizationActive(ctx context.Context) bool {

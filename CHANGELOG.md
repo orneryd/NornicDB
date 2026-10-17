@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Separate cached search responses by effective quantization ignore/rescore/oversampling
+  and HNSW beam settings; retire cached responses when compression policy changes.
+  Drop/recreate clears collection-owned compression overrides while embedding regeneration
+  preserves them, so reused services return to their configured defaults.
+
 - Build IVF-HNSW graphs for every nonempty cluster, retire minimum-size/maximum-count
   build filters, and return an error for missing routed graphs instead of exact scans.
 - Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
