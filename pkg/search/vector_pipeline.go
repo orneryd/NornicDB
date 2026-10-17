@@ -264,7 +264,10 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 	candidates := make([]Candidate, 0, min(candidateLimit, len(results)))
 	seenNodes := make(map[string]struct{}, min(candidateLimit, len(results)))
 	for index, r := range results {
-		nodeID := normalizeVectorResultIDToNodeID(r.ID)
+		nodeID, ok := vectorEntryOwner(r.ID)
+		if !ok {
+			continue
+		}
 		if _, seen := seenNodes[nodeID]; seen {
 			continue
 		}

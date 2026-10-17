@@ -124,7 +124,7 @@ func TestVectorCapacityPropertyRemovalPreservesSiblingCharges(t *testing.T) {
 	svc.RemovePropertyVectorIndex("embedding")
 	require.Equal(t, int64(24), svc.vectorResidentBytes)
 	require.Equal(t, 2, svc.vectorIndex.Count())
-	require.Equal(t, metadata-int64(len("owner-prop-embedding")+16), svc.vectorMetadataBytes)
+	require.Equal(t, metadata-int64(len(nodePropertyVectorKey("owner", "embedding"))+16), svc.vectorMetadataBytes)
 	require.Equal(t, fulltextResident, svc.bm25ResidentBytes)
 	require.Equal(t, fulltextMetadata, svc.bm25MetadataBytes)
 	text, ok := svc.fulltext().GetDocument("owner")

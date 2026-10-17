@@ -24,5 +24,5 @@ func TestHNSWLiveIndexTakesEveryChunk(t *testing.T) {
 	require.Equal(t, 4, index.Size())
 	results, err := index.Search(context.Background(), []float32{0, 0, 1}, 1, 0)
 	require.NoError(t, err)
-	require.Equal(t, "multi-chunk-1", results[0].ID)
+	require.Equal(t, nodeChunkVectorKey("multi", 1), results[0].ID)
 }

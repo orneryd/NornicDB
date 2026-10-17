@@ -737,7 +737,7 @@ func (h *HNSWIndex) ShouldRebuild() bool {
 }
 
 const (
-	hnswIndexFormatVersionGraphOnly = "1.2.0" // diverse graph, 2*M base layer, vectors resolved by ID
+	hnswIndexFormatVersionGraphOnly = "1.3.0" // diverse graph, 2*M base layer, vectors resolved by ID; 1.3: vector-entry keys
 )
 
 // hnswIndexSnapshot is the serializable form of the HNSW index for persistence.
@@ -967,7 +967,9 @@ func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
 	if err := util.DecodeMsgpackFile(file.File, &snap); err != nil {
 		return nil, err
 	}
-	if snap.InternalToID == nil {
+	// Member IDs are vector-entry keys: a file of another format (legacy keys)
+	// is treated as absent and rebuilt, never read.
+	if snap.InternalToID == nil || snap.Version != hnswIndexFormatVersionGraphOnly {
 		return nil, nil
 	}
 	return snap.InternalToID, nil
@@ -1488,7 +1490,10 @@ func (h *HNSWIndex) buildLexicalHintLocked(internalID uint32) (LexicalSeedHint, 
 	if len(h.buildLexicalHints) == 0 || !validHNSWIndex(internalID, len(h.internalToID)) {
 		return LexicalSeedHint{}, false
 	}
-	id := normalizeVectorResultIDToNodeID(h.internalToID[internalID])
+	id, ok := vectorEntryOwner(h.internalToID[internalID])
+	if !ok {
+		return LexicalSeedHint{}, false
+	}
 	hint, ok := h.buildLexicalHints[id]
 	return hint, ok
 }

@@ -244,7 +244,7 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 			hits, err := graph.Search(context.Background(), []float32{0, 1, 0}, 10, -1)
 			require.NoError(t, err)
 			require.Len(t, hits, 1)
-			assert.Equal(t, "nornic:b-named-v", hits[0].ID)
+			assert.Equal(t, nodeNamedVectorKey("nornic:b", "v"), hits[0].ID)
 		})
 	}
 }

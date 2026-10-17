@@ -40,7 +40,7 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 						require.Equal(t, 1, seed.fulltext().Count())
 						require.NotNil(t, seed.vectorFileStore)
 						require.Equal(t, 1, seed.vectorFileStore.Count())
-						require.Equal(t, "nornic:a-named-v", seed.nodeNamedVector["nornic:a"]["v"])
+						require.Equal(t, nodeNamedVectorKey("nornic:a", "v"), seed.nodeNamedVector["nornic:a"]["v"])
 						seed.PersistIndexesToDisk()
 						require.NoError(t, seed.Close(), "stop the seed before replacing its artifact")
 						for _, path := range []string{bm25Path, filepath.Join(dir, "vectors.vec"), filepath.Join(dir, "vectors.meta")} {

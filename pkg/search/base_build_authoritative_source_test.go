@@ -97,7 +97,7 @@ func TestBaseBuildRespectsAuthoritativeMemoryBeforeDiskRestore(t *testing.T) {
 							require.NoError(t, err)
 							require.NoError(t, svc.IndexNode(node))
 						}
-						stored, ok := svc.getVectorForCypher(currentID + "-named-v")
+						stored, ok := svc.getVectorForCypher(nodeNamedVectorKey(currentID, "v"))
 						require.True(t, ok)
 						require.Equal(t, current, stored)
 						svc.SetPersistenceEnabled(true)
@@ -121,7 +121,7 @@ func TestBaseBuildRespectsAuthoritativeMemoryBeforeDiskRestore(t *testing.T) {
 						assert.InDelta(t, 1, hits[0].Score, 1e-6, "old file coordinates must not replace current memory")
 					}
 					require.NotNil(t, svc.vectorFileStore)
-					stored, ok := svc.vectorFileStore.GetVector(currentID + "-named-v")
+					stored, ok := svc.vectorFileStore.GetVector(nodeNamedVectorKey(currentID, "v"))
 					assert.True(t, ok)
 					assert.Equal(t, current, stored)
 					assert.Zero(t, svc.vectorIndex.Count(), "file publication must retire duplicate resident payload")
@@ -134,10 +134,10 @@ func TestBaseBuildRespectsAuthoritativeMemoryBeforeDiskRestore(t *testing.T) {
 					candidates, err := graph.Search(ctx, current, 1, -1)
 					require.NoError(t, err)
 					if assert.Len(t, candidates, 1) {
-						assert.Equal(t, currentID+"-named-v", candidates[0].ID)
+						assert.Equal(t, nodeNamedVectorKey(currentID, "v"), candidates[0].ID)
 					}
 					if kind == "replace_membership" || kind == "active_source" {
-						assert.False(t, svc.vectorFileStore.Has("nornic:a-named-v"))
+						assert.False(t, svc.vectorFileStore.Has(nodeNamedVectorKey("nornic:a", "v")))
 						assert.NotContains(t, svc.nodeNamedVector, "nornic:a")
 					}
 				})

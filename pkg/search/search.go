@@ -3281,156 +3281,52 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// properties looking for vector-shaped values.
 	indexVectorState := vectorOn && !skipVectorMutation
 
-	// Index all embeddings: NamedEmbeddings and ChunkEmbeddings
-	// Strategy:
-	//   - NamedEmbeddings: Index each named vector at "node-id-named-{vectorName}"
-	//   - ChunkEmbeddings: Index chunk 0 at node.ID, later chunks at "node-id-chunk-N"
-	// This allows efficient indexed search for all embedding types
-	// Embeddings are stored in struct fields (opaque to users), not in properties
-
-	// Index NamedEmbeddings (each named vector gets its own index entry)
-	if indexVectorState && len(node.NamedEmbeddings) > 0 {
-		for vectorName, embedding := range node.NamedEmbeddings {
-			if len(embedding) == 0 {
-				continue
-			}
-
-			// Index each named embedding with ID: "node-id-named-{vectorName}"
-			namedID := fmt.Sprintf("%s-named-%s", node.ID, vectorName)
-			expectedDim := s.vectorIndex.GetDimensions()
-			if s.vectorFileStore != nil {
-				expectedDim = s.vectorFileStore.GetDimensions()
-			}
-			if err := s.addVectorLocked(namedID, embedding); err != nil {
-				if err == ErrDimensionMismatch {
-					s.logPrintf("⚠️ IndexNode %s named[%s]: embedding dimension mismatch (got %d, expected %d)",
-						node.ID, vectorName, len(embedding), expectedDim)
-				}
-				continue
-			}
-
-			if s.nodeNamedVector[nodeIDStr] == nil {
-				s.nodeNamedVector[nodeIDStr] = make(map[string]string, len(node.NamedEmbeddings))
-			}
-			s.nodeNamedVector[nodeIDStr][vectorName] = namedID
-
-			if s.servingGPUIndex() != nil {
-				_ = s.servingGPUIndex().Add(namedID, embedding) // Best effort
-			}
-
-			// Keep the active graph current with the canonical vector store.
-			s.hnswUpdateLive(namedID, embedding)
-
-			// Also add to cluster index if enabled
-			if s.servingClusterIndex() != nil {
-				_ = s.servingClusterIndex().Add(namedID, embedding) // Best effort
-			}
-		}
-	}
-
-	// Index ChunkEmbeddings (chunked documents)
-	// Strategy:
-	//   - Index a "main" embedding at node.ID (currently uses chunk 0 as a representative)
-	//   - For multi-chunk nodes, index every later chunk at "node-id-chunk-N"
-	//
-	// Vector search uses all chunk vectors because it overfetches and then
-	// collapses chunk IDs back to a unique node ID. Chunk 0 uses the main node ID
-	// for compatibility; it is not duplicated under a chunk suffix.
-	// Chunk embeddings are stored in struct field (opaque to users), not in properties
-	if indexVectorState && s.managedEmbeddingEligible(node) && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-		chunkIDs := make([]string, 0, len(node.ChunkEmbeddings)+1)
-		// Always index a main embedding at the node ID (using first chunk)
-		mainEmbedding := node.ChunkEmbeddings[0]
+	// Index every vector entry of the node: named vectors, managed chunk
+	// embeddings (chunk 0 under the node's main key, so a single-chunk node
+	// costs one entry) and vector-shaped property values for Cypher
+	// compatibility. Keys come from vector_entry_key.go, so no two nodes share
+	// one. Vector search overfetches entries and collapses them to their owner.
+	// Embeddings are stored in struct fields (opaque to users), not in properties.
+	if indexVectorState {
 		expectedDim := s.vectorIndex.GetDimensions()
 		if s.vectorFileStore != nil {
 			expectedDim = s.vectorFileStore.GetDimensions()
 		}
-		if err := s.addVectorLocked(string(node.ID), mainEmbedding); err != nil {
-			if err == ErrDimensionMismatch {
-				s.logPrintf("⚠️ IndexNode %s main: embedding dimension mismatch (got %d, expected %d)",
-					node.ID, len(mainEmbedding), expectedDim)
-			}
-		} else {
-			chunkIDs = append(chunkIDs, nodeIDStr) // main ID
-			if s.servingGPUIndex() != nil {
-				_ = s.servingGPUIndex().Add(string(node.ID), mainEmbedding) // Best effort
-			}
-
-			// Use Update() to keep the active graph current for both new and
-			// existing vectors.
-			s.hnswUpdateLive(string(node.ID), mainEmbedding)
-
-			// Also add to cluster index if enabled
-			if s.servingClusterIndex() != nil {
-				_ = s.servingClusterIndex().Add(string(node.ID), mainEmbedding) // Best effort
-			}
-		}
-
-		// For multi-chunk nodes, index later chunks with a chunk suffix. Chunk 0 is
-		// already represented by the main node ID; indexing it twice wastes memory
-		// and consumes ANN candidate slots before node-level collapse.
-		if len(node.ChunkEmbeddings) > 1 {
-			for i := 1; i < len(node.ChunkEmbeddings); i++ {
-				embedding := node.ChunkEmbeddings[i]
-				if len(embedding) > 0 {
-					chunkID := fmt.Sprintf("%s-chunk-%d", node.ID, i)
-					if err := s.addVectorLocked(chunkID, embedding); err != nil {
-						if err == ErrDimensionMismatch {
-							s.logPrintf("⚠️ IndexNode %s chunk %d: embedding dimension mismatch (got %d, expected %d)",
-								node.ID, i, len(embedding), expectedDim)
-						}
-						// Continue indexing other chunks even if one fails
-						continue
-					}
-					chunkIDs = append(chunkIDs, chunkID)
-
-					if s.servingGPUIndex() != nil {
-						_ = s.servingGPUIndex().Add(chunkID, embedding) // Best effort
-					}
-
-					// A later chunk reaches the active graph too, as the
-					// main embedding does.
-					s.hnswUpdateLive(chunkID, embedding)
-
-					// Also add to cluster index if enabled
-					if s.servingClusterIndex() != nil {
-						_ = s.servingClusterIndex().Add(chunkID, embedding) // Best effort
-					}
+		var chunkIDs []string
+		s.forEachNodeVectorEntry(node, expectedDim, func(item nodeVectorEntry) bool {
+			if err := s.addVectorLocked(item.key, item.vector); err != nil {
+				if err == ErrDimensionMismatch {
+					s.logPrintf("⚠️ IndexNode %s %s: embedding dimension mismatch (got %d, expected %d)",
+						node.ID, item.entry.describe(), len(item.vector), expectedDim)
 				}
+				return true // the node's other entries are still indexed
 			}
-		}
+			switch item.entry.Kind {
+			case vectorEntryNamed:
+				if s.nodeNamedVector[nodeIDStr] == nil {
+					s.nodeNamedVector[nodeIDStr] = make(map[string]string, len(node.NamedEmbeddings))
+				}
+				s.nodeNamedVector[nodeIDStr][item.entry.Name] = item.key
+			case vectorEntryProperty:
+				if s.nodePropVector[nodeIDStr] == nil {
+					s.nodePropVector[nodeIDStr] = make(map[string]string, 4)
+				}
+				s.nodePropVector[nodeIDStr][item.entry.Name] = item.key
+			default:
+				chunkIDs = append(chunkIDs, item.key)
+			}
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Add(item.key, item.vector) // Best effort
+			}
+			// Keep the active graph current with the canonical vector store.
+			s.hnswUpdateLive(item.key, item.vector)
+			if s.servingClusterIndex() != nil {
+				_ = s.servingClusterIndex().Add(item.key, item.vector) // Best effort
+			}
+			return true
+		})
 		if len(chunkIDs) > 0 {
 			s.nodeChunkVectors[nodeIDStr] = chunkIDs
-		}
-	}
-
-	// Index vector-shaped property values for Cypher compatibility.
-	// These are indexed under IDs: "node-id-prop-{propertyKey}".
-	if indexVectorState && node.Properties != nil {
-		dim := s.vectorIndex.GetDimensions()
-		if s.vectorFileStore != nil {
-			dim = s.vectorFileStore.GetDimensions()
-		}
-		for key, value := range node.Properties {
-			vec, ok := vectorFromPropertyValue(value, dim)
-			if !ok {
-				continue
-			}
-			propID := fmt.Sprintf("%s-prop-%s", nodeIDStr, key)
-			if err := s.addVectorLocked(propID, vec); err != nil {
-				continue
-			}
-			if s.nodePropVector[nodeIDStr] == nil {
-				s.nodePropVector[nodeIDStr] = make(map[string]string, 4)
-			}
-			s.nodePropVector[nodeIDStr][key] = propID
-			if s.servingGPUIndex() != nil {
-				_ = s.servingGPUIndex().Add(propID, vec) // Best effort
-			}
-			s.hnswUpdateLive(propID, vec)
-			if s.servingClusterIndex() != nil {
-				_ = s.servingClusterIndex().Add(propID, vec) // Best effort
-			}
 		}
 	}
 
@@ -3464,48 +3360,25 @@ func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 	expectedNamed := make(map[string]string, len(node.NamedEmbeddings))
 	expectedChunks := make([]string, 0, len(node.ChunkEmbeddings)+1)
 	expectedProps := make(map[string]string, 4)
-	for vectorName, embedding := range node.NamedEmbeddings {
-		if len(embedding) == 0 {
-			continue
-		}
-		if len(embedding) != dim {
+	complete := true
+	s.forEachNodeVectorEntry(node, dim, func(item nodeVectorEntry) bool {
+		if len(item.vector) != dim {
+			complete = false // re-indexing would reject it; not an unchanged state
 			return false
 		}
-		id := fmt.Sprintf("%s-named-%s", node.ID, vectorName)
-		expected[id] = embedding
-		expectedNamed[vectorName] = id
-	}
-	if s.managedEmbeddingEligible(node) && len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-		if len(node.ChunkEmbeddings[0]) != dim {
-			return false
+		expected[item.key] = item.vector
+		switch item.entry.Kind {
+		case vectorEntryNamed:
+			expectedNamed[item.entry.Name] = item.key
+		case vectorEntryProperty:
+			expectedProps[item.entry.Name] = item.key
+		default:
+			expectedChunks = append(expectedChunks, item.key)
 		}
-		expected[nodeIDStr] = node.ChunkEmbeddings[0]
-		expectedChunks = append(expectedChunks, nodeIDStr)
-		if len(node.ChunkEmbeddings) > 1 {
-			for i := 1; i < len(node.ChunkEmbeddings); i++ {
-				embedding := node.ChunkEmbeddings[i]
-				if len(embedding) == 0 {
-					continue
-				}
-				if len(embedding) != dim {
-					return false
-				}
-				id := fmt.Sprintf("%s-chunk-%d", node.ID, i)
-				expected[id] = embedding
-				expectedChunks = append(expectedChunks, id)
-			}
-		}
-	}
-	if node.Properties != nil {
-		for key, value := range node.Properties {
-			vec, ok := vectorFromPropertyValue(value, dim)
-			if !ok {
-				continue
-			}
-			id := fmt.Sprintf("%s-prop-%s", nodeIDStr, key)
-			expected[id] = vec
-			expectedProps[key] = id
-		}
+		return true
+	})
+	if !complete {
+		return false
 	}
 
 	if !sameStringMap(expectedNamed, s.nodeNamedVector[nodeIDStr]) {
@@ -3610,7 +3483,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	}
 	delete(s.nodePropVector, nodeIDStr)
 
-	// Remove all named embeddings (they're indexed as "node-id-named-{vectorName}")
+	// Remove all named embeddings (their keys are recorded in nodeNamedVector)
 	if named := s.nodeNamedVector[nodeIDStr]; len(named) > 0 {
 		for _, namedID := range named {
 			s.removeVectorLocked(namedID)
@@ -3627,7 +3500,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	}
 	delete(s.nodeNamedVector, nodeIDStr)
 
-	// Remove all chunk embeddings (they're indexed as "node-id-chunk-0", "node-id-chunk-1", etc.)
+	// Remove all chunk embeddings (their keys are recorded in nodeChunkVectors)
 	if chunkIDs := s.nodeChunkVectors[nodeIDStr]; len(chunkIDs) > 0 {
 		for _, chunkID := range chunkIDs {
 			s.removeVectorLocked(chunkID)
@@ -3837,8 +3710,8 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 }
 
 // RemovePropertyVectorIndex tears down all in-memory vector entries that
-// were indexed under the given property key (i.e. every "<nodeID>-prop-<key>"
-// entry). Used by Cypher DROP INDEX so the in-memory index actually goes
+// were indexed under the given property key (every node's property entry
+// for it). Used by Cypher DROP INDEX so the in-memory index actually goes
 // away — without this, a re-CREATE of the same index leaves orphaned
 // vectors in vectorIndex, HNSW, and the cluster index that still get scored
 // against future queries.
@@ -5423,48 +5296,23 @@ func lexicalEntryIDsFromResults(results []indexResult) []string {
 	}
 	ids := make([]string, len(results))
 	for i := range results {
-		ids[i] = results[i].ID
+		ids[i] = nodeMainVectorKey(results[i].ID) // BM25 node IDs as HNSW entry keys
 	}
 	return ids
 }
 
-func normalizeVectorResultIDToNodeID(id string) string {
-	// Chunk IDs are formatted as: "{nodeID}-chunk-{i}"
-	// Named IDs are formatted as: "{nodeID}-named-{vectorName}"
-	// Property-vector IDs are formatted as: "{nodeID}-prop-{propertyKey}"
-	//
-	// Node IDs can contain '-' (UUIDs etc.), so only treat these as suffixes when they match
-	// the known patterns (and for chunks: when the suffix is an integer).
-	if idx := strings.LastIndex(id, "-chunk-"); idx >= 0 {
-		suffix := id[idx+len("-chunk-"):]
-		if suffix != "" {
-			if _, err := strconv.Atoi(suffix); err == nil {
-				return id[:idx]
-			}
-		}
-	}
-	if idx := strings.LastIndex(id, "-named-"); idx >= 0 {
-		suffix := id[idx+len("-named-"):]
-		if suffix != "" {
-			return id[:idx]
-		}
-	}
-	if idx := strings.LastIndex(id, "-prop-"); idx >= 0 {
-		suffix := id[idx+len("-prop-"):]
-		if suffix != "" {
-			return id[:idx]
-		}
-	}
-	return id
-}
-
+// collapseCandidatesByNodeID keeps each owning node's best-scoring entry.
+// Candidates whose key has no owner are dropped.
 func collapseCandidatesByNodeID(cands []SearchCandidate) []SearchCandidate {
 	if len(cands) == 0 {
 		return nil
 	}
 	best := make(map[string]float64, len(cands))
 	for _, c := range cands {
-		nodeID := normalizeVectorResultIDToNodeID(c.ID)
+		nodeID, ok := vectorEntryOwner(c.ID)
+		if !ok {
+			continue
+		}
 		if prev, ok := best[nodeID]; !ok || c.Score > prev {
 			best[nodeID] = c.Score
 		}
@@ -5477,6 +5325,11 @@ func collapseCandidatesByNodeID(cands []SearchCandidate) []SearchCandidate {
 	return out
 }
 
+// collapseIndexResultsByNodeID is where vector search turns vector-entry keys
+// into owning node IDs, the only place results are decoded. Each owner keeps
+// its best-scoring entry; ID becomes the owner and MatchID keeps the entry's
+// key. Everything downstream reads owners and never decodes again. Results
+// whose key has no owner are dropped.
 func collapseIndexResultsByNodeID(results []indexResult) []indexResult {
 	if len(results) == 0 {
 		return nil
@@ -5484,7 +5337,7 @@ func collapseIndexResultsByNodeID(results []indexResult) []indexResult {
 	const duplicateScanLimit = 1024
 	canonical := true
 	for _, r := range results {
-		if normalizeVectorResultIDToNodeID(r.ID) != r.ID {
+		if r.ID == "" || r.ID[0] == vectorEntryKeyMarker {
 			canonical = false
 			break
 		}
@@ -5506,7 +5359,10 @@ func collapseIndexResultsByNodeIDSlow(results []indexResult) []indexResult {
 	best := make(map[string]indexResult, len(results))
 	for _, r := range results {
 		rawID := r.ID
-		nodeID := normalizeVectorResultIDToNodeID(rawID)
+		nodeID, ok := vectorEntryOwner(rawID)
+		if !ok {
+			continue
+		}
 		if prev, ok := best[nodeID]; !ok || r.Score > prev.Score {
 			if r.MatchID == "" && nodeID != rawID {
 				r.MatchID = rawID

@@ -66,7 +66,7 @@ func TestVectorRestorePreservesFulltextOutsideVectorMetadata(t *testing.T) {
 					require.True(t, ok)
 					require.Equal(t, "x", text)
 					require.NotContains(t, svc.nodeLabels, "a")
-					require.Equal(t, "b-named-v", svc.nodeNamedVector["b"]["v"])
+					require.Equal(t, nodeNamedVectorKey("b", "v"), svc.nodeNamedVector["b"]["v"])
 					assert.Equal(t, int64(1), svc.bm25ResidentBytes, "restored text-only document must remain charged")
 					assert.Equal(t, int64(26), svc.bm25MetadataBytes)
 					require.Zero(t, svc.indexCapacityByNode["a"].vectorMetadata, "restore must not invent cleared vector metadata for the surviving text")

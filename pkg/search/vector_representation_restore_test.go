@@ -121,7 +121,7 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				require.True(t, restored.IsReady())
 				require.NotNil(t, restored.vectorFileStore)
 				require.Equal(t, 1, restored.fulltext().Count())
-				require.Equal(t, "a-named-v", restored.nodeNamedVector["a"]["v"])
+				require.Equal(t, nodeNamedVectorKey("a", "v"), restored.nodeNamedVector["a"]["v"])
 				assert.Equal(t, int64(42), restored.vectorMetadataBytes, "restored metadata must retain its admission charges")
 				require.Equal(t, fulltextResident, restored.bm25ResidentBytes)
 				require.Equal(t, fulltextMetadata, restored.bm25MetadataBytes)
