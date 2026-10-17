@@ -100,7 +100,7 @@ FETCH_ARGS=(--cache "${WORK_DIR}/downloads" --destination "${QDRANT_BIN}"
 [[ -z "${QDRANT_SHA256}" ]] || FETCH_ARGS+=(--sha256 "${QDRANT_SHA256}")
 python3 "${BENCH_DIR}/fetch_qdrant.py" "${FETCH_ARGS[@]}"
 
-VENV="${WORK_DIR}/venv"
+VENV="${VECTOR_VENV_DIR:-${WORK_DIR}/.venv}"
 if [[ ! -x "${VENV}/bin/python" ]]; then
   log "creating the Python environment"
   python3 -m venv "${VENV}"
