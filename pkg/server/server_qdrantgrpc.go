@@ -51,6 +51,7 @@ func (s *Server) startQdrantGRPC() error {
 	baseStorage := s.db.GetBaseStorageForManager()
 
 	cfg := qdrantgrpc.DefaultConfig()
+	cfg.Logger = s.config.Logger
 	cfg.Localizer = s.localizer
 	if features.QdrantGRPCListenAddr != "" {
 		cfg.ListenAddr = features.QdrantGRPCListenAddr
