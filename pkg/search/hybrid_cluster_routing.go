@@ -34,39 +34,32 @@ func (s *Service) clearClusterLexicalProfiles() {
 	s.clusterLexicalMu.Unlock()
 }
 
-// clusterLexicalProfilesFor derives the hybrid-routing lexical profile of
-// every cluster in clustering; installClusterGeneration re-derives the
-// clusters its catch-up changes (updateClusterLexicalProfiles) and publishes
-// them together.
+// clusterLexicalProfilesFor builds the hybrid-routing lexical profile of each
+// cluster in clustering. installClusterGeneration publishes them with it.
 func (s *Service) clusterLexicalProfilesFor(clustering *gpu.Clustering) map[int]map[string]float64 {
-	profiles := make(map[int]map[string]float64, clustering.NumClusters())
-	clusters := make([]int, clustering.NumClusters())
-	for cid := range clusters {
-		clusters[cid] = cid
-	}
-	s.updateClusterLexicalProfiles(profiles, clustering, clusters)
-	return profiles
-}
-
-// updateClusterLexicalProfiles derives the profile of each listed cluster
-// from its current members' documents, replacing or removing its entry.
-func (s *Service) updateClusterLexicalProfiles(profiles map[int]map[string]float64, clustering *gpu.Clustering, clusters []int) {
 	s.mu.RLock()
 	fulltext := s.fulltext()
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	s.mu.RUnlock()
+	numClusters := clustering.NumClusters()
+	profiles := make(map[int]map[string]float64, numClusters)
+	if fulltext == nil {
+		return profiles
+	}
+
 	topTerms := envutil.GetInt("NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS", 64)
 	if topTerms < 8 {
 		topTerms = 8
 	}
-	for _, cid := range clusters {
-		delete(profiles, cid)
-		if fulltext == nil {
+
+	for cid := 0; cid < numClusters; cid++ {
+		memberIDs := clustering.MemberIDs(cid)
+		if len(memberIDs) == 0 {
 			continue
 		}
 		tf := make(map[string]float64, 128)
 		total := 0.0
-		for _, id := range clustering.MemberIDs(cid) {
+		for _, id := range memberIDs {
 			text, ok := fulltext.GetDocument(id)
 			if !ok {
 				text, ok = fulltext.GetDocument(normalizeVectorResultIDToNodeID(id))
@@ -87,6 +80,7 @@ func (s *Service) updateClusterLexicalProfiles(profiles map[int]map[string]float
 		}
 		profiles[cid] = topNTokenWeights(tf, topTerms)
 	}
+	return profiles
 }
 
 func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
