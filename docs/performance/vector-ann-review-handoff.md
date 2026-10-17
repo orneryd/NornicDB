@@ -15,6 +15,9 @@ and the comparison harness in [#1375](https://github.com/orneryd/NornicDB/pull/1
 | Embedded drop/recreate | Old point 1 remained alongside new point 3 | The constructor's default drop path clears the shared service and removes persisted vector, HNSW, IVF-HNSW and IVF-PQ artifacts |
 | Collection dimension adoption | Cluster dimension remained 1024 after its vector source adopted 4, rejecting all clustering backfill | Replace the cluster backend with the adopted dimension while preserving its manager and policy |
 | GPU graph completion | A 40-node descent with a one-round cap returned node 1 instead of node 39 | Expand every retained beam node completely; capped unions defer whole adjacency lists |
+| IVF-HNSW global candidate budget | Public routed query lost nearest points concentrated in one probed topic cluster | Each cluster can contribute the full requested top-K before the global merge |
+| Named/chunk/property lexical identity | Real public HNSW construction stored hints under document IDs; named-vector cluster profiles were empty | Resolve documents with the existing node-ID normalizer and bind construction hints to actual embedding IDs; expand BM25 seed documents through the existing vector metadata for k-means/PQ |
+| Lexical route in exact cluster fallback | After restoring profiles, public hybrid results had vector rank 0 for the lexical-selected topic | Exact fallback scores the selected members instead of choosing clusters again by vector proximity |
 | GPU candidate setting | The candidate-depth configuration was read but unused | Honor it above the M/efConstruction quality floor |
 | Benchmark identity | Inherited settings could change modes; fixed paths and ports could select/delete another run | Private directories, explicit settings, child listener ownership, strategy checks and failure cleanup |
 | Benchmark reporting/integrity | Tagged runs vanished; K=5 appeared under recall@10; cached executables bypassed verification | Report the measured population and K; verify every cached archive against the correct platform digest |
@@ -74,3 +77,31 @@ The cached 88,155 x 1,024 Titan corpus has no text payload file; it supports a
 vector-only comparison without AWS access. Lexical construction quality is
 covered separately by the lexical-hint regression, not inferred from that
 corpus's vector-only results.
+
+## Full-corpus follow-up corrections
+
+The first complete 13-mode sweep at `5f7e30163` exposed poor IVF-HNSW recall
+(0.6399). Its logs and results are preserved as a baseline. A public query with
+32 probed topic clusters reproduced a separate deterministic loss: the generator
+split its candidate budget between clusters even though all top results can lie
+in one cluster. That quota is removed; nearest-cluster probing remains an
+approximation and higher probe counts must still be measured.
+
+Lexical regression fixtures also found a shared identity mismatch. BM25 owns
+node IDs while named, property and later-chunk vectors have embedding IDs.
+Construction iterators now prioritize and bind their existing hints consistently,
+and clustering/PQ seed selection resolves the same document metadata. This is
+shared preparation for CPU, Metal, CUDA and Vulkan, not a new ranking formula.
+A public hybrid-search regression proves that an exact fallback for a small
+cluster retains lexical selection and contributes the selected results to the
+vector branch. Existing persisted graphs/codes remain usable; new construction
+uses the corrected hints.
+
+The permanent tests include `TestIVFHNSWPublicQueryPreservesConcentratedNeighbours`,
+`TestIVFHNSWPublicHybridSearchPreservesLexicalFallbackRoute`,
+`TestANNPublicBuildUsesNamedVectorLexicalSeeds`, and
+`TestHNSWLexicalSeedsFollowVectorIdentity`. A controlled overlay of the previous
+consumer implementations reproduces the failures; the integrated correction
+must pass current verification. The preferred-seed list is consumed during
+clustering, so its absence after training is not itself a defect; the regression
+inspects resolved seed IDs by reapplying their existing owner.
