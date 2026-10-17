@@ -207,6 +207,23 @@ func assertClusterGenerationCoherent(t *testing.T, svc *Service, check cgCheck) 
 			require.Equal(t, view.configuredPolicy, mode, "cluster %d graph uses the configured policy", cid)
 		}
 	}
+	// The serving pipeline routes on this generation with its probe count.
+	clustered, ivf, index, probes := cgServing(t, svc)
+	require.True(t, clustered, "a published generation is served by a clustered strategy")
+	require.Same(t, view.index, index, "queries route on the published generation's index")
+	require.Equal(t, cgExpectedProbes(view.numClusters), probes, "probe count follows the published generation")
+	if check.ivf {
+		require.True(t, ivf, "a generation with graphs is served by IVF-HNSW")
+	}
+}
+
+// assertPersistedGenerationMatches checks the generation persisted in dir
+// against the published one: one live entry per member, in its cluster.
+func assertPersistedGenerationMatches(t *testing.T, svc *Service, dir string) {
+	t.Helper()
+	persisted, duplicates := cgPersistedMembership(t, dir)
+	require.Empty(t, duplicates, "a persisted live member is in one cluster")
+	require.Equal(t, cgView(svc).membership, persisted, "the persisted generation is the published one")
 }
 
 // cgPausingContext pauses a clustering run right after k-means copied the
@@ -378,6 +395,7 @@ func TestClusterGenerationPersistenceMatrix(t *testing.T) {
 		f := newCGFixture(t, 20, true)
 		f.add(1, "beta newcomer")
 		f.svc.PersistIndexesToDisk()
+		assertPersistedGenerationMatches(t, f.svc, f.dir)
 		require.NoError(t, f.svc.Close())
 		f.svc = f.open(true)
 		require.NoError(t, f.svc.BuildIndexes(context.Background()))

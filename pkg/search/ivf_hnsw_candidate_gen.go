@@ -13,6 +13,27 @@ import (
 
 type clusterHNSWLookup func(clusterID int) *HNSWIndex
 
+// clusterServing is where a clustered candidate generator reads the cluster
+// generation a query uses: resolve returns its routing index and probe
+// count, called with lock held (the lock publication takes exclusively), so
+// a query routes on one published generation and never on a copy a
+// pipeline took earlier.
+type clusterServing struct {
+	lock    sync.Locker
+	resolve func() (*gpu.ClusterIndex, int)
+}
+
+// route returns the routing index and probe count for one query, starting
+// from the generator's own; the caller releases with the returned func.
+func (c *clusterServing) route(index *gpu.ClusterIndex, probes int) (*gpu.ClusterIndex, int, func()) {
+	if c == nil {
+		return index, probes, func() {}
+	}
+	c.lock.Lock()
+	index, probes = c.resolve()
+	return index, probes, c.lock.Unlock
+}
+
 // IVFHNSWCandidateGen implements IVF-HNSW: centroid routing (IVF) into per-cluster HNSW indexes.
 //
 // This is designed for large CPU-only datasets:
@@ -25,9 +46,9 @@ type IVFHNSWCandidateGen struct {
 	getClusterHNSW      clusterHNSWLookup
 	numClustersToSearch int
 	clusterSelector     func(ctx context.Context, query []float32, defaultN int) []int
-	// generation, when set, is held while routing and taking graphs, so both
+	// serving, when set, is held while routing and taking graphs, so both
 	// come from one published cluster generation.
-	generation sync.Locker
+	serving *clusterServing
 }
 
 func NewIVFHNSWCandidateGen(clusterIndex *gpu.ClusterIndex, getClusterHNSW clusterHNSWLookup, numClustersToSearch int) *IVFHNSWCandidateGen {
@@ -47,10 +68,12 @@ func (g *IVFHNSWCandidateGen) SetClusterSelector(fn func(ctx context.Context, qu
 	return g
 }
 
-// SetGenerationLock sets the lock that publication of a new cluster generation
-// takes exclusively; the lookup must then read graphs without locking.
-func (g *IVFHNSWCandidateGen) SetGenerationLock(generation sync.Locker) *IVFHNSWCandidateGen {
-	g.generation = generation
+// SetServing makes the generator read the published cluster generation per
+// query: resolve (called with lock held, the lock publication takes
+// exclusively) returns its routing index and probe count; the graph lookup
+// and selector are then called with lock held and must not lock it.
+func (g *IVFHNSWCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.ClusterIndex, int)) *IVFHNSWCandidateGen {
+	g.serving = &clusterServing{lock: lock, resolve: resolve}
 	return g
 }
 
@@ -132,11 +155,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 // cluster generation. Missing graphs are incomplete ANN state, not permission
 // to scan the entire routed population.
 func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32) ([]*HNSWIndex, error) {
-	if g.generation != nil {
-		g.generation.Lock()
-		defer g.generation.Unlock()
-	}
-	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
+	clusterIndex, probes, release := g.serving.route(g.clusterIndex, g.numClustersToSearch)
+	defer release()
+	if clusterIndex == nil || !clusterIndex.IsClustered() {
 		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
 	if g.getClusterHNSW == nil {
@@ -145,10 +166,10 @@ func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32)
 
 	clusterIDs := []int(nil)
 	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+		clusterIDs = g.clusterSelector(ctx, query, probes)
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+		clusterIDs = clusterIndex.FindNearestClusters(query, probes)
 	}
 	indexes := make([]*HNSWIndex, len(clusterIDs))
 	for i, cid := range clusterIDs {
