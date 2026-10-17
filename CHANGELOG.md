@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accelerate ARM64 CPU dot-product scoring with independent NEON fused multiply-add accumulators,
+  preserving block/tail handling and normalized signed-vector accuracy.
+
 - Admit managed model-space chunks before dimension validation and restrict persisted exact queries to admitted
   vector identities. Retire fulltext and capacity accounting through both default Qdrant server constructors on drop.
   Serialize the first GPU brute-force snapshot/upload/publication with live index mutations before pipeline locking.
