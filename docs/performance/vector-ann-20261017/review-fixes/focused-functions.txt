@@ -1,0 +1,4 @@
+github.com/orneryd/nornicdb/pkg/search/hnsw_quantization_config.go:122:		ConfigureHNSWQuantization			96.7%
+github.com/orneryd/nornicdb/pkg/search/hnsw_quantization_options.go:34:		effectiveHNSWQuantizationOptions		100.0%
+github.com/orneryd/nornicdb/pkg/search/search.go:551:				searchCacheKey					74.1%
+github.com/orneryd/nornicdb/pkg/search/vector_clear.go:28:			clearIndexes					82.4%
