@@ -1,0 +1,6 @@
+# github.com/orneryd/nornicdb/pkg/qdrantgrpc.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ok  	github.com/orneryd/nornicdb/pkg/search	1.955s	coverage: 16.0% of statements
+ok  	github.com/orneryd/nornicdb/pkg/qdrantgrpc	2.357s	coverage: 22.6% of statements
