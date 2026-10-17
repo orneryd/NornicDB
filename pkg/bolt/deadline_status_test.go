@@ -12,7 +12,9 @@ import (
 // A statement stopped at its deadline fails with Neo4j's transaction timeout,
 // not SyntaxError (#1339). Neo4j 5.26 reports a client tx_timeout as
 // TransactionTimedOutClientConfiguration; the server's own statement timeout
-// is TransactionTimedOut.
+// is TransactionTimedOut. Bolt owns both deadlines, so the status holds for an
+// executor that returns the context's bare error, on both RUN paths: a read
+// (streamed) and a write (answered whole).
 func TestBoltDeadlineStatus(t *testing.T) {
 	for _, test := range []struct {
 		name          string
@@ -25,25 +27,27 @@ func TestBoltDeadlineStatus(t *testing.T) {
 		{"server statement timeout", 50 * time.Millisecond, nil,
 			nornicerrors.TransactionTimedOut, nornicerrors.TransactionTimedOutMessage},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			config := DefaultConfig()
-			config.BoltStatementTimeout = test.serverTimeout
-			executor := &mockExecutor{executeFunc: func(ctx context.Context, _ string, _ map[string]any) (*QueryResult, error) {
-				// The statement runs until its deadline; the executor, which owns
-				// the statement's context, marks that as its timeout.
-				<-ctx.Done()
-				return nil, nornicerrors.MarkStatementTimeout(ctx.Err(), context.Cause(ctx))
-			}}
-			port := startBoltTestServer(t, New(config, executor))
-			conn := openBoltTestConn(t, port)
-			require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
-			require.NoError(t, SendRun(t, conn, "RETURN 1", nil, test.metadata))
-			code, message, err := AssertFailure(t, conn)
-			require.NoError(t, err)
-			require.Equal(t, test.code, code)
-			require.Equal(t, test.message, message)
-			require.NotEqual(t, nornicerrors.StatementSyntaxError, code)
-		})
+		for _, query := range []string{"RETURN 1", "CREATE (n)"} {
+			t.Run(test.name+"/"+query, func(t *testing.T) {
+				config := DefaultConfig()
+				config.BoltStatementTimeout = test.serverTimeout
+				executor := &mockExecutor{executeFunc: func(ctx context.Context, _ string, _ map[string]any) (*QueryResult, error) {
+					// The statement runs until its deadline and returns the
+					// context's error unmarked, as any QueryExecutor may.
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}}
+				port := startBoltTestServer(t, New(config, executor))
+				conn := openBoltTestConn(t, port)
+				require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+				require.NoError(t, SendRun(t, conn, query, nil, test.metadata))
+				code, message, err := AssertFailure(t, conn)
+				require.NoError(t, err)
+				require.Equal(t, test.code, code)
+				require.Equal(t, test.message, message)
+				require.NotEqual(t, nornicerrors.StatementSyntaxError, code)
+			})
+		}
 	}
 }
 
