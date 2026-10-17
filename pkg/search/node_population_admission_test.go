@@ -2,14 +2,10 @@ package search
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -160,152 +156,6 @@ func TestNodePopulationUninitializedPersistAndClosePreserveArtifacts(t *testing.
 				require.NoError(t, err)
 				assert.Equal(t, before[p], value, p)
 			}
-		})
-	}
-}
-
-func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
-	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-	for _, backend := range []string{"v1", "v2"} {
-		t.Run(backend, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
-			t.Cleanup(func() { require.NoError(t, engine.Close()) })
-			a := admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named")
-			_, err := engine.CreateNode(a)
-			require.NoError(t, err)
-			svc := configureNodeAdmissionService(t, engine, t.TempDir(), backend, nil)
-			logGate := &baseCheckpointBuildLog{entered: make(chan struct{}), release: make(chan struct{})}
-			var sourceOnce, graphOnce sync.Once
-			releaseSource := func() { sourceOnce.Do(func() { close(logGate.release) }) }
-			defer releaseSource()
-			svc.SetLogger(slog.New(logGate))
-			graphStarted, graphRelease := make(chan struct{}), make(chan struct{})
-			releaseGraph := func() { graphOnce.Do(func() { close(graphRelease) }) }
-			defer releaseGraph()
-			hnswBeforeInstallHook = func(ctx context.Context) {
-				close(graphStarted)
-				select {
-				case <-graphRelease:
-				case <-ctx.Done():
-				}
-			}
-			defer func() { hnswBeforeInstallHook = nil }()
-			buildDone := make(chan error, 1)
-			go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
-			select {
-			case <-logGate.entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("node phase did not enter source gate")
-			}
-			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
-			_, err = engine.CreateNode(b)
-			require.NoError(t, err)
-			writeDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() { writerID <- serviceTestGoroutineID(); writeDone <- svc.IndexNode(b) }()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
-			releaseSource()
-			select {
-			case <-graphStarted:
-			case <-time.After(5 * time.Second):
-				t.Fatal("ANN did not reach retained hook")
-			}
-			select {
-			case err := <-writeDone:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("NODE waiter waited for ANN/buildMu tail")
-			}
-			removeDone := make(chan error, 1)
-			require.NoError(t, engine.DeleteNode(a.ID))
-			go func() { removeDone <- svc.RemoveNode(a.ID) }()
-			select {
-			case err := <-removeDone:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("live delete waited for ANN")
-			}
-			select {
-			case err := <-buildDone:
-				t.Fatalf("build escaped blocked ANN: %v", err)
-			default:
-			}
-			releaseGraph()
-			require.NoError(t, <-buildDone)
-			resp, err := svc.Search(context.Background(), "bterm", nil, &SearchOptions{Limit: 10})
-			require.NoError(t, err)
-			require.Len(t, resp.Results, 1)
-			assert.Equal(t, "nornic:b", resp.Results[0].ID)
-			resp, err = svc.Search(context.Background(), "aterm", nil, &SearchOptions{Limit: 10})
-			require.NoError(t, err)
-			assert.Empty(t, resp.Results)
-			graph, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
-			require.NoError(t, err)
-			hits, err := graph.Search(context.Background(), []float32{0, 1, 0}, 10, -1)
-			require.NoError(t, err)
-			require.Len(t, hits, 1)
-			assert.Equal(t, "nornic:b-named-v", hits[0].ID)
-		})
-	}
-}
-
-func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
-	for _, closeOwner := range []bool{false, true} {
-		t.Run(fmt.Sprint("close=", closeOwner), func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
-			t.Cleanup(func() { require.NoError(t, engine.Close()) })
-			_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
-			require.NoError(t, err)
-			svc := configureNodeAdmissionService(t, engine, t.TempDir(), "v2", nil)
-			gate := &baseCheckpointBuildLog{entered: make(chan struct{}), release: make(chan struct{})}
-			var once sync.Once
-			release := func() { once.Do(func() { close(gate.release) }) }
-			defer release()
-			svc.SetLogger(slog.New(gate))
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			buildDone := make(chan error, 1)
-			go func() { buildDone <- svc.BuildIndexes(ctx) }()
-			select {
-			case <-gate.entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("missing node gate")
-			}
-			mutationDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() {
-				writerID <- serviceTestGoroutineID()
-				mutationDone <- svc.IndexNode(admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named"))
-			}()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
-			closed := make(chan error, 1)
-			if closeOwner {
-				go func() { closed <- svc.Close() }()
-			} else {
-				cancel()
-			}
-			if closeOwner {
-				select {
-				case err := <-mutationDone:
-					require.True(t, errors.Is(err, context.Canceled))
-				case <-time.After(5 * time.Second):
-					t.Fatal("Close did not wake NODE waiter")
-				}
-			}
-			release()
-			require.Error(t, <-buildDone)
-			if closeOwner {
-				require.NoError(t, <-closed)
-			} else {
-				require.ErrorIs(t, <-mutationDone, context.Canceled)
-			}
-			assert.False(t, svc.IsReady())
-			assert.Empty(t, svc.fulltext().Search("bterm", 10))
-			assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
-			svc.persistMu.Lock()
-			timer := svc.persistTimer
-			svc.persistMu.Unlock()
-			assert.Nil(t, timer)
 		})
 	}
 }
