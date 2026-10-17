@@ -415,6 +415,14 @@ type SearchOptions struct {
 	// don't search a graph and ignore it.
 	HNSWEf int
 
+	// QuantizationIgnore searches original coordinates. QuantizationRescore
+	// defaults to true; false returns approximate scores for quantized HNSW.
+	// QuantizationOversampling expands the exact-reranking candidate pool
+	// (0 defaults to 1; explicit values must be finite and at least 1).
+	QuantizationIgnore       bool
+	QuantizationRescore      *bool
+	QuantizationOversampling float64
+
 	// Where admits a candidate node, as a Cypher WHERE on it does: a missing
 	// property, a negation or a pattern from the node; nil admits every node. It
 	// is applied with Types and Filters to the candidates, before the top-K cut.
@@ -874,8 +882,10 @@ type Service struct {
 
 	// Optional IVF-HNSW acceleration: build one HNSW per cluster to use centroids
 	// as a routing layer for CPU-only large datasets.
-	clusterHNSWMu sync.RWMutex
-	clusterHNSW   map[int]*HNSWIndex
+	// Optional per-database policy supplied by the collection owner; guarded by mu.
+	hnswQuantizationOverride *HNSWQuantizationConfig
+	clusterHNSWMu            sync.RWMutex
+	clusterHNSW              map[int]*HNSWIndex
 
 	// Optional compressed ANN index (IVF/PQ), active only when
 	// NORNICDB_VECTOR_ANN_QUALITY=compressed and readiness checks pass.
@@ -1916,7 +1926,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		numClusters = maxClusters
 	}
 
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 	rebuilt := make(map[int]*HNSWIndex, numClusters)
 	s.logPrintf("[IVF-HNSW] 🔨 Building per-cluster HNSW: %d clusters (min size %d)", numClusters, minClusterSize)
 	const ivfProgressInterval = 50 // log every N clusters built
@@ -3964,7 +3974,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			hnswWarmupReason = "settings changed"
 			s.logPrintf("📇 HNSW on-disk index ignored due to settings change; rebuilding")
 		} else if err == nil && loaded != nil && dimensions > 0 && loaded.GetDimensions() == dimensions {
-			want := HNSWConfigFromEnv()
+			want := s.hnswConfig()
 			have := loaded.Config()
 			if have.M != want.M || have.EfConstruction != want.EfConstruction || have.EfSearch != want.EfSearch {
 				hnswWarmupReason = "config changed"
@@ -3974,7 +3984,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				// Beam factor is query-only tuning and does not affect the persisted
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswLexicalSeedHints(s.fulltext(), want.M)))
+				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
 				s.hnswMu.Lock()
 				s.hnswIndex = loaded
 				s.hnswMu.Unlock()
@@ -4969,6 +4979,11 @@ func (s *Service) adaptiveVectorSearch(
 	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
 	ctx = withHNSWEf(ctx, opts.HNSWEf)
+	var quantizationErr error
+	ctx, quantizationErr = withQuantizationOptions(ctx, opts)
+	if quantizationErr != nil {
+		return nil, vectorOverfetchStats{}, quantizationErr
+	}
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {
@@ -5647,11 +5662,11 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 }
 
 func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi *VectorIndex, vfs *VectorFileStore) (*HNSWIndex, error) {
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 	s.mu.RLock()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswLexicalSeedHints(fulltext, config.M)
+	seedHints := s.hnswBuildLexicalSeedHints(fulltext, config.M)
 	if vfs != nil && vfs.Count() > 0 {
 		total := vfs.Count()
 		iter := hnswVectorFileStoreIterator(vfs, seedHints)
@@ -5984,7 +5999,7 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, vect
 		return nil, localizedError(localization.SearchHNSWIndexCreationFailed(err), err)
 	}
 	return &vectorStrategyDescriptor{
-		name:         "HNSW",
+		name:         hnswIndex.quantizedStrategyName(),
 		candidateGen: NewHNSWCandidateGen(hnswIndex),
 		scorerPolicy: exactScorerPolicyCPU,
 	}, nil
@@ -6068,20 +6083,23 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 	s.hnswMu.RLock()
 	if idx := s.hnswIndex; idx != nil {
 		s.hnswMu.RUnlock()
+		if err := idx.SetQuantization(ctx, s.hnswConfig().Quantization); err != nil {
+			return nil, err
+		}
 		return idx, nil
 	}
 	s.hnswMu.RUnlock()
 
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 
 	s.mu.RLock()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	ft := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswLexicalSeedHints(ft, config.M)
+	seedHints := s.hnswBuildLexicalSeedHints(ft, config.M)
 	if len(seedHints) > 0 {
-		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked node IDs", len(seedHints))
+		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs", len(seedHints))
 	}
 
 	var built *HNSWIndex
@@ -6123,6 +6141,11 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		}
 		var err error
 		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iterator, nil)
+		if err == nil {
+			// Encode while the construction lease still lends normalized views.
+			// Runtime lookups retain their owning-copy contract.
+			err = built.SetQuantization(ctx, config.Quantization)
+		}
 		if built != nil && lease != nil {
 			// The lease accelerates construction only. Runtime lookup retains the
 			// owning-copy contract so compaction and close cannot invalidate views.
@@ -6149,6 +6172,9 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		return nil, localizedError(localization.SearchVectorIndexNil(), nil)
 	}
 
+	if err := built.SetQuantization(ctx, config.Quantization); err != nil {
+		return nil, err
+	}
 	if hnswBeforeInstallHook != nil {
 		hnswBeforeInstallHook()
 	}
@@ -6310,7 +6336,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 
 	rebuilt := NewHNSWIndex(old.dimensions, old.config)
 	rebuilt.SetVectorLookup(s.getVectorLookup())
-	seedHints := s.hnswLexicalSeedHints(fulltext, old.config.M)
+	seedHints := s.hnswBuildLexicalSeedHints(fulltext, old.config.M)
 	rebuilt.SetBuildLexicalHints(lexicalHintValues(seedHints))
 	const rebuildProgressInterval = 50000
 	if vfs != nil && vfs.Count() > 0 {

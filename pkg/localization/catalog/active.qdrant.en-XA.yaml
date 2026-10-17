@@ -100,3 +100,11 @@
 - id: qdrant.get_edges_failed
   description: Pseudo-locale edge read failure.
   other: "[!! failed to get edges: {{.Cause}} !!]"
+
+- id: qdrant.invalid_quantization_oversampling
+  description: Invalid quantized search oversampling factor.
+  other: "[!! quantization oversampling must be finite and at least 1 !!]"
+
+- id: qdrant.invalid_quantization_config
+  description: Unsupported or invalid vector compression configuration.
+  other: "[!! invalid quantization configuration: {{.Cause}} !!]"

@@ -292,6 +292,9 @@ func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []
 	opts.CandidateTarget = spec.Limit
 	if caller != nil {
 		opts.HNSWEf = caller.HNSWEf
+		opts.QuantizationIgnore = caller.QuantizationIgnore
+		opts.QuantizationRescore = caller.QuantizationRescore
+		opts.QuantizationOversampling = caller.QuantizationOversampling
 		opts.Where = caller.Where
 	}
 	return s.vectorQueryNodesIndexedWithOptions(ctx, queryEmbedding, spec, vectorName, opts)
@@ -320,14 +323,17 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	minSimilarity := -1.0
 	resolved.MinSimilarity = &minSimilarity
 	normalizedQuery := vector.Normalize(queryEmbedding)
+	ctx, err = withQuantizationOptions(ctx, resolved)
+	if err != nil {
+		return nil, err
+	}
+	var quantizedIndex *HNSWIndex
+	if h, ok := pipeline.candidateGen.(*HNSWCandidateGen); ok && h.quantizationActive(ctx) && !quantizationOptions(ctx).rescore {
+		quantizedIndex = h.hnswIndex
+	}
 
 	var supplement []vectorQueryScoredNode
-	if spec.Property != "" {
-		supplement, err = s.exactPropertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property)
-		if err != nil {
-			return nil, err
-		}
-	}
+	supplementReady := false
 
 	var postProcessErr error
 	seenOrphans := make(map[string]bool)
@@ -335,7 +341,16 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 		if postProcessErr != nil {
 			return nil
 		}
-		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement)
+		// Candidate discovery activates a pending PQ model after collection
+		// growth. Score supplements afterwards, once, using that same policy.
+		if !supplementReady && spec.Property != "" {
+			supplement, postProcessErr = s.propertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property, quantizedIndex)
+			if postProcessErr != nil {
+				return nil
+			}
+			supplementReady = true
+		}
+		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement, quantizedIndex)
 		postProcessErr = processErr
 		// Filtering here, inside the widening loop, lets a selective Where
 		// widen the search until it has the top K it admits.
@@ -361,7 +376,7 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	return hits, nil
 }
 
-func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode) ([]indexResult, error) {
+func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode, quantizedIndex *HNSWIndex) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
@@ -369,6 +384,8 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
 	meta := s.snapshotVectorQueryCandidateMeta(candidateNodes)
+	scoreVector, release := s.vectorQueryScoreReader(normalizedQuery, quantizedIndex)
+	defer release()
 
 	for nodeID := range candidateNodes {
 		select {
@@ -399,7 +416,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 
 		if named := nodeMeta.named; named != nil {
 			if vecID, ok := named[vectorName]; ok {
-				if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+				if score, ok := scoreVector(vecID); ok {
 					bestScore = score
 				}
 			}
@@ -407,7 +424,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 			// fall through to managed named embeddings (any key) before chunk fallback.
 			if bestScore < -1.0 && spec.Property == "" {
 				for _, vecID := range named {
-					if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+					if score, ok := scoreVector(vecID); ok {
 						if score > bestScore {
 							bestScore = score
 						}
@@ -419,7 +436,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 		if bestScore < -1.0 && spec.Property != "" {
 			if props := nodeMeta.props; props != nil {
 				if vecID, ok := props[spec.Property]; ok {
-					if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+					if score, ok := scoreVector(vecID); ok {
 						bestScore = score
 					}
 				}
@@ -428,7 +445,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 
 		if bestScore < -1.0 {
 			for _, vecID := range nodeMeta.chunks {
-				if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+				if score, ok := scoreVector(vecID); ok {
 					if score > bestScore {
 						bestScore = score
 					}
@@ -475,7 +492,7 @@ func collapseScoredNodesByID(nodes []vectorQueryScoredNode) []vectorQueryScoredN
 	return out
 }
 
-func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQuery []float32, label, property string) ([]vectorQueryScoredNode, error) {
+func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery []float32, label, property string, quantizedIndex *HNSWIndex) ([]vectorQueryScoredNode, error) {
 	type candidate struct {
 		nodeID string
 		vecID  string
@@ -507,6 +524,11 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
 
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	scoreVector, release := s.vectorQueryScoreReader(normalizedQuery, quantizedIndex)
+	defer release()
 	out := make([]vectorQueryScoredNode, 0, len(candidates))
 	for _, cand := range candidates {
 		select {
@@ -514,7 +536,7 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 			return nil, ctx.Err()
 		default:
 		}
-		score, ok := s.scoreVectorIDDot(normalizedQuery, cand.vecID)
+		score, ok := scoreVector(cand.vecID)
 		if !ok {
 			continue
 		}

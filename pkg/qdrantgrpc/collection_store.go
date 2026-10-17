@@ -11,6 +11,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -79,6 +80,22 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
+	return s.CreateWithQuantization(ctx, name, dims, distance, nil)
+}
+
+func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, name string, dims int, distance qpb.Distance, quantization *qpb.QuantizationConfig) error {
+	var encoded []byte
+	if quantization != nil {
+		if _, err := searchQuantizationConfig(quantization); err != nil {
+			return err
+		}
+		var err error
+		encoded, err = protojson.Marshal(quantization)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := validateCollectionName(name, s.reserved); err != nil {
 		return err
 	}
@@ -97,16 +114,15 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 	}
 
 	now := time.Now()
+	properties := map[string]any{"dimensions": dims, "distance": int32(distance), "schema_version": 1, "created_at": now.Unix()}
+	if len(encoded) > 0 {
+		properties["quantization_config"] = string(encoded)
+	}
 	_, err = engine.CreateNode(&storage.Node{
-		ID:     collectionMetaNodeID,
-		Labels: []string{collectionMetaNodeLabel},
-		Properties: map[string]any{
-			"dimensions":     dims,
-			"distance":       int32(distance),
-			"schema_version": 1,
-			"created_at":     now.Unix(),
-		},
-		CreatedAt: now,
+		ID:         collectionMetaNodeID,
+		Labels:     []string{collectionMetaNodeLabel},
+		Properties: properties,
+		CreatedAt:  now,
 	})
 	if err != nil {
 		_ = s.dropDatabase(name)
@@ -258,10 +274,25 @@ func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
 		distance = qpb.Distance(int32(v))
 	}
 
+	var quantization *qpb.QuantizationConfig
+	if raw, exists := node.Properties["quantization_config"]; exists {
+		encoded, ok := raw.(string)
+		if !ok {
+			return nil, ErrInvalidCollection
+		}
+		quantization = new(qpb.QuantizationConfig)
+		if err := protojson.Unmarshal([]byte(encoded), quantization); err != nil {
+			return nil, ErrInvalidCollection
+		}
+		if _, err := searchQuantizationConfig(quantization); err != nil {
+			return nil, ErrInvalidCollection
+		}
+	}
 	return &CollectionMeta{
-		Name:       "", // Name is the database name (known by caller); keep empty here.
-		Dimensions: int(dims),
-		Distance:   distance,
-		Status:     qpb.CollectionStatus_Green,
+		Quantization: quantization,
+		Name:         "", // Name is the database name (known by caller); keep empty here.
+		Dimensions:   int(dims),
+		Distance:     distance,
+		Status:       qpb.CollectionStatus_Green,
 	}, nil
 }
