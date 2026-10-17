@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -336,4 +337,15 @@ func (s *Service) awaitBudgetAdmissionLocked() error {
 		}
 	}
 	return nil
+}
+
+// Test seams for the population's restore step: populationStageHook runs
+// where the saved sources are read from disk, populationRestoreHook right
+// after the recorded writes are withdrawn. Nil outside tests.
+var populationStageHook, populationRestoreHook atomic.Pointer[func(*Service)]
+
+func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
+	if fn := hook.Load(); fn != nil {
+		(*fn)(s)
+	}
 }

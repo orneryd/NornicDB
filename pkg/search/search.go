@@ -4040,9 +4040,11 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	// persistence was off; only the source record establishes completeness.
 	s.indexMu.Lock()
 	s.withdrawPopulationWritesLocked()
+	runPopulationHook(&populationRestoreHook, s)
 	textComplete := s.nodeSources.textComplete
 	fulltextUnchanged := !s.fulltext().IsDirty() || s.fulltext().Count() == 0
 	if fulltextPath != "" && !textComplete && fulltextUnchanged {
+		runPopulationHook(&populationStageHook, s)
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
 		if loadErr == nil && accepted {
 			s.changeNodeSourcesLocked(nodeTextRestored)
