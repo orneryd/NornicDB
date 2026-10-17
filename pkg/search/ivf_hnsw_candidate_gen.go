@@ -66,9 +66,18 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		return []Candidate{}, nil
 	}
 
-	// Cluster graphs share one compression policy; the pool kept for exact
-	// rescoring follows the single-graph rule, oversampling included.
-	totalLimit := quantizedCandidateLimit(ctx, k, indexes[0].quantizationActive(ctx))
+	// The pool kept for exact rescoring follows the single-graph rule,
+	// oversampling included. Activation is per graph (pending PQ searches
+	// originals until its graph is large enough), so any compressed graph
+	// widens the pool, whatever the route order.
+	quantized := false
+	for _, index := range indexes {
+		if index.quantizationActive(ctx) {
+			quantized = true
+			break
+		}
+	}
+	totalLimit := quantizedCandidateLimit(ctx, k, quantized)
 	results := make([][]ANNResult, len(indexes))
 	errors := make([]error, len(indexes))
 	ef := hnswEfFromContext(ctx)
@@ -79,9 +88,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 				errors[i] = err
 				return
 			}
-			// Any list may contain the entire global top-K: retain its full budget.
-			// ef=0 uses the cluster graph's configured EfSearch.
-			results[i], errors[i] = indexes[i].SearchWithEf(ctx, query, totalLimit, minSimilarity, ef)
+			// Any list may contain the entire global top-K: retain its full budget,
+			// with a beam wide enough to supply it.
+			results[i], errors[i] = indexes[i].SearchWithEf(ctx, query, totalLimit, minSimilarity, ivfSearchBeam(indexes[i], ef, totalLimit))
 		}
 	}
 	if workers == 1 {
@@ -152,4 +161,15 @@ func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32)
 		}
 	}
 	return indexes, nil
+}
+
+// ivfSearchBeam is a cluster graph's beam for a pool of limit candidates: the
+// request's ef, or the graph's configured EfSearch, widened to hold the pool
+// as single-graph search widens its beam (an explicitly larger ef is kept).
+func ivfSearchBeam(index *HNSWIndex, requestEf, limit int) int {
+	ef := requestEf
+	if ef <= 0 {
+		ef = index.Config().EfSearch
+	}
+	return max(ef, limit)
 }
