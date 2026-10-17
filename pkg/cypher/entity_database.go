@@ -33,7 +33,8 @@ func NewEntityDatabaseResolver(ctx context.Context, manager DatabaseManagerInter
 // lookup is built on the first entity and kept, each answer is kept per
 // entity, and Release closes the remote engines the lookup opened (each
 // constituent is admitted before its storage, with execution's Read policy,
-// and opened at most once until then); a later entity rebuilds the lookup.
+// and opened, or tried and failed, at most once until then); a later entity
+// rebuilds the lookup.
 // A serializer resolves a result's entities and releases once, so a result
 // with N entities over C constituents opens each constituent once, not N
 // times. It is safe for concurrent use.
@@ -110,7 +111,7 @@ func NewEntityDatabaseAttribution(ctx context.Context, manager DatabaseManagerIn
 				}
 			}
 			names[ref.Alias], modes[ref.Alias] = name, ref.AccessMode
-			factories[ref.Alias] = func() (storage.Engine, error) {
+			open := func() (storage.Engine, error) {
 				if err := admitGraphImpersonation(ctx, manager, graph); err != nil {
 					return nil, err
 				}
@@ -131,6 +132,18 @@ func NewEntityDatabaseAttribution(ctx context.Context, manager DatabaseManagerIn
 					resourcesMu.Unlock()
 				}
 				return engine, nil
+			}
+			// A constituent that fails to open is tried once per lookup: the
+			// composite keeps only engines, and each entity would try it again.
+			// The lookup holds its constituents' lock while calling this.
+			var failed error
+			factories[ref.Alias] = func() (storage.Engine, error) {
+				if failed != nil {
+					return nil, failed
+				}
+				engine, err := open()
+				failed = err
+				return engine, err
 			}
 		}
 		return storage.NewDeferredCompositeEngine(factories, names, modes), release

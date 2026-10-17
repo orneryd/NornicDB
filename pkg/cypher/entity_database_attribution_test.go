@@ -11,15 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// closeCountingEngine counts its closes.
+// closeCountingEngine is a remote constituent: a namespace of its own store,
+// which Close closes, counting its closes.
 type closeCountingEngine struct {
 	storage.Engine
+	base   storage.Engine
 	closed *atomic.Int64
 }
 
 func (e *closeCountingEngine) Close() error {
 	e.closed.Add(1)
-	return e.Engine.Close()
+	return e.base.Close()
 }
 
 // One attribution serves a whole result: a remote constituent is opened once
@@ -33,13 +35,15 @@ func TestEntityDatabaseAttributionOpensEachConstituentOnce(t *testing.T) {
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(multidb.ConstituentRef, string) (storage.Engine, error) {
 			opened.Add(1)
-			engine := storage.NewMemoryEngine()
+			base := storage.NewMemoryEngine()
+			engine := storage.NewNamespacedEngine(base, "attr_remote")
 			for _, id := range []storage.NodeID{"r1", "r2", "r3", "r4"} {
 				if _, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Remote"}}); err != nil {
+					_ = base.Close()
 					return nil, err
 				}
 			}
-			return &closeCountingEngine{Engine: engine, closed: &closed}, nil
+			return &closeCountingEngine{Engine: engine, base: base, closed: &closed}, nil
 		},
 	})
 	require.NoError(t, err)

@@ -955,11 +955,15 @@ func RegisteredProcedureForCall(query string) (ProcedureSpec, bool) {
 // authorizeDatabase requires permission on database when the context
 // carries database-scoped entitlements, so a procedure that names another
 // database (gds.graph.drop's dbName) is checked there, not only where the
-// statement runs.
+// statement runs. A refused "access" is Neo4j's database-access refusal
+// (DatabaseAccessDeniedError), as AdmitGraph gives it.
 func authorizeDatabase(ctx context.Context, database, permission string) error {
 	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
 	if !ok || authorization.resolver(database, permission) {
 		return nil
+	}
+	if permission == "access" {
+		return DatabaseAccessDeniedError(ctx)
 	}
 	denied := permissionDenied(ctx, permission, PermissionRequirements{})
 	denied.Database = database
