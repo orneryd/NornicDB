@@ -14,7 +14,7 @@ This benchmark compares NornicDB's vector search with Qdrant's on recall and spe
 You need:
 - Go;
 - Python 3.10 or newer;
-- AWS credentials that can call Bedrock's `amazon.titan-embed-text-v2:0`, for embedding the corpus. Only the first run embeds; later runs reuse the cache.
+- A cached corpus, or AWS credentials that can call Bedrock's `amazon.titan-embed-text-v2:0` to create one. An existing `corpus/meta.json` skips embedding entirely; cached runs need no AWS access.
 
 ```sh
 cd /path/to/NornicDB
@@ -107,7 +107,7 @@ The HNSW modes also sweep `hnsw_ef` (16, 32, 64, 128, 256, 512), the same Search
   - NornicDB: until its search index reports ready and the first Search has answered.
   - Qdrant: until the collection is green with every vector indexed. `indexing_threshold` is set so every segment gets its HNSW index rather than a plain brute-force one.
 - **Disk:** allocated blocks under the data directory. Both engines preallocate sparse files, so apparent file sizes would overstate it.
-- **Memory:** the server's RSS. On macOS, RSS keeps memory Go has already handed back to the OS until the OS needs it, so it overstates NornicDB's resident memory. The physical footprint (`footprint <pid>`) is the fairer number.
+- **Memory:** the server's RSS snapshot after queries and the final readiness check. This is not peak memory or macOS physical footprint; compare the same measure on the same machine.
 - **Strategy:**
   - NornicDB: the strategy it reports in its `Vector search strategy:` log line.
   - Qdrant: its collection configuration.
@@ -119,6 +119,7 @@ All settings are environment variables read by `scripts/benchmark_vector_vs_qdra
 | Variable | Default | |
 |---|---|---|
 | `VECTOR_CORPUS_ROOTS` | this repository | colon-separated git repositories to chunk |
+| `VECTOR_VENV_DIR` | `bench-data/vector_ann/.venv` | Python environment; existing imported `venv` files are preserved |
 | `VECTOR_CORPUS_DIR` | `bench-data/vector_ann/corpus` | corpus location; rebuilt only when `meta.json` is missing |
 | `VECTOR_CORPUS_MAX_CHUNKS` | 100000 | chunk sample size (0 = all) |
 | `VECTOR_QUERIES` | 1000 | held-out queries |
