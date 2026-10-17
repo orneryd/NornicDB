@@ -139,6 +139,26 @@ func TestParkedBM25CancelledBeforeNodeAdmission(t *testing.T) {
 	})
 }
 
+// E0: a build cancelled before its base persist never parks BM25.
+func TestParkedBM25CancelledBeforeTheBasePersist(t *testing.T) {
+	parkedLifetimeBackends(t, func(t *testing.T, backend string) {
+		engine := parkedLifetimeEngine(t)
+		dir := t.TempDir()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		svc, logs := hookedService(t, engine, dir, backend, func(_ *Service, message string) {
+			if strings.Contains(message, iterationDoneMessage) {
+				cancel()
+			}
+		})
+		require.ErrorIs(t, svc.BuildIndexes(ctx), context.Canceled)
+		require.False(t, logs.saw(bm25ParkedMessage))
+		require.Equal(t, 2, svc.FulltextDocCount())
+		require.NoError(t, svc.BuildIndexes(context.Background()))
+		requireFulltextFinds(t, svc, map[string]string{"alpha": "nornic:a", "beta": "nornic:b"})
+	})
+}
+
 // E1: a base persist that cannot save BM25 fails the build before parking;
 // BM25 stays resident.
 func TestParkedBM25NotParkedWhenTheBasePersistFails(t *testing.T) {
