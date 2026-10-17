@@ -3,9 +3,11 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -177,4 +179,63 @@ func TestEmbeddingStatusRacesQueueStop(t *testing.T) {
 	<-done
 	require.Nil(t, db.EmbedQueueStats())
 	require.Zero(t, db.EmbeddingStatus().Pending)
+}
+
+// pendingWriterEngine runs onCount when the embedding status reads the
+// pending count: inside a procedure, under DB.Cypher's read lock.
+type pendingWriterEngine struct {
+	storage.Engine
+	onCount func()
+}
+
+func (e *pendingWriterEngine) PendingEmbeddingsCount() int {
+	if e.onCount != nil {
+		e.onCount()
+	}
+	return 0
+}
+
+// DB.Cypher holds db.mu.RLock for the whole statement, so the embedding
+// procedures must not take db.mu again. With a writer queued on it, Go's
+// RWMutex blocks the nested reader behind the writer and the writer behind
+// the outer reader, and neither ever returns.
+func TestEmbeddingProceduresUnderPendingWriter(t *testing.T) {
+	for _, query := range []string{"CALL db.embedding.status()", "CALL db.embedding.pause()", "CALL db.embedding.resume()"} {
+		t.Run(query, func(t *testing.T) {
+			engine := &pendingWriterEngine{Engine: storage.NewMemoryEngine()}
+			queue := NewEmbedQueue(nil, engine, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true})
+			t.Cleanup(queue.Close)
+			db := &DB{baseStorage: engine, embedQueue: queue}
+			db.cypherExecutor = cypher.NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
+			db.cypherExecutor.SetEmbeddingController(db)
+
+			writerDone := make(chan struct{})
+			var once sync.Once
+			engine.onCount = func() {
+				once.Do(func() {
+					go func() {
+						db.SetEmbedQueueShouldYield(nil) // takes db.mu.Lock
+						close(writerDone)
+					}()
+					time.Sleep(100 * time.Millisecond) // the writer queues behind DB.Cypher's read lock
+				})
+			}
+			done := make(chan error, 1)
+			go func() {
+				_, err := db.Cypher(context.Background(), query, nil)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("deadlock: the procedure took db.mu again behind a pending writer")
+			}
+			select {
+			case <-writerDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the writer never got db.mu")
+			}
+		})
+	}
 }
