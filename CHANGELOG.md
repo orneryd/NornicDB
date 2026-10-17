@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Neo.ClientError.Statement.SyntaxError` (#1339).
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+- Vector search always reports the node a vector belongs to. A node whose ID looked like another node's chunk,
+  named or property vector (`doc-chunk-1`, `x-named-v`, `x-prop-emb`), or a vector name or property key containing
+  such a suffix, was reported as the wrong node or dropped, and two such nodes could overwrite or delete each
+  other's vectors. Vector stores saved by earlier versions are rebuilt from storage on the first start (#1415).
 
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.

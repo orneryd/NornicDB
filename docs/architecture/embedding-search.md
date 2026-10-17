@@ -20,8 +20,8 @@ These fields are intentionally separate so “managed embeddings” and “clien
 
 `search.Service.IndexNode()` indexes *both* embedding types:
 
-- Named embeddings are indexed under IDs like `nodeID-named-{vectorName}`
-- Chunk embeddings are indexed under `nodeID` (main) and `nodeID-chunk-{i}` (per-chunk)
+- Each named embedding gets its own vector entry
+- Chunk embeddings are indexed under `nodeID` (main) plus one entry per later chunk. Entry keys come from `pkg/search/vector_entry_key.go` and always name exactly one node.
 
 ## Documentation
 

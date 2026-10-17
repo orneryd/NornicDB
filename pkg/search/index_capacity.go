@@ -107,32 +107,16 @@ func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, fulltext n
 	// Policy alone is not a storage destination: persistence-off and a failed
 	// file creation both write to memory, including disk-configured services.
 	diskPayload := s.vectorFileStore != nil
-	addVector := func(id string, vector []float32) {
-		if len(vector) == 0 || (dimensions > 0 && len(vector) != dimensions) {
-			return
+	s.forEachNodeVectorEntry(node, dimensions, func(item nodeVectorEntry) bool {
+		if dimensions > 0 && len(item.vector) != dimensions {
+			return true
 		}
-		usage.vectorMetadata += vectorEntryMetadataBytes(id)
+		usage.vectorMetadata += vectorEntryMetadataBytes(item.key)
 		if !diskPayload {
-			usage.vectorResident += vectorPayloadBytes(vector)
+			usage.vectorResident += vectorPayloadBytes(item.vector)
 		}
-	}
-	for name, vector := range node.NamedEmbeddings {
-		addVector(fmt.Sprintf("%s-named-%s", node.ID, name), vector)
-	}
-	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
-		addVector(nodeID, node.ChunkEmbeddings[0])
-		if len(node.ChunkEmbeddings) > 1 {
-			for index, vector := range node.ChunkEmbeddings[1:] {
-				index++ // chunk zero is already stored under the main node ID
-				addVector(fmt.Sprintf("%s-chunk-%d", node.ID, index), vector)
-			}
-		}
-	}
-	for property, value := range node.Properties {
-		if vector, ok := vectorFromPropertyValue(value, dimensions); ok {
-			addVector(fmt.Sprintf("%s-prop-%s", node.ID, property), vector)
-		}
-	}
+		return true
+	})
 	return usage
 }
 
@@ -269,7 +253,9 @@ func (s *Service) reconcileVectorSourceCapacityLocked(memory *VectorIndex) {
 	for id, value := range memory.vectors {
 		owner, ok := owners[id]
 		if !ok {
-			owner = normalizeVectorResultIDToNodeID(id)
+			if owner, ok = vectorEntryOwner(id); !ok {
+				owner = id // an undecodable key is still resident payload
+			}
 		}
 		bytes := int64(len(value)+len(memory.rawVectors[id])) * 4
 		usage := s.indexCapacityByNode[owner]

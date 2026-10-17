@@ -259,7 +259,7 @@ func (s *Service) applyBM25SeedHints() {
 	if !clusterIndex.IsClustered() && clusterIndex.Count() == 0 {
 		return
 	}
-	ids := bm25SeedDocIDs(fulltext)
+	ids := nodeMainVectorKeys(bm25SeedDocIDs(fulltext))
 	if len(ids) == 0 {
 		return
 	}

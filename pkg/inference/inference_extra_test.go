@@ -11,27 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNormalizeVectorResultIDToNodeID(t *testing.T) {
-	tests := []struct {
-		name string
-		id   string
-		want string
-	}{
-		{name: "plain node id", id: "node-123", want: "node-123"},
-		{name: "chunk suffix with number", id: "node-123-chunk-7", want: "node-123"},
-		{name: "chunk suffix without number stays intact", id: "node-123-chunk-final", want: "node-123-chunk-final"},
-		{name: "named suffix", id: "node-123-named-summary", want: "node-123"},
-		{name: "property suffix", id: "node-123-prop-title", want: "node-123"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, normalizeVectorResultIDToNodeID(tt.id))
-		})
-	}
-}
-
-func TestEngine_OnStoreBestOfChunks_NormalizesAndDeduplicates(t *testing.T) {
+// Similarity results are node-level: IDs are owning node IDs and are never
+// parsed, so a node whose own ID looks like a vector-entry key ("node-2-chunk-0")
+// is its own target. The best score per target is kept, and the source itself
+// is skipped.
+func TestEngine_OnStoreBestOfChunks_DeduplicatesNodeResults(t *testing.T) {
 	engine := New(&Config{
 		SimilarityThreshold: 0.8,
 		SimilarityTopK:      0, // exercises default top-k fallback
@@ -43,14 +27,14 @@ func TestEngine_OnStoreBestOfChunks_NormalizesAndDeduplicates(t *testing.T) {
 		switch int(embedding[0]) {
 		case 1:
 			return []SimilarityResult{
-				{ID: "node-2-chunk-0", Score: 0.90},
-				{ID: "node-1-chunk-2", Score: 0.99}, // self after normalization
-				{ID: "node-3-named-summary", Score: 0.84},
+				{ID: "node-2", Score: 0.90},
+				{ID: "node-1", Score: 0.99}, // self
+				{ID: "node-2-chunk-0", Score: 0.84},
 			}, nil
 		case 2:
 			return []SimilarityResult{
-				{ID: "node-2-prop-title", Score: 0.95}, // same node, higher score
-				{ID: "node-4", Score: 0.70},            // below threshold
+				{ID: "node-2", Score: 0.95}, // same node, higher score
+				{ID: "node-4", Score: 0.70}, // below threshold
 			}, nil
 		default:
 			return nil, nil
@@ -67,7 +51,7 @@ func TestEngine_OnStoreBestOfChunks_NormalizesAndDeduplicates(t *testing.T) {
 	require.Equal(t, []int{10, 10}, calls)
 
 	assert.Equal(t, "node-2", suggestions[0].TargetID)
-	assert.Equal(t, "node-3", suggestions[1].TargetID)
+	assert.Equal(t, "node-2-chunk-0", suggestions[1].TargetID)
 	assert.Equal(t, "similarity", suggestions[0].Method)
 	assert.Equal(t, "similarity", suggestions[1].Method)
 }

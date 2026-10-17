@@ -296,7 +296,7 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
+		candidateNodes[candidate.ID] = struct{}{} // owners: decoded once at collapse
 	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))

@@ -135,7 +135,11 @@ func lexicalHintForVectorID(vectorID string, hints map[string]LexicalSeedHint) (
 	if len(hints) == 0 || vectorID == "" {
 		return LexicalSeedHint{}, false
 	}
-	hint, ok := hints[normalizeVectorResultIDToNodeID(vectorID)]
+	nodeID, ok := vectorEntryOwner(vectorID)
+	if !ok {
+		return LexicalSeedHint{}, false
+	}
+	hint, ok := hints[nodeID]
 	return hint, ok
 }
 
@@ -154,6 +158,10 @@ func vectorIDInSeedNodeSet(vectorID string, seedNodeIDs map[string]struct{}) boo
 	if len(seedNodeIDs) == 0 || vectorID == "" {
 		return false
 	}
-	_, ok := seedNodeIDs[normalizeVectorResultIDToNodeID(vectorID)]
+	nodeID, ok := vectorEntryOwner(vectorID)
+	if !ok {
+		return false
+	}
+	_, ok = seedNodeIDs[nodeID]
 	return ok
 }

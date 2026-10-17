@@ -91,7 +91,7 @@ func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) 
 		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", index+1)), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embedding}}))
 	}
 	generator := &shortApproximateCandidateGenerator{
-		candidates: []Candidate{{ID: "doc-1-chunk-0", Score: 1}, {ID: "doc-2-chunk-0", Score: 0.99}},
+		candidates: []Candidate{{ID: nodeChunkVectorKey("doc-1", 0), Score: 1}, {ID: nodeChunkVectorKey("doc-2", 0), Score: 0.99}},
 		population: 3,
 	}
 	service.pipelineMu.Lock()

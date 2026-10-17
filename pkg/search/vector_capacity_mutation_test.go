@@ -115,16 +115,16 @@ func TestVectorCapacityBaseBatchPreservesFulltext(t *testing.T) {
 func TestVectorCapacityPropertyRemovalPreservesSiblingCharges(t *testing.T) {
 	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(newNamespacedEngine(t), 3, "v2", &ServiceOptions{VectorMemoryMaxBytes: 36})
 	t.Cleanup(func() { _ = svc.Close() })
-	node := &storage.Node{ID: "owner", NamedEmbeddings: map[string][]float32{"name": {1, 0, 0}}, Properties: map[string]any{"embedding": []float32{0, 1, 0}, "other": []float32{0, 0, 1}, "text": "preserved fulltext"}}
+	node := &storage.Node{ID: "owner", NamedEmbeddings: map[string][]float32{"name": {1, 0, 0}}, Properties: map[string]any{"embedding_vector": []float32{0, 1, 0}, "other": []float32{0, 0, 1}, "text": "preserved fulltext"}}
 	require.NoError(t, svc.IndexNode(node))
 	require.Equal(t, int64(36), svc.vectorResidentBytes)
 	fulltextResident, fulltextMetadata := svc.bm25ResidentBytes, svc.bm25MetadataBytes
 	metadata := svc.vectorMetadataBytes
 	svc.metadataMemoryMaxBytes = metadata
-	svc.RemovePropertyVectorIndex("embedding")
+	svc.RemovePropertyVectorIndex("embedding_vector")
 	require.Equal(t, int64(24), svc.vectorResidentBytes)
 	require.Equal(t, 2, svc.vectorIndex.Count())
-	require.Equal(t, metadata-int64(len("owner-prop-embedding")+16), svc.vectorMetadataBytes)
+	require.Equal(t, metadata-int64(len(nodePropertyVectorKey("owner", "embedding_vector"))+16), svc.vectorMetadataBytes)
 	require.Equal(t, fulltextResident, svc.bm25ResidentBytes)
 	require.Equal(t, fulltextMetadata, svc.bm25MetadataBytes)
 	text, ok := svc.fulltext().GetDocument("owner")

@@ -51,7 +51,7 @@ db.searchService = search.NewServiceWithDimensions(storage, 1024)
 // OnNodeDeleted → searchService.RemoveNode(nodeID)
 ```
 
-`search.Service.IndexNode()` also indexes `node.NamedEmbeddings` (client-managed vectors, e.g. Qdrant gRPC) under IDs like `nodeID-named-{vectorName}`.
+`search.Service.IndexNode()` also indexes `node.NamedEmbeddings` (client-managed vectors, e.g. Qdrant gRPC) as vector entries of that node (one per vector name).
 
 ### HNSW Construction Acceleration
 
