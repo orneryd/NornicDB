@@ -43,20 +43,16 @@ func TestGPUManagerChangeRetiresConcurrentFactory(t *testing.T) {
 	svc.SetLogger(slog.New(h))
 	release(0)
 	release(2)
-	svc.mu.Lock()
-	var unlockOnce sync.Once
-	unlock := func() { unlockOnce.Do(svc.mu.Unlock) }
 	setterDone, factoryDone := make(chan struct{}), make(chan struct{})
-	factoryStarted := false
+	setterStarted := false
 	var factoryErr error
 	defer func() {
 		cancel()
-		unlock()
 		for i := range h.release {
 			release(i)
 		}
 		for _, done := range []<-chan struct{}{setterDone, factoryDone} {
-			if done == factoryDone && !factoryStarted {
+			if done == setterDone && !setterStarted {
 				continue
 			}
 			select {
@@ -66,33 +62,25 @@ func TestGPUManagerChangeRetiresConcurrentFactory(t *testing.T) {
 			}
 		}
 	}()
-	setterID := make(chan string, 1)
+	// The factory's GPU preparation takes indexMu before pipelineMu (#1372),
+	// so a setter already holding indexMu runs first and the factory then
+	// captures the new token. The old-token case is a factory that captured
+	// its token and holds pipelineMu at its final publication log when the
+	// setter retires the source.
 	go func() {
-		setterID <- serviceTestGoroutineID()
-		svc.SetGPUManager(nil)
-		close(setterDone)
-	}()
-	setter := <-setterID
-	require.Eventually(t, func() bool {
-		return serviceStackContains(setter, "(*Service).SetGPUManager", "sync.(*RWMutex).Lock")
-	}, 5*time.Second, time.Millisecond, "setter did not reach its source writer")
-	factoryID := make(chan string, 1)
-	factoryStarted = true
-	go func() {
-		factoryID <- serviceTestGoroutineID()
 		_, factoryErr = svc.getOrCreateVectorPipeline(ctx)
 		close(factoryDone)
 	}()
-	factory := <-factoryID
-	require.Eventually(t, func() bool {
-		return serviceStackContains(factory, "(*Service).getOrCreateVectorPipeline", "sync.(*RWMutex).RLock")
-	}, 5*time.Second, time.Millisecond, "factory did not capture its token before the source read")
-	unlock()
 	select {
 	case <-h.entered[1]:
 	case <-time.After(5 * time.Second):
 		t.Fatal("factory did not reach its final publication log")
 	}
+	setterStarted = true
+	go func() {
+		svc.SetGPUManager(nil)
+		close(setterDone)
+	}()
 	// A correct setter can be waiting for this factory's pipelineMu. Observe
 	// retirement without requiring the setter to finish across the held gate.
 	require.Eventually(t, func() bool {
