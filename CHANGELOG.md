@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte accounting across propertyless staged/point/stream representations.
 ### Added
 
+- Optional local code-intelligence Git hooks: block staged reuse/refactor findings, refresh the
+  existing code graph after main pulls, and align Graphify ingestion with the reference action.
+  Endpoints and credentials use environment configuration with setup guidance.
 - Default application HNSW traversal to scalar int8 with original-vector rescoring;
   `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` retains full-precision traversal.
 - Add HNSW scalar int8, product (4×–64×), and binary coordinate compression
