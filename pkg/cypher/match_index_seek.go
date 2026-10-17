@@ -666,9 +666,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 // index answers: the property, the values it selects, and whether it tests
 // membership (value IN n.property) or equality (n.property = value).
 type indexSeekTerm struct {
-	property string
-	values   []interface{}
-	member   bool
+	property  string
+	values    []interface{}
+	member    bool
+	contained bool // values holds the text a contained-key index looks up
 }
 
 // parseIndexSeekTerm is the one reader of the WHERE terms a property index
@@ -703,7 +704,85 @@ func (e *StorageExecutor) parseIndexSeekTerm(ctx context.Context, variable, term
 	if property, values, ok := e.parseIndexedMembership(ctx, variable, term); ok {
 		return indexSeekTerm{property: property, values: values, member: true}, true
 	}
+	if property, values, ok := e.parseIndexedContained(ctx, variable, term); ok {
+		return indexSeekTerm{property: property, values: values, contained: true}, true
+	}
 	return indexSeekTerm{}, false
+}
+
+// parseIndexedContained reads the terms a contained-key index answers
+// (storage.ContainedIndex):
+//
+//	<text> CONTAINS n.p
+//	any(x IN n.p WHERE ... AND <text> CONTAINS x AND ...)
+//
+// with n.p optionally coalesce(n.p, []) and <text> a constant of the
+// incoming scope that doesn't mention x. The any() form needs only one
+// conjunct of that shape: the others narrow it, and the caller re-applies the
+// WHERE to the candidates. A null or non-string text makes CONTAINS null, so
+// the term selects nothing (values is empty); a non-string key is never
+// contained, and the index files none.
+func (e *StorageExecutor) parseIndexedContained(ctx context.Context, variable, term string) (string, []interface{}, bool) {
+	var property, textExpr string
+	if name, inner, ok := parseFunctionCallWS(term); ok && strings.EqualFold(name, "any") && strings.HasSuffix(term, ")") {
+		whereIdx := keywordIndexFrom(inner, "WHERE", 0, defaultKeywordScanOpts())
+		if whereIdx <= 0 {
+			return "", nil, false
+		}
+		local, bound, ok := splitTopLevelIn(inner[:whereIdx])
+		if !ok || !isValidIdentifier(local) || strings.EqualFold(local, variable) {
+			return "", nil, false
+		}
+		if property, ok = membershipListProperty(bound, variable); !ok {
+			return "", nil, false
+		}
+		for _, conjunct := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(inner[whereIdx+len("WHERE"):]))) {
+			left, right, ok := splitTopLevelContains(conjunct)
+			if ok && right == local && !slices.Contains(expressionFreeVariables(left), local) {
+				textExpr = left
+				break
+			}
+		}
+		if textExpr == "" {
+			return "", nil, false
+		}
+	} else {
+		if hasTopLevelLogicalOperator(term) || topLevelKeywordIndex(term, "NOT") >= 0 {
+			return "", nil, false
+		}
+		left, right, ok := splitTopLevelContains(term)
+		if !ok {
+			return "", nil, false
+		}
+		if property, ok = membershipProperty(right, variable); !ok {
+			return "", nil, false
+		}
+		textExpr = left
+	}
+	text, constant := e.indexSeekConstant(ctx, textExpr)
+	if !constant {
+		return "", nil, false
+	}
+	if value, isString := text.(string); isString {
+		return property, []interface{}{value}, true
+	}
+	return property, nil, true
+}
+
+// splitTopLevelContains splits "<left> CONTAINS <right>" at its one
+// top-level CONTAINS.
+func splitTopLevelContains(expr string) (left, right string, ok bool) {
+	expr = unwrapOuterParens(strings.TrimSpace(expr))
+	idx := keywordIndexFrom(expr, "CONTAINS", 0, defaultKeywordScanOpts())
+	if idx <= 0 || idx+len("CONTAINS") >= len(expr) {
+		return "", "", false
+	}
+	left = strings.TrimSpace(expr[:idx])
+	right = strings.TrimSpace(expr[idx+len("CONTAINS"):])
+	if left == "" || right == "" || keywordIndexFrom(right, "CONTAINS", 0, defaultKeywordScanOpts()) >= 0 {
+		return "", "", false
+	}
+	return left, right, true
 }
 
 // parseIndexedMembership reads v IN n.p, any(x IN <list> WHERE x IN n.p) and
@@ -834,7 +913,15 @@ func (e *StorageExecutor) collectIndexSeekTermNodes(nodePattern nodePatternInfo,
 		return nil, false
 	}
 	termLabels := make([][]string, len(terms))
+	termContained := make([][]*storage.ContainedIndex, len(terms))
 	for i, term := range terms {
+		if term.contained {
+			termContained[i] = containedSeekIndexes(schema, nodePattern.labels, term.property, anyOf)
+			if len(termContained[i]) == 0 {
+				return nil, false
+			}
+			continue
+		}
 		labels, _ := e.seekCandidateLabels(schema, nodePattern.labels, term.property, anyOf)
 		if len(labels) == 0 {
 			return nil, false
@@ -843,6 +930,17 @@ func (e *StorageExecutor) collectIndexSeekTermNodes(nodePattern nodePatternInfo,
 	}
 	idSet := make(map[storage.NodeID]struct{})
 	for i, term := range terms {
+		for _, idx := range termContained[i] {
+			for _, value := range term.values {
+				ids, ok := containedIndexLookup(e.storage, schema, idx, value.(string))
+				if !ok {
+					return nil, false
+				}
+				for _, id := range ids {
+					idSet[id] = struct{}{}
+				}
+			}
+		}
 		for _, label := range termLabels[i] {
 			for _, value := range term.values {
 				var ids []storage.NodeID
@@ -877,6 +975,34 @@ func (e *StorageExecutor) collectIndexSeekTermNodes(nodePattern nodePatternInfo,
 		nodes = append(nodes, node)
 	}
 	return nodes, true
+}
+
+// containedSeekIndexes returns the filled contained-key indexes covering
+// property that list every node a seek may return: one index of a pattern
+// label (a candidate carries all of them), or, for a label-less pattern whose
+// WHERE requires one of anyOf, an index of every one of those labels. Nil
+// when there is none.
+func containedSeekIndexes(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) []*storage.ContainedIndex {
+	if len(patternLabels) > 0 {
+		for _, label := range patternLabels {
+			if idx, ok := schema.ContainedIndexFor(label, property); ok {
+				return []*storage.ContainedIndex{idx}
+			}
+		}
+		return nil
+	}
+	if len(anyOf) == 0 {
+		return nil
+	}
+	out := make([]*storage.ContainedIndex, 0, len(anyOf))
+	for _, label := range anyOf {
+		idx, ok := schema.ContainedIndexFor(label, property)
+		if !ok {
+			return nil
+		}
+		out = append(out, idx)
+	}
+	return out
 }
 
 // indexSeekDisjunction reads clause as one index seek term or a disjunction
@@ -941,14 +1067,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexDisjunction(ctx contex
 // whole WHERE.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexConjunctTerms(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
-	if clause == "" || (!containsFold(clause, " IN ") && !containsFold(clause, " OR ")) {
+	if clause == "" || (!containsFold(clause, " IN ") && !containsFold(clause, " OR ") && !containsFold(clause, " CONTAINS ")) {
 		return nil, false, nil
 	}
 	conjuncts := splitTopLevelAndConjuncts(clause)
 	anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 	for _, conjunct := range conjuncts {
 		terms, ok := e.indexSeekDisjunction(ctx, nodePattern.variable, conjunct, params)
-		if !ok || (len(terms) == 1 && !terms[0].member) {
+		if !ok || (len(terms) == 1 && !terms[0].member && !terms[0].contained) {
 			continue
 		}
 		if nodes, used := e.collectIndexSeekTermNodes(nodePattern, terms, anyOf); used {

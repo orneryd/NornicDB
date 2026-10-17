@@ -247,6 +247,12 @@ type pendingWriteView struct {
 	namespace string
 }
 
+// hasLabel reports whether pending writes hold a node with label (in any
+// namespace: callers use it to decline, so over-reporting is safe).
+func (v pendingWriteView) hasLabel(label string) bool {
+	return v.index != nil && len(v.index.byLabel[label]) > 0
+}
+
 // keep reports whether an ID from the engine's index is current.
 func (v pendingWriteView) keep(id NodeID) bool {
 	return v.index == nil || !v.owner.nodeSupersededLocked(id)

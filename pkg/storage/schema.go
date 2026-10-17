@@ -1429,6 +1429,44 @@ func (sm *SchemaManager) GetContainedIndexesForLabel(label string) []*ContainedI
 	return out
 }
 
+// ContainedIndexFor returns a filled contained-key index on label whose keys
+// include property's values (the first by name), the one a seek on
+// `$text CONTAINS n.property` reads.
+func (sm *SchemaManager) ContainedIndexFor(label, property string) (*ContainedIndex, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	var found *ContainedIndex
+	for _, idx := range sm.containedIndexes {
+		if idx.Label != label || !idx.Filled() || !slices.Contains(idx.Properties, property) {
+			continue
+		}
+		if found == nil || idx.Name < found.Name {
+			found = idx
+		}
+	}
+	return found, found != nil
+}
+
+// ContainedIndexLookup returns the nodes idx files under a key contained in
+// text (or the empty key), without nodes an attached AsyncEngine's pending
+// writes supersede. ok is false while pending writes hold nodes with the
+// index's label: the index doesn't list them yet, and the caller scans.
+func (sm *SchemaManager) ContainedIndexLookup(idx *ContainedIndex, text string) ([]NodeID, bool) {
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	if view.hasLabel(idx.Label) {
+		return nil, false
+	}
+	nodes := idx.LookupNodes(text)
+	kept := nodes[:0]
+	for _, id := range nodes {
+		if view.keep(id) {
+			kept = append(kept, id)
+		}
+	}
+	return kept, true
+}
+
 // BackfillContainedIndex files values (node ID → properties) in a new
 // contained-key index and marks it filled. Nodes with pending writes in an
 // attached AsyncEngine are skipped, as BackfillPropertyIndex skips them: the

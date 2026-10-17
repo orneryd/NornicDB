@@ -37,6 +37,20 @@ func propertyIndexMemberLookup(engine storage.Engine, schema *storage.SchemaMana
 	return ids
 }
 
+// containedIndexLookup lists the nodes idx files under a key contained in
+// text, with the transaction's own pending node writes merged in. ok is false
+// when the index can't answer (SchemaManager.ContainedIndexLookup).
+func containedIndexLookup(engine storage.Engine, schema *storage.SchemaManager, idx *storage.ContainedIndex, text string) ([]storage.NodeID, bool) {
+	ids, ok := schema.ContainedIndexLookup(idx, text)
+	if !ok {
+		return nil, false
+	}
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		ids = wrapper.tx.MergePendingContainedMatches(ids, idx, text)
+	}
+	return ids, true
+}
+
 // compositeIndexLookup is the composite-index counterpart of
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull

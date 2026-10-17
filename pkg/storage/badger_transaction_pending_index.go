@@ -1,5 +1,10 @@
 package storage
 
+import (
+	"slices"
+	"strings"
+)
+
 // The property indexes describe committed state: a transaction's own node
 // writes reach them at commit. A property-index lookup made inside the
 // transaction therefore merges the transaction's pending nodes in, exactly
@@ -164,4 +169,37 @@ func compositeNodeMatches(node *Node, label string, properties []string, values 
 		}
 	}
 	return true
+}
+
+// MergePendingContainedMatches is MergePendingPropertyMatches for a
+// contained-key lookup (SchemaManager.ContainedIndexLookup): it drops the
+// committed ids the transaction has rewritten or deleted and adds its pending
+// nodes with the index's label that hold a key contained in text, or the
+// empty key.
+func (tx *BadgerTransaction) MergePendingContainedMatches(ids []NodeID, idx *ContainedIndex, text string) []NodeID {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
+		return ids
+	}
+	kept := ids[:0]
+	for _, id := range ids {
+		if _, rewritten := tx.pendingNodes[id]; rewritten {
+			continue
+		}
+		if _, deleted := tx.deletedNodes[id]; deleted {
+			continue
+		}
+		kept = append(kept, id)
+	}
+	for id, node := range tx.pendingNodes {
+		if node == nil || !hasLabel(node.Labels, idx.Label) {
+			continue
+		}
+		keys, empty := containedKeys(idx.Properties, node.Properties)
+		if empty || slices.ContainsFunc(keys, func(key string) bool { return strings.Contains(text, key) }) {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }
