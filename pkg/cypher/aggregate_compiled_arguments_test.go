@@ -10,6 +10,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,7 +108,7 @@ func TestAggregateCompiledArgumentsMatchText(t *testing.T) {
 		"MATCH (n:P) WITH n ORDER BY n.id RETURN collect({id: id(n) IS NOT NULL, label: labels(n)}) AS xs",
 		"UNWIND [[1, 2, 1.0], [2, 3, 2.0], [3, 1, 0.5]] AS e WITH gds.graph.project($g, e[0], e[1], {relationshipType: 'R', relationshipProperties: {weight: e[2]}}, {undirectedRelationshipTypes: ['*']}) AS g RETURN g.nodeCount AS nodes, g.relationshipCount AS relationships",
 		"CALL gds.louvain.stream($g, {relationshipWeightProperty: 'weight', consecutiveIds: true}) YIELD nodeId, communityId RETURN nodeId, communityId ORDER BY nodeId",
-		"UNWIND [[1, 2]] AS e RETURN gds.graph.project($g + 'x', e[0]) AS g",
+		"UNWIND [[1, 2]] AS e WITH gds.graph.project($g + 'x', e[0]) AS g RETURN g.nodeCount AS nodes, g.relationshipCount AS relationships",
 	}
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {
@@ -133,11 +134,13 @@ func TestAggregateCompiledArgumentsMatchText(t *testing.T) {
 					}
 					_, err := exec.Execute(context.Background(), "CALL gds.graph.drop($g, false) YIELD graphName RETURN graphName", map[string]interface{}{"g": graph})
 					require.NoError(t, err)
+					_, err = exec.Execute(context.Background(), "CALL gds.graph.drop($g, false) YIELD graphName RETURN graphName", map[string]interface{}{"g": graph + "x"})
+					require.NoError(t, err)
 				}()
 			}
 			for index, query := range queries {
 				for mode := 1; mode < len(aggregateArgumentModes); mode++ {
-					require.Equal(t, outputs[mode][index], outputs[0][index], "%s vs %s: %s", aggregateArgumentModes[mode].name, aggregateArgumentModes[0].name, query)
+					assert.Equal(t, outputs[mode][index], outputs[0][index], "%s vs %s: %s", aggregateArgumentModes[mode].name, aggregateArgumentModes[0].name, query)
 				}
 			}
 			// The routes ran the statements: rows, not only errors.
