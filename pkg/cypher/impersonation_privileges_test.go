@@ -515,7 +515,51 @@ func TestBuiltInProceduresUpdatingTheDBMS(t *testing.T) {
 		"db.stats.clear",
 		"db.stats.collect",
 		"db.stats.stop",
+		"dbms.setConfigValue",
 	}, marked)
+}
+
+// dbms.setConfigValue changes a setting every session shares, live (#1389),
+// and an empty value resets it: an administrator's change, refused while
+// impersonating, even an administrator, before the setting changes; a user
+// without admin gets Neo4j's admin-procedure refusal.
+func TestImpersonationAndSetConfigValue(t *testing.T) {
+	const setting = "dbms.memory.transaction.total.max"
+	resetTransactionMemory(t)
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	current := func() interface{} {
+		t.Helper()
+		result, err := exec.Execute(context.Background(), "SHOW SETTINGS YIELD name, value WHERE name = '"+setting+"' RETURN value", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		return result.Rows[0][0]
+	}
+	before := current()
+	for _, value := range []string{"2m", ""} {
+		call := "CALL dbms.setConfigValue('" + setting + "', '" + value + "')"
+		for _, query := range []string{call, "CALL apoc.cypher.run(\"" + call + "\", {}) YIELD value RETURN value"} {
+			_, err := exec.Execute(impersonatingContext("alice"), query, nil)
+			requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
+			require.Contains(t, err.Error(), "impersonating a user", query)
+		}
+	}
+	require.Equal(t, before, current(), "a refused change leaves the setting as it was")
+
+	reader := WithPermissionChecker(WithRequestIdentity(context.Background(), &RequestIdentity{
+		User: &AuthenticatedUser{Name: "bob", Roles: []string{"reader"}},
+	}), func(permission string) bool { return permission != "admin" })
+	_, err := exec.Execute(reader, "CALL dbms.setConfigValue('"+setting+"', '2m')", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
+	require.Contains(t, err.Error(), "Executing admin procedure 'dbms.setConfigValue' permission has not been granted for user 'bob' with roles [reader].")
+	require.Equal(t, before, current())
+
+	admin := WithPermissionChecker(context.Background(), func(string) bool { return true })
+	_, err = exec.Execute(admin, "CALL dbms.setConfigValue('"+setting+"', '2m')", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, before, current(), "the administrator changes it")
+	_, err = exec.Execute(admin, "CALL dbms.setConfigValue('"+setting+"', '')", nil)
+	require.NoError(t, err)
+	require.Equal(t, before, current(), "and an empty value resets it")
 }
 
 // TERMINATE TRANSACTIONS decides each transaction as Neo4j does, the same

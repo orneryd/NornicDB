@@ -101,6 +101,7 @@ var expectedBuiltinProcedureClasses = map[string]PrivilegeClass{
 	"dbms.listConfig":                                  PrivilegeAdmin,
 	"dbms.listConnections":                             PrivilegeRead,
 	"dbms.procedures":                                  PrivilegeNone,
+	"dbms.setConfigValue":                              PrivilegeSharedState | PrivilegeDBMS,
 	"gds.fastRP.stats":                                 PrivilegeRead,
 	"gds.fastRP.stream":                                PrivilegeRead,
 	"gds.graph.drop":                                   PrivilegeRead | PrivilegeWrite,
