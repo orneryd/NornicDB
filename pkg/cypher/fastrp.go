@@ -92,7 +92,7 @@ var fastRPConfigKeys = []string{
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
 func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
-	embeddings, _, err := e.runGdsFastRP("gds.fastRP.stream", args)
+	embeddings, _, projection, err := e.runGdsFastRP("gds.fastRP.stream", args)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 	for _, embedding := range embeddings {
 		rows = append(rows, []any{embedding.nodeID, embedding.vector})
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows, gdsProjection: projection}, nil
 }
 
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
@@ -108,7 +108,7 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 // the configuration (#1191).
 func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
 	started := time.Now()
-	embeddings, config, err := e.runGdsFastRP("gds.fastRP.stats", args)
+	embeddings, config, _, err := e.runGdsFastRP("gds.fastRP.stats", args)
 	if err != nil {
 		return nil, err
 	}
@@ -120,25 +120,25 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 
 // runGdsFastRP reads a gds.fastRP call's graph and configuration and computes
 // the embeddings.
-func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, error) {
+func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, *GraphProjection, error) {
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
-		return nil, FastRPConfig{}, err
+		return nil, FastRPConfig{}, nil, err
 	}
 	options, err := optionalProcedureMap(procedure, args, 1, "config")
 	if err != nil {
-		return nil, FastRPConfig{}, err
+		return nil, FastRPConfig{}, nil, err
 	}
 	config, err := fastRPConfiguration(options)
 	if err != nil {
-		return nil, FastRPConfig{}, err
+		return nil, FastRPConfig{}, nil, err
 	}
 	projection, err := e.graphProjection(graphName)
 	if err != nil {
-		return nil, FastRPConfig{}, err
+		return nil, FastRPConfig{}, nil, err
 	}
 	embeddings, err := generateFastRPEmbeddings(projection, config)
-	return embeddings, config, err
+	return embeddings, config, projection, err
 }
 
 // fastRPConfiguration reads gds.fastRP's configuration as GDS does (#1191):
