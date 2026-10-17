@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -55,9 +56,12 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 		require.NoError(t, svc.IndexNode(node))
 	}
 
+	// A wide rescoring pool keeps the check about graph membership in every
+	// compression mode (1-bit codes of 8-D vectors tie heavily).
+	membership := &SearchOptions{QuantizationOversampling: 64}
 	findsItself := func(id string) {
 		t.Helper()
-		hits, err := svc.VectorQueryNodesWithOptions(ctx, vectors[id], VectorQuerySpec{Limit: 3}, nil)
+		hits, err := svc.VectorQueryNodesWithOptions(ctx, vectors[id], VectorQuerySpec{Limit: 3}, membership)
 		require.NoError(t, err, "query for %s", id)
 		ids := make([]string, len(hits))
 		for i, hit := range hits {
@@ -108,4 +112,45 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 	for i := 40; i < grown; i += 4 {
 		findsItself(fmt.Sprintf("grown-%04d", i))
 	}
+}
+
+// A dimension change (first vector of a new dimension while the in-memory
+// index is empty, as with file-backed vectors) can replace the cluster index
+// while a clustering generation is built. That generation describes the
+// retired population and is discarded, never published.
+func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
+	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+	const dimensions = 4
+	ctx := context.Background()
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), dimensions)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+	svc.SetPersistenceEnabled(true)
+	svc.EnableClustering(nil, 2)
+	svc.SetMinEmbeddingsForClustering(1)
+	rng := rand.New(rand.NewSource(7))
+	for i := 0; i < 40; i++ {
+		vec := make([]float32, dimensions)
+		for d := range vec {
+			vec[d] = float32(rng.NormFloat64())
+		}
+		require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n-%02d", i)), ChunkEmbeddings: [][]float32{vec}}))
+	}
+	original := svc.clusterIndex
+	require.Zero(t, svc.vectorIndex.Count(), "file-backed vectors leave the in-memory index empty")
+
+	ivfHNSWBuildHook = func() { svc.maybeAutoSetVectorDimensions(dimensions + 1) }
+	t.Cleanup(func() { ivfHNSWBuildHook = nil })
+	require.NoError(t, svc.TriggerClustering(ctx))
+
+	require.NotSame(t, original, svc.clusterIndex, "the dimension change replaced the cluster index")
+	require.False(t, svc.clusterIndex.IsClustered())
+	svc.clusterHNSWMu.RLock()
+	require.Nil(t, svc.clusterHNSW, "the superseded generation's graphs are not published")
+	svc.clusterHNSWMu.RUnlock()
+	svc.clusterLexicalMu.RLock()
+	require.Empty(t, svc.clusterLexicalProfiles)
+	svc.clusterLexicalMu.RUnlock()
 }
