@@ -210,9 +210,9 @@ func TestHNSWCandidateGenerationSelectsDistinctNodesFromChunkedResults(t *testin
 	require.NoError(t, err)
 	require.Len(t, candidates, 3)
 	require.Equal(t, []string{"doc-a", "doc-b", "doc-c"}, []string{
-		normalizeVectorResultIDToNodeID(candidates[0].ID),
-		normalizeVectorResultIDToNodeID(candidates[1].ID),
-		normalizeVectorResultIDToNodeID(candidates[2].ID),
+		mustVectorEntryOwner(t, candidates[0].ID),
+		mustVectorEntryOwner(t, candidates[1].ID),
+		mustVectorEntryOwner(t, candidates[2].ID),
 	})
 }
 

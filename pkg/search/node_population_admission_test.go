@@ -123,7 +123,7 @@ func TestNodePopulationFirstMutationPreservesRestart(t *testing.T) {
 							candidates, err := graph.Search(ctx, []float32{0, 1, 0}, 1, -1)
 							require.NoError(t, err)
 							require.Len(t, candidates, 1)
-							assert.Equal(t, "nornic:b", normalizeVectorResultIDToNodeID(candidates[0].ID))
+							assert.Equal(t, "nornic:b", mustVectorEntryOwner(t, candidates[0].ID))
 						}
 					}
 				})
