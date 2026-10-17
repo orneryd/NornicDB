@@ -9,19 +9,27 @@
 extern "C" float neon_dot_product(const float* a, const float* b, int len) {
     if (len == 0) return 0.0f;
     
-    float32x4_t sum_vec = vdupq_n_f32(0.0f);
+    // Independent accumulators avoid a dependency chain through every vector
+    // add. This is the hot kernel for CPU HNSW traversal on ARM64.
+    float32x4_t sum0 = vdupq_n_f32(0.0f);
+    float32x4_t sum1 = vdupq_n_f32(0.0f);
+    float32x4_t sum2 = vdupq_n_f32(0.0f);
+    float32x4_t sum3 = vdupq_n_f32(0.0f);
     int i = 0;
-    
-    // Process 4 elements at a time using NEON
-    for (; i + 4 <= len; i += 4) {
-        float32x4_t va = vld1q_f32(&a[i]);
-        float32x4_t vb = vld1q_f32(&b[i]);
-        float32x4_t prod = vmulq_f32(va, vb);
-        sum_vec = vaddq_f32(sum_vec, prod);
+
+    for (; i + 16 <= len; i += 16) {
+        sum0 = vfmaq_f32(sum0, vld1q_f32(a + i), vld1q_f32(b + i));
+        sum1 = vfmaq_f32(sum1, vld1q_f32(a + i + 4), vld1q_f32(b + i + 4));
+        sum2 = vfmaq_f32(sum2, vld1q_f32(a + i + 8), vld1q_f32(b + i + 8));
+        sum3 = vfmaq_f32(sum3, vld1q_f32(a + i + 12), vld1q_f32(b + i + 12));
     }
-    
-    // Horizontal sum of the vector
-    float sum = vaddvq_f32(sum_vec);
+
+    for (; i + 4 <= len; i += 4) {
+        sum0 = vfmaq_f32(sum0, vld1q_f32(a + i), vld1q_f32(b + i));
+    }
+
+    float sum = vaddvq_f32(sum0) + vaddvq_f32(sum1)
+              + vaddvq_f32(sum2) + vaddvq_f32(sum3);
     
     // Handle remaining elements
     for (; i < len; i++) {
