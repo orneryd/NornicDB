@@ -109,7 +109,11 @@ func bm25SeedDocIDs(fulltext lexicalSeedProvider) []string {
 // bm25SeedEmbeddingIDs resolves ranked BM25 documents through the existing
 // index metadata. Cluster/PQ builders own embedding IDs, including named,
 // property and chunk embeddings, rather than full-text document IDs.
+// Live writes change the metadata under indexMu, which ranks before
+// pipelineMu and ivfpqMu, so no caller may hold either.
 func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(nodeIDs))
@@ -135,4 +139,30 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 		slices.Sort(ids[start:])
 	}
 	return ids
+}
+
+// vectorBuildSeeds are the lexical inputs of ANN construction during pipeline
+// creation. They read the node metadata under indexMu, which ranks before
+// pipelineMu, so pipeline creation resolves them before taking pipelineMu and
+// passes them down.
+type vectorBuildSeeds struct {
+	compressedIDs []string                   // IVF-PQ build seeds; nil unless compressed quality
+	hnswHints     map[string]LexicalSeedHint // HNSW build hints; nil while a graph exists
+}
+
+func (s *Service) pipelineBuildSeeds() vectorBuildSeeds {
+	s.mu.RLock()
+	fulltext := s.fulltext()
+	s.mu.RUnlock()
+	var seeds vectorBuildSeeds
+	if ANNQualityFromEnv() == ANNQualityCompressed {
+		seeds.compressedIDs = s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
+	}
+	s.hnswMu.RLock()
+	hasGraph := s.hnswIndex != nil
+	s.hnswMu.RUnlock()
+	if !hasGraph {
+		seeds.hnswHints = s.hnswBuildLexicalSeedHints(fulltext, s.hnswConfig().M)
+	}
+	return seeds
 }

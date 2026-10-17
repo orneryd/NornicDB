@@ -5400,6 +5400,9 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if err := s.prepareGPUIndexForCurrentStrategy(); err != nil {
 		s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
 	}
+	// Build seeds read the node metadata under indexMu, which ranks before
+	// pipelineMu (ConfigureHNSWQuantization holds it while taking pipelineMu).
+	seeds := s.pipelineBuildSeeds()
 
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
@@ -5416,7 +5419,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	vi := s.vectorIndex
 	s.mu.RUnlock()
 
-	strategy, err := s.resolveVectorStrategy(ctx, vectorCount, dimensions, vfs)
+	strategy, err := s.resolveVectorStrategy(ctx, seeds, vectorCount, dimensions, vfs)
 	if err != nil {
 		return nil, err
 	}
@@ -5432,7 +5435,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		if uploadErr != nil {
 			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", uploadErr)
 		}
-		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, uploadErr == nil)
+		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, seeds, vectorCount, dimensions, vfs, uploadErr == nil)
 		if err != nil {
 			return nil, err
 		}
@@ -5935,20 +5938,20 @@ type vectorStrategyDescriptor struct {
 	needsGPUUpload bool
 }
 
-func (s *Service) resolveVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveVectorStrategy(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
 	if ANNQualityFromEnv() == ANNQualityCompressed {
-		return s.resolveCompressedVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		return s.resolveCompressedVectorStrategy(ctx, seeds, vectorCount, dimensions, vfs)
 	}
-	return s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+	return s.resolveStandardVectorStrategy(ctx, seeds, vectorCount, dimensions, vfs)
 }
 
-func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
 	profile := ResolveCompressedANNProfile(vectorCount, dimensions, vfs != nil && vfs.Count() > 0)
 	if !profile.Active {
 		for _, diag := range profile.Diagnostics {
 			s.logPrintf("[IVFPQ] ⏭️ compressed mode inactive | code=%s reason=%s", diag.Code, diag.Message)
 		}
-		strategy, err := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		strategy, err := s.resolveStandardVectorStrategy(ctx, seeds, vectorCount, dimensions, vfs)
 		if err != nil {
 			return nil, err
 		}
@@ -5956,10 +5959,10 @@ func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, vectorCou
 		return strategy, nil
 	}
 
-	idx, err := s.getOrBuildIVFPQIndex(ctx, ivfpqProfileFromCompressed(profile), vfs)
+	idx, err := s.getOrBuildIVFPQIndex(ctx, ivfpqProfileFromCompressed(profile), vfs, seeds.compressedIDs)
 	if err != nil {
 		s.logPrintf("[IVFPQ] ⚠️ compressed build/load failed, falling back to standard path: %v", err)
-		strategy, fallbackErr := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		strategy, fallbackErr := s.resolveStandardVectorStrategy(ctx, seeds, vectorCount, dimensions, vfs)
 		if fallbackErr != nil {
 			return nil, fallbackErr
 		}
@@ -5987,11 +5990,11 @@ func ivfpqProfileFromCompressed(profile CompressedANNProfile) IVFPQProfile {
 	}
 }
 
-func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
-	return s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, true)
+func (s *Service) resolveStandardVectorStrategy(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+	return s.resolveStandardVectorStrategyWithGPU(ctx, seeds, vectorCount, dimensions, vfs, true)
 }
 
-func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, allowGPU bool) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore, allowGPU bool) (*vectorStrategyDescriptor, error) {
 	// Auto strategy: choose candidate generator based on dataset size and clustering
 	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled()
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
@@ -6034,7 +6037,7 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, vect
 		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
 	}
 	// Large dataset: use HNSW (lazy-initialize if needed)
-	hnswIndex, err := s.getOrCreateHNSWIndex(ctx, dimensions)
+	hnswIndex, err := s.getOrCreateHNSWIndex(ctx, dimensions, seeds.hnswHints)
 	if err != nil {
 		return nil, localizedError(localization.SearchHNSWIndexCreationFailed(err), err)
 	}
@@ -6117,7 +6120,9 @@ func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorI
 var hnswBeforeInstallHook func()
 
 // getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
-func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {
+// seedHints (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
+// since they read the node metadata under indexMu.
+func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int, seedHints map[string]LexicalSeedHint) (*HNSWIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -6136,9 +6141,7 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 	s.mu.RLock()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
-	ft := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswBuildLexicalSeedHints(ft, config.M)
 	if len(seedHints) > 0 {
 		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs", len(seedHints))
 	}
