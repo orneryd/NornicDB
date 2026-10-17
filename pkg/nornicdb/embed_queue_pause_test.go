@@ -300,3 +300,45 @@ func TestEmbedWorkerRepeatedPauseWaitsForClaim(t *testing.T) {
 	require.True(t, <-worked)
 	require.Equal(t, []int{1}, provider.batchSizes, "the claim already under way is finished, and nothing after it")
 }
+
+// A restore hold waits out a claim in progress, as a pause does: once
+// holdForRestore returns, no node is claimed until the hold is released.
+func TestEmbedWorkerRestoreHoldWaitsForClaim(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	nodes := []*storage.Node{
+		{ID: "docs:first", Properties: map[string]any{"content": "first"}},
+		{ID: "docs:second", Properties: map[string]any{"content": "second"}},
+	}
+	for _, node := range nodes {
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+	}
+	queue := &blockingQueue{sequenceEmbeddingEngine: &sequenceEmbeddingEngine{Engine: engine, nodes: nodes}, entered: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(queue.release) })
+	t.Cleanup(release)
+	provider := &resolvedDocumentBatchEmbedder{}
+	worker := NewEmbedWorker(provider, queue, &EmbedWorkerConfig{NumWorkers: 0, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 8, DeferWorkerStart: true})
+	t.Cleanup(worker.Close)
+
+	worked := make(chan bool, 1)
+	go func() { worked <- worker.processNextBatch() }()
+	<-queue.entered
+	held := make(chan func(), 1)
+	go func() { held <- worker.holdForRestore(0) }()
+	select {
+	case <-held:
+		t.Fatal("the restore hold returned while a claim was still in progress")
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	var releaseHold func()
+	select {
+	case releaseHold = <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the restore hold never returned after the claim finished")
+	}
+	require.True(t, <-worked)
+	require.Equal(t, []int{1}, provider.batchSizes, "the claim under way is finished, and nothing is claimed after the hold")
+	releaseHold()
+}

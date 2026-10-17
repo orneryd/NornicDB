@@ -245,6 +245,12 @@ func (e *LocalGGUFEmbedder) warmupLoop(interval time.Duration) {
 	}
 }
 
+// embedModel runs one embedding on the loaded model. A test replaces it to
+// keep a call in flight.
+var embedModel = func(ctx context.Context, model *localllm.Model, text string) ([]float32, error) {
+	return model.Embed(ctx, text)
+}
+
 // embedWithRecovery wraps the embed call with panic recovery.
 // CGO calls can panic on segfaults or other C-level errors.
 // This prevents the entire process from crashing.
@@ -291,7 +297,7 @@ func (e *LocalGGUFEmbedder) embedWithRecovery(ctx context.Context, text string) 
 	e.mu.RUnlock()
 
 	// Perform the actual embedding
-	embedding, err = model.Embed(ctx, text)
+	embedding, err = embedModel(ctx, model, text)
 
 	if err != nil {
 		e.errorCount.Add(1)
