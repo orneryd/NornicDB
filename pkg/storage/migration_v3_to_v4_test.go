@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -139,6 +140,11 @@ func TestMigrationV3ToV4_MovesCompatibilityRecords(t *testing.T) {
 	plain := separatelyStoredNode("test:released-plain")
 	_, err = b.CreateNode(plain)
 	require.NoError(t, err)
+	// A second separate range puts more released keys in the family than
+	// one move batch holds.
+	second := separatelyStoredNode("test:released-second")
+	_, err = b.CreateNode(second)
+	require.NoError(t, err)
 	sharded, _ := r8SeparateReplacementNode(t, "test:released-sharded", 0)
 	_, err = b.CreateNode(sharded)
 	require.NoError(t, err)
@@ -150,7 +156,7 @@ func TestMigrationV3ToV4_MovesCompatibilityRecords(t *testing.T) {
 	sidecar.EmbedMeta = map[string]any{"chunk_count": 2, "model": "fixture"}
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(sidecar))
 	binary := seedPriorEmbeddingNode(t, b, "test:r4\x00owner", true)
-	ids := []NodeID{plain.ID, sharded.ID, sidecar.ID}
+	ids := []NodeID{plain.ID, second.ID, sharded.ID, sidecar.ID}
 	for _, id := range ids {
 		toReleasedEmbeddingKeys(t, b, id)
 		require.Zero(t, countEmbeddingKeys(t, b, id), "SETUP: no current record left for %q", id)
@@ -163,7 +169,8 @@ func TestMigrationV3ToV4_MovesCompatibilityRecords(t *testing.T) {
 		}
 		return txn.Set(legacyEmbeddingKey(orphan, 0), payload)
 	}))
-	want := map[NodeID][][]float32{plain.ID: plain.ChunkEmbeddings, sharded.ID: sharded.ChunkEmbeddings, sidecar.ID: sidecar.ChunkEmbeddings, binary.ID: binary.ChunkEmbeddings}
+	require.Greater(t, compatibilityFamilyKeyCount(t, b)-len(binary.ChunkEmbeddings), embeddingKeyMoveBatchSize, "SETUP: the released family spans move batches")
+	want := map[NodeID][][]float32{plain.ID: plain.ChunkEmbeddings, second.ID: second.ChunkEmbeddings, sharded.ID: sharded.ChunkEmbeddings, sidecar.ID: sidecar.ChunkEmbeddings, binary.ID: binary.ChunkEmbeddings}
 	check := func(b *BadgerEngine) {
 		t.Helper()
 		for id, chunks := range want {
@@ -290,4 +297,56 @@ func TestBufferedCommit_ReplaysCompatibilityKeysAtCurrentAddresses(t *testing.T)
 	c = data.bufferedCommit(b)
 	require.Equal(t, data.Writes, c.writes, "a pre-V4 store replays the logged keys")
 	require.True(t, c.deletes[string(legacyEmbeddingKey(id, 5))])
+}
+
+// A released shard part that is missing was never readable; the move copies
+// the parts that exist and does not invent the missing one.
+func TestMigrationV3ToV4_MissingShardPart(t *testing.T) {
+	b := newTestEngine(t)
+	sharded, kvs := r8SeparateReplacementNode(t, "test:released-missing-part", 0)
+	_, err := b.CreateNode(sharded)
+	require.NoError(t, err)
+	storeBeforeV4(t, b)
+	toReleasedEmbeddingKeys(t, b, sharded.ID)
+	require.Greater(t, len(kvs), 2, "SETUP: base plus at least two parts")
+	released := legacyEmbeddingKey(sharded.ID, 0)
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(embeddingPartKey(released, 1))
+	}))
+	require.NoError(t, b.migrateV3ToV4())
+	require.Zero(t, compatibilityFamilyKeyCount(t, b))
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		_, err := txn.Get(embeddingChunkPartKey(sharded.ID, 0, 0))
+		require.NoError(t, err, "an existing part moves")
+		_, err = txn.Get(embeddingChunkPartKey(sharded.ID, 0, 1))
+		require.ErrorIs(t, err, badger.ErrKeyNotFound, "a missing part stays missing")
+		return nil
+	}))
+}
+
+// A V3 store whose arm cannot complete stays at V3, whether open or Restore
+// runs the arm: an undecodable owner body cannot prove its chunks orphaned.
+func TestMigrationV3ToV4_FailureKeepsV3(t *testing.T) {
+	dir := t.TempDir()
+	b, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	live := separatelyStoredNode("test:corrupt-upgrade")
+	_, err = b.CreateNode(live)
+	require.NoError(t, err)
+	storeBeforeV4(t, b)
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(nodeKey(live.ID), []byte{0xff})
+	}))
+	backup := filepath.Join(t.TempDir(), "corrupt.backup")
+	require.NoError(t, b.Backup(backup))
+	require.NoError(t, b.Close())
+
+	_, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	require.ErrorContains(t, err, "migration v3→v4 failed")
+
+	target := newTestEngine(t)
+	require.Error(t, target.Restore(backup))
+	version, err := readSchemaVersionFrom(heldViewer{db: target.db})
+	require.NoError(t, err)
+	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
 }
