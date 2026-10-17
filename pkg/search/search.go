@@ -1958,9 +1958,6 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 				s.logPrintf("[IVF-HNSW] 🔨 Progress: %d cluster HNSW indexes built (cluster id %d)", builtCount, cid+1)
 			}
 		}
-		if err := idx.SetQuantization(ctx, config.Quantization); err != nil {
-			return fmt.Errorf("IVF-HNSW cluster %d: %w", cid, err)
-		}
 		rebuilt[cid] = idx
 	}
 	s.logPrintf("[IVF-HNSW] 🔨 Built %d cluster HNSW indexes", len(rebuilt))
