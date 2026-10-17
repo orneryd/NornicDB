@@ -1,0 +1,8 @@
+== nornicdb / hnsw-fast: HNSW fast (M=16, efConstruction=100, efSearch=50)
+Profile captured bench-data/vector_ann/profiling/hnsw-cost/case-1 38986 requests
+   preset beam      recall@10 0.9972  p50   0.761 ms  p95   0.903 ms    6480.6 qps
+   load 12.6s (7007/s), index ready 49.4s, disk 1237 MB, RSS 3717 MB, strategy: HNSW
+== nornicdb / sq-int8: HNSW + scalar int8 quantization (rescore)
+Profile captured bench-data/vector_ann/profiling/hnsw-cost/case-2 54300 requests
+   preset beam      recall@10 0.9959  p50   0.565 ms  p95   0.683 ms    8104.0 qps
+   load 13.4s (6574/s), index ready 35.7s, disk 1630 MB, RSS 3183 MB, strategy: HNSW scalar int8 (90623340 encoded bytes)
