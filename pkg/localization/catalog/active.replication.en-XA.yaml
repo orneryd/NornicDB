@@ -61,6 +61,12 @@
 - id: replication.config.invalid_boolean
   description: Expanded pseudo-locale invalid boolean setting error.
   other: '[!! invalid value "{{.Value}}" for {{.EnvVar}} (use true or false) !!]'
+- id: replication.config.invalid_replay_protection
+  description: Expanded pseudo-locale invalid replay protection mode.
+  other: "[!! invalid value \"{{.Value}}\" for {{.EnvVar}} (use '{{.Compat}}' or '{{.Require}}') !!]"
+- id: replication.config.replay_protection_needs_secret
+  description: Expanded pseudo-locale replay protection without a secret.
+  other: "[!! {{.EnvVar}}=require needs {{.SecretEnvVar}} !!]"
 - id: replication.transport.closed
   description: Expanded pseudo-locale closed transport error.
   other: "[!! transport closed !!]"

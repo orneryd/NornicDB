@@ -83,3 +83,24 @@ func ReplicationRPCReadFailed(cause error) Message {
 func ReplicationRPCMessageTooLarge(actual uint32, maximum int) Message {
 	return Message{ID: MessageReplicationRPCMessageTooLarge, Fallback: fmt.Sprintf("message too large: %d > %d", actual, maximum), Data: map[string]any{"Actual": actual, "Maximum": maximum}}
 }
+
+const (
+	MessageReplicationRPCReplayedMessage          MessageID = "replication.rpc.replayed_message"
+	MessageReplicationRPCReplayCacheFull          MessageID = "replication.rpc.replay_cache_full"
+	MessageReplicationRPCReplayProtectionRequired MessageID = "replication.rpc.replay_protection_required"
+)
+
+// ReplicationRPCReplayedMessage identifies a signed message whose nonce was already received.
+func ReplicationRPCReplayedMessage() Message {
+	return Message{ID: MessageReplicationRPCReplayedMessage, Fallback: "message already received (replayed nonce)"}
+}
+
+// ReplicationRPCReplayCacheFull identifies a message refused because the replay cache is full.
+func ReplicationRPCReplayCacheFull(limit int) Message {
+	return Message{ID: MessageReplicationRPCReplayCacheFull, Fallback: fmt.Sprintf("replay cache full (%d messages); message refused", limit), Data: map[string]any{"Limit": limit}}
+}
+
+// ReplicationRPCReplayProtectionRequired identifies a signed message without a replay-protection nonce.
+func ReplicationRPCReplayProtectionRequired() Message {
+	return Message{ID: MessageReplicationRPCReplayProtectionRequired, Fallback: "message has no replay-protection nonce; upgrade the sending node"}
+}

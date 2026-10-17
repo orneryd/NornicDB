@@ -61,6 +61,12 @@
 - id: replication.config.invalid_boolean
   description: A security setting holds a value that is not a boolean. EnvVar and Value are untranslated.
   other: 'invalid value "{{.Value}}" for {{.EnvVar}} (use true or false)'
+- id: replication.config.invalid_replay_protection
+  description: Invalid replay protection mode. EnvVar, Value and the mode names are untranslated.
+  other: "invalid value \"{{.Value}}\" for {{.EnvVar}} (use '{{.Compat}}' or '{{.Require}}')"
+- id: replication.config.replay_protection_needs_secret
+  description: Required replay protection without a replication secret. EnvVar and SecretEnvVar are untranslated.
+  other: "{{.EnvVar}}=require needs {{.SecretEnvVar}}"
 - id: replication.transport.closed
   description: Operation attempted on a closed cluster transport.
   other: transport closed

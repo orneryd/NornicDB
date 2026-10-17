@@ -61,6 +61,12 @@
 - id: replication.config.invalid_boolean
   description: Un ajuste de seguridad tiene un valor que no es booleano. EnvVar y Value no se traducen.
   other: 'valor "{{.Value}}" no válido para {{.EnvVar}} (use true o false)'
+- id: replication.config.invalid_replay_protection
+  description: Modo de protección contra repeticiones no válido. EnvVar, Value y los modos no se traducen.
+  other: "valor \"{{.Value}}\" no válido para {{.EnvVar}} (use '{{.Compat}}' o '{{.Require}}')"
+- id: replication.config.replay_protection_needs_secret
+  description: Protección obligatoria contra repeticiones sin secreto de replicación. EnvVar y SecretEnvVar no se traducen.
+  other: "{{.EnvVar}}=require necesita {{.SecretEnvVar}}"
 - id: replication.transport.closed
   description: Operación sobre un transporte cerrado.
   other: el transporte está cerrado
