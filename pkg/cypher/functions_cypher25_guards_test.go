@@ -196,11 +196,11 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 	failing := errors.New("failed")
 	identity := func(accumulator, item interface{}) (interface{}, error) { return item, nil }
 	fail := func(accumulator, item interface{}) (interface{}, error) { return nil, failing }
-	_, err := runReduceForm(form, 0, []interface{}{1}, fail, identity)
+	_, err := runReduceForm(form, 0, []interface{}{1}, fail, identity, nil)
 	require.ErrorIs(t, err, failing)
-	_, err = runReduceForm(form, 0, []interface{}{1}, identity, fail)
+	_, err = runReduceForm(form, 0, []interface{}{1}, identity, fail, nil)
 	require.ErrorIs(t, err, failing)
-	_, err = runReduceForm(form, 0, []interface{}{1}, identity, identity)
+	_, err = runReduceForm(form, 0, []interface{}{1}, identity, identity, nil)
 	require.Error(t, err, "a predicate that isn't a boolean")
 
 	for text, want := range map[string]string{"UTC+01:00": "UTC+01:00", "GMT-05:30:15x": "GMT-05:30:15", "UT+00:00": "UT"} {
