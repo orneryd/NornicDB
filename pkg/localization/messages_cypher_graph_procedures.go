@@ -441,6 +441,7 @@ const (
 	MessageCypherGraphProceduresSimilarityRowKey           MessageID = "cyphergraphprocedures.similarity_row_key"
 	MessageCypherGraphProceduresSimilarityRowNode          MessageID = "cyphergraphprocedures.similarity_row_node"
 	MessageCypherGraphProceduresSimilarityRowWeight        MessageID = "cyphergraphprocedures.similarity_row_weight"
+	MessageCypherGraphProceduresSimilarityDuplicateSource  MessageID = "cyphergraphprocedures.similarity_duplicate_source"
 )
 
 // CypherGraphProceduresInvalidRowSimilarityMetric is nornicdb.similarity.stream's message for an unknown similarity metric.
@@ -453,9 +454,9 @@ func CypherGraphProceduresSimilarityRowNotMap(position, typeName string) Message
 	return Message{ID: MessageCypherGraphProceduresSimilarityRowNotMap, Fallback: "Row " + position + " of the similarity rows must be a map with source and thing, but found: " + typeName, Data: map[string]any{"Position": position, "Type": typeName}}
 }
 
-// CypherGraphProceduresSimilarityRowKey is nornicdb.similarity.stream's message for a row key other than source, thing and weight.
+// CypherGraphProceduresSimilarityRowKey is nornicdb.similarity.stream's message for a row key other than source, thing, weight and having.
 func CypherGraphProceduresSimilarityRowKey(position, key string) Message {
-	return Message{ID: MessageCypherGraphProceduresSimilarityRowKey, Fallback: "Row " + position + " of the similarity rows has the unexpected key `" + key + "`; rows take source, thing and weight", Data: map[string]any{"Key": key, "Position": position}}
+	return Message{ID: MessageCypherGraphProceduresSimilarityRowKey, Fallback: "Row " + position + " of the similarity rows has the unexpected key `" + key + "`; rows take source, thing, weight and having", Data: map[string]any{"Key": key, "Position": position}}
 }
 
 // CypherGraphProceduresSimilarityRowNode is nornicdb.similarity.stream's message for a row's source or thing that is not a node or node id.
@@ -466,4 +467,9 @@ func CypherGraphProceduresSimilarityRowNode(position, key, typeName string) Mess
 // CypherGraphProceduresSimilarityRowWeight is nornicdb.similarity.stream's message for a row weight that is not a finite number of at least 0.
 func CypherGraphProceduresSimilarityRowWeight(position, weight string) Message {
 	return Message{ID: MessageCypherGraphProceduresSimilarityRowWeight, Fallback: "Row " + position + " of the similarity rows has the weight " + weight + "; a weight must be a finite number of at least 0", Data: map[string]any{"Position": position, "Weight": weight}}
+}
+
+// CypherGraphProceduresSimilarityDuplicateSource is nornicdb.similarity.pairs's message for a source listed twice in its sources.
+func CypherGraphProceduresSimilarityDuplicateSource(position, source string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityDuplicateSource, Fallback: "Source " + position + " of the similarity sources repeats the source " + source + "; each source is listed once", Data: map[string]any{"Position": position, "Source": source}}
 }

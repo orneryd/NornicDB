@@ -219,10 +219,13 @@
   other: '[!! Row {{.Position}} of the similarity rows must be a map with source and thing, but found: {{.Type}} !!]'
 - id: cyphergraphprocedures.similarity_row_key
   description: Expanded pseudo-locale similarity row key.
-  other: '[!! Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing and weight !!]'
+  other: '[!! Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing, weight and having !!]'
 - id: cyphergraphprocedures.similarity_row_node
   description: Expanded pseudo-locale similarity row node.
   other: '[!! Row {{.Position}} of the similarity rows needs a node or node id for `{{.Key}}`, but found: {{.Type}} !!]'
 - id: cyphergraphprocedures.similarity_row_weight
   description: Expanded pseudo-locale similarity row weight.
   other: '[!! Row {{.Position}} of the similarity rows has the weight {{.Weight}}; a weight must be a finite number of at least 0 !!]'
+- id: cyphergraphprocedures.similarity_duplicate_source
+  description: Expanded pseudo-locale similarity duplicate source.
+  other: '[!! Source {{.Position}} of the similarity sources repeats the source {{.Source}}; each source is listed once !!]'

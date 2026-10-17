@@ -91,6 +91,7 @@ const (
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyPolicies               MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_policies"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyProfiles               MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_profiles"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve                MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_resolve"
+	MessageCypherProcedureMetadataNornicdbSimilarityPairs                       MessageID = "cypherproceduremetadata.nornicdb_similarity_pairs"
 	MessageCypherProcedureMetadataNornicdbSimilarityStream                      MessageID = "cypherproceduremetadata.nornicdb_similarity_stream"
 	MessageCypherProcedureMetadataNornicdbStats                                 MessageID = "cypherproceduremetadata.nornicdb_stats"
 	MessageCypherProcedureMetadataNornicdbVersion                               MessageID = "cypherproceduremetadata.nornicdb_version"
@@ -537,6 +538,11 @@ func CypherProcedureMetadataNornicdbKnowledgepolicyResolve() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve, Fallback: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"}
 }
 
+// CypherProcedureMetadataNornicdbSimilarityPairs describes nornicdb.similarity.pairs in procedure listings.
+func CypherProcedureMetadataNornicdbSimilarityPairs() Message {
+	return Message{ID: MessageCypherProcedureMetadataNornicdbSimilarityPairs, Fallback: "Returns the exact best page of unordered source pairs by resource allocation over incidence rows the statement supplies, with pair rules (partition keys, classes, documents, identifiers, excluded pairs) and the exact count of every eligible pair. A NornicDB extension."}
+}
+
 // CypherProcedureMetadataNornicdbSimilarityStream describes nornicdb.similarity.stream in procedure listings.
 func CypherProcedureMetadataNornicdbSimilarityStream() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbSimilarityStream, Fallback: "Scores node similarity for one source node over incidence rows the statement supplies (source, thing, optional weight), by JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION, with no graph projection. A NornicDB extension."}
@@ -646,6 +652,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"nornicdb.knowledgepolicy.policies":                CypherProcedureMetadataNornicdbKnowledgepolicyPolicies,
 	"nornicdb.knowledgepolicy.profiles":                CypherProcedureMetadataNornicdbKnowledgepolicyProfiles,
 	"nornicdb.knowledgepolicy.resolve":                 CypherProcedureMetadataNornicdbKnowledgepolicyResolve,
+	"nornicdb.similarity.pairs":                        CypherProcedureMetadataNornicdbSimilarityPairs,
 	"nornicdb.similarity.stream":                       CypherProcedureMetadataNornicdbSimilarityStream,
 	"nornicdb.stats":                                   CypherProcedureMetadataNornicdbStats,
 	"nornicdb.version":                                 CypherProcedureMetadataNornicdbVersion,
