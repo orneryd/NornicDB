@@ -566,13 +566,16 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int6
 	}
 }
 
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []string, edgesDeleted int64) {
-	b.cacheOnNodeDeletedWithLabelsAndCounts(nodeID, labels, edgesDeleted, true)
+// cacheOnNodeDeletedWithNode applies a delete whose pre-delete snapshot
+// (deleted) is known: it also unfiles the node's label and property-index
+// entries.
+func (b *BadgerEngine) cacheOnNodeDeletedWithNode(nodeID NodeID, deleted *Node, edgesDeleted int64) {
+	b.cacheOnNodeDeletedWithNodeAndCounts(nodeID, deleted, edgesDeleted, true)
 }
 
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
+func (b *BadgerEngine) cacheOnNodeDeletedWithNodeAndCounts(nodeID NodeID, deleted *Node, edgesDeleted int64, publishCounts bool) {
 	b.cacheDeleteNode(nodeID)
-	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
+	b.labelCacheInvalidateForNodeLabels(deleted.Labels, nodeID)
 
 	// Decrement cached node count for O(1) stats.
 	if publishCounts {
@@ -590,11 +593,12 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labe
 		b.InvalidateEdgeTypeCache()
 	}
 
-	// Remove stale property-index entries. Without labels + properties of
-	// the deleted node we can't do targeted removal, so the narrower
-	// cacheOnNodeDeleted (without labels) leaves the index potentially
-	// dangling — callers MUST use this variant when property indexes exist.
-	b.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, labels)
+	// Remove the node's property-index entries from the snapshot: the node
+	// cache was just cleared and may never have held it. Without a snapshot
+	// targeted removal is impossible, so the narrower cacheOnNodeDeleted
+	// leaves the index dangling; callers MUST use this variant when property
+	// indexes exist.
+	b.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, deleted)
 }
 
 func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
