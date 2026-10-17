@@ -36,18 +36,43 @@ import "sync"
 // Badger-side follow-ups (positional counts, ID counters, MVCC sequence)
 // stay outside it.
 
-// commitPublication is a commit's derived-state publication and the keys it
-// is ordered on.
-type commitPublication struct {
-	keys []any
-	run  func()
+// publicationKey is an entity (node or edge) or a unique value a commit's
+// publication touches. It is a plain comparable value, so building and
+// indexing keys does not box them.
+type publicationKey struct {
+	node   NodeID
+	edge   EdgeID
+	unique uniqueConstraintLockKey
 }
 
-type stagedPublication struct {
+// commitPublication is a commit's derived-state publication, the keys it is
+// ordered on, and its place in the stage once registered.
+type commitPublication struct {
+	keys []publicationKey
+	// publish is the writer's publication; pendingEmbeddingIDs are the
+	// pending-embedding candidates the commit added (commutative, no key).
+	publish             func()
+	pendingEmbeddingIDs map[NodeID]struct{}
+	engine              *BadgerEngine
+
 	ts      uint64
-	keys    []any
-	run     func()
 	running bool
+}
+
+func (p *commitPublication) run() {
+	if len(p.pendingEmbeddingIDs) > 0 {
+		p.engine.publishPendingEmbeddingAdds(p.pendingEmbeddingIDs)
+	}
+	if p.publish != nil {
+		p.publish()
+	}
+}
+
+// keyQueue is the pending timestamps of one key: the first inline, so the
+// common case of one pending publication per key allocates nothing.
+type keyQueue struct {
+	first uint64
+	rest  []uint64
 }
 
 // publicationStage orders the publications of written commits by commit
@@ -55,8 +80,8 @@ type stagedPublication struct {
 type publicationStage struct {
 	mu      sync.Mutex
 	changed sync.Cond
-	pending map[uint64]*stagedPublication
-	byKey   map[any][]uint64 // the pending timestamps of each key
+	pending map[uint64]*commitPublication
+	byKey   map[publicationKey]keyQueue
 }
 
 // register adds the publication of the commit written at ts. The committer
@@ -66,16 +91,23 @@ func (s *publicationStage) register(ts uint64, pub *commitPublication) {
 	if pub == nil {
 		return
 	}
+	pub.ts = ts
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending == nil {
-		s.pending = make(map[uint64]*stagedPublication)
-		s.byKey = make(map[any][]uint64)
+		s.pending = make(map[uint64]*commitPublication)
+		s.byKey = make(map[publicationKey]keyQueue)
 		s.changed.L = &s.mu
 	}
-	s.pending[ts] = &stagedPublication{ts: ts, keys: pub.keys, run: pub.run}
+	s.pending[ts] = pub
 	for _, key := range pub.keys {
-		s.byKey[key] = append(s.byKey[key], ts)
+		queue, queued := s.byKey[key]
+		if !queued {
+			s.byKey[key] = keyQueue{first: ts}
+			continue
+		}
+		queue.rest = append(queue.rest, ts)
+		s.byKey[key] = queue
 	}
 }
 
@@ -103,7 +135,7 @@ func (s *publicationStage) apply(ts uint64) {
 // runnableLocked returns the publication to run to make progress toward p: p
 // itself when no earlier pending publication shares a key with it, else the
 // one its earliest such publication waits on. Nil when that one is running.
-func (s *publicationStage) runnableLocked(p *stagedPublication) *stagedPublication {
+func (s *publicationStage) runnableLocked(p *commitPublication) *commitPublication {
 	for {
 		earlier := s.earliestDependencyLocked(p)
 		if earlier == nil {
@@ -116,21 +148,29 @@ func (s *publicationStage) runnableLocked(p *stagedPublication) *stagedPublicati
 	}
 }
 
-func (s *publicationStage) earliestDependencyLocked(p *stagedPublication) *stagedPublication {
-	var earliest *stagedPublication
-	for _, key := range p.keys {
-		for _, at := range s.byKey[key] {
-			if at < p.ts && (earliest == nil || at < earliest.ts) {
-				earliest = s.pending[at]
-			}
+func (s *publicationStage) earliestDependencyLocked(p *commitPublication) *commitPublication {
+	var earliest uint64
+	consider := func(at uint64) {
+		if at < p.ts && (earliest == 0 || at < earliest) {
+			earliest = at
 		}
 	}
-	return earliest
+	for _, key := range p.keys {
+		queue := s.byKey[key]
+		consider(queue.first)
+		for _, at := range queue.rest {
+			consider(at)
+		}
+	}
+	if earliest == 0 {
+		return nil
+	}
+	return s.pending[earliest]
 }
 
 // runLocked runs p without holding the stage's lock and retires it, also
 // when it panics: the panic surfaces in this caller and the stage goes on.
-func (s *publicationStage) runLocked(p *stagedPublication) {
+func (s *publicationStage) runLocked(p *commitPublication) {
 	p.running = true
 	s.mu.Unlock()
 	defer func() {
@@ -141,21 +181,31 @@ func (s *publicationStage) runLocked(p *stagedPublication) {
 	p.run()
 }
 
-func (s *publicationStage) retireLocked(p *stagedPublication) {
+func (s *publicationStage) retireLocked(p *commitPublication) {
 	delete(s.pending, p.ts)
 	for _, key := range p.keys {
-		pending := s.byKey[key]
-		for i, at := range pending {
-			if at == p.ts {
-				pending = append(pending[:i], pending[i+1:]...)
-				break
+		queue, queued := s.byKey[key]
+		if !queued {
+			continue
+		}
+		switch {
+		case queue.first == p.ts && len(queue.rest) == 0:
+			delete(s.byKey, key)
+			continue
+		case queue.first == p.ts:
+			queue.first, queue.rest = queue.rest[0], queue.rest[1:]
+		default:
+			for i, at := range queue.rest {
+				if at == p.ts {
+					queue.rest = append(queue.rest[:i], queue.rest[i+1:]...)
+					break
+				}
 			}
 		}
-		if len(pending) == 0 {
-			delete(s.byKey, key)
-		} else {
-			s.byKey[key] = pending
+		if len(queue.rest) == 0 {
+			queue.rest = nil
 		}
+		s.byKey[key] = queue
 	}
 	s.changed.Broadcast()
 }
@@ -170,26 +220,32 @@ func (s *publicationStage) pendingCount() int {
 // appendNodePublicationKeys appends the keys a publication of a node write
 // is ordered on: the node, and the unique values old (the pre-write node)
 // and written hold, the ones the write frees and takes.
-func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old, written *Node) []any {
-	keys = append(keys, id)
-	if schema == nil || !schema.HasUniqueValueTracking() {
+func appendNodePublicationKeys(keys []publicationKey, schema *SchemaManager, id NodeID, old, written *Node) []publicationKey {
+	keys = append(keys, publicationKey{node: id})
+	if schema == nil {
 		return keys
 	}
-	for _, node := range []*Node{old, written} {
-		if node == nil {
+	return schema.appendUniqueValueKeys(schema.appendUniqueValueKeys(keys, old), written)
+}
+
+// appendUniqueValueKeys appends the keys of node's values under the unique
+// constraints the unique-value registry tracks for its labels.
+func (sm *SchemaManager) appendUniqueValueKeys(keys []publicationKey, node *Node) []publicationKey {
+	if node == nil {
+		return keys
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, uc := range sm.uniqueConstraints {
+		if !hasLabel(node.Labels, uc.Label) {
 			continue
 		}
-		for _, c := range schema.GetConstraintsForLabels(node.Labels) {
-			if c.EffectiveEntityType() != ConstraintEntityNode || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
-				continue
-			}
-			value, ok := node.Properties[c.Properties[0]]
-			if !ok || !hasLabel(node.Labels, c.Label) {
-				continue
-			}
-			if key, keyed := uniqueConstraintValueKey(value); keyed {
-				keys = append(keys, uniqueConstraintLockKey{label: c.Label, property: c.Properties[0], value: key})
-			}
+		value, ok := node.Properties[uc.Property]
+		if !ok {
+			continue
+		}
+		if key, keyed := uniqueConstraintValueKey(value); keyed {
+			keys = append(keys, publicationKey{unique: uniqueConstraintLockKey{label: uc.Label, property: uc.Property, value: key}})
 		}
 	}
 	return keys
@@ -198,29 +254,36 @@ func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old
 // appendEdgePublicationKeys appends the keys a publication of an edge write
 // is ordered on: the edge, and the relationship-uniqueness values old and
 // written hold.
-func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old, written *Edge) []any {
-	keys = append(keys, id)
+func appendEdgePublicationKeys(keys []publicationKey, schema *SchemaManager, id EdgeID, old, written *Edge) []publicationKey {
+	keys = append(keys, publicationKey{edge: id})
 	if schema == nil {
 		return keys
 	}
-	for _, edge := range []*Edge{old, written} {
-		if edge == nil || len(edge.Properties) == 0 {
+	return schema.appendRelationshipUniqueKeys(schema.appendRelationshipUniqueKeys(keys, old), written)
+}
+
+// appendRelationshipUniqueKeys appends the keys of edge's values under the
+// relationship uniqueness constraints of its type, as the key locks name
+// them (lockRelationshipConstraintKeysOf).
+func (sm *SchemaManager) appendRelationshipUniqueKeys(keys []publicationKey, edge *Edge) []publicationKey {
+	if edge == nil || len(edge.Properties) == 0 {
+		return keys
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, c := range sm.constraints {
+		if c.Label != edge.Type || c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 			continue
 		}
-		for _, c := range schema.GetConstraintsForLabels([]string{edge.Type}) {
-			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
-				continue
-			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
-			if !ok || len(values) == 0 {
-				continue
-			}
-			var key interface{} = values[0]
-			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
-			}
-			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
+		values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+		if !ok || len(values) == 0 {
+			continue
 		}
+		var key interface{} = values[0]
+		if len(values) > 1 {
+			key = NewCompositeKey(values...).Hash
+		}
+		keys = append(keys, publicationKey{unique: uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key}})
 	}
 	return keys
 }
@@ -228,7 +291,7 @@ func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old
 // appendOperationPublicationKeys appends the keys of a commit's operations:
 // every node and edge they write, edges a node delete removed, and the unique
 // values they free and take.
-func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Operation) []any {
+func appendOperationPublicationKeys(keys []publicationKey, schema *SchemaManager, ops []Operation) []publicationKey {
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
@@ -238,7 +301,7 @@ func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Ope
 		case OpDeleteNode:
 			keys = appendNodePublicationKeys(keys, schema, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
-				keys = append(keys, edgeID)
+				keys = append(keys, publicationKey{edge: edgeID})
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil {

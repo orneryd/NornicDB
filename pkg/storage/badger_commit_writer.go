@@ -38,7 +38,7 @@ type commitWriter struct {
 	// is visible and after every earlier commit's publication that shares a
 	// key (badger_publication_stage.go).
 	publish     func()
-	publishKeys []any
+	publishKeys []publicationKey
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -137,13 +137,7 @@ func (cw *commitWriter) publication() *commitPublication {
 	if len(ids) == 0 && publish == nil {
 		return nil
 	}
-	engine := cw.engine
-	return &commitPublication{keys: cw.publishKeys, run: func() {
-		engine.publishPendingEmbeddingAdds(ids)
-		if publish != nil {
-			publish()
-		}
-	}}
+	return &commitPublication{keys: cw.publishKeys, publish: publish, pendingEmbeddingIDs: ids, engine: cw.engine}
 }
 
 func (cw *commitWriter) reserveNotification() {

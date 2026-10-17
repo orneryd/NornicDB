@@ -93,7 +93,7 @@ func (b *BadgerEngine) withNotifyingUpdate(fn func(txn *badger.Txn) error, notif
 // is visible and before this returns (badger_publication_stage.go). publish
 // and keys may read what fn recorded: they run after fn. keys returns the
 // entities and unique values the publication touches.
-func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any, notification ...*commitNotification) error {
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []publicationKey, notification ...*commitNotification) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(fn); err != nil {
 			return err

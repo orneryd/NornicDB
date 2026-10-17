@@ -4055,7 +4055,7 @@ func setCommitTailHook(hook func()) func() {
 // caches and counts per operation, in operation order, then the unique-value
 // registry; and the keys it is ordered on. All operations belong to the
 // transaction's pinned namespace.
-func (tx *BadgerTransaction) publication() (func(), []any) {
+func (tx *BadgerTransaction) publication() (func(), []publicationKey) {
 	engine, ops := tx.engine, tx.operations
 	if len(ops) == 0 {
 		return nil, nil

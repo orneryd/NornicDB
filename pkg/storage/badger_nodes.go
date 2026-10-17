@@ -711,10 +711,10 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		b.publishUniqueValues(uniqueSchema, deletedNode.ID, deletedNode, nil)
 		b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
 	}
-	keys := func() []any {
+	keys := func() []publicationKey {
 		keys := appendNodePublicationKeys(nil, uniqueSchema, id, deletedNode, nil)
 		for _, edgeID := range deletedEdgeIDs {
-			keys = append(keys, edgeID)
+			keys = append(keys, publicationKey{edge: edgeID})
 		}
 		return keys
 	}

@@ -39,7 +39,8 @@ var publishingPaths = map[string]string{
 	"CreateEdge":  "TestPostCommitEdgePublicationOrder (create)",
 	"UpdateEdge":  "TestPostCommitEdgePublicationOrder (update, restore, type change)",
 	"DeleteEdge":  "TestPostCommitEdgePublicationOrder (delete)",
-	"publication": "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx); the commit writer's pending-embedding candidates",
+	"publication": "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx)",
+	"commitPublication.run": "every publication: the commit's pending-embedding candidates (commutative, TestPendingCandidates*), then the writer's publish",
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
 	"EnqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
 	"UpdateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
@@ -165,6 +166,10 @@ func (src *packageSource) stageRoots() map[string][]ast.Node {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
+			}
+			if fn.Name.Name == "run" && fn.Recv != nil && types.ExprString(fn.Recv.List[0].Type) == "*commitPublication" {
+				// The stage runs every publication through it.
+				roots["commitPublication.run"] = append(roots["commitPublication.run"], fn.Body)
 			}
 			if fn.Name.Name == "publication" {
 				// What the stage runs is the closure the method returns; the
