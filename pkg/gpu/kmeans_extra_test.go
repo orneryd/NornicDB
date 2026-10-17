@@ -1,6 +1,8 @@
 package gpu
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -202,4 +204,73 @@ func assertFloat32Near(t *testing.T, got, want float32) {
 	if got < want-tolerance || got > want+tolerance {
 		t.Fatalf("got %f, want %f", got, want)
 	}
+}
+
+// A computed clustering changes nothing until it is published, so callers can
+// build state from its membership first; embeddings added in between join
+// their nearest centroid at publication.
+func TestClusterIndexComputeThenPublishClustering(t *testing.T) {
+	t.Run("empty index computes nothing", func(t *testing.T) {
+		ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 5, InitMethod: "random"})
+		clustering, err := ci.ComputeClustering(nil)
+		requireNoError(t, err)
+		if clustering != nil {
+			t.Fatalf("ComputeClustering() on an empty index = %+v, want nil", clustering)
+		}
+	})
+
+	t.Run("cancelled context", func(t *testing.T) {
+		ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 5, InitMethod: "random"})
+		requireNoError(t, ci.Add("a", []float32{1, 0}))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := ci.ComputeClustering(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ComputeClustering() error = %v, want context.Canceled", err)
+		}
+		if ci.IsClustered() {
+			t.Fatalf("a cancelled computation must not publish")
+		}
+	})
+
+	t.Run("publishes routing and membership together", func(t *testing.T) {
+		ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 10, InitMethod: "kmeans++"})
+		requireNoError(t, ci.AddBatch(
+			[]string{"a1", "a2", "b1", "b2"},
+			[][]float32{{1, 0}, {0.9, 0.1}, {0, 1}, {0.1, 0.9}},
+		))
+		clustering, err := ci.ComputeClustering(context.Background())
+		requireNoError(t, err)
+		if clustering.NumClusters() != 2 {
+			t.Fatalf("NumClusters() = %d, want 2", clustering.NumClusters())
+		}
+		if ci.IsClustered() || ci.NumClusters() != 0 {
+			t.Fatalf("computing must not publish")
+		}
+		var members []string
+		for cid := 0; cid < clustering.NumClusters(); cid++ {
+			ids := clustering.MemberIDs(cid)
+			if len(ids) != 2 || ids[0][0] != ids[1][0] {
+				t.Fatalf("cluster %d members = %v, want one topic", cid, ids)
+			}
+			members = append(members, ids...)
+		}
+		if len(members) != 4 {
+			t.Fatalf("members = %v, want all four", members)
+		}
+
+		requireNoError(t, ci.Add("a3", []float32{0.95, 0.05}))
+		ci.PublishClustering(clustering)
+		if !ci.IsClustered() || ci.NumClusters() != 2 {
+			t.Fatalf("published index: clustered=%t clusters=%d", ci.IsClustered(), ci.NumClusters())
+		}
+		stats := ci.ClusterStats()
+		if stats.Iterations == 0 {
+			t.Fatalf("a computed clustering publishes its iterations")
+		}
+		cluster := ci.FindNearestCentroid([]float32{1, 0})
+		got := ci.GetClusterMemberIDsForCluster(cluster)
+		if len(got) != 3 {
+			t.Fatalf("cluster %d members = %v, want a1, a2 and the added a3", cluster, got)
+		}
+	})
 }
