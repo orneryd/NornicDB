@@ -34,7 +34,7 @@ func (s *Service) clearClusterLexicalProfiles() {
 
 func (s *Service) rebuildClusterLexicalProfiles() {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.servingClusterIndex()
 	fulltext := s.fulltext()
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	s.mu.RUnlock()
@@ -162,7 +162,7 @@ func (s *Service) selectHybridClustersFor(ctx context.Context, clusterIndex *gpu
 	}
 
 	s.clusterLexicalMu.RLock()
-	profiles := s.clusterLexicalProfiles
+	profiles := s.servingClusterProfiles()
 	s.clusterLexicalMu.RUnlock()
 	if len(profiles) == 0 {
 		if len(semanticClusters) > defaultN {
@@ -250,7 +250,7 @@ func (s *Service) selectHybridClustersFor(ctx context.Context, clusterIndex *gpu
 
 func (s *Service) applyBM25SeedHints() {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.servingClusterIndex()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	if clusterIndex == nil || fulltext == nil {

@@ -1664,7 +1664,7 @@ func (s *Service) installClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	defer s.mu.Unlock()
 
 	// If clustering is already enabled, only rebuild when switching CPU<->GPU.
-	if s.clusterEnabled && s.clusterIndex != nil {
+	if s.clusterEnabled && s.servingClusterIndex() != nil {
 		requestGPU := gpuManager != nil && gpuManager.IsEnabled()
 		if s.clusterUsesGPU == requestGPU {
 			return false
@@ -1727,7 +1727,7 @@ func (s *Service) installClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 		}
 		s.vectorIndex.mu.RUnlock()
 
-		_ = s.clusterIndex.AddBatch(ids, embs) // Best effort
+		_ = s.servingClusterIndex().AddBatch(ids, embs) // Best effort
 	}
 
 	mode := "CPU"
@@ -1781,7 +1781,7 @@ const fulltextIndexChunkSize = 250
 // BuildIndexes or when stats haven't caught up). Caller must not hold s.mu.
 func (s *Service) ensureClusterIndexBackfilled(targetCount int) {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.servingClusterIndex()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
@@ -1851,7 +1851,7 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 	ctx = runCtx
 
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.servingClusterIndex()
 	generation := s.clusterGeneration.Load()
 	threshold := s.minEmbeddingsForClustering
 	s.mu.RUnlock()
@@ -2035,7 +2035,7 @@ func (s *Service) ClusteringInProgress() bool {
 func (s *Service) IsClusteringEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.clusterEnabled && s.clusterIndex != nil
+	return s.clusterEnabled && s.servingClusterIndex() != nil
 }
 
 // SetMinEmbeddingsForClustering sets the minimum number of embeddings required
@@ -2482,7 +2482,7 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 		return
 	}
 	s.hnswMu.RLock()
-	idx := s.hnswIndex
+	idx := s.servingHNSW()
 	s.hnswMu.RUnlock()
 	if idx == nil {
 		s.logPrintf("📇 Background persist: HNSW skip (index not built yet; will be built during warmup or when k-means completes)")
@@ -2519,7 +2519,7 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 		return
 	}
 	s.clusterHNSWMu.RLock()
-	clusterHNSW := s.clusterHNSW
+	clusterHNSW := s.servingClusterHNSW()
 	s.clusterHNSWMu.RUnlock()
 	if len(clusterHNSW) == 0 {
 		return
@@ -2576,10 +2576,10 @@ func (s *Service) resolveMinSimilarity(opts *SearchOptions) *float64 {
 func (s *Service) ClusterStats() *gpu.ClusterStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.clusterIndex == nil {
+	if s.servingClusterIndex() == nil {
 		return nil
 	}
-	stats := s.clusterIndex.ClusterStats()
+	stats := s.servingClusterIndex().ClusterStats()
 	return &stats
 }
 
@@ -2779,12 +2779,12 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 		s.reconcileVectorSourceCapacityLocked(nil)
 
 		// Dimension changes invalidate all vector backends.
-		if s.gpuEmbeddingIndex != nil {
-			s.gpuEmbeddingIndex.Clear()
+		if s.servingGPUIndex() != nil {
+			s.servingGPUIndex().Clear()
 			s.gpuEmbeddingIndex = nil
 		}
-		if s.clusterIndex != nil {
-			s.clusterIndex.Clear()
+		if s.servingClusterIndex() != nil {
+			s.servingClusterIndex().Clear()
 		}
 		s.mu.Unlock()
 
@@ -2800,8 +2800,8 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 		s.clearClusterLexicalProfiles()
 
 		s.hnswMu.Lock()
-		if s.hnswIndex != nil {
-			s.hnswIndex.Clear()
+		if s.servingHNSW() != nil {
+			s.servingHNSW().Clear()
 		}
 		s.hnswMu.Unlock()
 	}, false)
@@ -2840,11 +2840,11 @@ func (s *Service) ClearVectorIndex() {
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
 	}
-	if s.gpuEmbeddingIndex != nil {
-		s.gpuEmbeddingIndex.Clear()
+	if s.servingGPUIndex() != nil {
+		s.servingGPUIndex().Clear()
 	}
-	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
+	if s.servingClusterIndex() != nil {
+		s.servingClusterIndex().Clear()
 	}
 	s.clearNodeVectorMetadataLocked()
 
@@ -2871,8 +2871,8 @@ func (s *Service) ClearVectorIndex() {
 		// Also clear HNSW index if it exists (frees memory from tombstones).
 		// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
 		s.hnswMu.Lock()
-		if s.hnswIndex != nil {
-			s.hnswIndex.Clear()
+		if s.servingHNSW() != nil {
+			s.servingHNSW().Clear()
 		}
 		s.hnswMu.Unlock()
 	}, false)
@@ -2952,7 +2952,7 @@ func (s *Service) hnswUpdateLive(id string, embedding []float32) {
 		}
 	}
 	s.hnswMu.RLock()
-	idx := s.hnswIndex
+	idx := s.servingHNSW()
 	s.hnswMu.RUnlock()
 	if idx != nil {
 		_ = idx.Update(id, embedding) // Best effort
@@ -2965,7 +2965,7 @@ func (s *Service) hnswRemoveLive(id string) {
 		s.hnswRebuildOverlay.Remove(id)
 	}
 	s.hnswMu.RLock()
-	idx := s.hnswIndex
+	idx := s.servingHNSW()
 	s.hnswMu.RUnlock()
 	if idx != nil {
 		idx.Remove(id)
@@ -2990,7 +2990,7 @@ func (s *Service) trackIVFPQAdd(id string, value []float32) {
 		return
 	}
 	s.ivfpqMu.RLock()
-	active := s.ivfpqIndex != nil
+	active := s.servingIVFPQ() != nil
 	if active {
 		s.ivfpqOverlay.Add(id, value)
 	}
@@ -3002,7 +3002,7 @@ func (s *Service) trackIVFPQRemove(id string) {
 		return
 	}
 	s.ivfpqMu.RLock()
-	active := s.ivfpqIndex != nil
+	active := s.servingIVFPQ() != nil
 	if active {
 		s.ivfpqOverlay.Remove(id)
 	}
@@ -3258,16 +3258,16 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			}
 			s.nodeNamedVector[nodeIDStr][vectorName] = namedID
 
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Add(namedID, embedding) // Best effort
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Add(namedID, embedding) // Best effort
 			}
 
 			// Keep the active graph current with the canonical vector store.
 			s.hnswUpdateLive(namedID, embedding)
 
 			// Also add to cluster index if enabled
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(namedID, embedding) // Best effort
+			if s.servingClusterIndex() != nil {
+				_ = s.servingClusterIndex().Add(namedID, embedding) // Best effort
 			}
 		}
 	}
@@ -3296,8 +3296,8 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			}
 		} else {
 			chunkIDs = append(chunkIDs, nodeIDStr) // main ID
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Add(string(node.ID), mainEmbedding) // Best effort
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Add(string(node.ID), mainEmbedding) // Best effort
 			}
 
 			// Use Update() to keep the active graph current for both new and
@@ -3305,8 +3305,8 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.hnswUpdateLive(string(node.ID), mainEmbedding)
 
 			// Also add to cluster index if enabled
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(string(node.ID), mainEmbedding) // Best effort
+			if s.servingClusterIndex() != nil {
+				_ = s.servingClusterIndex().Add(string(node.ID), mainEmbedding) // Best effort
 			}
 		}
 
@@ -3328,8 +3328,8 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 					}
 					chunkIDs = append(chunkIDs, chunkID)
 
-					if s.gpuEmbeddingIndex != nil {
-						_ = s.gpuEmbeddingIndex.Add(chunkID, embedding) // Best effort
+					if s.servingGPUIndex() != nil {
+						_ = s.servingGPUIndex().Add(chunkID, embedding) // Best effort
 					}
 
 					// A later chunk reaches the active graph too, as the
@@ -3337,8 +3337,8 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 					s.hnswUpdateLive(chunkID, embedding)
 
 					// Also add to cluster index if enabled
-					if s.clusterIndex != nil {
-						_ = s.clusterIndex.Add(chunkID, embedding) // Best effort
+					if s.servingClusterIndex() != nil {
+						_ = s.servingClusterIndex().Add(chunkID, embedding) // Best effort
 					}
 				}
 			}
@@ -3368,12 +3368,12 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 				s.nodePropVector[nodeIDStr] = make(map[string]string, 4)
 			}
 			s.nodePropVector[nodeIDStr][key] = propID
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Add(propID, vec) // Best effort
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Add(propID, vec) // Best effort
 			}
 			s.hnswUpdateLive(propID, vec)
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(propID, vec) // Best effort
+			if s.servingClusterIndex() != nil {
+				_ = s.servingClusterIndex().Add(propID, vec) // Best effort
 			}
 		}
 	}
@@ -3521,8 +3521,8 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 
 	// Remove main embedding
 	s.removeVectorLocked(nodeIDStr)
-	if s.gpuEmbeddingIndex != nil {
-		_ = s.gpuEmbeddingIndex.Remove(nodeIDStr)
+	if s.servingGPUIndex() != nil {
+		_ = s.servingGPUIndex().Remove(nodeIDStr)
 	}
 	if removeFulltext && s.fulltext() != nil {
 		s.fulltext().Remove(nodeIDStr)
@@ -3532,8 +3532,8 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	s.hnswRemoveLive(nodeIDStr)
 
 	// Also remove from cluster index if enabled
-	if s.clusterIndex != nil {
-		s.clusterIndex.Remove(nodeIDStr)
+	if s.servingClusterIndex() != nil {
+		s.servingClusterIndex().Remove(nodeIDStr)
 	}
 
 	delete(s.nodeLabels, nodeIDStr)
@@ -3543,12 +3543,12 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	if props := s.nodePropVector[nodeIDStr]; len(props) > 0 {
 		for _, propID := range props {
 			s.removeVectorLocked(propID)
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Remove(propID)
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Remove(propID)
 			}
 			s.hnswRemoveLive(propID)
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(propID)
+			if s.servingClusterIndex() != nil {
+				s.servingClusterIndex().Remove(propID)
 			}
 		}
 	}
@@ -3558,14 +3558,14 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	if named := s.nodeNamedVector[nodeIDStr]; len(named) > 0 {
 		for _, namedID := range named {
 			s.removeVectorLocked(namedID)
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Remove(namedID)
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Remove(namedID)
 			}
 
 			s.hnswRemoveLive(namedID)
 
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(namedID)
+			if s.servingClusterIndex() != nil {
+				s.servingClusterIndex().Remove(namedID)
 			}
 		}
 	}
@@ -3575,15 +3575,15 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	if chunkIDs := s.nodeChunkVectors[nodeIDStr]; len(chunkIDs) > 0 {
 		for _, chunkID := range chunkIDs {
 			s.removeVectorLocked(chunkID)
-			if s.gpuEmbeddingIndex != nil {
-				_ = s.gpuEmbeddingIndex.Remove(chunkID)
+			if s.servingGPUIndex() != nil {
+				_ = s.servingGPUIndex().Remove(chunkID)
 			}
 
 			// Keep the active graph current with the canonical vector store.
 			s.hnswRemoveLive(chunkID)
 
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(chunkID)
+			if s.servingClusterIndex() != nil {
+				s.servingClusterIndex().Remove(chunkID)
 			}
 		}
 	}
@@ -3810,12 +3810,12 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 			continue
 		}
 		s.removeVectorLocked(propID)
-		if s.gpuEmbeddingIndex != nil {
-			_ = s.gpuEmbeddingIndex.Remove(propID)
+		if s.servingGPUIndex() != nil {
+			_ = s.servingGPUIndex().Remove(propID)
 		}
 		s.hnswRemoveLive(propID)
-		if s.clusterIndex != nil {
-			s.clusterIndex.Remove(propID)
+		if s.servingClusterIndex() != nil {
+			s.servingClusterIndex().Remove(propID)
 		}
 		delete(props, propertyKey)
 		if len(props) == 0 {
@@ -4111,8 +4111,8 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		}
 		s.publishVectorServing(func() {
 			s.hnswMu.Lock()
-			if s.hnswIndex != nil {
-				s.hnswIndex.Clear()
+			if s.servingHNSW() != nil {
+				s.servingHNSW().Clear()
 				s.invalidateHNSWLocked()
 			}
 			s.hnswMu.Unlock()
@@ -5436,7 +5436,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	// Read the pointer once under the lock: resetANNForBuild may clear it as
 	// soon as the lock is released (#593).
 	s.pipelineMu.RLock()
-	pipeline := s.vectorPipeline
+	pipeline := s.servingPipeline()
 	s.pipelineMu.RUnlock()
 	if pipeline != nil {
 		return pipeline, nil
@@ -5446,8 +5446,8 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	defer s.pipelineMu.Unlock()
 
 	// Double-check after acquiring write lock
-	if s.vectorPipeline != nil {
-		return s.vectorPipeline, nil
+	if s.servingPipeline() != nil {
+		return s.servingPipeline(), nil
 	}
 
 	snapshot := s.captureVectorSnapshot()
@@ -5476,7 +5476,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 func (s *Service) currentPipelineStrategy() strategyMode {
 	s.pipelineMu.RLock()
-	p := s.vectorPipeline
+	p := s.servingPipeline()
 	s.pipelineMu.RUnlock()
 	if p == nil {
 		return strategyModeUnknown
@@ -5629,7 +5629,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 		var hnswForPipeline *HNSWIndex
 		if target == strategyModeHNSW {
 			s.hnswMu.Lock()
-			old := s.hnswIndex
+			old := s.servingHNSW()
 			s.hnswIndex = targetHNSW
 			s.hnswMu.Unlock()
 			hnswForPipeline = targetHNSW
@@ -5638,7 +5638,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 			}
 		} else {
 			s.hnswMu.Lock()
-			old := s.hnswIndex
+			old := s.servingHNSW()
 			s.invalidateHNSWLocked()
 			s.hnswMu.Unlock()
 			if old != nil {
@@ -5689,7 +5689,7 @@ func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *
 		return NewVectorSearchPipeline(NewBruteForceCandidateGen(vi), NewCPUExactScorer(vi))
 	case strategyModeHNSW:
 		s.hnswMu.RLock()
-		idx := s.hnswIndex
+		idx := s.servingHNSW()
 		s.hnswMu.RUnlock()
 		if idx != nil {
 			if vfs != nil {
@@ -5721,8 +5721,8 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	}
 	s.publishVectorServing(func() {
 		s.hnswMu.Lock()
-		if s.hnswIndex != nil {
-			s.hnswIndex.Clear()
+		if s.servingHNSW() != nil {
+			s.servingHNSW().Clear()
 		}
 		s.invalidateHNSWLocked()
 		s.hnswMu.Unlock()
@@ -6008,13 +6008,13 @@ func (s *Service) resolveClusteredVectorStrategy(clusterIndex *gpu.ClusterIndex,
 
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) && !gpuEnabled {
 		s.clusterHNSWMu.RLock()
-		hasClusterHNSW := len(s.clusterHNSW) > 0
+		hasClusterHNSW := len(s.servingClusterHNSW()) > 0
 		s.clusterHNSWMu.RUnlock()
 		if hasClusterHNSW {
 			gen := NewIVFHNSWCandidateGen(clusterIndex, func(clusterID int) *HNSWIndex {
 				s.clusterHNSWMu.RLock()
 				defer s.clusterHNSWMu.RUnlock()
-				return s.clusterHNSW[clusterID]
+				return s.servingClusterHNSW()[clusterID]
 			}, numClustersToSearch).
 				SetClusterSelector(s.hybridClusterSelector(clusterIndex))
 			return &vectorStrategyDescriptor{
@@ -6781,7 +6781,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	searchMethod, message := vectorSearchMethod(pipeline)
 
 	s.mu.RLock()
-	clusterEnabled := s.clusterEnabled && s.clusterIndex != nil
+	clusterEnabled := s.clusterEnabled && s.servingClusterIndex() != nil
 	s.mu.RUnlock()
 	if clusterEnabled {
 		s.logPrintf("[K-MEANS] 🔍 SEARCH | mode=%s candidates=%d duration=%v",

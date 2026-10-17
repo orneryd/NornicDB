@@ -318,7 +318,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 }
 
 // vectorServingFields are the structures whose change alters what vector
-// search serves. Only the serving owners write them.
+// search serves.
 var vectorServingFields = map[string]bool{
 	"hnswIndex": true, "vectorPipeline": true, "clusterIndex": true, "clusterHNSW": true,
 	"clusterLexicalProfiles": true, "ivfpqIndex": true, "gpuEmbeddingIndex": true,
@@ -329,6 +329,12 @@ var vectorServingFields = map[string]bool{
 // (which changes nothing a search returns).
 var vectorServingOwners = map[string]bool{"publishVectorServing": true, "cacheDerivedVectorPipelineLocked": true}
 
+// vectorServingAccessors read the serving fields for everything else.
+var vectorServingAccessors = map[string]bool{
+	"servingHNSW": true, "servingPipeline": true, "servingClusterIndex": true, "servingClusterHNSW": true,
+	"servingClusterProfiles": true, "servingIVFPQ": true, "servingGPUIndex": true,
+}
+
 // vectorServingHelpers write serving fields on an owner's behalf. They may be
 // referenced only inside an owner's install or another helper.
 var vectorServingHelpers = map[string]bool{
@@ -336,67 +342,47 @@ var vectorServingHelpers = map[string]bool{
 	"rebuildClusterLexicalProfiles": true, "installClusterIndex": true,
 }
 
-// servingFieldOf reports the serving field an expression writes through: the
-// field itself (s.f), one of its elements (s.f[k]) or a dereference (*s.f).
-func servingFieldOf(expr ast.Expr) (recv, field string, ok bool) {
-	for {
-		switch x := expr.(type) {
-		case *ast.IndexExpr:
-			expr = x.X
-			continue
-		case *ast.StarExpr:
-			expr = x.X
-			continue
-		case *ast.ParenExpr:
-			expr = x.X
-			continue
-		case *ast.SelectorExpr:
-			if id, isIdent := x.X.(*ast.Ident); isIdent && vectorServingFields[x.Sel.Name] {
-				return id.Name, x.Sel.Name, true
-			}
-		}
-		return "", "", false
+// namedTypeOf returns the named type an explicit declaration gives: T or *T.
+func namedTypeOf(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
 	}
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
 }
 
-// freshServiceLocals lists the locals a receiver-less constructor binds to a
-// new Service (s := &Service{...} or s := Service{...}): initializing those
-// is not a publication.
-func freshServiceLocals(fn *ast.FuncDecl) map[string]bool {
-	fresh := map[string]bool{}
-	if fn.Recv != nil || !(strings.HasPrefix(fn.Name.Name, "New") || strings.HasPrefix(fn.Name.Name, "new")) {
-		return fresh
+// unrelatedLocals lists the receiver and parameters fn declares with a named
+// type other than Service: a same-named field on them is not a serving field.
+func unrelatedLocals(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	var lists []*ast.FieldList
+	if fn.Recv != nil {
+		lists = append(lists, fn.Recv)
 	}
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || assign.Tok != token.DEFINE {
-			return true
-		}
-		for i, rhs := range assign.Rhs {
-			if i >= len(assign.Lhs) {
-				break
-			}
-			if unary, ok := rhs.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-				rhs = unary.X
-			}
-			if lit, ok := rhs.(*ast.CompositeLit); ok {
-				if typ, ok := lit.Type.(*ast.Ident); ok && typ.Name == "Service" {
-					if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-						fresh[id.Name] = true
-					}
+	lists = append(lists, fn.Type.Params)
+	for _, list := range lists {
+		for _, field := range list.List {
+			if typ := namedTypeOf(field.Type); typ != "" && typ != "Service" {
+				for _, name := range field.Names {
+					out[name.Name] = true
 				}
 			}
 		}
-		return true
-	})
-	return fresh
+	}
+	return out
 }
 
-// servingOwnershipViolations lists every write to a serving field, and every
-// use of a serving helper, outside the owners. A write is an assignment to the
-// field or one of its elements, or delete/clear of it. It is admitted inside an
-// owner or helper, inside a function literal handed to an owner, or on a fresh
-// Service a receiver-less constructor is initializing.
+// servingOwnershipViolations makes the ownership rule hold by construction.
+// Any mention of a serving field (read, write or address-of, through any
+// expression) is reported unless it is inside an owner, accessor or helper
+// method of Service, inside a function literal or helper method value handed
+// to publishVectorServing, or a field of a receiver or parameter explicitly
+// typed as another named type. Keys of a composite literal initialize a value no one has observed and
+// are not mentions. Also reported: a serving helper used outside an owner, an
+// assignment through a pointer (*x = ...) not provably of another type, and an
+// assignment of a whole Service value.
 func servingOwnershipViolations(file *ast.File, name string) []string {
 	var out []string
 	for _, decl := range file.Decls {
@@ -405,46 +391,67 @@ func servingOwnershipViolations(file *ast.File, name string) []string {
 			continue
 		}
 		fnName := fn.Name.Name
-		if fn.Recv != nil && (vectorServingOwners[fnName] || vectorServingHelpers[fnName]) {
+		if fn.Recv != nil && len(fn.Recv.List) == 1 && namedTypeOf(fn.Recv.List[0].Type) == "Service" &&
+			(vectorServingOwners[fnName] || vectorServingAccessors[fnName] || vectorServingHelpers[fnName]) {
 			continue
 		}
-		fresh := freshServiceLocals(fn)
-		report := func(recv, field, what string, inOwner bool) {
-			if inOwner || fresh[recv] {
-				return
-			}
-			out = append(out, fmt.Sprintf("%s: %s %s %s", name, fnName, what, field))
+		unrelated := unrelatedLocals(fn)
+		report := func(format string, args ...any) {
+			out = append(out, fmt.Sprintf("%s: %s ", name, fnName)+fmt.Sprintf(format, args...))
 		}
 		var walk func(n ast.Node, inOwner bool)
 		walk = func(n ast.Node, inOwner bool) {
 			ast.Inspect(n, func(node ast.Node) bool {
 				switch x := node.(type) {
 				case *ast.CallExpr:
-					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && vectorServingOwners[sel.Sel.Name] {
+					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "publishVectorServing" {
 						walk(x.Fun, inOwner)
 						for _, arg := range x.Args {
-							walk(arg, true)
+							_, isLit := arg.(*ast.FuncLit)
+							sel, isSel := arg.(*ast.SelectorExpr)
+							walk(arg, inOwner || isLit || isSel && vectorServingHelpers[sel.Sel.Name])
 						}
 						return false
 					}
-					if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "delete" || id.Name == "clear") && len(x.Args) > 0 {
-						if recv, field, ok := servingFieldOf(x.Args[0]); ok {
-							report(recv, field, id.Name+"s", inOwner)
-						}
-					}
 				case *ast.SelectorExpr:
 					if vectorServingHelpers[x.Sel.Name] && !inOwner {
-						out = append(out, fmt.Sprintf("%s: %s uses %s outside an owner", name, fnName, x.Sel.Name))
+						report("uses %s outside an owner", x.Sel.Name)
 					}
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if recv, field, ok := servingFieldOf(lhs); ok {
-							report(recv, field, "writes", inOwner)
+					if vectorServingFields[x.Sel.Name] && !inOwner {
+						if id, ok := x.X.(*ast.Ident); !ok || !unrelated[id.Name] {
+							report("mentions %s", x.Sel.Name)
 						}
 					}
-				case *ast.IncDecStmt:
-					if recv, field, ok := servingFieldOf(x.X); ok {
-						report(recv, field, "writes", inOwner)
+				case *ast.AssignStmt:
+					for i, lhs := range x.Lhs {
+						star, ok := lhs.(*ast.StarExpr)
+						if !ok {
+							continue
+						}
+						if id, ok := star.X.(*ast.Ident); ok && unrelated[id.Name] {
+							continue
+						}
+						if len(x.Rhs) == len(x.Lhs) {
+							if lit, ok := x.Rhs[i].(*ast.CompositeLit); ok {
+								if typ := namedTypeOf(lit.Type); typ != "" && typ != "Service" {
+									continue
+								}
+							}
+						}
+						report("assigns through a pointer")
+					}
+					if x.Tok == token.ASSIGN {
+						for i, rhs := range x.Rhs {
+							if _, deref := x.Lhs[i].(*ast.StarExpr); deref && len(x.Lhs) == len(x.Rhs) {
+								continue // reported above
+							}
+							if unary, ok := rhs.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+								rhs = unary.X
+							}
+							if lit, ok := rhs.(*ast.CompositeLit); ok && namedTypeOf(lit.Type) == "Service" {
+								report("assigns a whole Service")
+							}
+						}
 					}
 				}
 				return true
@@ -457,27 +464,46 @@ func servingOwnershipViolations(file *ast.File, name string) []string {
 
 func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 	probe, err := parser.ParseFile(token.NewFileSet(), "probe.go", "package search\n"+
+		"type gen struct{ hnswIndex *HNSWIndex }\n"+
 		"func (s *Service) leak() { s.vectorPipeline = nil }\n"+
 		"func (s *Service) leakElement() { s.clusterHNSW[0] = nil }\n"+
 		"func (s *Service) leakDelete() { delete(s.clusterHNSW, 0) }\n"+
-		"func (s *Service) leakClear() { clear(s.clusterLexicalProfiles) }\n"+
-		"func (s *Service) NewGraph() { s.hnswIndex = nil }\n"+
-		"func NewWrapped(s *Service) *Service { s.ivfpqIndex = nil; return s }\n"+
-		"func (s *Service) leakHelper() { s.invalidateHNSWLocked() }\n"+
-		"func NewFresh() *Service { s := &Service{}; s.vectorPipeline = nil; s.clusterHNSW[0] = nil; return s }\n"+
-		"func (s *Service) viaOwner() { s.publishVectorServing(func() { s.hnswIndex = nil; s.clusterHNSW[0] = nil; delete(s.clusterHNSW, 1); s.invalidateHNSWLocked() }, true) }\n"+
+		"func (s *Service) leakRead() *IVFPQIndex { return s.ivfpqIndex }\n"+
+		"func (s *Service) leakAddress() { resetGraph(&s.hnswIndex) }\n"+
+		"func (s *Service) leakAlias() { m := s.clusterHNSW; delete(m, 0) }\n"+
+		"func (s *Service) leakParen() { (*s).hnswIndex = nil }\n"+
+		"func (s *Service) leakReset() { *s = Service{} }\n"+
+		"func (s *Service) leakCopy(o *Service) { *s = *o }\n"+
+		"func NewWrapped(o *Service) *Service { s := &Service{}; s = o; s.ivfpqIndex = nil; return s }\n"+
+		"func NewRebound(o *Service) { o = &Service{}; _ = o }\n"+
+		"func (s *Service) leakHelper() { f := s.invalidateHNSWLocked; f() }\n"+
+		"func (s *Service) leakCacheArg() { s.cacheDerivedVectorPipelineLocked(s.vectorPipeline) }\n"+
+		"func servingHNSW(s *Service) *HNSWIndex { return s.hnswIndex }\n"+
+		"func (g *gen) unrelated() *HNSWIndex { g.hnswIndex = nil; return g.hnswIndex }\n"+
+		"func (g *gen) unrelatedReset() { *g = gen{} }\n"+
+		"func NewFresh() *Service { return &Service{clusterHNSW: map[int]*HNSWIndex{}} }\n"+
+		"func (s *Service) viaAccessor() *HNSWIndex { return s.servingHNSW() }\n"+
+		"func (s *Service) viaOwner() { s.publishVectorServing(func() { s.hnswIndex = nil; delete(s.clusterHNSW, 1); s.invalidateHNSWLocked() }, true) }\n"+
 		"func (s *Service) viaMethodValue() { s.publishVectorServing(s.clearClusterLexicalProfiles, false) }\n"+
+		"func (s *Service) servingHNSW() *HNSWIndex { return s.hnswIndex }\n"+
 		"func (s *Service) publishVectorServing(install func(), retire bool) { s.vectorPipeline = nil }\n", 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{
-		"probe.go: leak writes vectorPipeline",
-		"probe.go: leakElement writes clusterHNSW",
-		"probe.go: leakDelete deletes clusterHNSW",
-		"probe.go: leakClear clears clusterLexicalProfiles",
-		"probe.go: NewGraph writes hnswIndex",
-		"probe.go: NewWrapped writes ivfpqIndex",
+		"probe.go: leak mentions vectorPipeline",
+		"probe.go: leakElement mentions clusterHNSW",
+		"probe.go: leakDelete mentions clusterHNSW",
+		"probe.go: leakRead mentions ivfpqIndex",
+		"probe.go: leakAddress mentions hnswIndex",
+		"probe.go: leakAlias mentions clusterHNSW",
+		"probe.go: leakParen mentions hnswIndex",
+		"probe.go: leakReset assigns through a pointer",
+		"probe.go: leakCopy assigns through a pointer",
+		"probe.go: NewWrapped mentions ivfpqIndex",
+		"probe.go: NewRebound assigns a whole Service",
 		"probe.go: leakHelper uses invalidateHNSWLocked outside an owner",
-	}, servingOwnershipViolations(probe, "probe.go"), "negative fixture: every write shape and helper use outside an owner is reported; owner installs and fresh constructors are admitted")
+		"probe.go: leakCacheArg mentions vectorPipeline",
+		"probe.go: servingHNSW mentions hnswIndex",
+	}, servingOwnershipViolations(probe, "probe.go"), "negative fixture: every mention outside an owner, accessor or helper is reported; fields of other types, fresh literals, accessor reads and owner installs are admitted")
 
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
@@ -493,5 +519,5 @@ func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 		problems = append(problems, servingOwnershipViolations(parsed, name)...)
 	}
 	sort.Strings(problems)
-	require.Empty(t, problems, "serving fields written, or their helpers used, outside publishVectorServing")
+	require.Empty(t, problems, "serving fields mentioned outside publishVectorServing, the derived-pipeline cache, the accessors and helpers")
 }

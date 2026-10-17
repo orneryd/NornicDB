@@ -39,8 +39,8 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	if s.hnswBuildPaused > 0 || s.hnswVectorsChanging.Load() {
 		return nil, nil, nil
 	}
-	if s.hnswIndex != nil {
-		return s.hnswIndex, nil, nil
+	if s.servingHNSW() != nil {
+		return s.servingHNSW(), nil, nil
 	}
 	if job := s.hnswBuild; job != nil {
 		select {
@@ -173,7 +173,7 @@ func (s *Service) vectorSnapshotCurrent(snapshot vectorSnapshotToken) bool {
 func (s *Service) reserveHNSWRebuild(ctx context.Context, old *HNSWIndex) (context.Context, func(), bool) {
 	s.hnswMu.Lock()
 	defer s.hnswMu.Unlock()
-	if s.hnswBuildPaused > 0 || s.hnswVectorsChanging.Load() || s.hnswIndex != old || ctx.Err() != nil {
+	if s.hnswBuildPaused > 0 || s.hnswVectorsChanging.Load() || s.servingHNSW() != old || ctx.Err() != nil {
 		return ctx, nil, false
 	}
 	if job := s.hnswBuild; job != nil {
@@ -231,7 +231,7 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		ctx = context.Background()
 	}
 	s.hnswMu.RLock()
-	if idx := s.hnswIndex; idx != nil {
+	if idx := s.servingHNSW(); idx != nil {
 		s.hnswMu.RUnlock()
 		return idx, nil
 	}
@@ -294,8 +294,8 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		s.hnswMu.Unlock()
 		return nil, err
 	}
-	if s.hnswIndex != nil {
-		existing := s.hnswIndex
+	if s.servingHNSW() != nil {
+		existing := s.servingHNSW()
 		s.hnswMu.Unlock()
 		return existing, nil
 	}
@@ -389,7 +389,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		return nil
 	}
 	s.hnswMu.RLock()
-	old := s.hnswIndex
+	old := s.servingHNSW()
 	s.hnswMu.RUnlock()
 	if old == nil {
 		return nil
@@ -450,7 +450,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	// and captures mutations that arrived while the graph was being rebuilt.
 	s.indexMu.Lock()
 	s.hnswMu.RLock()
-	currentIsOld := s.hnswIndex == old && ctx.Err() == nil
+	currentIsOld := s.servingHNSW() == old && ctx.Err() == nil
 	s.hnswMu.RUnlock()
 	if !currentIsOld {
 		s.indexMu.Unlock()
@@ -469,7 +469,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	// hnswMu -> pipelineMu here can deadlock. The owner retires the pipeline
 	// after the install has released hnswMu.
 	s.hnswMu.Lock()
-	if s.hnswIndex == old && ctx.Err() == nil {
+	if s.servingHNSW() == old && ctx.Err() == nil {
 		s.publishVectorServing(func() {
 			s.hnswIndex = rebuilt
 			s.hnswLastRebuildUnix.Store(time.Now().Unix())
