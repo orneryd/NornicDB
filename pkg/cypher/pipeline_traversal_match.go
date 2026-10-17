@@ -113,7 +113,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			if !cancellation.check() {
 				return nil, true, cancellation.err
 			}
-			joined :=make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
+			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
 			for name, value := range row {
 				joined[name] = value
 			}

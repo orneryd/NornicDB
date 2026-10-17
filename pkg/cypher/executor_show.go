@@ -599,7 +599,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClauseWithCancellation("CALL show() YIELD " + items, contextPipelineProbe(ctx))
+	yield := parseYieldClauseWithCancellation("CALL show() YIELD "+items, contextPipelineProbe(ctx))
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}

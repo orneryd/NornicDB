@@ -307,9 +307,9 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 	t.Helper()
 	fset, files := loadCancellationSources(t)
 	// Pass 1: the wrappers, and how many methods share each method name.
-	wrappers := map[string]cancellationWrapper{} // function name, or "." + method name
+	wrappers := map[string]cancellationWrapper{}       // function name, or "." + method name
 	methodWrappers := map[string]cancellationWrapper{} // "Type.method"
-	probeIndex := map[string]int{}            // probe form name -> index of its probe parameter
+	probeIndex := map[string]int{}                     // probe form name -> index of its probe parameter
 	methodNames := map[string]int{}
 	for _, f := range files {
 		for _, decl := range f.file.Decls {

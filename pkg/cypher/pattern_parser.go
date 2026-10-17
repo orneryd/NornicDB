@@ -456,7 +456,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 
 	// Handle arrays
 	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
-		if _, _, _, _, comprehension := parseListComprehensionWithCancellation(valueStr[1 : len(valueStr)-1], contextPipelineProbe(ctx)); comprehension {
+		if _, _, _, _, comprehension := parseListComprehensionWithCancellation(valueStr[1:len(valueStr)-1], contextPipelineProbe(ctx)); comprehension {
 			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
 			return value
 		}
