@@ -183,8 +183,12 @@ type DB struct {
 	inferenceServicesMu sync.RWMutex
 	inferenceServices   map[string]*inference.Engine
 
-	// Async embedding queue for auto-generating embeddings
+	// Async embedding queue for auto-generating embeddings. Touched only in
+	// embed_lifecycle.go; read it with GetEmbedQueue.
 	embedQueue        *EmbedQueue
+	// ownedEmbedders are the embedders the database took (SetEmbedder, the
+	// per-database registry), closed once by Close; guarded by mu.
+	ownedEmbedders    []embed.Embedder
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
 	embedQueueYieldFn func() bool
 	// embeddingPause is an administrator's pause of automatic embedding
@@ -1197,19 +1201,18 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if config.Memory.EmbeddingEnabled && db.baseStorage != nil && db.embedWorkerConfig != nil {
 		workerCfg := *db.embedWorkerConfig
 		workerCfg.DeferWorkerStart = true
-		db.embedQueue = db.newEmbedQueue(nil, &workerCfg)
+		queue := db.newEmbedQueue(nil, &workerCfg)
 		if db.embedQueueYieldFn != nil {
-			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
+			queue.SetShouldYield(db.embedQueueYieldFn)
 		}
-		db.embedQueue.SetOnEmbedded(func(node *storage.Node) {
+		queue.SetOnEmbedded(func(node *storage.Node) {
 			db.onNodeEmbedded(node)
 		})
+		db.mu.Lock()
+		db.setEmbedQueueLocked(queue)
+		db.mu.Unlock()
 		if db.cypherExecutor != nil {
-			db.cypherExecutor.SetNodeMutatedCallback(func(nodeID string) {
-				if db.embedQueue != nil {
-					db.embedQueue.Enqueue(nodeID)
-				}
-			})
+			db.cypherExecutor.SetNodeMutatedCallback(db.enqueueMutatedNode)
 		}
 		log.Printf("🧠 Embed queue created (workers will start after DB warmup)")
 	}
@@ -1398,8 +1401,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Start embed queue workers after warmup so they don't compete with index build on startup.
-		if db.embedQueue != nil {
-			db.embedQueue.StartWorkers()
+		if queue := db.GetEmbedQueue(); queue != nil {
+			queue.StartWorkers()
 		}
 	})
 
@@ -1578,22 +1581,29 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 	return replication.NewReplicatedEngine(base, replicator, 30*time.Second), nil
 }
 
-// SetEmbedder configures the auto-embed queue with the given embedder.
-// This should be called by the server after creating a working embedder.
-// The embedder is shared with the MCP server and Cypher executor for consistency.
-// A closing or closed database ignores it.
-func (db *DB) SetEmbedder(embedder embed.Embedder) {
+// SetEmbedder configures the auto-embed queue with the given embedder and
+// reports whether the database took it. It should be called by the server
+// after creating a working embedder; the embedder is shared with the MCP
+// server and Cypher executor for consistency.
+//
+// The database owns what it takes: Close closes it, also after a later
+// SetEmbedder replaced it (each provider reload holds one model until
+// Close). A closing or closed database refuses the embedder and closes it,
+// so no caller is left holding a model nobody releases.
+func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
-		return
+		return false
 	}
 
 	db.mu.Lock()
 	if db.closed {
 		// Close has stopped, or is stopping, the queue and timers this
-		// would start.
+		// would start, and has joined or is joining the embedders' users.
 		db.mu.Unlock()
-		return
+		closeEmbedder(embedder)
+		return false
 	}
+	db.adoptEmbedderLocked(embedder)
 	// Relationships whose embedding failed for want of an embedder are
 	// embedded now, not after the retry delay (#1065).
 	defer db.wakeRelationshipEmbedding()
@@ -1611,12 +1621,12 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 		db.cypherExecutor.SetEmbedder(embedder)
 	}
 
-	if db.embedQueue != nil {
+	if queue := db.embedQueueLocked(); queue != nil {
 		// Queue was created in Open(); activate with loaded embedder and start cluster timer
 		if db.embedQueueYieldFn != nil {
-			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
+			queue.SetShouldYield(db.embedQueueYieldFn)
 		}
-		db.embedQueue.SetEmbedder(embedder)
+		queue.SetEmbedder(embedder)
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
 			embedder.Model(), embedder.Dimensions())
 		db.mu.Unlock()
@@ -1626,20 +1636,21 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 				db.startClusteringTimer(interval)
 			}
 		}
-		return
+		return true
 	}
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
 	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
-	db.embedQueue = db.newEmbedQueue(embedder, db.embedWorkerConfig)
+	queue := db.newEmbedQueue(embedder, db.embedWorkerConfig)
+	db.setEmbedQueueLocked(queue)
 	if db.embedQueueYieldFn != nil {
-		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
+		queue.SetShouldYield(db.embedQueueYieldFn)
 	}
 
 	// Set callback to update search index after embedding and run inference.
 	// Note: IndexNode is idempotent (uses map keyed by node ID), so if the storage
 	// OnNodeUpdated callback also calls IndexNode, no double-counting occurs.
-	db.embedQueue.SetOnEmbedded(func(node *storage.Node) {
+	queue.SetOnEmbedded(func(node *storage.Node) {
 		db.onNodeEmbedded(node)
 	})
 
@@ -1659,9 +1670,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	// Wire up Cypher executor to trigger embedding queue when nodes are created or mutated
 	// This ensures nodes created or updated via Cypher get embeddings (re)generated
 	if db.cypherExecutor != nil {
-		db.cypherExecutor.SetNodeMutatedCallback(func(nodeID string) {
-			db.embedQueue.Enqueue(nodeID)
-		})
+		db.cypherExecutor.SetNodeMutatedCallback(db.enqueueMutatedNode)
 	}
 
 	log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
@@ -1672,6 +1681,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if startClusterTimer {
 		db.startClusteringTimer(clusterInterval)
 	}
+	return true
 }
 
 // SetEmbedQueueShouldYield sets an optional foreground-pressure callback used to
@@ -1679,7 +1689,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 func (db *DB) SetEmbedQueueShouldYield(fn func() bool) {
 	db.mu.Lock()
 	db.embedQueueYieldFn = fn
-	q := db.embedQueue
+	q := db.embedQueueLocked()
 	db.mu.Unlock()
 	if q != nil {
 		q.SetShouldYield(fn)
@@ -1694,7 +1704,7 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 		return
 	}
 	db.mu.Lock()
-	eq := db.embedQueue
+	eq := db.embedQueueLocked()
 	closed := db.closed
 	db.mu.Unlock()
 	if eq == nil || closed {
@@ -1719,7 +1729,7 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
 	db.mu.Lock()
 	db.embedConfigForDB = fn
-	queue := db.embedQueue
+	queue := db.embedQueueLocked()
 	db.mu.Unlock()
 	if queue == nil {
 		return
@@ -1741,7 +1751,7 @@ func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error))
 func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	db.mu.RLock()
 	fn := db.embedConfigForDB
-	queue := db.embedQueue
+	queue := db.embedQueueLocked()
 	db.mu.RUnlock()
 	if queue == nil {
 		return nil, nil
@@ -1783,6 +1793,15 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	// the single-flight section below.
 	db.embedderRegistryMu.Unlock()
 
+	// A closing database loads no new model; one that finishes loading as
+	// it closes is refused and closed by adoptEmbedder below.
+	db.mu.RLock()
+	closed := db.closed
+	db.mu.RUnlock()
+	if closed {
+		return nil
+	}
+
 	create := db.embedderFactory
 	if create == nil {
 		create = embed.NewEmbedder
@@ -1821,6 +1840,9 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	db.embedderCreateMu.Unlock()
 
 	newEmbedder, createErr := create(cfg)
+	if createErr == nil && newEmbedder != nil && !db.adoptEmbedder(newEmbedder) {
+		newEmbedder = nil // the database closed while it loaded
+	}
 
 	db.embedderRegistryMu.Lock()
 	if createErr == nil && newEmbedder != nil {
@@ -1919,19 +1941,6 @@ func (db *DB) GetBaseStorageForManager() storage.Engine {
 	panic("nornicdb: GetBaseStorageForManager called but DB storage is not namespaced")
 }
 
-// StopEmbedQueue stops the embed queue and waits for workers to exit.
-// Call this as soon as shutdown is requested (e.g. on SIGINT) so embeddings stop
-// before the server is torn down. Safe to call if already stopped or never started.
-func (db *DB) StopEmbedQueue() {
-	db.mu.Lock()
-	q := db.embedQueue
-	db.embedQueue = nil
-	db.mu.Unlock()
-	if q != nil {
-		q.Close()
-	}
-}
-
 // startBackgroundTask tracks DB-owned goroutines and prevents new tracked tasks
 // from being launched once shutdown has started.
 func (db *DB) startBackgroundTask(fn func()) bool {
@@ -1982,19 +1991,21 @@ func (db *DB) EmbedQueueStats() *QueueStats {
 
 // EmbeddingFailures lists nodes parked after terminal embedding errors.
 func (db *DB) EmbeddingFailures(ctx context.Context, limit int) ([]EmbeddingFailure, error) {
-	if db.embedQueue == nil {
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return nil, localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
-	return db.embedQueue.ParkedEmbeddingFailures(ctx, limit)
+	return queue.ParkedEmbeddingFailures(ctx, limit)
 }
 
 // RetryEmbeddingFailures clears terminal failure state and requeues the
 // selected nodes. An empty ID list retries all parked nodes.
 func (db *DB) RetryEmbeddingFailures(ctx context.Context, ids []storage.NodeID) (int, error) {
-	if db.embedQueue == nil {
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return 0, localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
-	return db.embedQueue.RetryParkedEmbeddingFailures(ctx, ids)
+	return queue.RetryParkedEmbeddingFailures(ctx, ids)
 }
 
 // PendingEmbeddingsCount returns durable queued work plus nodes currently claimed
@@ -2017,10 +2028,11 @@ func (db *DB) PendingEmbeddingsCount() int {
 // Callers that need a complete vector corpus before search should invoke this
 // after triggering embedding work and before building or evaluating an index.
 func (db *DB) WaitForEmbeddings(ctx context.Context) error {
-	if db.embedQueue == nil {
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
-	db.embedQueue.TriggerImmediate()
+	queue.TriggerImmediate()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -2203,10 +2215,11 @@ func (db *DB) VectorIndexDimensions() int {
 // EmbedExisting triggers the worker to scan for nodes without embeddings.
 // The worker runs automatically, but this can be used to trigger immediate processing.
 func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
-	if db.embedQueue == nil {
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return 0, localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
-	db.embedQueue.TriggerImmediate()
+	queue.TriggerImmediate()
 	return 0, nil // Worker will process in background
 }
 
@@ -2214,10 +2227,11 @@ func (db *DB) EmbedExisting(ctx context.Context) (int, error) {
 // This clears all worker state (processed counts, recently-processed cache),
 // which is necessary when regenerating all embeddings after ClearAllEmbeddings.
 func (db *DB) ResetEmbedWorker() error {
-	if db.embedQueue == nil {
+	queue := db.GetEmbedQueue()
+	if queue == nil {
 		return localizedError(localization.NornicDBCoreAutoEmbedNotEnabled(), nil)
 	}
-	db.embedQueue.Reset()
+	queue.Reset()
 	return nil
 }
 
@@ -2299,15 +2313,6 @@ func (db *DB) GetCypherExecutor() *cypher.StorageExecutor {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return db.cypherExecutor
-}
-
-// GetEmbedQueue returns the embedding queue for this database.
-// This is used by GraphQL and other integrations that need to wire up
-// embedding callbacks for namespaced executors.
-func (db *DB) GetEmbedQueue() *EmbedQueue {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	return db.embedQueue
 }
 
 // GetAccessFlusher returns the active knowledge-policy AccessFlusher, or

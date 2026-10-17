@@ -69,10 +69,7 @@ func (db *DB) retentionPoliciesPath() string {
 // Used during initialization failures and normal close.
 func (db *DB) closeInternal() error {
 	// SetEmbedder refuses once closed is set, so embedQueue is final here.
-	db.mu.Lock()
-	db.closed = true
-	embedQueue := db.embedQueue
-	db.mu.Unlock()
+	embedQueue := db.closingEmbedQueue()
 
 	db.stopClusteringTimer()
 	if db.buildCancel != nil {
@@ -145,6 +142,9 @@ func (db *DB) closeInternal() error {
 		db.searchContinuation = nil
 	}
 	db.searchContinuationMu.Unlock()
+	// The workers, the server's initialisation task and search (relationship
+	// embedding) are joined: nothing uses an embedder any more.
+	db.closeOwnedEmbedders()
 
 	if db.baseStorage != nil {
 		if err := db.baseStorage.Close(); err != nil {

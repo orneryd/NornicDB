@@ -99,7 +99,20 @@ func (db *DB) loadEmbeddingPause() {
 	}
 }
 
+// storeEmbeddingPause writes the pause state and makes it durable before
+// returning. With async writes the WAL syncs only on a timer, and a crash
+// in between must not undo a pause the administrator was told took effect.
 func (db *DB) storeEmbeddingPause(paused bool) error {
+	if err := db.writeEmbeddingPause(paused); err != nil {
+		return err
+	}
+	if db.wal != nil {
+		return db.wal.Sync()
+	}
+	return nil
+}
+
+func (db *DB) writeEmbeddingPause(paused bool) error {
 	system := db.embeddingControlStorage()
 	if system == nil {
 		return nil
@@ -139,7 +152,7 @@ func (db *DB) SetEmbeddingPaused(_ context.Context, paused bool) (cypher.Embeddi
 		}
 		db.embeddingPause.set(paused)
 		db.mu.RLock()
-		queue := db.embedQueue
+		queue := db.embedQueueLocked()
 		db.mu.RUnlock()
 		if queue != nil {
 			queue.SetPaused(paused)

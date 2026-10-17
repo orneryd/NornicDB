@@ -287,17 +287,17 @@ func (e *LocalGGUFEmbedder) embedWithRecovery(ctx context.Context, text string) 
 		}
 	}()
 
-	// Check if embedder is closed
+	// Hold the read lock across the native call: Close takes the write lock
+	// to free the model, so it waits for this call instead of freeing the
+	// model under it.
 	e.mu.RLock()
+	defer e.mu.RUnlock()
 	if e.closed {
-		e.mu.RUnlock()
 		return nil, fmt.Errorf("embedder is closed")
 	}
-	model := e.model
-	e.mu.RUnlock()
 
 	// Perform the actual embedding
-	embedding, err = embedModel(ctx, model, text)
+	embedding, err = embedModel(ctx, e.model, text)
 
 	if err != nil {
 		e.errorCount.Add(1)
@@ -474,17 +474,20 @@ func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
 
 // Close releases all resources associated with the embedder.
 //
-// After Close is called, the embedder must not be used.
+// After Close is called, the embedder must not be used: new embeddings are
+// refused, and Close waits for those already running before it frees the
+// model.
 func (e *LocalGGUFEmbedder) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if e.closed {
+		e.mu.Unlock()
 		return nil
 	}
-	e.closed = true
+	e.closed = true // embeddings from here on are refused
+	e.mu.Unlock()
 
-	// Stop warmup goroutine
+	// Stop warmup goroutine. It is waited for without the lock, so a warmup
+	// embedding in progress can finish and the loop see the stop.
 	close(e.stopWarmup)
 
 	// Wait for warmup to finish (with timeout)
@@ -493,6 +496,11 @@ func (e *LocalGGUFEmbedder) Close() error {
 	case <-time.After(5 * time.Second):
 		fmt.Printf("⚠️  Warmup goroutine did not stop in time\n")
 	}
+
+	// The write lock waits for the embeddings still running (each holds the
+	// read lock), so the model is freed under none of them.
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	// Close the model
 	if e.model != nil {

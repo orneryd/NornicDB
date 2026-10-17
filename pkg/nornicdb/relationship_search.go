@@ -29,7 +29,7 @@ func (db *DB) relationshipEmbedFunc(dbName string) search.RelationshipEmbedFunc 
 			return search.RelationshipEmbedding{}, err
 		}
 		db.mu.RLock()
-		queue := db.embedQueue
+		queue := db.embedQueueLocked()
 		config := db.embedWorkerConfig
 		db.mu.RUnlock()
 		if queue == nil || config == nil {

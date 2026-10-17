@@ -548,7 +548,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
-	embedQueue := db.embedQueue
+	embedQueue := db.embedQueueLocked()
 	db.mu.RUnlock()
 	if rejectExisting {
 		if _, err := storageEngine.GetNode(storage.NodeID(id)); err == nil {
@@ -607,7 +607,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		return nil, ErrClosed
 	}
 	storageEngine := db.storage
-	embedQueue := db.embedQueue
+	embedQueue := db.embedQueueLocked()
 	db.mu.RUnlock()
 
 	n, err := storageEngine.GetNode(storage.NodeID(id))
@@ -1463,7 +1463,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		return ErrClosed
 	}
 	restorable, supportsNativeRestore := db.storage.(RestorableEngine)
-	embedQueue := db.embedQueue
+	embedQueue := db.embedQueueLocked()
 	db.mu.RUnlock()
 
 	// Hold the embedding worker before taking db.mu: a node it is finishing

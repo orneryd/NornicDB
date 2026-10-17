@@ -19,7 +19,7 @@ func TestDB_SetEmbedder_IgnoredAfterClose(t *testing.T) {
 	require.Error(t, db.LifetimeContext().Err())
 
 	m := &mockEmbedder{dims: 4, model: "late"}
-	db.SetEmbedder(m)
+	require.False(t, db.SetEmbedder(m), "a closed database refuses the embedder")
 	db.SetDefaultEmbedConfig(&embed.Config{Provider: "openai", Model: "late", Dimensions: 4})
 
 	require.Nil(t, db.GetCypherExecutor().GetEmbedder())

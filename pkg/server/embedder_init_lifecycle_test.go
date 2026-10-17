@@ -236,3 +236,38 @@ func TestEmbedderRefusedByClosingDBIsClosed(t *testing.T) {
 		})
 	}
 }
+
+// healthFailingEmbedder fails its health check.
+type healthFailingEmbedder struct {
+	closeTrackingEmbedder
+}
+
+func (e *healthFailingEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return nil, fmt.Errorf("model not ready")
+}
+
+// An attempt whose embedder fails the health check releases it before the
+// next attempt builds another, so failed attempts leak no model.
+func TestEmbedderFailingHealthCheckIsClosed(t *testing.T) {
+	s, _ := setupTestServer(t)
+	s.embedderRetryInitialBackoff = time.Millisecond
+	s.embedderRetryMaxBackoff = time.Millisecond
+	failing := &healthFailingEmbedder{closeTrackingEmbedder{countingEmbedder: countingEmbedder{dims: 4}}}
+	healthy := &closeTrackingEmbedder{countingEmbedder: countingEmbedder{dims: 4}}
+	var attempts atomic.Int32
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
+		if attempts.Add(1) == 1 {
+			return failing, nil
+		}
+		return healthy, nil
+	}
+	s.startEmbedderInit(&embed.Config{Provider: "openai", APIURL: "http://127.0.0.1:1", Model: "m", Dimensions: 4}, 0, nil, s.db)
+	select {
+	case <-s.embedderInitDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("embedder initialisation never finished")
+	}
+	require.True(t, failing.closed.Load(), "the embedder that failed its health check wasn't closed")
+	require.False(t, healthy.closed.Load(), "the installed embedder stays open")
+	require.NoError(t, s.Stop(context.Background()))
+}

@@ -242,7 +242,9 @@ func configureOllamaEmbedder(db *nornicdb.DB, provider, model, apiURL string, di
 	if err != nil {
 		return err
 	}
-	db.SetEmbedder(embedder)
+	if !db.SetEmbedder(embedder) {
+		return errors.New("the database is closing and refused the embedder")
+	}
 	return nil
 }
 

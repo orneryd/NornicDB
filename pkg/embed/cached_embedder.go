@@ -371,6 +371,15 @@ type CacheStats struct {
 	HitRate float64 `json:"hit_rate"` // Hit rate percentage (0-100)
 }
 
+// Close closes the wrapped embedder, releasing a local model it holds, so a
+// cached embedder is closed as the bare one would be.
+func (c *CachedEmbedder) Close() error {
+	if closer, ok := c.base.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 // Clear removes all cached embeddings.
 func (c *CachedEmbedder) Clear() {
 	c.mu.Lock()

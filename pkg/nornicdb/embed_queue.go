@@ -342,15 +342,23 @@ func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
 func (ew *EmbedWorker) SetPaused(paused bool) {
 	changed := ew.operatorPaused.Swap(paused) != paused
 	if paused {
-		// Wait out a claim already past its pause check, even when another
-		// caller set the flag: once this returns, the claimed nodes
-		// (Stats().InFlight) are all that will be embedded until the resume.
-		ew.claimMu.Lock()
-		ew.claimMu.Unlock() //nolint:staticcheck // A barrier, not a critical section.
+		// Even when another caller set the flag: once this returns, the
+		// claimed nodes (Stats().InFlight) are all that will be embedded
+		// until the resume.
+		ew.waitOutClaim()
 	}
 	if changed {
 		ew.signalAllWorkers()
 	}
+}
+
+// waitOutClaim returns once no claim sits between its pause/restore check
+// and its reservation: a claim holds claimMu across both. Every pause and
+// every restore hold passes it after setting its flag, so afterwards no node
+// is claimed that wasn't already.
+func (ew *EmbedWorker) waitOutClaim() {
+	ew.claimMu.Lock()
+	ew.claimMu.Unlock() //nolint:staticcheck // A barrier, not a critical section.
 }
 
 // Paused reports whether background embedding is paused (SetPaused).
@@ -926,6 +934,7 @@ func nodeGone(node *storage.Node, err error) bool {
 // store.
 func (ew *EmbedWorker) holdForRestore(wait time.Duration) (release func()) {
 	ew.restoreHolds.Add(1)
+	ew.waitOutClaim() // a claim past its hold check is counted in inFlight below
 	for deadline := time.Now().Add(wait); ew.inFlight.Load() > 0 && time.Now().Before(deadline); {
 		time.Sleep(10 * time.Millisecond)
 	}
