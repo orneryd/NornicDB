@@ -19,9 +19,11 @@ import (
 // separately-loaded set of counters gets wrong.
 //
 // This is stress coverage: whether a snapshot lands mid-update depends on
-// scheduling. The proof that each set has one owning lock is
-// TestStatisticsSetsGoThroughTheirOwningLock; here the sampler is at least
-// running before the work starts.
+// scheduling. The structural check that every set is read and written within
+// one critical section of its owner is TestSharedStateHoldsItsOwningLock
+// (stateTuples); TestStatisticsSetsGoThroughTheirOwningLock checks that the
+// accesses wait for that owner. Here the sampler is at least running before
+// the work starts.
 func liveSnapshots(work func(), snapshot func() string) (taken int, broken []string) {
 	var done atomic.Bool
 	started := make(chan struct{})
