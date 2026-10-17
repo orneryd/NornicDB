@@ -5,13 +5,14 @@ import (
 	"errors"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 )
 
 // clusterGeneration is the one owner of what clustered routing serves:
-// routing and membership (in index, or staged while a generation is built),
+// routing and membership (the generation's own Clustering),
 // the per-cluster IVF-HNSW graphs, the lexical routing term counts and
 // profiles, and the graph policy. It is kept current on every admission:
 // only applyClusterAdmission, publishClusterGeneration and
@@ -23,9 +24,20 @@ import (
 // the canonical vector store's vectors (every admission reads the vector from
 // the store under the admission boundary), and lexical terms are derived from
 // the fulltext index the service serves.
+//
+// The generation owns its routing (centroids and membership): admissions
+// change it through AssignToClustering/Remove whether it is published or
+// still being built, and publication makes the index route through it. Once
+// a newer generation is published or this one is retired, nothing changes
+// it again, so a query that took it at its start (clusterSnapshot) finishes
+// on it.
 type clusterGeneration struct {
-	index    *gpu.ClusterIndex // population; published routing and membership
-	staged   *gpu.Clustering   // membership while unpublished; nil once published
+	index     *gpu.ClusterIndex // the population (embeddings)
+	routing   *gpu.Clustering   // centroids and membership by node ID
+	published bool
+	// holders counts the queries serving from generations of index; a
+	// retired index's GPU buffers are released after the last one finishes.
+	holders  *sync.WaitGroup
 	graphs   map[int]*HNSWIndex
 	terms    map[int]*clusterTerms
 	profiles map[int]map[string]float64
@@ -40,7 +52,7 @@ type clusterGeneration struct {
 // newClusterGeneration is an unpublished generation for clustering of index,
 // with its graphs (nil without IVF-HNSW) and the terms of its clusters.
 func newClusterGeneration(index *gpu.ClusterIndex, clustering *gpu.Clustering, graphs map[int]*HNSWIndex, terms map[int]*clusterTerms) *clusterGeneration {
-	return &clusterGeneration{index: index, staged: clustering, graphs: graphs, terms: terms}
+	return &clusterGeneration{index: index, routing: clustering, graphs: graphs, terms: terms}
 }
 
 // clusterTerms counts the analyzed tokens of a cluster's members' documents.
@@ -132,40 +144,19 @@ func (t *clusterTerms) profile(n int) map[string]float64 {
 	return out
 }
 
-func (g *clusterGeneration) numClusters() int {
-	if g.staged != nil {
-		return g.staged.NumClusters()
-	}
-	return g.index.NumClusters()
-}
+func (g *clusterGeneration) numClusters() int { return g.routing.NumClusters() }
 
-func (g *clusterGeneration) members(cluster int) []string {
-	if g.staged != nil {
-		return g.staged.MemberIDs(cluster)
-	}
-	return g.index.GetClusterMemberIDsForCluster(cluster)
-}
+func (g *clusterGeneration) members(cluster int) []string { return g.routing.MemberIDs(cluster) }
 
-func (g *clusterGeneration) clusterOf(id string) (int, bool) {
-	if g.staged != nil {
-		return g.staged.ClusterOf(id)
-	}
-	return g.index.ClusterOf(id)
-}
+func (g *clusterGeneration) clusterOf(id string) (int, bool) { return g.routing.ClusterOf(id) }
 
+// assign and unassign are the one membership path of a generation, published
+// or being built.
 func (g *clusterGeneration) assign(id string) (int, bool, int, bool) {
-	if g.staged != nil {
-		return g.index.AssignToClustering(g.staged, id)
-	}
-	return g.index.AssignLive(id)
+	return g.index.AssignToClustering(g.routing, id)
 }
 
-func (g *clusterGeneration) unassign(id string) (int, bool) {
-	if g.staged != nil {
-		return g.staged.Remove(id)
-	}
-	return g.index.Unassign(id)
-}
+func (g *clusterGeneration) unassign(id string) (int, bool) { return g.routing.Remove(id) }
 
 func (g *clusterGeneration) touch(cluster int) {
 	if g.dirty == nil {
@@ -337,7 +328,7 @@ func (s *Service) nodeVectorIDsLocked(nodeID string) []string {
 // clusters are re-derived at publication instead (the old text of a change
 // is gone by then). Callers hold clusterStateMu.
 func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmission) {
-	published := gen.staged == nil
+	published := gen.published
 	switch op.kind {
 	case clusterVectorAdded, clusterVectorRemoved:
 		var tokens map[string]float64
@@ -611,8 +602,16 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 	// policy configured since. A failure leaves gen.policy behind the
 	// configured one, so the next policy publication completes it.
 	_, err := s.applyClusterPolicyLocked(ctx, gen, s.hnswConfig().Quantization)
-	gen.index.PublishClustering(gen.staged)
-	gen.staged = nil
+	// The index routes through the generation's own routing from now on; the
+	// superseded generation keeps its routing for the queries holding it,
+	// which share the index's holder count.
+	gen.index.PublishClustering(gen.routing)
+	gen.published = true
+	if prev := s.clusterGen; prev != nil && prev.index == gen.index {
+		gen.holders = prev.holders
+	} else {
+		gen.holders = &sync.WaitGroup{}
+	}
 	s.clusterGen = gen
 	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
@@ -627,7 +626,7 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 // already in the policy). A generation being published is always checked.
 // Callers hold clusterStateMu.
 func (s *Service) applyClusterPolicyLocked(ctx context.Context, gen *clusterGeneration, policy HNSWQuantizationConfig) (bool, error) {
-	if gen.staged == nil && gen.policy == policy {
+	if gen.published && gen.policy == policy {
 		return false, nil
 	}
 	for _, graph := range gen.graphs {
@@ -639,31 +638,45 @@ func (s *Service) applyClusterPolicyLocked(ctx context.Context, gen *clusterGene
 	return true, nil
 }
 
-// retireClusterGeneration retires the published generation. A non-nil
-// replacement also replaces the cluster index; clearIndex empties the index
-// it retires (and releases it when replaced), so the population is derived
-// again from the canonical store. Callers hold clusterStateMu and, when
-// replacing or clearing the index, mu; they publish the serving pipeline
-// (publishClusterServing) once they release the owner's locks.
-func (s *Service) retireClusterGeneration(replacement *gpu.ClusterIndex, clearIndex bool) {
-	old := s.clusterIndex
+// clusterIndexReleaseHook, set by tests only, runs when a retired cluster
+// index is released, after its last query holder finished.
+var clusterIndexReleaseHook func(*gpu.ClusterIndex)
+
+// retireClusterGeneration retires the published generation and replaces the
+// cluster index with replacement (a fresh, empty one when the population is
+// to be derived again from the canonical store). The retired index and
+// generation are never changed in place: queries that took the generation
+// at their start finish on it, and the index's GPU buffers are released only
+// after the last of them (GPU subset scoring reads the device without the
+// index's lock). Callers hold clusterStateMu and mu; they publish the
+// serving pipeline (publishClusterServing) once they release the owner's
+// locks.
+func (s *Service) retireClusterGeneration(replacement *gpu.ClusterIndex) {
+	old, gen := s.clusterIndex, s.clusterGen
 	s.clusterGen = nil
-	if replacement != nil {
-		s.clusterIndex = replacement
+	s.clusterIndex = replacement
+	if old == nil || old == replacement {
+		return
 	}
-	if clearIndex && old != nil {
-		old.Clear()
-		if replacement != nil {
-			old.Release()
+	var holders *sync.WaitGroup
+	if gen != nil && gen.index == old {
+		holders = gen.holders
+	}
+	go func() {
+		if holders != nil {
+			holders.Wait()
 		}
-	}
+		if hook := clusterIndexReleaseHook; hook != nil {
+			hook(old)
+		}
+		old.Release()
+	}()
 }
 
 // publishClusterServing publishes the serving pipeline for the current
 // cluster generation and advances the index revision. Callers hold none of
-// the owner's locks. Clustered pipelines read the generation, its routing
-// and its probe count per query (clusterServingLocked), so a pipeline built
-// before a publication never serves a copy of an older one.
+// the owner's locks. Clustered pipelines hold no generation: each query
+// serves from the one it took at its start (clusterSnapshot).
 func (s *Service) publishClusterServing() {
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
@@ -671,26 +684,105 @@ func (s *Service) publishClusterServing() {
 	s.indexChanged()
 }
 
-// clusterServingLocked is the published generation's routing index and the
-// number of clusters a query probes (NORNICDB_KMEANS_NPROBE, by default the
-// IVF rule over its clusters); a nil index when none is published. Callers
-// hold clusterStateMu.
-func (s *Service) clusterServingLocked() (*gpu.ClusterIndex, int) {
-	gen := s.clusterGen
-	if gen == nil || gen.staged != nil {
-		return nil, 0
-	}
-	numClusters := gen.index.NumClusters()
-	return gen.index, clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters))
+// clusterSnapshot is the cluster generation one query serves from, taken
+// once at its start; nil gen when none was published.
+type clusterSnapshot struct {
+	gen *clusterGeneration
 }
 
-// clusterGraphLocked is the published generation's graph for cluster;
-// callers hold clusterStateMu.
-func (s *Service) clusterGraphLocked(cluster int) *HNSWIndex {
-	if s.clusterGen == nil {
-		return nil
+type clusterSnapshotKey struct{}
+
+// acquireClusterSnapshot takes the published generation for one query (one
+// load under clusterStateMu) and returns ctx carrying it. The query holds
+// the generation until release; every candidate-generation call of the
+// query (including adaptive overfetch rounds) routes on it.
+func (s *Service) acquireClusterSnapshot(ctx context.Context) (context.Context, *clusterGeneration, func()) {
+	s.clusterStateMu.RLock()
+	gen := s.clusterGen
+	if gen != nil {
+		gen.holders.Add(1)
 	}
-	return s.clusterGen.graphs[cluster]
+	s.clusterStateMu.RUnlock()
+	release := func() {}
+	if gen != nil {
+		var once sync.Once
+		release = func() { once.Do(gen.holders.Done) }
+	}
+	return context.WithValue(ctx, clusterSnapshotKey{}, &clusterSnapshot{gen: gen}), gen, release
+}
+
+// vectorPipelineForQuery resolves the pipeline one query uses together with
+// the cluster generation it serves from, carried in the returned ctx. A
+// cached clustered pipeline that cannot serve that generation (retired, or
+// replaced by a CPU/GPU mode change or a clear) is dropped and the current
+// one resolved; release ends the query's hold on the generation.
+func (s *Service) vectorPipelineForQuery(ctx context.Context) (context.Context, *VectorSearchPipeline, func(), error) {
+	for attempt := 0; ; attempt++ {
+		queryCtx, gen, release := s.acquireClusterSnapshot(ctx)
+		pipeline, err := s.getOrCreateVectorPipeline(queryCtx)
+		if err != nil {
+			release()
+			return ctx, nil, func() {}, err
+		}
+		if pipelineServesGeneration(pipeline, gen) || attempt == 2 {
+			return queryCtx, pipeline, release, nil
+		}
+		release()
+		s.pipelineMu.Lock()
+		if s.vectorPipeline == pipeline {
+			s.vectorPipeline = nil
+		}
+		s.pipelineMu.Unlock()
+	}
+}
+
+// pipelineServesGeneration reports whether pipeline can serve a query that
+// holds gen: a clustered generator needs a generation, IVF-HNSW one with
+// graphs. Any other strategy answers from the canonical store.
+func pipelineServesGeneration(pipeline *VectorSearchPipeline, gen *clusterGeneration) bool {
+	switch pipeline.candidateGen.(type) {
+	case *IVFHNSWCandidateGen:
+		return gen != nil && len(gen.graphs) > 0
+	case *KMeansCandidateGen, *GPUKMeansCandidateGen:
+		return gen != nil
+	}
+	return true
+}
+
+// clusterGenerationFor is the generation ctx's query serves from; outside a
+// query it takes one for the call (release when done).
+func (s *Service) clusterGenerationFor(ctx context.Context) (context.Context, *clusterGeneration, func()) {
+	if snap, ok := ctx.Value(clusterSnapshotKey{}).(*clusterSnapshot); ok {
+		return ctx, snap.gen, func() {}
+	}
+	return s.acquireClusterSnapshot(ctx)
+}
+
+// clusterQueryView is how a clustered generator serves one query: the
+// routing of the generation the query holds, its probe count
+// (NORNICDB_KMEANS_NPROBE, by default the IVF rule over its clusters), its
+// graphs and its population.
+func (s *Service) clusterQueryView(ctx context.Context) (context.Context, clusterView, func()) {
+	ctx, gen, done := s.clusterGenerationFor(ctx)
+	if gen == nil {
+		return ctx, clusterView{}, done
+	}
+	numClusters := gen.routing.NumClusters()
+	return ctx, clusterView{
+		routing: gen.routing,
+		index:   gen.index,
+		probes:  clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters)),
+		graph:   func(cluster int) *HNSWIndex { return gen.graphs[cluster] },
+	}, done
+}
+
+// clusterGenerationIn is the generation ctx's query serves from, else the
+// published one; callers hold clusterStateMu (read).
+func (s *Service) clusterGenerationIn(ctx context.Context) *clusterGeneration {
+	if snap, ok := ctx.Value(clusterSnapshotKey{}).(*clusterSnapshot); ok {
+		return snap.gen
+	}
+	return s.clusterGen
 }
 
 // clusterGenerationSave is a published generation's graphs, captured as one

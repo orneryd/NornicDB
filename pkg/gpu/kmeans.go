@@ -146,16 +146,16 @@ type ClusterIndex struct {
 
 	config *KMeansConfig
 
-	// Cluster state
-	centroids  [][]float32       // [K][dimensions] centroid vectors
-	membership clusterMembership // cluster membership by node ID
+	// Cluster state: the published generation's routing (centroids and
+	// membership by node ID); nil until clustered. Publication replaces the
+	// pointer, so a caller holding an older generation keeps routing on it.
+	routing *Clustering
 
 	// Real-time update tracking (Tier 1/2)
 	pendingUpdates      []nodeUpdate
 	updatesSinceCluster int64
 
 	// State tracking
-	clustered           bool
 	lastClusterTime     time.Time
 	lastClusterDuration time.Duration
 	iterations          int
@@ -209,7 +209,6 @@ func NewClusterIndex(manager *Manager, embConfig *EmbeddingIndexConfig, kmeansCo
 	return &ClusterIndex{
 		EmbeddingIndex: NewEmbeddingIndex(manager, embConfig),
 		config:         kmeansConfig,
-		membership:     newClusterMembership(0),
 		pendingUpdates: make([]nodeUpdate, 0, 1000),
 	}
 }
@@ -364,31 +363,37 @@ func (ci *ClusterIndex) ComputeClustering(ctx context.Context) (*Clustering, err
 	return clustering, nil
 }
 
-// PublishClustering makes clustering the index's routing and membership.
-// Embeddings added since it was built are assigned to their nearest centroid.
-// The index takes ownership of clustering; callers must not use it afterwards.
+// PublishClustering makes clustering the index's routing and membership: the
+// index routes through clustering itself from now on, and later admissions
+// to it (AssignToClustering, Remove) are the index's. Its membership is first
+// brought to the index's embeddings by node ID: an embedding the generation
+// does not know joins its nearest centroid, and a member the index no longer
+// holds is dropped. A previously published Clustering is left as it was.
 func (ci *ClusterIndex) PublishClustering(clustering *Clustering) {
-	// Brief lock to publish new cluster state (order: clusterMu then mu).
-	// Assignments follow the index's current embeddings by node ID; an
-	// embedding the generation does not know joins its nearest centroid.
+	// Brief lock to publish new cluster state (order: clusterMu, mu,
+	// then the clustering's own lock).
 	ci.clusterMu.Lock()
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	defer ci.clusterMu.Unlock()
-	centroids := clustering.centroids
-	membership := newClusterMembership(len(ci.nodeIDs))
+	clustering.mu.Lock()
+	present := make(map[string]struct{}, len(ci.nodeIDs))
 	for _, id := range ci.nodeIDs {
-		cid, ok := clustering.membership.clusterOf(id)
-		if !ok {
-			if cid, ok = ci.nearestCentroidForIDLocked(id, centroids); !ok {
-				continue
-			}
+		present[id] = struct{}{}
+		if _, ok := clustering.membership.clusterOf(id); ok {
+			continue
 		}
-		membership.set(id, cid)
+		if cid, ok := ci.nearestCentroidForIDLocked(id, clustering.centroids); ok {
+			clustering.membership.set(id, cid)
+		}
 	}
-	ci.centroids = centroids
-	ci.membership = membership
-	ci.clustered = true
+	for id := range clustering.membership.idToCluster {
+		if _, ok := present[id]; !ok {
+			clustering.membership.remove(id)
+		}
+	}
+	clustering.mu.Unlock()
+	ci.routing = clustering
 	ci.updatesSinceCluster = 0
 	if !clustering.computed {
 		return
@@ -745,11 +750,9 @@ func (ci *ClusterIndex) Clear() {
 	ci.EmbeddingIndex.Clear()
 
 	// Reset cluster state
-	ci.centroids = nil
-	ci.membership = newClusterMembership(0)
+	ci.routing = nil
 	ci.pendingUpdates = ci.pendingUpdates[:0]
 	ci.updatesSinceCluster = 0
-	ci.clustered = false
 	ci.iterations = 0
 	ci.clusterIterations = 0
 	ci.centroidDrift = 0
@@ -825,30 +828,28 @@ func (ci *ClusterIndex) checkCentroidsLocked(centroids [][]float32) error {
 
 // IsClustered returns true if clustering has been performed.
 func (ci *ClusterIndex) IsClustered() bool {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-	return ci.clustered
+	return ci.PublishedClustering() != nil
 }
 
 // NumClusters returns the number of clusters.
 func (ci *ClusterIndex) NumClusters() int {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-	return len(ci.centroids)
+	if c := ci.PublishedClustering(); c != nil {
+		return c.NumClusters()
+	}
+	return 0
 }
 
 // GetCentroids returns a copy of the centroid vectors for persistence.
 // Returns nil if not clustered.
 func (ci *ClusterIndex) GetCentroids() [][]float32 {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-	if !ci.clustered || len(ci.centroids) == 0 {
+	c := ci.PublishedClustering()
+	if c == nil || len(c.centroids) == 0 {
 		return nil
 	}
-	out := make([][]float32, len(ci.centroids))
-	for c, vec := range ci.centroids {
-		out[c] = make([]float32, len(vec))
-		copy(out[c], vec)
+	out := make([][]float32, len(c.centroids))
+	for i, vec := range c.centroids {
+		out[i] = make([]float32, len(vec))
+		copy(out[i], vec)
 	}
 	return out
 }
@@ -864,15 +865,20 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 
 	stats := ClusterStats{
 		EmbeddingCount:  embeddingCount,
-		NumClusters:     len(ci.centroids),
 		Iterations:      ci.iterations,
 		LastClusterTime: ci.lastClusterDuration,
 		CentroidDrift:   ci.centroidDrift,
-		Clustered:       ci.clustered,
+		Clustered:       ci.routing != nil,
 	}
+	if ci.routing == nil {
+		return stats
+	}
+	stats.NumClusters = ci.routing.NumClusters()
+	ci.routing.mu.RLock()
+	defer ci.routing.mu.RUnlock()
 
 	populated := 0
-	for _, members := range ci.membership.members {
+	for _, members := range ci.routing.membership.members {
 		if len(members) > 0 {
 			populated++
 		}
@@ -882,7 +888,7 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 		stats.MinClusterSize = math.MaxInt32
 		stats.MaxClusterSize = 0
 
-		for _, members := range ci.membership.members {
+		for _, members := range ci.routing.membership.members {
 			size := len(members)
 			if size == 0 {
 				continue
@@ -904,105 +910,36 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 
 // FindNearestCentroid finds the cluster ID nearest to the given embedding.
 func (ci *ClusterIndex) FindNearestCentroid(embedding []float32) int {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-
-	return ci.findNearestCentroidLocked(embedding)
-}
-
-// findNearestCentroidLocked finds nearest centroid without acquiring lock.
-// Caller must hold clusterMu.
-func (ci *ClusterIndex) findNearestCentroidLocked(embedding []float32) int {
-	if !ci.clustered || len(ci.centroids) == 0 {
+	c := ci.PublishedClustering()
+	if c == nil || len(c.centroids) == 0 {
 		return -1
 	}
-
-	minDist := math.MaxFloat64
-	nearest := 0
-
-	for c, centroid := range ci.centroids {
-		dist := squaredEuclidean(embedding, centroid)
-		if dist < minDist {
-			minDist = dist
-			nearest = c
-		}
-	}
-
-	return nearest
+	return nearestCentroidFromList(embedding, c.centroids)
 }
 
 // FindNearestClusters finds the k nearest cluster IDs to the given embedding.
 func (ci *ClusterIndex) FindNearestClusters(embedding []float32, k int) []int {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-
-	if !ci.clustered || len(ci.centroids) == 0 {
-		return nil
+	if c := ci.PublishedClustering(); c != nil {
+		return c.NearestClusters(embedding, k)
 	}
-
-	// Compute distances only to populated centroids. Duplicate inputs can leave
-	// centroids empty, and routing to those clusters would return no candidates.
-	type distIdx struct {
-		dist float64
-		idx  int
-	}
-
-	distances := make([]distIdx, 0, len(ci.centroids))
-	for c, centroid := range ci.centroids {
-		if len(ci.membership.members[c]) == 0 {
-			continue
-		}
-		distances = append(distances, distIdx{
-			dist: squaredEuclidean(embedding, centroid),
-			idx:  c,
-		})
-	}
-	if k > len(distances) {
-		k = len(distances)
-	}
-	if k == 0 {
-		return nil
-	}
-
-	// Partial sort to find k nearest
-	for i := 0; i < k; i++ {
-		minIdx := i
-		for j := i + 1; j < len(distances); j++ {
-			if distances[j].dist < distances[minIdx].dist {
-				minIdx = j
-			}
-		}
-		distances[i], distances[minIdx] = distances[minIdx], distances[i]
-	}
-
-	result := make([]int, k)
-	for i := 0; i < k; i++ {
-		result[i] = distances[i].idx
-	}
-
-	return result
+	return nil
 }
 
 // GetClusterMembers returns the embedding indices belonging to the given clusters.
 func (ci *ClusterIndex) GetClusterMembers(clusterIDs []int) []int {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-
-	if !ci.clustered {
+	c := ci.PublishedClustering()
+	if c == nil {
 		return nil
 	}
-
+	ids := c.MemberIDsOf(clusterIDs)
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
-	var members []int
-	for _, cid := range clusterIDs {
-		for _, id := range ci.membership.members[cid] {
-			if idx, ok := ci.idToIndex[id]; ok {
-				members = append(members, idx)
-			}
+	members := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if idx, ok := ci.idToIndex[id]; ok {
+			members = append(members, idx)
 		}
 	}
-
 	return members
 }
 
@@ -1012,18 +949,10 @@ func (ci *ClusterIndex) GetClusterMembers(clusterIDs []int) []int {
 // the gpu package. It intentionally copies the IDs to avoid exposing internal
 // slices that may be mutated during re-clustering.
 func (ci *ClusterIndex) GetClusterMemberIDs(clusterIDs []int) []string {
-	ci.clusterMu.RLock()
-	defer ci.clusterMu.RUnlock()
-
-	if !ci.clustered {
-		return nil
+	if c := ci.PublishedClustering(); c != nil {
+		return c.MemberIDsOf(clusterIDs)
 	}
-
-	var out []string
-	for _, cid := range clusterIDs {
-		out = append(out, ci.membership.members[cid]...)
-	}
-	return out
+	return nil
 }
 
 // GetClusterMemberIDsForCluster returns node IDs for a single cluster ID.
@@ -1151,19 +1080,16 @@ func (ci *ClusterIndex) OnNodeUpdate(nodeID string, embedding []float32) error {
 
 	ci.clusterMu.Lock()
 	defer ci.clusterMu.Unlock()
-	if !ci.clustered {
+	if ci.routing == nil {
 		return nil
 	}
 
-	ci.mu.RLock()
-	newCluster, ok := ci.nearestCentroidForIDLocked(nodeID, ci.centroids)
-	ci.mu.RUnlock()
+	oldCluster, wasMember, newCluster, ok := ci.AssignToClustering(ci.routing, nodeID)
 	if !ok {
 		return nil
 	}
 
 	// Track a changed assignment for the batch centroid update.
-	oldCluster, wasMember := ci.membership.set(nodeID, newCluster)
 	if wasMember && oldCluster != newCluster {
 		ci.pendingUpdates = append(ci.pendingUpdates, nodeUpdate{
 			id:         nodeID,
@@ -1182,7 +1108,7 @@ func (ci *ClusterIndex) ShouldRecluster() bool {
 	ci.clusterMu.RLock()
 	defer ci.clusterMu.RUnlock()
 
-	if !ci.clustered {
+	if ci.routing == nil {
 		return false
 	}
 
@@ -1228,11 +1154,17 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 	ci.clusterMu.Lock()
 	defer ci.mu.RUnlock()
 	defer ci.clusterMu.Unlock()
+	routing := ci.routing
+	if routing == nil {
+		return
+	}
+	routing.mu.Lock()
+	defer routing.mu.Unlock()
 
 	// Recompute centroids for affected clusters
 	dims := ci.dimensions
 	for cluster := range affectedClusters {
-		members := ci.membership.members[cluster]
+		members := routing.membership.members[cluster]
 		if len(members) == 0 {
 			continue
 		}
@@ -1251,7 +1183,7 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 		}
 
 		for d := 0; d < dims; d++ {
-			ci.centroids[cluster][d] = float32(newCentroid[d] / float64(len(members)))
+			routing.centroids[cluster][d] = float32(newCentroid[d] / float64(len(members)))
 		}
 	}
 }

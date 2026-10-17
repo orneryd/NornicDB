@@ -27,8 +27,9 @@ import (
 // graphs reached through a variable, a range or a map parameter are caught.
 // Negative fixtures prove each bypass shape is rejected.
 
-// clusterOwnerFuncs may change the cluster generation; methods of
-// clusterGeneration and clusterTerms are part of the owner too.
+// clusterOwnerFuncs may change the cluster generation, or hand it to a
+// query; methods of clusterGeneration and clusterTerms are part of the owner
+// too.
 var clusterOwnerFuncs = map[string]bool{
 	"Service.applyClusterAdmission":           true,
 	"Service.admitLocked":                     true,
@@ -45,8 +46,10 @@ var clusterOwnerFuncs = map[string]bool{
 	"Service.retireClusterGeneration":         true,
 	"Service.publishClusterServing":           true,
 	"Service.snapshotClusterGenerationLocked": true,
-	"Service.clusterServingLocked":            true,
-	"Service.clusterGraphLocked":              true,
+	"Service.acquireClusterSnapshot":          true,
+	"Service.clusterGenerationFor":            true,
+	"Service.clusterQueryView":                true,
+	"Service.clusterGenerationIn":             true,
 	"newClusterGeneration":                    true,
 }
 
@@ -76,22 +79,34 @@ var clusterOwnerCallers = map[string][]string{
 		"Service.replaceClusterIndex", "Service.resetANNForBuild"},
 	"Service.publishClusterServing": {"Service.EnableClustering", "Service.maybeAutoSetVectorDimensions",
 		"Service.publishClusterGeneration", "Service.resetANNForBuild"},
-	// Readers: persistence capture and per-query serving.
+	// Readers: persistence capture, and the generation a query holds.
 	"Service.snapshotClusterGenerationLocked": {"Service.persistIVFHNSWBackground"},
-	"Service.clusterServingLocked": {"Service.resolveClusteredVectorStrategy", "Service.resolveStandardVectorStrategyWithGPU",
-		"Service.selectHybridClustersLocked"},
-	"Service.clusterGraphLocked": {"Service.resolveClusteredVectorStrategy"},
+	"Service.acquireClusterSnapshot":          {"Service.clusterGenerationFor", "Service.vectorPipelineForQuery"},
+	"Service.clusterGenerationFor":            {"Service.clusterQueryView"},
+	"Service.clusterQueryView":                {"Service.resolveClusteredVectorStrategy"},
+	"Service.clusterGenerationIn":             {"Service.selectHybridClustersLocked"},
 }
 
-// gpuClusterStateWriters may write the gpu cluster state (centroids,
-// membership, clustered) or construct its holders.
+// Queries route only through a generation's own routing: these readers of
+// the cluster index's published routing are not called from pkg/search,
+// except the index's published Clustering for a generator built without a
+// serving source.
+var clusterIndexRoutingReaders = map[string]bool{
+	"FindNearestClusters": true, "FindNearestCentroid": true, "GetClusterMemberIDs": true,
+	"GetClusterMemberIDsForCluster": true, "GetClusterMembers": true, "SearchWithClusters": true,
+	"ClusterOf": true, "GetCentroids": true, "NumClusters": true, "PublishedClustering": true,
+}
+
+var clusterIndexRoutingReaderCallers = map[string]bool{"ownClusterView": true}
+
+// gpuClusterStateWriters may write the gpu cluster state (the published
+// routing pointer, centroids, membership) or construct its holders.
 var gpuClusterStateWriters = map[string]bool{
 	"NewClusterIndex": true, "newClustering": true, "newClusterMembership": true,
 	"ClusterIndex.PublishClustering": true, "ClusterIndex.Clear": true,
-	"ClusterIndex.RestoreClusteringState": true, "ClusterIndex.OnNodeUpdate": true,
-	"ClusterIndex.UpdateCentroidsBatch": true, "ClusterIndex.AssignToClustering": true,
-	"ClusterIndex.AssignLive": true, "ClusterIndex.Unassign": true, "ClusterIndex.Remove": true,
-	"Clustering.Remove": true, "clusterMembership.set": true, "clusterMembership.remove": true,
+	"ClusterIndex.RestoreClusteringState": true, "ClusterIndex.UpdateCentroidsBatch": true,
+	"ClusterIndex.AssignToClustering": true, "Clustering.Remove": true,
+	"clusterMembership.set": true, "clusterMembership.remove": true,
 }
 
 // Service fields that hold the generation; every field of clusterGeneration
@@ -100,7 +115,7 @@ var serviceGenerationFields = map[string]bool{"clusterIndex": true, "clusterGen"
 
 // gpu fields holding published or staged cluster state.
 var gpuGenerationFields = map[string]map[string]bool{
-	"ClusterIndex":      {"centroids": true, "membership": true, "clustered": true},
+	"ClusterIndex":      {"routing": true},
 	"Clustering":        {"centroids": true, "membership": true},
 	"clusterMembership": {"idToCluster": true, "members": true, "pos": true},
 }
@@ -109,7 +124,7 @@ var gpuGenerationFields = map[string]map[string]bool{
 var clusterMutatingMethods = map[string]map[string]bool{
 	"ClusterIndex": {"Add": true, "AddBatch": true, "Remove": true, "PublishClustering": true, "Clear": true,
 		"RestoreClusteringState": true, "ClusterWithContext": true, "Cluster": true, "Release": true,
-		"OnNodeUpdate": true, "UpdateCentroidsBatch": true, "AssignToClustering": true, "AssignLive": true, "Unassign": true},
+		"OnNodeUpdate": true, "UpdateCentroidsBatch": true, "AssignToClustering": true},
 	"Clustering":   {"Remove": true},
 	"clusterTerms": {"add": true, "enter": true, "leave": true},
 	"HNSWIndex": {"Add": true, "Update": true, "Remove": true, "Clear": true, "SetQuantization": true,
@@ -121,10 +136,13 @@ var clusterMutatingMethods = map[string]map[string]bool{
 const clusterGuardFixtureFile = "zz_cluster_owner_guard_fixture.go"
 
 // Bypass shapes the guard must reject: graph mutations through the
-// generation, an alias, a range, a map parameter and an owner accessor; a
-// write through a generation alias; a generation literal; a direct index
-// mutation; lexical terms; a call into an owner step from outside.
+// generation, an alias, a range, a map parameter and a query view; a write
+// through a generation alias; a generation literal; a direct index
+// mutation; lexical terms; a call into an owner step from outside; routing
+// a query on the index instead of a generation.
 const clusterGuardSearchFixture = `package search
+
+import "context"
 
 func (s *Service) fixtureGraphBypass(id string) { s.clusterGen.graphs[0].Remove(id) }
 func (s *Service) fixtureAliasWrite() { gen := s.clusterGen; gen.graphs = nil }
@@ -135,18 +153,23 @@ func (s *Service) fixtureRangeGraph(id string) {
 	}
 }
 func fixtureMapParam(graphs map[int]*HNSWIndex, id string) { graphs[1].Add(id, nil) }
-func (s *Service) fixtureAccessorGraph(id string) { s.clusterGraphLocked(0).Remove(id) }
+func (s *Service) fixtureViewGraph(id string) {
+	_, view, done := s.clusterQueryView(context.Background())
+	defer done()
+	view.graph(0).Remove(id)
+}
 func (s *Service) fixtureLiteral() *clusterGeneration { return &clusterGeneration{} }
-func (s *Service) fixtureIndexBypass(id string) { s.clusterIndex.AssignLive(id) }
+func (s *Service) fixtureIndexBypass(id string) { s.clusterIndex.AssignToClustering(s.clusterGen.routing, id) }
 func (s *Service) fixtureTerms() { s.clusterGen.terms[0].add("x", 1) }
 func (s *Service) fixtureDelete() { delete(s.clusterGen.profiles, 0) }
 func (s *Service) fixtureHelper() { s.admitLocked(clusterAdmission{}) }
+func (s *Service) fixtureIndexRouting(q []float32) []int { return s.clusterIndex.FindNearestClusters(q, 1) }
 `
 
 const clusterGuardGPUFixture = `package gpu
 
-func (ci *ClusterIndex) fixtureMembership(id string) { ci.membership.set(id, 0) }
-func (ci *ClusterIndex) fixtureCentroids() { ci.centroids = nil }
+func (ci *ClusterIndex) fixtureMembership(id string) { ci.routing.membership.set(id, 0) }
+func (ci *ClusterIndex) fixtureRouting() { ci.routing = nil }
 func (c *Clustering) fixtureStaged() { c.centroids[0] = nil }
 `
 
@@ -456,7 +479,7 @@ func (g *clusterGuard) check(fn *ast.FuncDecl) {
 				g.edge(callee, key)
 			}
 			sel, ok := node.Fun.(*ast.SelectorExpr)
-			if !ok || owner {
+			if !ok {
 				return true
 			}
 			s, ok := g.p.info.Selections[sel]
@@ -464,6 +487,13 @@ func (g *clusterGuard) check(fn *ast.FuncDecl) {
 				return true
 			}
 			recv := namedOf(s.Recv())
+			if !g.gpu && recv == "ClusterIndex" && clusterIndexRoutingReaders[sel.Sel.Name] &&
+				!(sel.Sel.Name == "PublishedClustering" && clusterIndexRoutingReaderCallers[key]) {
+				g.flag(key, "routes on the cluster index (%s) instead of a generation's routing", sel.Sel.Name)
+			}
+			if owner {
+				return true
+			}
 			if !clusterMutatingMethods[recv][sel.Sel.Name] {
 				return true
 			}
@@ -774,6 +804,6 @@ func TestClusterGenerationOwnerFieldSet(t *testing.T) {
 	for i := 0; i < gen.NumField(); i++ {
 		genFields = append(genFields, gen.Field(i).Name)
 	}
-	require.Equal(t, []string{"index", "staged", "graphs", "terms", "profiles", "dirty", "policy"}, genFields,
+	require.Equal(t, []string{"index", "routing", "published", "holders", "graphs", "terms", "profiles", "dirty", "policy"}, genFields,
 		"the generation's state; a new field must be added to the owner's checks")
 }
