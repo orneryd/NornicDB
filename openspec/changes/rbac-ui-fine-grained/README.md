@@ -17,3 +17,13 @@ its canonical persisted privilege/evaluator subset exists, the UI is built
 against the contract in `design.md` with a feature flag and explicit
 "unsupported" empty states; no privilege toggle is rendered as authoritative
 before its backend route accepts and persists it.
+
+## Shared FGAC enforcement foundation
+
+The [FGAC/F-PRIV convergence spec](../fgac-privilege-convergence/README.md)
+records the 17 October decision to perform the permissions refactor with #935.
+Its complete operation classification and canonical evaluator are shared backend
+dependencies, not a second permissions implementation in this plan. F-PRIV
+resumes after 1.4.4 ships for the planned 1.5.0 release and requires passing
+whole-family review under Rule 73;
+#1352 does not merge alone.
