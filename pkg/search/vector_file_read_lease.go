@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
@@ -21,6 +22,10 @@ type vectorFileReadLease struct {
 	closeOnce   sync.Once
 	closeErr    error
 }
+
+// errVectorFileUnmapped marks a readable file the platform would not map, for
+// example ENOMEM from a whole-file mapping. Its rows stay readable with ReadAt.
+var errVectorFileUnmapped = errors.New("vector file mapping unavailable")
 
 func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 	v.appendMu.Lock()
@@ -50,11 +55,11 @@ func (v *VectorFileStore) newMappedReadLeaseLocked() (*vectorFileReadLease, erro
 		return nil, err
 	}
 	if stat.Size() < 0 || uint64(stat.Size()) > uint64(^uint(0)>>1) {
-		return nil, fmt.Errorf("vector file size %d cannot be mapped on this platform", stat.Size())
+		return nil, fmt.Errorf("%w: vector file size %d cannot be mapped on this platform", errVectorFileUnmapped, stat.Size())
 	}
-	data, unmap, err := mapVectorFileReadOnly(v.file.File, int(stat.Size()))
+	data, unmap, err := v.mapFile(v.file.File, int(stat.Size()))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errVectorFileUnmapped, err)
 	}
 	return &vectorFileReadLease{dimensions: v.dimensions, idToOrdinal: v.idToOrdinal, data: data, unmap: unmap}, nil
 }
