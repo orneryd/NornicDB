@@ -62,6 +62,20 @@ top-k limits and TLS/mTLS settings. Mount certificate files into the container
 when using native TLS. For secure deployment topologies, see
 [Qdrant gRPC reverse proxying](../operations/reverse-proxy.md#qdrant-grpc).
 
+## Request logging
+
+Unary and streaming request completion events use NornicDB's configured logger
+and `NORNICDB_LOG_LEVEL`. Successful requests log at debug, so the default info
+level does not write a log for every successful search. Client/protocol failures
+log at warning; `Unknown`, `Internal`, `DataLoss`, and `Unavailable` failures log
+at error. Events include the RPC method/type, status code, outcome and duration;
+request payloads and authentication metadata are not included.
+
+To inspect successful requests, set `NORNICDB_LOG_LEVEL=DEBUG`. Applications that
+embed `qdrantgrpc.NewServer` directly can supply `Config.Logger`; nil uses an
+info-level text logger on stderr. The production server injects its configured
+structured logger, including its output, redaction and level policy.
+
 ## TLS, mTLS, and application authentication
 
 Authenticated public listeners require native TLS. Clients must trust the CA
