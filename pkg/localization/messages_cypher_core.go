@@ -107,6 +107,8 @@ const (
 	MessageCypherCoreTrimCharacterLength                    MessageID = "cyphercore.trim_character_length"
 	MessageCypherCoreTrimSpecificationUnknown               MessageID = "cyphercore.trim_specification_unknown"
 	MessageCypherCoreNormalizeFormInvalid                   MessageID = "cyphercore.normalize_form_invalid"
+	MessageCypherCoreJSONStringifyProfileUnknown            MessageID = "cyphercore.json_stringify_profile_unknown"
+	MessageCypherCoreJSONStringifyValueUnsupported          MessageID = "cyphercore.json_stringify_value_unsupported"
 	MessageCypherCoreProcedureOutputShadowsVariable         MessageID = "cyphercore.procedure_output_shadows_variable"
 	MessageCypherCoreVariableDeclaredInOuterScope           MessageID = "cyphercore.variable_declared_in_outer_scope"
 	MessageCypherCorePatternNodeValueType                   MessageID = "cyphercore.pattern_node_value_type"
@@ -620,6 +622,14 @@ func CypherCoreTrimSpecificationUnknown() Message {
 
 func CypherCoreNormalizeFormInvalid(form string) Message {
 	return cypherCoreMessage(MessageCypherCoreNormalizeFormInvalid, "normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: "+form, map[string]any{"Form": form})
+}
+
+func CypherCoreJSONStringifyProfileUnknown(profile string) Message {
+	return cypherCoreMessage(MessageCypherCoreJSONStringifyProfileUnknown, "nornicdb.json.stringify() profile must be python-canonical or python-sorted, got: "+profile, map[string]any{"Profile": profile})
+}
+
+func CypherCoreJSONStringifyValueUnsupported(profile string, valueType string) Message {
+	return cypherCoreMessage(MessageCypherCoreJSONStringifyValueUnsupported, "nornicdb.json.stringify() can't write "+valueType+" in the "+profile+" profile", map[string]any{"Profile": profile, "Type": valueType})
 }
 
 func CypherCoreProcedureOutputShadowsVariable(variable string) Message {
