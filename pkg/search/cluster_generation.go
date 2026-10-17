@@ -716,10 +716,7 @@ func (s *Service) retireClusterGeneration(replace func(old *gpu.ClusterIndex) *g
 // the owner's locks. Clustered pipelines hold no generation: each query
 // serves from the one it took at its start (clusterSnapshot).
 func (s *Service) publishClusterServing() {
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-	s.indexChanged()
+	s.publishVectorServing(func() {}, true)
 }
 
 // currentClusterIndex is the cluster index (the clustered population) for
@@ -782,8 +779,8 @@ func (s *Service) vectorPipelineForQuery(ctx context.Context) (context.Context, 
 		}
 		release()
 		s.pipelineMu.Lock()
-		if s.vectorPipeline == pipeline {
-			s.vectorPipeline = nil
+		if s.servingPipeline() == pipeline {
+			s.cacheDerivedVectorPipelineLocked(nil)
 		}
 		s.pipelineMu.Unlock()
 	}

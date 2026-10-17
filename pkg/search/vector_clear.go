@@ -36,7 +36,7 @@ func (s *Service) clearIndexes(all bool) error {
 	// Lock order: pipelineMu -> mu -> hnswMu, matching pipeline construction paths.
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
-	s.vectorPipeline = nil
+	s.cacheDerivedVectorPipelineLocked(nil)
 
 	s.indexMu.Lock()
 	// Clearing the cluster generation is one cluster-state change.
@@ -49,8 +49,8 @@ func (s *Service) clearIndexes(all bool) error {
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
 	}
-	if s.gpuEmbeddingIndex != nil {
-		s.gpuEmbeddingIndex.Clear()
+	if s.servingGPUIndex() != nil {
+		s.servingGPUIndex().Clear()
 	}
 	s.retireClusterGeneration(emptyClusterIndex)
 	clear(s.nodeLabels)
@@ -85,19 +85,23 @@ func (s *Service) clearIndexes(all bool) error {
 	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
 
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
+	// pipelineMu is held: the pipeline was dropped above, and no query can
+	// cache another before this publication.
+	s.publishVectorServing(func() {
+		s.ivfpqMu.Lock()
+		s.ivfpqIndex = nil
+		s.ivfpqOverlay.Reset()
+		s.ivfpqMu.Unlock()
 
-	// Also clear HNSW index if it exists (frees memory from tombstones).
-	// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-		s.hnswIndex = nil // Reset to nil so it can be recreated lazily
-	}
-	s.hnswMu.Unlock()
+		// Also clear HNSW index if it exists (frees memory from tombstones).
+		// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
+		s.hnswMu.Lock()
+		if s.servingHNSW() != nil {
+			s.servingHNSW().Clear()
+			s.hnswIndex = nil // Reset to nil so it can be recreated lazily
+		}
+		s.hnswMu.Unlock()
+	}, false)
 	paths := []string{}
 	if all && s.fulltextIndexPath != "" {
 		paths = append(paths, s.fulltextIndexPath)
