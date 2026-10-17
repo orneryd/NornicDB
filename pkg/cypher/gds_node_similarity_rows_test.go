@@ -465,3 +465,36 @@ func TestSimilarityRowsSelfIncidence(t *testing.T) {
 		}
 	}
 }
+
+// TestSimilarityRowsRemoteIDsAsGiven: a sourceNode given as a remote node's
+// elementId string finds the remote rows' source, and ties order local and
+// remote nodes by the ids the output shows, not their internal keys.
+func TestSimilarityRowsRemoteIDsAsGiven(t *testing.T) {
+	remote := func(id string) storage.RemoteEntityValue {
+		return storage.RemoteEntityValue{"elementId": id, "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	}
+	seed, z := remote("4:r:seed"), remote("z")
+	rows := []interface{}{
+		map[string]interface{}{"source": seed, "thing": "x"},
+		map[string]interface{}{"source": z, "thing": "x"},
+		map[string]interface{}{"source": "a", "thing": "x"},
+	}
+	for _, source := range []interface{}{"4:r:seed", []interface{}{"4:r:seed"}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source, "similarityMetric": "RESOURCE_ALLOCATION"}})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2, "sourceNode=%v", source)
+		// Equal scores: local "a" before remote "z", by the shown ids.
+		require.Equal(t, "a", result.Rows[0][1])
+		require.Equal(t, "z", result.Rows[1][1])
+	}
+	// Shared things tie the same way: local "b" before remote "y".
+	y := remote("y")
+	shared, err := callNornicSimilarityStream([]interface{}{[]interface{}{
+		map[string]interface{}{"source": "s", "thing": y}, map[string]interface{}{"source": "s", "thing": "b"},
+		map[string]interface{}{"source": "t", "thing": y}, map[string]interface{}{"source": "t", "thing": "b"},
+	}, map[string]interface{}{"sourceNode": "s", "similarityMetric": "RESOURCE_ALLOCATION"}})
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{
+		map[string]interface{}{"nodeId": "b", "weight": 0.5}, map[string]interface{}{"nodeId": "y", "weight": 0.5},
+	}, shared.Rows[0][3])
+}
