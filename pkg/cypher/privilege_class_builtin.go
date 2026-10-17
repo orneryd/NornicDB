@@ -128,6 +128,7 @@ var builtinProcedureClasses = map[string]PrivilegeClass{
 	"nornicdb.knowledgepolicy.policies":                PrivilegeRead,
 	"nornicdb.knowledgepolicy.profiles":                PrivilegeRead,
 	"nornicdb.knowledgepolicy.resolve":                 PrivilegeRead,
+	"nornicdb.similarity.stream":                       PrivilegeRead,
 	"nornicdb.stats":                                   PrivilegeRead,
 	"nornicdb.version":                                 PrivilegeNone,
 	"tx.setMetaData":                                   PrivilegeNone,
