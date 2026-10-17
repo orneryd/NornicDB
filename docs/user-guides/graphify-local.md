@@ -232,8 +232,10 @@ and detector plus local adaptations. Matching logic is shared in `pr_duplicates.
 
 The integration tests exercise actual Git commits and pulls against an HTTP fixture,
 including staged-versus-unstaged content, both blocking classifications, missing
-configuration, missing baselines, disabled checks and main refreshes:
+configuration, missing baselines, disabled checks and main refreshes. The command
+isolates unrelated user-global Git configuration; global-hook tests install and
+exercise their own real global configuration in temporary repositories:
 
 ```sh
-.venv-code-intelligence/bin/python -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
+GIT_CONFIG_GLOBAL=/dev/null .venv-code-intelligence/bin/python -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
 ```
