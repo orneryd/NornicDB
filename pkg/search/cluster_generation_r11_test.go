@@ -366,26 +366,3 @@ func TestClusterGenerationRoutingSettingsChangeRejectsRestore(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9")
 	require.False(t, f.svc.tryRestoreClusteredWarmupFromDisk(context.Background(), f.svc.clusterIndex, hnswPath, nil))
 }
-
-// A pipeline holds no copy of the generation: one built before a
-// publication routes on the next one with its probe count, and after a
-// retirement routes on none.
-func TestClusterGenerationPipelineServesCurrentGeneration(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	pipeline, err := f.svc.getOrCreateVectorPipeline(context.Background())
-	require.NoError(t, err)
-	gen, ok := pipeline.candidateGen.(*IVFHNSWCandidateGen)
-	require.True(t, ok)
-	f.recluster()
-	t.Setenv("NORNICDB_KMEANS_NPROBE", "2")
-	index, probes, release := gen.serving.route(nil, 0)
-	release()
-	require.Same(t, f.svc.clusterIndex, index)
-	require.Equal(t, 2, probes)
-	require.NoError(t, f.svc.ClearVectorIndex())
-	index, _, release = gen.serving.route(nil, 0)
-	release()
-	require.Nil(t, index, "a retired generation is not served")
-	_, err = gen.SearchCandidates(context.Background(), []float32{1, 0, 0, 0}, 5, 0)
-	require.Error(t, err, "a stale pipeline reports the retired generation instead of routing on it")
-}

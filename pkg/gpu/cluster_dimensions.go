@@ -9,14 +9,28 @@ package gpu
 //
 //	replacement := index.EmptyWithDimensions(768)
 func (ci *ClusterIndex) EmptyWithDimensions(dimensions int) *ClusterIndex {
+	return ci.emptyLike(dimensions, true)
+}
+
+// Empty creates an empty cluster index with this index's dimensions, manager,
+// synchronization policy and k-means settings, without preallocating its
+// capacity (the replaced index may stay alive while queries finish on it).
+// The original index is unchanged.
+func (ci *ClusterIndex) Empty() *ClusterIndex {
+	return ci.emptyLike(ci.dimensions, false)
+}
+
+func (ci *ClusterIndex) emptyLike(dimensions int, keepCapacity bool) *ClusterIndex {
 	config := ci.Config()
 	ci.EmbeddingIndex.mu.RLock()
 	manager := ci.manager
 	embeddings := &EmbeddingIndexConfig{
 		Dimensions:     dimensions,
-		InitialCap:     cap(ci.nodeIDs),
 		AutoSync:       ci.autoSync,
 		BatchThreshold: ci.batchThreshold,
+	}
+	if keepCapacity {
+		embeddings.InitialCap = cap(ci.nodeIDs)
 	}
 	ci.EmbeddingIndex.mu.RUnlock()
 	return NewClusterIndex(manager, embeddings, &config)

@@ -71,11 +71,11 @@ func (k *KMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, que
 	return k
 }
 
-// SetServing makes the generator route each query on the published cluster
-// generation (see IVFHNSWCandidateGen.SetServing); the selector is then
+// SetServing makes the generator serve each query from the cluster
+// generation the query holds (see clusterServing); the selector is then
 // called with lock held.
-func (k *KMeansCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.ClusterIndex, int)) *KMeansCandidateGen {
-	k.serving = &clusterServing{lock: lock, resolve: resolve}
+func (k *KMeansCandidateGen) SetServing(lock sync.Locker, view func(context.Context) (context.Context, clusterView, func())) *KMeansCandidateGen {
+	k.serving = &clusterServing{lock: lock, view: view}
 	return k
 }
 
@@ -88,38 +88,38 @@ func (k *KMeansCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.C
 //
 // If clustering is not available or not clustered, falls back to brute-force.
 func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]Candidate, error) {
-	// Route on one cluster generation: the routing and the routed members
-	// are read under its lock; scoring runs after it.
-	clusterIndex, probes, release := k.serving.route(k.clusterIndex, k.numClustersToSearch)
+	// Route on the query's cluster generation: the routing and the routed
+	// members are read in its routing section; scoring follows, on the same
+	// generation's population.
+	ctx, view, unlock, done := k.serving.open(ctx, ownClusterView(k.clusterIndex, k.numClustersToSearch, nil))
+	defer done()
 	// Check if clustering is available and clustered
-	if clusterIndex == nil || !clusterIndex.IsClustered() {
-		release()
+	if view.routing == nil {
+		unlock()
 		// Fall back to brute-force
 		bruteGen := NewBruteForceCandidateGen(k.vectorIndex)
 		return bruteGen.SearchCandidates(ctx, query, limit, minSimilarity)
 	}
-	if dims := clusterIndex.Dimensions(); dims > 0 && len(query) != dims {
-		release()
+	if dims := view.index.Dimensions(); dims > 0 && len(query) != dims {
+		unlock()
 		return nil, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
 	}
 
 	candidateLimit := boundCandidateLimit(limit)
 	clusterIDs := []int(nil)
 	if k.clusterSelector != nil {
-		clusterIDs = k.clusterSelector(ctx, query, probes)
+		clusterIDs = k.clusterSelector(ctx, query, view.probes)
 	}
-	var ids []string
-	if len(clusterIDs) > 0 {
-		ids = clusterIndex.GetClusterMemberIDs(clusterIDs)
+	if len(clusterIDs) == 0 {
+		// Default nearest-centroid routing.
+		clusterIDs = view.routing.NearestClusters(query, view.probes)
 	}
-	release()
+	ids := view.routing.MemberIDsOf(clusterIDs)
+	unlock()
 	var results []gpu.SearchResult
 	var err error
-	if len(clusterIDs) > 0 {
-		results, err = clusterIndex.ScoreSubset(query, ids)
-	} else {
-		// Default nearest-centroid routing.
-		results, err = clusterIndex.SearchWithClusters(query, candidateLimit, probes)
+	if len(ids) > 0 {
+		results, err = view.index.ScoreSubset(query, ids)
 	}
 	if err != nil {
 		return nil, localizedError(localization.SearchClusterFailed(err), err)

@@ -150,7 +150,7 @@ func TestClusterMembershipByID(t *testing.T) {
 
 func TestClusterIndexSearchWithClustersEmptyClusterState(t *testing.T) {
 	ci := NewClusterIndex(nil, embConfig(2), nil)
-	ci.clustered = true
+	ci.routing = &Clustering{membership: newClusterMembership(0)}
 
 	results, err := ci.SearchWithClusters([]float32{1, 0}, 5, 2)
 	if err != nil {
@@ -344,15 +344,18 @@ func sortedIDs(ids []string) []string {
 	return out
 }
 
-// A published clustering admits, moves and removes members live, by ID.
+// A published clustering admits, moves and removes members live, by ID,
+// through the same AssignToClustering/Remove an unpublished one uses; a
+// superseded clustering keeps its routing.
 func TestClusterIndexLiveMembership(t *testing.T) {
 	ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 10, InitMethod: "kmeans++"})
 	requireNoError(t, ci.Add("a1", []float32{1, 0}))
-	if _, _, _, ok := ci.AssignLive("a1"); ok {
-		t.Fatalf("an unclustered index assigns nothing")
+	if ci.PublishedClustering() != nil {
+		t.Fatalf("an unclustered index routes through no clustering")
 	}
 	requireNoError(t, ci.AddBatch([]string{"a2", "b1", "b2"}, [][]float32{{0.9, 0.1}, {0, 1}, {0.1, 0.9}}))
 	requireNoError(t, ci.Cluster())
+	published := ci.PublishedClustering()
 	aCluster, _ := ci.ClusterOf("a1")
 	bCluster, _ := ci.ClusterOf("b1")
 	if aCluster == bCluster {
@@ -360,19 +363,29 @@ func TestClusterIndexLiveMembership(t *testing.T) {
 	}
 
 	requireNoError(t, ci.Add("a3", []float32{0.95, 0.05}))
-	if prev, was, cid, ok := ci.AssignLive("a3"); !ok || was || cid != aCluster {
-		t.Fatalf("AssignLive(a3) = %d %t %d %t", prev, was, cid, ok)
+	if prev, was, cid, ok := ci.AssignToClustering(published, "a3"); !ok || was || cid != aCluster {
+		t.Fatalf("AssignToClustering(a3) = %d %t %d %t", prev, was, cid, ok)
+	}
+	if cid, _ := ci.ClusterOf("a3"); cid != aCluster {
+		t.Fatalf("the index routes through the published clustering")
 	}
 	requireNoError(t, ci.Add("a3", []float32{0.05, 0.95})) // moves next to b
-	if prev, was, cid, ok := ci.AssignLive("a3"); !ok || !was || prev != aCluster || cid != bCluster {
+	if prev, was, cid, ok := ci.AssignToClustering(published, "a3"); !ok || !was || prev != aCluster || cid != bCluster {
 		t.Fatalf("moving a3 = %d %t %d %t", prev, was, cid, ok)
 	}
-	if _, _, _, ok := ci.AssignLive("unknown"); ok {
+	if _, _, _, ok := ci.AssignToClustering(published, "unknown"); ok {
 		t.Fatalf("an id without an embedding cannot be assigned")
 	}
-	if cid, ok := ci.Unassign("a3"); !ok || cid != bCluster {
-		t.Fatalf("Unassign(a3) = %d %t", cid, ok)
+	if got := published.NearestClusters([]float32{0, 1}, 1); len(got) != 1 || got[0] != bCluster {
+		t.Fatalf("NearestClusters = %v, want [%d]", got, bCluster)
 	}
+	if got := sortedIDs(published.MemberIDsOf([]int{bCluster})); !reflect.DeepEqual(got, []string{"a3", "b1", "b2"}) {
+		t.Fatalf("MemberIDsOf = %v", got)
+	}
+	if cid, ok := published.Remove("a3"); !ok || cid != bCluster {
+		t.Fatalf("Remove(a3) = %d %t", cid, ok)
+	}
+
 	if _, ok := ci.ClusterOf("a3"); ok {
 		t.Fatalf("an unassigned id has no cluster")
 	}
@@ -388,6 +401,21 @@ func TestClusterIndexLiveMembership(t *testing.T) {
 	stats := ci.ClusterStats()
 	if stats.MinClusterSize != 1 || stats.MaxClusterSize != 2 {
 		t.Fatalf("stats = %+v", stats)
+	}
+
+	// Publishing a newer clustering leaves the superseded one as it was.
+	before := published.MemberIDsOf([]int{0, 1})
+	requireNoError(t, ci.Cluster())
+	if ci.PublishedClustering() == published {
+		t.Fatalf("a new publication replaces the routing")
+	}
+	requireNoError(t, ci.Add("a4", []float32{1, 0}))
+	ci.AssignToClustering(ci.PublishedClustering(), "a4")
+	if _, ok := published.ClusterOf("a4"); ok {
+		t.Fatalf("a superseded clustering receives no admissions")
+	}
+	if got := published.MemberIDsOf([]int{0, 1}); !reflect.DeepEqual(sortedIDs(got), sortedIDs(before)) {
+		t.Fatalf("superseded membership changed: %v, was %v", got, before)
 	}
 }
 
