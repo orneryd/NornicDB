@@ -251,6 +251,9 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	} else {
 		result, err = executor.Execute(ctx, query, params)
+		// Bolt owns this deadline, so it marks the timeout for any executor,
+		// not only one that marks it itself.
+		err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
 	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
 	// defer remains the panic/early-return safety net; finishRun is idempotent.
