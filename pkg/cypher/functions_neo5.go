@@ -15,8 +15,6 @@ import (
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -58,8 +56,8 @@ func init() {
 	cypherfn.Register("isnan", fnIsNaN)
 	cypherfn.Register("char_length", fnCharLength)
 	cypherfn.Register("character_length", fnCharLength)
-	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
-	cypherfn.Register("lower", fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
+	cypherfn.Register("upper", fnStringCase(cypherfn.UpperCaseText, "upper"))
+	cypherfn.Register("lower", fnStringCase(cypherfn.LowerCaseText, "lower"))
 	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
 	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))

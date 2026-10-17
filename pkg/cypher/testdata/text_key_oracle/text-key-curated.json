@@ -1,0 +1,258 @@
+[
+{
+"in": null,
+"out": ""
+},
+{
+"in": "",
+"out": ""
+},
+{
+"in": " ",
+"out": ""
+},
+{
+"in": "\t\n\r",
+"out": ""
+},
+{
+"in": "   Jane   Smith  ",
+"out": "jane smith"
+},
+{
+"in": "Jane\u00a0Smith",
+"out": "jane smith"
+},
+{
+"in": "Jane\u2003\u3000Smith",
+"out": "jane smith"
+},
+{
+"in": "a\u000bb\u001cc\u001dd\u001ee\u001ff\u0085g\u2028h\u2029i\u200bj\ufeffk",
+"out": "a b c d e f g h i\u200bj\ufeffk"
+},
+{
+"in": "\uff21\uff23\uff2d\uff25\u3000\uff14\uff12",
+"out": "acme 42"
+},
+{
+"in": "Stra\u00dfe",
+"out": "strasse"
+},
+{
+"in": "STRASSE",
+"out": "strasse"
+},
+{
+"in": "\u1e9e",
+"out": "ss"
+},
+{
+"in": "\u039f\u0394\u039f\u03a3",
+"out": "\u03bf\u03b4\u03bf\u03c3"
+},
+{
+"in": "\u03bf\u03b4\u03cc\u03c2",
+"out": "\u03bf\u03b4\u03cc\u03c3"
+},
+{
+"in": "\u03aa\u0301",
+"out": "\u0390"
+},
+{
+"in": "\u0399\u0308\u0301",
+"out": "\u0390"
+},
+{
+"in": "\u0390",
+"out": "\u0390"
+},
+{
+"in": "\u0130stanbul",
+"out": "i\u0307stanbul"
+},
+{
+"in": "\ufb01nance",
+"out": "finance"
+},
+{
+"in": "\u216b",
+"out": "xii"
+},
+{
+"in": "\u2460\u2461",
+"out": "12"
+},
+{
+"in": "\u00b2\u00b3",
+"out": "23"
+},
+{
+"in": "\u0662\u0660\u0662\u0666",
+"out": "2026"
+},
+{
+"in": "\u06f1\u06f2\u06f3",
+"out": "123"
+},
+{
+"in": "\u0967\u0968\u0969",
+"out": "123"
+},
+{
+"in": "\u09e7\u09e8\u09e9",
+"out": "123"
+},
+{
+"in": "\u0e51\u0e52\u0e53",
+"out": "123"
+},
+{
+"in": "\ud835\udfcf\ud835\udfd0\ud835\udfd1",
+"out": "123"
+},
+{
+"in": "\ud835\udfd8",
+"out": "0"
+},
+{
+"in": "\u24b6",
+"out": "a"
+},
+{
+"in": "caf\u00e9",
+"out": "caf\u00e9"
+},
+{
+"in": "cafe\u0301",
+"out": "caf\u00e9"
+},
+{
+"in": "\u00c5",
+"out": "\u00e5"
+},
+{
+"in": "\u212b",
+"out": "\u00e5"
+},
+{
+"in": "\u01c5",
+"out": "d\u017e"
+},
+{
+"in": "\ufb00",
+"out": "ff"
+},
+{
+"in": "\uff8a\uff9f",
+"out": "\u30d1"
+},
+{
+"in": "\u337f",
+"out": "\u682a\u5f0f\u4f1a\u793e"
+},
+{
+"in": "\u2167 ltd",
+"out": "viii ltd"
+},
+{
+"in": "M\u00fcller GmbH",
+"out": "m\u00fcller gmbh"
+},
+{
+"in": "\u24c2cdonald's",
+"out": "mcdonald's"
+},
+{
+"in": "O'Brien",
+"out": "o'brien"
+},
+{
+"in": "Smith-Jones",
+"out": "smith-jones"
+},
+{
+"in": "\u00dcn\u00efc\u00f6d\u00e9",
+"out": "\u00fcn\u00efc\u00f6d\u00e9"
+},
+{
+"in": "\u0149",
+"out": "\u02bcn"
+},
+{
+"in": "\u03a3\u0391\u03a3",
+"out": "\u03c3\u03b1\u03c3"
+},
+{
+"in": "\u03a3",
+"out": "\u03c3"
+},
+{
+"in": "\u03c2",
+"out": "\u03c3"
+},
+{
+"in": "a\u03c2 b",
+"out": "a\u03c3 b"
+},
+{
+"in": "\u0130",
+"out": "i\u0307"
+},
+{
+"in": "I\u0307",
+"out": "i\u0307"
+},
+{
+"in": "\ufb03",
+"out": "ffi"
+},
+{
+"in": "\u01f0",
+"out": "\u01f0"
+},
+{
+"in": "\u1f88",
+"out": "\u1f80"
+},
+{
+"in": "\ufb13",
+"out": "\u0574\u0576"
+},
+{
+"in": "\ud83d\ude00 ACME",
+"out": "\ud83d\ude00 acme"
+},
+{
+"in": "\u0000x",
+"out": "\u0000x"
+},
+{
+"in": "\ufffd",
+"out": "\ufffd"
+},
+{
+"in": "Acme\tLtd\n",
+"out": "acme ltd"
+},
+{
+"in": "  ",
+"out": ""
+},
+{
+"in": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+"out": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+},
+{
+"in": "\uff21\u00a0\u00a0\uff22",
+"out": "a b"
+},
+{
+"in": "\u0660-\u0661\u0662.\u0663/\u0664",
+"out": "0-12.3/4"
+},
+{
+"in": "\u200eACME\u200f",
+"out": "\u200eacme\u200f"
+}
+]

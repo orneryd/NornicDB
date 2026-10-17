@@ -202,6 +202,29 @@ RETURN text.locate(s.text, $quote, {line: $line, from: $partStart, to: $partEnd}
 
 To place many quotes in one long text passed as a parameter, bind it once (`WITH $text AS t UNWIND $citations AS c RETURN text.locate(t, c.quote, {line: c.line})`): a string parameter used directly in the per-row expression is re-read on every row.
 
+### 🔑 Text Keys (1 function, a NornicDB extension)
+
+`nornicdb.text.key(text)` returns the text's comparison key, so names written with other compatibility forms, case, digits or spacing compare equal. The steps, in order:
+
+1. NFKC (full-width `ＡＣＭＥ` is `ACME`, `ﬁ` is `fi`, `①` is `1`);
+2. lower case, as `toLower` lowers (full Unicode lower case, as Python's `str.lower()` too: `İ` is `i` followed by U+0307, not a plain `i`);
+3. `ß` as `ss` and a final `ς` as `σ` (`Straße` is `strasse`, `ΟΔΟΣ` and `οδος` are both `οδοσ`);
+4. NFKC again (lowering can leave a decomposed letter: `Ϊ́` is `ΐ`);
+5. every decimal digit (category Nd) of any script as its ASCII digit (`٢٠٢٦` and `२०२६` are `2026`);
+6. every run of whitespace as one space: the regular expression class `[\s\x{0b}\x{1c}-\x{1f}\x{85}\p{Z}]` as `string.regexReplace` reads it, the set Python's `\s` matches in a str pattern (ASCII tab, line feed, vertical tab, form feed, carriage return, U+001C–U+001F and space, U+0085, and every separator, category Z: no-break, ideographic, line and paragraph separators included; not U+200B or U+180E);
+7. trimmed.
+
+Null is null; a value that isn't a string is a type error, as in `toLower`. An ASCII text costs one pass and nothing is allocated when it is its own key already.
+
+The Unicode tables are the ones of the Go toolchain NornicDB is built with: Unicode 15.0.0 for Go 1.26 (the `unicode` package and `golang.org/x/text`). A key stored by one build is only equal to one computed by a build on another Unicode version for the characters both versions treat alike: Go 1.27 moves to Unicode 17.0.0, whose new digits, case pairs and compatibility forms give other keys.
+
+```cypher
+// Store the key with the name, and look a name up by its key
+MATCH (p:Person) SET p.nameKey = nornicdb.text.key(p.name);
+MATCH (p:Person {nameKey: nornicdb.text.key($name)}) RETURN p
+// "ＭÜＬＬＥＲ   Straße ١" → "müller strasse 1"
+```
+
 ### ⏰ Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |
@@ -266,14 +289,11 @@ RETURN count(user) AS cleanedCount
 ### Example 2b: Identity Match Keys
 
 Compare names and identifiers whatever their width, case, spacing or script of
-digits, in plain Cypher: NFKC, lower case (with the letters lower case leaves
-apart, such as `ß`, folded too), whitespace runs as one space, decimal digits as
-ASCII through a map the caller passes, and `-./` dropped from a key of digits only.
+digits: `nornicdb.text.key` (see Text Keys) folds the text, and `-./` is dropped
+from a key of digits only.
 
 ```cypher
-// $digits maps each non-ASCII decimal digit to its ASCII digit, e.g. {`٢`: '2', `３`: '3', …}
-WITH replace(replace(toLower(normalize($raw, NFKC)), 'ß', 'ss'), 'ς', 'σ') AS folded
-WITH trim(string.regexReplace(reduce(out = '', c IN split(folded, '') | out + coalesce($digits[c], c)), '\s+', ' ')) AS k
+WITH nornicdb.text.key($raw) AS k
 RETURN CASE WHEN k =~ '[0-9./-]+' THEN string.regexReplace(k, '[-./]', '') ELSE k END AS key
 // "  MÜLLER   Straße 1" → "müller strasse 1";  "١٢٣-٤٥٦/٧٨" → "12345678"
 ```
