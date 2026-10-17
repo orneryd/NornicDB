@@ -410,6 +410,11 @@
     es: "Alias obsoleto de kp.decayInfo: devuelve la configuración de puntuación de la capa de conocimiento",
   }
 - {
+    name: nornicdb.graph.expandReferences,
+    en: "Returns the closure of seed nodes and relationships under property references to ids in domain labels, relationship endpoints and filtered relationship branches, each element once with its category. A NornicDB extension.",
+    es: "Devuelve el cierre de los nodos y relaciones semilla según las referencias de propiedades a ids de etiquetas de dominio, los extremos de las relaciones y las ramas de relaciones filtradas, cada elemento una vez con su categoría. Extensión de NornicDB.",
+  }
+- {
     name: nornicdb.knowledgepolicy.deindexStatus,
     en: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status",
     es: "Alias obsoleto de kp.deindexStatus: devuelve el estado de la cola de desindexación de la capa de conocimiento",
