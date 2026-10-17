@@ -4619,6 +4619,20 @@ func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, propert
 	return nil
 }
 
+// ReleaseMergeKeys releases the MERGE key locks the transaction holds
+// (PrepareMergeKey). A transaction a statement failed in can no longer
+// commit, so its keys protect nothing, and other MERGEs of them must not
+// wait until the client rolls it back.
+func (tx *BadgerTransaction) ReleaseMergeKeys() {
+	tx.mu.Lock()
+	releases := tx.mergeKeyReleases
+	tx.mergeKeyReleases = nil
+	tx.mu.Unlock()
+	for _, release := range releases {
+		release()
+	}
+}
+
 // catchUpToNode readies the transaction for a MERGE that will look up node
 // nodeID. When the node was committed after the snapshot, a transaction that
 // has observed nothing yet moves its snapshot forward; one that has fails
