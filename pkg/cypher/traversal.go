@@ -812,25 +812,14 @@ func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matche
 		return
 	}
 	var pushed map[string]interface{}
-	for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
-		shape := parseSimpleIndexedEqualityShape(rel.Variable, conjunct)
-		if !shape.ok || !isPlainSymbolicName(shape.property) || !isLiteralOrParameter(shape.constant) {
+	for _, term := range relationshipEqualityTermsFor(rel.Variable, whereClause) {
+		if _, exists := rel.Properties[term.property]; exists {
 			continue
 		}
-		// parseVariableProperty folds case; a variable is case-sensitive.
-		clause := unwrapOuterParens(strings.TrimSpace(conjunct))
-		eq := topLevelEqualsIndex(clause)
-		access := rel.Variable + "." + shape.property
-		if eq <= 0 || (strings.TrimSpace(clause[:eq]) != access && strings.TrimSpace(clause[eq+1:]) != access) {
+		if _, exists := pushed[term.property]; exists {
 			continue
 		}
-		if _, exists := rel.Properties[shape.property]; exists {
-			continue
-		}
-		if _, exists := pushed[shape.property]; exists {
-			continue
-		}
-		value, ok := e.indexSeekConstant(ctx, shape.constant)
+		value, ok := e.indexSeekConstant(ctx, term.constant)
 		if !ok {
 			continue
 		}
@@ -840,12 +829,51 @@ func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matche
 				pushed[key] = existing
 			}
 		}
-		pushed[shape.property] = value
+		pushed[term.property] = value
 	}
 	if pushed != nil {
 		rel.Properties = pushed
 	}
 }
+
+// relationshipEqualityTerm is one variable.property = <literal or
+// parameter> conjunct of a WHERE: the property and the constant's text.
+type relationshipEqualityTerm struct {
+	property, constant string
+}
+
+// relationshipEqualityTermsFor is the text part of
+// pushRelationshipEqualities: whereClause's conjuncts that compare
+// variable.property with a literal or parameter. It is read once per
+// variable and text, not once per row: a quantified group's iteration runs
+// the same WHERE for every row it expands.
+func relationshipEqualityTermsFor(variable, whereClause string) []relationshipEqualityTerm {
+	key := variable + "\x00" + whereClause
+	if terms, cached := relationshipEqualityTerms.get(key); cached {
+		return terms
+	}
+	var terms []relationshipEqualityTerm
+	for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
+		shape := parseSimpleIndexedEqualityShape(variable, conjunct)
+		if !shape.ok || !isPlainSymbolicName(shape.property) || !isLiteralOrParameter(shape.constant) {
+			continue
+		}
+		// parseVariableProperty folds case; a variable is case-sensitive.
+		clause := unwrapOuterParens(strings.TrimSpace(conjunct))
+		eq := topLevelEqualsIndex(clause)
+		access := variable + "." + shape.property
+		if eq <= 0 || (strings.TrimSpace(clause[:eq]) != access && strings.TrimSpace(clause[eq+1:]) != access) {
+			continue
+		}
+		terms = append(terms, relationshipEqualityTerm{property: shape.property, constant: shape.constant})
+	}
+	relationshipEqualityTerms.put(key, terms)
+	return terms
+}
+
+// relationshipEqualityTerms caches relationshipEqualityTermsFor by
+// variable and WHERE text.
+var relationshipEqualityTerms = newBoundedCache[string, []relationshipEqualityTerm](1024, boundedCacheStringShardIndex)
 
 // isPlainSymbolicName reports whether name is an unquoted identifier.
 func isPlainSymbolicName(name string) bool {
