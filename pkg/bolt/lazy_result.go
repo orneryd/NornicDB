@@ -29,7 +29,7 @@ type lazyResult struct {
 	query    string
 	database string
 	start    time.Time
-	context context.Context
+	context  context.Context
 	rows     int
 
 	// helperDone is closed when serveLazyResult returns; nil until the

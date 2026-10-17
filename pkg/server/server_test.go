@@ -2373,7 +2373,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		serverNoEmbed, _ := setupTestServer(t)
 		req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
 		rec = httptest.NewRecorder()
-		serverNoEmbed.handleEmbedTrigger(rec, req)
+		serverNoEmbed.handleEmbedTrigger(rec, as(req, "admin"))
 		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	})
 

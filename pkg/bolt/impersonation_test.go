@@ -23,17 +23,17 @@ import (
 // "nornic" with change capture on, and a session signed in as the service
 // account "svc936".
 type impersonationFixture struct {
-	t          *testing.T
-	ctx        context.Context
-	conn       *mockConn
-	session    *Session
-	server     *Server
-	executor   *cypher.StorageExecutor
-	privileges *auth.ImpersonatePrivilegeStore
+	t              *testing.T
+	ctx            context.Context
+	conn           *mockConn
+	session        *Session
+	server         *Server
+	executor       *cypher.StorageExecutor
+	privileges     *auth.ImpersonatePrivilegeStore
 	dataPrivileges *auth.PrivilegesStore
-	auth       *auth.Authenticator
-	adapter    *AuthenticatorAdapter
-	logs       *bytes.Buffer
+	auth           *auth.Authenticator
+	adapter        *AuthenticatorAdapter
+	logs           *bytes.Buffer
 }
 
 // boltResponse is one message a session wrote: its signature, the metadata

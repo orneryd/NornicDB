@@ -13,12 +13,12 @@ type transactionHTTPOrderedMap struct {
 }
 
 type transactionHTTPValueState struct {
-	rest         bool
-	graph        *GraphResult
-	mapKeyOrders map[uintptr][]string
-	nodes        map[string]struct{}
-	edges        map[string]struct{}
-	entityDatabase cypher.EntityDatabaseResolver
+	rest               bool
+	graph              *GraphResult
+	mapKeyOrders       map[uintptr][]string
+	nodes              map[string]struct{}
+	edges              map[string]struct{}
+	entityDatabase     cypher.EntityDatabaseResolver
 	entityContextBound bool
 }
 

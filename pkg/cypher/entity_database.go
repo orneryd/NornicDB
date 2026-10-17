@@ -51,7 +51,7 @@ func NewEntityDatabaseResolver(ctx context.Context, manager DatabaseManagerInter
 		}
 		type resource struct {
 			database string
-			owner *ownedStorageCleanup
+			owner    *ownedStorageCleanup
 		}
 		var resources []resource
 		defer func() {

@@ -19,7 +19,7 @@ import (
 
 type impersonationDriverFactory struct {
 	QueryExecutor
-	store storage.Engine
+	store  storage.Engine
 	search *search.Service
 }
 
@@ -87,11 +87,11 @@ func TestBoltImpersonationOfficialPythonDriver(t *testing.T) {
 	connections := map[string]map[string]bool{}
 	for _, line := range strings.Split(f.logs.String(), "\n") {
 		var event struct {
-			User string `json:"user"`
+			User      string `json:"user"`
 			Executing string `json:"executingUser"`
-			Remote string `json:"remote"`
-			Params struct {
-				Phase string `json:"phase"`
+			Remote    string `json:"remote"`
+			Params    struct {
+				Phase    string `json:"phase"`
 				Expected string `json:"expected"`
 			} `json:"params"`
 		}

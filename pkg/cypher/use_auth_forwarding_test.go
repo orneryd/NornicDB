@@ -85,7 +85,7 @@ func TestUseClause_AuthorizesAgainstTargetDatabase(t *testing.T) {
 	exec.SetDatabaseManager(&useAuthDBManager{engine: target})
 
 	ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool {
-		return permission == "read" || permission == "write" && database == "cmp"
+		return permission == "access" || permission == "read" || permission == "write" && database == "cmp"
 	})
 	_, err := exec.Execute(ctx, "USE cmp CREATE (:AllowedOnTarget)", nil)
 	require.NoError(t, err)
@@ -101,7 +101,8 @@ func TestUseClause_RejectsUnauthorizedTargetBeforeRouting(t *testing.T) {
 	manager := &useAuthDBManager{engine: storage.NewNamespacedEngine(base, "cmp")}
 	exec.SetDatabaseManager(manager)
 	ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool {
-		return database == "nornic" && permission == "read"
+		// cmp is selectable; only its read is refused.
+		return permission == "access" || database == "nornic" && permission == "read"
 	})
 
 	manager.lastAuthToken = ""

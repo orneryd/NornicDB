@@ -55,7 +55,7 @@ func TestBoostedProcedureKeepsUnrelatedFunctionAdmission(t *testing.T) {
 		PluginFunctionLookup = func(name string) (interface{}, bool) {
 			return PluginFunctionContract{
 				Privilege: class,
-				Handler: func() int64 { called++; return 1 },
+				Handler:   func() int64 { called++; return 1 },
 			}, name == "contract.effect"
 		}
 		ctx := WithPermissionChecker(context.Background(), func(permission string) bool { return permission == "read" })

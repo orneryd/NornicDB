@@ -95,7 +95,7 @@ func TestGDSCatalogCacheUsesSemanticCallableNames(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			for _, principal := range []struct {
-				ctx context.Context
+				ctx      context.Context
 				expected bool
 			}{{alice, true}, {bob, false}, {alice, true}} {
 				result, err := executor.Execute(principal.ctx, query, nil)

@@ -103,7 +103,7 @@ func TestFabricDatabaseSelectionUsesFragmentPermissions(t *testing.T) {
 	t.Run("read one database and write another", func(t *testing.T) {
 		exec := newCompositeFixture(t)
 		ctx := WithDatabasePermissionResolver(context.Background(), "pcomp", func(database, permission string) bool {
-			return database != "pother" || permission == "read"
+			return permission == "access" || database != "pother" || permission == "read"
 		})
 		result, err := exec.Execute(ctx, "CALL { USE pcomp.other MATCH (n:EI) RETURN n.v AS v } CALL { USE pcomp.third WITH v CREATE (n:Loaded {v: v}) RETURN n.v AS loaded } RETURN loaded", nil)
 		require.NoError(t, err)
