@@ -13,13 +13,16 @@ import (
 )
 
 // Storage version constants. V3 retains V2 body encoding and repairs
-// versioned adjacency for edges written by older bulk writers.
+// versioned adjacency for edges written by older bulk writers. V4 stores
+// every embedding record in the current key family, so readers of a V4
+// store skip the compatibility families.
 const (
 	storageVersionV0              = 0
 	storageVersionV1              = 1
 	storageVersionPropKeyDictV2   = 2
 	storageVersionEdgeAdjacencyV3 = 3
-	storageVersionCurrent         = storageVersionEdgeAdjacencyV3
+	storageVersionEmbeddingKeysV4 = 4
+	storageVersionCurrent         = storageVersionEmbeddingKeysV4
 )
 
 // Format-byte tokens for tokenized bodies. Both are reserved so they

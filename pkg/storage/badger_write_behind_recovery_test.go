@@ -18,6 +18,8 @@ func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duratio
 		DataDir:             dir,
 		WriteBehind:         true,
 		WriteBehindInterval: interval,
+		// Fixtures seeded as pre-V4 stores reopen as an upgrade would.
+		AllowStorageUpgrade: true,
 	})
 	require.NoError(t, err)
 	walCfg := DefaultWALConfig()

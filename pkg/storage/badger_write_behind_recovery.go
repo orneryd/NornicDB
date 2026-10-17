@@ -5,8 +5,8 @@ import (
 )
 
 // bufferedCommit restores the same range and point-write intent for both
-// startup recovery and individual WAL entry replay.
-func (data *WALBufferedCommitData) bufferedCommit() bufferedCommit {
+// startup recovery and individual WAL entry replay into b.
+func (data *WALBufferedCommitData) bufferedCommit(b *BadgerEngine) bufferedCommit {
 	c := bufferedCommit{
 		recovered: true,
 		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,
@@ -20,6 +20,9 @@ func (data *WALBufferedCommitData) bufferedCommit() bufferedCommit {
 		for _, key := range data.Deletes {
 			c.deletes[key] = true
 		}
+	}
+	if !b.compatibilityEmbeddingKeys() {
+		c.useCurrentEmbeddingKeys()
 	}
 	return c
 }
@@ -73,7 +76,7 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		if exists {
 			return nil // already applied to Badger
 		}
-		c := data.bufferedCommit()
+		c := data.bufferedCommit(b)
 		pending = append(pending, c)
 		return nil
 	})

@@ -379,8 +379,9 @@ type BadgerEngine struct {
 	propKeyDict *propertyKeyDictionary
 
 	// storageVersion is the on-disk schema version after migrations have
-	// run during engine open. Written once during NewBadgerEngineWithOptions
-	// and read-only thereafter. The encode path picks codecs deterministically
+	// run during engine open. Written during NewBadgerEngineWithOptions, and
+	// by Restore for the restored data while reads and writes are held off;
+	// read-only otherwise. The encode path picks codecs deterministically
 	// from this value; the decode path dispatches on per-record format bytes
 	// because old bodies coexist with new ones until rewritten.
 	storageVersion int
@@ -1103,13 +1104,6 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load mvcc prune floors: %w", err)
 	}
 
-	// Old shrink/delete code could leave orphan chunks behind an inline or
-	// missing body. Repair once before reads may trust body/meta absence.
-	if err := engine.ensureEmbeddingKeyRepair(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to repair orphaned embedding keys: %w", err)
-	}
-
 	// Now bodies are guaranteed v2. Schema load + unique-value rebuild
 	// can decode them.
 	if err := engine.loadPersistedSchemas(); err != nil {
@@ -1340,8 +1334,12 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 }
 
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
+	return readSchemaVersionFrom(b.db)
+}
+
+func readSchemaVersionFrom(db badgerViewer) (int, error) {
 	var version int
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(mvccSchemaVersionKey())
 		if err == badger.ErrKeyNotFound {
 			return nil
@@ -1373,10 +1371,14 @@ func (b *BadgerEngine) readSchemaVersion() (int, error) {
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
 	return b.db.Update(func(txn *badger.Txn) error {
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(version))
-		return txn.Set(mvccSchemaVersionKey(), buf)
+		return setSchemaVersion(txn, version)
 	})
+}
+
+func setSchemaVersion(txn *badger.Txn, version int) error {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(version))
+	return txn.Set(mvccSchemaVersionKey(), buf)
 }
 
 // ============================================================================

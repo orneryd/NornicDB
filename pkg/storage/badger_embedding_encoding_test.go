@@ -15,6 +15,7 @@ import (
 
 func seedPriorEmbeddingNode(t *testing.T, b *BadgerEngine, id NodeID, binaryLength bool) *Node {
 	t.Helper()
+	storeBeforeV4(t, b)
 	n := separatelyStoredNode(id)
 	_, err := b.CreateNode(n)
 	require.NoError(t, err)

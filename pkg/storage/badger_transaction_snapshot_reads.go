@@ -119,7 +119,7 @@ func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID Nod
 	if txn == nil {
 		return false
 	}
-	_, _, err := getEmbeddingItem(txn, nodeID, reservedEmbeddingMetaChunkIndex)
+	_, _, err := getEmbeddingItem(txn, nodeID, reservedEmbeddingMetaChunkIndex, tx.engine.compatibilityEmbeddingKeys())
 	return err == nil
 }
 
