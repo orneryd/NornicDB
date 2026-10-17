@@ -122,6 +122,7 @@ func TestVectorEntryDescribeAndMainKeys(t *testing.T) {
 	assert.Equal(t, "named[v]", vectorEntry{Kind: vectorEntryNamed, Name: "v"}.describe())
 	assert.Equal(t, "property[p]", vectorEntry{Kind: vectorEntryProperty, Name: "p"}.describe())
 	assert.Equal(t, []string{"a", nodeMainVectorKey("\x00b")}, nodeMainVectorKeys([]string{"a", "\x00b"}))
+	assert.Equal(t, nodeChunkVectorKey("d", 2), NodeChunkVectorKey("d", 2))
 }
 
 // Every (node, entry) maps to its own key, and every key decodes back to

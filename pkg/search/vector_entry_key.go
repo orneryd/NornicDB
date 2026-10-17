@@ -230,3 +230,10 @@ func nodeMainVectorKeys(nodeIDs []string) []string {
 	}
 	return nodeIDs
 }
+
+// NodeChunkVectorKey is the vector-entry key of chunk index of nodeID (chunk 0
+// is the node's main vector), for callers outside this package that build
+// HNSW or cluster indexes keyed like the search service's own.
+func NodeChunkVectorKey(nodeID string, chunk int) string {
+	return nodeChunkVectorKey(nodeID, chunk)
+}
