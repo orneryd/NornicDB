@@ -162,7 +162,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				values = append(values, value)
 			}
 		}
-		position, exists := grouping.addTuple(values)
+		position, exists := grouping.addTupleByContract(values, cypherEquivalenceContract)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
 			if run.memory.reserveGroup(row, values, len(templates)) != nil {
@@ -401,7 +401,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 					parts = append(parts, value)
 				}
 			}
-			position, exists := groups.addTuple(parts)
+			position, exists := groups.addTupleByContract(parts, cypherEquivalenceContract)
 			var merged *mergedGroup
 			if !exists {
 				merged = &mergedGroup{group: partial, ordinal: ordinal}
@@ -554,7 +554,7 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		if state.seen == nil {
 			state.seen = &cypherValueIndex{}
 		}
-		if _, exists := state.seen.add(value); exists {
+		if _, exists := state.seen.addByContract(value, cypherEquivalenceContract); exists {
 			return true
 		}
 		// The value counts once: collect's list keeps the same value and

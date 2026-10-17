@@ -1884,7 +1884,7 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
-				if _, exists := seen.addTuple(row); !exists {
+				if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); !exists {
 					if err := retention.reserveBytes(sliceHeaderBytes + mapEntryBytes + int64(len(row))*valueSlotBytes); err != nil {
 						return nil, err
 					}

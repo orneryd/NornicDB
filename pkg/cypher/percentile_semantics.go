@@ -59,7 +59,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			return nil, false
 		}
 		if distinct {
-			if _, exists := seen.add(value); exists {
+			if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
 				continue
 			}
 			if retention.reserveValue(value) != nil {
