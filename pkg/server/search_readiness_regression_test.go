@@ -25,6 +25,49 @@ func (e *readinessChangingEmbedder) Embed(ctx context.Context, text string) ([]f
 	return e.countingEmbedder.Embed(ctx, text)
 }
 
+// iterationGatedEngine holds the next base population inside its storage
+// traversal once armed. The population clears readiness before it iterates,
+// so a held rebuild is a deterministic "sources replaced, not ready" point.
+type iterationGatedEngine struct {
+	storage.Engine
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (e *iterationGatedEngine) arm() (entered, release chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.entered, e.release = make(chan struct{}), make(chan struct{})
+	return e.entered, e.release
+}
+
+func (e *iterationGatedEngine) IterateNodes(fn func(*storage.Node) bool) error {
+	e.mu.Lock()
+	entered, release := e.entered, e.release
+	e.entered, e.release = nil, nil
+	e.mu.Unlock()
+	if entered != nil {
+		close(entered)
+		<-release
+	}
+	if iterator, ok := e.Engine.(interface {
+		IterateNodes(func(*storage.Node) bool) error
+	}); ok {
+		return iterator.IterateNodes(fn)
+	}
+	nodes, err := e.Engine.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if !fn(node) {
+			break
+		}
+	}
+	return nil
+}
+
 func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.auth = nil
@@ -36,20 +79,39 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	vector[0] = 1
 	_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
 	require.NoError(t, err)
-	service, err := server.db.GetOrCreateSearchService(database, engine)
+	gated := &iterationGatedEngine{Engine: engine}
+	// The database may already own a service built over its plain engine;
+	// replace it so the next service traverses through the gate.
+	server.db.ResetSearchService(database)
+	service, err := server.db.GetOrCreateSearchService(database, gated)
 	require.NoError(t, err)
-	// Wait for the DB owner's initial build; starting a second BuildIndexes
-	// here would itself race the asynchronous initial build.
-	require.Eventually(t, service.IsReady, 10*time.Second, 10*time.Millisecond)
+	// Only database creation starts a build, so build the replacement here
+	// (BuildIndexes serialises with any build the database started).
+	require.NoError(t, service.BuildIndexes(context.Background()))
+	require.True(t, service.IsReady())
 	rebuildResult := make(chan error, 1)
 	server.db.SetEmbedder(&readinessChangingEmbedder{
 		countingEmbedder: countingEmbedder{dims: 1024},
 		beforeEmbed: func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			// A canceled rebuild leaves this service unavailable. Doing this in
+			// A rebuild cancelled after it replaced the node sources leaves this
+			// service unavailable. (One cancelled before it starts changes
+			// nothing, and the complete indexes keep answering.) Doing this in
 			// query embedding deterministically crosses the handler's first gate.
-			rebuildResult <- service.BuildIndexes(ctx)
+			entered, release := gated.arm()
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- service.BuildIndexes(ctx) }()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Error("rebuild did not reach its node traversal")
+			}
+			if service.IsReady() {
+				t.Error("a rebuild replacing the node sources must clear readiness")
+			}
+			cancel()
+			close(release)
+			rebuildResult <- <-done
 		},
 	})
 	body := map[string]interface{}{"database": database, "query": "needle", "limit": 1}
@@ -72,4 +134,31 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	require.NoError(t, service.BuildIndexes(context.Background()))
 	response = makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
+// A rebuild cancelled before it starts replaces nothing, so search keeps
+// answering from the complete indexes.
+func TestHandleSearch_CancelledRebuildBeforeStartKeepsServing(t *testing.T) {
+	server, _ := setupTestServer(t)
+	server.auth = nil
+	const database = "readiness_cancel_early"
+	require.NoError(t, server.dbManager.CreateDatabase(database))
+	engine, err := server.dbManager.GetStorage(database)
+	require.NoError(t, err)
+	vector := make([]float32, 1024)
+	vector[0] = 1
+	_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
+	require.NoError(t, err)
+	service, err := server.db.GetOrCreateSearchService(database, engine)
+	require.NoError(t, err)
+	require.Eventually(t, service.IsReady, 10*time.Second, 10*time.Millisecond)
+	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, service.BuildIndexes(cancelled), context.Canceled)
+	require.True(t, service.IsReady())
+	body := map[string]interface{}{"database": database, "query": "needle", "limit": 1}
+	response := makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "seed", "the complete indexes still return the seed")
 }
