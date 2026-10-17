@@ -10,6 +10,7 @@ and the comparison harness in [#1375](https://github.com/orneryd/NornicDB/pull/1
 |---|---|---|
 | Lazy first reads and incomplete builds | All three metrics returned no hits without warming; partial builds answered successfully | Optioned/Qdrant reads use the service warming/readiness boundary; existing Cypher scalar reads retain their live-index contract |
 | Population versus live updates/deletes | The paused population replaced a completed update (score 0 instead of 1) and restored a deleted point | The existing base-operation mutex orders live node mutations and derived work against population and source clearing |
+| Durable Qdrant deletion versus population | A public RPC removed the index entry, then paused storage deletion; population restored it after acknowledgment (2 embeddings instead of 1) | Delete durable storage first, then enter the shared-index mutation boundary, as upserts already do |
 | Fixed dimensions | A 2-d explicit embedding on a fixed 4-d index returned success and discarded its previous indexed vector | Validate explicit vectors before replacing index entries; propagate indexing/provider failures to gRPC callers |
 | File-backed Dot/Euclid | Dot score for `[3,4,0,0]` against itself was 5 instead of 25 | Resolve original durable vectors for magnitude-sensitive scoring; cosine coordinates remain normalized and single-copy |
 | Embedded drop/recreate | Old point 1 remained alongside new point 3 | The constructor's default drop path clears the shared service and removes persisted vector, HNSW, IVF-HNSW and IVF-PQ artifacts |
@@ -107,3 +108,9 @@ consumer implementations reproduces the failures; the integrated correction
 must pass current verification. The preferred-seed list is consumed during
 clustering, so its absence after training is not itself a defect; the regression
 inspects resolved seed IDs by reapplying their existing owner.
+
+`TestSharedIndexDeleteOrdersStorageBeforePopulationBoundary` extends the gRPC
+population proof to a population that begins during durable deletion, rather
+than one already running when the mutation starts. The previous storage/index
+order failed (2 indexed embeddings after deleting one of two points); the final
+order retains one embedding and returns the surviving point through gRPC.
