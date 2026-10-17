@@ -445,6 +445,71 @@ IVFPQ heap delta     ~1.57MiB  ~2.08MiB  ~2.08MiB  ~2.08MiB
 
 Use this profile when memory-scaled ANN operation is more important than lowest-latency single-query performance. For full knobs and operational tuning, see `docs/operations/configuration.md` ("Compressed ANN mode (IVFPQ)").
 
+### Compressed HNSW coordinates
+
+HNSW can keep compressed coordinates for graph traversal, independently of the
+`fast`, `balanced`, or `accurate` graph preset. Original vectors continue to
+build the graph and rescore the candidate pool by default. Lexical insertion
+order, signature tie-breaking, and lexical query entry points remain enabled.
+
+```bash
+export NORNICDB_VECTOR_ANN_QUALITY=fast
+export NORNICDB_VECTOR_HNSW_QUANTIZATION=scalar  # none | scalar | pq | binary
+export NORNICDB_PERSIST_SEARCH_INDEXES=true     # file-backed originals/checkpoints
+```
+
+| Mode | Coordinate storage at 1,024 dimensions | Scoring |
+| --- | --- | --- |
+| `scalar` (`int8`) | 1,024 bytes + a 4-byte scale per vector | Signed int8 dot product with per-vector symmetric scales |
+| `pq` (`product`) | 256 bytes at the default 16× ratio, plus shared codebooks | Float query against product-codeword lookup tables |
+| `binary` | 128 bytes | Sign bits and Hamming distance |
+
+These sizes exclude graph links, originals, storage caches, and process memory.
+Keeping originals permits exact rescoring; compression ratios are not RSS ratios.
+This initial compressed HNSW path accelerates cosine queries. Dot and Euclidean
+queries retain their existing original-vector scoring paths.
+
+PQ accepts `NORNICDB_VECTOR_HNSW_PQ_COMPRESSION=4|8|16|32|64` (default `16`),
+`NORNICDB_VECTOR_HNSW_PQ_TRAINING_SAMPLE_MAX` (default `10000`), and
+`NORNICDB_VECTOR_HNSW_PQ_TRAINING_ITERATIONS` (default `10`). Training prioritizes
+lexical seeds, then samples the remaining population deterministically. Books
+train independently using squared distance, matching encoding. A collection with
+fewer than 256 live vectors remains uncompressed until it has enough training
+vectors; its strategy reports quantization as pending. Product codes here are
+non-residual codes on the HNSW graph; the existing `quality=compressed` IVF-PQ
+routing mode remains available separately.
+
+Qdrant gRPC clients can instead set `CreateCollection.quantization_config` to
+scalar int8, product, or binary. The collection stores that policy and reapplies
+it after restart, including when global quantization is disabled. All named
+vectors in one collection must share a policy. Scalar quantile clipping other
+than `1` and changing quantization through `UpdateCollection` are currently
+unsupported and return explicit errors.
+
+`SearchParams.quantization` (also forwarded by Query, Recommend, and SearchGroups)
+controls each request:
+
+- `ignore=true` traverses original coordinates.
+- `rescore=true` (the default) ranks discovered candidates with original vectors.
+- `oversampling>=1` expands the rescoring pool; binary often needs a larger pool.
+- `rescore=false` returns approximate scores through the final public consumer.
+  Binary scores are approximate proxies, rather than exact cosine values.
+
+Binary storage also accepts `NORNICDB_VECTOR_HNSW_BINARY_QUERY_BITS=1|4|8`
+(default `1`), or Qdrant `BinaryQuantization.query_encoding=Binary|Scalar4Bits|Scalar8Bits`.
+The 4/8-bit query variants preserve query magnitudes while stored vectors still
+use one bit per dimension. Bitplane/popcount scoring costs more than Hamming
+scoring, and can improve candidate ranking. Two-bit and 1.5-bit stored encodings
+are currently unsupported and return explicit errors.
+
+`params.exact=true` evaluates the indexed population with original vectors.
+For Go callers the equivalent fields are `SearchOptions.QuantizationIgnore`,
+`QuantizationRescore`, and `QuantizationOversampling` (zero means the default 1).
+Recall depends on embedding distribution, graph beam, and rescoring depth;
+measure the full corpus before choosing a compressed mode. Native ARM64 int8
+scoring and portable Go scoring use the same exact signed-integer accumulation.
+CUDA/Vulkan construction still requires device validation on those platforms.
+
 ### Dimensions
 
 | Dimensions | Speed    | Quality | Model Examples    |

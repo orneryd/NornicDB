@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add opt-in HNSW scalar int8, product (4×–64×), and binary coordinate compression
+  (with binary or 4/8-bit scalar queries),
+  preserving original-vector construction, lexical hints, exact rescoring and checkpoints.
+  Persist Qdrant collection quantization policies and honor request ignore/rescore/oversampling.
+  Extend the full-corpus ANN benchmark to exercise the same compressed modes on both engines.
+
 ### Fixed
+
+- Resolve named/property/chunk lexical HNSW seeds using indexed identities while preserving
+  direct document anchors in insertion order.
+  Train PQ codebooks with the same squared-distance assignments used by encoding, retaining
+  subvector magnitudes; coarse IVF routing keeps cosine training. Pool CPU build scratch and
+  encode HNSW coordinates while construction can borrow the existing mapped read lease.
 
 - Honor the configured logger for unary/streaming gRPC request completion: successful requests log at debug,
   client failures at warning, and internal/service failures at error. Suppressed requests avoid log formatting/output.

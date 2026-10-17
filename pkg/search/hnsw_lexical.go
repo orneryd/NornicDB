@@ -19,11 +19,12 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		if batchSize <= 0 {
 			batchSize = 10000
 		}
+		seededIDs := make(map[string]struct{})
 		if len(seedHints) > 0 {
 			seedPairs := make([]hnswBuildPair, 0, len(seedHints))
 			if err := iterate(batchSize, func(ids []string, vecs [][]float32) error {
 				for i := range ids {
-					hint, ok := seedHints[ids[i]]
+					hint, ok := lexicalHintForVectorID(ids[i], seedHints)
 					if !ok {
 						continue
 					}
@@ -35,7 +36,10 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 			}); err != nil {
 				return err
 			}
-			slices.SortFunc(seedPairs, compareLexicalBuildPairs)
+			seedPairs = prioritizedLexicalBuildPairs(seedPairs)
+			for _, pair := range seedPairs {
+				seededIDs[pair.id] = struct{}{}
+			}
 			for start := 0; start < len(seedPairs); start += batchSize {
 				end := min(start+batchSize, len(seedPairs))
 				if err := fn(seedPairs[start:end]); err != nil {
@@ -46,7 +50,7 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		return iterate(batchSize, func(ids []string, vecs [][]float32) error {
 			batch := make([]hnswBuildPair, 0, len(ids))
 			for i := range ids {
-				if _, seeded := seedHints[ids[i]]; seeded {
+				if _, seeded := seededIDs[ids[i]]; seeded {
 					continue
 				}
 				hint, hasHint := lexicalHintForVectorID(ids[i], seedHints)
@@ -70,23 +74,49 @@ func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedHints map[string]LexicalSe
 	if len(seedHints) == 0 || len(pairs) == 0 {
 		return pairs
 	}
-	seedPairs := make([]hnswBuildPair, 0, len(seedHints))
-	otherPairs := make([]hnswBuildPair, 0, len(pairs))
-	for _, pair := range pairs {
-		if hint, ok := seedHints[pair.id]; ok {
-			pair.hint, pair.hasHint = hint, true
-			seedPairs = append(seedPairs, pair)
-			continue
-		}
-		if hint, ok := lexicalHintForVectorID(pair.id, seedHints); ok {
-			pair.hint, pair.hasHint = hint, true
-		}
-		otherPairs = append(otherPairs, pair)
+	for i := range pairs {
+		pairs[i].hint, pairs[i].hasHint = lexicalHintForVectorID(pairs[i].id, seedHints)
 	}
-	slices.SortStableFunc(seedPairs, compareLexicalBuildPairs)
+	seedPairs := prioritizedLexicalBuildPairs(pairs)
+	seededIDs := make(map[string]struct{}, len(seedPairs))
+	for _, pair := range seedPairs {
+		seededIDs[pair.id] = struct{}{}
+	}
+	otherPairs := make([]hnswBuildPair, 0, len(pairs)-len(seedPairs))
+	for _, pair := range pairs {
+		if _, seeded := seededIDs[pair.id]; !seeded {
+			otherPairs = append(otherPairs, pair)
+		}
+	}
+
 	pairs = append(seedPairs, otherPairs...)
 	logSearchPrintf("[HNSW] 🧭 Lexical-seeded build order: %d seeded vectors prioritized", len(seedPairs))
 	return pairs
+}
+
+// A directly indexed document remains its construction anchor. Otherwise
+// named/property/chunk embeddings carry the document's ranked insertion slot.
+// All other chunks retain annotations for graph linking without delaying the
+// next document anchor. Memory and file-backed builders share this decision.
+func prioritizedLexicalBuildPairs(pairs []hnswBuildPair) []hnswBuildPair {
+	anchors := make(map[string]struct{})
+	for _, pair := range pairs {
+		if pair.hasHint && pair.id == pair.hint.ID {
+			anchors[pair.id] = struct{}{}
+		}
+	}
+	out := make([]hnswBuildPair, 0)
+	for _, pair := range pairs {
+		if !pair.hasHint {
+			continue
+		}
+		_, hasAnchor := anchors[pair.hint.ID]
+		if !hasAnchor || pair.id == pair.hint.ID {
+			out = append(out, pair)
+		}
+	}
+	slices.SortFunc(out, compareLexicalBuildPairs)
+	return out
 }
 
 func compareLexicalBuildPairs(left, right hnswBuildPair) int {
@@ -119,6 +149,29 @@ func (s *Service) hnswLexicalSeedHints(ft bm25Index, graphM int) map[string]Lexi
 	return out
 }
 
+// hnswBuildLexicalSeedHints binds ranked documents to every indexed embedding.
+// Metadata owns this mapping: parsing an encoded ID cannot disambiguate node
+// names that themselves contain a named/property/chunk suffix.
+func (s *Service) hnswBuildLexicalSeedHints(ft bm25Index, graphM int) map[string]LexicalSeedHint {
+	docs := s.hnswLexicalSeedHints(ft, graphM)
+	out := make(map[string]LexicalSeedHint, len(docs))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for nodeID, hint := range docs {
+		out[nodeID] = hint
+		for _, id := range s.nodeChunkVectors[nodeID] {
+			out[id] = hint
+		}
+		for _, id := range s.nodeNamedVector[nodeID] {
+			out[id] = hint
+		}
+		for _, id := range s.nodePropVector[nodeID] {
+			out[id] = hint
+		}
+	}
+	return out
+}
+
 func (s *Service) hnswLexicalSeedNodeSet(ft bm25Index) map[string]struct{} {
 	hints := s.hnswLexicalSeedHints(ft, DefaultHNSWConfig().M)
 	if len(hints) == 0 {
@@ -135,6 +188,9 @@ func lexicalHintForVectorID(vectorID string, hints map[string]LexicalSeedHint) (
 	if len(hints) == 0 || vectorID == "" {
 		return LexicalSeedHint{}, false
 	}
+	if hint, ok := hints[vectorID]; ok {
+		return hint, true
+	}
 	hint, ok := hints[normalizeVectorResultIDToNodeID(vectorID)]
 	return hint, ok
 }
@@ -144,7 +200,8 @@ func lexicalHintValues(hints map[string]LexicalSeedHint) []LexicalSeedHint {
 		return nil
 	}
 	out := make([]LexicalSeedHint, 0, len(hints))
-	for _, hint := range hints {
+	for id, hint := range hints {
+		hint.ID = id
 		out = append(out, hint)
 	}
 	return out

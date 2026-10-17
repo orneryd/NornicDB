@@ -715,7 +715,7 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	store, meta, err := service.openCollection(ctx, "test_vectors")
 	require.NoError(t, err)
 
-	svc, err := service.getSearchService(ctx, "test_vectors", store)
+	svc, err := service.getSearchService(ctx, "test_vectors", store, meta)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	query := []float32{1, 0, 0, 0}
@@ -754,13 +754,13 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	t.Run("a canceled search fails", func(t *testing.T) {
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err := searchCollection(cancelCtx, svc, meta.Distance, "", query, nil, 2, 0, -1, 0, false)
+		_, err := searchCollection(cancelCtx, svc, meta.Distance, "", query, nil, 2, 0, -1, 0, false, nil)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("getSearchService branches", func(t *testing.T) {
 		service.searchProvider = nil
-		svc, err := service.getSearchService(ctx, "test_vectors", store)
+		svc, err := service.getSearchService(ctx, "test_vectors", store, meta)
 		require.NoError(t, err)
 		require.Nil(t, svc)
 
@@ -769,7 +769,7 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 			_ = st
 			return nil, errors.New("boom")
 		}
-		svc, err = service.getSearchService(ctx, "test_vectors", store)
+		svc, err = service.getSearchService(ctx, "test_vectors", store, meta)
 		require.ErrorContains(t, err, "boom")
 		require.Nil(t, svc)
 
@@ -779,7 +779,7 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 			_ = st
 			return expected, nil
 		}
-		svc, err = service.getSearchService(ctx, "test_vectors", store)
+		svc, err = service.getSearchService(ctx, "test_vectors", store, meta)
 		require.NoError(t, err)
 		require.Equal(t, expected, svc)
 	})

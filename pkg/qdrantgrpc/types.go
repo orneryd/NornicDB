@@ -11,4 +11,6 @@ type CollectionMeta struct {
 	Dimensions int
 	Distance   qpb.Distance
 	Status     qpb.CollectionStatus
+	// Quantization is the durable collection policy; nil uses server defaults.
+	Quantization *qpb.QuantizationConfig
 }
