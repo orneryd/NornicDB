@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
+  limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
+  `Neo.ClientError.Statement.SyntaxError` (#1339).
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
 
