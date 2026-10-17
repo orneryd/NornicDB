@@ -18,7 +18,7 @@ func TestRerankCandidateContentPrependsTitleAndExpandsChunkNeighbours(t *testing
 		Properties: map[string]interface{}{"title": "  The Title  ", "text": strings.Join(chunks, " ")},
 		EmbedMeta:  map[string]interface{}{"chunk_texts": chunks},
 	}
-	result := rrfResult{ID: "nornic:doc", MatchID: "nornic:doc-chunk-2", VectorRank: 1}
+	result := rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 2), VectorRank: 1}
 
 	content := svc.rerankCandidateContent(node, result, "matched", 4096)
 	require.Equal(t, "The Title\nchunk zero chunk one chunk two matched chunk three chunk four", content)
@@ -96,7 +96,7 @@ func TestRerankBudgetCountsCharactersNotBytes(t *testing.T) {
 		{"cjk", []string{strings.Repeat("字", 100), strings.Repeat("文", 100), strings.Repeat("本", 100)}},
 	} {
 		node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": script.chunks}}
-		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc-chunk-1"}, "", 250)
+		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "", 250)
 		// 100 (matched) + 1 + 100 (next) + 1 + 48 (bounded previous suffix) = 250 characters in every script.
 		require.Equal(t, 250, utf8.RuneCountInString(content), script.name)
 		bytesPerChar := len(script.chunks[0]) / 100
@@ -123,7 +123,7 @@ func TestRerankBudgetHandlesMixedScripts(t *testing.T) {
 	chunks := []string{mixed, mixed + " second", mixed + " third"}
 	node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": chunks}}
 	for budget := 1; budget <= 3*utf8.RuneCountInString(mixed)+20; budget += 3 {
-		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: "nornic:doc-chunk-1"}, "gamma", budget)
+		content := svc.rerankCandidateContent(node, rrfResult{ID: "nornic:doc", MatchID: nodeChunkVectorKey("nornic:doc", 1)}, "gamma", budget)
 		require.LessOrEqual(t, utf8.RuneCountInString(content), budget, "budget %d", budget)
 		require.True(t, utf8.ValidString(content), "budget %d: cut inside a multi-byte character", budget)
 	}

@@ -411,7 +411,10 @@ func (h *HNSWCandidateGen) searchCandidatesWithEntryEvidence(ctx context.Context
 	candidates := make([]Candidate, 0, min(candidateLimit, len(results)))
 	selected := make(map[string]struct{}, min(candidateLimit, len(results)))
 	for _, r := range results {
-		nodeID := normalizeVectorResultIDToNodeID(r.ID)
+		nodeID, ok := vectorEntryOwner(r.ID)
+		if !ok {
+			continue
+		}
 		if _, ok := selected[nodeID]; !ok {
 			if len(selected) == candidateLimit {
 				// A further node was cut here, so the search isn't exhausted

@@ -148,7 +148,7 @@ func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t
 	// returns Claude. This mirrors high-frequency entities being present in the
 	// file store while candidate generation misses them during ingest.
 	staleHNSW := NewHNSWIndex(4, DefaultHNSWConfig())
-	require.NoError(t, staleHNSW.Add("claude-existing-prop-name_embedding", []float32{0, 1, 0, 0}))
+	require.NoError(t, staleHNSW.Add(nodePropertyVectorKey("claude-existing", "name_embedding"), []float32{0, 1, 0, 0}))
 	svc.vectorPipeline = NewVectorSearchPipeline(NewHNSWCandidateGen(staleHNSW), NewCPUExactScorer(vfs))
 	svc.hnswIndex = staleHNSW
 
@@ -221,9 +221,9 @@ func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 
 	svc.nodeLabels["nornic:n1"] = []string{"Doc"}
-	svc.nodeNamedVector["nornic:n1"] = map[string]string{"default": "nornic:n1-named-default"}
-	svc.nodePropVector["nornic:n1"] = map[string]string{"vec": "nornic:n1-prop-vec"}
-	svc.nodeChunkVectors["nornic:n1"] = []string{"nornic:n1-chunk-0"}
+	svc.nodeNamedVector["nornic:n1"] = map[string]string{"default": nodeNamedVectorKey("nornic:n1", "default")}
+	svc.nodePropVector["nornic:n1"] = map[string]string{"vec": nodePropertyVectorKey("nornic:n1", "vec")}
+	svc.nodeChunkVectors["nornic:n1"] = []string{nodeChunkVectorKey("nornic:n1", 0)}
 
 	svc.ClearVectorIndex()
 

@@ -201,11 +201,11 @@ func TestHNSWCandidateGenerationSelectsDistinctNodesFromChunkedResults(t *testin
 	config := DefaultHNSWConfig()
 	index := NewHNSWIndex(2, config)
 	for i := 0; i < 8; i++ {
-		require.NoError(t, index.Add(fmt.Sprintf("doc-a-chunk-%d", i), []float32{1, float32(i) / 100}))
+		require.NoError(t, index.Add(nodeChunkVectorKey("doc-a", i), []float32{1, float32(i) / 100}))
 	}
-	require.NoError(t, index.Add("doc-b-chunk-0", []float32{0.95, 0.05}))
-	require.NoError(t, index.Add("doc-c-chunk-0", []float32{0.9, 0.1}))
-	require.NoError(t, index.Add("doc-d-chunk-0", []float32{0.85, 0.15}))
+	require.NoError(t, index.Add(nodeChunkVectorKey("doc-b", 0), []float32{0.95, 0.05}))
+	require.NoError(t, index.Add(nodeChunkVectorKey("doc-c", 0), []float32{0.9, 0.1}))
+	require.NoError(t, index.Add(nodeChunkVectorKey("doc-d", 0), []float32{0.85, 0.15}))
 
 	// The limit counts nodes; every chunk the beam surfaced for a selected
 	// node stays, for the exact stage to score.

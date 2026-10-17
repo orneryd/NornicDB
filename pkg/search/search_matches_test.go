@@ -247,7 +247,7 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	require.Empty(t, light.EmbedMeta)
 	// The matched chunk's window; without its chunk texts the reranker would
 	// read the text's start ("alpha beta.").
-	require.Equal(t, "gamma delta.", service.rerankCandidateContent(light, rrfResult{ID: "doc", MatchID: "doc-chunk-1"}, "zzz", 12))
+	require.Equal(t, "gamma delta.", service.rerankCandidateContent(light, rrfResult{ID: "doc", MatchID: nodeChunkVectorKey("doc", 1)}, "zzz", 12))
 }
 
 // A keyword hit's term matches list its rarest query terms' occurrences

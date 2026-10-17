@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"sort"
-	"strconv"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -287,7 +286,7 @@ func (s *Service) graphRerankContent(result *SearchResult, query string, maxChar
 		matched := rrfResult{ID: string(id)}
 		if match != nil && match.Kind == SearchMatchChunk {
 			if len(managedChunkTexts(s.hitEmbedMeta(node))) > match.Chunk {
-				matched.MatchID = string(id) + "-chunk-" + strconv.Itoa(match.Chunk)
+				matched.MatchID = nodeChunkVectorKey(string(id), match.Chunk)
 			} else if passage := graphPassage(node.Properties, match, maxChars); passage != "" {
 				return passage
 			}

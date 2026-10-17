@@ -118,24 +118,22 @@ func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
-	// Expected vectors:
-	// - named: "nornic:doc-vectors-named-titleVec"
-	// - chunks: chunk 0 under the main id + chunk-1
-	// - custom property vector: "nornic:doc-vectors-prop-customVec"
+	// Expected vectors, under vector_entry_key.go keys:
+	// - named: titleVec
+	// - chunks: chunk 0 under the main id + chunk 1
+	// - custom property vector: customVec
 	require.Equal(t, 4, svc.EmbeddingCount())
 
 	named := svc.nodeNamedVector["nornic:doc-vectors"]
 	require.NotNil(t, named)
-	require.Equal(t, "nornic:doc-vectors-named-titleVec", named["titleVec"])
+	require.Equal(t, nodeNamedVectorKey("nornic:doc-vectors", "titleVec"), named["titleVec"])
 
 	props := svc.nodePropVector["nornic:doc-vectors"]
 	require.NotNil(t, props)
-	require.Equal(t, "nornic:doc-vectors-prop-customVec", props["customVec"])
+	require.Equal(t, nodePropertyVectorKey("nornic:doc-vectors", "customVec"), props["customVec"])
 
 	chunks := svc.nodeChunkVectors["nornic:doc-vectors"]
-	require.Contains(t, chunks, "nornic:doc-vectors")
-	require.NotContains(t, chunks, "nornic:doc-vectors-chunk-0")
-	require.Contains(t, chunks, "nornic:doc-vectors-chunk-1")
+	require.Equal(t, []string{"nornic:doc-vectors", nodeChunkVectorKey("nornic:doc-vectors", 1)}, chunks)
 }
 
 func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {

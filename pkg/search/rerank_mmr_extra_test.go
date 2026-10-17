@@ -188,7 +188,7 @@ func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
 
 	reranker := &recordingReranker{}
 	results := []rrfResult{
-		{ID: "nornic:vector", MatchID: "nornic:vector-chunk-1", RRFScore: 0.9, VectorRank: 1},
+		{ID: "nornic:vector", MatchID: nodeChunkVectorKey("nornic:vector", 1), RRFScore: 0.9, VectorRank: 1},
 		{ID: "nornic:bm25", RRFScore: 0.8, BM25Rank: 1},
 		{ID: "nornic:prefix", RRFScore: 0.7},
 	}

@@ -63,13 +63,13 @@ func TestPropertyVectorHelpers(t *testing.T) {
 	svc := NewServiceWithDimensions(engine, 4)
 	svc.buildInProgress.Store(true)
 	svc.nodePropVector = map[string]map[string]string{
-		"node-1": {"title": "node-1-prop-title", "body": "node-1-prop-body"},
-		"node-2": {"title": "node-2-prop-title"},
+		"node-1": {"title": nodePropertyVectorKey("node-1", "title"), "body": nodePropertyVectorKey("node-1", "body")},
+		"node-2": {"title": nodePropertyVectorKey("node-2", "title")},
 	}
 
-	require.NoError(t, svc.vectorIndex.Add("node-1-prop-title", []float32{1, 0, 0, 0}))
-	require.NoError(t, svc.vectorIndex.Add("node-1-prop-body", []float32{0, 1, 0, 0}))
-	require.NoError(t, svc.vectorIndex.Add("node-2-prop-title", []float32{0, 0, 1, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-1", "title"), []float32{1, 0, 0, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-1", "body"), []float32{0, 1, 0, 0}))
+	require.NoError(t, svc.vectorIndex.Add(nodePropertyVectorKey("node-2", "title"), []float32{0, 0, 1, 0}))
 
 	require.Equal(t, 2, svc.CountPropertyVectorEntries("title"))
 	require.Equal(t, 1, svc.CountPropertyVectorEntries("body"))
@@ -91,11 +91,11 @@ func TestPropertyVectorHelpers(t *testing.T) {
 	liveSvc := NewServiceWithDimensions(engine, 4)
 	liveSvc.resultCache.Put("cached", &SearchResponse{Query: "cached"})
 	liveSvc.nodePropVector = map[string]map[string]string{
-		"node-1": {"body": "node-1-prop-body"},
-		"node-2": {"title": "node-2-prop-title"},
+		"node-1": {"body": nodePropertyVectorKey("node-1", "body")},
+		"node-2": {"title": nodePropertyVectorKey("node-2", "title")},
 	}
-	require.NoError(t, liveSvc.vectorIndex.Add("node-1-prop-body", []float32{0, 1, 0, 0}))
-	require.NoError(t, liveSvc.vectorIndex.Add("node-2-prop-title", []float32{0, 0, 1, 0}))
+	require.NoError(t, liveSvc.vectorIndex.Add(nodePropertyVectorKey("node-1", "body"), []float32{0, 1, 0, 0}))
+	require.NoError(t, liveSvc.vectorIndex.Add(nodePropertyVectorKey("node-2", "title"), []float32{0, 0, 1, 0}))
 
 	liveSvc.RemovePropertyVectorIndex("body")
 	require.Nil(t, liveSvc.resultCache.Get("cached"))

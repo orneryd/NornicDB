@@ -82,7 +82,7 @@ func TestHNSWBuildMetadataDoesNotExecuteBM25Queries(t *testing.T) {
 }
 
 func TestHNSWBuildIteratorPrioritizesRankedDocumentsAndAnnotatesTheirChunks(t *testing.T) {
-	ids := []string{"other", "doc-a-chunk-1", "doc-a", "doc-b", "doc-b-chunk-1"}
+	ids := []string{"other", nodeChunkVectorKey("doc-a", 1), "doc-a", "doc-b", nodeChunkVectorKey("doc-b", 1)}
 	vectors := [][]float32{{1}, {2}, {3}, {4}, {5}}
 	iterate := func(_ int, fn func([]string, [][]float32) error) error {
 		return fn(ids, vectors)
@@ -106,9 +106,9 @@ func TestHNSWBuildIteratorPrioritizesRankedDocumentsAndAnnotatesTheirChunks(t *t
 	for _, pair := range built {
 		seen[pair.id] = pair
 	}
-	require.True(t, seen["doc-a-chunk-1"].hasHint)
-	require.Equal(t, hints["doc-a"], seen["doc-a-chunk-1"].hint)
-	require.True(t, seen["doc-b-chunk-1"].hasHint)
+	require.True(t, seen[nodeChunkVectorKey("doc-a", 1)].hasHint)
+	require.Equal(t, hints["doc-a"], seen[nodeChunkVectorKey("doc-a", 1)].hint)
+	require.True(t, seen[nodeChunkVectorKey("doc-b", 1)].hasHint)
 	require.False(t, seen["other"].hasHint)
 }
 

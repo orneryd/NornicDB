@@ -379,7 +379,7 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode, quantizedIndex *HNSWIndex) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		candidateNodes[decodeVectorKey(candidate.ID).node] = struct{}{}
+		candidateNodes[candidate.ID] = struct{}{} // owners: decoded once at collapse
 	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
@@ -805,13 +805,9 @@ func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVect
 		}
 		eligible.ChunkEmbeddings = nil
 		for _, chunkID := range admitted.chunks {
-			chunk := 0
-			if chunkID != id {
-				key := decodeVectorKey(chunkID)
-				if key.kind != vectorKeyChunk || key.node != id {
-					continue
-				}
-				chunk = key.chunk
+			chunk, ok := vectorEntryChunkIndex(id, chunkID)
+			if !ok {
+				continue
 			}
 			if chunk >= 0 && chunk < len(node.ChunkEmbeddings) {
 				eligible.ChunkEmbeddings = append(eligible.ChunkEmbeddings, node.ChunkEmbeddings[chunk])

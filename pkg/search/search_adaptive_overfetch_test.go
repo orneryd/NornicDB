@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -31,15 +30,15 @@ func (g *shortNonExhaustiveCandidateGenerator) searchCandidatesWithExhaustion(_ 
 	g.limits = append(g.limits, limit)
 	if limit <= 3 {
 		return []Candidate{
-			{ID: "doc-1-chunk-0", Score: 1},
-			{ID: "doc-1-chunk-1", Score: 0.9},
+			{ID: nodeChunkVectorKey("doc-1", 0), Score: 1},
+			{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
 		}, false, nil
 	}
 	return []Candidate{
-		{ID: "doc-1-chunk-0", Score: 1},
-		{ID: "doc-1-chunk-1", Score: 0.9},
-		{ID: "doc-2-chunk-0", Score: 0.8},
-		{ID: "doc-3-chunk-0", Score: 0.7},
+		{ID: nodeChunkVectorKey("doc-1", 0), Score: 1},
+		{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
+		{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.8},
+		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.7},
 	}, false, nil
 }
 
@@ -81,10 +80,10 @@ func (g *recordingCandidateGenerator) SearchCandidates(_ context.Context, _ []fl
 
 func TestAdaptiveVectorSearchWidensOnlyWhenUniqueNodesUnderfill(t *testing.T) {
 	generator := &recordingCandidateGenerator{candidates: []Candidate{
-		{ID: "doc-1-chunk-0", Score: 1.0},
-		{ID: "doc-1-chunk-1", Score: 0.9},
-		{ID: "doc-2-chunk-0", Score: 0.8},
-		{ID: "doc-3-chunk-0", Score: 0.7},
+		{ID: nodeChunkVectorKey("doc-1", 0), Score: 1.0},
+		{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
+		{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.8},
+		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.7},
 	}}
 	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
@@ -132,10 +131,10 @@ func TestAdaptiveVectorSearchWidensShortNonExhaustiveApproximateResults(t *testi
 
 func TestAdaptiveVectorSearchScoresFullApproximateBudgetBeforeNodeCollapse(t *testing.T) {
 	generator := &recordingApproximateCandidateGenerator{recordingCandidateGenerator: recordingCandidateGenerator{candidates: []Candidate{
-		{ID: "doc-1-chunk-0", Score: 1.0},
-		{ID: "doc-2-chunk-0", Score: 0.9},
-		{ID: "doc-3-chunk-0", Score: 0.8},
-		{ID: "best-node-chunk-7", Score: 0.99},
+		{ID: nodeChunkVectorKey("doc-1", 0), Score: 1.0},
+		{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.9},
+		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.8},
+		{ID: nodeChunkVectorKey("best-node", 7), Score: 0.99},
 	}}}
 	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
@@ -160,9 +159,9 @@ func TestHNSWRecallBudgetIsWideButBoundedForLargeResultSets(t *testing.T) {
 
 func TestAdaptiveVectorSearchStopsAtConfiguredCap(t *testing.T) {
 	generator := &recordingCandidateGenerator{candidates: []Candidate{
-		{ID: "doc-1-chunk-0", Score: 1.0},
-		{ID: "doc-1-chunk-1", Score: 0.9},
-		{ID: "doc-1-chunk-2", Score: 0.8},
+		{ID: nodeChunkVectorKey("doc-1", 0), Score: 1.0},
+		{ID: nodeChunkVectorKey("doc-1", 1), Score: 0.9},
+		{ID: nodeChunkVectorKey("doc-1", 2), Score: 0.8},
 		{ID: "doc-2", Score: 0.7},
 	}}
 	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
@@ -336,10 +335,10 @@ func TestVectorQueryNodesIndexedUsesAdaptiveWidening(t *testing.T) {
 		require.NoError(t, service.IndexNode(node))
 	}
 	generator := &recordingCandidateGenerator{candidates: []Candidate{
-		{ID: "skip-chunk-0", Score: 1.0},
-		{ID: "doc-1-chunk-0", Score: 0.9},
-		{ID: "doc-2-chunk-0", Score: 0.8},
-		{ID: "doc-3-chunk-0", Score: 0.7},
+		{ID: nodeChunkVectorKey("skip", 0), Score: 1.0},
+		{ID: nodeChunkVectorKey("doc-1", 0), Score: 0.9},
+		{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.8},
+		{ID: nodeChunkVectorKey("doc-3", 0), Score: 0.7},
 	}}
 	service.pipelineMu.Lock()
 	service.vectorPipeline = NewVectorSearchPipeline(generator, &IdentityExactScorer{})
@@ -368,9 +367,9 @@ func TestVectorQueryNodesIndexedWidensBeyondChunkRatioUntilDistinctNodesFill(t *
 	}
 	candidates := make([]Candidate, 0, 13)
 	for chunk := 0; chunk < 12; chunk++ {
-		candidates = append(candidates, Candidate{ID: fmt.Sprintf("doc-1-chunk-%d", chunk), Score: 1})
+		candidates = append(candidates, Candidate{ID: nodeChunkVectorKey("doc-1", chunk), Score: 1})
 	}
-	candidates = append(candidates, Candidate{ID: "doc-2-chunk-0", Score: 0.9})
+	candidates = append(candidates, Candidate{ID: nodeChunkVectorKey("doc-2", 0), Score: 0.9})
 	generator := &recordingCandidateGenerator{candidates: candidates}
 	service.pipelineMu.Lock()
 	service.vectorPipeline = NewVectorSearchPipeline(generator, &IdentityExactScorer{})
