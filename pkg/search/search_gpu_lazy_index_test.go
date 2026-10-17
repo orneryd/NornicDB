@@ -111,3 +111,59 @@ func TestGPUFirstPipelineUploadOwnsMutationAdmission(t *testing.T) {
 	require.NoError(t, svc.RemoveNode("b"))
 	require.Equal(t, 1, gpuIndexOf(svc).Count())
 }
+
+func newGPUCompressedPipelineService(t *testing.T) *Service {
+	t.Helper()
+	cfg := gpu.DefaultConfig()
+	cfg.Enabled = true
+	cfg.FallbackOnError = true
+	manager, err := gpu.NewManager(cfg)
+	require.NoError(t, err)
+	if !manager.IsEnabled() {
+		t.Skip("GPU not available")
+	}
+	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
+	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", "1")
+	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", "1000")
+	t.Setenv("NORNICDB_VECTOR_IVF_LISTS", "16")
+	t.Setenv("NORNICDB_VECTOR_PQ_SEGMENTS", "1")
+	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
+	engine := newNamespacedEngine(t)
+	for i := 0; i < 600; i++ {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n-%d", i)), ChunkEmbeddings: [][]float32{testVec4(i)}})
+		require.NoError(t, err)
+	}
+	svc := NewServiceWithDimensions(engine, 4)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetPersistenceEnabled(true)
+	svc.SetGPUManager(manager)
+	return svc
+}
+
+func TestGPUCompressedPipelineDoesNotAllocateUnusedBruteIndex(t *testing.T) {
+	svc := newGPUCompressedPipelineService(t)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.IsType(t, &IVFPQCandidateGen{}, svc.vectorPipeline.candidateGen)
+	require.Nil(t, gpuIndexOf(svc), "compressed retrieval must not retain an unused GPU brute-force copy")
+}
+
+func TestGPUCompressedFallbackUploadsOnlyAfterSelection(t *testing.T) {
+	svc := newGPUCompressedPipelineService(t)
+	for i := 0; i < 600; i++ {
+		node, err := svc.engine.GetNode(storage.NodeID(fmt.Sprintf("n-%d", i)))
+		require.NoError(t, err)
+		require.NoError(t, svc.IndexNode(node))
+	}
+	// A canceled first training attempt follows the existing standard fallback.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.getOrCreateVectorPipeline(ctx)
+	require.NoError(t, err)
+	require.Equal(t, strategyModeBruteGPU, svc.currentPipelineStrategy())
+	require.NotNil(t, gpuIndexOf(svc))
+	require.Equal(t, 600, gpuIndexOf(svc).Count())
+	hits, err := svc.VectorQueryNodesWithOptions(context.Background(), testVec4(1), VectorQuerySpec{Limit: 3}, nil)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+}
