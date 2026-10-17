@@ -83,15 +83,14 @@ var knownCommitterLocks = []string{
 // heldAcrossCommit classifies every place that holds a stage lock across a
 // call that can commit: why the commit carries no publication, so it does
 // not run the stage.
-var heldAcrossCommit = map[string]string{
-	"FindNodeNeedingEmbedding holds pendingEmbeddingCandidates.mu across withUpdate": "the commit only deletes pending-embedding keys: no publish and no pending-embedding adds, so it carries no publication and does not run the stage",
-}
+var heldAcrossCommit = map[string]string{}
 
 // lockOrderReviewed classifies every place that holds a stage lock while it
 // takes a lock some committer holds across its stage wait: why the two are
 // never the same instance in a wait cycle.
 var lockOrderReviewed = map[string]string{
 	"StageSchemaChanges holds SchemaManager.mu while taking BadgerTransaction.mu": "the SchemaManager is the transaction's private schema view (tx.knowledgeSchema), never a schema a publication locks, and the BadgerTransaction is the staging transaction itself, which cannot be committing at the same time",
+	"FindNodeNeedingEmbedding holds pendingEmbeddingCandidates.mu while withUpdate takes managedBadgerDB.commitGate": "commitGate is held only while a commit takes its timestamp and writes (commitShared), by a large commit until it releases the intent (beginLargeCommit to release) and by the write-behind acknowledgement (commitBufferedLocked); none of them waits for the stage, which applyThrough runs after the gate is released. FindNodeNeedingEmbedding's own commit carries no publication (it only deletes pending-embedding keys), so it does not run the stage",
 }
 
 // commitFunctions must never be reachable from a publication.
