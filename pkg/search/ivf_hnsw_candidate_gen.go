@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -90,24 +92,49 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 
 	totalLimit := boundCandidateLimit(k)
 
-	best := make(map[string]float64, totalLimit)
-	for _, cid := range clusterIDs {
+	// Resolve lookup callbacks serially; only independent graph reads run in workers.
+	indexes := make([]*HNSWIndex, len(clusterIDs))
+	for i, cid := range clusterIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		idx := g.getClusterHNSW(cid)
-		if idx == nil {
-			continue
+		indexes[i] = g.getClusterHNSW(cid)
+	}
+	results := make([][]ANNResult, len(indexes))
+	errors := make([]error, len(indexes))
+	ef := hnswEfFromContext(ctx)
+	workers := min(4, runtime.GOMAXPROCS(0), len(indexes))
+	search := func(worker int) {
+		for i := worker; i < len(indexes); i += workers {
+			if err := ctx.Err(); err != nil {
+				errors[i] = err
+				return
+			}
+			if indexes[i] == nil {
+				continue
+			}
+			// Any list may contain the entire global top-K: retain its full budget.
+			// ef=0 uses the cluster graph's configured EfSearch.
+			results[i], errors[i] = indexes[i].SearchWithEf(ctx, query, totalLimit, minSimilarity, ef)
 		}
-		// Any list may contain the entire global top-K. Splitting the quota
-		// between lists silently discards closer neighbours before the merge.
-		// SearchWithEf with ef 0 uses the cluster graph's configured EfSearch; a
-		// request's own ef (SearchOptions.HNSWEf) replaces it.
-		results, err := idx.SearchWithEf(ctx, query, totalLimit, minSimilarity, hnswEfFromContext(ctx))
-		if err != nil {
-			return nil, err
+	}
+	if workers == 1 {
+		search(0)
+	} else {
+		var pending sync.WaitGroup
+		pending.Add(workers)
+		for w := 0; w < workers; w++ {
+			go func(worker int) { defer pending.Done(); search(worker) }(w)
 		}
-		for _, r := range results {
+		pending.Wait()
+	}
+	// Merge in route order after all workers finish, preserving error and score policy.
+	best := make(map[string]float64, totalLimit)
+	for i, hits := range results {
+		if errors[i] != nil {
+			return nil, errors[i]
+		}
+		for _, r := range hits {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
 				best[r.ID] = score
