@@ -14,7 +14,7 @@ the queries that go over fail cleanly, and the client can retry them later.
 |---|---|---|---|---|
 | `db.memory.transaction.max` | One transaction of a database | `0` (unlimited) | yes | `NORNICDB_MEMORY_TRANSACTION_MAX`, YAML `memory.transaction_max`, or the database's config override |
 | `db.memory.transaction.total.max` | All transactions of one database together | `0` (unlimited) | yes | The database's config override |
-| `dbms.memory.transaction.total.max` | All transactions of the process together | `0` (unlimited) | no (restart) | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max` |
+| `dbms.memory.transaction.total.max` | All transactions of the process together | `0` (unlimited) | yes, via `dbms.setConfigValue` | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max`, or `CALL dbms.setConfigValue(...)` while the server runs |
 
 - **Units:** bytes. Use a `k`, `m`, `g` or `t` suffix for kibibytes,
   mebibytes, gibibytes or tebibytes: `512m`, `2g`. `0` means unlimited.
@@ -34,7 +34,14 @@ the queries that go over fail cleanly, and the client can retry them later.
   config API (`PUT /admin/databases/<db>/config` with
   `{"overrides": {"db.memory.transaction.max": "1g"}}`). A database's own
   `db.memory.transaction.max` replaces the process default for that
-  database.
+  database. Change the global pool with
+  `CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '2g')`;
+  the change lasts until the process restarts. An empty value
+  (`CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '')`)
+  resets it to the value the process was configured with
+  (`NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX` or YAML, else unlimited).
+  A running statement keeps the limits it started with, and one that
+  started with no limit is not counted toward a newly set pool limit.
 - **Visibility:** `SHOW SETTINGS` and `CALL dbms.listConfig()` list all
   three settings with their current values in bytes. While a limit is set,
   `SHOW TRANSACTIONS YIELD estimatedUsedHeapMemory` shows each running
