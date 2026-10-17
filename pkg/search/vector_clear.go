@@ -52,9 +52,7 @@ func (s *Service) clearIndexes(all bool) error {
 	if s.gpuEmbeddingIndex != nil {
 		s.gpuEmbeddingIndex.Clear()
 	}
-	if s.clusterIndex != nil {
-		s.retireClusterGeneration(s.clusterIndex.Empty())
-	}
+	s.retireClusterGeneration(emptyClusterIndex)
 	clear(s.nodeLabels)
 	clear(s.nodeTypes)
 	clear(s.nodeNamedVector)

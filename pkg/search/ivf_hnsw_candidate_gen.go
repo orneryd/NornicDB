@@ -36,14 +36,18 @@ type clusterServing struct {
 
 // open returns the view for one call, starting from the generator's own
 // when no serving source is set. unlock ends the routing section; done the
-// call's hold on the generation.
+// call's hold on the generation. Both run at most once, so a caller defers
+// them right after open (a panic in routing, for example in the configured
+// analyzer, still unlocks and releases) and may also unlock early, before
+// scoring.
 func (c *clusterServing) open(ctx context.Context, own clusterView) (context.Context, clusterView, func(), func()) {
 	if c == nil {
 		return ctx, own, func() {}, func() {}
 	}
 	ctx, view, done := c.view(ctx)
 	c.lock.Lock()
-	return ctx, view, c.lock.Unlock, done
+	var once sync.Once
+	return ctx, view, func() { once.Do(c.lock.Unlock) }, done
 }
 
 // ownClusterView is a generator's view without a serving source: the
@@ -104,6 +108,7 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	}
 	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
 	defer done()
+	defer unlock()
 	indexes, err := g.routedGraphs(ctx, query, view)
 	unlock()
 	if err != nil {

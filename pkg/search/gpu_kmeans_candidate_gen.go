@@ -56,6 +56,7 @@ func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []fl
 	// its GPU buffers unreleased) until done.
 	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, nil))
 	defer done()
+	defer unlock()
 	if view.routing == nil {
 		unlock()
 		return nil, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
