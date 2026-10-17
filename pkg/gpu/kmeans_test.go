@@ -109,8 +109,8 @@ func TestNewClusterIndex(t *testing.T) {
 		if ci.config == nil {
 			t.Error("config should not be nil")
 		}
-		if ci.membership.idToCluster == nil {
-			t.Error("membership should not be nil")
+		if ci.IsClustered() {
+			t.Error("a new index is not clustered")
 		}
 	})
 

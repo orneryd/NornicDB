@@ -173,29 +173,37 @@ func cgSimulateCrashBeforeManifest(dir string) error {
 
 func cgClearVectors(svc *Service) error { return svc.ClearVectorIndex() }
 
-// cgServing builds (or reuses) the serving pipeline and reports how its
-// clustered generator routes a query now: whether it serves IVF-HNSW, the
-// routing index and the probe count. clustered is false for a non-clustered
-// strategy.
-func cgServing(t *testing.T, svc *Service) (clustered, ivf bool, index *gpu.ClusterIndex, probes int) {
+// cgServing starts a query (its pipeline and cluster generation) and reports
+// how its clustered generator routes: whether it serves IVF-HNSW, the
+// routing and population it uses and the probe count. clustered is false for
+// a non-clustered strategy.
+func cgServing(t *testing.T, svc *Service) (clustered, ivf bool, view clusterView) {
 	t.Helper()
-	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
+	ctx, pipeline, release, err := svc.vectorPipelineForQuery(context.Background())
 	require.NoError(t, err)
-	var serving *clusterServing
+	defer release()
+	serving := cgGeneratorServing(pipeline)
+	if serving == nil {
+		return false, false, clusterView{}
+	}
+	_, ivf = pipeline.candidateGen.(*IVFHNSWCandidateGen)
+	_, view, unlock, done := serving.open(ctx, clusterView{})
+	unlock()
+	done()
+	return true, ivf, view
+}
+
+// cgGeneratorServing is a clustered generator's serving source, or nil.
+func cgGeneratorServing(pipeline *VectorSearchPipeline) *clusterServing {
 	switch gen := pipeline.candidateGen.(type) {
 	case *IVFHNSWCandidateGen:
-		ivf, serving = true, gen.serving
+		return gen.serving
 	case *KMeansCandidateGen:
-		serving = gen.serving
+		return gen.serving
 	case *GPUKMeansCandidateGen:
-		serving = gen.serving
-	default:
-		return false, false, nil, 0
+		return gen.serving
 	}
-	require.NotNil(t, serving, "a clustered generator reads the published generation per query")
-	index, probes, release := serving.route(nil, 0)
-	release()
-	return true, ivf, index, probes
+	return nil
 }
 
 // cgExpectedProbes is the probe count for a generation of numClusters:

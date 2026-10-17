@@ -53,16 +53,18 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 
 // selectHybridClustersLocked is selectHybridClusters for callers holding
 // clusterStateMu (the clustered generators route under it). It routes on the
-// published generation's index with that generation's profiles.
+// routing and profiles of the generation the query holds (else the published
+// one).
 func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float32, defaultN int) []int {
-	clusterIndex, _ := s.clusterServingLocked()
-	if clusterIndex == nil || !clusterIndex.IsClustered() {
+	gen := s.clusterGenerationIn(ctx)
+	if gen == nil {
 		return nil
 	}
+	routing := gen.routing
 	if defaultN <= 0 {
 		defaultN = 3
 	}
-	numClusters := clusterIndex.NumClusters()
+	numClusters := routing.NumClusters()
 	if numClusters <= 0 {
 		return nil
 	}
@@ -73,7 +75,7 @@ func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float3
 	if semanticProbe <= 0 {
 		return nil
 	}
-	semanticClusters := clusterIndex.FindNearestClusters(query, semanticProbe)
+	semanticClusters := routing.NearestClusters(query, semanticProbe)
 	if len(semanticClusters) == 0 {
 		return nil
 	}
@@ -96,10 +98,7 @@ func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float3
 		return semanticClusters
 	}
 
-	var profiles map[int]map[string]float64
-	if s.clusterGen != nil {
-		profiles = s.clusterGen.profiles
-	}
+	profiles := gen.profiles
 	if len(profiles) == 0 {
 		if len(semanticClusters) > defaultN {
 			return semanticClusters[:defaultN]
