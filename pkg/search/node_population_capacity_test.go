@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The startup build restores the saved image and its capacity before live
+// writes are checked against it; a write never runs the population itself.
 func TestNodePopulationRestoresCapacityBeforeFirstMutation(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		for _, traced := range []bool{false, true} {
@@ -38,39 +40,47 @@ func TestNodePopulationRestoresCapacityBeforeFirstMutation(t *testing.T) {
 					existing := &storage.Edge{ID: "r", Type: "REL", Properties: map[string]any{"text": "oldedge"}}
 					svc.IndexRelationship(existing)
 					b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
-					switch operation {
-					case "new_node", "index_node":
-						err = svc.IndexNode(b)
-					case "remove_node":
-						err = svc.RemoveNode(a.ID)
-					case "index_edge":
-						err = svc.IndexEdge(&storage.Edge{ID: "next", Type: "REL", Properties: map[string]any{"text": "newedge", "v": []float32{0, 1, 0}}})
-					case "remove_edge":
-						err = svc.RemoveEdge(existing.ID)
-					}
-					require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
-					assert.False(t, svc.IsReady())
-					assert.Contains(t, svc.indexCapacityByNode, "nornic:a")
-					assert.NotContains(t, svc.indexCapacityByNode, "nornic:b")
-					assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
-					assert.Empty(t, svc.edgePropVector)
-					assert.Empty(t, svc.fulltext().Search("bterm", 10))
-					assert.NotEmpty(t, svc.fulltext().Search("aterm", 10))
-					rs := svc.relationshipSearch()
-					rs.mu.RLock()
-					assert.Contains(t, rs.entries, "r", "failed admission must precede RemoveRelationship")
-					assert.NotContains(t, rs.entries, "next", "failed admission must precede IndexRelationship")
-					rs.mu.RUnlock()
+					// The startup build restores the saved image and charges it
+					// before any live write is checked; writes never populate.
+					buildErr := svc.BuildIndexes(context.Background())
 					if operation == "new_node" {
+						require.NoError(t, buildErr, "the saved image fits the budget exactly")
+						assert.True(t, svc.IsReady())
+						require.ErrorIs(t, svc.IndexNode(b), ErrIndexMemoryBudgetExceeded, "the first write is checked against the restored capacity")
 						assert.Equal(t, budget, svc.bm25ResidentBytes)
-						assert.True(t, svc.nodeSourcesCompleteLocked(), "the old admitted population survives a rejected new write")
-					} else {
-						assert.Greater(t, svc.bm25ResidentBytes, budget, "an oversized installed population stays charged")
-						assert.False(t, svc.nodeSourcesCompleteLocked())
-						svc.persistMu.Lock()
-						timer := svc.persistTimer
-						svc.persistMu.Unlock()
-						assert.Nil(t, timer, "failed initial admission must precede scheduling persistence")
+						assert.Contains(t, svc.indexCapacityByNode, "nornic:a")
+						assert.NotContains(t, svc.indexCapacityByNode, "nornic:b")
+						assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
+						assert.Empty(t, svc.fulltext().Search("bterm", 10))
+						assert.NotEmpty(t, svc.fulltext().Search("aterm", 10))
+						return
+					}
+					require.ErrorIs(t, buildErr, ErrIndexMemoryBudgetExceeded, "an oversized saved image is refused by the build")
+					assert.False(t, svc.IsReady())
+					assert.False(t, svc.nodeSourcesCompleteLocked())
+					assert.Contains(t, svc.indexCapacityByNode, "nornic:a")
+					assert.Greater(t, svc.bm25ResidentBytes, budget, "an oversized installed population stays charged")
+					// After the failed build a write applies directly, checked against
+					// the charged capacity: a BM25 addition is refused; a removal, or an
+					// edge vector the BM25 budget does not cover, applies.
+					switch operation {
+					case "index_node":
+						require.ErrorIs(t, svc.IndexNode(b), ErrIndexMemoryBudgetExceeded)
+						assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
+						assert.Empty(t, svc.fulltext().Search("bterm", 10))
+					case "index_edge":
+						require.NoError(t, svc.IndexEdge(&storage.Edge{ID: "next", Type: "REL", Properties: map[string]any{"text": "newedge", "v": []float32{0, 1, 0}}}))
+						assert.Contains(t, svc.edgePropVector, "next")
+					case "remove_node":
+						require.NoError(t, svc.RemoveNode(a.ID))
+						assert.NotContains(t, svc.indexCapacityByNode, "nornic:a")
+						assert.Empty(t, svc.fulltext().Search("aterm", 10))
+					case "remove_edge":
+						require.NoError(t, svc.RemoveEdge(existing.ID))
+						rs := svc.relationshipSearch()
+						rs.mu.RLock()
+						assert.NotContains(t, rs.entries, "r")
+						rs.mu.RUnlock()
 					}
 				})
 			}

@@ -2275,7 +2275,7 @@ func (s *Service) schedulePersist() {
 // persistBaseIndexes writes BM25 + vector store only (no HNSW/IVF-HNSW).
 // Used after BuildIndexes iteration to make base indexes durable before HNSW/k-means.
 func (s *Service) persistBaseIndexes() error {
-	if !s.nodePopulationCanPersist() {
+	if !s.nodePopulationForPersist(context.Background()) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
 		return nil
 	}
@@ -2344,7 +2344,7 @@ func (s *Service) runPersist() {
 }
 
 func (s *Service) runPersistWithContext(ctx context.Context) {
-	if !s.nodePopulationCanPersist() {
+	if !s.nodePopulationForPersist(ctx) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
 		return
 	}
@@ -3034,7 +3034,9 @@ func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
 	memoryCurrent := s.nodeSources.memoryAuthoritative || s.vectorIndex.Count() > 0
 	if restoreNodeMetadata && !memoryCurrent {
 		if _, err := security.RootedStat(s.vectorIndexPath + ".vec"); err != nil {
-			return false // Initial ingestion will create the store lazily.
+			// No saved image to restore: start an empty store, as live
+			// ingestion before any population always did.
+			restoreNodeMetadata = false
 		}
 	}
 	if s.nodeSources.memoryAuthoritative {

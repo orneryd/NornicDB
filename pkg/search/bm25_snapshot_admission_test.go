@@ -76,8 +76,12 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
-						// In the live-first route these assertions precede any later
-						// BuildIndexes call that could repair a partial initial base.
+						if entry == "live_before_first_build" {
+							// A write before the first build applies directly; the
+							// build, not the write, populates the node sources.
+							require.NoError(t, svc.BuildIndexes(ctx))
+							assert.True(t, svc.IsReady())
+						}
 						assert.Positive(t, engine.nodeReads, "rejected text requires real NODE rebuilding")
 						for _, item := range []struct {
 							text string
@@ -197,7 +201,9 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 						require.True(t, bm25SettingsEquivalent(saved.BM25, current.BM25, svc.currentBM25FormatVersion()))
 						require.Equal(t, saved.Vector, current.Vector)
 						engine.nodeReads = 0
-						engine.denyNodeRead = true
+						// A write before the first build makes that build rebuild from
+						// storage: the saved image lacks the write.
+						engine.denyNodeRead = entry == "explicit_build"
 						if entry == "explicit_build" {
 							require.NoError(t, svc.BuildIndexes(ctx), "an accepted checkpoint must not force NODE iteration")
 							assert.True(t, svc.IsReady())
@@ -206,7 +212,13 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
-						assert.Zero(t, engine.nodeReads, "accepted restoration must retain its no-traversal route")
+						if entry == "explicit_build" {
+							assert.Zero(t, engine.nodeReads, "accepted restoration must retain its no-traversal route")
+						} else {
+							require.NoError(t, svc.BuildIndexes(ctx))
+							assert.True(t, svc.IsReady())
+							assert.Positive(t, engine.nodeReads, "the build after a live write rebuilds from storage")
+						}
 						response, err := svc.Search(ctx, "aterm", nil, &SearchOptions{Limit: 10})
 						require.NoError(t, err)
 						if empty {
