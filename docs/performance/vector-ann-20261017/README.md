@@ -10,6 +10,16 @@ The full corpus shows useful compression/latency tradeoffs. Overall process RSS
 and several latency comparisons still trail Qdrant; all-metric parity is an open
 target. CUDA/Vulkan device execution remains for the hardware handoff.
 
+## Latest query-cost correction
+
+[Full-corpus compressed HNSW refresh and profiles](hnsw-query-cost/README.md)
+measure clean source `ee2daadfb307172cceac3b5ba49a3e4d7636572b` across all nine
+compressed HNSW modes. Mapped original-vector scoring reduces fresh scalar p50
+**0.565 → 0.470 ms**, retaining **99.59% recall**, with RSS **3,180 → 3,360 MB**.
+The new profile removes original-vector `Pread` as the leading cost; runtime
+tracing identifies gRPC control-buffer scheduling as a remaining target.
+Float/IVF and competitor numbers below retain their original sources and dates.
+
 ## Source, workload and completeness
 
 - Runtime and timed harness: `7c201376d1203a651fc625869fb98df7be746ac4`, clean,
