@@ -1816,7 +1816,11 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 
 func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	ctx = withExpressionFailureSlot(ctx)
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesWithCancellation(cypher, contextPipelineProbe(ctx))
+	splitProbe := contextPipelineProbe(ctx)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesWithCancellation(cypher, splitProbe)
+	if splitProbe != nil && splitProbe.err != nil {
+		return nil, splitProbe.err
+	}
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
