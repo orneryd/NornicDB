@@ -51,6 +51,7 @@ func (s *Server) startQdrantGRPC() error {
 	baseStorage := s.db.GetBaseStorageForManager()
 
 	cfg := qdrantgrpc.DefaultConfig()
+	cfg.Logger = s.config.Logger
 	cfg.Localizer = s.localizer
 	if features.QdrantGRPCListenAddr != "" {
 		cfg.ListenAddr = features.QdrantGRPCListenAddr
@@ -112,17 +113,18 @@ func (s *Server) startQdrantGRPC() error {
 		if err != nil {
 			return nil, err
 		}
-		// Per-DB master switch: the Qdrant gRPC bridge serves vector
-		// queries; if the database has vector search disabled, surface a
-		// deterministic error rather than handing back a service whose
-		// ANN substrate isn't populated. External Qdrant clients see
-		// the same "off" semantics they'd get against a database that
-		// simply has no vectors.
+		// An intentionally disabled vector service has no hits. Provider
+		// failures remain errors, so an unavailable index cannot acknowledge a
+		// write or disguise an incomplete search as an empty successful answer.
 		if !svc.VectorEnabled() {
-			return nil, fmt.Errorf("qdrant grpc: vector search is disabled for database %q (set NORNICDB_SEARCH_VECTOR_ENABLED=true or per-DB override to enable)", database)
+			return nil, nil
 		}
 		return svc, nil
 	}
+
+	// A dropped collection's database loses its search index too, as with
+	// Cypher's DROP DATABASE.
+	cfg.DropDatabase = s.databaseManager().DropDatabase
 
 	grpcServer, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, baseStorage, searchProvider, s.auth)
 	if err != nil {

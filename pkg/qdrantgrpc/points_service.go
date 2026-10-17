@@ -3,13 +3,12 @@ package qdrantgrpc
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -23,16 +22,14 @@ type PointsService struct {
 	config         *Config
 	collections    CollectionStore
 	searchProvider SearchServiceProvider
-	vecIndex       *vectorIndexCache
 	checker        DatabaseAccessChecker // optional; when set, enforces per-database (per-collection) RBAC
 }
 
-func NewPointsService(config *Config, collections CollectionStore, searchProvider SearchServiceProvider, vecIndex *vectorIndexCache, checker DatabaseAccessChecker) *PointsService {
+func NewPointsService(config *Config, collections CollectionStore, searchProvider SearchServiceProvider, checker DatabaseAccessChecker) *PointsService {
 	return &PointsService{
 		config:         config,
 		collections:    collections,
 		searchProvider: searchProvider,
-		vecIndex:       vecIndex,
 		checker:        checker,
 	}
 }
@@ -55,15 +52,24 @@ func (s *PointsService) openCollection(ctx context.Context, name string) (storag
 	return engine, meta, nil
 }
 
-func (s *PointsService) getSearchService(database string, store storage.Engine) *search.Service {
+func (s *PointsService) getSearchService(ctx context.Context, database string, store storage.Engine, metadata *CollectionMeta) (*search.Service, error) {
 	if s.searchProvider == nil {
-		return nil
+		return nil, nil
 	}
 	svc, err := s.searchProvider(database, store)
 	if err != nil {
-		return nil
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
 	}
-	return svc
+	if svc != nil && metadata != nil && metadata.Quantization != nil {
+		cfg, configErr := searchQuantizationConfig(metadata.Quantization)
+		if configErr == nil {
+			configErr = svc.ConfigureHNSWQuantization(ctx, cfg)
+		}
+		if configErr != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(configErr))
+		}
+	}
+	return svc, nil
 }
 
 // Only text requests capture a provider. The owner keeps the same binding when
@@ -144,7 +150,6 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 	nodesToCreate := make([]*storage.Node, 0, len(req.Points))
 	nodesToUpdate := make([]*storage.Node, 0, len(req.Points))
-	oldVectorNamesByID := make(map[string][]string, len(req.Points))
 
 	for i, point := range req.Points {
 		nodeID := nodeIDs[i]
@@ -188,15 +193,18 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 
 		if prev := existing[nodeID]; prev != nil {
-			oldVectorNamesByID[string(node.ID)] = nodeVectorNames(prev)
 			node.CreatedAt = prev.CreatedAt
 			node.UpdatedAt = time.Now()
 			nodesToUpdate = append(nodesToUpdate, node)
 		} else {
-			oldVectorNamesByID[string(node.ID)] = nil
 			node.CreatedAt = time.Now()
 			nodesToCreate = append(nodesToCreate, node)
 		}
+	}
+
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(nodesToCreate) > 0 {
@@ -210,42 +218,9 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 		}
 	}
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
-	if searchSvc != nil {
-		for _, node := range nodesToCreate {
-			_ = searchSvc.IndexNode(node)
-		}
-		for _, node := range nodesToUpdate {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
-		}
-	}
-
-	// Maintain a per-collection in-memory vector index for Qdrant gRPC searches.
-	// This avoids falling back to storage scans when Qdrant collection dimensions
-	// differ from the DB's default embedding dimensions.
-	if s.vecIndex != nil {
-		for _, node := range append(nodesToCreate, nodesToUpdate...) {
-			if node == nil {
-				continue
-			}
-			newNames := nodeVectorNames(node)
-			if len(newNames) == 0 {
-				newNames = []string{""}
-			}
-
-			oldNames := oldVectorNamesByID[string(node.ID)]
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantMissingVectorForPoint(name, string(node.ID)))
-				}
-				vectors = append(vectors, vec)
-			}
-			if err := s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors); err != nil {
-				return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
-			}
+	for _, node := range append(nodesToCreate, nodesToUpdate...) {
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
 		}
 	}
 
@@ -315,11 +290,14 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.Points)
 	if err != nil {
@@ -327,18 +305,12 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	}
 
 	for _, nodeID := range nodeIDs {
+		// Persist first, as upserts do: population must either see the deletion
+		// or finish before the final shared-index removal can be acknowledged.
+		_ = store.DeleteNode(nodeID)
 		if searchSvc != nil {
 			_ = searchSvc.RemoveNode(nodeID)
 		}
-		if s.vecIndex != nil {
-			node, err := store.GetNode(nodeID)
-			if err == nil {
-				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nodeVectorNames(node))
-			} else {
-				s.vecIndex.deletePoint(req.CollectionName, string(nodeID), nil)
-			}
-		}
-		_ = store.DeleteNode(nodeID)
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -428,13 +400,14 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantHNSWEfTooLarge())
 		}
 		ef = int(raw)
-		// Keep `ef` sane: HNSW ef must be at least the number of candidates we need.
-		need := limit + offset
-		if ef > 0 && ef < need {
-			ef = need
-		}
 	}
 
+	if q := req.GetParams().GetQuantization(); q != nil && q.Oversampling != nil {
+		value := q.GetOversampling()
+		if value < 1 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantInvalidQuantizationOversampling())
+		}
+	}
 	minSimilarity := float64(-1)
 	if req.ScoreThreshold != nil {
 		minSimilarity = float64(*req.ScoreThreshold)
@@ -451,26 +424,20 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
 	defer releaseProjection()
 
-	searchSvc := s.getSearchService(req.CollectionName, store)
-	results := s.searchCollection(ctx, store, searchSvc, req.CollectionName, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
+	results, err := searchCollection(ctx, searchSvc, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef, req.GetParams().GetExact(), req.GetParams().GetQuantization())
+	if err != nil {
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSearchFailed(err))
+	}
 
 	out := make([]*qpb.ScoredPoint, 0, len(results))
 	for _, r := range results {
-		var pid *qpb.PointId
 		needNode := includePayload || includeVectors
-		var nodeID storage.NodeID
-		if strings.HasPrefix(r.ID, "qdrant:") {
-			pid = nodeIDToPointID(storage.NodeID(r.ID))
-			if needNode {
-				nodeID = storage.NodeID(r.ID)
-			}
-		} else {
-			// Fast path for vecIndex results: IDs are compact "<id>" (no "qdrant:point:" prefix).
-			pid = pointIDFromCompactString(r.ID)
-			if needNode {
-				nodeID = storage.NodeID(expandPointID(r.ID))
-			}
-		}
+		nodeID := storage.NodeID(r.ID)
+		pid := nodeIDToPointID(nodeID)
 
 		sp := &qpb.ScoredPoint{
 			Id:    pid,
@@ -738,7 +705,10 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, pv := range req.Points {
 		if pv == nil || pv.Id == nil || pv.Vectors == nil {
@@ -750,7 +720,6 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		if err != nil {
 			continue
 		}
-		oldNames := nodeVectorNames(node)
 
 		names, vecs, err := extractVectors(ctx, s.config.Localizer, pv.Vectors)
 		if err != nil {
@@ -766,21 +735,8 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
 
-		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
-		}
-		if s.vecIndex != nil {
-			newNames := nodeVectorNames(node)
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					continue
-				}
-				vectors = append(vectors, vec)
-			}
-			_ = s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors)
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
 		}
 	}
 
@@ -813,7 +769,10 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc := s.getSearchService(req.CollectionName, store)
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	if err != nil {
+		return nil, err
+	}
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.PointsSelector)
 	if err != nil {
@@ -825,26 +784,12 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		if err != nil {
 			continue
 		}
-		oldNames := nodeVectorNames(node)
 		deleteNodeVectors(node, req.Vectors.Names)
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
 
-		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
-		}
-		if s.vecIndex != nil {
-			newNames := nodeVectorNames(node)
-			vectors := make([][]float32, 0, len(newNames))
-			for _, name := range newNames {
-				vec, ok := nodeVectorByName(node, name)
-				if !ok {
-					continue
-				}
-				vectors = append(vectors, vec)
-			}
-			_ = s.vecIndex.replacePoint(req.CollectionName, meta.Dimensions, meta.Distance, string(node.ID), oldNames, newNames, vectors)
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
 		}
 	}
 
@@ -918,6 +863,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 	}
 
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         queryVec,
 		Filter:         req.Filter,
@@ -999,6 +945,7 @@ func (s *PointsService) SearchGroups(ctx context.Context, req *qpb.SearchPointGr
 
 	// Oversample then group.
 	searchResp, err := s.Search(ctx, &qpb.SearchPoints{
+		Params:         req.Params,
 		CollectionName: req.CollectionName,
 		Vector:         req.Vector,
 		Filter:         req.Filter,
@@ -1157,6 +1104,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 			ReadConsistency:  req.ReadConsistency,
 			ShardKeySelector: req.ShardKeySelector,
 			Timeout:          req.Timeout,
+			Params:           req.Params,
 		})
 		if err != nil {
 			return nil, err
@@ -1374,195 +1322,91 @@ type searchResult struct {
 	Score float64
 }
 
-func (s *PointsService) searchCollection(ctx context.Context, store storage.Engine, searchSvc *search.Service, collection string, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int) []searchResult {
-	if s.vecIndex != nil {
-		// Request extra candidates only when we need to apply payload filters.
-		// For filter-free searches, returning exactly limit+offset avoids unnecessary
-		// ANN work (and is closer to Qdrant's behavior).
-		want := limit + offset
-		if filter != nil {
-			want = (limit + offset) * 10
-			if want < limit+offset {
-				want = limit + offset
-			}
-			if want > s.config.MaxTopK*10 {
-				want = s.config.MaxTopK * 10
-			}
-		}
-
-		cands := s.vecIndex.search(ctx, collection, len(queryVec), dist, vectorName, queryVec, want, minScore, ef)
-		if len(cands) > 0 {
-			if filter == nil {
-				if offset > 0 {
-					if offset >= len(cands) {
-						return nil
-					}
-					cands = cands[offset:]
-				}
-				if len(cands) > limit {
-					cands = cands[:limit]
-				}
-				return cands
-			}
-
-			filtered := make([]searchResult, 0, len(cands))
-			for _, r := range cands {
-				node, err := store.GetNode(storage.NodeID(expandPointID(r.ID)))
-				if err != nil || !matchesFilter(node, filter) {
-					continue
-				}
-				filtered = append(filtered, r)
-				if len(filtered) >= limit+offset {
-					break
-				}
-			}
-
-			if offset > 0 {
-				if offset >= len(filtered) {
-					return nil
-				}
-				filtered = filtered[offset:]
-			}
-			if len(filtered) > limit {
-				filtered = filtered[:limit]
-			}
-			return filtered
-		}
-	}
-
-	// Use search service for default vector (vectorName == "" or "default")
-	// TODO: Once IndexRegistry supports named vectors, use it for all vectorName searches
-	// For named vectors, we currently use vecIndex (deprecated) or brute-force fallback
-	effectiveVectorName := vectorName
-	if effectiveVectorName == "" {
-		effectiveVectorName = "default"
-	}
-
-	// Try search service for default vector (uses unified pipeline with HNSW/k-means)
-	if searchSvc != nil && effectiveVectorName == "default" {
-		// Fast path: avoid per-candidate storage lookups for type filtering.
-		prefix := "qdrant:point:"
-
-		// Qdrant's score_threshold is optional; if not set, do not apply a threshold.
-		// Our search.Service defaults may otherwise prune results unexpectedly.
-		minSimilarity := float64(-1)
-		if minScore >= 0 {
-			minSimilarity = minScore
-		}
-
-		// Ask for extra candidates, since we still need to:
-		// - filter to this collection by ID prefix (and drop chunk-suffixed IDs)
-		// - optionally apply payload filters
-		candidateLimit := (limit + offset) * 10
-		if candidateLimit < limit+offset {
-			candidateLimit = limit + offset
-		}
-		if candidateLimit > s.config.MaxTopK*10 {
-			candidateLimit = s.config.MaxTopK * 10
-		}
-
-		cands, err := searchSvc.VectorSearchCandidates(ctx, queryVec, &search.SearchOptions{
-			Limit:         candidateLimit,
-			MinSimilarity: &minSimilarity,
-		})
-		if err == nil && len(cands) > 0 {
-			results := make([]searchResult, 0, len(cands))
-			for _, r := range cands {
-				if !strings.HasPrefix(r.ID, prefix) {
-					continue
-				}
-				if strings.Contains(r.ID, "-chunk-") {
-					continue
-				}
-				if filter != nil {
-					node, err := store.GetNode(storage.NodeID(r.ID))
-					if err != nil || !matchesFilter(node, filter) {
-						continue
-					}
-				}
-				results = append(results, searchResult{ID: r.ID, Score: r.Score})
-				if len(results) >= limit+offset {
-					// Enough results after filtering; keep tail latency bounded.
-					break
-				}
-			}
-
-			if offset > 0 {
-				if offset >= len(results) {
-					return nil
-				}
-				results = results[offset:]
-			}
-			if len(results) > limit {
-				results = results[:limit]
-			}
-			return results
-		}
-	}
-
-	// Brute-force fallback: scan all nodes and filter by label. This keeps the
-	// measured path comparable to the Bolt/Cypher vector procedure and avoids
-	// label-index iterator overhead on some storage backends under high concurrency.
-	nodes, err := store.AllNodes()
-	if err != nil {
+// indexPoint brings the collection database's search index in step with a
+// point just written: its previous vectors are removed and its current ones
+// indexed, which is what Search finds. A database without a search service
+// (vector search disabled for it) has nothing to index.
+func indexPoint(searchSvc *search.Service, node *storage.Node) error {
+	if searchSvc == nil {
 		return nil
 	}
-
-	normalizedQuery := vector.Normalize(queryVec)
-	var scored []searchResult
-
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		if !isQdrantPointNode(node) {
-			continue
-		}
-		if filter != nil && !matchesFilter(node, filter) {
-			continue
-		}
-
-		emb, ok := nodeVectorByName(node, vectorName)
-		if !ok {
-			continue
-		}
-
-		score := scoreVector(dist, normalizedQuery, emb)
-		if minScore >= 0 && score < minScore {
-			continue
-		}
-		scored = append(scored, searchResult{ID: string(node.ID), Score: score})
-	}
-
-	sort.Slice(scored, func(i, j int) bool { return scored[i].Score > scored[j].Score })
-
-	if offset > 0 {
-		if offset >= len(scored) {
-			return nil
-		}
-		scored = scored[offset:]
-	}
-	if len(scored) > limit {
-		scored = scored[:limit]
-	}
-	return scored
+	return searchSvc.IndexNode(node)
 }
 
-func scoreVector(dist qpb.Distance, normalizedQuery []float32, candidate []float32) float64 {
+// searchCollection runs a Qdrant vector search on the collection database's
+// search service: the same index, ANN strategy (NORNICDB_VECTOR_ANN_QUALITY)
+// and query as Cypher's db.index.vector.queryNodes, restricted to the
+// collection's points and the requested vector name. Scores are Qdrant's raw
+// similarities. A database without a search service (vector search disabled
+// for it) has no hits, as for Cypher.
+//
+// ef is the request's hnsw_ef (0 for the index's configured ef, see
+// qdrantSearchEf); minScore < 0 means no score_threshold.
+func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int, exact bool, quantization *qpb.QuantizationSearchParams) ([]searchResult, error) {
+	if searchSvc == nil {
+		return nil, nil
+	}
+	if vectorName == "" {
+		vectorName = "default"
+	}
+	opts := &search.SearchOptions{HNSWEf: qdrantSearchEf(ef, limit+offset)}
+	if quantization != nil {
+		q := quantization
+		opts.QuantizationIgnore = q.GetIgnore()
+		opts.QuantizationRescore = q.Rescore
+		opts.QuantizationOversampling = q.GetOversampling()
+	}
+	if filter != nil {
+		opts.Where = func(node *storage.Node) bool { return matchesFilter(node, filter) }
+	}
+	hits, err := searchSvc.VectorQueryNodesWithOptions(ctx, queryVec, search.VectorQuerySpec{
+		Label:      QdrantPointLabel,
+		Property:   vectorName,
+		Similarity: similarityName(dist),
+		Limit:      limit + offset,
+		ScoreScale: search.VectorScoreSimilarity,
+		Exact:      exact,
+	}, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]searchResult, 0, len(hits))
+	for _, hit := range hits {
+		// Hits are best first, so score_threshold cuts the tail.
+		if minScore >= 0 && hit.Score < minScore {
+			break
+		}
+		results = append(results, searchResult{ID: hit.ID, Score: hit.Score})
+	}
+	if offset >= len(results) {
+		return nil, nil
+	}
+	return results[offset:], nil
+}
+
+// qdrantSearchEf is the HNSW beam width (ef) of a Qdrant search: the request's
+// hnsw_ef, or, as Qdrant defaults it, the index's configured ef (the
+// NORNICDB_VECTOR_ANN_QUALITY preset's efSearch) when the request has none;
+// never less than the results it must return. A Cypher vector query without an
+// ef keeps the pipeline's wider default instead.
+func qdrantSearchEf(requested, need int) int {
+	ef := requested
+	if ef <= 0 {
+		ef = search.HNSWConfigFromEnv().EfSearch
+	}
+	return max(ef, need)
+}
+
+// similarityName is the search service's name for a Qdrant distance.
+func similarityName(dist qpb.Distance) string {
 	switch dist {
 	case qpb.Distance_Dot:
-		return float64(vector.DotProduct(normalizedQuery, candidate))
+		return "dot"
 	case qpb.Distance_Euclid:
-		return vector.EuclideanSimilarity(normalizedQuery, candidate)
-	case qpb.Distance_Cosine, qpb.Distance_UnknownDistance:
-		fallthrough
+		return "euclidean"
 	default:
-		// Avoid per-candidate allocations: Normalize(candidate) returns a copy.
-		// CosineSimilarity computes dot/(|a||b|) without allocating.
-		return vector.CosineSimilarity(normalizedQuery, candidate)
+		return "cosine"
 	}
 }
 
@@ -1657,19 +1501,6 @@ func nodeIDToPointID(id storage.NodeID) *qpb.PointId {
 	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
 }
 
-func pointIDFromCompactString(raw string) *qpb.PointId {
-	// Qdrant PointId is either uint64 or UUID string.
-	if len(raw) > 0 {
-		first := raw[0]
-		if first >= '0' && first <= '9' {
-			if n, err := strconv.ParseUint(raw, 10, 64); err == nil {
-				return &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: n}}
-			}
-		}
-	}
-	return &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: raw}}
-}
-
 func splitNodeID(nodeID string) []string {
 	// Expected: qdrant:point:<id>
 	parts := make([]string, 0, 3)
@@ -1740,27 +1571,6 @@ func extractDenseFromVector(ctx context.Context, manager *localization.Manager, 
 		return v.Data, nil
 	}
 	return nil, localizedStatus(ctx, manager, codes.InvalidArgument, localization.QdrantFieldRequired("dense vector data"))
-}
-
-func nodeVectorNames(node *storage.Node) []string {
-	if node == nil {
-		return nil
-	}
-	if len(node.NamedEmbeddings) == 0 {
-		return nil
-	}
-	// Extract vector names from NamedEmbeddings keys (stable order).
-	names := make([]string, 0, len(node.NamedEmbeddings))
-	for name := range node.NamedEmbeddings {
-		// Map "default" back to empty string for unnamed vector
-		if name == "default" {
-			names = append(names, "")
-		} else {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names
 }
 
 func nodeVectorByName(node *storage.Node, vectorName string) ([]float32, bool) {

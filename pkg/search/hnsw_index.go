@@ -49,6 +49,9 @@ func validHNSWIndex(index uint32, length int) bool {
 
 // HNSWConfig contains configuration parameters for the HNSW index.
 type HNSWConfig struct {
+	// Quantization controls coordinate compression independently of graph quality.
+	Quantization HNSWQuantizationConfig
+
 	M                         int     // Max connections per node per layer (default: 16)
 	EfConstruction            int     // Candidate list size during construction (default: 200)
 	EfSearch                  int     // Candidate list size during search (default: 100)
@@ -56,7 +59,7 @@ type HNSWConfig struct {
 	LevelMultiplier           float64 // Level multiplier = 1/ln(M)
 	UseGPUBuild               bool    // Attempt GPU-assisted construction when available
 	GPUBuildBatchSize         int     // Number of vectors per GPU construction batch
-	GPUBuildCandidateK        int     // Number of GPU nearest-neighbor candidates per vector
+	GPUBuildCandidateK        int     // Minimum GPU candidate depth (at least M and EfConstruction)
 	GPUBuildDistancePrecision string  // Distance precision for GPU build kernels (currently fp32)
 }
 
@@ -114,6 +117,7 @@ type HNSWIndex struct {
 	deleted      []bool
 	liveCount    int
 	vectors      []float32
+	quantized    *hnswQuantizedVectors
 
 	// When set, vectors are resolved by ID at search/build time instead of from h.vectors.
 	// vecOff will be -1 for nodes that use the lookup (saves one full vector copy in RAM).
@@ -325,6 +329,9 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			dst := h.vectors[off : off+h.dimensions]
 			copy(dst, vec)
 			vector.NormalizeInPlace(dst)
+			if h.quantized != nil {
+				h.quantized.set(internalID, dst)
+			}
 			return nil
 		}
 
@@ -400,6 +407,9 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
 	h.liveCount++
+	if h.quantized != nil {
+		h.quantized.set(internalID, normalized)
+	}
 
 	if !h.hasEntryPoint {
 		h.entryPoint = internalID
@@ -451,6 +461,85 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.addBestScratch = neighbors[:0]
 
 	return nil
+}
+
+// levelZeroSearchLocked is the level-0 beam search a query or an insert of
+// normalized makes: the greedy descent through the upper layers from the entry
+// point, then a beam of width ef at level 0 from the reached node and the live
+// nodes of entryIDs (lexical seeds). It returns the candidates closest first in
+// a slice from h.itemsPool, which the caller returns. Caller holds h.mu for
+// reading.
+func (h *HNSWIndex) levelZeroSearchLocked(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
+	ep, err := h.descendLocked(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	entryBufAny := h.idsPool.Get()
+	entries := entryBufAny.([]uint32)[:0]
+	defer h.idsPool.Put(entries[:0])
+	entries = append(entries, ep)
+	for _, id := range entryIDs {
+		internalID, ok := h.idToInternal[id]
+		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		entries = append(entries, internalID)
+	}
+	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+}
+
+// descendLocked is the greedy descent through the upper layers from the entry
+// point that a query or an insert of normalized makes before its level-0
+// search. Caller holds h.mu for reading and checked h.hasEntryPoint.
+func (h *HNSWIndex) descendLocked(ctx context.Context, normalized []float32) (uint32, error) {
+	ep := h.entryPoint
+	for l := h.maxLevel; l > 0; l-- {
+		var err error
+		if ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l); err != nil {
+			return 0, err
+		}
+	}
+	return ep, nil
+}
+
+// levelZeroEntry is where an insert of normalized starts its level-0 search
+// (descendLocked): a GPU build seeds the vector's graph search there.
+func (h *HNSWIndex) levelZeroEntry(ctx context.Context, normalized []float32) (uint32, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return 0, false
+	}
+	ep, err := h.descendLocked(ctx, normalized)
+	return ep, err == nil
+}
+
+// buildLevelZeroCandidates is an insert's level-0 candidate search for a
+// vector not in the index yet (levelZeroSearchLocked at width ef), run under
+// the read lock so a build batch's searches run in parallel. It returns the
+// live candidates' internal IDs and distances, closest first.
+func (h *HNSWIndex) buildLevelZeroCandidates(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]uint32, []float32, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return nil, nil, nil
+	}
+	items, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer h.itemsPool.Put(items[:0])
+	ids := make([]uint32, 0, len(items))
+	dists := make([]float32, 0, len(items))
+	for _, item := range items {
+		if !validHNSWIndex(item.id, len(h.deleted)) || h.deleted[item.id] {
+			continue
+		}
+		ids = append(ids, item.id)
+		dists = append(dists, item.dist)
+	}
+	return ids, dists, nil
 }
 
 func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Candidates []uint32) error {
@@ -515,6 +604,7 @@ func (h *HNSWIndex) Clear() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.quantized = nil
 	// Reset all internal state
 	h.nodeLevel = make([]uint16, 0, 1024)
 	h.vecOff = make([]int32, 0, 1024)
@@ -588,6 +678,9 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	if err := h.prepareQuantizationReadLocked(ctx); err != nil {
+		return nil, false, err
+	}
 
 	if !h.hasEntryPoint || len(h.nodeLevel) == 0 {
 		return []ANNResult{}, true, nil
@@ -628,28 +721,13 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
-	ep := h.entryPoint
-
-	for l := h.maxLevel; l > 0; l-- {
-		var err error
-		ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l)
-		if err != nil {
-			return nil, false, err
-		}
+	if h.quantized != nil && !quantizationOptions(ctx).ignore {
+		scorer := h.quantized.query(normalized)
+		defer scorer.release()
+		ctx = context.WithValue(ctx, hnswQuantizedQueryKey{}, scorer)
+		minSim32 = float32(math.Inf(-1))
 	}
-
-	entryBufAny := h.idsPool.Get()
-	entries := entryBufAny.([]uint32)[:0]
-	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
-	for _, id := range entryIDs {
-		internalID, ok := h.idToInternal[id]
-		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
-			continue
-		}
-		entries = append(entries, internalID)
-	}
-	candidates, err := h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+	candidates, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
 	if err != nil {
 		return nil, false, err
 	}
@@ -743,6 +821,7 @@ const (
 // hnswIndexSnapshot is the serializable form of the HNSW index for persistence.
 // Vectors and VecOff are omitted; they are reconstructed on load from the vector index.
 type hnswIndexSnapshot struct {
+	Quantization      *hnswQuantizationSnapshot
 	Version           string
 	Config            HNSWConfig
 	Dimensions        int
@@ -762,12 +841,13 @@ type hnswIndexSnapshot struct {
 	MaxLevel          int
 }
 
-// Save writes the HNSW index to path (msgpack format) as graph-only: graph structure and IDs only, no vector data.
-// Vectors are always loaded from the vector index (vectors) on load, so the file stays small.
+// Save writes graph structure, IDs and any compressed model to path (msgpack).
+// Original vectors remain in their canonical vector store and are resolved on load.
 // Dir is created if needed. Copies index data under a short read lock so I/O does not block Search/Add/Remove.
 func (h *HNSWIndex) Save(path string) error {
 	h.mu.RLock()
 	config := h.config
+	quantization := h.quantized.snapshot()
 	dimensions := h.dimensions
 	nodeLevel := append([]uint16(nil), h.nodeLevel...)
 	neighborsArena := append([]uint32(nil), h.neighborsArena...)
@@ -802,6 +882,7 @@ func (h *HNSWIndex) Save(path string) error {
 	}()
 
 	snap := hnswIndexSnapshot{
+		Quantization:      quantization,
 		Version:           hnswIndexFormatVersionGraphOnly,
 		Config:            config,
 		Dimensions:        dimensions,
@@ -865,12 +946,17 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 		return nil, nil
 	}
 
+	quantized, validQuantization := restoreHNSWQuantization(snap.Quantization, snap.Dimensions, len(snap.InternalToID))
+	if !validQuantization {
+		return nil, nil
+	}
 	config := snap.Config
 	if config.M == 0 {
 		config = DefaultHNSWConfig()
 	}
 	h := NewHNSWIndex(snap.Dimensions, config)
 	h.mu.Lock()
+	h.quantized = quantized
 	h.nodeLevel = snap.NodeLevel
 	h.neighborsArena = snap.NeighborsArena
 	h.neighborsOff = snap.NeighborsOff
@@ -1137,7 +1223,8 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 		ctx = context.Background()
 	}
 	current := entryID
-	currentDist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(current))
+	scorer, _ := ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	currentDist := h.graphDistanceLocked(query, current, scorer)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1160,7 +1247,7 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 			if !validHNSWIndex(neighborID, len(h.nodeLevel)) {
 				continue
 			}
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+			dist := h.graphDistanceLocked(query, neighborID, scorer)
 			if dist < currentDist {
 				current = neighborID
 				currentDist = dist
@@ -1244,6 +1331,10 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // entry IDs.
 func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
 	var mode M
+	var scorer *hnswQuantizedQuery
+	if ctx != nil {
+		scorer, _ = ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	}
 	visited := h.visitedPool.Get().(*visitedGenState)
 	defer h.visitedPool.Put(visited)
 	if len(visited.gen) < len(h.nodeLevel) {
@@ -1272,9 +1363,9 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	results.Reset(true, ef*2)
 	defer h.heapPool.Put(results)
 
-	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID)
+	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID, scorer)
 	for _, id := range extraEntries {
-		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id)
+		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id, scorer)
 	}
 
 	for candidates.Len() > 0 {
@@ -1315,14 +1406,17 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 			}
 			visited.gen[neighborID] = curGen
 
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+			dist := h.graphDistanceLocked(query, neighborID, scorer)
 
 			if results.Len() < ef || dist < results.Peek().dist {
 				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				results.Push(hnswDistItem{id: neighborID, dist: dist})
-
-				if results.Len() > ef {
-					_ = results.Pop()
+				if results.Len() < ef {
+					results.Push(hnswDistItem{id: neighborID, dist: dist})
+				} else {
+					// A full beam admits only a closer item. Replace its worst
+					// member with one downward sift instead of push then pop.
+					results.items[0] = hnswDistItem{id: neighborID, dist: dist}
+					results.siftDown(0)
 				}
 			}
 		}
@@ -1360,16 +1454,21 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 // seedLayerEntry validates and seeds one entry point into the candidate and
 // result heaps. It is a small helper (one call per entry point, not per
 // neighbor) shared by the single- and multi-entry instantiations.
-func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) {
+func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32, scorer *hnswQuantizedQuery) {
 	if !validHNSWIndex(entryID, len(h.nodeLevel)) || h.deleted[entryID] || visited.gen[entryID] == curGen {
 		return
 	}
-	entryVector := h.vectorAtLocked(entryID)
-	if len(entryVector) != h.dimensions {
-		return
+	var entryDist float32
+	if scorer != nil {
+		entryDist = 1 - scorer.dot(entryID)
+	} else {
+		entryVector := h.vectorAtLocked(entryID)
+		if len(entryVector) != h.dimensions {
+			return
+		}
+		entryDist = 1 - vector.DotProductSIMD(query, entryVector)
 	}
 	visited.gen[entryID] = curGen
-	entryDist := float32(1.0) - vector.DotProductSIMD(query, entryVector)
 	item := hnswDistItem{id: entryID, dist: entryDist}
 	candidates.Push(item)
 	results.Push(item)

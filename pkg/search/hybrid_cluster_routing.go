@@ -64,6 +64,9 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 		total := 0.0
 		for _, id := range memberIDs {
 			text, ok := fulltext.GetDocument(id)
+			if !ok {
+				text, ok = fulltext.GetDocument(normalizeVectorResultIDToNodeID(id))
+			}
 			if !ok || text == "" {
 				continue
 			}
@@ -263,7 +266,7 @@ func (s *Service) applyBM25SeedHints() {
 	if len(ids) == 0 {
 		return
 	}
-	indices := clusterIndex.GetIndicesForNodeIDs(ids)
+	indices := clusterIndex.GetIndicesForNodeIDs(s.bm25SeedEmbeddingIDs(ids))
 	if len(indices) == 0 {
 		return
 	}

@@ -21,8 +21,7 @@ func setupPointsService(t *testing.T) (*PointsService, CollectionStore, storage.
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbm, vecIndex)
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -36,7 +35,7 @@ func setupPointsService(t *testing.T) (*PointsService, CollectionStore, storage.
 	err = collections.Create(ctx, "test_vectors", 4, qpb.Distance_Cosine)
 	require.NoError(t, err)
 
-	return NewPointsService(cfg, collections, nil, vecIndex, nil), collections, base
+	return NewPointsService(cfg, collections, sharedSearchProvider(), nil), collections, base
 }
 
 func TestPointsService_UpsertGetDeleteCountSearch(t *testing.T) {
@@ -174,173 +173,6 @@ func TestPointsService_SearchBatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, resp.Result, 2)
-}
-
-type recordingVectorIndex struct {
-	dim  int
-	dist qpb.Distance
-
-	lastEf int
-}
-
-func (r *recordingVectorIndex) dimensions() int        { return r.dim }
-func (r *recordingVectorIndex) distance() qpb.Distance { return r.dist }
-func (r *recordingVectorIndex) remove(id string)       { _ = id }
-func (r *recordingVectorIndex) upsert(id string, vec []float32) {
-	_ = id
-	_ = vec
-}
-func (r *recordingVectorIndex) search(ctx context.Context, query []float32, limit int, minScore float64, ef int) []searchResult {
-	_ = ctx
-	_ = query
-	_ = limit
-	_ = minScore
-	r.lastEf = ef
-	return []searchResult{{ID: "p1", Score: 0.99}}
-}
-
-type staticVectorIndex struct {
-	dim   int
-	dist  qpb.Distance
-	cands []searchResult
-}
-
-func (s *staticVectorIndex) dimensions() int        { return s.dim }
-func (s *staticVectorIndex) distance() qpb.Distance { return s.dist }
-func (s *staticVectorIndex) remove(id string)       { _ = id }
-func (s *staticVectorIndex) upsert(id string, vec []float32) {
-	_ = id
-	_ = vec
-}
-func (s *staticVectorIndex) search(ctx context.Context, query []float32, limit int, minScore float64, ef int) []searchResult {
-	_ = ctx
-	_ = query
-	_ = limit
-	_ = minScore
-	_ = ef
-	return append([]searchResult(nil), s.cands...)
-}
-
-func TestPointsService_Search_RespectsHnswEf(t *testing.T) {
-	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
-
-	rec := &recordingVectorIndex{dim: 4, dist: qpb.Distance_Cosine}
-	cache := newVectorIndexCache()
-	cache.indexes[indexKey{collection: "test_vectors", vectorName: ""}] = rec
-	service.vecIndex = cache
-
-	ef := uint64(77)
-	resp, err := service.Search(ctx, &qpb.SearchPoints{
-		CollectionName: "test_vectors",
-		Vector:         []float32{1, 0, 0, 0},
-		Limit:          3,
-		Params:         &qpb.SearchParams{HnswEf: &ef},
-	})
-	require.NoError(t, err)
-	require.Len(t, resp.Result, 1)
-	assert.Equal(t, 77, rec.lastEf)
-	assert.Equal(t, "p1", resp.Result[0].GetId().GetUuid())
-}
-
-func TestPointsService_SearchCollection_VecIndexBranches(t *testing.T) {
-	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
-
-	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
-		CollectionName: "test_vectors",
-		Points: []*qpb.PointStruct{
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "a"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{"tag": {Kind: &qpb.Value_StringValue{StringValue: "keep"}}},
-			},
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "b"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 1, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{"tag": {Kind: &qpb.Value_StringValue{StringValue: "drop"}}},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	store, meta, err := service.openCollection(ctx, "test_vectors")
-	require.NoError(t, err)
-
-	cache := newVectorIndexCache()
-	cache.indexes[indexKey{collection: "test_vectors", vectorName: ""}] = &staticVectorIndex{
-		dim:  4,
-		dist: meta.Distance,
-		cands: []searchResult{
-			{ID: "a", Score: 0.99},
-			{ID: "missing", Score: 0.98},
-			{ID: "b", Score: 0.97},
-		},
-	}
-	service.vecIndex = cache
-
-	// No filter path with offset trimming.
-	res := service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 1, 5, -1, 0)
-	require.Nil(t, res)
-
-	res = service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 1, 1, -1, 0)
-	require.Len(t, res, 1)
-
-	// Filter path drops missing/non-matching candidates and can return nil when offset exceeds.
-	res = service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, &qpb.Filter{
-		Must: []*qpb.Condition{
-			{
-				ConditionOneOf: &qpb.Condition_Field{
-					Field: &qpb.FieldCondition{
-						Key:   "tag",
-						Match: &qpb.Match{MatchValue: &qpb.Match_Keyword{Keyword: "keep"}},
-					},
-				},
-			},
-		},
-	}, 1, 1, -1, 0)
-	require.Nil(t, res)
-}
-
-func TestPointsService_SearchCollection_BruteForceBranches(t *testing.T) {
-	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
-	service.vecIndex = nil
-
-	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
-		CollectionName: "test_vectors",
-		Points: []*qpb.PointStruct{
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "bf1"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{"tag": {Kind: &qpb.Value_StringValue{StringValue: "x"}}},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	store, meta, err := service.openCollection(ctx, "test_vectors")
-	require.NoError(t, err)
-
-	// High score threshold prunes all brute-force candidates.
-	res := service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 2, 0, 2.0, 0)
-	require.Nil(t, res)
-
-	// Offset beyond results branch.
-	res = service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 1, 10, -1, 0)
-	require.Nil(t, res)
 }
 
 func TestPointsService_Query_Document(t *testing.T) {
@@ -607,12 +439,11 @@ func TestPointsService_HelperCoverage(t *testing.T) {
 		require.True(t, matchesFilter(node, filter))
 	})
 
-	t.Run("score vector distances", func(t *testing.T) {
-		a := []float32{1, 0, 0, 0}
-		b := []float32{1, 0, 0, 0}
-		require.Greater(t, scoreVector(qpb.Distance_Dot, a, b), 0.9)
-		require.Greater(t, scoreVector(qpb.Distance_Cosine, a, b), 0.9)
-		require.Greater(t, scoreVector(qpb.Distance_Euclid, a, b), 0.9)
+	t.Run("distance names the search service's similarity", func(t *testing.T) {
+		require.Equal(t, "dot", similarityName(qpb.Distance_Dot))
+		require.Equal(t, "euclidean", similarityName(qpb.Distance_Euclid))
+		require.Equal(t, "cosine", similarityName(qpb.Distance_Cosine))
+		require.Equal(t, "cosine", similarityName(qpb.Distance_UnknownDistance))
 	})
 }
 
@@ -884,73 +715,63 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	store, meta, err := service.openCollection(ctx, "test_vectors")
 	require.NoError(t, err)
 
-	t.Run("vec index path without filter", func(t *testing.T) {
-		results := service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 1, 0, -1, 0)
+	svc, err := service.getSearchService(ctx, "test_vectors", store, meta)
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+	query := []float32{1, 0, 0, 0}
+
+	t.Run("shared index without filter", func(t *testing.T) {
+		results := mustSearchCollection(t, ctx, svc, meta.Distance, "", query, nil, 1, 0, -1, 0)
 		require.Len(t, results, 1)
+		require.Equal(t, "qdrant:point:sc1", results[0].ID)
+		require.InDelta(t, 1.0, results[0].Score, 1e-6, "Qdrant scores are raw cosine similarities")
 
-		none := service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 1, 99, -1, 0)
-		require.Nil(t, none)
+		require.Nil(t, mustSearchCollection(t, ctx, svc, meta.Distance, "", query, nil, 1, 99, -1, 0))
 	})
 
-	t.Run("vec index path with filter", func(t *testing.T) {
-		results := service.searchCollection(ctx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, &qpb.Filter{
-			Must: []*qpb.Condition{
-				{
-					ConditionOneOf: &qpb.Condition_Field{
-						Field: &qpb.FieldCondition{
-							Key:   "group",
-							Match: &qpb.Match{MatchValue: &qpb.Match_Keyword{Keyword: "a"}},
-						},
-					},
-				},
-			},
-		}, 2, 0, -1, 0)
-		require.NotEmpty(t, results)
+	t.Run("shared index with filter", func(t *testing.T) {
+		results := mustSearchCollection(t, ctx, svc, meta.Distance, "", query, &qpb.Filter{Must: []*qpb.Condition{{ConditionOneOf: &qpb.Condition_Field{Field: &qpb.FieldCondition{
+			Key: "group", Match: &qpb.Match{MatchValue: &qpb.Match_Keyword{Keyword: "b"}},
+		}}}}}, 2, 0, -1, 0)
+		require.Len(t, results, 1)
+		require.Equal(t, "qdrant:point:sc2", results[0].ID)
+
+		require.Nil(t, mustSearchCollection(t, ctx, svc, meta.Distance, "", query, &qpb.Filter{Must: []*qpb.Condition{{ConditionOneOf: &qpb.Condition_Field{Field: &qpb.FieldCondition{
+			Key: "group", Match: &qpb.Match{MatchValue: &qpb.Match_Keyword{Keyword: "no-match"}},
+		}}}}}, 2, 0, -1, 0))
 	})
 
-	t.Run("search service path and brute fallback path", func(t *testing.T) {
-		service.vecIndex = nil
+	t.Run("score threshold cuts lower hits", func(t *testing.T) {
+		results := mustSearchCollection(t, ctx, svc, meta.Distance, "", query, nil, 2, 0, 0.5, 0)
+		require.Len(t, results, 1)
+		require.Nil(t, mustSearchCollection(t, ctx, svc, meta.Distance, "", query, nil, 2, 0, 2.0, 0))
+	})
 
-		svc := search.NewServiceWithDimensions(store, 4)
-		nodes, err := store.GetNodesByLabel(QdrantPointLabel)
-		require.NoError(t, err)
-		for _, n := range nodes {
-			require.NoError(t, svc.IndexNode(n))
-		}
+	t.Run("no search service has no hits", func(t *testing.T) {
+		require.Nil(t, mustSearchCollection(t, ctx, nil, meta.Distance, "", query, nil, 2, 0, -1, 0))
+	})
 
-		results := service.searchCollection(ctx, store, svc, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 2, 0, -1, 0)
-		require.NotEmpty(t, results)
-
-		// Search-service filter/offset paths.
-		filtered := service.searchCollection(ctx, store, svc, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, &qpb.Filter{
-			Must: []*qpb.Condition{
-				{
-					ConditionOneOf: &qpb.Condition_Field{
-						Field: &qpb.FieldCondition{
-							Key:   "group",
-							Match: &qpb.Match{MatchValue: &qpb.Match_Keyword{Keyword: "no-match"}},
-						},
-					},
-				},
-			},
-		}, 2, 1, -1, 0)
-		require.Nil(t, filtered)
-
+	t.Run("a canceled search fails", func(t *testing.T) {
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		require.Nil(t, service.searchCollection(cancelCtx, store, nil, "test_vectors", meta.Distance, "", []float32{1, 0, 0, 0}, nil, 2, 0, -1, 0))
+		_, err := searchCollection(cancelCtx, svc, meta.Distance, "", query, nil, 2, 0, -1, 0, false, nil)
+		require.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("getSearchService branches", func(t *testing.T) {
 		service.searchProvider = nil
-		require.Nil(t, service.getSearchService("test_vectors", store))
+		svc, err := service.getSearchService(ctx, "test_vectors", store, meta)
+		require.NoError(t, err)
+		require.Nil(t, svc)
 
 		service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
 			_ = database
 			_ = st
 			return nil, errors.New("boom")
 		}
-		require.Nil(t, service.getSearchService("test_vectors", store))
+		svc, err = service.getSearchService(ctx, "test_vectors", store, meta)
+		require.ErrorContains(t, err, "boom")
+		require.Nil(t, svc)
 
 		expected := search.NewServiceWithDimensions(store, 4)
 		service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
@@ -958,7 +779,9 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 			_ = st
 			return expected, nil
 		}
-		require.Equal(t, expected, service.getSearchService("test_vectors", store))
+		svc, err = service.getSearchService(ctx, "test_vectors", store, meta)
+		require.NoError(t, err)
+		require.Equal(t, expected, svc)
 	})
 
 	t.Run("extractDenseFromVector and resolvePointIDs", func(t *testing.T) {
@@ -1301,7 +1124,7 @@ func TestPointsService_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("allowAccess with checker", func(t *testing.T) {
-		blocked := NewPointsService(service.config, collections, nil, service.vecIndex, denyChecker{})
+		blocked := NewPointsService(service.config, collections, service.searchProvider, denyChecker{})
 		_, err := blocked.Count(ctx, &qpb.CountPoints{CollectionName: "test_vectors"})
 		require.Error(t, err)
 	})
@@ -1394,8 +1217,6 @@ func TestPointsService_SearchProviderMutationPaths(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Force search-service path (vecIndex disabled).
-	service.vecIndex = nil
 	_, err = service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
 		Points: []*qpb.PointStruct{
@@ -1625,7 +1446,7 @@ func TestPointsService_EngineErrorBranches(t *testing.T) {
 	}
 	cfg := DefaultConfig()
 	cfg.AllowVectorMutations = true
-	svc := NewPointsService(cfg, store, nil, nil, nil)
+	svc := NewPointsService(cfg, store, nil, nil)
 
 	eng.batchGetErr = errors.New("batch get failed")
 	_, err := svc.Upsert(ctx, &qpb.UpsertPoints{

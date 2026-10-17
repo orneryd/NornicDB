@@ -2424,7 +2424,7 @@ func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
 	require.NotEmpty(t, hits)
 	assert.Equal(t, "named_exact", hits[0].ID)
 
-	hits, err = svc.vectorQueryNodesExact(context.Background(), []float32{1, 0}, VectorQuerySpec{Limit: 5}, "default", "dot")
+	hits, err = svc.vectorQueryNodesExact(context.Background(), []float32{1, 0}, VectorQuerySpec{Limit: 5}, "default", "dot", nil)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 }

@@ -1,0 +1,149 @@
+{
+  "engine": "qdrant",
+  "mode": "exact",
+  "title": "Exact (brute force)",
+  "strategy": "exact search (exact=true)",
+  "base_mode": "exact",
+  "tag": "",
+  "gpu_requested": false,
+  "settings": {
+    "QDRANT__STORAGE__STORAGE_PATH": "/Users/timothysweet/src/NornicDB/bench-data/vector_ann/profiling/quantization-final/data/qdrant-exact-ez_5nxmm/storage",
+    "QDRANT__STORAGE__SNAPSHOTS_PATH": "/Users/timothysweet/src/NornicDB/bench-data/vector_ann/profiling/quantization-final/data/qdrant-exact-ez_5nxmm/snapshots",
+    "QDRANT__SERVICE__HOST": "127.0.0.1",
+    "QDRANT__SERVICE__HTTP_PORT": "17333",
+    "QDRANT__SERVICE__GRPC_PORT": "17334",
+    "QDRANT__SERVICE__MAX_REQUEST_SIZE_MB": "256",
+    "QDRANT__TELEMETRY_DISABLED": "true"
+  },
+  "provenance": {
+    "binaries_sha256": {
+      "nornicdb": "4a2a3ce57ee1f2af7f138d39651d45598d268f55f56c27fa2320ebc6d44f4492",
+      "qdrant": "ee6f221283784b4c63fddfdb7ba02fb713211c86761f2b8e02f2605ca81bf90c"
+    },
+    "corpus_sha256": {
+      "vectors.npy": "ba1c6bb0c1907cdb3bc8e9b14d40109d68cd5ec0a01c667ef2a33a6b78da9729",
+      "queries.npy": "d295c6d9ce66c58869690c5bb202aa0a32fa1f812d8e72dff4ec55b3a880e2bb",
+      "truth.npy": "aafe231d65dbe0519fd3bdcbae21c5db1dfa09112907b5cde3b886056592e690",
+      "meta.json": "085567a1c6e9017f10867ae6a66956776ae8e9b06610baee20c0d09f885cc5e9"
+    },
+    "construction_input": "vectors only (legacy corpus has no payloads)",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]",
+    "dependencies": [
+      "annotated-types==0.8.0",
+      "anyio==4.15.1",
+      "boto3==1.43.114",
+      "botocore==1.43.114",
+      "certifi==2026.7.22",
+      "charset-normalizer==3.5.2",
+      "grpcio==1.84.0",
+      "h11==0.16.0",
+      "h2==4.4.1",
+      "hpack==4.2.0",
+      "httpcore==1.0.9",
+      "httpx==0.28.1",
+      "hyperframe==6.1.0",
+      "idna==3.20",
+      "jmespath==1.1.0",
+      "numpy==2.5.4",
+      "portalocker==3.2.0",
+      "protobuf==7.36.2",
+      "psutil==7.2.2",
+      "pydantic==2.14.1",
+      "pydantic_core==2.50.1",
+      "python-dateutil==2.9.0.post0",
+      "qdrant-client==1.19.1",
+      "requests==2.34.2",
+      "s3transfer==0.19.2",
+      "six==1.17.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "urllib3==2.8.0"
+    ],
+    "nornic_build_settings": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "-tags": "noui,nolocalllm",
+      "CGO_ENABLED": "1",
+      "CGO_CFLAGS": "",
+      "CGO_CPPFLAGS": "",
+      "CGO_CXXFLAGS": "",
+      "CGO_LDFLAGS": "",
+      "GOARCH": "arm64",
+      "GOOS": "darwin",
+      "GOARM64": "v8.0",
+      "vcs": "git",
+      "vcs.revision": "7c201376d1203a651fc625869fb98df7be746ac4",
+      "vcs.time": "2026-10-17T07:12:13Z",
+      "vcs.modified": "false"
+    },
+    "harness_commit": "7c201376d",
+    "checkout_dirty": false
+  },
+  "vectors": 88155,
+  "loaded_points": 88155,
+  "dimensions": 1024,
+  "k": 10,
+  "load_s": 5.303104639053345,
+  "load_vectors_per_s": 16623.281266374655,
+  "index_ready_s": 1.0151679515838623,
+  "rss_bytes_after_load": 2963865600,
+  "disk_bytes": 437075968,
+  "runs": [
+    {
+      "recall@1": 1.0,
+      "recall@10": 1.0,
+      "mean_ms": 4.000712317880243,
+      "p50_ms": 3.870041109621525,
+      "p95_ms": 4.999875044450164,
+      "p99_ms": 5.128542524762452,
+      "qps": 368.83463517129724,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": null,
+      "search_params": {
+        "exact": true
+      }
+    }
+  ],
+  "rss_bytes_after_queries": 902365184,
+  "footprint_phase": "snapshot after all queries and a final index-readiness check",
+  "footprint_unix_s": 1792222085.427535,
+  "build_backend": null,
+  "collection_settings": {
+    "params": {
+      "vectors": {
+        "size": 1024,
+        "distance": "Cosine"
+      },
+      "shard_number": 1,
+      "replication_factor": 1,
+      "write_consistency_factor": 1,
+      "on_disk_payload": true
+    },
+    "hnsw_config": {
+      "m": 0,
+      "ef_construct": 100,
+      "full_scan_threshold": 10,
+      "max_indexing_threads": 0,
+      "on_disk": false
+    },
+    "optimizer_config": {
+      "deleted_threshold": 0.2,
+      "vacuum_min_vector_number": 1000,
+      "default_segment_number": 0,
+      "max_segment_size": null,
+      "memmap_threshold": null,
+      "indexing_threshold": 1,
+      "flush_interval_sec": 5,
+      "max_optimization_threads": null,
+      "prevent_unoptimized": null
+    },
+    "wal_config": {
+      "wal_capacity_mb": 32,
+      "wal_segments_ahead": 0,
+      "wal_retain_closed": 1
+    },
+    "quantization_config": null
+  },
+  "wall_s": 14.389586925506592
+}

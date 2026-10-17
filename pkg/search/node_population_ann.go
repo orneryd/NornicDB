@@ -30,7 +30,7 @@ func (s *Service) restoreNodePopulationANN(ctx context.Context, plan nodePopulat
 			hnswWarmupReason = "settings changed"
 			s.logPrintf("📇 HNSW on-disk index ignored due to settings change; rebuilding")
 		} else if err == nil && loaded != nil && dimensions > 0 && loaded.GetDimensions() == dimensions {
-			want := HNSWConfigFromEnv()
+			want := s.hnswConfig()
 			have := loaded.Config()
 			if have.M != want.M || have.EfConstruction != want.EfConstruction || have.EfSearch != want.EfSearch {
 				hnswWarmupReason = "config changed"
@@ -40,7 +40,7 @@ func (s *Service) restoreNodePopulationANN(ctx context.Context, plan nodePopulat
 				// Beam factor is query-only tuning and does not affect the persisted
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswLexicalSeedHints(s.fulltext(), want.M)))
+				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
 				if ctx.Err() != nil {
 					return
 				}

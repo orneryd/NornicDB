@@ -2257,7 +2257,9 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 // keep their embeddings.
 func (db *DB) ClearEmbeddingsForDatabase(dbName string, storageEngine storage.Engine) (int, error) {
 	if svc, _ := db.getOrCreateSearchService(dbName, storageEngine); svc != nil {
-		svc.ClearVectorIndex()
+		if err := svc.ClearVectorIndex(); err != nil {
+			return 0, err
+		}
 	}
 	return clearStoredEmbeddings(storageEngine)
 }

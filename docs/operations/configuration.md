@@ -748,7 +748,7 @@ Runtime transition behavior:
 
 **Strategy selection (order of precedence):**
 
-1. **GPU brute-force** – when GPU is enabled and vector count is in `[NORNICDB_VECTOR_GPU_BRUTE_MIN_N, NORNICDB_VECTOR_GPU_BRUTE_MAX_N]`.
+1. **GPU brute-force** – when GPU is enabled and vector count is in `[NORNICDB_VECTOR_GPU_BRUTE_MIN_N, NORNICDB_VECTOR_GPU_BRUTE_MAX_N]`. Its GPU copy of the vectors is built when it is first chosen.
 2. **CPU brute-force** – only when `NORNICDB_VECTOR_CPU_BRUTE_MAX_N` is greater than 0 and vector count is below that value.
 3. **Cluster-based** (IVF-HNSW or k-means) – when clustering is enabled and built.
 4. **Global HNSW** – default strategy when neither GPU brute-force, CPU brute-force opt-in, nor clustering is chosen.
@@ -783,7 +783,7 @@ By default, `NORNICDB_VECTOR_CPU_BRUTE_MAX_N=0`, so CPU brute-force is opt-in an
 | `NORNICDB_VECTOR_PQ_SEGMENTS`                  | (auto)   | Compressed mode only. Defaults to approximately `dimensions / 8` (up to 128), choosing a divisor of the embedding dimension; 1024 dimensions use 128 segments. Explicit values must divide the dimension. |
 | `NORNICDB_VECTOR_PQ_BITS`                      | `8`      | Compressed mode only. Bits per PQ code (currently clamped to 4-8).                                                                                                          |
 | `NORNICDB_VECTOR_IVFPQ_NPROBE`                 | (auto)   | Compressed mode only. IVF lists probed per query; defaults to max(16, one eighth of the lists). An explicit value overrides the adaptive default.                           |
-| `NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`            | `2000`   | Compressed mode only. Minimum approximate candidates sent to exact rerank; larger requested depths are preserved.                                                           |
+| `NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`            | `200`    | Compressed mode only. Minimum approximate candidates sent to exact rerank; larger requested depths are preserved.                                                           |
 | `NORNICDB_VECTOR_IVFPQ_TRAINING_SAMPLE_MAX`    | `200000` | Compressed mode only. Maximum vectors sampled for IVFPQ training.                                                                                                           |
 | `NORNICDB_VECTOR_IVFPQ_OVERFLOW_MAX`           | `512`    | Compressed mode only. Maximum exact outlier vectors retained alongside PQ. Set `0` to disable.                                                                             |
 | **HNSW Metal (GPU)**                           |          |                                                                                                                                                                             |
@@ -791,10 +791,9 @@ By default, `NORNICDB_VECTOR_CPU_BRUTE_MAX_N=0`, so CPU brute-force is opt-in an
 | **HNSW build acceleration**                    |          |                                                                                                                                                                             |
 | `NORNICDB_HNSW_BUILD_GPU_ENABLED`              | `true`   | Attempt GPU-assisted HNSW construction on supported hosts. Falls back to CPU if the accelerator is unavailable or fails.                                                    |
 | `NORNICDB_HNSW_BUILD_GPU_BATCH_SIZE`           | `2048`   | Number of vectors processed per construction batch.                                                                                                                         |
-| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`          | `128`    | Number of nearest candidates requested from the accelerator per vector before CPU graph linking.                                                                            |
+| `NORNICDB_HNSW_BUILD_GPU_CANDIDATE_K`          | `128`    | Minimum candidate depth before CPU graph linking; at least M and efConstruction (native GPU kernels cap returned candidates at 256).                                                                            |
 | `NORNICDB_HNSW_BUILD_GPU_DISTANCE_PRECISION`   | `fp32`   | Distance precision for GPU build candidate search.                                                                                                                          |
 | `NORNICDB_HNSW_BUILD_GPU_BEAM_WIDTH`           | `64`     | Metal graph-beam width for approximate layer-0 construction candidate search.                                                                                               |
-| `NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS`           | `2`      | Metal graph-beam expansion rounds before CPU graph linking.                                                                                                                 |
 | `NORNICDB_HNSW_BUILD_GPU_BEAM_UNION_MAX`       | `4096`   | Maximum graph-expanded candidate union scored per query group.                                                                                                              |
 | `NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP`     | `512`    | Number of construction queries grouped into one graph-beam candidate search.                                                                                                |
 | **HNSW maintenance**                           |          |                                                                                                                                                                             |
@@ -838,7 +837,7 @@ This mode is integrated end-to-end: build, persist, startup load/rebuild, search
 ```bash
 export NORNICDB_VECTOR_ANN_QUALITY=compressed
 export NORNICDB_VECTOR_PQ_BITS=8
-export NORNICDB_VECTOR_IVFPQ_RERANK_TOPK=2000
+export NORNICDB_VECTOR_IVFPQ_RERANK_TOPK=200
 export NORNICDB_VECTOR_IVFPQ_TRAINING_SAMPLE_MAX=200000
 ```
 

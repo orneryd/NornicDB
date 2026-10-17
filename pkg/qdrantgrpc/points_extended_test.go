@@ -19,8 +19,7 @@ func setupExtendedPointsService(t *testing.T) (*PointsService, storage.Engine) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbm, vecIndex)
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -33,7 +32,7 @@ func setupExtendedPointsService(t *testing.T) (*PointsService, storage.Engine) {
 
 	require.NoError(t, collections.Create(ctx, "test_collection", 4, qpb.Distance_Cosine))
 
-	svc := NewPointsService(cfg, collections, nil, vecIndex, nil)
+	svc := NewPointsService(cfg, collections, sharedSearchProvider(), nil)
 
 	_, err = svc.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_collection",
@@ -277,69 +276,6 @@ func TestPointsService_RecommendAndGroupsAndFieldIndex(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestVectorIndexCache_BruteIndexOperations(t *testing.T) {
-	t.Parallel()
-
-	cache := newVectorIndexCache()
-	idx := cache.getOrCreate("c1", "v1", 3, qpb.Distance_Dot)
-	require.NotNil(t, idx)
-	require.Equal(t, 3, idx.dimensions())
-	require.Equal(t, qpb.Distance_Dot, idx.distance())
-
-	// Wrong-dimension upsert is ignored.
-	idx.upsert("p-bad", []float32{1, 2})
-
-	idx.upsert("p1", []float32{1, 0, 0})
-	idx.upsert("p2", []float32{0, 1, 0})
-	results := idx.search(context.Background(), []float32{1, 0, 0}, 5, -1, 0)
-	require.NotEmpty(t, results)
-
-	idx.remove("p1")
-	results = idx.search(context.Background(), []float32{1, 0, 0}, 5, -1, 0)
-	for _, r := range results {
-		require.NotEqual(t, "p1", r.ID)
-	}
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	require.Nil(t, idx.search(cancelCtx, []float32{1, 0, 0}, 5, -1, 0))
-
-	// Cache-level helpers.
-	require.NotNil(t, cache.search(context.Background(), "c1", 3, qpb.Distance_Dot, "v1", []float32{1, 0, 0}, 3, -1, 0))
-	cache.deletePoint("c1", "p2", []string{"v1"})
-	cache.deleteCollection("c1")
-
-	// search validation branches
-	require.Nil(t, cache.search(context.Background(), "c1", 3, qpb.Distance_Dot, "v1", []float32{1, 0}, 3, -1, 0))
-	require.Nil(t, cache.search(context.Background(), "c1", 3, qpb.Distance_Dot, "v1", []float32{1, 0, 0}, 0, -1, 0))
-
-	// hnsw nil receiver and nil index branches
-	var hNil *hnswVectorIndex
-	hNil.Clear()
-	hNil.remove("x")
-	hNil.upsert("x", []float32{1, 0, 0})
-	require.Nil(t, hNil.search(context.Background(), []float32{1, 0, 0}, 1, -1, 0))
-
-	h := &hnswVectorIndex{dim: 3, dist: qpb.Distance_Cosine}
-	h.remove("x")
-	h.upsert("x", []float32{1, 0, 0})
-	require.Nil(t, h.search(context.Background(), []float32{1, 0, 0}, 1, -1, 0))
-
-	require.Equal(t, "qdrant:point:x", expandPointID("qdrant:point:x"))
-}
-
-func TestVectorScoreHelpers(t *testing.T) {
-	t.Parallel()
-
-	a := []float32{1, 0, 0}
-	b := []float32{1, 0, 0}
-
-	require.Greater(t, scoreVectorIndex(qpb.Distance_Dot, a, b), 0.9)
-	require.Greater(t, scoreVectorIndex(qpb.Distance_Cosine, a, b), 0.9)
-	require.Greater(t, scoreVectorIndex(qpb.Distance_Euclid, a, b), 0.9)
-	require.Greater(t, scoreVectorIndex(qpb.Distance_UnknownDistance, a, b), 0.9)
-}
-
 func TestFilterAndVectorCacheHelperBranches(t *testing.T) {
 	t.Parallel()
 
@@ -398,22 +334,10 @@ func TestFilterAndVectorCacheHelperBranches(t *testing.T) {
 	require.False(t, matchesFieldCondition(nil, nil))
 	require.False(t, matchesFieldCondition(&storage.Node{}, nil))
 	require.False(t, matchesFieldCondition(&storage.Node{Properties: map[string]any{}}, &qpb.FieldCondition{Key: "missing"}))
-
-	cache := newVectorIndexCache()
-	// Search input validation branches.
-	require.Nil(t, cache.search(context.Background(), "c", 3, qpb.Distance_Dot, "", []float32{1, 0}, 3, -1, 0))
-	require.Nil(t, cache.search(context.Background(), "c", 3, qpb.Distance_Dot, "", []float32{1, 0, 0}, 0, -1, 0))
-
-	// replacePoint validation branch.
-	err := cache.replacePoint("c", 3, qpb.Distance_Dot, "p", []string{"a"}, []string{"a", "b"}, [][]float32{{1, 0, 0}})
-	require.Error(t, err)
 }
 
 func TestPointVectorHelperBranches(t *testing.T) {
 	t.Parallel()
-
-	require.Equal(t, uint64(42), pointIDFromCompactString("42").GetNum())
-	require.Equal(t, "not-a-number", pointIDFromCompactString("not-a-number").GetUuid())
 
 	n := &storage.Node{}
 	upsertNodeVectors(nil, []string{""}, [][]float32{{1}})
@@ -477,73 +401,9 @@ func TestPointVectorHelperBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBruteVectorIndex_SearchBranches(t *testing.T) {
-	t.Parallel()
-
-	var nilIdx *bruteVectorIndex
-	require.Nil(t, nilIdx.search(context.Background(), []float32{1, 0}, 1, -1, 0))
-
-	idx := newBruteVectorIndex(2, qpb.Distance_Dot)
-	idx.upsert("a", []float32{1, 0})
-	idx.upsert("b", []float32{0, 1})
-	idx.upsert("c", []float32{1, 1})
-
-	require.Nil(t, idx.search(context.Background(), []float32{1, 0}, 0, -1, 0))
-	require.Nil(t, idx.search(context.Background(), []float32{1, 0, 0}, 1, -1, 0))
-
-	// minScore branch prunes low scores.
-	out := idx.search(context.Background(), []float32{1, 0}, 2, 1.5, 0)
-	require.Empty(t, out)
-
-	// top replacement branch with limited top-k.
-	out = idx.search(context.Background(), []float32{1, 0}, 1, -1, 0)
-	require.Len(t, out, 1)
-
-	// Cosine normalization branch + canceled context branch.
-	cos := newBruteVectorIndex(2, qpb.Distance_Cosine)
-	cos.upsert("c1", []float32{1, 1})
-	out = cos.search(context.Background(), []float32{1, 1}, 1, -1, 0)
-	require.Len(t, out, 1)
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	require.Nil(t, cos.search(cancelCtx, []float32{1, 1}, 1, -1, 0))
-}
-
-func TestVectorIndexCacheExtraBranches(t *testing.T) {
-	t.Parallel()
-
-	var nilCache *vectorIndexCache
-	require.Nil(t, nilCache.search(context.Background(), "c", 2, qpb.Distance_Dot, "", []float32{1, 0}, 1, -1, 0))
-	require.NoError(t, nilCache.replacePoint("c", 2, qpb.Distance_Dot, "p", nil, nil, nil))
-	nilCache.deletePoint("c", "p", nil)
-
-	cache := newVectorIndexCache()
-	require.NoError(t, cache.replacePoint("c", 2, qpb.Distance_Dot, "qdrant:point:p1", nil, []string{""}, [][]float32{{1, 0}}))
-	results := cache.search(context.Background(), "c", 2, qpb.Distance_Dot, "", []float32{1, 0}, 5, -1, 0)
-	require.Len(t, results, 1)
-	require.Equal(t, "p1", results[0].ID)
-
-	cache.deletePoint("c", "qdrant:point:p1", nil)
-	require.Empty(t, cache.search(context.Background(), "c", 2, qpb.Distance_Dot, "", []float32{1, 0}, 5, -1, 0))
-
-	require.ErrorContains(t, cache.replacePoint("c", 2, qpb.Distance_Dot, "p2", nil, []string{""}, [][]float32{{1, 0, 0}}), "vector dim mismatch")
-
-	first := cache.getOrCreate("c", "named", 2, qpb.Distance_Euclid)
-	second := cache.getOrCreate("c", "named", 3, qpb.Distance_Euclid)
-	require.NotSame(t, first, second)
-	cache.deleteCollection("c")
-	require.Empty(t, cache.indexes)
-
-	require.Equal(t, "abc", compactPointID("c", "qdrant:point:abc"))
-	require.Equal(t, "raw", compactPointID("c", "raw"))
-	require.Equal(t, "qdrant:point:raw", expandPointID("raw"))
-	require.Equal(t, "qdrant:custom", expandPointID("qdrant:custom"))
-}
-
 func TestCollectionStorePointCountBranches(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	dbStore := store.(*databaseCollectionStore)
 
 	require.NoError(t, store.Create(ctx, "counted", 2, qpb.Distance_Cosine))

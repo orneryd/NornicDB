@@ -15,6 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// cpuOnlyHNSWBuild runs the production construction entry point on the CPU
+// kernel, whatever NORNICDB_HNSW_BUILD_GPU_ENABLED says.
+func cpuOnlyHNSWBuild(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator) (*HNSWIndex, hnswBuildStats, error) {
+	config.UseGPUBuild = false
+	return buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iter, nil)
+}
+
 func hnswBuildFixture(n int, identical bool) (*VectorIndex, []hnswBuildPair) {
 	vi := NewVectorIndex(2048)
 	rng := rand.New(rand.NewSource(86))
@@ -60,7 +67,7 @@ func BenchmarkHNSWBuild2048(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := buildHNSWCPU(b.Context(), 2048, config, vi.getVectorRef, n, hnswPairSliceIterator(pairs))
+						_, _, err := cpuOnlyHNSWBuild(b.Context(), 2048, config, vi.getVectorRef, n, hnswPairSliceIterator(pairs))
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -72,7 +79,7 @@ func BenchmarkHNSWBuild2048(b *testing.B) {
 }
 func BenchmarkHNSWSearch2048(b *testing.B) {
 	vi, pairs := hnswBuildFixture(5300, false)
-	idx, _, err := buildHNSWCPU(b.Context(), 2048, DefaultHNSWConfig(), vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
+	idx, _, err := cpuOnlyHNSWBuild(b.Context(), 2048, DefaultHNSWConfig(), vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -99,7 +106,7 @@ func TestHNSWBuildCPUProfile(t *testing.T) {
 	f, err := os.Create(path)
 	require.NoError(t, err)
 	require.NoError(t, pprof.StartCPUProfile(f))
-	_, stats, err := buildHNSWCPU(context.Background(), 2048, DefaultHNSWConfig(), vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
+	_, stats, err := cpuOnlyHNSWBuild(context.Background(), 2048, DefaultHNSWConfig(), vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
 	pprof.StopCPUProfile()
 	require.NoError(t, f.Close())
 	require.NoError(t, err)

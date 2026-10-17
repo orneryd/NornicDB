@@ -105,8 +105,11 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		return nil, err
 	}
 	idx, job, err := s.startHNSWBuild(dimensions)
-	if err != nil || idx != nil {
-		return idx, err
+	if err != nil {
+		return nil, err
+	}
+	if idx != nil {
+		return idx, s.applyHNSWQuantizationPolicy(ctx, idx)
 	}
 	if job == nil {
 		return nil, ErrSearchIndexBuilding
@@ -115,8 +118,18 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-job.done:
-		return job.index, job.err
+		if job.err != nil || job.index == nil {
+			return job.index, job.err
+		}
+		return job.index, s.applyHNSWQuantizationPolicy(ctx, job.index)
 	}
+}
+
+// applyHNSWQuantizationPolicy brings a ready graph to the database's current
+// compression policy (environment or ConfigureHNSWQuantization) whenever a
+// caller obtains the installed graph. An unchanged policy is a no-op.
+func (s *Service) applyHNSWQuantizationPolicy(ctx context.Context, idx *HNSWIndex) error {
+	return idx.SetQuantization(ctx, s.hnswConfig().Quantization)
 }
 
 // pauseHNSWBuild cancels and joins construction before vector storage is reset
@@ -210,6 +223,11 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 			lookup, iterator = lease.Lookup, hnswVectorReadLeaseIterator(lease, hints)
 		}
 		built, stats, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iterator, nil)
+		if err == nil {
+			// Encode while the construction lease still lends normalized views.
+			// Runtime lookups retain their owning-copy contract.
+			err = built.SetQuantization(ctx, config.Quantization)
+		}
 		if built != nil {
 			built.SetVectorLookup(s.getVectorLookup())
 		}
@@ -217,7 +235,11 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 	}
 	pairs := hnswOrderedVectorIndexPairs(vi, hints)
 	s.logPrintf("[HNSW] Building from in-memory index: %d vectors", len(pairs))
-	return buildHNSWWithOptionalGPU(ctx, dimensions, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs), nil)
+	built, stats, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs), nil)
+	if err == nil {
+		err = built.SetQuantization(ctx, config.Quantization)
+	}
+	return built, stats, err
 }
 
 // hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
@@ -237,16 +259,16 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 	}
 	s.hnswMu.RUnlock()
 
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 
 	s.mu.RLock()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	ft := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswLexicalSeedHints(ft, config.M)
+	seedHints := s.hnswBuildLexicalSeedHints(ft, config.M)
 	if len(seedHints) > 0 {
-		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked node IDs", len(seedHints))
+		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs", len(seedHints))
 	}
 
 	var built *HNSWIndex
@@ -435,7 +457,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
 
-	rebuilt, _, err := s.buildHNSWSnapshot(ctx, old.dimensions, old.config, vi, vfs, s.hnswLexicalSeedHints(fulltext, old.config.M))
+	rebuilt, _, err := s.buildHNSWSnapshot(ctx, old.dimensions, old.config, vi, vfs, s.hnswBuildLexicalSeedHints(fulltext, old.config.M))
 	if err != nil {
 		return err
 	}

@@ -127,12 +127,13 @@ func TestHNSWConstructionCachePreservesGraphAndReleasesViews(t *testing.T) {
 	for _, identical := range []bool{false, true} {
 		vi, pairs := hnswBuildFixture(96, identical)
 		config := DefaultHNSWConfig()
-		reference := NewHNSWIndex(2048, config)
-		reference.SetVectorLookup(vi.getVectorRef)
-		for _, p := range pairs {
-			require.NoError(t, reference.Add(p.id, p.vec))
-		}
-		built, _, err := buildHNSWCPU(context.Background(), 2048, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
+		// The batch-parallel builder's graph differs from one-at-a-time inserts
+		// by design. Cached neighbour selection is checked against the uncached
+		// reference above; here the cached build must be reproducible.
+		reference, _, err := cpuOnlyHNSWBuild(context.Background(), 2048, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
+		require.NoError(t, err)
+		require.Equal(t, len(pairs), reference.Size())
+		built, _, err := cpuOnlyHNSWBuild(context.Background(), 2048, config, vi.getVectorRef, len(pairs), hnswPairSliceIterator(pairs))
 		require.NoError(t, err)
 		require.Equal(t, reference.nodeLevel, built.nodeLevel)
 		require.Equal(t, reference.neighborCountsArena, built.neighborCountsArena)

@@ -1563,6 +1563,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "qdrant.read_existing_points_failed", Constructor: "QdrantReadExistingPointsFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.recommend_dimension_mismatch", Constructor: "QdrantRecommendationDimensionMismatch", Fields: []string{"Negative", "Positive"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.scan_points_failed", Constructor: "QdrantScanPointsFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "qdrant.search_failed", Constructor: "QdrantSearchFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.snapshot_delete_failed", Constructor: "QdrantSnapshotDeleteFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.snapshot_directory_create_failed", Constructor: "QdrantSnapshotDirectoryCreateFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.snapshot_list_failed", Constructor: "QdrantSnapshotListFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

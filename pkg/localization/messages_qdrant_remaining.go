@@ -32,6 +32,7 @@ const (
 	MessageQdrantRecommendDimMismatch      MessageID = "qdrant.recommend_dimension_mismatch"
 	MessageQdrantVectorKindUnsupported     MessageID = "qdrant.vector_kind_unsupported"
 	MessageQdrantScanPointsFailed          MessageID = "qdrant.scan_points_failed"
+	MessageQdrantSearchFailed              MessageID = "qdrant.search_failed"
 	MessageQdrantSelectorInvalid           MessageID = "qdrant.points_selector_invalid"
 	MessageQdrantVectorsTypeUnsupported    MessageID = "qdrant.vectors_type_unsupported"
 	MessageQdrantGetCollectionPointsFailed MessageID = "qdrant.get_collection_points_failed"
@@ -147,6 +148,10 @@ func QdrantScanPointsFailed(cause error) Message {
 	return qdrantCauseMessage(MessageQdrantScanPointsFailed, "failed to scan points: ", cause)
 }
 
+func QdrantSearchFailed(cause error) Message {
+	return qdrantCauseMessage(MessageQdrantSearchFailed, "vector search failed: ", cause)
+}
+
 func QdrantInvalidPointsSelector() Message {
 	return Message{ID: MessageQdrantSelectorInvalid, Fallback: "invalid points selector"}
 }
@@ -178,4 +183,14 @@ func QdrantGetEdgesFailed(cause error) Message {
 func qdrantCauseMessage(id MessageID, prefix string, cause error) Message {
 	causeText := cause.Error()
 	return Message{ID: id, Fallback: prefix + causeText, Data: map[string]any{"Cause": causeText}}
+}
+
+// QdrantInvalidQuantizationOversampling identifies an invalid quantized search budget.
+func QdrantInvalidQuantizationOversampling() Message {
+	return Message{ID: MessageID("qdrant.invalid_quantization_oversampling"), Fallback: "quantization oversampling must be finite and at least 1"}
+}
+
+// QdrantInvalidQuantizationConfig identifies an unsupported compression request.
+func QdrantInvalidQuantizationConfig(cause error) Message {
+	return qdrantCauseMessage(MessageID("qdrant.invalid_quantization_config"), "invalid quantization configuration: ", cause)
 }

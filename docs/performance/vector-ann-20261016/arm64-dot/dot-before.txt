@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/simd
+cpu: Apple M2 Max
+BenchmarkDotProduct/SIMD-1024-12         	 4911709	       243.8 ns/op	33600.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkDotProduct/SIMD-1024-12         	 4908882	       244.9 ns/op	33454.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkDotProduct/SIMD-1024-12         	 4903375	       244.0 ns/op	33572.57 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/simd	4.630s

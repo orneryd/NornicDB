@@ -1,0 +1,36 @@
+F== nornicdb / bq+rescore8: HNSW + binary quantization (rescore, 2x oversampling) [rescore8]
+F/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py:243: ResourceWarning: unclosed file <_io.TextIOWrapper name='/private/var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmph97tv34x/out/.runner.lock' mode='w' encoding='UTF-8'>
+  run.main()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+F
+======================================================================
+FAIL: test_report_caption_uses_recorded_parameters_without_rewriting_raw_results (test_benchmark.QuantizationEvidenceContracts.test_report_caption_uses_recorded_parameters_without_rewriting_raw_results)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py", line 275, in test_report_caption_uses_recorded_parameters_without_rewriting_raw_results
+    self.assertIn("8x oversampling", displayed["title"])
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '8x oversampling' not found in 'binary (2x oversampling) [rescore8]'
+
+======================================================================
+FAIL: test_runner_caption_uses_explicit_rescoring_factor (test_benchmark.QuantizationEvidenceContracts.test_runner_caption_uses_explicit_rescoring_factor)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py", line 264, in test_runner_caption_uses_explicit_rescoring_factor
+    self.assertIn("8x oversampling", engine.mode["title"])
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '8x oversampling' not found in 'HNSW + binary quantization (rescore, 2x oversampling) [rescore8]'
+
+======================================================================
+FAIL: test_unstamped_binary_cannot_start_a_nornic_benchmark (test_benchmark.QuantizationEvidenceContracts.test_unstamped_binary_cannot_start_a_nornic_benchmark)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py", line 242, in test_unstamped_binary_cannot_start_a_nornic_benchmark
+    with self.assertRaisesRegex(RuntimeError, "embedded VCS"):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: RuntimeError not raised
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.005s
+
+FAILED (failures=3)

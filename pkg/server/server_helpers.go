@@ -369,7 +369,7 @@ func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
 func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
 	var manager cypher.DatabaseManagerInterface
 	if s.dbManager != nil {
-		manager = &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
+		manager = s.databaseManager()
 	}
 	var canAccess func(string) bool
 	if mode != nil {

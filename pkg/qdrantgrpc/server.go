@@ -67,7 +67,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +98,12 @@ type Config struct {
 	// TLSConfig enables TLS transport when non-nil. ClientAuth and ClientCAs
 	// control optional mutual TLS authentication.
 	TLSConfig *tls.Config
+
+	// Logger receives request completion events at debug for success, warning
+	// for client failures, and error for internal/service failures. Production
+	// callers should pass their configured logger, e.g. cfg.Logger = logger.
+	// Nil uses an info-level text logger on stderr for standalone callers.
+	Logger *slog.Logger
 
 	// Localizer renders public protocol messages. Nil preserves source English.
 	Localizer *localization.Manager
@@ -150,6 +158,12 @@ type Config struct {
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 
+	// DropDatabase drops a collection's database together with the state the
+	// server derives from it, such as its search index, as Cypher's DROP
+	// DATABASE does. nil drops it from the database manager only, which leaves
+	// a dropped collection's vectors in its search service.
+	DropDatabase func(name string) error
+
 	// BindQueryEmbedding captures the provider used by EmbedQuery for a text
 	// request. It must preserve an existing binding in nested batch calls.
 	// ID and numeric-vector requests never invoke it.
@@ -178,6 +192,8 @@ type Config struct {
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
+// A nil service with nil error means vector search is intentionally disabled;
+// a non-nil error means the index is unavailable and must reach the caller.
 // When nil, Qdrant point writes still persist but do not update NornicDB search indexes.
 type SearchServiceProvider func(database string, store storage.Engine) (*search.Service, error)
 
@@ -215,7 +231,6 @@ type Server struct {
 	collections    CollectionStore
 	baseStorage    storage.Engine
 	searchService  SearchServiceProvider
-	vecIndex       *vectorIndexCache
 	authenticator  *auth.Authenticator // Authentication for gRPC requests
 	basicAuthCache *auth.BasicAuthCache
 
@@ -300,8 +315,35 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if config.Logger == nil {
+		config.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
 	if collections == nil {
 		return nil, fmt.Errorf("collection store required")
+	}
+	// Both exported constructor assemblies pair default storage retirement
+	// with complete derived-state retirement. Preserve custom lifecycle hooks.
+	if store, ok := collections.(*databaseCollectionStore); ok && store.defaultDrop && searchProvider != nil {
+		paired := *store
+		paired.defaultDrop = false
+		paired.dropDatabase = func(name string) error {
+			engine, err := store.dbManager.GetStorage(name)
+			if err != nil {
+				return err
+			}
+			svc, err := searchProvider(name, engine)
+			if err != nil {
+				return err
+			}
+			if err := store.dropDatabase(name); err != nil {
+				return err
+			}
+			if svc != nil {
+				return svc.ClearIndexes()
+			}
+			return nil
+		}
+		collections = &paired
 	}
 
 	srv := &Server{
@@ -309,7 +351,6 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		collections:    collections,
 		baseStorage:    baseStorage,
 		searchService:  searchProvider,
-		vecIndex:       newVectorIndexCache(),
 		authenticator:  authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		register:       nil,
@@ -404,11 +445,11 @@ func (s *Server) Start() error {
 	if s.databaseAccessModeResolver == nil {
 		checker = nil // no per-DB RBAC when resolvers not set
 	}
-	collectionsService := NewCollectionsService(s.collections, s.vecIndex, checker)
+	collectionsService := NewCollectionsService(s.collections, checker)
 	collectionsService.localizer = s.config.Localizer
 	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
 
-	pointsService := NewPointsService(s.config, s.collections, s.searchService, s.vecIndex, checker)
+	pointsService := NewPointsService(s.config, s.collections, s.searchService, checker)
 	qpb.RegisterPointsServer(s.grpcServer, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.collections, s.baseStorage, s.config.SnapshotDir, checker)
@@ -593,17 +634,43 @@ func (s *Server) streamAuthInterceptor(srv interface{}, ss grpc.ServerStream, in
 func (s *Server) unaryLoggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)
-	code := status.Code(err)
-	log.Printf("[gRPC] UNARY %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ctx, "unary", info.FullMethod, start, err)
 	return resp, err
 }
 
 func (s *Server) streamLoggingInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	start := time.Now()
 	err := handler(srv, ss)
-	code := status.Code(err)
-	log.Printf("[gRPC] STREAM %s %s %v", info.FullMethod, code.String(), time.Since(start))
+	s.logRequest(ss.Context(), "stream", info.FullMethod, start, err)
 	return err
+}
+
+// logRequest uses the injected level policy before formatting completion fields.
+// Protocol/client failures are warnings; service/internal failures are errors.
+func (s *Server) logRequest(ctx context.Context, kind, method string, start time.Time, err error) {
+	code := status.Code(err)
+	level := slog.LevelDebug
+	outcome := "success"
+	if code != codes.OK {
+		level = slog.LevelWarn
+		outcome = "failure"
+		switch code {
+		case codes.Unknown, codes.Internal, codes.DataLoss, codes.Unavailable:
+			level = slog.LevelError
+		}
+	}
+	logger := s.config.Logger
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+	logger.LogAttrs(ctx, level, "gRPC request completed",
+		slog.String("event_id", "qdrant.grpc.request"),
+		slog.String("component", "qdrantgrpc"),
+		slog.String("rpc_type", kind),
+		slog.String("rpc_method", method),
+		slog.String("grpc_code", code.String()),
+		slog.String("outcome", outcome),
+		slog.Duration("duration", time.Since(start)))
 }
 
 // handleBasicAuth handles Basic authentication for gRPC requests.
@@ -827,16 +894,13 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbManager, vecIndex)
+	var dropDatabase func(name string) error
+	if config != nil {
+		dropDatabase = config.DropDatabase
+	}
+	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {
 		return nil, err
 	}
-	srv, err := NewServer(config, collections, baseStorage, searchProvider, authenticator)
-	if err != nil {
-		return nil, err
-	}
-	// Ensure server and store share the same index cache.
-	srv.vecIndex = vecIndex
-	return srv, nil
+	return NewServer(config, collections, baseStorage, searchProvider, authenticator)
 }

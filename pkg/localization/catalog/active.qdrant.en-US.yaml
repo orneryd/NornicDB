@@ -76,6 +76,9 @@
 - id: qdrant.scan_points_failed
   description: Qdrant point scan failure. Cause is diagnostic text.
   other: "failed to scan points: {{.Cause}}"
+- id: qdrant.search_failed
+  description: Qdrant vector search failure. Cause is diagnostic text.
+  other: "vector search failed: {{.Cause}}"
 - id: qdrant.points_selector_invalid
   description: Qdrant validation error for an invalid points selector.
   other: invalid points selector
@@ -97,3 +100,11 @@
 - id: qdrant.get_edges_failed
   description: Qdrant full-snapshot edge read failure. Cause is diagnostic text.
   other: "failed to get edges: {{.Cause}}"
+
+- id: qdrant.invalid_quantization_oversampling
+  description: Invalid quantized search oversampling factor.
+  other: "quantization oversampling must be finite and at least 1"
+
+- id: qdrant.invalid_quantization_config
+  description: Unsupported or invalid vector compression configuration.
+  other: "invalid quantization configuration: {{.Cause}}"

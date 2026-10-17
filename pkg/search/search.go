@@ -420,6 +420,21 @@ type SearchOptions struct {
 	// doesn't read them (#1060): no hit's chunks are scored, no text scanned.
 	SkipMatches bool
 
+	// HNSWEf is this search's HNSW beam width (ef), as Qdrant's per-request
+	// hnsw_ef: 0 uses the configured preset (NORNICDB_VECTOR_HNSW_EF_SEARCH and
+	// the beam factor). Only HNSW-based strategies read it (global HNSW and the
+	// per-cluster graphs of IVF-HNSW); IVF-PQ, k-means routing and brute force
+	// don't search a graph and ignore it.
+	HNSWEf int
+
+	// QuantizationIgnore searches original coordinates. QuantizationRescore
+	// defaults to true; false returns approximate scores for quantized HNSW.
+	// QuantizationOversampling expands the exact-reranking candidate pool
+	// (0 defaults to 1; explicit values must be finite and at least 1).
+	QuantizationIgnore       bool
+	QuantizationRescore      *bool
+	QuantizationOversampling float64
+
 	// Where admits a candidate node, as a Cypher WHERE on it does: a missing
 	// property, a negation or a pattern from the node; nil admits every node. It
 	// is applied with Types and Filters to the candidates, before the top-K cut.
@@ -900,8 +915,10 @@ type Service struct {
 
 	// Optional IVF-HNSW acceleration: build one HNSW per cluster to use centroids
 	// as a routing layer for CPU-only large datasets.
-	clusterHNSWMu sync.RWMutex
-	clusterHNSW   map[int]*HNSWIndex
+	// Optional per-database policy supplied by the collection owner; guarded by mu.
+	hnswQuantizationOverride *HNSWQuantizationConfig
+	clusterHNSWMu            sync.RWMutex
+	clusterHNSW              map[int]*HNSWIndex
 
 	// Optional compressed ANN index (IVF/PQ), active only when
 	// NORNICDB_VECTOR_ANN_QUALITY=compressed and readiness checks pass.
@@ -1039,7 +1056,18 @@ const (
 	strategyModeBruteCPU
 	strategyModeBruteGPU
 	strategyModeHNSW
+	strategyModeIVFPQ
+	strategyModeKMeansCPU
+	strategyModeKMeansGPU
+	strategyModeIVFHNSW
 )
+
+// runtimeManaged reports whether runtime strategy transitions may move a
+// pipeline of this mode: only between brute force and HNSW. IVF-PQ and k-means
+// routing are configured strategies a transition never replaces.
+func (m strategyMode) runtimeManaged() bool {
+	return m == strategyModeBruteCPU || m == strategyModeBruteGPU || m == strategyModeHNSW
+}
 
 type strategyDeltaMutation struct {
 	seq uint64
@@ -1961,7 +1989,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		numClusters = maxClusters
 	}
 
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 	rebuilt := make(map[int]*HNSWIndex, numClusters)
 	s.logPrintf("[IVF-HNSW] 🔨 Building per-cluster HNSW: %d clusters (min size %d)", numClusters, minClusterSize)
 	const ivfProgressInterval = 50 // log every N clusters built
@@ -2727,6 +2755,19 @@ func firstEdgeVectorDimensions(edge *storage.Edge) int {
 	return 0
 }
 
+// adoptFirstVectorDimensions applies IndexNode's rule to a batch of a rebuild
+// from storage: the first vector of an empty index whose dimension isn't fixed
+// sets the dimension, whichever stored node carries it. A node without a
+// vector (a document, a Qdrant collection's metadata node) never decides it.
+func (s *Service) adoptFirstVectorDimensions(batch []*storage.Node) {
+	for _, node := range batch {
+		if dims := firstVectorDimensions(node); dims > 0 {
+			s.maybeAutoSetVectorDimensions(dims)
+			return
+		}
+	}
+}
+
 func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	if s == nil || dimensions <= 0 || s.vectorDimensionsFixed.Load() {
 		return
@@ -2778,7 +2819,10 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 		s.gpuEmbeddingIndex = nil
 	}
 	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
+		old := s.clusterIndex
+		s.clusterIndex = old.EmptyWithDimensions(dimensions)
+		old.Clear()
+		old.Release()
 	}
 	s.mu.Unlock()
 
@@ -2804,69 +2848,6 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 	s.retireVectorSourceLocked(false)
 }
 
-// ClearVectorIndex removes all embeddings from the vector index.
-// This is used when regenerating all embeddings to reset the index count.
-// Also frees memory from HNSW tombstones which can accumulate over time.
-func (s *Service) ClearVectorIndex() {
-	// Clustering copies the population and publishes into it later; join it
-	// whatever context its caller supplied.
-	resumeClusters := s.pauseClusterRuns()
-	defer resumeClusters()
-	resumeBase := s.pauseBaseBuild(true)
-	defer resumeBase()
-	resume := s.pauseHNSWBuild()
-	defer resume()
-	defer s.indexChanged()
-	// Serialize source retirement and final transition publication. Release mu
-	// before pipelineMu, matching pipeline snapshot ordering.
-	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
-	s.mu.Lock()
-	s.changeNodeSourcesLocked(nodeVectorCleared)
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
-	if s.vectorIndex != nil {
-		s.vectorIndex.Clear()
-	}
-	if s.gpuEmbeddingIndex != nil {
-		s.gpuEmbeddingIndex.Clear()
-	}
-	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
-	}
-	s.clearNodeVectorMetadataLocked()
-
-	clear(s.edgeTypes)
-	clear(s.edgePropVector)
-	s.clearVectorIndexCapacityLocked()
-	s.mu.Unlock()
-	if err := s.removeVectorArtifactsLocked(); err != nil {
-		s.logPrintf("⚠️ Vector artifact retirement failed: %v", err)
-	}
-
-	// Retire cluster-derived publication before clearing it.
-	s.clusterGeneration.Add(1)
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
-
-	// Also clear HNSW index if it exists (frees memory from tombstones).
-	// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-	}
-	s.hnswMu.Unlock()
-	s.retireVectorSourceLocked(false) // Recreate lazily from replacement vectors.
-}
-
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
@@ -2884,7 +2865,7 @@ func (s *Service) IndexNode(node *storage.Node) error {
 			s.resultCache.Invalidate()
 		}
 	}
-	err = s.indexNodeLocked(node, !bm25On)
+	err = s.indexNodeLocked(node, false)
 	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3145,15 +3126,33 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
-	defer s.indexChanged()
-	nodeIDStr := string(node.ID)
-	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
 	}
+	// Explicit embeddings are vectors, unlike ordinary numeric properties.
+	// Validate before removing the previous entries so a failed update cannot
+	// silently discard acknowledged vectors (including fixed embedder dimensions).
+	if shouldIndex && s.vectorEnabled.Load() {
+		dims := s.VectorIndexDimensions()
+		for _, embedding := range node.NamedEmbeddings {
+			if len(embedding) > 0 && len(embedding) != dims {
+				return ErrDimensionMismatch
+			}
+		}
+		if s.managedEmbeddingEligible(node) {
+			for _, embedding := range node.ChunkEmbeddings {
+				if len(embedding) > 0 && len(embedding) != dims {
+					return ErrDimensionMismatch
+				}
+			}
+		}
+	}
+	defer s.indexChanged()
+	nodeIDStr := string(node.ID)
+	defer s.rememberChunkSpansLocked(nodeIDStr, node)
 	var fulltext nodeFulltext
-	if !skipFulltext {
+	if !skipFulltext && s.bm25Enabled.Load() {
 		fulltext.text = s.extractSearchableText(node)
 		fulltext.index = s.bm25Enabled.Load()
 		if index := s.fulltext(); index != nil && nodeIDStr != "" && shouldIndex {
@@ -4189,9 +4188,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		if len(batch) == 0 {
 			return nil
 		}
-		if count == 0 && len(batch) > 0 {
-			s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
-		}
+		s.adoptFirstVectorDimensions(batch)
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
 			shouldIndex, err := s.shouldIndexNode(n)
@@ -4551,11 +4548,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		mode = "relationships"
 		return s.SearchRelationships(ctx, query, embedding, opts)
 	}
-	if err := s.EnsureWarm(ctx); err != nil {
+	if err := s.prepareSearchRead(ctx); err != nil {
 		return nil, err
-	}
-	if s.buildAttempted.Load() && !s.IsReady() {
-		return nil, localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
 	}
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
@@ -5024,7 +5018,10 @@ func resolveVectorAdaptiveOverfetch(opts *SearchOptions, pipeline *VectorSearchP
 			config.initialLimit = rescoreFloor
 		}
 	}
-	if planner, ok := pipeline.candidateGen.(approximateCandidateDepthPlanner); ok {
+	// A request's own HNSW ef (SearchOptions.HNSWEf) sets the graph search depth
+	// itself, so the generator's preferred depth doesn't widen it.
+	_, hnsw := pipeline.candidateGen.(*HNSWCandidateGen)
+	if planner, ok := pipeline.candidateGen.(approximateCandidateDepthPlanner); ok && !(hnsw && opts.HNSWEf > 0) {
 		preferred := planner.preferredCandidateDepth(config.target, config.maxLimit)
 		if preferred > config.initialLimit {
 			config.initialLimit = min(preferred, config.maxLimit)
@@ -5047,6 +5044,12 @@ func (s *Service) adaptiveVectorSearch(
 	}
 	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
+	ctx = withHNSWEf(ctx, opts.HNSWEf)
+	var quantizationErr error
+	ctx, quantizationErr = withQuantizationOptions(ctx, opts)
+	if quantizationErr != nil {
+		return nil, vectorOverfetchStats{}, quantizationErr
+	}
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {
@@ -5421,6 +5424,12 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		return pipeline, nil
 	}
 
+	// Initial GPU upload must own mutation admission through publication. Do
+	// this before pipelineMu: transition publication takes indexMu first.
+	if err := s.prepareGPUIndexForCurrentStrategy(); err != nil {
+		s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
+	}
+
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
 
@@ -5440,6 +5449,26 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	strategy, err := s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, vectorCount, dimensions, vfs, vi)
 	if err != nil {
 		return nil, err
+	}
+	if strategy.needsGPUUpload {
+		// Compressed construction may fall back to GPU brute force. Upload
+		// only after that choice, releasing pipelineMu before indexMu.
+		s.pipelineMu.Unlock()
+		uploadErr := s.ensureGPUIndexSynced(vi, vfs)
+		s.pipelineMu.Lock()
+		if s.vectorPipeline != nil {
+			return s.vectorPipeline, nil
+		}
+		if uploadErr != nil {
+			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", uploadErr)
+		}
+		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, uploadErr == nil)
+		if err != nil {
+			return nil, err
+		}
+		if ANNQualityFromEnv() == ANNQualityCompressed {
+			strategy.name = "compressed-fallback -> " + strategy.name
+		}
 	}
 
 	s.logPrintf("🔍 Vector search strategy: %s (N=%d vectors)", strategy.name, vectorCount)
@@ -5467,6 +5496,14 @@ func (s *Service) currentPipelineStrategy() strategyMode {
 		return strategyModeBruteCPU
 	case *HNSWCandidateGen:
 		return strategyModeHNSW
+	case *IVFPQCandidateGen:
+		return strategyModeIVFPQ
+	case *KMeansCandidateGen:
+		return strategyModeKMeansCPU
+	case *GPUKMeansCandidateGen:
+		return strategyModeKMeansGPU
+	case *IVFHNSWCandidateGen:
+		return strategyModeIVFHNSW
 	default:
 		return strategyModeUnknown
 	}
@@ -5501,7 +5538,7 @@ func (s *Service) scheduleStrategyTransitionCheck() {
 	}
 	vectorCount, _, _ := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
-	if current == strategyModeUnknown {
+	if !current.runtimeManaged() {
 		return
 	}
 	desired := s.desiredRuntimeStrategy(vectorCount)
@@ -5567,7 +5604,7 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
-	if current == strategyModeUnknown || current == target {
+	if !current.runtimeManaged() || current == target {
 		return
 	}
 
@@ -5624,7 +5661,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 	// The active construction job owns its overlay across snapshot and install.
 	// Adopting the ready graph must not discard another builder's mutations.
 	if target == strategyModeBruteGPU {
-		_ = s.ensureGPUIndexSynced(vi, vfs)
+		_ = s.ensureGPUIndexSyncedLocked(vi, vfs)
 	}
 
 	var p *VectorSearchPipeline
@@ -5689,7 +5726,7 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 		return false
 	}
 	if target == strategyModeBruteGPU {
-		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
+		if err := s.ensureGPUIndexSyncedLocked(vi, vfs); err != nil {
 			s.logPrintf("⚠️ Runtime CPU->GPU brute switch skipped: %v", err)
 			return false
 		}
@@ -5709,11 +5746,11 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 }
 
 func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi *VectorIndex, vfs *VectorFileStore) (*HNSWIndex, error) {
-	config := HNSWConfigFromEnv()
+	config := s.hnswConfig()
 	s.mu.RLock()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
-	built, _, err := s.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, s.hnswLexicalSeedHints(fulltext, config.M))
+	built, _, err := s.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, s.hnswBuildLexicalSeedHints(fulltext, config.M))
 	return built, err
 }
 func hnswPairSliceIterator(pairs []hnswBuildPair) hnswBuildIterator {
@@ -5826,6 +5863,14 @@ func (m strategyMode) String() string {
 		return "GPU brute-force"
 	case strategyModeHNSW:
 		return "HNSW"
+	case strategyModeIVFPQ:
+		return "IVFPQ compressed"
+	case strategyModeKMeansCPU:
+		return "CPU k-means (cluster routing)"
+	case strategyModeKMeansGPU:
+		return "GPU k-means (cluster routing)"
+	case strategyModeIVFHNSW:
+		return "IVF-HNSW (per-cluster HNSW)"
 	default:
 		return "unknown"
 	}
@@ -5843,6 +5888,8 @@ type vectorStrategyDescriptor struct {
 	candidateGen CandidateGenerator
 	scorerPolicy exactScorerPolicy
 	pendingHNSW  bool // Exact fallback is temporary, including during index reset.
+	// needsGPUUpload is resolved outside pipelineMu, under mutation admission.
+	needsGPUUpload bool
 }
 
 func (s *Service) resolveVectorStrategy(ctx context.Context, sourceEpoch uint64, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
@@ -5903,22 +5950,29 @@ func ivfpqProfileFromCompressed(profile CompressedANNProfile) IVFPQProfile {
 }
 
 func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+	return s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, true, source...)
+}
+
+func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, allowGPU bool, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
 	vi := s.vectorMemorySnapshot(source)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// Auto strategy: choose candidate generator based on dataset size and clustering
-	manager, gpuIndex := s.gpuVectorState()
-	gpuEnabled := manager != nil && manager.IsEnabled() && gpuIndex != nil
-	gpuMinN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", 5000)
+	manager, gi := s.gpuVectorState()
+	gpuEnabled := manager != nil && manager.IsEnabled()
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
 
 	// Prefer GPU brute-force (exact) when enabled and within configured thresholds.
 	// This path is exact and typically highest-throughput within its tuned N range.
-	if gpuEnabled && vectorCount >= gpuMinN && vectorCount <= gpuMaxN {
+	// The first pipeline read prepares its GPU copy before taking pipelineMu.
+	if allowGPU && s.desiredRuntimeStrategy(vectorCount) == strategyModeBruteGPU {
+		if gi == nil {
+			return &vectorStrategyDescriptor{name: "GPU brute-force", needsGPUUpload: true}, nil
+		}
 		return &vectorStrategyDescriptor{
 			name:         "GPU brute-force",
-			candidateGen: NewGPUBruteForceCandidateGen(gpuIndex),
+			candidateGen: NewGPUBruteForceCandidateGen(gi),
 			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
@@ -5954,8 +6008,11 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 		}
 		return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building)", pendingHNSW: true, candidateGen: NewBruteForceCandidateGen(vi), scorerPolicy: exactScorerPolicyCPU}, nil
 	}
+	if err := s.applyHNSWQuantizationPolicy(ctx, hnswIndex); err != nil {
+		return nil, err
+	}
 	return &vectorStrategyDescriptor{
-		name:         "HNSW",
+		name:         hnswIndex.quantizedStrategyName(),
 		candidateGen: NewHNSWCandidateGen(hnswIndex),
 		scorerPolicy: exactScorerPolicyCPU,
 	}, nil
@@ -5966,7 +6023,13 @@ func (s *Service) resolveClusteredVectorStrategy(clusterIndex *gpu.ClusterIndex,
 	// If clustering is enabled and clusters are built, use centroid routing on CPU
 	// (GPU subset scoring when GPU is enabled but full brute is out-of-range, else IVF-HNSW when available,
 	// else CPU k-means candidate generation).
-	numClustersToSearch := 3 // Default: search 3 nearest clusters
+	// Clusters each query searches: NORNICDB_KMEANS_NPROBE, by default the IVF
+	// rule (defaultListsToProbe) over the clusters k-means built.
+	numClusters := 0
+	if clusterIndex != nil {
+		numClusters = clusterIndex.NumClusters()
+	}
+	numClustersToSearch := clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters))
 	// When GPU is enabled but full brute-force is not selected (e.g. N too large),
 	// still use k-means centroids to route and score only the cluster subset.
 	// ScoreSubset uses GPU when possible and falls back to CPU gracefully.

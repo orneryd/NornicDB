@@ -8,6 +8,9 @@ import (
 // SetGPUManager enables GPU acceleration for exact brute-force vector search.
 // This is independent from k-means clustering. Replacing the manager preserves
 // the native graph and retires descriptors captured from the previous backend.
+// The GPU copy of the vectors is built when that strategy is first chosen
+// (ensureGPUIndexSynced), not here: outside NORNICDB_VECTOR_GPU_BRUTE_MIN_N..MAX_N
+// it is never used, and it holds every vector in host and GPU memory.
 func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
@@ -19,24 +22,44 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	retired := s.gpuEmbeddingIndex
 	s.gpuManager = manager
 	s.gpuEmbeddingIndex = nil
-	vi, vfs := s.vectorIndex, s.vectorFileStore
 	s.mu.Unlock()
 
 	// The same barrier orders live mutations, completed transitions and a
 	// factory already holding pipelineMu. Never take pipelineMu under mu.
-	defer func() {
-		s.retireVectorSourceLocked(true)
-		if retired != nil {
-			// Release waits for index readers and preserves CPU coordinates,
-			// so a reader already holding the retired descriptor can finish.
-			retired.Release()
-		}
-	}()
-	if manager != nil && manager.IsEnabled() {
-		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
-			s.logPrintf("GPU vector index initialization failed: %v", err)
-		}
+	s.retireVectorSourceLocked(true)
+	if retired != nil {
+		// Release waits for index readers and preserves CPU coordinates,
+		// so a reader already holding the retired descriptor can finish.
+		retired.Release()
 	}
+}
+
+// prepareGPUIndexForCurrentStrategy builds the GPU copy before a pipeline
+// factory takes pipelineMu, when the current population selects GPU brute force.
+func (s *Service) prepareGPUIndexForCurrentStrategy() error {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	count, vi, vfs := s.snapshotStrategyInputs()
+	if ANNQualityFromEnv() == ANNQualityCompressed {
+		profile := ResolveCompressedANNProfile(count, s.VectorIndexDimensions(), vfs != nil && vfs.Count() > 0)
+		if profile.Active {
+			return nil
+		} // Compressed retrieval owns its model, not a flat GPU copy.
+	}
+	if s.desiredRuntimeStrategy(count) != strategyModeBruteGPU {
+		return nil
+	}
+	return s.ensureGPUIndexSyncedLocked(vi, vfs)
+}
+
+// ensureGPUIndexSynced takes mutation admission for a caller that doesn't own it.
+func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) error {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	// Re-read the canonical owner after admission: a reset may have replaced
+	// the inputs while the caller waited for an ongoing mutation.
+	_, vi, vfs = s.snapshotStrategyInputs()
+	return s.ensureGPUIndexSyncedLocked(vi, vfs)
 }
 
 // gpuVectorState reads the configuration and its derived index together.
@@ -47,9 +70,10 @@ func (s *Service) gpuVectorState() (*gpu.Manager, *gpu.EmbeddingIndex) {
 	return s.gpuManager, s.gpuEmbeddingIndex
 }
 
-// ensureGPUIndexSynced is the single builder for manager replacement and runtime
-// strategy changes. The caller owns indexMu, excluding source/backend writers.
-func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) error {
+// ensureGPUIndexSyncedLocked is the single builder for the first GPU brute-force
+// pipeline and runtime strategy changes. The caller owns indexMu, so no
+// acknowledged mutation can fall between snapshot and GPU publication.
+func (s *Service) ensureGPUIndexSyncedLocked(vi *VectorIndex, vfs *VectorFileStore) error {
 	manager, current := s.gpuVectorState()
 	if manager == nil || !manager.IsEnabled() {
 		return localizedError(localization.SearchGPUNotEnabled(), nil)
