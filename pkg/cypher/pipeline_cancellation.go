@@ -303,3 +303,15 @@ func probeStatementContext(probe *pipelineCancellation) context.Context {
 	}
 	return context.WithValue(probe.ctx, pipelineCancellationKey{}, probe)
 }
+
+// cancelledPanic reports whether a panic the statement recovered is a
+// consequence of its cancellation: once a reader has stopped early, the
+// values after it (an empty prefix, a -1 index) are not the statement's, and
+// using them may panic. The statement's result is then its cancellation.
+// Any other panic is not this owner's to absorb.
+func cancelledPanic(ctx context.Context) error {
+	if err := statementCancellationErr(ctx); err != nil {
+		return err
+	}
+	return ctx.Err()
+}

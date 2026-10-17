@@ -1689,6 +1689,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 			workerCtx := ctx
 			if workerCtx != nil {
 				workerCtx = pipelineWorkerContext(workerCtx)
+				defer recoverCancelledWorker(workerCtx)
 			}
 
 			var workerPaths []PathResult

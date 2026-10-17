@@ -579,7 +579,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if hasSuffixFoldASCII(expr, lowerASCIIWithCancellation(predicate.suffix, probe)) {
+		if hasSuffixFoldASCII(expr, predicate.suffix) {
 			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values, probe)
 			if err != nil {
 				return nil, false, err

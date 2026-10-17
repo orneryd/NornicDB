@@ -141,6 +141,7 @@ func parallelFilterNodesWithCancellation(ctx context.Context, nodes []*storage.N
 		go func(workerID int, chunk []*storage.Node) {
 			defer wg.Done()
 			workerCtx := pipelineWorkerContext(ctx)
+			defer recoverCancelledWorker(workerCtx)
 			workerProbe := parameterCancellationForContext(workerCtx)
 			filterFn := filterForContext(workerCtx)
 			filtered := make([]*storage.Node, 0, pipelineInitialCapacity(len(chunk)/4, workerProbe))

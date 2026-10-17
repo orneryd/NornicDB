@@ -1002,16 +1002,25 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 				starts = ends
 			}
 			for _, source := range starts {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.forward, false, source, source, nil)
 			}
 		case len(starts) == 1 && len(ends) == 1:
 			search(plan.forward, false, starts[0], ends[0], nil)
 		case ends != nil && (starts == nil || len(ends) < len(starts)):
 			for _, source := range ends {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.backward, true, source, nil, starts)
 			}
 		default:
 			for _, source := range starts {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.forward, false, source, nil, ends)
 			}
 		}
@@ -1063,6 +1072,9 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 			}
 		}
 		return s.pair(source, target, count, groups, direct, bind)
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if ends != nil {
 		s.ends = make(map[storage.NodeID]bool, len(ends))

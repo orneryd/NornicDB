@@ -23,3 +23,23 @@ func clearPipelineRow(row pipelineRow, probe *pipelineCancellation) bool {
 	}
 	return true
 }
+
+// recoverCancelledWorker is deferred by a goroutine running part of a
+// statement under its forked probe (pipelineWorkerContext): a panic that
+// follows the statement's cancellation ends the worker and is reported to the
+// statement's owner, which returns the cancellation. Any other panic is
+// re-raised.
+func recoverCancelledWorker(ctx context.Context) {
+	if recovered := recover(); recovered != nil {
+		if cancelledPanic(ctx) != nil {
+			if probe := contextPipelineProbe(ctx); probe != nil {
+				probe.observed.Store(true)
+				if probe.parent != nil {
+					probe.parent.observed.Store(true)
+				}
+			}
+			return
+		}
+		panic(recovered)
+	}
+}

@@ -403,7 +403,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
 				if g, ok := node.(*ast.GoStmt); ok {
 					lit, ok := g.Call.Fun.(*ast.FuncLit)
-					usesCtx, forks := false, false
+					usesCtx, forks, recovers := false, false, false
 					var body ast.Node = g.Call
 					if ok {
 						body = lit.Body
@@ -415,11 +415,18 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 						if call, ok := n.(*ast.CallExpr); ok && callName(call) == "pipelineWorkerContext" {
 							forks = true
 						}
+						if d, ok := n.(*ast.DeferStmt); ok && callName(d.Call) == "recoverCancelledWorker" {
+							recovers = true
+						}
 						return true
 					})
 					if usesCtx && !forks {
 						counts["E"]++
 						findings = append(findings, cancellationFinding{rule: "E", key: key + " go", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
+					}
+					if forks && !recovers {
+						counts["E"]++
+						findings = append(findings, cancellationFinding{rule: "E", key: key + " go without recoverCancelledWorker", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
 					}
 				}
 				call, ok := node.(*ast.CallExpr)
