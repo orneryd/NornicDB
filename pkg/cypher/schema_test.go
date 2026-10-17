@@ -578,8 +578,8 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 			wantSimFn: "cosine", // default
 		},
 		{
-			name:      "QuotedOptionKeys",
-			query:     `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
+			name:       "QuotedOptionKeys",
+			query:      `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
 			wantDims:   384,
 			wantSimFn:  "dot",
 			nornicOnly: true,

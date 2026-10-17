@@ -233,7 +233,7 @@ func (disabledBM25Index) Count() int                                  { return 0
 func (disabledBM25Index) Save(string) error                           { return nil }
 func (disabledBM25Index) SaveNoCopy(string) error                     { return nil }
 func (disabledBM25Index) Load(string) error                           { return nil }
-func (disabledBM25Index) loadSnapshot(string) (bool, error)            { return false, nil }
+func (disabledBM25Index) loadSnapshot(string) (bool, error)           { return false, nil }
 func (disabledBM25Index) IsDirty() bool                               { return false }
 func (disabledBM25Index) IndexBatch([]FulltextBatchEntry)             {}
 

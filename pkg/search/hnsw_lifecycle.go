@@ -145,8 +145,8 @@ func (s *Service) pauseHNSWBuild() func() {
 // A snapshot begun while sources are changing stays unavailable even when the
 // same generation becomes ready: warmup cannot make its old pointers current.
 type vectorSnapshotToken struct {
-	generation  uint64
-	available   bool
+	generation uint64
+	available  bool
 	// sourceEpoch is read before source pointers, like generation.
 	sourceEpoch uint64
 }
