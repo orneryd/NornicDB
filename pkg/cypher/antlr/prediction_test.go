@@ -21,6 +21,15 @@ func setMaxParserDFAStates(t *testing.T, n int) {
 	t.Cleanup(func() { maxParserDFAStates = previous })
 }
 
+// setExactCountWindow sets exactCountWindow for one test. Tests of the
+// budget and of drains by estimate lengthen it so that only those drain.
+func setExactCountWindow(t *testing.T, d time.Duration) {
+	t.Helper()
+	previous := exactCountWindow
+	exactCountWindow = d
+	t.Cleanup(func() { exactCountWindow = previous })
+}
+
 // distinctExpression builds a random expression whose shape (not only its
 // literals) differs between seeds, so each one adds prediction states.
 func distinctExpression(r *rand.Rand, depth int) string {
@@ -388,6 +397,7 @@ func TestValidatePredictionDrainedGenerationPastLimitStaysRetired(t *testing.T) 
 func TestValidatePredictionBudgetCoversHeldGenerations(t *testing.T) {
 	const limit = 2000
 	setMaxParserDFAStates(t, limit)
+	setExactCountWindow(t, time.Hour)
 	retireCurrentPredictionForTest()
 	r := rand.New(rand.NewSource(7))
 	var held []*parserPrediction
@@ -430,6 +440,80 @@ func TestValidatePredictionBudgetCoversHeldGenerations(t *testing.T) {
 	}
 }
 
+// A generation that only short parses hold, back to back so it is never
+// idle, is still counted exactly: once it has parsed new shapes for
+// exactCountWindow without a count, it drains for the milliseconds its
+// parses take, is counted, and is current again. While it parses only
+// shapes it has seen it keeps its exact count and is never drained.
+func TestValidatePredictionShortParsesCountedAndRestored(t *testing.T) {
+	setMaxParserDFAStates(t, 1_000_000)
+	retireCurrentPredictionForTest()
+	first := currentPrediction.Load()
+	warm := func(i int) string {
+		return fmt.Sprintf("MATCH (n:L) WHERE n.v = %d AND n.s = 's%d' RETURN n.x + %d AS v", i, i, i)
+	}
+	if err := Validate(warm(0)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two holders keep short parses on the current generation, overlapping,
+	// so it never has a moment without a parse.
+	var stop atomic.Bool
+	var holders sync.WaitGroup
+	for holder := 0; holder < 2; holder++ {
+		holders.Add(1)
+		go func(offset time.Duration) {
+			defer holders.Done()
+			time.Sleep(offset)
+			for !stop.Load() {
+				held := acquirePrediction()
+				time.Sleep(2 * time.Millisecond)
+				held.release(nil)
+			}
+		}(time.Duration(holder) * time.Millisecond)
+	}
+	defer func() {
+		stop.Store(true)
+		holders.Wait()
+	}()
+
+	warmPhase := func(phase string) {
+		t.Helper()
+		for i := 1; i <= 50; i++ {
+			if err := Validate(warm(i)); err != nil {
+				t.Fatal(err)
+			}
+			if currentPrediction.Load() != first {
+				t.Fatalf("%s: a warm generation parsing only shapes it has seen was drained", phase)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	warmPhase("before new shapes")
+
+	counted := first.exactAt.Load()
+	for seed := 0; seed < 10; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(exactCountWindow + time.Millisecond)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for currentPrediction.Load() != first && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if currentPrediction.Load() != first {
+		t.Fatalf("the generation that short parses hold was not current again after its drain")
+	}
+	if first.exactAt.Load() == counted {
+		t.Fatalf("the generation that short parses hold was never counted exactly")
+	}
+	if first.tokensAtExact.Load() != first.newShapeTokens.Load() {
+		t.Fatalf("the restored generation was not counted after its last new shape")
+	}
+	warmPhase("after the drain")
+}
+
 // A drain hands new parses to the spare, the stand-in the last restore
 // replaced, instead of a cold generation.
 func TestValidatePredictionDrainUsesSpare(t *testing.T) {
@@ -465,6 +549,7 @@ func TestValidatePredictionDrainUsesSpare(t *testing.T) {
 func drainPredictionPastEstimate(t *testing.T, limit int) *parserPrediction {
 	t.Helper()
 	setMaxParserDFAStates(t, 1_000_000)
+	setExactCountWindow(t, time.Hour)
 	retireCurrentPredictionForTest()
 	first := acquirePrediction()
 	first.release(nil)

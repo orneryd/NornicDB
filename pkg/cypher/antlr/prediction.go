@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/antlr4-go/antlr/v4"
 )
@@ -32,6 +33,16 @@ import (
 // the total does, so while long parses hold large generations the current
 // one stays small instead of growing to the budget again beside each of
 // them.
+//
+// A share is estimated over at most exactCountWindow of new statement
+// shapes: a current generation that has parsed new shapes without an exact
+// count for that long is drained to the spare and counted once its parses
+// end. A generation only short parses hold is counted and current again
+// within milliseconds; one a long parse holds is handed off about 5 ms after
+// the long parse starts, so its share stays near its exact count instead of
+// absorbing every statement parsed beside it (it was accounted at the whole
+// budget while it held a tenth of that, and every other generation was held
+// to one cold statement).
 //
 // Only an exact count retires a generation. While parses always hold the
 // current one, its size is estimated from new-shape tokens, which overcounts
@@ -63,9 +74,11 @@ type parserPrediction struct {
 
 	// exactStates is the DFA state count of the last exact count, and
 	// tokensAtExact newShapeTokens at that moment. While the generation is
-	// never idle its size is estimated from them (estimatedStates).
+	// never idle its size is estimated from them (estimatedStates). exactAt
+	// is when it was last counted or made current (predictionClock).
 	exactStates   atomic.Int64
 	tokensAtExact atomic.Int64
+	exactAt       atomic.Int64
 
 	// accounted is this generation's share of liveStates.
 	accounted atomic.Int64
@@ -125,6 +138,18 @@ const statesPerNewShapeToken = 1
 // maxPredictionShapes bounds the fingerprint set of one generation.
 const maxPredictionShapes = 1 << 18
 
+// exactCountWindow is how long a current generation may parse new shapes
+// without an exact count before it is drained for one; tests lengthen it.
+var exactCountWindow = 5 * time.Millisecond
+
+// predictionStart anchors predictionClock.
+var predictionStart = time.Now()
+
+// predictionClock is monotonic nanoseconds since predictionStart.
+func predictionClock() int64 {
+	return int64(time.Since(predictionStart))
+}
+
 // sparePrediction is the stand-in the last restore replaced, which the next
 // drain or replacement makes current. liveStates is the sum of every live
 // generation's accounted states.
@@ -145,6 +170,7 @@ func newParserPrediction(standIn bool) *parserPrediction {
 	}
 	p := &parserPrediction{decisionToDFA: dfas, contextCache: antlr.NewPredictionContextCache(), standIn: standIn}
 	p.seq.Store(predictionSeq.Add(1))
+	p.exactAt.Store(predictionClock())
 	return p
 }
 
@@ -170,9 +196,10 @@ func acquirePrediction() *parserPrediction {
 // parse holds p its DFA states are counted exactly; while parses always hold
 // it, which TryLock can't get past, the count is estimated from the last
 // exact count and the new-shape tokens since (estimatedStates), and an
-// estimate past the budget drains p (drain). Neither check waits for other
-// parses, and a generation is only replaced when an exact count is past the
-// budget, so a working set that fits keeps its warm predictions.
+// estimate past the budget, or one older than exactCountWindow, drains p
+// (drain). Neither check waits for other parses, and a generation is only
+// replaced when an exact count is past the budget, so a working set that
+// fits keeps its warm predictions.
 func (p *parserPrediction) release(tokens *antlr.CommonTokenStream) {
 	p.mu.RUnlock()
 	p.readers.Add(-1)
@@ -187,9 +214,17 @@ func (p *parserPrediction) release(tokens *antlr.CommonTokenStream) {
 		return
 	}
 	p.account(p.estimatedStates())
-	if currentPrediction.Load() == p && overBudget(p, budget) {
+	if currentPrediction.Load() == p && (overBudget(p, budget) || p.countOverdue()) {
 		p.drain(budget)
 	}
+}
+
+// countOverdue reports whether p has parsed new shapes since an exact count
+// more than exactCountWindow ago. A generation that parses only shapes it
+// has seen keeps its exact count, however busy it is.
+func (p *parserPrediction) countOverdue() bool {
+	return p.newShapeTokens.Load() != p.tokensAtExact.Load() &&
+		predictionClock()-p.exactAt.Load() > int64(exactCountWindow)
 }
 
 // count counts p's DFA states exactly and accounts them. A current p past
@@ -201,6 +236,7 @@ func (p *parserPrediction) count(budget int64) {
 	p.mu.Unlock()
 	p.exactStates.Store(states)
 	p.tokensAtExact.Store(tokensNow)
+	p.exactAt.Store(predictionClock())
 	p.account(states)
 	if !p.live() {
 		return
@@ -247,6 +283,7 @@ func (p *parserPrediction) replace(standIn bool) bool {
 		next = newParserPrediction(standIn)
 	} else {
 		next.seq.Store(predictionSeq.Add(1))
+		next.exactAt.Store(predictionClock())
 	}
 	if !currentPrediction.CompareAndSwap(p, next) {
 		if !sparePrediction.CompareAndSwap(nil, next) {
