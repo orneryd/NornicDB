@@ -752,3 +752,65 @@ func TestSimilarityPairsDocExample(t *testing.T) {
 		[]interface{}{"m2", "m3", floatSum(1.0/2, 1.0/3)}, []interface{}{"m1", "m2", 1.0 / 3},
 	}, int64(3), true}}, result.Rows)
 }
+
+// singletonAtoms is n sources with one partition key and distinct classes:
+// every source its own atom, and no two atoms compatible, so preparation
+// tries n(n+1)/2 atom pairs and keeps none.
+func singletonAtoms(n int) map[string]interface{} {
+	sources := make([]interface{}, n)
+	for i := range sources {
+		sources[i] = map[string]interface{}{"source": fmt.Sprintf("p%05d", i), "partitionKeys": []interface{}{"g"}, "classKey": fmt.Sprintf("c%05d", i)}
+	}
+	return map[string]interface{}{"sources": sources}
+}
+
+// TestSimilarityPairsCancelledPreparation: the call polls cancellation while
+// it prepares, also through atom pairs it rejects, and never reports success
+// once cancelled.
+func TestSimilarityPairsCancelledPreparation(t *testing.T) {
+	ctx, stop := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer stop()
+	_, err := callNornicSimilarityPairs(ctx, []interface{}{[]interface{}{}, singletonAtoms(10000)})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	// The rejected block attempts alone poll it.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	probe := newContextCancelProbe(cancelled)
+	config, err := readSimilarityPairsConfig(singletonAtoms(100))
+	require.NoError(t, err)
+	selector := &similarityPairsSelector{config: config, probe: &probe, account: &memoryAccount{}}
+	selector.parties = selector.config.parties
+	require.NoError(t, selector.prepareAtoms())
+	require.ErrorIs(t, selector.prepareBlocks(), context.Canceled)
+}
+
+// TestSimilarityPairsConfigurationMemory: the configuration's own state,
+// the excluded pairs and identifier lists, is charged to the statement.
+func TestSimilarityPairsConfigurationMemory(t *testing.T) {
+	resetTransactionMemory(t)
+	executor := newTransactionMemoryExecutor(t)
+	query := "CALL nornicdb.similarity.pairs($rows, $config) YIELD reached RETURN reached"
+	excluded := make([]interface{}, 100000)
+	for i := range excluded {
+		excluded[i] = []interface{}{fmt.Sprintf("a%06d", i), fmt.Sprintf("b%06d", i)}
+	}
+	identifiers := make([]interface{}, 100000)
+	for i := range identifiers {
+		identifiers[i] = fmt.Sprintf("id%06d", i)
+	}
+	for name, config := range map[string]map[string]interface{}{
+		"excludedPairs":  {"sources": []interface{}{}, "excludedPairs": excluded},
+		"identifierKeys": {"sources": []interface{}{map[string]interface{}{"source": "s", "identifierKeys": identifiers}}},
+	} {
+		params := map[string]interface{}{"rows": []interface{}{}, "config": config}
+		ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 20})
+		_, err := executor.Execute(context.Background(), query, params)
+		requireMemoryError(t, err, "Neo.TransientError.General.TransactionMemoryLimit", "db.memory.transaction.max")
+		requirePoolsEmpty(t, "nornic")
+		ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 30})
+		result, err := executor.Execute(context.Background(), query, params)
+		require.NoError(t, err, name)
+		require.Equal(t, int64(0), result.Rows[0][0], name)
+		requirePoolsEmpty(t, "nornic")
+	}
+}
