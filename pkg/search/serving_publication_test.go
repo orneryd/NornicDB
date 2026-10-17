@@ -496,10 +496,11 @@ func (g *servingGuard) report(where, format string, args ...any) {
 	g.out[where+": "+fmt.Sprintf(format, args...)] = true
 }
 
-// holdsService reports whether t is Service, or holds one by value (struct
+// holdsService reports whether t has Service's representation (its underlying
+// struct, as a distinct defined type does), or holds one by value (struct
 // fields, arrays): memory a pointer to t can overwrite.
 func (g *servingGuard) holdsService(t types.Type, seen map[types.Type]bool) bool {
-	if types.Identical(t, g.service) {
+	if types.Identical(t.Underlying(), g.service.Underlying()) {
 		return true
 	}
 	if seen[t] {
@@ -517,6 +518,15 @@ func (g *servingGuard) holdsService(t types.Type, seen map[types.Type]bool) bool
 		return g.holdsService(u.Elem(), seen)
 	}
 	return false
+}
+
+// exposesService reports whether a value of type t is, or points to, memory
+// holding Service's representation.
+func (g *servingGuard) exposesService(t types.Type) bool {
+	if ptr, ok := t.Underlying().(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	return g.holdsService(t, map[types.Type]bool{})
 }
 
 // reachesService reports whether t reaches Service through any composite or
@@ -599,11 +609,12 @@ func (g *servingGuard) visit(root ast.Node, scope servingScope) {
 					helperCalls[sel] = true
 				}
 			}
-			if tv, ok := g.info.Types[x.Fun]; ok && tv.IsType() && len(x.Args) == 1 {
-				if types.Identical(tv.Type, types.Typ[types.UnsafePointer]) {
-					if ptr, ok := g.info.TypeOf(x.Args[0]).Underlying().(*types.Pointer); ok && g.holdsService(ptr.Elem(), map[types.Type]bool{}) {
-						g.report(scope.where, "converts a pointer to Service memory to unsafe.Pointer")
-					}
+			// A conversion re-types storage: (*mirror)(s), unsafe.Pointer(s) or
+			// back exposes the same Service memory under another type.
+			if tv, ok := g.info.Types[x.Fun]; ok && tv.IsType() && len(x.Args) == 1 && !scope.constructor {
+				from := g.info.TypeOf(x.Args[0])
+				if !types.Identical(tv.Type, from) && (g.exposesService(tv.Type) || g.exposesService(from)) {
+					g.report(scope.where, "converts Service memory to another type")
 				}
 			}
 		case *ast.SelectorExpr:
@@ -745,6 +756,10 @@ type serviceAlias = Service
 type servingWrapper struct{ *Service }
 type box[T any] struct{ v T }
 type other struct{}
+type servingMirror Service
+type serviceHolder struct{ s Service }
+type holderMirror serviceHolder
+type genMirror gen
 
 func (other) publishVectorServing(install func(), retire bool) { install() }
 
@@ -775,6 +790,9 @@ func leakGenericField(b *box[*Service])           { b.v.hnswIndex = nil }
 func leakGenericWrite(s *Service)                 { zero(s) }
 func leakFakeOwner(o other, s *Service)           { o.publishVectorServing(func() { s.hnswIndex = nil }, false) }
 func leakUnsafe(s *Service)                       { *(**HNSWIndex)(unsafe.Pointer(s)) = nil }
+func leakMirror(s *Service)                       { *(*servingMirror)(s) = servingMirror{} }
+func leakMirrorHolder(h *serviceHolder)           { *(*holderMirror)(h) = holderMirror{} }
+func unrelatedConversion(g *gen) *genMirror       { return (*genMirror)(g) }
 
 var leakPackageFunc = func(s *Service) { s.hnswIndex = nil }
 var leakPackageHelper = (*Service).invalidateHNSWLocked
@@ -852,6 +870,8 @@ func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 		"leakGoroutine: uses invalidateHNSWLocked outside an owner",
 		"leakHelperCall: uses invalidateHNSWLocked outside an owner",
 		"leakHelperValue: uses invalidateHNSWLocked outside an owner",
+		"leakMirror: converts Service memory to another type",
+		"leakMirrorHolder: converts Service memory to another type",
 		"leakParen: mentions hnswIndex",
 		"leakParen: uses a Service value",
 		"leakRead: mentions ivfpqIndex",
@@ -864,7 +884,7 @@ func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 		"leakShadowCopy: assigns a Service",
 		"leakShadowCopy: uses a Service value",
 		"leakTypeAlias: mentions hnswIndex",
-		"leakUnsafe: converts a pointer to Service memory to unsafe.Pointer",
+		"leakUnsafe: converts Service memory to another type",
 		"leakWrapped: assigns a Service",
 		"leakWrapped: mentions ivfpqIndex",
 		"leakWrapped: uses a Service value",
