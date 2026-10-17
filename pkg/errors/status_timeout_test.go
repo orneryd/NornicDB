@@ -8,26 +8,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A statement its own deadline stopped (marked by its owner) is Neo4j's
-// transaction timeout, not a SyntaxError (#1339).
+// A statement an owned deadline stopped is Neo4j's transaction timeout, not
+// a SyntaxError (#1339), with the status of the owner whose deadline ended
+// it first: the context's cause.
 func TestNeo4jStatusDeadlineIsTransactionTimeout(t *testing.T) {
-	for _, err := range []error{
-		MarkStatementTimeout(context.DeadlineExceeded, true),
-		fmt.Errorf("route: %w", MarkStatementTimeout(fmt.Errorf("pipeline stage: %w", context.DeadlineExceeded), false)),
+	for _, test := range []struct {
+		cause         error
+		code, message string
+	}{
+		{ErrDatabaseQueryTimeLimit, TransactionTimedOut, TransactionTimedOutMessage},
+		{ErrServerStatementTimeout, TransactionTimedOut, TransactionTimedOutMessage},
+		{ErrClientTransactionTimeout, TransactionTimedOutClientConfiguration, TransactionTimedOutClientConfigurationMessage},
+		{fmt.Errorf("wrapped: %w", ErrDatabaseQueryTimeLimit), TransactionTimedOut, TransactionTimedOutMessage},
 	} {
-		code, message := Neo4jStatus(err)
-		require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOut", code)
-		require.Equal(t, TransactionTimedOutMessage, message)
-		require.True(t, HasNeo4jStatus(err))
-		require.False(t, IsCompileTimeError(err), "a timed-out statement compiled, so HTTP keeps its result columns")
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		t.Run(test.cause.Error(), func(t *testing.T) {
+			require.ErrorIs(t, test.cause, context.DeadlineExceeded, "an owned cause is a deadline")
+			for _, err := range []error{
+				MarkStatementTimeout(context.DeadlineExceeded, test.cause),
+				fmt.Errorf("route: %w", MarkStatementTimeout(fmt.Errorf("pipeline stage: %w", context.DeadlineExceeded), test.cause)),
+			} {
+				code, message := Neo4jStatus(err)
+				require.Equal(t, test.code, code)
+				require.Equal(t, test.message, message)
+				require.True(t, HasNeo4jStatus(err))
+				require.False(t, IsCompileTimeError(err), "a timed-out statement compiled, so HTTP keeps its result columns")
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			}
+			marked := MarkStatementTimeout(context.DeadlineExceeded, test.cause)
+			require.Same(t, marked, MarkStatementTimeout(marked, ErrClientTransactionTimeout), "marking is idempotent: the first owner stands")
+		})
 	}
-	require.Nil(t, MarkStatementTimeout(nil, true))
-	marked := MarkStatementTimeout(context.DeadlineExceeded, true)
-	require.Same(t, marked, MarkStatementTimeout(marked, false), "marking is idempotent")
-	require.True(t, CallerDeadlineTimeout(marked))
-	require.False(t, CallerDeadlineTimeout(MarkStatementTimeout(context.DeadlineExceeded, false)), "a database limit is not the caller's deadline")
-	require.False(t, CallerDeadlineTimeout(context.DeadlineExceeded))
+	require.Nil(t, MarkStatementTimeout(nil, ErrDatabaseQueryTimeLimit))
+}
+
+// A deadline no owner installed is not the statement's timeout: a caller's
+// own budget (cause context.DeadlineExceeded), a live context (nil cause), a
+// cancelled one, or a statement error that is not a deadline at all.
+func TestMarkStatementTimeoutNeedsAnOwnedDeadline(t *testing.T) {
+	for _, cause := range []error{nil, context.DeadlineExceeded, context.Canceled, fmt.Errorf("budget: %w", context.DeadlineExceeded)} {
+		err := MarkStatementTimeout(context.DeadlineExceeded, cause)
+		require.Equal(t, context.DeadlineExceeded, err)
+		require.False(t, HasNeo4jStatus(err))
+	}
+	cancelled := MarkStatementTimeout(context.Canceled, ErrDatabaseQueryTimeLimit)
+	require.Equal(t, context.Canceled, cancelled, "a statement error that is not a deadline keeps its status")
 }
 
 // A dependency's own deadline (an embedder, a remote call) is not the

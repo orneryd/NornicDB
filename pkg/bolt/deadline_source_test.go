@@ -12,29 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The client status is reported only when the client's tx_timeout is the
-// deadline that stopped the statement; a shorter database query time limit
-// keeps the server status (review: sol-r1-1392 P2).
-func TestClientTimeoutStatusFollowsTheExpiredDeadline(t *testing.T) {
-	server, client := nornicerrors.TransactionTimedOut, nornicerrors.TransactionTimedOutClientConfiguration
-	for _, test := range []struct {
-		name          string
-		err           error
-		clientTimeout bool
-		want          string
-	}{
-		{"client tx_timeout expired", nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, true), true, client},
-		{"database limit expired first", nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, false), true, server},
-		{"server statement timeout, no tx_timeout", nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, true), false, server},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			code, message := nornicerrors.Neo4jStatus(test.err)
-			code, _ = clientTimeoutStatus(test.err, code, message, test.clientTimeout)
-			require.Equal(t, test.want, code)
-		})
-	}
-}
-
 // End to end on a streamed read with real database limits: whichever deadline
 // expires first decides the status.
 func TestBoltLazyResultTimeoutSource(t *testing.T) {

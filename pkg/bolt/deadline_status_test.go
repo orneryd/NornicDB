@@ -32,7 +32,7 @@ func TestBoltDeadlineStatus(t *testing.T) {
 				// The statement runs until its deadline; the executor, which owns
 				// the statement's context, marks that as its timeout.
 				<-ctx.Done()
-				return nil, nornicerrors.MarkStatementTimeout(ctx.Err(), true)
+				return nil, nornicerrors.MarkStatementTimeout(ctx.Err(), context.Cause(ctx))
 			}}
 			port := startBoltTestServer(t, New(config, executor))
 			conn := openBoltTestConn(t, port)
