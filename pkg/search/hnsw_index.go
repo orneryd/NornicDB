@@ -1449,10 +1449,11 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // closest-first; the returned slice belongs to its pool until the caller
 // releases it).
 //
-// Entry seeding validates validity, deletion, prior visits and vector
-// dimensions. The build path always passes a live entry point, so those
-// probes never fire there; on the query path they guard the caller-supplied
-// entry IDs.
+// Entry seeding validates validity, prior visits and vector dimensions. The
+// build path always passes a live entry point, so those probes never fire
+// there; on the query path they guard the caller-supplied entry IDs.
+// Tombstones, entries included, are routed through and never scored or
+// returned (see relaxLayerNeighbors).
 func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
 	var mode M
 	var scorer *hnswQuantizedQuery
@@ -1487,9 +1488,22 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	results.Reset(true, ef*2)
 	defer h.heapPool.Put(results)
 
-	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID, scorer)
+	// Tombstoned entries (an upper-layer descent may end on one) are routed
+	// through like any other tombstone.
+	var bridgeBuf [8]uint32
+	bridges := bridgeBuf[:0]
+	if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID, scorer) {
+		bridges = append(bridges, entryID)
+	}
 	for _, id := range extraEntries {
-		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id, scorer)
+		if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id, scorer) {
+			bridges = append(bridges, id)
+		}
+	}
+	if len(bridges) > 0 {
+		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, bridges, ef, level, candidates, results, visited, curGen, scorer); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	for candidates.Len() > 0 {
@@ -1509,40 +1523,8 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
-		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
-		if !ok {
-			continue
-		}
-
-		// Reverse iteration: order doesn't matter when checking all neighbors
-		for i := len(neighbors) - 1; i >= 0; i-- {
-			if i&31 == 0 {
-				if err := mode.neighborProbe(ctx); err != nil {
-					return nil, nil, err
-				}
-			}
-			neighborID := neighbors[i]
-			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
-				continue
-			}
-			if visited.gen[neighborID] == curGen {
-				continue
-			}
-			visited.gen[neighborID] = curGen
-
-			dist := h.graphDistanceLocked(query, neighborID, scorer)
-
-			if results.Len() < ef || dist < results.Peek().dist {
-				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				if results.Len() < ef {
-					results.Push(hnswDistItem{id: neighborID, dist: dist})
-				} else {
-					// A full beam admits only a closer item. Replace its worst
-					// member with one downward sift instead of push then pop.
-					results.items[0] = hnswDistItem{id: neighborID, dist: dist}
-					results.siftDown(0)
-				}
-			}
+		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, append(bridges[:0], nodeID), ef, level, candidates, results, visited, curGen, scorer); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -1575,12 +1557,72 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	return nil, buf, nil
 }
 
+// relaxLayerNeighbors pushes the unvisited live neighbours of the nodes on
+// stack that improve the result set. A tombstone keeps its links until a
+// rebuild, and live nodes may be connected only through it, so a tombstoned
+// neighbour is never scored or returned (its vector may no longer resolve)
+// but routed through: its own neighbours are relaxed as the current node's.
+// Otherwise a removal silently cuts those live nodes off. The stack is
+// returned for reuse.
+func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, stack []uint32, ef int, level int, candidates, results *distHeap, visited *visitedGenState, curGen uint16, scorer *hnswQuantizedQuery) ([]uint32, error) {
+	var mode M
+	for len(stack) > 0 {
+		nodeID := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
+		if !ok {
+			continue
+		}
+
+		// Reverse iteration: order doesn't matter when checking all neighbors
+		for i := len(neighbors) - 1; i >= 0; i-- {
+			if i&31 == 0 {
+				if err := mode.neighborProbe(ctx); err != nil {
+					return stack, err
+				}
+			}
+			neighborID := neighbors[i]
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) {
+				continue
+			}
+			if visited.gen[neighborID] == curGen {
+				continue
+			}
+			visited.gen[neighborID] = curGen
+			if h.deleted[neighborID] {
+				stack = append(stack, neighborID)
+				continue
+			}
+
+			dist := h.graphDistanceLocked(query, neighborID, scorer)
+
+			if results.Len() < ef || dist < results.Peek().dist {
+				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
+				if results.Len() < ef {
+					results.Push(hnswDistItem{id: neighborID, dist: dist})
+				} else {
+					// A full beam admits only a closer item. Replace its worst
+					// member with one downward sift instead of push then pop.
+					results.items[0] = hnswDistItem{id: neighborID, dist: dist}
+					results.siftDown(0)
+				}
+			}
+		}
+	}
+	return stack, nil
+}
+
 // seedLayerEntry validates and seeds one entry point into the candidate and
 // result heaps. It is a small helper (one call per entry point, not per
-// neighbor) shared by the single- and multi-entry instantiations.
-func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32, scorer *hnswQuantizedQuery) {
-	if !validHNSWIndex(entryID, len(h.nodeLevel)) || h.deleted[entryID] || visited.gen[entryID] == curGen {
-		return
+// neighbor) shared by the single- and multi-entry instantiations. It reports
+// a tombstoned entry, which the caller routes through instead of seeding.
+func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32, scorer *hnswQuantizedQuery) bool {
+	if !validHNSWIndex(entryID, len(h.nodeLevel)) || visited.gen[entryID] == curGen {
+		return false
+	}
+	if h.deleted[entryID] {
+		visited.gen[entryID] = curGen
+		return true
 	}
 	var entryDist float32
 	if scorer != nil {
@@ -1588,7 +1630,7 @@ func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visit
 	} else {
 		entryVector := h.vectorAtLocked(entryID)
 		if len(entryVector) != h.dimensions {
-			return
+			return false
 		}
 		entryDist = 1 - vector.DotProductSIMD(query, entryVector)
 	}
@@ -1599,6 +1641,7 @@ func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visit
 	if results.Len() > ef {
 		_ = results.Pop()
 	}
+	return false
 }
 
 func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m int, out []uint32) []uint32 {
