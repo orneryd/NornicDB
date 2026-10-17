@@ -25,6 +25,20 @@ import (
 // generation recomputes predictions on demand and accepts exactly the same
 // statements, only the first parse of each shape after a reset is slower.
 // Replacing a generation never waits for, or holds back, any parse.
+//
+// Only an exact count retires a generation. While parses always hold the
+// current one, its size is estimated from new-shape tokens, which overcounts
+// (a new shape built from known parts adds almost no states). A generation
+// the estimate passes is drained instead: new parses use a stand-in until
+// its last parse ends, then it is counted, and it is current again if it
+// fits. A generation only short parses hold drains in milliseconds, so
+// stand-ins drain the same way and keep their own warm predictions, and the
+// stand-in a restore replaces is kept as the spare that the next drain hands
+// new parses to, warm. Without this, 8 workers of distinct small statements
+// next to one long parse replaced the generation 20 times in 13 s, and the
+// long statement parsed cold on every run. At most the current generation,
+// the draining ones and the spare are live besides retired generations that
+// parses still hold, each within the limit at its last exact count.
 type parserPrediction struct {
 	// mu is held shared by every parse using this generation; counting the
 	// DFA states takes it exclusively, and only when no parse holds it
@@ -45,6 +59,15 @@ type parserPrediction struct {
 	// never idle its size is estimated from them (estimatedStates).
 	exactStates   atomic.Int64
 	tokensAtExact atomic.Int64
+
+	// seq orders generations by when they became current, by creation or as
+	// the spare, and standIn marks one made by a drain or replacing one that
+	// was: a drained generation that fits is current again in place of a
+	// stand-in that became current after it. draining is set from a drain to
+	// the exact count that ends it.
+	seq      atomic.Uint64
+	standIn  bool
+	draining atomic.Bool
 }
 
 // bytesPerDFAState is the measured heap of one DFA state with its
@@ -92,19 +115,25 @@ const statesPerNewShapeToken = 1
 // maxPredictionShapes bounds the fingerprint set of one generation.
 const maxPredictionShapes = 1 << 18
 
+// sparePrediction is the stand-in the last restore replaced, which the next
+// drain makes current.
 var (
 	currentPrediction atomic.Pointer[parserPrediction]
+	sparePrediction   atomic.Pointer[parserPrediction]
+	predictionSeq     atomic.Uint64
 	predictionMu      sync.Mutex
 )
 
-func newParserPrediction() *parserPrediction {
+func newParserPrediction(standIn bool) *parserPrediction {
 	CypherParserInit()
 	atn := CypherParserParserStaticData.atn
 	dfas := make([]*antlr.DFA, len(atn.DecisionToState))
 	for decision, state := range atn.DecisionToState {
 		dfas[decision] = antlr.NewDFA(state, decision)
 	}
-	return &parserPrediction{decisionToDFA: dfas, contextCache: antlr.NewPredictionContextCache()}
+	p := &parserPrediction{decisionToDFA: dfas, contextCache: antlr.NewPredictionContextCache(), standIn: standIn}
+	p.seq.Store(predictionSeq.Add(1))
+	return p
 }
 
 // acquirePrediction returns the current generation, held for one parse;
@@ -114,7 +143,7 @@ func acquirePrediction() *parserPrediction {
 	if p == nil {
 		predictionMu.Lock()
 		if p = currentPrediction.Load(); p == nil {
-			p = newParserPrediction()
+			p = newParserPrediction(false)
 			currentPrediction.Store(p)
 		}
 		predictionMu.Unlock()
@@ -127,9 +156,10 @@ func acquirePrediction() *parserPrediction {
 // when it has grown past parserDFAStateLimit. When no parse holds p its DFA
 // states are counted exactly; while parses always hold it, which TryLock
 // can't get past, the count is estimated from the last exact count and the
-// new-shape tokens since (estimatedStates). Neither check waits for other
-// parses, and a generation is only replaced when it is past the limit, so
-// a working set that fits keeps its warm predictions.
+// new-shape tokens since (estimatedStates), and an estimate past the limit
+// drains p (drain). Neither check waits for other parses, and a generation
+// is only replaced when an exact count is past the limit, so a working set
+// that fits keeps its warm predictions.
 func (p *parserPrediction) release(tokens *antlr.CommonTokenStream) {
 	p.mu.RUnlock()
 	if tokens != nil {
@@ -138,19 +168,67 @@ func (p *parserPrediction) release(tokens *antlr.CommonTokenStream) {
 		}
 	}
 	limit := parserDFAStateLimit()
-	if !p.mu.TryLock() {
-		if p.estimatedStates() > limit {
-			p.retire()
-		}
-		return
+	if p.mu.TryLock() {
+		p.count(limit)
+	} else if currentPrediction.Load() == p && p.estimatedStates() > limit {
+		p.drain(limit)
 	}
+}
+
+// count counts p's DFA states exactly and replaces p when they are past
+// limit, and no longer keeps it as the spare; a drained p that fits is
+// restored. The caller holds p.mu, which count releases.
+func (p *parserPrediction) count(limit int64) {
 	tokensNow := p.newShapeTokens.Load()
 	states := int64(p.dfaStates())
 	p.mu.Unlock()
 	p.exactStates.Store(states)
 	p.tokensAtExact.Store(tokensNow)
+	if p.draining.CompareAndSwap(true, false) && states <= limit {
+		p.restore()
+		return
+	}
 	if states > limit {
+		sparePrediction.CompareAndSwap(p, nil)
 		p.retire()
+	}
+}
+
+// drain makes the spare, or a fresh stand-in without one, current so that
+// p's parses end and the last one counts p exactly.
+func (p *parserPrediction) drain(limit int64) {
+	if !p.draining.CompareAndSwap(false, true) {
+		return
+	}
+	next := sparePrediction.Swap(nil)
+	if next == nil {
+		next = newParserPrediction(true)
+	} else {
+		next.seq.Store(predictionSeq.Add(1))
+	}
+	if !currentPrediction.CompareAndSwap(p, next) {
+		p.draining.Store(false)
+		sparePrediction.CompareAndSwap(nil, next)
+		return
+	}
+	// p's parses may all have ended already, and then no release counts it.
+	if p.mu.TryLock() {
+		p.count(limit)
+	}
+}
+
+// restore makes drained generation p current again in place of a stand-in
+// that became current after it, which becomes the spare.
+func (p *parserPrediction) restore() {
+	for {
+		c := currentPrediction.Load()
+		if c == nil || c == p || !c.standIn || c.seq.Load() < p.seq.Load() {
+			return
+		}
+		if currentPrediction.CompareAndSwap(c, p) {
+			sparePrediction.Store(c)
+			return
+		}
 	}
 }
 
@@ -160,9 +238,10 @@ func (p *parserPrediction) estimatedStates() int64 {
 	return p.exactStates.Load() + (p.newShapeTokens.Load()-p.tokensAtExact.Load())*statesPerNewShapeToken
 }
 
-// retire makes a fresh generation current if p still is.
+// retire makes a fresh generation current if p still is; it stands in where
+// p did.
 func (p *parserPrediction) retire() {
-	currentPrediction.CompareAndSwap(p, newParserPrediction())
+	currentPrediction.CompareAndSwap(p, newParserPrediction(p.standIn))
 }
 
 // addShape records shape and reports whether it is new to p. A full set

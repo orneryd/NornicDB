@@ -1771,7 +1771,6 @@ func (s *Session) processMessage(msg *boltMessage) error {
 	return s.dispatchMessage(msg.msgType, msg.data)
 }
 
-
 func (s *Session) handleQueuedMessage() error {
 	if s.messageQueue == nil || s.readErrQueue == nil {
 		return s.handleMessage()

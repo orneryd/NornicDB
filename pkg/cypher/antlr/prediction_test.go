@@ -193,13 +193,12 @@ func runContinuousPredictionLoad(t *testing.T, limit int) (count, total, largest
 	return count, total, largest, waits
 }
 
-
 // The prediction DFAs are bounded: past maxParserDFAStates a new generation
 // starts, and verdicts are the same before and after the reset.
 func TestValidatePredictionGenerationRotates(t *testing.T) {
 	setMaxParserDFAStates(t, 1)
 	statements := map[string]bool{
-		"MATCH (n:Person) WHERE n.age > 3 RETURN n.name AS name":                               true,
+		"MATCH (n:Person) WHERE n.age > 3 RETURN n.name AS name":                              true,
 		"MATCH (a)-[:KNOWS]->(b) WITH a, collect(b) AS bs RETURN a, size(bs) AS c":            true,
 		"RETURN [x IN range(1, 5) WHERE x % 2 = 0 | CASE WHEN x > 2 THEN x ELSE 0 END] AS xs": true,
 		"MATCH (n RETURN n":    false,
@@ -345,9 +344,136 @@ func TestValidatePredictionWorkingSetKeepsGeneration(t *testing.T) {
 	}
 }
 
-// retireCurrentPredictionForTest starts a fresh generation.
-func retireCurrentPredictionForTest() {
-	if p := currentPrediction.Load(); p != nil {
-		p.retire()
+// The token estimate only starts a drain: a generation it passes while a
+// long parse holds it gives new parses to a stand-in, is counted exactly when
+// that parse ends, and is current again because its states fit. Before, the
+// estimate replaced it, and the long statement parsed cold on its next run.
+func TestValidatePredictionDrainedGenerationThatFitsIsRestored(t *testing.T) {
+	const limit = 3000
+	first := drainPredictionPastEstimate(t, limit)
+	if !first.draining.Load() {
+		t.Fatalf("the generation the estimate passed is not draining")
 	}
+	first.release(nil)
+	tokens, states := first.newShapeTokens.Load(), first.exactStates.Load()
+	t.Logf("new-shape tokens=%d states=%d limit=%d", tokens, states, limit)
+	if states > limit {
+		t.Fatalf("the generation holds %d states, past the limit of %d; the fixture must fit", states, limit)
+	}
+	if currentPrediction.Load() != first {
+		t.Fatalf("a drained generation within its state limit was not restored")
+	}
+	if first.draining.Load() {
+		t.Fatalf("the restored generation is still draining")
+	}
+}
+
+// A drained generation whose exact count is past the limit stays replaced.
+func TestValidatePredictionDrainedGenerationPastLimitStaysRetired(t *testing.T) {
+	first := drainPredictionPastEstimate(t, 3000)
+	setMaxParserDFAStates(t, 1)
+	first.release(nil)
+	if currentPrediction.Load() == first {
+		t.Fatalf("a drained generation past its state limit was restored")
+	}
+	if first.draining.Load() {
+		t.Fatalf("a retired generation is still draining")
+	}
+}
+
+// Drains nest: a stand-in the estimate passes drains in turn and is restored
+// when its own parse ends, and the generation it stood in for is restored in
+// its place when the long parse ends.
+func TestValidatePredictionNestedDrainsRestoreInCreationOrder(t *testing.T) {
+	const limit = 3000
+	first := drainPredictionPastEstimate(t, limit)
+	second := acquirePrediction()
+	if second == first || !second.standIn {
+		t.Fatalf("new parses did not take a stand-in while the generation drains")
+	}
+	for seed := 100; seed < 140 && currentPrediction.Load() == second; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if currentPrediction.Load() == second {
+		t.Fatalf("the estimate never passed the limit on the stand-in")
+	}
+	second.release(nil)
+	if currentPrediction.Load() != second {
+		t.Fatalf("a drained stand-in within its state limit was not restored")
+	}
+	first.release(nil)
+	if currentPrediction.Load() != first {
+		t.Fatalf("the drained generation was not restored over its stand-in")
+	}
+	if sparePrediction.Load() != second {
+		t.Fatalf("the stand-in the restore replaced is not the spare")
+	}
+}
+
+// A drain hands new parses to the spare, which keeps the predictions it
+// built as a stand-in, instead of a cold generation.
+func TestValidatePredictionDrainUsesSpare(t *testing.T) {
+	const limit = 3000
+	first := drainPredictionPastEstimate(t, limit)
+	standIn := currentPrediction.Load()
+	first.release(nil)
+	if currentPrediction.Load() != first || sparePrediction.Load() != standIn {
+		t.Fatalf("the restore did not keep the stand-in as the spare")
+	}
+	holder := acquirePrediction()
+	for seed := 200; seed < 240 && currentPrediction.Load() == first; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if currentPrediction.Load() != standIn {
+		t.Fatalf("the drain did not make the spare current")
+	}
+	if sparePrediction.Load() != nil {
+		t.Fatalf("the spare is still held after the drain made it current")
+	}
+	holder.release(nil)
+	if currentPrediction.Load() != first {
+		t.Fatalf("the drained generation was not restored over the spare")
+	}
+}
+
+// drainPredictionPastEstimate starts a fresh generation, holds a parse on it
+// as a long parse does, and validates distinct long statements until their
+// new-shape tokens pass limit. It returns the held generation, which the
+// caller releases.
+func drainPredictionPastEstimate(t *testing.T, limit int) *parserPrediction {
+	t.Helper()
+	setMaxParserDFAStates(t, 1_000_000)
+	retireCurrentPredictionForTest()
+	first := acquirePrediction()
+	first.release(nil)
+	setMaxParserDFAStates(t, limit)
+	holder := acquirePrediction()
+	if holder != first {
+		t.Fatalf("the held parse did not take the fresh generation")
+	}
+	for seed := 0; seed < 40 && currentPrediction.Load() == first; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if currentPrediction.Load() == first {
+		t.Fatalf("new-shape tokens=%d never passed the limit of %d", first.newShapeTokens.Load(), limit)
+	}
+	for seed := 40; seed < 50; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return holder
+}
+
+// retireCurrentPredictionForTest starts a fresh generation that stands in
+// for none, with no spare.
+func retireCurrentPredictionForTest() {
+	sparePrediction.Store(nil)
+	currentPrediction.Store(newParserPrediction(false))
 }
