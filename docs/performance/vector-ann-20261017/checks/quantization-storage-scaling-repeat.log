@@ -1,0 +1,34 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 12.516875ms, 8000: 133.390333ms, ratio 10.7 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.38s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 12.180208ms, 8000: 120.412542ms, ratio 9.9 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.36s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 12.555916ms, 8000: 127.293542ms, ratio 10.1 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.35s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 11.806375ms, 8000: 121.527375ms, ratio 10.3 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.35s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 11.85025ms, 8000: 147.803375ms, ratio 12.5 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.37s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 13.474083ms, 8000: 131.564ms, ratio 9.8 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.39s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 12.89075ms, 8000: 128.272125ms, ratio 10.0 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.43s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 18.286167ms, 8000: 133.388292ms, ratio 7.3 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.43s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 13.540042ms, 8000: 131.233417ms, ratio 9.7 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.37s)
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 13.89225ms, 8000: 128.552291ms, ratio 9.3 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.40s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	4.608s
