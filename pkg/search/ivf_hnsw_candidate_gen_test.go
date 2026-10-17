@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -90,6 +91,13 @@ func TestIVFHNSWCandidateGen_ErrorAndFallbackBranches(t *testing.T) {
 	cands, err := gen.SearchCandidates(context.Background(), query, 5, -1.0)
 	require.NoError(t, err)
 	require.NotEmpty(t, cands)
+	for _, limit := range []int{-1, 0, 1, 3} {
+		t.Run(fmt.Sprintf("exact fallback budget %d", limit), func(t *testing.T) {
+			got, err := gen.SearchCandidates(context.Background(), query, limit, -1)
+			require.NoError(t, err)
+			require.Len(t, got, min(2, max(0, limit)))
+		})
+	}
 
 	// Canceled context is propagated from per-cluster HNSW search path.
 	hidx := NewHNSWIndex(3, DefaultHNSWConfig())
