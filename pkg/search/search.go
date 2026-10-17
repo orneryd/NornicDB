@@ -2923,10 +2923,14 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
+	shouldIndex, err := s.shouldIndexNode(node)
+	if err != nil {
+		return err
+	}
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
-	if s.vectorEnabled.Load() {
+	if shouldIndex && s.vectorEnabled.Load() {
 		dims := s.VectorIndexDimensions()
 		for _, embedding := range node.NamedEmbeddings {
 			if len(embedding) > 0 && len(embedding) != dims {
@@ -2941,11 +2945,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	}
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
-	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
-	shouldIndex, err := s.shouldIndexNode(node)
-	if err != nil {
-		return err
-	}
+	defer s.rememberChunkSpansLocked(nodeIDStr, node)
 	var fulltext nodeFulltext
 	if !skipFulltext && s.bm25Enabled.Load() {
 		fulltext.text = s.extractSearchableText(node)
