@@ -50,14 +50,18 @@ class HookTests(unittest.TestCase):
         self.hits = 0
         self.stored_commit = self.baseline
         self.auth = []
+        self.paths = []
+        self.search_databases = []
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
+                fixture.paths.append(self.path)
                 fixture.auth.append(self.headers.get("Authorization"))
                 data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if self.path == "/nornicdb/search":
                     fixture.searches.append(data["query"])
+                    fixture.search_databases.append(data["database"])
                     payload = {"results": [{"node": {"properties": {
                         "id": f"existing-{i}", "label": "existing()", "body": BODY,
                         "source_file": f"existing{i}.py", "source_location": "L1",
@@ -131,6 +135,8 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
                 self.assertIn("Commit blocked", result.stderr)
                 self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
                 self.assertEqual(self.auth[-1], "Bearer fixture-token")
+                self.assertEqual(set(self.search_databases), {"nornicdbcode"})
+                self.assertNotIn("/db/nornic/tx/commit", self.paths)
 
     def test_unstaged_edit_cannot_hide_staged_duplicate(self):
         self.hits = 1
@@ -202,6 +208,8 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.git("push", "origin", "main", root=peer)
         self.git("pull", "--ff-only", "origin", "main")
         self.assertEqual(self.stored_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertIn("/db/nornicdbcode/tx/commit", self.paths)
+        self.assertNotIn("/db/nornic/tx/commit", self.paths)
         # A post-rewrite from pull --rebase uses the same update command.
         result = subprocess.run([str(self.root / ".git/hooks/post-rewrite"), "rebase"],
                                 input="", capture_output=True, text=True, env=self.env, cwd=self.root)
