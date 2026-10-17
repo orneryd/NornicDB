@@ -327,6 +327,9 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 				return false
 			}
 		}
+		if s[j] == ':' && (j == 0 || s[j-1] != ':') {
+			return true // a map value follows its key's colon ({end: end})
+		}
 		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
 	}
 	start := j
