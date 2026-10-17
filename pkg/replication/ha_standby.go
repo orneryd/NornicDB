@@ -130,7 +130,9 @@ type RaftAppendEntriesResponse struct {
 	CodecVersion  uint32 `json:"codec_version,omitempty"`
 }
 
-// ConnectionHandler handles incoming connections.
+// ConnectionHandler handles incoming connections. ClusterTransport calls it
+// once per inbound connection, after the first message read from it has been
+// verified and before that message is dispatched.
 type ConnectionHandler func(conn PeerConnection)
 
 // WALBatchResponse is the response to a WAL batch.
@@ -939,8 +941,12 @@ func (a *WALApplier) Flush() error {
 	return nil
 }
 
-// NewDefaultTransport creates a ClusterTransport for production use.
+// NewDefaultTransport creates a ClusterTransport from a transport config.
 // See transport.go for the full implementation.
+//
+// Deprecated: it applies only what config carries, not the replication
+// secret or TLS settings of a replication Config. Build a node's transport
+// with NewDefaultTransportFromConfig.
 func NewDefaultTransport(config *ClusterTransportConfig) Transport {
 	return NewClusterTransport(config)
 }
