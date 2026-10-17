@@ -28,26 +28,40 @@ type remoteParticipant struct {
 	mu        sync.Mutex
 	ended     bool
 	committed bool
-	err       error // the outcome of the end that ran
+	done      chan struct{} // closed when the end that ran has returned
+	err       error         // the outcome of the end that ran, set before done closes
 }
 
+// end commits or rolls back the sub-transaction, the first time it is
+// called; a later call returns that outcome (once it is known) and never
+// commits a rolled-back sub-transaction. The network call holds no lock. A
+// call that ctx's deadline stopped records that: the remote server then ends
+// the sub-transaction itself, the driver having closed its connection.
 func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	switch {
-	case !p.ended:
-		p.ended, p.committed = true, commit
-		if commit {
-			p.err = p.tx.Commit(ctx)
-		} else {
-			p.err = p.tx.Rollback(ctx)
+	if p.ended {
+		committed, done := p.committed, p.done
+		p.mu.Unlock()
+		if commit && !committed {
+			return fmt.Errorf("remote sub-transaction was rolled back")
 		}
-		return p.err
-	case commit && !p.committed:
-		return fmt.Errorf("remote sub-transaction was rolled back")
-	default:
+		<-done
 		return p.err
 	}
+	p.ended, p.committed, p.done = true, commit, make(chan struct{})
+	p.mu.Unlock()
+	var err error
+	if commit {
+		err = p.tx.Commit(ctx)
+	} else {
+		err = p.tx.Rollback(ctx)
+	}
+	if err != nil && ctx.Err() != nil {
+		err = fmt.Errorf("remote sub-transaction did not end before its deadline: %w (%w)", ctx.Err(), err)
+	}
+	p.err = err
+	close(p.done)
+	return err
 }
 
 // NewRemoteFragmentExecutor creates a remote executor.
@@ -61,9 +75,11 @@ func NewRemoteFragmentExecutor() *RemoteFragmentExecutor {
 // RollbackParticipants rolls back every remote sub-transaction now, for a
 // transaction that failed and can no longer commit: each remote server
 // releases what its sub-transaction holds (MERGE key locks) instead of
-// keeping it until the client ends the transaction. A rollback error is
-// recorded on its participant, which reports it when the transaction ends;
-// the first one is returned.
+// keeping it until the client ends the transaction. The participants roll
+// back concurrently, so ctx's deadline bounds the whole call and one that
+// doesn't respond doesn't hold up the others. A rollback error (a deadline
+// included) is recorded on its participant, which reports it when the
+// transaction ends; the first one is returned.
 func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error {
 	r.mu.RLock()
 	participants := make([]*remoteParticipant, 0, len(r.txHandles))
@@ -71,13 +87,22 @@ func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error
 		participants = append(participants, participant)
 	}
 	r.mu.RUnlock()
-	var first error
-	for _, participant := range participants {
-		if err := participant.end(ctx, false); err != nil && first == nil {
-			first = err
+	errs := make([]error, len(participants))
+	var wg sync.WaitGroup
+	for i, participant := range participants {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = participant.end(ctx, false)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
 		}
 	}
-	return first
+	return nil
 }
 
 // Execute runs a Cypher query against a remote NornicDB instance.

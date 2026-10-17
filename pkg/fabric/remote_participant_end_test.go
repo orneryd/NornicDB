@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -44,4 +45,35 @@ func TestRemoteParticipantEndsOnce(t *testing.T) {
 	require.Equal(t, 1, failing.rollbacks)
 	require.Equal(t, 1, ok.rollbacks)
 	require.Zero(t, ok.commits)
+}
+
+type stalledRemoteTx struct{ countingRemoteTx }
+
+func (s *stalledRemoteTx) Rollback(ctx context.Context) error {
+	s.rollbacks++
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Remote participants that never answer their rollback are bounded by one
+// deadline, not one each: RollbackParticipants returns by then, the other
+// participants are still rolled back, and a stalled one records the deadline
+// and ends once.
+func TestRollbackParticipantsBoundedByDeadline(t *testing.T) {
+	first, second, ok := &stalledRemoteTx{}, &stalledRemoteTx{}, &countingRemoteTx{}
+	r := NewRemoteFragmentExecutor()
+	r.txHandles["first"] = &remoteParticipant{tx: first}
+	r.txHandles["second"] = &remoteParticipant{tx: second}
+	r.txHandles["ok"] = &remoteParticipant{tx: ok}
+	const deadline = time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+
+	start := time.Now()
+	require.ErrorContains(t, r.RollbackParticipants(ctx), "deadline")
+	require.Less(t, time.Since(start), deadline*18/10, "the stalled participants wait out one deadline together")
+	require.Equal(t, 1, ok.rollbacks)
+	require.ErrorContains(t, r.txHandles["first"].end(context.Background(), false), "deadline")
+	require.Equal(t, 1, first.rollbacks)
+	require.Equal(t, 1, second.rollbacks)
 }
