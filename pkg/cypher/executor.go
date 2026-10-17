@@ -1766,7 +1766,13 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		return execute(ctx, e)
+		// Without a transaction the writes apply as the statement runs: once it
+		// returns, they are durable and its result stands.
+		result, err := execute(ctx, e)
+		if err == nil {
+			markStatementCommitted(ctx)
+		}
+		return result, err
 	}
 
 	// Start implicit transaction
@@ -1930,6 +1936,8 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok {
 		running.committed.Store(true)
 	}
+	// Nor does its deadline: the commit is durable (markStatementCommitted).
+	markStatementCommitted(ctx)
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
 	// attached exactly as on the durable path: the write-behind ACK carries

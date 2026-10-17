@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"hash/maphash"
 	"sort"
 	"strings"
@@ -200,6 +201,9 @@ type pipelineCancellation struct {
 	// failure is a worker's recovered panic, reported to the statement probe:
 	// the statement fails with it (recoverWorkerPanic).
 	failure atomic.Pointer[error]
+	// committed records that the statement's writes are durable
+	// (markStatementCommitted): its result is then never replaced.
+	committed atomic.Bool
 }
 
 func (probe *pipelineCancellation) check() bool {
@@ -308,4 +312,52 @@ func probeStatementContext(probe *pipelineCancellation) context.Context {
 		return context.Background()
 	}
 	return context.WithValue(probe.ctx, pipelineCancellationKey{}, probe)
+}
+
+// admitStatementProbe gives a statement admitted under its database's query
+// limits a probe on the limited context (whose deadline is the database's
+// query time limit as well as the caller's), reporting to the probe the
+// statement prepared under, so the statement's owner sees what either saw.
+func admitStatementProbe(ctx context.Context) context.Context {
+	if ctx.Done() == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, pipelineCancellationKey{}, &pipelineCancellation{ctx: ctx, parent: contextPipelineProbe(ctx)})
+}
+
+// markStatementCommitted records that the statement's writes are durable:
+// from then on its result stands, whatever its deadline does next.
+func markStatementCommitted(ctx context.Context) {
+	for probe := contextPipelineProbe(ctx); probe != nil; probe = probe.parent {
+		probe.committed.Store(true)
+	}
+}
+
+// statementCommitted reports whether the statement's writes are durable.
+func statementCommitted(ctx context.Context) bool {
+	probe := contextPipelineProbe(ctx)
+	return probe != nil && probe.committed.Load()
+}
+
+// statementDeadlineOutcome is a statement's result under its deadline: an
+// error it returns after its context ended is that context's error, and a
+// result built after a reader saw the cancellation is not returned (the
+// reader may have handed a partial value on). A statement whose writes are
+// durable keeps its result whatever its deadline did since: a commit runs
+// to completion once it starts, and a client told it timed out would retry
+// a write that landed.
+func statementDeadlineOutcome(ctx context.Context, result *ExecuteResult, err error) (*ExecuteResult, error) {
+	if statementCommitted(ctx) {
+		return result, err
+	}
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+			return nil, ctxErr
+		}
+		return result, err
+	}
+	if cancelled := statementCancellationErr(ctx); cancelled != nil {
+		return nil, cancelled
+	}
+	return result, nil
 }

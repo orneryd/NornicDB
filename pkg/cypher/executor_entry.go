@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -166,43 +165,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Admit the statement before preparation so configured deadlines cover it.
-	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
-	var queryLimitCancel context.CancelFunc
-	if namespacedEngine, ok := e.storage.(interface {
-		GetQueryLimitChecker() interface {
-			CheckQueryRate() error
-			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
-			GetQueryLimits() interface{}
-		}
-	}); ok {
-		if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
-			// Check query rate limit
-			if err := qlc.CheckQueryRate(); err != nil {
-				return nil, err
-			}
-
-			// Check write rate limit for write queries
-			// We need to check this early, but we don't know if it's a write query yet
-			// So we'll check it in the write handlers too
-
-			// Apply query timeout and concurrent query limits
-			var err error
-			var limitedContext context.Context
-			limitedContext, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
-			if err != nil {
-				return nil, err
-			}
-			ctx = limitedContext
-			// Ensure cancel is called when done
-			defer func() {
-				if queryLimitCancel != nil {
-					queryLimitCancel()
-				}
-			}()
-		}
-	}
-
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
 	// The statement's deadline has one owner, this context's probe. Once the
@@ -211,17 +173,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// after its context ended is that context's error, and a result built
 	// after a reader saw the cancellation is not returned.
 	statementCtx := ctx
-	defer func() {
-		if retErr != nil {
-			if err := statementCtx.Err(); err != nil && !errors.Is(retErr, err) {
-				result, retErr = nil, err
-			}
-			return
-		}
-		if err := statementCancellationErr(statementCtx); err != nil {
-			result, retErr = nil, err
-		}
-	}()
+	defer func() { result, retErr = statementDeadlineOutcome(statementCtx, result, retErr) }()
 	preparationProbe := parameterCancellationForContext(ctx)
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
@@ -804,6 +756,40 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
+	}
+
+	// Admit the statement on the database it runs on, after USE routing
+	// (a routed statement is admitted by its target database's Execute):
+	// query rate, the database's query time limit and concurrency slots.
+	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
+	var queryLimitCancel context.CancelFunc
+	if namespacedEngine, ok := e.storage.(interface {
+		GetQueryLimitChecker() interface {
+			CheckQueryRate() error
+			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
+			GetQueryLimits() interface{}
+		}
+	}); ok {
+		if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
+			if err := qlc.CheckQueryRate(); err != nil {
+				return nil, err
+			}
+			var err error
+			var limitedContext context.Context
+			limitedContext, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if queryLimitCancel != nil {
+					queryLimitCancel()
+				}
+			}()
+			// The admitted statement's probe reads the limited context, so the
+			// database's time limit is the statement's deadline from here.
+			ctx = admitStatementProbe(limitedContext)
+			statementCtx = ctx
+		}
 	}
 
 	// TRC-15: plan span wraps the analysis/classification phase.
