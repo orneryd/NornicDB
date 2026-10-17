@@ -25,7 +25,7 @@ func (tx *BadgerTransaction) PendingChanges(includeEntities bool) TransactionCha
 	changes := TransactionChanges{
 		Namespace:     tx.namespace,
 		Operations:    len(tx.operations) + len(tx.connectedDeletes),
-		HoldsMergeKey: tx.mergeKeyRelease != nil,
+		HoldsMergeKey: len(tx.mergeKeyReleases) > 0,
 	}
 	if !includeEntities {
 		return changes
