@@ -61,6 +61,8 @@ type VectorFileStore struct {
 	buildIndexedCount     int64 // last checkpoint count; persisted in .meta for resume
 	obsoleteCount         int64 // approximate number of stale slots in .vec from updates/deletes
 	scoreScratchPool      sync.Pool
+	queryReadMap          *vectorFileReadLease // borrowed only while mu is read-locked
+	queryReadSlots        int64
 	closed                bool
 }
 
@@ -273,7 +275,9 @@ func (v *VectorFileStore) Remove(id string) bool {
 
 // GetVector returns a copy of the stored (normalized) vector for id, or (nil, false) if not found.
 func (v *VectorFileStore) GetVector(id string) ([]float32, bool) {
-	v.mu.RLock()
+	if err := v.lockQueryRead(); err != nil {
+		return nil, false
+	}
 	defer v.mu.RUnlock()
 	ordinal, ok := v.idToOrdinal[id]
 	if !ok || ordinal < 0 || ordinal >= v.nextOrdinal || v.closed || v.file == nil {
@@ -282,6 +286,13 @@ func (v *VectorFileStore) GetVector(id string) ([]float32, bool) {
 	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	if !ok {
 		return nil, false
+	}
+	if v.queryReadMap != nil {
+		stored, ok := v.queryReadMap.Lookup(id)
+		if !ok {
+			return nil, false
+		}
+		return append([]float32(nil), stored...), true
 	}
 	buf := make([]byte, vectorBytes)
 	if _, err := v.file.ReadAt(buf, v.vectorOffset(ordinal)); err != nil {
@@ -301,7 +312,9 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	v.mu.RLock()
+	if err := v.lockQueryRead(); err != nil {
+		return nil, err
+	}
 	defer v.mu.RUnlock()
 	if v.closed || v.file == nil {
 		return nil, nil
@@ -317,7 +330,11 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		return nil, nil
 	}
 
-	scratch := v.getScoreScratch(len(candidates), vectorScoreReadBatchSize)
+	batchCapacity := vectorScoreReadBatchSize
+	if v.queryReadMap != nil {
+		batchCapacity = 0
+	}
+	scratch := v.getScoreScratch(len(candidates), batchCapacity)
 	defer v.putScoreScratch(scratch)
 	offsets := scratch.offsets[:0]
 	offsetsSorted := true
@@ -351,51 +368,69 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	}
 
 	scored := make([]ScoredCandidate, 0, len(candidates))
-	vecBytes := dims * 4
-	maxBatchBytes := vectorScoreReadBatchSize
-	if vecBytes > maxBatchBytes {
-		maxBatchBytes = vecBytes
-	}
-	batch := scratch.batch[:maxBatchBytes]
-	for i := 0; i < len(offsets); {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		start := offsets[i].vecOff
-		end := start + int64(vecBytes)
-		j := i + 1
-		for j < len(offsets) {
-			nextEnd := offsets[j].vecOff + int64(vecBytes)
-			if nextEnd-start > int64(maxBatchBytes) {
-				break
+	if v.queryReadMap != nil {
+		for _, entry := range offsets {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			end = nextEnd
-			j++
-		}
-		batchLen := int(end - start)
-		n, err := v.file.ReadAt(batch[:batchLen], start)
-		if err != nil && err != io.EOF {
-			i = j
-			continue
-		}
-		limit := n
-		for k := i; k < j; k++ {
-			localOff := int(offsets[k].vecOff - start)
-			if localOff < 0 || localOff+vecBytes > limit {
+			stored, ok := v.queryReadMap.Lookup(entry.id)
+			if !ok {
 				continue
 			}
+			// Retain the existing scalar accumulation order and score semantics.
 			var score float32
-			vecBuf := batch[localOff : localOff+vecBytes]
 			for d := 0; d < dims; d++ {
-				value := math.Float32frombits(binary.LittleEndian.Uint32(vecBuf[d*4 : d*4+4]))
-				score += normalizedQuery[d] * value
+				score += normalizedQuery[d] * stored[d]
 			}
-			scored = append(scored, ScoredCandidate{ID: offsets[k].id, Score: float64(score)})
+			scored = append(scored, ScoredCandidate{ID: entry.id, Score: float64(score)})
 		}
-		i = j
+	} else {
+		vecBytes := dims * 4
+		maxBatchBytes := vectorScoreReadBatchSize
+		if vecBytes > maxBatchBytes {
+			maxBatchBytes = vecBytes
+		}
+		batch := scratch.batch[:maxBatchBytes]
+		for i := 0; i < len(offsets); {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+
+			start := offsets[i].vecOff
+			end := start + int64(vecBytes)
+			j := i + 1
+			for j < len(offsets) {
+				nextEnd := offsets[j].vecOff + int64(vecBytes)
+				if nextEnd-start > int64(maxBatchBytes) {
+					break
+				}
+				end = nextEnd
+				j++
+			}
+			batchLen := int(end - start)
+			n, err := v.file.ReadAt(batch[:batchLen], start)
+			if err != nil && err != io.EOF {
+				i = j
+				continue
+			}
+			limit := n
+			for k := i; k < j; k++ {
+				localOff := int(offsets[k].vecOff - start)
+				if localOff < 0 || localOff+vecBytes > limit {
+					continue
+				}
+				var score float32
+				vecBuf := batch[localOff : localOff+vecBytes]
+				for d := 0; d < dims; d++ {
+					value := math.Float32frombits(binary.LittleEndian.Uint32(vecBuf[d*4 : d*4+4]))
+					score += normalizedQuery[d] * value
+				}
+				scored = append(scored, ScoredCandidate{ID: offsets[k].id, Score: float64(score)})
+			}
+			i = j
+		}
 	}
 	slices.SortFunc(scored, func(a, b ScoredCandidate) int {
 		if a.Score > b.Score {
@@ -634,6 +669,10 @@ func (v *VectorFileStore) Load() error {
 	if err != nil {
 		return err
 	}
+	if err := v.releaseQueryReadMapLocked(); err != nil {
+		_ = recoveryFile.Close()
+		return err
+	}
 	if err := recoveryFile.Truncate(vecHeaderSize + meta.DataSlots*stride); err != nil {
 		_ = recoveryFile.Close()
 		return err
@@ -859,6 +898,9 @@ func (v *VectorFileStore) rewriteVecLocked(ids []string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if err := v.releaseQueryReadMapLocked(); err != nil {
+		return err
+	}
 	if err := v.file.Close(); err != nil {
 		return err
 	}
@@ -921,10 +963,11 @@ func (v *VectorFileStore) Close() error {
 		return nil
 	}
 	v.closed = true
+	mappingErr := v.releaseQueryReadMapLocked()
 	if v.file != nil {
 		err := v.file.Close()
 		v.file = nil
-		return err
+		return errors.Join(mappingErr, err)
 	}
-	return nil
+	return mappingErr
 }
