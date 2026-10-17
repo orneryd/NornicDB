@@ -46,9 +46,11 @@ func (h *recordingLog) saw(message string) bool {
 const bm25ParkedMessage = "cleared BM25 in-memory state (will reload after warmup)"
 
 // BM25 is parked through the ANN warmup only when the base persist wrote its
-// checkpoint. An empty index never written has no checkpoint to reload, so it
-// stays resident and the first build of an empty persisted service succeeds;
-// a dirty empty index and a populated one are written and parked as before.
+// checkpoint. A BM25 index the build rebuilt from storage is written even when
+// it is empty and never changed, so the first build of an empty persisted
+// service writes, parks and reloads its empty checkpoint; a dirty empty index
+// and a populated one are written and parked as before. A save that fails or
+// is skipped never parks (TestParkedBM25NotParkedWhenTheBasePersistFails).
 func TestBM25ParkedOnlyWhenTheBaseCheckpointWasWritten(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		for _, kind := range []string{"empty_never_written", "empty_dirty", "populated"} {
@@ -71,10 +73,10 @@ func TestBM25ParkedOnlyWhenTheBaseCheckpointWasWritten(t *testing.T) {
 				}
 				require.NoError(t, svc.BuildIndexes(context.Background()))
 				require.True(t, svc.IsReady())
-				require.Equal(t, kind != "empty_never_written", logs.saw(bm25ParkedMessage), "parked only after a written checkpoint")
+				require.True(t, logs.saw(bm25ParkedMessage), "parked after a written checkpoint")
+				require.FileExists(t, filepath.Join(dir, "bm25"))
 				if kind == "populated" {
 					require.Equal(t, []string{"nornic:a"}, parkingSearchIDs(t, svc, "aterm"))
-					require.FileExists(t, filepath.Join(dir, "bm25"))
 				}
 
 				// The first live write after the build is served, and a restart
