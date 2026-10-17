@@ -24,6 +24,11 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 	return nil, errLocalLLMNotBuilt
 }
 
+// NewLocalGGUFContext returns an error when localllm is not built in.
+func NewLocalGGUFContext(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
+	return nil, errLocalLLMNotBuilt
+}
+
 // Embed returns an error (stub).
 func (e *LocalGGUFEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	return nil, errLocalLLMNotBuilt

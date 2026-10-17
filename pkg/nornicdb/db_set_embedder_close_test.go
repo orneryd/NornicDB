@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -51,4 +52,20 @@ func TestDB_SetEmbedder_ConcurrentWithClose(t *testing.T) {
 	if queue := db.GetEmbedQueue(); queue != nil {
 		require.True(t, queue.closed.Load())
 	}
+}
+
+// Close waits for a background task, which ends with the lifetime context, and
+// a closing database refuses new ones.
+func TestDB_RunBackgroundTask_JoinedByClose(t *testing.T) {
+	db, err := Open("", nil)
+	require.NoError(t, err)
+
+	var finished atomic.Bool
+	require.True(t, db.RunBackgroundTask(func() {
+		<-db.LifetimeContext().Done()
+		finished.Store(true)
+	}))
+	require.NoError(t, db.Close())
+	require.True(t, finished.Load(), "Close returned before the background task did")
+	require.False(t, db.RunBackgroundTask(func() { t.Error("task ran after Close") }))
 }
