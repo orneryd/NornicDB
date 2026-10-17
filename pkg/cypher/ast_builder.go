@@ -946,7 +946,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// List literal
-	if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+	if isListLiteral(text) {
 		expr.Type = ASTExprList
 		inner := text[1 : len(text)-1]
 		parts := splitOutsideBrackets(inner, ',')
