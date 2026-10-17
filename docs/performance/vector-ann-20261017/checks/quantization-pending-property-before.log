@@ -1,0 +1,26 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 00:04:14 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 00:04:14 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 00:04:14 INFO 📊 Indexed 255 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=255
+2026/10/17 00:04:14 INFO 📇 BuildIndexes: base index iteration complete (processed=255) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=255
+2026/10/17 00:04:14 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 00:04:14 INFO 🔍 Warming up vector search pipeline (255 vectors)... event_id=search.operator.b35df112977624a0 component=search message_template="🔍 Warming up vector search pipeline (%d vectors)..." arg_0=255
+2026/10/17 00:04:14 INFO [HNSW] 🧭 Lexical build metadata: 510 ranked vector IDs event_id=search.operator.d63680830393d684 component=search message_template="[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs" arg_0=510
+2026/10/17 00:04:14 INFO [HNSW] 🧭 Lexical-seeded build order: 255 seeded vectors prioritized event_id=search.operator.b6d70edf59d6e015 component=search message_template="[HNSW] 🧭 Lexical-seeded build order: %d seeded vectors prioritized" arg_0=255
+2026/10/17 00:04:14 INFO [HNSW] 🔨 Building from in-memory index: 255 vectors event_id=search.operator.607db6ed42a9c6fc component=search message_template="[HNSW] 🔨 Building from in-memory index: %d vectors" arg_0=255
+2026/10/17 00:04:14 INFO [HNSW] 🔨 Progress: 255 / 255 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=255 arg_1=255
+2026/10/17 00:04:14 INFO [HNSW] build batch=1 vectors=255 indexed=255 duration=4.099708ms search=1.009375ms link=3.090333ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=255 arg_2=255 arg_3=4.099708ms arg_4=1.009375ms arg_5=3.090333ms
+2026/10/17 00:04:14 INFO [HNSW] 🔨 Built from memory: 255 vectors event_id=search.operator.8564e5103ad8d50e component=search message_template="[HNSW] 🔨 Built from memory: %d vectors" arg_0=255
+2026/10/17 00:04:14 INFO 🔍 HNSW index created: quality=fast M=16 efConstruction=100 efSearch=50 vectors=255 tombstone_ratio=0.00 build_strategy=batch_parallel build_backend=*search.CPUHNSWBuildAccelerator build_batches=1 build_kernel_errors=0 build_fallback=false build_duration=4.137167ms event_id=search.operator.dce3aec02782896b component=search message_template="🔍 HNSW index created: quality=%s M=%d efConstruction=%d efSearch=%d vectors=%d tombstone_ratio=%.2f build_strategy=%s build_backend=%s build_batches=%d build_kernel_errors=%d build_fallback=%t build_duration=%s" arg_0=fast arg_1=16 arg_2=100 arg_3=50 arg_4=255 arg_5=0 arg_6=batch_parallel arg_7=*search.CPUHNSWBuildAccelerator arg_8=1 arg_9=0 arg_10=false arg_11=4.137167ms
+2026/10/17 00:04:14 INFO 🔍 Vector search strategy: HNSW (quantization pending) (N=255 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="HNSW (quantization pending)" arg_1=255
+2026/10/17 00:04:14 INFO 🔍 Vector search pipeline ready in 4.561ms event_id=search.operator.4cbb2bbd194dd189 component=search message_template="🔍 Vector search pipeline ready in %v" arg_0=4.561ms
+--- FAIL: TestQuantizationPendingPQPropertyQueryUsesApproximateScoresOnActivation (0.04s)
+    hnsw_quantization_service_test.go:225: 
+        	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/hnsw_quantization_service_test.go:225
+        	Error:      	Max difference between 0.99987453 and 1 allowed is 1e-06, but difference was -0.00012546777725219727
+        	Test:       	TestQuantizationPendingPQPropertyQueryUsesApproximateScoresOnActivation
+        	Messages:   	property supplements must use the newly activated model on its first query
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/search	0.582s
+FAIL

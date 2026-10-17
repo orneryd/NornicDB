@@ -1,0 +1,57 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/16 23:44:03 INFO [HNSW] 🧭 Lexical-seeded build order: 1 seeded vectors prioritized event_id=search.operator.b6d70edf59d6e015 component=search message_template="[HNSW] 🧭 Lexical-seeded build order: %d seeded vectors prioritized" arg_0=1
+--- FAIL: TestHNSWLexicalSeedsFollowVectorIdentity (0.00s)
+    --- FAIL: TestHNSWLexicalSeedsFollowVectorIdentity/chunked_file_iterator (0.00s)
+        ann_lexical_identity_regression_test.go:51: 
+            	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/ann_lexical_identity_regression_test.go:22
+            	            				/Users/timothysweet/src/NornicDB/pkg/search/ann_lexical_identity_regression_test.go:51
+            	Error:      	Not equal: 
+            	            	expected: []string{"first-chunk-0", "first-prop-features", "second-named-default", "literal-named-doc", "other"}
+            	            	actual  : []string{"literal-named-doc", "other", "second-named-default", "first-prop-features", "first-chunk-0"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,7 +1,7 @@
+            	            	 ([]string) (len=5) {
+            	            	- (string) (len=13) "first-chunk-0",
+            	            	+ (string) (len=17) "literal-named-doc",
+            	            	+ (string) (len=5) "other",
+            	            	+ (string) (len=20) "second-named-default",
+            	            	  (string) (len=19) "first-prop-features",
+            	            	- (string) (len=20) "second-named-default",
+            	            	- (string) (len=17) "literal-named-doc",
+            	            	- (string) (len=5) "other"
+            	            	+ (string) (len=13) "first-chunk-0"
+            	            	 }
+            	Test:       	TestHNSWLexicalSeedsFollowVectorIdentity/chunked_file_iterator
+            	Messages:   	ranked document hints must prioritize every embedding exactly once
+    --- FAIL: TestHNSWLexicalSeedsFollowVectorIdentity/memory_source (0.00s)
+        ann_lexical_identity_regression_test.go:58: 
+            	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/ann_lexical_identity_regression_test.go:22
+            	            				/Users/timothysweet/src/NornicDB/pkg/search/ann_lexical_identity_regression_test.go:58
+            	Error:      	Not equal: 
+            	            	expected: []string{"first-chunk-0", "first-prop-features", "second-named-default", "literal-named-doc", "other"}
+            	            	actual  : []string{"literal-named-doc", "other", "second-named-default", "first-prop-features", "first-chunk-0"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,7 +1,7 @@
+            	            	 ([]string) (len=5) {
+            	            	- (string) (len=13) "first-chunk-0",
+            	            	+ (string) (len=17) "literal-named-doc",
+            	            	+ (string) (len=5) "other",
+            	            	+ (string) (len=20) "second-named-default",
+            	            	  (string) (len=19) "first-prop-features",
+            	            	- (string) (len=20) "second-named-default",
+            	            	- (string) (len=17) "literal-named-doc",
+            	            	- (string) (len=5) "other"
+            	            	+ (string) (len=13) "first-chunk-0"
+            	            	 }
+            	Test:       	TestHNSWLexicalSeedsFollowVectorIdentity/memory_source
+            	Messages:   	ranked document hints must prioritize every embedding exactly once
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/search	0.515s
+FAIL
