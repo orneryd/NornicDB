@@ -373,11 +373,22 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 // cypher25 is the statement's language version (its scope checks differ).
 func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
+	return e.validateSyntaxWith(cypher, cypher25, config.IsANTLRParser())
+}
+
+// validateSyntaxWith is validateSyntax with the grammar check chosen by the
+// caller: grammar is ANTLR's strict grammar check, otherwise the Nornic
+// validator. executeInternal checks the texts NornicDB builds from an
+// already validated statement without the grammar (executeInternal).
+func (e *StorageExecutor) validateSyntaxWith(cypher string, cypher25, grammar bool) error {
 	// A text the selected validator accepted passed every check below (it
 	// is marked valid only then), so a repeated query skips them all (#823):
 	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
 	// (#911).
-	validator := activeSyntaxValidator()
+	validator := syntaxValidNornic
+	if grammar {
+		validator = syntaxValidANTLR
+	}
 	if e.hasCachedValidSyntax(cypher, validator) {
 		return nil
 	}
@@ -399,11 +410,15 @@ func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
 	if err := validatePlaceholderOperands(cypher); err != nil {
 		return err
 	}
-	if config.IsANTLRParser() {
+	if grammar {
 		return e.validateSyntaxANTLR(cypher, cypher25)
 	}
 	return e.validateSyntaxNornic(cypher)
 }
+
+// grammarValidate is antlr.Validate; tests replace it to count the grammar
+// parses a statement costs.
+var grammarValidate = antlr.Validate
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
@@ -415,7 +430,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
 		return nil
 	}
-	parserError := antlr.Validate(cypher)
+	parserError := grammarValidate(cypher)
 	if parserError == nil {
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 		return nil
@@ -848,31 +863,59 @@ func hasValidStartKeyword(cypher string) bool {
 func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	e.syntaxValidationOnce.Do(func() {
 		if e.syntaxValidationCache == nil {
-			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
-			for i := range e.syntaxValidationCache.shards {
-				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
-			}
+			e.syntaxValidationCache = newSyntaxValidationCache()
 		}
 	})
 	return e.syntaxValidationCache
 }
 
-// ShareStatementCachesFrom gives a fresh executor the source executor's
-// caches that depend only on the statement text: the syntax verdicts and
-// the upper-cased text. Configure it before executing queries. Protocol
-// transactions (Bolt and HTTP explicit transactions) build a new executor
-// per transaction; without the shared verdicts every statement in such a
-// transaction was validated again from scratch, which under
-// NORNICDB_PARSER=antlr is a full grammar parse of the statement.
+func newSyntaxValidationCache() *syntaxValidationCache {
+	cache := &syntaxValidationCache{max: 4096}
+	for i := range cache.shards {
+		cache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
+	}
+	return cache
+}
+
+// StatementCaches is a database's caches that depend only on the statement
+// text: the syntax verdicts and the upper-cased text. Protocol servers build
+// executors per transaction and per authenticated session; they give each
+// executor of a database the same StatementCaches, so a statement is
+// validated once per database instead of once per executor (under
+// NORNICDB_PARSER=antlr, a full grammar parse of the statement).
+type StatementCaches struct {
+	syntax *syntaxValidationCache
+	upper  *upperQueryCache
+}
+
+// NewStatementCaches returns empty statement caches for one database.
+func NewStatementCaches() *StatementCaches {
+	return &StatementCaches{syntax: newSyntaxValidationCache(), upper: newUpperQueryCache()}
+}
+
+// StatementCaches returns the statement caches e uses: the ones given to
+// UseStatementCaches, or e's own.
+func (e *StorageExecutor) StatementCaches() *StatementCaches {
+	e.statementCachesOnce.Do(func() {
+		if e.statementCaches == nil {
+			e.statementCaches = &StatementCaches{syntax: e.ensureSyntaxValidationCache(), upper: e.ensureUpperQueryCache()}
+		}
+	})
+	return e.statementCaches
+}
+
+// UseStatementCaches makes e use caches, shared with the database's other
+// executors; nil keeps e's own. Configure it before executing queries.
 //
 //	transactionExecutor := NewStorageExecutor(databaseStorage)
-//	transactionExecutor.ShareStatementCachesFrom(databaseExecutor)
-func (e *StorageExecutor) ShareStatementCachesFrom(source *StorageExecutor) {
-	if source == nil || source == e {
+//	transactionExecutor.UseStatementCaches(databaseCaches)
+func (e *StorageExecutor) UseStatementCaches(caches *StatementCaches) {
+	if caches == nil {
 		return
 	}
-	e.syntaxValidationCache = source.ensureSyntaxValidationCache()
-	e.upperQueryCache = source.ensureUpperQueryCache()
+	e.statementCaches = caches
+	e.syntaxValidationCache = caches.syntax
+	e.upperQueryCache = caches.upper
 }
 
 // The validators a statement text is cached as valid for: each marks only

@@ -2,7 +2,11 @@ package antlr
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
+	"runtime"
+	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,13 +44,25 @@ func distinctExpression(r *rand.Rand, depth int) string {
 	}
 }
 
+// distinctStatement is a statement whose token-type sequence differs between
+// seeds, so each one is a new shape.
+func distinctStatement(r *rand.Rand) string {
+	var b strings.Builder
+	b.WriteString("MATCH (n) WITH n, 1 AS x")
+	for j := 0; j < 3; j++ {
+		fmt.Fprintf(&b, ", %s AS v%d", distinctExpression(r, 2+r.Intn(2)), j)
+	}
+	b.WriteString(" RETURN v0, v1, v2")
+	return b.String()
+}
+
 // Under continuous concurrency some parse always holds the current
-// generation, so it is never idle for a size check. The bound must hold
-// anyway: busy generations are drained and measured, and every generation
-// stays near maxParserDFAStates while the workload builds far more states.
+// generation, so it is never idle for an exact count. The bound holds
+// anyway through the estimate from new-shape tokens, and every generation
+// stays near the limit while the workload builds far more states.
 func TestValidatePredictionBoundedUnderContinuousLoad(t *testing.T) {
 	const limit = 1000
-	count, total, largest := runContinuousPredictionLoad(t, limit, 4)
+	count, total, largest, _ := runContinuousPredictionLoad(t, limit)
 	if total <= 3*limit {
 		t.Fatalf("workload built only %d states; it must exceed the bound to test it", total)
 	}
@@ -58,23 +74,62 @@ func TestValidatePredictionBoundedUnderContinuousLoad(t *testing.T) {
 	}
 }
 
+// A parse never waits for parses already running: replacing a generation
+// takes no lock, and the exact count runs only when no parse holds the
+// generation. While a holder keeps a parse open for the whole test (a long
+// cold parse), taking a generation for a new parse stays under
+// maxAcquireWait, though generations rotate throughout.
+func TestValidatePredictionNeverWaitsForRunningParses(t *testing.T) {
+	const maxAcquireWait = 50 * time.Millisecond
+	_, _, _, waits := runContinuousPredictionLoad(t, 1000)
+	sort.Slice(waits, func(i, j int) bool { return waits[i] < waits[j] })
+	worst := waits[len(waits)-1]
+	t.Logf("acquire waits n=%d p50=%v p99=%v max=%v", len(waits), waits[len(waits)/2], waits[len(waits)*99/100], worst)
+	if worst > maxAcquireWait {
+		t.Fatalf("a parse waited %v for a generation, past %v", worst, maxAcquireWait)
+	}
+}
+
+// A busy generation that only sees statement shapes it has parsed before
+// keeps its estimated size: it is never replaced, however many statements
+// it parses while a parse holds it the whole time.
+func TestValidatePredictionRepeatedShapesKeepGeneration(t *testing.T) {
+	setMaxParserDFAStates(t, 1_000_000)
+	first := acquirePrediction()
+	first.release(nil)
+	if err := Validate("MATCH (n:L) WHERE n.v = 0 AND n.s = 's0' RETURN n.x + 0 AS v"); err != nil {
+		t.Fatal(err)
+	}
+	setMaxParserDFAStates(t, int(first.exactStates.Load())+1)
+	holder := acquirePrediction()
+	defer holder.release(nil)
+	for i := 0; i < 500; i++ {
+		// Literal values differ, token types don't.
+		if err := Validate(fmt.Sprintf("MATCH (n:L) WHERE n.v = %d AND n.s = 's%d' RETURN n.x + %d AS v", i, i, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if currentPrediction.Load() != first {
+		t.Fatalf("a repeated statement shape replaced the generation")
+	}
+}
+
 // runContinuousPredictionLoad validates distinct statements from 8 workers
-// while two staggered holders keep a parse open on the current generation
-// almost all the time, as long parses under load do. It returns how many
-// generations the parses used, their total DFA states and the largest one.
-func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (count, total, largest int) {
+// while a holder keeps a parse open on a generation for the whole run, as a
+// long cold parse does, and a second pair of holders keeps the current
+// generation busy. It returns how many generations the parses used, their
+// total and largest DFA state counts, and how long each worker waited to
+// take a generation.
+func runContinuousPredictionLoad(t *testing.T, limit int) (count, total, largest int, waits []time.Duration) {
 	t.Helper()
 	setMaxParserDFAStates(t, limit)
-	previousBusy := maxBusyPredictionChecks
-	maxBusyPredictionChecks = busyChecks
-	t.Cleanup(func() { maxBusyPredictionChecks = previousBusy })
-	t.Cleanup(predictionDrains.Wait)
 
 	var generations sync.Map
 	record := func() { generations.Store(currentPrediction.Load(), true) }
 
 	var stop atomic.Bool
 	var holders sync.WaitGroup
+	long := acquirePrediction()
 	for holder := 0; holder < 2; holder++ {
 		holders.Add(1)
 		go func(offset time.Duration) {
@@ -83,13 +138,14 @@ func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (co
 			for !stop.Load() {
 				held := acquirePrediction()
 				time.Sleep(2 * time.Millisecond)
-				held.release()
+				held.release(nil)
 			}
 		}(time.Duration(holder) * time.Millisecond)
 	}
 
 	const workers, perWorker = 8, 40
 	var wg sync.WaitGroup
+	var waitsMu sync.Mutex
 	errs := make(chan error, workers)
 	for worker := 0; worker < workers; worker++ {
 		wg.Add(1)
@@ -97,13 +153,14 @@ func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (co
 			defer wg.Done()
 			r := rand.New(rand.NewSource(int64(worker + 1)))
 			for i := 0; i < perWorker; i++ {
-				var b strings.Builder
-				b.WriteString("MATCH (n) WITH n, 1 AS x")
-				for j := 0; j < 3; j++ {
-					fmt.Fprintf(&b, ", %s AS v%d", distinctExpression(r, 2+r.Intn(2)), j)
-				}
-				b.WriteString(" RETURN v0, v1, v2")
-				if err := Validate(b.String()); err != nil {
+				started := time.Now()
+				p := acquirePrediction()
+				waited := time.Since(started)
+				p.release(nil)
+				waitsMu.Lock()
+				waits = append(waits, waited)
+				waitsMu.Unlock()
+				if err := Validate(distinctStatement(r)); err != nil {
 					errs <- fmt.Errorf("worker %d statement %d: %v", worker, i, err)
 					return
 				}
@@ -114,7 +171,7 @@ func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (co
 	wg.Wait()
 	stop.Store(true)
 	holders.Wait()
-	predictionDrains.Wait()
+	long.release(nil)
 	close(errs)
 	for err := range errs {
 		t.Fatal(err)
@@ -132,9 +189,10 @@ func runContinuousPredictionLoad(t *testing.T, limit int, busyChecks uint32) (co
 		}
 		return true
 	})
-	t.Logf("busyChecks=%d generations=%d total states=%d largest=%d limit=%d", busyChecks, count, total, largest, limit)
-	return count, total, largest
+	t.Logf("generations=%d total states=%d largest=%d limit=%d", count, total, largest, limit)
+	return count, total, largest, waits
 }
+
 
 // The prediction DFAs are bounded: past maxParserDFAStates a new generation
 // starts, and verdicts are the same before and after the reset.
@@ -149,7 +207,7 @@ func TestValidatePredictionGenerationRotates(t *testing.T) {
 		"MATCH (n) RETRUN n.x": false,
 	}
 	first := acquirePrediction()
-	first.release()
+	first.release(nil)
 	for round := 0; round < 3; round++ {
 		for statement, valid := range statements {
 			if err := Validate(statement); (err == nil) != valid {
@@ -191,5 +249,105 @@ func TestValidatePredictionGenerationConcurrent(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Fatal(err)
+	}
+}
+
+// A retired generation is freed by the first GC after its parses end: no
+// pooled validator keeps it reachable (sync.Pool would otherwise hold it
+// across one more GC, and until reuse between GCs).
+func TestValidateRetiredPredictionIsCollected(t *testing.T) {
+	setMaxParserDFAStates(t, 1)
+	var collected atomic.Bool
+	func() {
+		p := acquirePrediction()
+		p.release(nil)
+		runtime.SetFinalizer(currentPrediction.Load(), func(*parserPrediction) { collected.Store(true) })
+	}()
+	// A burst of parses: the first one past the limit retires the generation.
+	for i := 0; i < 8; i++ {
+		if err := Validate(fmt.Sprintf("MATCH (n:L%d) RETURN n.x + %d AS v", i, i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.GC()
+	deadline := time.Now().Add(2 * time.Second)
+	for !collected.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !collected.Load() {
+		t.Fatalf("the retired generation was still reachable after its parses ended and one GC")
+	}
+}
+
+// The DFA state limit is a quarter of the runtime memory limit, and 2 GiB of
+// states without one.
+func TestParserDFAStateLimitFromMemoryLimit(t *testing.T) {
+	previous := debug.SetMemoryLimit(-1)
+	t.Cleanup(func() { debug.SetMemoryLimit(previous) })
+
+	debug.SetMemoryLimit(8 << 30)
+	if got, want := parserDFAStateLimit(), int64(8<<30)/4/bytesPerDFAState; got != want {
+		t.Fatalf("limit with an 8 GiB memory limit = %d states, want %d", got, want)
+	}
+	debug.SetMemoryLimit(math.MaxInt64)
+	if got, want := parserDFAStateLimit(), int64(defaultPredictionBudget)/bytesPerDFAState; got != want {
+		t.Fatalf("limit without a memory limit = %d states, want %d", got, want)
+	}
+	setMaxParserDFAStates(t, 7)
+	if got := parserDFAStateLimit(); got != 7 {
+		t.Fatalf("overridden limit = %d, want 7", got)
+	}
+}
+
+// longFlatStatement is a long statement of seed-dependent operator order:
+// every seed is a new shape of many tokens, but long flat expressions reuse
+// their prediction states, so the shapes build far fewer states than tokens.
+func longFlatStatement(seed int) string {
+	r := rand.New(rand.NewSource(int64(seed)))
+	ops := []string{" + ", " - ", " * "}
+	var b strings.Builder
+	b.WriteString("RETURN 1")
+	for i := 0; i < 300; i++ {
+		b.WriteString(ops[r.Intn(len(ops))])
+		b.WriteString("n.p")
+	}
+	b.WriteString(" AS v")
+	return b.String()
+}
+
+// Distinct statements parsed one after another keep their generation while
+// its states fit the limit, however many new-shape tokens they hold: an exact
+// count replaces the token estimate whenever the generation is idle, so a
+// working set that fits keeps its warm predictions (the first run of each
+// statement pays no cold prediction for shapes another statement built).
+func TestValidatePredictionWorkingSetKeepsGeneration(t *testing.T) {
+	const limit = 3000
+	setMaxParserDFAStates(t, 1_000_000)
+	retireCurrentPredictionForTest()
+	first := acquirePrediction()
+	first.release(nil)
+	setMaxParserDFAStates(t, limit)
+	for seed := 0; seed < 40; seed++ {
+		if err := Validate(longFlatStatement(seed)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens, states := first.newShapeTokens.Load(), first.exactStates.Load()
+	t.Logf("new-shape tokens=%d states=%d limit=%d", tokens, states, limit)
+	if tokens <= 2*limit {
+		t.Fatalf("the statements held only %d new-shape tokens; they must exceed twice the limit of %d", tokens, limit)
+	}
+	if states > limit {
+		t.Fatalf("the statements built %d states, past the limit of %d; the fixture must fit", states, limit)
+	}
+	if currentPrediction.Load() != first {
+		t.Fatalf("an idle generation within its state limit was replaced by its new-shape token count")
+	}
+}
+
+// retireCurrentPredictionForTest starts a fresh generation.
+func retireCurrentPredictionForTest() {
+	if p := currentPrediction.Load(); p != nil {
+		p.retire()
 	}
 }
