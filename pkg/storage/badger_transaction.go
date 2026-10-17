@@ -220,9 +220,9 @@ type BadgerTransaction struct {
 	// observed is set once the transaction reads through its snapshot; from
 	// then on the snapshot can't move forward (PrepareMergeKey, #961).
 	observed bool
-	// mergeKeyRelease releases the constraint key lock PrepareMergeKey took;
-	// closeLocked calls it.
-	mergeKeyRelease    func()
+	// mergeKeyReleases release the constraint key locks PrepareMergeKey
+	// took, one per key; closeLocked calls them.
+	mergeKeyReleases   map[uniqueConstraintLockKey]func()
 	snapshotDeregister func()
 	closedErr          error
 }
@@ -381,12 +381,12 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		tx.badgerDB.endRead(tx.badgerReadTs)
 		tx.badgerReadHeld = false
 	}
-	if tx.mergeKeyRelease != nil {
-		// After a commit's publication to the constraint cache, so a MERGE
-		// waiting for the key finds the committed node.
-		tx.mergeKeyRelease()
-		tx.mergeKeyRelease = nil
+	// After a commit's publication to the constraint cache, so a MERGE
+	// waiting for a key finds the committed node.
+	for _, release := range tx.mergeKeyReleases {
+		release()
 	}
+	tx.mergeKeyReleases = nil
 	tx.clearSnapshotCachesLocked()
 	if tx.bufferedStagingTransferred {
 		// The write-behind buffer owns the staged state; the transaction is
@@ -4479,30 +4479,38 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error
 // concurrent MERGEs of one key behave as in Neo4j: one creates the node and
 // the others match it, without an error or a retry (#961).
 //
-// It applies while the transaction hasn't read through its snapshot or
-// written anything, and to one key per transaction:
+// It applies to every MERGE of the transaction, before or after it has read
+// or written, and to any number of keys (a MERGE per UNWIND row):
 //   - when the key's node was committed after the transaction's snapshot,
-//     the snapshot moves forward to now (nothing has read it yet), so the
-//     MERGE sees the node and everything committed with it, and matches;
+//     the MERGE can't see it, so it must not create the key again
+//     (catchUpToNode): a transaction that hasn't read through its snapshot
+//     or written anything moves the snapshot forward to now, so the MERGE
+//     sees the node and everything committed with it, and matches; any
+//     other fails with ErrConflict, a transient error, and its retry
+//     matches the node;
 //   - when the key has no node, the transaction locks the key until it ends,
-//     so a concurrent MERGE of the key waits for it to commit and then
-//     matches its node; a node committed while this one waited moves the
-//     snapshot forward as above.
+//     so a concurrent MERGE of the key waits for it to finish; a node
+//     committed while this one waited is handled as above.
 //
-// Otherwise it does nothing, and a concurrent create of the key fails at
-// commit, the retryable MERGE race. A wait ends with ErrDeadlock when it
-// would close a cycle of transactions waiting for each other, or with ctx's
-// error.
+// A wait ends with ErrDeadlock, also transient, when it would close a cycle
+// of transactions waiting for each other, or with ctx's error.
 func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, property string, value interface{}) error {
 	tx.mu.Lock()
-	if tx.Status != TxStatusActive || tx.mergeKeyRelease != nil || tx.namespace == "" || tx.snapshotTx == nil || tx.observedLocked() {
+	if tx.Status != TxStatusActive || tx.namespace == "" || tx.snapshotTx == nil {
 		tx.mu.Unlock()
 		return nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
 	key, constrained := schema.uniqueMergeKey(label, property, value)
+	constrained = constrained && lockableUniqueConstraintKey(key)
+	held := false
+	if constrained {
+		_, held = tx.mergeKeyReleases[key]
+	}
 	tx.mu.Unlock()
-	if !constrained {
+	if !constrained || held {
+		// A key the transaction holds can't gain a node it hasn't seen: no
+		// other transaction can commit the key until this one ends.
 		return nil
 	}
 	nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, property, value)
@@ -4517,12 +4525,15 @@ func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, propert
 		return err
 	}
 	tx.mu.Lock()
-	if tx.Status != TxStatusActive || tx.mergeKeyRelease != nil {
+	if _, held = tx.mergeKeyReleases[key]; tx.Status != TxStatusActive || held {
 		tx.mu.Unlock()
 		release()
 		return nil
 	}
-	tx.mergeKeyRelease = release
+	if tx.mergeKeyReleases == nil {
+		tx.mergeKeyReleases = make(map[uniqueConstraintLockKey]func(), 1)
+	}
+	tx.mergeKeyReleases[key] = release
 	tx.mu.Unlock()
 	if nodeID, found, _, _ = schema.LookupUniqueConstraintValueForPlanning(label, property, value); found {
 		return tx.catchUpToNode(nodeID)
@@ -4530,8 +4541,25 @@ func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, propert
 	return nil
 }
 
-// catchUpToNode moves the snapshot forward when node nodeID was committed
-// after it and the transaction has observed nothing yet.
+// ReleaseMergeKeys releases the MERGE key locks the transaction holds
+// (PrepareMergeKey). A transaction a statement failed in can no longer
+// commit, so its keys protect nothing, and other MERGEs of them must not
+// wait until the client rolls it back.
+func (tx *BadgerTransaction) ReleaseMergeKeys() {
+	tx.mu.Lock()
+	releases := tx.mergeKeyReleases
+	tx.mergeKeyReleases = nil
+	tx.mu.Unlock()
+	for _, release := range releases {
+		release()
+	}
+}
+
+// catchUpToNode readies the transaction for a MERGE that will look up node
+// nodeID. When the node was committed after the snapshot, a transaction that
+// has observed nothing yet moves its snapshot forward; one that has fails
+// with ErrConflict, since its MERGE would miss the node and create the key
+// again.
 func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == ErrNotFound {
@@ -4542,12 +4570,18 @@ func (tx *BadgerTransaction) catchUpToNode(nodeID NodeID) error {
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	if tx.Status != TxStatusActive || tx.observedLocked() {
+	if tx.Status != TxStatusActive {
 		return nil
 	}
 	newer, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
 	if err != nil || !newer {
 		return err
+	}
+	if tx.observedLocked() {
+		// Wire contract: substrings "conflict:" and "changed after transaction start" are
+		// matched by downstream Bolt classifiers as transient.
+		// See docs/plans/consumer-pinned-error-contract-plan.md §2.2.
+		return localizedError(localization.StorageTransactionNodeChanged(string(nodeID)), ErrConflict)
 	}
 	return tx.refreshSnapshotLocked()
 }
