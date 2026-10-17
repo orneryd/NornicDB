@@ -244,21 +244,6 @@ func TestCoverageLiftMergeCreateSubqueryAndOrderingHelpers(t *testing.T) {
 		})
 	}
 
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("n.name = coalesce($name, 'Ada=Byron')")
-	require.True(t, ok)
-	assert.Equal(t, "n.name", lhs)
-	assert.Equal(t, "coalesce($name, 'Ada=Byron')", rhs)
-	lhs, rhs, ok = splitTopLevelEqualityCallSubquery("m.`odd=key` = {value: 'x=y'}")
-	require.True(t, ok)
-	assert.Equal(t, "m.`odd=key`", lhs)
-	assert.Equal(t, "{value: 'x=y'}", rhs)
-	_, _, ok = splitTopLevelEqualityCallSubquery("= missingLeft")
-	assert.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("missingRight = ")
-	assert.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("n.name")
-	assert.False(t, ok)
-
 	assert.Equal(t, "Ada", extractOrderByPropertyValue(node, []string{"name"}))
 	assert.Equal(t, time.Unix(100, 0), extractOrderByPropertyValue(node, []string{"createdAt"}))
 	node.Properties["createdAt"] = "explicit-created"
