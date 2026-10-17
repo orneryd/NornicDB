@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -273,4 +274,64 @@ func TestClusterIndexComputeThenPublishClustering(t *testing.T) {
 			t.Fatalf("cluster %d members = %v, want a1, a2 and the added a3", cluster, got)
 		}
 	})
+}
+
+// An unpublished clustering takes embeddings added or removed after its
+// snapshot by node ID, and publication follows the index's current embeddings
+// by ID, so a swap-delete removal in the index cannot misalign membership.
+func TestClusteringReconcilesMembershipByID(t *testing.T) {
+	ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 10, InitMethod: "kmeans++"})
+	requireNoError(t, ci.AddBatch(
+		[]string{"a1", "a2", "b1", "b2"},
+		[][]float32{{1, 0}, {0.9, 0.1}, {0, 1}, {0.1, 0.9}},
+	))
+	clustering, err := ci.ComputeClustering(context.Background())
+	requireNoError(t, err)
+	clusterOf := func(id string) int {
+		for cid := 0; cid < clustering.NumClusters(); cid++ {
+			for _, member := range clustering.MemberIDs(cid) {
+				if member == id {
+					return cid
+				}
+			}
+		}
+		return -1
+	}
+	aCluster, bCluster := clusterOf("a1"), clusterOf("b1")
+	if aCluster < 0 || bCluster < 0 || aCluster == bCluster {
+		t.Fatalf("clusters a=%d b=%d, want two distinct topics", aCluster, bCluster)
+	}
+
+	if _, ok := ci.AssignToClustering(clustering, "unknown"); ok {
+		t.Fatalf("an id without an embedding cannot be assigned")
+	}
+	requireNoError(t, ci.Add("a3", []float32{0.95, 0.05}))
+	if cid, ok := ci.AssignToClustering(clustering, "a3"); !ok || cid != aCluster {
+		t.Fatalf("AssignToClustering(a3) = %d, %t; want %d", cid, ok, aCluster)
+	}
+	requireNoError(t, ci.Add("a2", []float32{0.05, 0.95})) // a2 moved next to b
+	if cid, ok := ci.AssignToClustering(clustering, "a2"); !ok || cid != bCluster || clusterOf("a2") != bCluster {
+		t.Fatalf("a moved embedding is reassigned once: cluster %d, ok %t", cid, ok)
+	}
+	if cid, ok := clustering.Remove("b2"); !ok || cid != bCluster {
+		t.Fatalf("Remove(b2) = %d, %t; want %d", cid, ok, bCluster)
+	}
+	if _, ok := clustering.Remove("b2"); ok {
+		t.Fatalf("removing an absent id is a no-op")
+	}
+	ci.Remove("b2") // swap-delete moves the last embedding into b2's slot
+
+	ci.PublishClustering(clustering)
+	if got := ci.GetClusterMemberIDsForCluster(aCluster); !reflect.DeepEqual(sortedIDs(got), []string{"a1", "a3"}) {
+		t.Fatalf("cluster a members = %v, want [a1 a3]", got)
+	}
+	if got := ci.GetClusterMemberIDsForCluster(bCluster); !reflect.DeepEqual(sortedIDs(got), []string{"a2", "b1"}) {
+		t.Fatalf("cluster b members = %v, want [a2 b1]", got)
+	}
+}
+
+func sortedIDs(ids []string) []string {
+	out := append([]string(nil), ids...)
+	sort.Strings(out)
+	return out
 }
