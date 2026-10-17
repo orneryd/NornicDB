@@ -93,8 +93,8 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 	selected := svc.selectHybridClusters(withQueryText(context.Background(), "beta auth"), query, 1)
 	require.Len(t, selected, 1)
 	require.NotEqual(t, semantic, selected, "the real BM25-derived profile must select the lexical topic")
-	require.NotNil(t, svc.clusterHNSW[selected[0]], "small lexical-selected cluster must have a graph")
-	require.Len(t, svc.clusterHNSW, svc.clusterIndex.NumClusters())
+	require.NotNil(t, svc.clusterGen.graphs[selected[0]], "small lexical-selected cluster must have a graph")
+	require.Len(t, svc.clusterGen.graphs, svc.clusterIndex.NumClusters())
 	options := DefaultSearchOptions()
 	options.Limit = 6
 	options.MinRRFScore = 0.001

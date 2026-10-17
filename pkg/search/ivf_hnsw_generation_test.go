@@ -104,7 +104,7 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 
 	require.Equal(t, 24, svc.clusterIndex.NumClusters())
 	svc.clusterStateMu.RLock()
-	require.Len(t, svc.clusterHNSW, 24)
+	require.Len(t, svc.clusterGen.graphs, 24)
 	svc.clusterStateMu.RUnlock()
 	pipeline, err = svc.getOrCreateVectorPipeline(ctx)
 	require.NoError(t, err)
@@ -149,16 +149,13 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	require.NotSame(t, original, svc.clusterIndex, "the dimension change replaced the cluster index")
 	require.False(t, svc.clusterIndex.IsClustered())
 	svc.clusterStateMu.RLock()
-	require.Nil(t, svc.clusterHNSW, "the superseded generation's graphs are not published")
+	require.Nil(t, svc.clusterGen, "the superseded generation (graphs, profiles) is not published")
 	svc.clusterStateMu.RUnlock()
-	svc.clusterLexicalMu.RLock()
-	require.Empty(t, svc.clusterLexicalProfiles)
-	svc.clusterLexicalMu.RUnlock()
 }
 
 // Every replacement or clearing of the cluster generation takes
-// clusterStateMu, which the installer holds from its identity check through
-// publication. A replacement that starts after the check therefore waits for
+// clusterStateMu, which publishClusterGeneration holds from its identity
+// check through publication. A replacement that starts after the check therefore waits for
 // the publication and then retires it; the retired index is never left
 // published (sol r9: TestSolR9ReplacementAfterCheck).
 func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) {
@@ -197,7 +194,9 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 				require.Never(t, func() bool { return len(replaced) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 			}
 			t.Cleanup(func() { clusterPublishHook = nil })
-			require.NoError(t, svc.installClusterGeneration(context.Background(), original, clustering, false))
+			gen, err := svc.buildClusterGeneration(context.Background(), original, clustering, nil)
+			require.NoError(t, err)
+			require.NoError(t, svc.publishClusterGeneration(context.Background(), clusterPublication{generation: gen}))
 			select {
 			case err := <-replaced:
 				require.NoError(t, err)
@@ -207,16 +206,20 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 
 			svc.clusterStateMu.RLock()
 			defer svc.clusterStateMu.RUnlock()
-			require.Nil(t, svc.clusterHNSW, "the published graphs retire with the generation")
+			// The derived state retires; an index that keeps its routing keeps
+			// a routing-only generation maintaining membership.
+			if retiredGen := svc.clusterGen; retiredGen != nil {
+				require.True(t, retiredGen.routingOnly, "the published generation retires")
+				require.Nil(t, retiredGen.graphs, "the published graphs retire with the generation")
+				require.Empty(t, retiredGen.profiles)
+			}
 			if path.retired {
 				require.False(t, original.IsClustered(), "a retired index is not left published")
 			}
 			if path.replacing {
 				require.NotSame(t, original, svc.clusterIndex)
 				require.False(t, svc.clusterIndex.IsClustered())
-				svc.clusterLexicalMu.RLock()
-				require.Empty(t, svc.clusterLexicalProfiles)
-				svc.clusterLexicalMu.RUnlock()
+				require.Nil(t, svc.clusterGen)
 			}
 		})
 	}
@@ -330,7 +333,7 @@ func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
 				}
 				svc.clusterStateMu.RLock()
 				inGraph := false
-				for _, graph := range svc.clusterHNSW {
+				for _, graph := range svc.clusterGen.graphs {
 					inGraph = inGraph || graphHolds(graph, id)
 				}
 				svc.clusterStateMu.RUnlock()

@@ -26,7 +26,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
 	clusterIdx := gpu.NewClusterIndex(nil, embCfg, gpu.DefaultKMeansConfig())
 	svc.clusterIndex = clusterIdx
-	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}}
 	svc.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 3}}
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 
@@ -35,7 +35,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	require.Nil(t, svc.vectorPipeline)
 	require.Nil(t, svc.gpuEmbeddingIndex)
 	require.NotNil(t, svc.clusterIndex)
-	require.Nil(t, svc.clusterHNSW)
+	require.Nil(t, svc.clusterGen)
 	require.Nil(t, svc.ivfpqIndex)
 
 	// Once vectors exist, dimensions must not auto-change.
@@ -215,7 +215,7 @@ func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 	embCfg.AutoSync = false
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
 	svc.clusterIndex = gpu.NewClusterIndex(nil, embCfg, gpu.DefaultKMeansConfig())
-	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}}
 	svc.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 3}}
 	svc.hnswIndex = NewHNSWIndex(3, DefaultHNSWConfig())
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
@@ -229,7 +229,7 @@ func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 
 	require.Nil(t, svc.vectorPipeline)
 	require.Nil(t, svc.vectorFileStore)
-	require.Nil(t, svc.clusterHNSW)
+	require.Nil(t, svc.clusterGen)
 	require.Nil(t, svc.ivfpqIndex)
 	require.Nil(t, svc.hnswIndex)
 	require.Empty(t, svc.nodeLabels)
