@@ -263,10 +263,11 @@ func (s *Service) clusterTextTokens(id string) map[string]float64 {
 	if fulltext == nil {
 		return nil
 	}
-	text, ok := fulltext.GetDocument(id)
-	if !ok {
-		text, ok = fulltext.GetDocument(decodeVectorKey(id).node)
+	owner, valid := vectorEntryOwner(id)
+	if !valid {
+		return nil
 	}
+	text, ok := fulltext.GetDocument(owner)
 	if !ok || text == "" {
 		return nil
 	}

@@ -1,7 +1,6 @@
 package search
 
 import (
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -60,7 +59,7 @@ func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, q
 		remaining -= charLen(header) + 1
 	}
 	var body string
-	if chunkIndex, ok := matchingChunkIndex(string(node.ID), result.MatchID); ok {
+	if chunkIndex, ok := vectorEntryChunkIndex(string(node.ID), result.MatchID); ok {
 		if chunks := managedChunkTexts(s.hitEmbedMeta(node)); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
 			body = expandedChunkWindow(chunks, chunkIndex, query, remaining)
 		}
@@ -196,21 +195,6 @@ func trimChunkOverlapSuffix(prev, window string) string {
 		}
 	}
 	return strings.TrimSpace(prev)
-}
-
-func matchingChunkIndex(nodeID, matchID string) (int, bool) {
-	if matchID == "" {
-		return 0, false
-	}
-	prefix := nodeID + "-chunk-"
-	if strings.HasPrefix(matchID, prefix) {
-		index, err := strconv.Atoi(strings.TrimPrefix(matchID, prefix))
-		return index, err == nil && index >= 0
-	}
-	if matchID == nodeID {
-		return 0, true
-	}
-	return 0, false
 }
 
 // managedChunkTexts returns the chunk texts the embedding worker kept in a
