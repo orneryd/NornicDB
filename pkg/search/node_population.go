@@ -3,25 +3,9 @@ package search
 import (
 	"context"
 	"os"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/security"
 )
-
-// baseOperationMutex keeps the existing base-operation exclusion, with a
-// selectable acquisition for mutations waiting only for its NODE phase.
-type baseOperationMutex struct {
-	once sync.Once
-	free chan struct{}
-}
-
-func (m *baseOperationMutex) token() chan struct{} {
-	m.once.Do(func() { m.free = make(chan struct{}, 1); m.free <- struct{}{} })
-	return m.free
-}
-
-func (m *baseOperationMutex) Lock()   { <-m.token() }
-func (m *baseOperationMutex) Unlock() { m.token() <- struct{}{} }
 
 // nodeSourceRecord is the one initial-population and source-authority record.
 // indexMu protects it; identity, dirty state and positive counts do not establish
@@ -424,8 +408,8 @@ func (s *Service) nodePopulationForPersist(ctx context.Context) bool {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	select {
-	case <-s.buildMu.token():
+	switch {
+	case s.buildMu.TryLock():
 		err := s.runBasePopulationOperation(ctx, s.claimNodeAdmission(), false)
 		s.buildMu.Unlock()
 		if err != nil {

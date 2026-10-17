@@ -395,6 +395,8 @@ func (s *Service) stopHNSWMaintenance() {
 }
 
 func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}

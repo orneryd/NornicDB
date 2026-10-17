@@ -853,8 +853,10 @@ type Service struct {
 	fulltextLabels []string
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
-	indexMu        sync.RWMutex
-	buildMu        baseOperationMutex
+	indexMu sync.RWMutex
+	// buildMu orders live node mutations and derived builds against full
+	// population/checkpoint restoration and vector-source clearing.
+	buildMu        sync.RWMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
 	embeddingSpace atomic.Value
@@ -1852,6 +1854,14 @@ func (s *Service) ensureClusterIndexBackfilled(targetCount int) {
 // be skipped silently and the default non-clustered vector strategy is used.
 // Returns error only if clustering is not enabled or fails unexpectedly.
 func (s *Service) TriggerClustering(ctx context.Context) error {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
+	return s.triggerClustering(ctx)
+}
+
+// triggerClustering runs with the base operation already owned, either by
+// BuildIndexes or the public TriggerClustering wrapper.
+func (s *Service) triggerClustering(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2846,6 +2856,10 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	// Population and checkpoint restoration must finish before a live mutation
+	// can be acknowledged; their snapshots may contain older node state.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	bm25On, vecOn := s.bm25Enabled.Load(), s.vectorEnabled.Load()
 	if !bm25On && !vecOn {
 		return nil
@@ -3576,6 +3590,10 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
+	// Population and checkpoint restoration must finish before a live mutation
+	// can be acknowledged; their snapshots may contain older node state.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	release, err := s.lockNodeMutation(0)
 	if err != nil {
 		return err
@@ -4422,7 +4440,7 @@ func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int) 
 	if restored {
 		return nil
 	}
-	if err := s.TriggerClustering(ctx); err != nil {
+	if err := s.triggerClustering(ctx); err != nil {
 		return err
 	}
 	return nil
@@ -5605,6 +5623,8 @@ func (s *Service) launchScheduledStrategyTransition() {
 }
 
 func (s *Service) runStrategyTransition(target strategyMode) {
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	defer func() {
 		s.strategyTransitionMu.Lock()
 		s.strategyTransitionInProgress = false
