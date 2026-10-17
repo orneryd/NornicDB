@@ -67,12 +67,16 @@ func (p posSpan) contains(pos token.Pos) bool { return pos > p.from && pos < p.t
 // indexMu metadata access outside a span where the method holds indexMu,
 // unless the Locked suffix or the documented list says the caller holds it.
 //
-// A span opens at a top-level recv.indexMu.Lock/RLock call statement of the
-// method body and closes at the next top-level Unlock/RUnlock call, or at the
-// end of the body once the unlock is deferred. A lock taken inside a nested
-// block or closure opens no span; an unlock inside a nested block ends the
-// protection for the rest of that block; an access inside a closure is never
-// protected, since the closure can run after the release.
+// A span opens at a recv.indexMu.Lock/RLock call statement of any statement
+// list (the body, a nested block, a case or a closure body) and covers the
+// statements after it in that list, which the lock dominates. It closes at
+// the next Unlock/RUnlock call of the same list, at a label (a goto can enter
+// there without the lock), or at the end of the list once the unlock is
+// deferred. An unlock inside a nested list ends the protection of every span
+// opened before it for the rest of that list. A span protects only accesses
+// of its own function: an access inside a closure is never protected by the
+// enclosing method's lock, since the closure can run after the release, and
+// a lock inside a closure never protects the enclosing method.
 func metadataReadersWithoutIndexMu(file *ast.File, name string) []string {
 	var out []string
 	for _, decl := range file.Decls {
@@ -89,66 +93,86 @@ func metadataReadersWithoutIndexMu(file *ast.File, name string) []string {
 			continue
 		}
 
-		var held []posSpan
-		open, deferred := token.NoPos, false
-		for _, stmt := range fn.Body.List {
-			switch indexMuCall(stmt, recv) {
-			case "lock":
-				if open == token.NoPos {
-					open, deferred = stmt.End(), false
-				}
-			case "defer":
-				if open != token.NoPos {
-					deferred = true
-				}
-			case "unlock":
-				if open != token.NoPos && !deferred {
-					held = append(held, posSpan{open, stmt.Pos()})
-					open = token.NoPos
+		// owner is the innermost closure holding pos; the zero span is the
+		// method itself.
+		var closures []posSpan
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.FuncLit); ok {
+				closures = append(closures, posSpan{lit.Pos(), lit.End()})
+			}
+			return true
+		})
+		owner := func(pos token.Pos) posSpan {
+			var in posSpan
+			for _, c := range closures {
+				if c.contains(pos) && c.from > in.from {
+					in = c
 				}
 			}
-		}
-		if open != token.NoPos {
-			held = append(held, posSpan{open, fn.Body.End()})
+			return in
 		}
 
-		var released, closures []posSpan
+		type lockSpan struct{ span, owner posSpan }
+		var held, released []lockSpan
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			var list []ast.Stmt
 			var end token.Pos
 			switch b := n.(type) {
-			case *ast.FuncLit:
-				closures = append(closures, posSpan{b.Pos(), b.End()})
 			case *ast.BlockStmt:
-				if b != fn.Body {
-					list, end = b.List, b.End()
-				}
+				list, end = b.List, b.End()
 			case *ast.CaseClause:
 				list, end = b.Body, b.End()
 			case *ast.CommClause:
 				list, end = b.Body, b.End()
+			default:
+				return true
 			}
-			for _, stmt := range list {
-				if indexMuCall(stmt, recv) == "unlock" {
-					released = append(released, posSpan{stmt.Pos(), end})
+			in := owner(n.Pos())
+			open, deferred := token.NoPos, false
+			closeAt := func(at token.Pos) {
+				if open != token.NoPos {
+					held = append(held, lockSpan{posSpan{open, at}, in})
+					open = token.NoPos
 				}
 			}
+			for _, stmt := range list {
+				if _, labeled := stmt.(*ast.LabeledStmt); labeled {
+					closeAt(stmt.Pos())
+				}
+				switch indexMuCall(stmt, recv) {
+				case "lock":
+					if open == token.NoPos {
+						open, deferred = stmt.End(), false
+					}
+				case "defer":
+					if open != token.NoPos {
+						deferred = true
+					}
+				case "unlock":
+					released = append(released, lockSpan{posSpan{stmt.Pos(), end}, in})
+					if !deferred {
+						closeAt(stmt.Pos())
+					}
+				}
+			}
+			closeAt(end)
 			return true
 		})
 
 		protected := func(pos token.Pos) bool {
-			for _, c := range closures {
-				if c.contains(pos) {
-					return false
-				}
-			}
-			for _, r := range released {
-				if r.contains(pos) {
-					return false
-				}
-			}
+			in := owner(pos)
 			for _, h := range held {
-				if h.contains(pos) {
+				if h.owner != in || !h.span.contains(pos) {
+					continue
+				}
+				cancelled := false
+				for _, r := range released {
+					if r.owner == in && r.span.contains(pos) && r.span.from > h.span.from {
+						cancelled = true
+						break
+					}
+				}
+				if !cancelled {
 					return true
 				}
 			}
@@ -196,6 +220,14 @@ func TestMetadataReadersHoldIndexMu(t *testing.T) {
 		{"read in a conditional while held", `func (s *Service) f(ok bool) int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); if ok { return len(s.nodeLabels) }; return 0 }`, false},
 		{"early release that returns", `func (s *Service) f(n int) int { s.indexMu.RLock(); if n < 0 { s.indexMu.RUnlock(); return 0 }; n = len(s.nodeLabels); s.indexMu.RUnlock(); return n }`, false},
 		{"Locked suffix", `func (s *Service) fLocked() int { return len(s.nodePropVector) }`, false},
+		{"nested lock dominating the write", `func (s *Service) f(ok bool) { if ok { s.indexMu.Lock(); s.mu.Lock(); s.nodePropVector = nil; s.mu.Unlock(); s.indexMu.Unlock() } }`, false},
+		{"nested lock with a deferred unlock", `func (s *Service) f(ok bool) int { if ok { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return len(s.nodeLabels) }; return 0 }`, false},
+		{"nested lock released before the write", `func (s *Service) f(ok bool) { if ok { s.indexMu.Lock(); s.indexMu.Unlock(); s.nodePropVector = nil } }`, true},
+		{"nested lock in a sibling branch", `func (s *Service) f(ok bool) int { if ok { s.indexMu.RLock(); defer s.indexMu.RUnlock() } else { return len(s.nodeLabels) }; return 0 }`, true},
+		{"relocked after a release", `func (s *Service) f() int { s.indexMu.RLock(); s.indexMu.RUnlock(); { s.indexMu.RLock(); n := len(s.nodeLabels); s.indexMu.RUnlock(); return n } }`, false},
+		{"label after the lock", `func (s *Service) f(ok bool) int { if ok { goto L }; s.indexMu.RLock(); L: n := len(s.nodeLabels); s.indexMu.RUnlock(); return n }`, true},
+		{"lock inside the closure that reads", `func (s *Service) f() func() int { return func() int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return len(s.nodePropVector) } }`, false},
+		{"closure lock does not cover the method", `func (s *Service) f() int { func() { s.indexMu.RLock(); defer s.indexMu.RUnlock() }(); return len(s.nodePropVector) }`, true},
 	}
 	fset := token.NewFileSet()
 	for _, probe := range probes {
