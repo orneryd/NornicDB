@@ -48,7 +48,6 @@ package inference
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -82,11 +81,44 @@ type CooldownTable struct {
 	entries  map[string]*CooldownEntry // key: "src:dst:label"
 	defaults map[string]time.Duration  // per-label defaults
 
-	// Stats. Checks run under the read lock, concurrently, so the counters are
-	// atomic rather than guarded by mu.
-	totalChecks  atomic.Int64
-	totalBlocked atomic.Int64
-	totalAllowed atomic.Int64
+	// Stats. Checks run under the read lock, concurrently, and are counted
+	// in checkCounters, which keeps the counts a consistent set.
+	counters checkCounters
+}
+
+// checkCounters counts cooldown checks. The counts are read as a set
+// (TotalAllowed+TotalBlocked == TotalChecks, BlockRate = Blocked/Checks), so
+// one mutex guards them together: a check updates them in one step and a
+// snapshot reads them in one step. Separately atomic counters can't give a
+// snapshot that is consistent across them.
+type checkCounters struct {
+	mu      sync.Mutex
+	checks  int64
+	allowed int64
+	blocked int64
+}
+
+func (c *checkCounters) record(allowed bool) {
+	c.mu.Lock()
+	c.checks++
+	if allowed {
+		c.allowed++
+	} else {
+		c.blocked++
+	}
+	c.mu.Unlock()
+}
+
+func (c *checkCounters) snapshot() (checks, allowed, blocked int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.checks, c.allowed, c.blocked
+}
+
+func (c *checkCounters) reset() {
+	c.mu.Lock()
+	c.checks, c.allowed, c.blocked = 0, 0, 0
+	c.mu.Unlock()
 }
 
 // CooldownStats provides observability into cooldown behavior.
@@ -131,25 +163,12 @@ func (ct *CooldownTable) CanMaterialize(src, dst, label string) bool {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	ct.totalChecks.Add(1)
-
-	key := cooldownKey(src, dst, label)
-	entry, exists := ct.entries[key]
-	if !exists {
-		ct.totalAllowed.Add(1)
-		return true
+	allowed := true
+	if entry, exists := ct.entries[cooldownKey(src, dst, label)]; exists {
+		allowed = time.Since(entry.LastMaterialized) >= ct.getCooldownDuration(label)
 	}
-
-	cooldown := ct.getCooldownDuration(label)
-	elapsed := time.Since(entry.LastMaterialized)
-
-	if elapsed >= cooldown {
-		ct.totalAllowed.Add(1)
-		return true
-	}
-
-	ct.totalBlocked.Add(1)
-	return false
+	ct.counters.record(allowed)
+	return allowed
 }
 
 // CanMaterializeWithReason returns whether materialization is allowed and the reason.
@@ -291,9 +310,7 @@ func (ct *CooldownTable) Clear() {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	ct.entries = make(map[string]*CooldownEntry)
-	ct.totalChecks.Store(0)
-	ct.totalBlocked.Store(0)
-	ct.totalAllowed.Store(0)
+	ct.counters.reset()
 }
 
 // Cleanup removes expired entries to prevent memory growth.
@@ -334,12 +351,8 @@ func (ct *CooldownTable) Stats() CooldownStats {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	stats := CooldownStats{
-		TotalEntries: int64(len(ct.entries)),
-		TotalChecks:  ct.totalChecks.Load(),
-		TotalBlocked: ct.totalBlocked.Load(),
-		TotalAllowed: ct.totalAllowed.Load(),
-	}
+	stats := CooldownStats{TotalEntries: int64(len(ct.entries))}
+	stats.TotalChecks, stats.TotalAllowed, stats.TotalBlocked = ct.counters.snapshot()
 
 	if stats.TotalChecks > 0 {
 		stats.BlockRate = float64(stats.TotalBlocked) / float64(stats.TotalChecks)

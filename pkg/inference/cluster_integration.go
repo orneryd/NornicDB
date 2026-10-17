@@ -16,7 +16,6 @@ package inference
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -119,11 +118,35 @@ type ClusterIntegration struct {
 	clusterIndex *gpu.ClusterIndex
 	mu           sync.RWMutex
 
-	// Stats tracking. Searches run under the read lock, concurrently, so the
-	// search counters are atomic rather than guarded by mu.
-	searchesTotal     atomic.Int64
-	searchesClustered atomic.Int64
-	lastReclusterAt   int64 // embedding count at last recluster
+	// Stats tracking. Searches run under the read lock, concurrently, and
+	// are counted in searches, which keeps the counts a consistent set.
+	searches        searchCounters
+	lastReclusterAt int64 // embedding count at last recluster
+}
+
+// searchCounters counts searches. The counts are read as a set
+// (SearchesClustered <= SearchesTotal, hit rate = Clustered/Total), so one
+// mutex guards them together: a search updates them in one step and a
+// snapshot reads them in one step.
+type searchCounters struct {
+	mu        sync.Mutex
+	total     int64
+	clustered int64
+}
+
+func (c *searchCounters) record(clustered bool) {
+	c.mu.Lock()
+	c.total++
+	if clustered {
+		c.clustered++
+	}
+	c.mu.Unlock()
+}
+
+func (c *searchCounters) snapshot() (total, clustered int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total, c.clustered
 }
 
 // NewClusterIntegration creates a new cluster integration.
@@ -272,14 +295,13 @@ func (ci *ClusterIntegration) Search(ctx context.Context, query []float32, topK 
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
-	ci.searchesTotal.Add(1)
-
 	if !ci.config.Enabled || !ci.clusterIndex.IsClustered() {
+		ci.searches.record(false)
 		// Fall back to brute-force search
 		return ci.clusterIndex.Search(query, topK)
 	}
 
-	ci.searchesClustered.Add(1)
+	ci.searches.record(true)
 	return ci.clusterIndex.SearchWithClusters(query, topK, ci.config.NumClustersSearch)
 }
 
@@ -399,10 +421,11 @@ func (ci *ClusterIntegration) Stats() ClusterIntegrationStats {
 
 	clusterStats := ci.clusterIndex.ClusterStats()
 
+	total, clustered := ci.searches.snapshot()
 	return ClusterIntegrationStats{
 		ClusterStats:      clusterStats,
-		SearchesTotal:     ci.searchesTotal.Load(),
-		SearchesClustered: ci.searchesClustered.Load(),
+		SearchesTotal:     total,
+		SearchesClustered: clustered,
 		Enabled:           ci.config.Enabled,
 	}
 }
