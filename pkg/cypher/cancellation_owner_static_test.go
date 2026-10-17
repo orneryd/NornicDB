@@ -468,7 +468,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 				if !isWrapper || wrapperKey == selfKey && !resolved || resolved && varTypes[call.Fun.(*ast.SelectorExpr).X.(*ast.Ident).Name]+"."+name == key {
 					return true
 				}
-				if cancellationExactHelpers[name] != "" {
+				if cancellationTextSentinels[name+"WithCancellation"] != "" || cancellationTextSentinels[name+"Probed"] != "" {
 					counts["Bexact"]++
 					return true
 				}
@@ -733,13 +733,22 @@ func unrewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, plain st
 
 // collectSentinelFindings is rule F: every call of a sentinel-shaped probe
 // form is followed at once by a probe or context check, or is the plain
-// exact form of a statement-text helper (cancellationExactHelpers).
+// exact form of a statement-text helper (cancellationTextSentinels); a data
+// helper (cancellationDataSentinels) is always checked. Every sentinel-shaped
+// helper is classified in exactly one list.
 func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wrappers map[string]cancellationWrapper, counts map[string]int) []cancellationFinding {
 	sentinel := map[string]bool{}
 	for _, f := range files {
 		for _, decl := range f.file.Decls {
 			if fn, ok := decl.(*ast.FuncDecl); ok && sentinelShaped(fn) {
 				sentinel[fn.Name.Name] = true
+				if os.Getenv("CANCELLATION_INVENTORY") != "" {
+					var results []string
+					for _, field := range fn.Type.Results.List {
+						results = append(results, string(f.src[fset.Position(field.Type.Pos()).Offset:fset.Position(field.Type.End()).Offset]))
+					}
+					fmt.Printf("SENTINEL %s %s (%s)\n", fn.Name.Name, f.name, strings.Join(results, ", "))
+				}
 			}
 		}
 	}
@@ -755,6 +764,22 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 	}
 	counts["sentinelHelpers"] = len(sentinel)
 	var findings []cancellationFinding
+	for name := range sentinel {
+		text, data := cancellationTextSentinels[name] != "", cancellationDataSentinels[name] != ""
+		switch {
+		case !text && !data:
+			findings = append(findings, cancellationFinding{rule: "F", key: "unclassified sentinel-shaped helper " + name})
+		case text && data:
+			findings = append(findings, cancellationFinding{rule: "F", key: "sentinel-shaped helper classified twice " + name})
+		}
+	}
+	for _, list := range []map[string]string{cancellationTextSentinels, cancellationDataSentinels} {
+		for name := range list {
+			if !sentinel[name] {
+				findings = append(findings, cancellationFinding{rule: "F", key: "stale sentinel classification " + name})
+			}
+		}
+	}
 	for _, f := range files {
 		for _, decl := range f.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -788,7 +813,9 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 							}
 							counts["F"]++
 							finding := cancellationFinding{rule: "F", key: key + " -> " + name, where: fmt.Sprintf("%s:%d", f.name, fset.Position(node.Pos()).Line)}
-							if plain := plainOf[name]; plain != "" && cancellationExactHelpers[plain] != "" {
+							if cancellationDataSentinels[name] != "" {
+								finding.key += " (data helper: check the probe after it)"
+							} else if plain := plainOf[name]; plain != "" && cancellationTextSentinels[name] != "" {
 								if text, ok := unrewriteCall(fset, f.src, node, plain, wrapperOf[name]); ok {
 									start, end := fset.Position(node.Pos()), fset.Position(node.End())
 									finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, start.Line, start.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
