@@ -70,6 +70,9 @@ func TestBoundExpandCountMatchesTraversal(t *testing.T) {
 		"MATCH (a)-[r]-(b) WHERE b.k = 2 OR b.k IS NULL",
 		"MATCH (a)-[r]-(a)",
 		"MATCH (a:X)-[r]-(b {k: 3})",
+		"MATCH (a)-[r]-(b) WHERE startNode(r).k = 1 AND coalesce(endNode(r).k, 0) <> startNode(r).k",
+		"MATCH (a)-[r]-(b) WHERE endNode(r) = b AND startNode(r) = a",
+		"MATCH (a)-[r]-(b) WHERE startNode(r).k IS NULL OR endNode(r).k IS NULL OR startNode(r).k < endNode(r).k",
 	}
 	ids := []storage.NodeID{"a", "b", "c", "d"}
 	var cases int
@@ -149,6 +152,8 @@ func TestBoundExpandExistsMatchesPatternComprehension(t *testing.T) {
 		{"(x)<-[r:T|U]-(y)", ""},
 		{"(x)-[r:T {w: 1}]-(y:Y)", ""},
 		{"(x)-[r]-(y)", "y.k = 2"},
+		{"(x)-[r]-(y)", "startNode(r).k = 1 AND coalesce(endNode(r).k, 0) <> startNode(r).k"},
+		{"(x)-[r]-(y)", "endNode(r) = y AND startNode(r) = x"},
 	} {
 		where := ""
 		if pattern.where != "" {
