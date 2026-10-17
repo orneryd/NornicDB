@@ -53,11 +53,15 @@ func TestUseDeniedAliasAndCompositeUseDatabaseAccessText(t *testing.T) {
 }
 
 // requireDatabaseAccessDenied requires Neo4j's database-access refusal:
-// Forbidden, naming the principal (DatabaseAccessDeniedError).
+// Forbidden, naming the principal (DatabaseAccessDeniedError), under any
+// wrapping a subquery or procedure adds.
 func requireDatabaseAccessDenied(t *testing.T, err error, msgAndArgs ...interface{}) {
 	t.Helper()
-	var status interface{ BoltErrorCode() string }
+	var status interface {
+		error
+		BoltErrorCode() string
+	}
 	require.True(t, errors.As(err, &status), msgAndArgs...)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", status.BoltErrorCode(), msgAndArgs...)
-	require.Regexp(t, `^Database access is not allowed for user '.*' with (no roles|roles \[.*\])\.$`, err.Error(), msgAndArgs...)
+	require.Regexp(t, `^Database access is not allowed for user '.*' with (no roles|roles \[.*\])\.$`, status.Error(), msgAndArgs...)
 }
