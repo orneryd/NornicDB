@@ -241,6 +241,21 @@ func TestMaybeEnableReplication_RefusesSecurityConfigItCannotApply(t *testing.T)
 		}()},
 		{"secret too short", map[string]string{"NORNICDB_CLUSTER_REPLICATION_SECRET": "short"}},
 	}
+	// A security boolean that doesn't parse is refused, never read as false.
+	for _, key := range []string{
+		"NORNICDB_CLUSTER_TLS_ENABLED",
+		"NORNICDB_CLUSTER_TLS_VERIFY_CLIENT",
+		"NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY",
+	} {
+		for _, value := range []string{"tru", "enabled", "2"} {
+			env := tlsOn(certFile, keyFile, caFile, "true")
+			env[key] = value
+			cases = append(cases, struct {
+				name string
+				env  map[string]string
+			}{key + "=" + value, env})
+		}
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			addr := replTestFreeAddr(t)
