@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.
+- Long Cypher pipeline stages observe statement cancellation and deadlines while processing rows, nested DISTINCT
+  values, sorting, aggregation and list expansion. A statement stopped at its deadline reports Neo4j's
+  `Neo.ClientError.Transaction.TransactionTimedOut` (or `TransactionTimedOutClientConfiguration` for a Bolt client
+  `tx_timeout`) instead of `Neo.ClientError.Statement.SyntaxError`.
 
 ### Security
 

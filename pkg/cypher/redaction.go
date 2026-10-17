@@ -131,10 +131,22 @@ func redactGrammarAccepts(query string) bool {
 // redactForLog is RedactLiterals for the executor's log sites. A statement
 // the executor's own ANTLR validation (or an earlier redaction) already
 // found grammar-valid is not parsed again; the verdict is the same either
-// way, so the output does not depend on the parser or the cache.
+// way, so the output does not depend on the parser or the cache. It takes
+// the statement as the client sent it and strips its comments itself:
+// a statement longer than redactLogMaxBytes is logged as the bare
+// placeholder before any scan, so a statement cancelled at its deadline
+// does not spend a full lexer pass on the log after the deadline.
 func (e *StorageExecutor) redactForLog(query string) string {
-	return redactLiterals(query, e.redactGrammarAccepts)
+	if len(query) > redactLogMaxBytes {
+		return RedactedPlaceholder
+	}
+	return redactLiterals(StripComments(query), e.redactGrammarAccepts)
 }
+
+// redactLogMaxBytes is the largest statement the log sites redact. The
+// log keeps 500 characters of the result; above the bound the placeholder
+// is the safe direction, since it redacts more.
+const redactLogMaxBytes = 128 << 10
 
 func (e *StorageExecutor) redactGrammarAccepts(query string) bool {
 	if len(query) > redactGrammarCheckMaxBytes {

@@ -34,7 +34,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			if _, bound := scope[root]; !bound {
 				return nil, true, deleteUndefinedVariableError(expression)
 			}
-		} else if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+		} else if value, evaluated, err := e.evaluateRowValueProbed(strings.TrimSpace(expression), pipelineRow{}, contextPipelineProbe(ctx)); err != nil {
 			return nil, true, err
 		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
@@ -51,7 +51,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		values := make([]interface{}, 0, len(targets))
 		for _, expression := range targets {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), row)
+			value, ok, err := e.evaluateRowValueProbed(strings.TrimSpace(expression), row, contextPipelineProbe(ctx))
 			if err != nil {
 				return nil, true, err
 			}
@@ -101,7 +101,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
-			incident, err := undirectedIncidentEdges(store, nodeID)
+			incident, err := undirectedIncidentEdgesContext(ctx, store, nodeID)
 			if err != nil {
 				return nil, true, err
 			}
@@ -505,7 +505,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			newRow[name] = edge
 		}
 		for name, path := range paths {
-			newRow[name] = e.pathToMap(path)
+			newRow[name] = e.pathToMapContext(ctx, path)
 		}
 	}
 	return newRow, nil
@@ -651,7 +651,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 							}
 							if nodePathVariable != "" {
 								path := PathResult{Nodes: []*storage.Node{node}}
-								expanded[nodePathVariable] = e.pathToMap(path)
+								expanded[nodePathVariable] = e.pathToMapContext(ctx, path)
 							}
 							matchedRows = append(matchedRows, expanded)
 						}
@@ -730,7 +730,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if nodePathVariable != "" {
 			if node := nodeContext[nodePathBinding]; node != nil {
 				path := PathResult{Nodes: []*storage.Node{node}}
-				newRow[nodePathVariable] = e.pathToMap(path)
+				newRow[nodePathVariable] = e.pathToMapContext(ctx, path)
 			}
 		}
 		if relationshipPattern != nil {
@@ -781,10 +781,15 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 // them resolved (resolveRowDynamicTokens), as a MERGE of its own, in order,
 // so a row sees what the rows before it merged.
 func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows []pipelineRow, clause, pattern string) ([]pipelineRow, *QueryStats, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	at := strings.Index(clause, pattern)
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, nil, cancellation.err
+		}
 		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 		resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
 		if err != nil {

@@ -78,25 +78,31 @@ type callSplit struct {
 // a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
 // STARTS WITH, belong to the expression they are in.
 func parseYieldClause(cypher string) *yieldClause {
+	return parseYieldClauseWithCancellation(cypher, nil)
+}
+func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation) *yieldClause {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
-	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
-	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
+	normalized := replaceTextWithCancellation(replaceTextWithCancellation(cypher, "\n", " ", probe), "\t", " ", probe)
+	yieldIdx := topLevelKeywordIndex(normalized, "YIELD")
 	if yieldIdx == -1 {
 		return nil
 	}
 	result := &yieldClause{items: []yieldItem{}}
 
-	afterYield := strings.TrimSpace(normalized[yieldIdx+len("YIELD"):])
+	afterYield := trimSpaceWithCancellation(normalized[yieldIdx+len("YIELD"):], probe)
 	if len(afterYield) > 0 && afterYield[0] == '*' {
 		result.yieldAll = true
-		afterYield = strings.TrimSpace(afterYield[1:])
+		afterYield = trimSpaceWithCancellation(afterYield[1:], probe)
 	}
 
 	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
 	// outer clause boundary (and a RETURN) belongs to the subsequent query.
 	yieldScope := scopeYieldToCallClause(afterYield)
 	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
-		yieldScope = strings.TrimSpace(yieldScope[:returnIdx])
+		yieldScope = trimSpaceWithCancellation(yieldScope[:returnIdx], probe)
 	}
 	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
 	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
@@ -108,15 +114,21 @@ func parseYieldClause(cypher string) *yieldClause {
 	part := func(start, keywordLen int) string {
 		end := len(yieldScope)
 		for _, idx := range positions {
+			if probe != nil && !probe.check() {
+				return ""
+			}
 			if idx > start && idx < end {
 				end = idx
 			}
 		}
-		return strings.TrimSpace(yieldScope[start+keywordLen : end])
+		return trimSpaceWithCancellation(yieldScope[start+keywordLen:end], probe)
 	}
 	if whereIdx >= 0 {
 		result.where = part(whereIdx, len("WHERE"))
 		for _, idx := range []int{orderIdx, skipIdx, limitIdx} {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if idx >= 0 && idx < whereIdx {
 				result.misplacedWhere = true
 			}
@@ -125,7 +137,7 @@ func parseYieldClause(cypher string) *yieldClause {
 	if orderIdx >= 0 {
 		orderBy := part(orderIdx, len("ORDER"))
 		if len(orderBy) >= len("BY") && strings.EqualFold(orderBy[:len("BY")], "BY") {
-			orderBy = strings.TrimSpace(orderBy[len("BY"):])
+			orderBy = trimSpaceWithCancellation(orderBy[len("BY"):], probe)
 		}
 		result.orderBy = orderBy
 	}
@@ -140,49 +152,78 @@ func parseYieldClause(cypher string) *yieldClause {
 	if !result.yieldAll {
 		itemsEnd := len(yieldScope)
 		for _, idx := range positions {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if idx != -1 && idx < itemsEnd {
 				itemsEnd = idx
 			}
 		}
-		itemsStr := strings.TrimSpace(yieldScope[:itemsEnd])
+		itemsStr := trimSpaceWithCancellation(yieldScope[:itemsEnd], probe)
 		if itemsStr != "" {
 			// Split by comma, respecting AS keyword
-			for _, item := range strings.Split(itemsStr, ",") {
-				item = strings.TrimSpace(item)
+			for from := 0; from <= len(itemsStr); {
+				if probe != nil && !probe.check() {
+					return nil
+				}
+				next := indexByteWithCancellation(itemsStr[from:], ',', probe)
+				if probe != nil && probe.err != nil {
+					return nil
+				}
+				if next < 0 {
+					next = len(itemsStr)
+				} else {
+					next += from
+				}
+				item := itemsStr[from:next]
+				from = next + 1
+				item = trimSpaceWithCancellation(item, probe)
 				if item == "" {
 					continue
 				}
 				yi := yieldItem{}
 				upperItem := upperASCII(item)
-				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
-					yi.name = strings.TrimSpace(item[:asIdx])
-					yi.alias = strings.TrimSpace(item[asIdx+4:])
+				if asIdx := indexTextWithCancellation(upperItem, " AS ", probe); asIdx != -1 {
+					yi.name = trimSpaceWithCancellation(item[:asIdx], probe)
+					yi.alias = trimSpaceWithCancellation(item[asIdx+4:], probe)
 				} else {
 					yi.name = item
 				}
-				result.items = append(result.items, yi)
+				result.items = appendPipelineItem(result.items, yi, probe)
 			}
 		}
 	}
 
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 	return result
 }
 
 // scopeYieldToCallClause trims text after YIELD to the first outer query-clause
 // boundary so YIELD item parsing does not accidentally consume later clauses.
 func scopeYieldToCallClause(afterYield string) string {
+	return scopeYieldToCallClauseWithCancellation(afterYield, nil)
+}
+func scopeYieldToCallClauseWithCancellation(afterYield string, probe *pipelineCancellation) string {
 	scopeEnd := findYieldOuterBoundary(afterYield)
-	if scopeEnd == -1 {
+	if scopeEnd < 0 {
 		scopeEnd = len(afterYield)
 	}
-	return strings.TrimSpace(afterYield[:scopeEnd])
+	return trimSpaceWithCancellation(afterYield[:scopeEnd], probe)
 }
 
 func findYieldOuterBoundary(afterYield string) int {
+	return findYieldOuterBoundaryWithCancellation(afterYield, nil)
+}
+func findYieldOuterBoundaryWithCancellation(afterYield string, probe *pipelineCancellation) int {
 	scopeEnd := len(afterYield)
 	// The clause keywords; ORDER/RETURN/WHERE/LIMIT/SKIP are excluded because
 	// they are valid within the YIELD scope.
 	for _, kw := range callTailPlanClauseKeywords {
+		if probe != nil && !probe.check() {
+			return -1
+		}
 		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
@@ -309,7 +350,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
 		return projected, err
 	}
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
@@ -380,7 +421,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			break
 		}
 	}
-	return combineCallTailRowResults(results, expectedCols)
+	return combineCallTailRowResultsWithCancellation(results, expectedCols, parameterCancellationForContext(ctx))
 }
 
 // executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
@@ -498,7 +539,7 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 	return columns, len(columns) > 0
 }
 
-func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
 		return nil, false, nil
@@ -526,7 +567,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 	if modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
+	result, err := e.applyResultModifiers(ctx, result, modifiers)
 	return result, true, err
 }
 
@@ -545,6 +586,11 @@ func (e *StorageExecutor) executeCallTailParallel(
 ) (*ExecuteResult, bool, error) {
 	if len(usedCols) == 0 || len(seed.Rows) <= 1 {
 		return nil, false, nil
+	}
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	if !probe.check() {
+		return nil, true, probe.err
 	}
 	workers := runtime.GOMAXPROCS(0)
 	if workers < 2 {
@@ -567,24 +613,40 @@ func (e *StorageExecutor) executeCallTailParallel(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			workerCtx := pipelineWorkerContext(context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{}))
+			defer recoverWorkerPanic(workerCtx)
+			workerProbe := pipelineCancellationForContext(workerCtx)
 			for j := range jobs {
-				res, err := e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
+				if !workerProbe.check() {
+					results <- callTailRowResult{idx: j.idx, err: workerProbe.err}
+					break
+				}
+				res, err := e.executeCallTailSingleRow(workerCtx, seed.Columns, j.row, tail, usedCols, expectedCols)
 				results <- callTailRowResult{idx: j.idx, res: res, err: err}
 			}
 		}()
 	}
 	for i, row := range seed.Rows {
+		if !probe.check() {
+			break
+		}
 		jobs <- job{idx: i, row: row}
 	}
 	close(jobs)
 	wg.Wait()
 	close(results)
+	if !probe.poll() {
+		return nil, true, probe.err
+	}
 
 	ordered := make([]callTailRowResult, len(seed.Rows))
 	for rr := range results {
+		if !probe.check() {
+			return nil, true, probe.err
+		}
 		ordered[rr.idx] = rr
 	}
-	combined, err := combineCallTailRowResults(ordered, expectedCols)
+	combined, err := combineCallTailRowResultsWithCancellation(ordered, expectedCols, probe)
 	return combined, true, err
 }
 
@@ -593,8 +655,15 @@ func (e *StorageExecutor) executeCallTailParallel(
 // first failing row's error (in row order, so the parallel path reports the
 // same one), and the tail's columns when no row produced any.
 func combineCallTailRowResults(results []callTailRowResult, expectedCols []string) (*ExecuteResult, error) {
+	return combineCallTailRowResultsWithCancellation(results, expectedCols, nil)
+}
+
+func combineCallTailRowResultsWithCancellation(results []callTailRowResult, expectedCols []string, probe *pipelineCancellation) (*ExecuteResult, error) {
 	var combined *ExecuteResult
 	for _, result := range results {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
 		if result.err != nil {
 			return nil, result.err
 		}
@@ -603,14 +672,21 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 		}
 		if combined == nil {
 			combined = &ExecuteResult{
-				Columns: append([]string{}, result.res.Columns...),
-				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
+				Columns: appendPipelineItems([]string{}, result.res.Columns, probe),
+				Rows:    make([][]interface{}, 0, pipelineInitialCapacity(len(result.res.Rows), probe)),
 			}
 		}
-		combined.Rows = append(combined.Rows, result.res.Rows...)
+		combined.Rows = appendPipelineItems(combined.Rows, result.res.Rows, probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
 	}
 	if combined == nil {
-		return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, nil
+		columns := appendPipelineItems([]string{}, expectedCols, probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
+		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, nil
 	}
 	return combined, nil
 }

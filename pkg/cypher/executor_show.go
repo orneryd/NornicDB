@@ -599,7 +599,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClause("CALL show() YIELD " + items)
+	yield := parseYieldClause("CALL show() YIELD "+items)
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}
@@ -669,7 +669,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	quoted := make([]string, len(outputs))
 	for i, column := range outputs {
 		quoted[i] = column
-		if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
+		if name, next, ok := scanIdentifierTokenWithCancellation(column, 0, contextPipelineProbe(ctx)); !ok || name != column || next != len(column) {
 			quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
 		}
 	}

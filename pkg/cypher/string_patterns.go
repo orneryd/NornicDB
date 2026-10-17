@@ -364,7 +364,12 @@ func ParseAggregation(expr string) *AggregationResult {
 }
 
 // isValidIdentifier checks if s is a valid Cypher identifier (alphanumeric + underscore, starts with letter/underscore).
-func isValidIdentifier(s string) bool {
+func isValidIdentifier(s string) bool { return isValidIdentifierWithCancellation(s, nil) }
+func isValidIdentifierWithCancellation(s string, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	if len(s) == 0 {
 		return false
 	}
@@ -373,6 +378,10 @@ func isValidIdentifier(s string) bool {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		c := s[i]
 		if !isIdentByte(c) {
 			return false

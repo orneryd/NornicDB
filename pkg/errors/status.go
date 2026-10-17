@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"context"
 	stderrors "errors"
 	"strings"
 
@@ -17,6 +18,18 @@ const (
 	// TransactionCommitFailed is the status of a COMMIT that failed for a
 	// reason with no more specific classification.
 	TransactionCommitFailed = "Neo.ClientError.Transaction.TransactionCommitFailed"
+	// TransactionTimedOut is the status of a statement stopped by a timeout
+	// the server configures (Neo4j's db.transaction.timeout; NornicDB's query
+	// time limit and Bolt statement timeout).
+	TransactionTimedOut = "Neo.ClientError.Transaction.TransactionTimedOut"
+	// TransactionTimedOutClientConfiguration is the status of a statement or
+	// transaction stopped by the timeout its client set when it started.
+	TransactionTimedOutClientConfiguration = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
+
+	// TransactionTimedOutMessage and TransactionTimedOutClientConfigurationMessage
+	// are Neo4j 5.26's messages for those statuses, trailing space included.
+	TransactionTimedOutMessage                    = "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the specified timeout (db.transaction.timeout). You may want to retry with a longer timeout. "
+	TransactionTimedOutClientConfigurationMessage = "The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. "
 )
 
 // compileTimeStatuses are the statuses Neo4j raises while compiling a
@@ -96,6 +109,8 @@ type statusMessenger interface {
 //   - a transaction over the storage size limit is
 //     General.TransactionOutOfMemoryError, a ClientError drivers don't retry,
 //     with a message saying to split it;
+//   - a statement past its deadline (context.DeadlineExceeded) is
+//     Transaction.TransactionTimedOut, the server-configured timeout status;
 //   - a constraint violation is Schema.ConstraintValidationFailed;
 //   - a message that starts with (or contains) a "Neo.…: " code keeps that code;
 //   - anything else is Statement.SyntaxError.
@@ -133,6 +148,11 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	}
 	if transientCode, ok := MapTransientTransactionError(err); ok {
 		return transientCode, message, true
+	}
+	// The engine stops a statement past its deadline with the bare context
+	// error; that is a timeout, not a statement error.
+	if stderrors.Is(err, context.DeadlineExceeded) {
+		return TransactionTimedOut, TransactionTimedOutMessage, true
 	}
 	if stderrors.Is(err, storage.ErrStorageRestoring) {
 		return TransientDatabaseUnavailable, message, true

@@ -1,6 +1,10 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 func (e *StorageExecutor) propertyViewEngine() *storage.BadgerEngine {
 	if e.storedPropertyIdentity {
@@ -130,9 +134,9 @@ func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
 	}
 }
 
-func (e *StorageExecutor) projectVisiblePipelineNodeRead(nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
+func (e *StorageExecutor) projectVisiblePipelineNodeRead(ctx context.Context, nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
 	if e.queryPropertyDecayEnabled() {
 		nodes = e.projectVisibleQueryValue(nodes).([]*storage.Node)
 	}
-	return projectPipelineSimpleNodeRead(nodes, items, variable)
+	return projectPipelineSimpleNodeRead(ctx, nodes, items, variable)
 }

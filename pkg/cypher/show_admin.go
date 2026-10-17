@@ -583,7 +583,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 		}
 		return []interface{}{nil}, true, nil
 	}
-	items, isList := cypherListValue(value)
+	items, isList := cypherListValueWithCancellation(value, contextPipelineProbe(ctx))
 	if !isList {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))

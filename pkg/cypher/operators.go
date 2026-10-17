@@ -77,10 +77,17 @@ func asciiLowerByte(b byte) byte {
 }
 
 func equalFoldASCII(text, other string) bool {
+	return equalFoldASCIIWithCancellation(text, other, nil)
+}
+
+func equalFoldASCIIWithCancellation(text, other string, probe *pipelineCancellation) bool {
 	if len(text) != len(other) {
 		return false
 	}
 	for i := 0; i < len(text); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		if asciiLowerByte(text[i]) != asciiLowerByte(other[i]) {
 			return false
 		}
@@ -247,16 +254,30 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 // clauses after it; and inside a bracket or a subquery's braces within the
 // block (THEN COLLECT { MATCH … }) a clause can start, so nothing there is
 // the block's.
-func insideCaseBlock(s string, at int) bool {
+func insideCaseBlock(s string, at int) bool { return insideCaseBlockWithCancellation(s, at, nil) }
+func insideCaseBlockWithCancellation(s string, at int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	end := enclosingCaseBlockEnd(s, at)
-	return end >= 2 && caseKeywordAt(s, end-2, "END") && bracketDepthAt(s, at) == 0
+	return end >= 2 && caseKeywordAtWithCancellation(s, end-2, "END", probe) && bracketDepthAtWithCancellation(s, at, probe) == 0
 }
 
 // bracketDepthAt is the number of brackets, parentheses and braces open at
 // s[at], outside quotes and backtick names.
-func bracketDepthAt(s string, at int) int {
+func bracketDepthAt(s string, at int) int { return bracketDepthAtWithCancellation(s, at, nil) }
+func bracketDepthAtWithCancellation(s string, at int, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return 0
+	}
+
 	depth := 0
 	for i := 0; i < at && i < len(s); i++ {
+		if probe != nil && !probe.check() {
+			return 0
+		}
+
 		switch c := s[i]; c {
 		case '\'', '"', '`':
 			i = skipCypherQuotedText(s, i, c) - 1
@@ -274,9 +295,20 @@ func bracketDepthAt(s string, at int) int {
 // inside one. A CASE counts only outside quotes, backtick names, brackets and
 // property access (n.case); an unterminated CASE extends to the end of expr.
 func enclosingCaseBlockEnd(expr string, at int) int {
+	return enclosingCaseBlockEndWithCancellation(expr, at, nil)
+}
+func enclosingCaseBlockEndWithCancellation(expr string, at int, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return -1
+	}
+
 	depth, nest := 0, 0
 	var quote byte
 	for i := 0; i < len(expr); i++ {
+		if probe != nil && !probe.check() {
+			return -1
+		}
+
 		if i >= at && depth == 0 {
 			return -1
 		}
@@ -298,10 +330,10 @@ func enclosingCaseBlockEnd(expr string, at int) int {
 			if nest != 0 || (i > 0 && expr[i-1] == '.') {
 				continue
 			}
-			if c|0x20 == 'c' && caseKeywordAt(expr, i, "CASE") {
+			if c|0x20 == 'c' && caseKeywordAtWithCancellation(expr, i, "CASE", probe) {
 				depth++
 				i += len("CASE") - 1
-			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(expr, i, "END") {
+			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAtWithCancellation(expr, i, "END", probe) {
 				depth--
 				i += len("END") - 1
 				if depth == 0 && i >= at {
@@ -620,7 +652,7 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "+-"); ok && binaryOperands(leftExpr, rightExpr) {
 		left, right := operands(leftExpr, rightExpr)
 		if operator == '+' {
-			return result('+', left, right, e.add(left, right))
+			return result('+', left, right, e.addWithCancellation(left, right, contextPipelineProbe(ctx)))
 		}
 		return result('-', left, right, e.subtract(left, right))
 	}
@@ -720,6 +752,10 @@ func (e *StorageExecutor) splitByOperator(expr, op string) []string {
 //	add(5.0, 3)                                  // float64(8.0)
 //	add("2025-01-01", &CypherDuration{Days: 5})  // "2025-01-06T00:00:00Z"
 func (e *StorageExecutor) add(left, right interface{}) interface{} {
+	return e.addWithCancellation(left, right, nil)
+}
+
+func (e *StorageExecutor) addWithCancellation(left, right interface{}, probe *pipelineCancellation) interface{} {
 	// A null operand makes the sum null, for lists and strings too.
 	if left == nil || right == nil {
 		return nil
@@ -728,7 +764,7 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// concatenated first, for every evaluator (#1214).
 	if leftText, ok := left.(string); ok {
 		if rightText, ok := right.(string); ok {
-			return leftText + rightText
+			return concatPipelineStrings(leftText, rightText, probe)
 		}
 	}
 	if result, handled := addTemporalValues(left, right); handled {
@@ -738,24 +774,36 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// - list + list
 	// - list + scalar
 	// - scalar + list
-	leftList, leftIsList := toInterfaceSlice(left)
-	rightList, rightIsList := toInterfaceSlice(right)
+	leftList, leftIsList := cypherListValueWithCancellation(left, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
+	rightList, rightIsList := cypherListValueWithCancellation(right, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 	if leftIsList && rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), len(rightList)))
-		out = append(out, leftList...)
-		out = append(out, rightList...)
+		out = appendPipelineValues(out, leftList, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		out = appendPipelineValues(out, rightList, probe)
 		return out
 	}
 	if leftIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), 1))
-		out = append(out, leftList...)
+		out = appendPipelineValues(out, leftList, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		out = append(out, right)
 		return out
 	}
 	if rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
 		out = append(out, left)
-		out = append(out, rightList...)
+		out = appendPipelineValues(out, rightList, probe)
 		return out
 	}
 
@@ -777,13 +825,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// String concatenation: string + string, string + number, number + string.
 	if text, isText := left.(string); isText {
 		if other, ok := concatOperandText(right); ok {
-			return text + other
+			return concatPipelineStrings(text, other, probe)
 		}
 		return nil
 	}
 	if text, isText := right.(string); isText {
 		if other, ok := concatOperandText(left); ok {
-			return other + text
+			return concatPipelineStrings(other, text, probe)
 		}
 		return nil
 	}

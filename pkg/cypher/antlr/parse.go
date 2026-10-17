@@ -106,10 +106,43 @@ func Parse(query string) (*ParseResult, error) {
 // This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
+	return ValidateWithCancellation(query, nil)
+}
+
+// ValidationWork is the statement's cancellation owner, as validation sees
+// it: CheckBoundary reports false, and Err the reason, once the statement
+// is cancelled.
+type ValidationWork interface {
+	Err() error
+	CheckBoundary() bool
+}
+
+// ValidateWithCancellation is Validate under the statement's cancellation.
+// The upstream runtime gives a running parse no way to stop, so the deadline
+// is checked at the parse's boundaries: before it, between the SLL pass and
+// the LL retry, and after it. A cancelled statement returns work.Err(), never
+// a syntax verdict. A nil work is Validate.
+func ValidateWithCancellation(query string, work ValidationWork) error {
+	if work != nil && !work.CheckBoundary() {
+		return work.Err()
+	}
+	cancelled, err := validate(query, work)
+	if cancelled {
+		return err
+	}
+	if work != nil && !work.CheckBoundary() {
+		return work.Err()
+	}
+	return err
+}
+
+// validate is Validate's body; cancelled reports that it stopped at the
+// boundary between its passes, so err is work.Err().
+func validate(query string, work ValidationWork) (cancelled bool, err error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
-		return localization.NewLocalizedError(string(message.ID), message, nil)
+		return false, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
 	v := validatorPool.Get().(*pooledValidator)
@@ -136,6 +169,9 @@ func Validate(query string) error {
 	_ = v.parser.Script()
 
 	if len(v.errorListener.errors) > 0 {
+		if work != nil && !work.CheckBoundary() {
+			return true, work.Err()
+		}
 		// Retry with LL prediction mode to avoid rejecting valid queries that
 		// require full context prediction.
 		v.errorListener.reset()
@@ -146,10 +182,10 @@ func Validate(query string) error {
 
 		if len(v.errorListener.errors) > 0 {
 			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.errors, "; "))
-			return localization.NewLocalizedError(string(message.ID), message, nil)
+			return false, localization.NewLocalizedError(string(message.ID), message, nil)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // parseErrorListener collects syntax errors during parsing

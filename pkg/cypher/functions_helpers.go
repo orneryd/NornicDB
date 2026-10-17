@@ -52,7 +52,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
 func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
-	funcName, argsStr, valid := parseFunctionCallWS(expr)
+	funcName, argsStr, valid := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx))
 	if !valid {
 		return nil, false
 	}

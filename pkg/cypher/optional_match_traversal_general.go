@@ -159,7 +159,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 		for _, node := range candidates {
 			propertyMatch := true
 			for name, expression := range propertyExpressions {
-				expected, resolved, err := e.evaluateRowValue(expression, scope)
+				expected, resolved, err := e.evaluateRowValueProbed(expression, scope, contextPipelineProbe(ctx))
 				if err != nil {
 					return nil, err
 				}

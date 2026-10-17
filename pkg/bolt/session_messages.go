@@ -107,8 +107,10 @@ func (s *Session) handleRun(data []byte) error {
 	// per-call cap is authoritative; the server cap is the fallback
 	// for clients that didn't set one).
 	var runTimeout time.Duration
+	clientTimeout := false
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		runTimeout = time.Duration(txTimeout) * time.Millisecond
+		clientTimeout = true
 	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
 		runTimeout = s.server.config.BoltStatementTimeout
 	}
@@ -281,6 +283,10 @@ func (s *Session) handleRun(data []byte) error {
 			}
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
+		if clientTimeout && code == nornicerrors.TransactionTimedOut {
+			// The deadline is the client's tx_timeout, as in Neo4j.
+			code, msg = transactionTimedOutCode, transactionTimedOutMsg
+		}
 		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
 	}
 	rows := 0

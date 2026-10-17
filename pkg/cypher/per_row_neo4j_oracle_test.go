@@ -190,7 +190,7 @@ func TestRowValueProgramsMatchNeo4j(t *testing.T) {
 					value, ok, err = exec.evaluateRowValueText(tc.expression, row)
 				} else {
 					root, _ := (&rowValueCompiler{}).compile(tc.expression)
-					value, ok, err = root.eval(exec, row, nil)
+					value, ok, err = root.eval(exec, row, nil, nil)
 				}
 				require.NoError(t, err)
 				require.NoError(t, getExpressionFailure(ctx))

@@ -151,6 +151,7 @@ var (
 )
 
 type bindingFilterPredicate struct {
+	cancellation    *pipelineCancellation
 	plan            *rowPredicatePlan
 	membership      compiledRowMemberships
 	queryParameters map[string]interface{}
@@ -163,7 +164,7 @@ type bindingFilterPredicate struct {
 
 func (predicate *bindingFilterPredicate) matches(row binding, params map[string]interface{}) bool {
 	if predicate.plan != nil {
-		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, parameters: predicate.queryParameters}, &predicate.membership)
+		return predicate.executor.evaluateRowPredicatePartScopeWithCancellation(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, parameters: predicate.queryParameters}, &predicate.membership, predicate.cancellation)
 	}
 	for name, node := range row {
 		predicate.values[name] = node
@@ -180,7 +181,7 @@ func (predicate *bindingFilterPredicate) matches(row binding, params map[string]
 
 func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool {
 	if predicate.plan != nil {
-		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, rels: rels, parameters: predicate.queryParameters}, &predicate.membership)
+		return predicate.executor.evaluateRowPredicatePartScopeWithCancellation(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, rels: rels, parameters: predicate.queryParameters}, &predicate.membership, predicate.cancellation)
 	}
 	for name, value := range rels {
 		predicate.values[name] = value
@@ -200,8 +201,9 @@ func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereCl
 		if params == nil {
 			params = getParamsFromContext(ctx)
 		}
-		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params}
-		predicate.membership.prepare(&plan.root, compiledRowScope{parameters: params})
+		ctx = withPipelineCancellation(ctx)
+		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params, cancellation: contextPipelineProbe(ctx)}
+		predicate.membership.prepareWithCancellation(&plan.root, compiledRowScope{parameters: params}, predicate.cancellation)
 		return predicate
 	}
 	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
@@ -353,7 +355,7 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 	if clause == "" {
 		return bindingWherePlan{predicate: func(binding, map[string]interface{}) bool { return true }}, true
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(clause); ok {
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(clause, contextPipelineProbe(ctx)); ok {
 		return e.compileBindingWherePlan(ctx, inner)
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
@@ -771,12 +773,23 @@ func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement 
 }
 
 func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map[interface{}]struct{}, []interface{}, bool) {
-	cache.Lock()
-	defer cache.Unlock()
-	unchanged := cache.comparable != nil && len(cache.snapshot) == len(items)
+	return cache.getValidatedWithCancellation(items, nil)
+}
+
+func (cache *bindingParamMembershipCache) getValidatedWithCancellation(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}, bool) {
+	// Published snapshots and indexes are immutable. Expensive validation and
+	// construction run outside the shared lock, so another statement's index
+	// construction cannot hold a cancelled query behind an unbounded scan.
+	cache.RLock()
+	previousItems, comparable, nonComparable, hasNull := cache.snapshot, cache.comparable, cache.nonComparable, cache.hasNull
+	cache.RUnlock()
+	unchanged := comparable != nil && len(previousItems) == len(items)
 	if unchanged {
 		for index, item := range items {
-			previous := cache.snapshot[index]
+			if probe != nil && !probe.check() {
+				return nil, nil, false
+			}
+			previous := previousItems[index]
 			if item == nil && previous == nil {
 				continue
 			}
@@ -787,11 +800,24 @@ func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map
 		}
 	}
 	if !unchanged {
-		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
-		cache.hasNull = listHasNull(items)
-		cache.snapshot = append(cache.snapshot[:0], items...)
+		comparable, nonComparable = buildComparableMembershipIndexWithCancellation(items, probe)
+		if probe != nil && probe.err != nil {
+			return nil, nil, false
+		}
+		hasNull = false
+		snapshot := make([]interface{}, len(items))
+		for index, item := range items {
+			if probe != nil && !probe.check() {
+				return nil, nil, false
+			}
+			hasNull = hasNull || item == nil
+			snapshot[index] = item
+		}
+		cache.Lock()
+		cache.comparable, cache.nonComparable, cache.hasNull, cache.snapshot = comparable, nonComparable, hasNull, snapshot
+		cache.Unlock()
 	}
-	return cache.comparable, cache.nonComparable, cache.hasNull
+	return comparable, nonComparable, hasNull
 }
 
 func firstInterfaceElement(items []interface{}) *interface{} {
@@ -943,10 +969,17 @@ func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context
 		ctx = withQueryParams(ctx, params)
 	}
 	values := make(map[string]interface{}, len(b)+len(params))
+	probe := parameterCancellationForContext(ctx)
 	for name, node := range b {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		values[name] = node
 	}
 	bindParameterRow(ctx, pipelineRow(values))
+	if probe != nil && probe.err != nil {
+		return false
+	}
 	return e.evaluateMatchRowPredicate(ctx, expr, values)
 }
 

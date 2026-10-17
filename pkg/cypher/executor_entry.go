@@ -166,8 +166,30 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	// Normalize query: trim BOM (some clients send it) then whitespace
+	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
+	// The statement's deadline has one owner, this context's probe. Once the
+	// statement is cancelled, a reader that stopped early may have handed a
+	// partial value on, so the deadline wins: an error the statement returns
+	// after its context ended is that context's error, and a result built
+	// after a reader saw the cancellation is not returned.
+	// The outcome is settled once, before admission's cleanup cancels the
+	// admitted context: that cancellation is the statement ending, not its
+	// deadline.
+	statementCtx := ctx
+	settled := false
+	settleOutcome := func() {
+		if !settled {
+			settled = true
+			result, retErr = statementDeadlineOutcome(statementCtx, result, retErr)
+		}
+	}
+	defer settleOutcome()
+	preparationProbe := parameterCancellationForContext(ctx)
 	cypher = trimBOM(cypher)
-	cypher = normalizeCypherSyntaxConfusables(cypher)
+	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
 	if err := internalFunctionCallError(cypher); err != nil {
@@ -182,7 +204,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
 	if config.IsCypherQueryNormalizationEnabled() {
-		canonical, rewrite = canonicalizeQueryText(cypher)
+		canonical, rewrite = canonicalizeQueryTextWithCancellation(cypher, preparationProbe)
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
 	}
 	if rewrite != nil {
 		cypher = canonical
@@ -190,28 +215,42 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
-	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
+	if grouped, numericRewrite := canonicalizeNumericLiteralsWithCancellation(cypher, preparationProbe); numericRewrite != nil {
 		cypher = grouped
 		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
 	}
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 	// GQL function aliases (collect_list, ln, …) call the function they
 	// name; columns and messages keep the client's text.
-	if !rewriteFree(rewriteFreeFunctionAliases, false, cypher) {
-		if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
+	aliasesFree := rewriteFreeWithCancellation(rewriteFreeFunctionAliases, false, cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	if !aliasesFree {
+		aliased, aliasRewrite := canonicalizeFunctionAliasesWithCancellation(cypher, preparationProbe)
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
+		if aliasRewrite != nil {
 			cypher = aliased
 			defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
 		} else {
-			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
+			markRewriteFreeWithCancellation(rewriteFreeFunctionAliases, false, cypher, preparationProbe)
 		}
 	}
-	cypher = strings.TrimSpace(cypher)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	cypher = trimSpaceWithCancellation(cypher, preparationProbe)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	ctx = withCypherVersion(ctx, cypher)
-	if err := validateCypherPreamble(cypher); err != nil {
+	if err := validateCypherPreambleWithCancellation(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
 	if config.IsANTLRParser() {
-		body, _ := stripCypherPreamble(cypher)
+		body, _ := stripCypherPreambleWithCancellation(cypher, preparationProbe)
 		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
@@ -219,7 +258,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
-	cypher, _ = stripCypherPreamble(cypher)
+	cypher, _ = stripCypherPreambleWithCancellation(cypher, preparationProbe)
 	cypher = strings.TrimSpace(cypher)
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
@@ -232,7 +271,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
 		}
 	}
-	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
+	expressionsFree := rewriteFreeWithCancellation(rewriteFreeCypher25Expressions, cypher25, cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	if !expressionsFree {
 		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
 		if err != nil {
 			return nil, err
@@ -247,13 +290,20 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				}
 			}()
 		} else {
-			markRewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher)
+			markRewriteFreeWithCancellation(rewriteFreeCypher25Expressions, cypher25, cypher, preparationProbe)
 		}
+	}
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
 	}
 	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
 	// errors are mapped back (#907).
-	if !rewriteFree(rewriteFreeQueryStructure, false, cypher) {
+	structureFree := rewriteFreeWithCancellation(rewriteFreeQueryStructure, false, cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	if !structureFree {
 		if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
 			return nil, err
 		} else if structureRewrite != nil {
@@ -261,17 +311,23 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 		} else if !mayUseQueryStructure(cypher) {
 			// Only the quick check's verdict is the text's alone.
-			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
+			markRewriteFreeWithCancellation(rewriteFreeQueryStructure, false, cypher, preparationProbe)
 		}
 	}
-	if err := e.validateStatementFraming(cypher); err != nil {
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	if err := e.validateStatementFramingWithCancellation(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
-		cypher = strings.TrimSpace(stripped)
+	if stripped, ok := stripUnionBranchFinishesWithCancellation(cypher, preparationProbe); ok {
+		cypher = trimSpaceWithCancellation(stripped, preparationProbe)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
+	}
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
 	}
 	if cypher == "" {
 		if finishTerminated {
@@ -302,7 +358,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Typed Go maps and slices become Cypher maps and lists here, once, for
 	// every route (#712).
-	params = normalizeQueryParameters(params)
+	params = normalizeQueryParametersWithCancellation(params, parameterCancellationForContext(ctx))
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
+	}
 
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.
 	useBefore := GetUseDatabaseFromContext(ctx)
@@ -312,6 +371,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	ctx = processedCtx
 	cypher = processedQuery
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 	if cypher == "" {
 		return shellResult, nil
 	}
@@ -365,12 +427,28 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
-	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+	if canonical, names := canonicalizeQuotedVariablesWithCancellation(cypher, preparationProbe); names != nil {
 		cypher = canonical
-		params = names.parameterValues(params)
+		params = bindQuotedQueryParametersWithCancellation(names, params, preparationProbe)
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
-		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+		defer func() {
+			// A committed statement's result stands: its names are restored
+			// in full, without the deadline introducing an error.
+			restoreProbe := preparationProbe
+			if statementCommitted(statementCtx) {
+				restoreProbe = nil
+			}
+			result, retErr = names.restoreWithCancellation(result, retErr, func(text string) []returnItem {
+				return e.parseReturnItems(text)
+			}, restoreProbe)
+		}()
+	}
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
 	}
 
 	// Label expressions in patterns become the label forms and WHERE
@@ -399,10 +477,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
+			if err := e.validateSyntaxWithCancellation(modeQuery, cypherVersionFromContext(ctx) == "25", parameterCancellationForContext(ctx)); err != nil {
 				return nil, err
 			}
 			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
@@ -525,6 +606,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Explicit params win over shell params to preserve HTTP/Bolt semantics.
 	params = mergeInheritedQueryParams(ctx, params)
 	params = e.mergeShellParams(ctx, params)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 
 	// Check for transaction control statements and transaction scripts FIRST.
 	// These are Nornic extensions and must bypass strict ANTLR validation.
@@ -623,7 +707,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntaxWithCancellation(cypher, cypherVersionFromContext(ctx) == "25", parameterCancellationForContext(ctx)); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -690,7 +774,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 
-	// Check query limits if storage engine supports it
+	// Admit the statement on the database it runs on, after USE routing
+	// (a routed statement is admitted by its target database's Execute):
+	// query rate, the database's query time limit and concurrency slots.
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
 	var queryLimitCancel context.CancelFunc
 	if namespacedEngine, ok := e.storage.(interface {
@@ -701,27 +787,25 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 	}); ok {
 		if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
-			// Check query rate limit
 			if err := qlc.CheckQueryRate(); err != nil {
 				return nil, err
 			}
-
-			// Check write rate limit for write queries
-			// We need to check this early, but we don't know if it's a write query yet
-			// So we'll check it in the write handlers too
-
-			// Apply query timeout and concurrent query limits
 			var err error
-			ctx, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
+			var limitedContext context.Context
+			limitedContext, queryLimitCancel, err = qlc.CheckQueryLimits(ctx)
 			if err != nil {
 				return nil, err
 			}
-			// Ensure cancel is called when done
 			defer func() {
+				settleOutcome()
 				if queryLimitCancel != nil {
 					queryLimitCancel()
 				}
 			}()
+			// The admitted statement's probe reads the limited context, so the
+			// database's time limit is the statement's deadline from here.
+			ctx = admitStatementProbe(limitedContext)
+			statementCtx = ctx
 		}
 	}
 
@@ -749,7 +833,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// For routing, we still need upperQuery for some handlers
 	// TODO: Migrate handlers to use QueryInfo directly
-	upperQuery := e.cachedUpperQuery(cypher)
+	upperQuery := e.cachedUpperQueryWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 
 	// Capture the storage and search-index revisions before execution so
 	// mutations performed outside this executor cannot leave a stale cached
