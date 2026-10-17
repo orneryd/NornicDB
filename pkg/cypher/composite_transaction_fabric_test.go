@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -236,6 +237,99 @@ RETURN c
 	require.Contains(t, err.Error(), "Writing to more than one database per transaction is not allowed")
 	_, err = exec.Execute(ctx, "ROLLBACK", nil)
 	require.NoError(t, err)
+}
+
+// A composite explicit transaction that fails releases its local
+// participants' MERGE key locks when it fails, not when the client ends it: a
+// competing MERGE of the key completes while the failed transaction is still
+// open. Ending it then releases nothing a second time (the competitor keeps
+// its key), and the participant's write is discarded.
+func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
+	failures := []struct{ name, statement string }{
+		{"outer statement error", "RETURN ("},
+		{"second write shard", "CALL { USE cmp_mk.b CREATE (n:W) RETURN count(n) AS c } RETURN c"},
+	}
+	for _, mode := range []string{"nornic", "antlr"} {
+		for _, failure := range failures {
+			for _, end := range []string{"ROLLBACK", "COMMIT"} {
+				t.Run(mode+"/"+failure.name+"/"+end, func(t *testing.T) {
+					previous := config.GetParserType()
+					config.SetParserType(mode)
+					t.Cleanup(func() { config.SetParserType(previous) })
+					mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+					require.NoError(t, mgr.CreateDatabase("mk_a"))
+					require.NoError(t, mgr.CreateDatabase("mk_b"))
+					require.NoError(t, mgr.CreateCompositeDatabase("cmp_mk", []multidb.ConstituentRef{
+						{Alias: "a", DatabaseName: "mk_a", Type: "local", AccessMode: "read_write"},
+						{Alias: "b", DatabaseName: "mk_b", Type: "local", AccessMode: "read_write"},
+					}))
+					shard, err := mgr.GetStorage("mk_a")
+					require.NoError(t, err)
+					ctx := context.Background()
+					_, err = NewStorageExecutor(shard).Execute(ctx, "CREATE CONSTRAINT mk_u FOR (u:U) REQUIRE u.k IS UNIQUE", nil)
+					require.NoError(t, err)
+					mergeKey := func(exec *StorageExecutor) <-chan error {
+						done := make(chan error, 1)
+						go func() {
+							_, err := exec.Execute(ctx, "MERGE (u:U {k: 1}) RETURN u.k AS k", nil)
+							done <- err
+						}()
+						return done
+					}
+
+					cmpStore, err := mgr.GetStorage("cmp_mk")
+					require.NoError(t, err)
+					exec := NewStorageExecutor(cmpStore)
+					exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					_, err = exec.Execute(ctx, "CALL { USE cmp_mk.a MERGE (u:U {k: 1}) RETURN u.k AS k } RETURN k", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, failure.statement, nil)
+					require.Error(t, err)
+
+					competitor := NewStorageExecutor(shard)
+					_, err = competitor.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					t.Cleanup(func() { _, _ = competitor.Execute(ctx, "ROLLBACK", nil) })
+					select {
+					case err := <-mergeKey(competitor):
+						require.NoError(t, err)
+					case <-time.After(10 * time.Second):
+						t.Fatal("a MERGE of the failed transaction's key waits for the failed transaction to end")
+					}
+
+					third := mergeKey(NewStorageExecutor(shard))
+					_, err = exec.Execute(ctx, end, nil)
+					if end == "COMMIT" {
+						require.ErrorContains(t, err, "rolled back because a statement in it failed")
+					} else {
+						require.NoError(t, err)
+					}
+					select {
+					case err := <-third:
+						t.Fatalf("ending the failed transaction released the competitor's key (MERGE returned %v)", err)
+					case <-time.After(300 * time.Millisecond):
+					}
+					_, err = competitor.Execute(ctx, "COMMIT", nil)
+					require.NoError(t, err)
+					select {
+					case err := <-third:
+						require.NoError(t, err)
+					case <-time.After(10 * time.Second):
+						t.Fatal("a MERGE of the key waits after its holder committed")
+					}
+
+					res, err := NewStorageExecutor(shard).Execute(ctx, "MATCH (u:U {k: 1}) RETURN count(u) AS c", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
+				})
+			}
+		}
+	}
 }
 
 func TestCompositeExplicitTx_RollbackRevertsWrites(t *testing.T) {
