@@ -694,6 +694,11 @@ func (t *httpCypherTx) Commit(ctx context.Context) error {
 	return err
 }
 
+// OutlivesConnection reports that the server addresses this transaction by
+// its URL, not by a connection: closing a connection doesn't end it, only a
+// rollback, a commit or the server's transaction timeout does.
+func (t *httpCypherTx) OutlivesConnection() bool { return true }
+
 func (t *httpCypherTx) Rollback(ctx context.Context) error {
 	if t.closed {
 		return nil
