@@ -247,6 +247,40 @@ type Engine struct {
 	heimdallQC *HeimdallQC
 }
 
+// engineComponents is a snapshot of the engine's replaceable components. The
+// pointers are owned by e.mu: setters replace them under e.mu, and every
+// operation reads them once through components(), then works with the
+// snapshot without holding e.mu. So no operation mixes two generations of a
+// component, and no component or injected callback runs under e.mu.
+type engineComponents struct {
+	similaritySearch func(ctx context.Context, embedding []float32, k int) ([]SimilarityResult, error)
+	topology         *TopologyIntegration
+	cluster          *ClusterIntegration
+	kalman           *KalmanAdapter
+	heimdallQC       *HeimdallQC
+	cooldown         *CooldownTable
+	evidence         *EvidenceBuffer
+	edgeMeta         *storage.EdgeMetaStore
+	nodeConfig       *storage.NodeConfigStore
+}
+
+// components returns the current component snapshot.
+func (e *Engine) components() engineComponents {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return engineComponents{
+		similaritySearch: e.similaritySearch,
+		topology:         e.topologyIntegration,
+		cluster:          e.clusterIntegration,
+		kalman:           e.kalmanAdapter,
+		heimdallQC:       e.heimdallQC,
+		cooldown:         e.cooldownTable,
+		evidence:         e.evidenceBuffer,
+		edgeMeta:         e.edgeMetaStore,
+		nodeConfig:       e.nodeConfigStore,
+	}
+}
+
 type accessRecord struct {
 	NodeID    string
 	Timestamp time.Time
@@ -330,7 +364,9 @@ func New(config *Config) *Engine {
 	}
 }
 
-// SetSimilaritySearch sets the similarity search function.
+// SetSimilaritySearch sets the similarity search function. The engine calls
+// it without holding its lock, possibly from several goroutines at once, so fn
+// must be safe for concurrent use; it may call back into the engine.
 func (e *Engine) SetSimilaritySearch(fn func(ctx context.Context, embedding []float32, k int) ([]SimilarityResult, error)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -367,9 +403,7 @@ func (e *Engine) SetTopologyIntegration(integration *TopologyIntegration) {
 
 // GetTopologyIntegration returns the current topology integration (or nil).
 func (e *Engine) GetTopologyIntegration() *TopologyIntegration {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.topologyIntegration
+	return e.components().topology
 }
 
 // SetClusterIntegration enables GPU-accelerated k-means clustering for similarity search.
@@ -410,9 +444,7 @@ func (e *Engine) SetClusterIntegration(integration *ClusterIntegration) {
 
 // GetClusterIntegration returns the current cluster integration (or nil).
 func (e *Engine) GetClusterIntegration() *ClusterIntegration {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.clusterIntegration
+	return e.components().cluster
 }
 
 // SetKalmanAdapter configures the Kalman-enhanced inference adapter.
@@ -442,9 +474,7 @@ func (e *Engine) SetKalmanAdapter(adapter *KalmanAdapter) {
 
 // GetKalmanAdapter returns the current Kalman adapter (or nil if not configured).
 func (e *Engine) GetKalmanAdapter() *KalmanAdapter {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.kalmanAdapter
+	return e.components().kalman
 }
 
 // SetHeimdallQC sets the Heimdall SLM quality control for edge validation.
@@ -474,9 +504,7 @@ func (e *Engine) SetHeimdallQC(qc *HeimdallQC) {
 
 // GetHeimdallQC returns the current Heimdall QC (or nil if not configured).
 func (e *Engine) GetHeimdallQC() *HeimdallQC {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.heimdallQC
+	return e.components().heimdallQC
 }
 
 // OnStore is called when a new node is stored in the graph.
@@ -528,9 +556,7 @@ func (e *Engine) GetHeimdallQC() *HeimdallQC {
 //   - 0.5-0.7: Possible, show as "related"
 //   - <0.5: Weak, ignore
 func (e *Engine) OnStore(ctx context.Context, nodeID string, embedding []float32) ([]EdgeSuggestion, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.onStoreBestOfChunksLocked(ctx, nodeID, [][]float32{embedding})
+	return e.onStoreBestOfChunks(ctx, e.components(), nodeID, [][]float32{embedding})
 }
 
 // OnStoreBestOfChunks is called when a new node is stored (or later embedded) and has
@@ -541,12 +567,13 @@ func (e *Engine) OnStore(ctx context.Context, nodeID string, embedding []float32
 // The merged semantic suggestions are then combined with topology integration (if enabled),
 // and optionally sent through Heimdall QC.
 func (e *Engine) OnStoreBestOfChunks(ctx context.Context, nodeID string, embeddings [][]float32) ([]EdgeSuggestion, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.onStoreBestOfChunksLocked(ctx, nodeID, embeddings)
+	return e.onStoreBestOfChunks(ctx, e.components(), nodeID, embeddings)
 }
 
-func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, embeddings [][]float32) ([]EdgeSuggestion, error) {
+// onStoreBestOfChunks computes store-time suggestions from the component
+// snapshot c, without holding e.mu: the injected similarity search, topology
+// and Heimdall run unlocked and may call back into the engine.
+func (e *Engine) onStoreBestOfChunks(ctx context.Context, c engineComponents, nodeID string, embeddings [][]float32) ([]EdgeSuggestion, error) {
 	suggestions := make([]EdgeSuggestion, 0)
 
 	// Choose a representative embedding for downstream consumers (e.g., Heimdall augment pool).
@@ -560,7 +587,7 @@ func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, e
 	}
 
 	// 1. Similarity-based suggestions (semantic) using best-of-chunks.
-	if e.similaritySearch != nil && len(embeddings) > 0 {
+	if c.similaritySearch != nil && len(embeddings) > 0 {
 		topK := e.config.SimilarityTopK
 		if topK <= 0 {
 			topK = 10
@@ -574,7 +601,7 @@ func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, e
 				continue
 			}
 
-			similar, err := e.similaritySearch(ctx, emb, topK)
+			similar, err := c.similaritySearch(ctx, emb, topK)
 			if err != nil {
 				continue
 			}
@@ -625,22 +652,22 @@ func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, e
 	// 2. Topological suggestions (NEW - feature flagged for AUTOMATIC integration)
 	// Note: Cypher procedures (CALL gds.linkPrediction.*) are always available
 	// This flag only controls automatic use in OnStore()
-	if e.topologyIntegration != nil {
+	if c.topology != nil {
 		// Check feature flag via config (automatic integration)
-		topoConfig := e.topologyIntegration.config
+		topoConfig := c.topology.config
 		if topoConfig != nil && topoConfig.Enabled {
-			topoSuggestions, err := e.topologyIntegration.SuggestTopological(ctx, nodeID)
+			topoSuggestions, err := c.topology.SuggestTopological(ctx, nodeID)
 			if err == nil && len(topoSuggestions) > 0 {
 				// Combine semantic and topological suggestions
-				suggestions = e.topologyIntegration.CombinedSuggestions(suggestions, topoSuggestions)
+				suggestions = c.topology.CombinedSuggestions(suggestions, topoSuggestions)
 			}
 		}
 	}
 
 	// 3. Heimdall QC validation (if enabled)
 	// Each suggestion is sent to the SLM for approval before returning
-	if e.heimdallQC != nil && config.IsAutoTLPLLMQCEnabled() {
-		suggestions = e.validateSuggestionsWithHeimdall(ctx, nodeID, repEmbedding, suggestions)
+	if c.heimdallQC != nil && config.IsAutoTLPLLMQCEnabled() {
+		suggestions = e.validateSuggestionsWithHeimdall(ctx, c, nodeID, repEmbedding, suggestions)
 	}
 
 	return suggestions, nil
@@ -648,8 +675,8 @@ func (e *Engine) onStoreBestOfChunksLocked(ctx context.Context, nodeID string, e
 
 // validateSuggestionsWithHeimdall filters suggestions through Heimdall SLM batch review.
 // Returns approved suggestions + any augmented suggestions from Heimdall.
-func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNodeID string, embedding []float32, suggestions []EdgeSuggestion) []EdgeSuggestion {
-	if len(suggestions) == 0 || e.heimdallQC == nil {
+func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, c engineComponents, sourceNodeID string, embedding []float32, suggestions []EdgeSuggestion) []EdgeSuggestion {
+	if len(suggestions) == 0 || c.heimdallQC == nil {
 		return suggestions
 	}
 
@@ -666,11 +693,11 @@ func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNode
 	var candidatePool []NodeSummary
 
 	// Only build candidate pool if augment is enabled and we have similarity search
-	if config.IsAutoTLPLLMAugmentEnabled() && e.similaritySearch != nil && len(embedding) > 0 {
+	if config.IsAutoTLPLLMAugmentEnabled() && c.similaritySearch != nil && len(embedding) > 0 {
 		// Get additional similar nodes beyond what's already in suggestions
 		// Request more than we need to filter out duplicates
 		poolSize := 20 // Request more to account for filtering
-		similar, err := e.similaritySearch(ctx, embedding, poolSize)
+		similar, err := c.similaritySearch(ctx, embedding, poolSize)
 		if err == nil {
 			// Build a set of already-suggested target IDs to avoid duplicates
 			suggestedTargets := make(map[string]bool)
@@ -706,7 +733,7 @@ func (e *Engine) validateSuggestionsWithHeimdall(ctx context.Context, sourceNode
 	}
 
 	// Call Heimdall batch review
-	approved, augmented, err := e.heimdallQC.ReviewBatch(ctx, sourceNode, suggestions, candidatePool)
+	approved, augmented, err := c.heimdallQC.ReviewBatch(ctx, sourceNode, suggestions, candidatePool)
 	if err != nil {
 		// On error, return original suggestions (fail-open)
 		return suggestions
@@ -970,6 +997,7 @@ type ProcessSuggestionResult struct {
 //	    }
 //	}
 func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) ProcessSuggestionResult {
+	c := e.components()
 	ctx := context.Background()
 	result := ProcessSuggestionResult{
 		ShouldMaterialize: true,
@@ -977,8 +1005,8 @@ func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) 
 	}
 
 	// Log provenance for this suggestion (if auto-integration enabled)
-	if config.IsEdgeProvenanceAutoIntegrationEnabled() && e.edgeMetaStore != nil {
-		e.edgeMetaStore.AppendFromSuggestion(
+	if config.IsEdgeProvenanceAutoIntegrationEnabled() && c.edgeMeta != nil {
+		c.edgeMeta.AppendFromSuggestion(
 			ctx,
 			suggestion.SourceID, suggestion.TargetID, suggestion.Type,
 			suggestion.Confidence,
@@ -989,19 +1017,19 @@ func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) 
 	}
 
 	// Check cooldown (if auto-integration enabled)
-	if config.IsCooldownAutoIntegrationEnabled() {
-		if !e.cooldownTable.CanMaterialize(suggestion.SourceID, suggestion.TargetID, suggestion.Type) {
+	if config.IsCooldownAutoIntegrationEnabled() && c.cooldown != nil {
+		if !c.cooldown.CanMaterialize(suggestion.SourceID, suggestion.TargetID, suggestion.Type) {
 			result.ShouldMaterialize = false
 			result.CooldownBlocked = true
-			_, reason := e.cooldownTable.CanMaterializeWithReason(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
+			_, reason := c.cooldown.CanMaterializeWithReason(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
 			result.Reason = "cooldown: " + reason
 			return result
 		}
 	}
 
 	// Check per-node config (if auto-integration enabled)
-	if config.IsPerNodeConfigAutoIntegrationEnabled() && e.nodeConfigStore != nil {
-		allowed, reason := e.nodeConfigStore.IsEdgeAllowedWithReason(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
+	if config.IsPerNodeConfigAutoIntegrationEnabled() && c.nodeConfig != nil {
+		allowed, reason := c.nodeConfig.IsEdgeAllowedWithReason(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
 		if !allowed {
 			result.ShouldMaterialize = false
 			result.NodeConfigBlocked = true
@@ -1011,8 +1039,8 @@ func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) 
 	}
 
 	// Check evidence buffering (if auto-integration enabled)
-	if config.IsEvidenceAutoIntegrationEnabled() {
-		shouldMaterialize := e.evidenceBuffer.AddEvidence(
+	if config.IsEvidenceAutoIntegrationEnabled() && c.evidence != nil {
+		shouldMaterialize := c.evidence.AddEvidence(
 			suggestion.SourceID,
 			suggestion.TargetID,
 			suggestion.Type,
@@ -1024,7 +1052,7 @@ func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) 
 		if !shouldMaterialize {
 			result.ShouldMaterialize = false
 			result.EvidencePending = true
-			_, reason := e.evidenceBuffer.CheckThreshold(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
+			_, reason := c.evidence.CheckThreshold(suggestion.SourceID, suggestion.TargetID, suggestion.Type)
 			result.Reason = "evidence: " + reason
 			return result
 		}
@@ -1077,34 +1105,35 @@ func (e *Engine) ProcessSuggestion(suggestion EdgeSuggestion, sessionID string) 
 // If you forget to call this, it's like never returning the book - the library
 // thinks you still have it and might suggest you borrow it again (duplicate!).
 func (e *Engine) RecordMaterialization(sourceID, targetID, edgeType string) {
+	c := e.components()
 	ctx := context.Background()
 
 	// Update cooldown tracking
-	if config.IsCooldownAutoIntegrationEnabled() {
-		e.cooldownTable.RecordMaterialization(sourceID, targetID, edgeType)
+	if config.IsCooldownAutoIntegrationEnabled() && c.cooldown != nil {
+		c.cooldown.RecordMaterialization(sourceID, targetID, edgeType)
 	}
 
 	// Log materialization in provenance
-	if config.IsEdgeProvenanceAutoIntegrationEnabled() && e.edgeMetaStore != nil {
-		e.edgeMetaStore.MarkMaterialized(ctx, sourceID, targetID, edgeType, "inference-engine")
+	if config.IsEdgeProvenanceAutoIntegrationEnabled() && c.edgeMeta != nil {
+		c.edgeMeta.MarkMaterialized(ctx, sourceID, targetID, edgeType, "inference-engine")
 	}
 
 	// Update per-node edge counts
-	if config.IsPerNodeConfigAutoIntegrationEnabled() && e.nodeConfigStore != nil {
-		e.nodeConfigStore.RecordEdgeCreation(sourceID, targetID)
+	if config.IsPerNodeConfigAutoIntegrationEnabled() && c.nodeConfig != nil {
+		c.nodeConfig.RecordEdgeCreation(sourceID, targetID)
 	}
 }
 
 // GetCooldownTable returns the cooldown table for direct access.
 // The table is always available regardless of auto-integration setting.
 func (e *Engine) GetCooldownTable() *CooldownTable {
-	return e.cooldownTable
+	return e.components().cooldown
 }
 
 // GetEvidenceBuffer returns the evidence buffer for direct access.
 // The buffer is always available regardless of auto-integration setting.
 func (e *Engine) GetEvidenceBuffer() *EvidenceBuffer {
-	return e.evidenceBuffer
+	return e.components().evidence
 }
 
 // SetCooldownTable sets a custom cooldown table.
@@ -1124,7 +1153,7 @@ func (e *Engine) SetEvidenceBuffer(buffer *EvidenceBuffer) {
 // GetEdgeMetaStore returns the edge meta store for direct access.
 // The store is always available regardless of auto-integration setting.
 func (e *Engine) GetEdgeMetaStore() *storage.EdgeMetaStore {
-	return e.edgeMetaStore
+	return e.components().edgeMeta
 }
 
 // SetEdgeMetaStore sets a custom edge meta store.
@@ -1137,7 +1166,7 @@ func (e *Engine) SetEdgeMetaStore(store *storage.EdgeMetaStore) {
 // GetNodeConfigStore returns the node config store for direct access.
 // The store is always available regardless of auto-integration setting.
 func (e *Engine) GetNodeConfigStore() *storage.NodeConfigStore {
-	return e.nodeConfigStore
+	return e.components().nodeConfig
 }
 
 // SetNodeConfigStore sets a custom node config store.
@@ -1151,11 +1180,15 @@ func (e *Engine) SetNodeConfigStore(store *storage.NodeConfigStore) {
 // Should be called periodically (e.g., every 10 minutes).
 // provenanceMaxAge specifies the max age for provenance records (0 = don't cleanup).
 func (e *Engine) CleanupTier1() (cooldownRemoved, evidenceRemoved int) {
-	if e.cooldownTable != nil {
-		cooldownRemoved = e.cooldownTable.Cleanup()
+	return cleanupTier1(e.components())
+}
+
+func cleanupTier1(c engineComponents) (cooldownRemoved, evidenceRemoved int) {
+	if c.cooldown != nil {
+		cooldownRemoved = c.cooldown.Cleanup()
 	}
-	if e.evidenceBuffer != nil {
-		evidenceRemoved = e.evidenceBuffer.Cleanup()
+	if c.evidence != nil {
+		evidenceRemoved = c.evidence.Cleanup()
 	}
 	return
 }
@@ -1163,9 +1196,10 @@ func (e *Engine) CleanupTier1() (cooldownRemoved, evidenceRemoved int) {
 // CleanupTier1WithProvenance runs cleanup including provenance records.
 // provenanceMaxAge specifies the max age for provenance records.
 func (e *Engine) CleanupTier1WithProvenance(provenanceMaxAge time.Duration) (cooldownRemoved, evidenceRemoved, provenanceRemoved int) {
-	cooldownRemoved, evidenceRemoved = e.CleanupTier1()
-	if e.edgeMetaStore != nil && provenanceMaxAge > 0 {
-		provenanceRemoved = e.edgeMetaStore.Cleanup(provenanceMaxAge)
+	c := e.components()
+	cooldownRemoved, evidenceRemoved = cleanupTier1(c)
+	if c.edgeMeta != nil && provenanceMaxAge > 0 {
+		provenanceRemoved = c.edgeMeta.Cleanup(provenanceMaxAge)
 	}
 	return
 }
