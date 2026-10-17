@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local action-format ingestion and staged duplicate checks; configuration is ENV-only."""
+"""Local action-format ingestion and staged duplicate checks; connection credentials use ENV configuration."""
 import argparse
 import json
 import os
@@ -9,11 +9,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 SETUP = ("Set NORNICDB_URI and either NORNICDB_TOKEN or both NORNICDB_USER and "
          "NORNICDB_PASSWORD in the environment of your terminal/IDE. "
-         "See docs/user-guides/graphify-local.md#configuration. No credentials belong in Git.")
+         "See docs/user-guides/graphify-local.md#setup. No credentials belong in Git.")
 CODE_SUFFIXES = set(".go .py .js .jsx .ts .tsx .java .rb .rs .c .h .cpp .cc .hpp .cs .swift .kt .kts .php .scala .sh .bash .zsh .lua .ex .exs .sql .m .mm .vue .svelte".split())
 
 
@@ -46,8 +47,14 @@ def connection():
 
 def identity(root):
     import graphify_local as gi
-    return (os.environ.get("CODE_INTEL_REPO") or gi.repo_from_git(root),
-            os.environ.get("NORNICDB_DATABASE") or gi.DEFAULT_DATABASE)
+    remote = gi.git_output(root, "remote", "get-url", "origin")
+    repo = os.environ.get("CODE_INTEL_REPO") or (gi.repo_from_git(root) if remote else root.name)
+    per_repo = gi.git_output(root, "config", "--get", "codeIntelligence.database")
+    global_mode = gi.git_output(root, "config", "--bool", "--get", "codeIntelligence.databaseFromRepo") == "true"
+    database = per_repo or os.environ.get("NORNICDB_DATABASE") or (repo.rsplit("/", 1)[-1] if global_mode else gi.DEFAULT_DATABASE)
+    if not database.strip() or ":" in database or database.startswith("_"):
+        raise CheckError("Invalid database name; set NORNICDB_DATABASE or git config codeIntelligence.database.")
+    return repo, database
 
 
 def extract(root, output):
@@ -76,13 +83,14 @@ def snapshot(root, tree, directory):
     return source
 
 
-def ingest(root, revision="HEAD", force=False):
+def ingest(root, revision="HEAD", force=False, branch_override=None):
     import graphify_local as gi
     uri, user, password, token = connection()
     repo, database = identity(root)
     commit = git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
-    branch = git(root, "branch", "--show-current")
-    main = os.environ.get("CODE_INTEL_MAIN", gi.DEFAULT_MAIN)
+    branch = branch_override or git(root, "branch", "--show-current")
+    global_mode = gi.git_output(root, "config", "--bool", "--get", "codeIntelligence.databaseFromRepo") == "true"
+    main = os.environ.get("CODE_INTEL_MAIN", gi.git_output(root, "config", "--get", "codeIntelligence.main") or ("" if global_mode else gi.DEFAULT_MAIN))
     cap = int(os.environ.get("CODE_INTEL_MAX_EMBED_CHARS", "0"))
     if cap and cap < gi.MIN_EMBED_CHARS:
         raise CheckError(f"CODE_INTEL_MAX_EMBED_CHARS must be 0 or at least {gi.MIN_EMBED_CHARS}.")
@@ -90,11 +98,12 @@ def ingest(root, revision="HEAD", force=False):
     if state and state.get("commit") == commit and state.get("main_spec") == main and int(state.get("max_embed_chars") or 0) == cap:
         print(f"Code graph is current at {commit[:12]}.")
         return
+    print(f"Updating {repo} at {commit} in database {database}.", flush=True)
     with tempfile.TemporaryDirectory(prefix="nornic-ingest-") as temp:
         directory = Path(temp)
         source = snapshot(root, commit, directory)
         # Preserve source-history times even though the immutable export has no .git directory.
-        for path, mtime in gi.git_file_times(root).items():
+        for path, mtime in gi.git_file_times(root, commit).items():
             target = source / path
             if target.is_file() and not target.is_symlink():
                 os.utime(target, (mtime, mtime))
@@ -120,10 +129,12 @@ def check_staged(root):
         directory = Path(temp)
         source = snapshot(root, staged, directory)
         graph = extract(source, directory / "extract")
-        db = pd.NornicDB(uri, user, password, token, database)
+        deadline_seconds = int(os.environ.get("CODE_INTEL_DEADLINE_SECONDS", "300"))
+        db = pd.NornicDB(uri, user, password, token, database, exhaust=True, repo=repo,
+                         deadline=time.monotonic() + deadline_seconds)
         report = pd.analyze(db, repo, graph, source, diff, head_sha=head, base_sha=head,
-                            options={"max_candidates": sys.maxsize, "min_added_fraction": 0.0,
-                                     "deadline_seconds": int(os.environ.get("CODE_INTEL_DEADLINE_SECONDS", "300"))},
+                            options={"max_candidates": sys.maxsize, "min_added_fraction": 0.0, "max_matches": 0,
+                                     "deadline_seconds": deadline_seconds},
                             ignore=pd.DEFAULT_IGNORE)
         print(pd.render_summary(report, max_findings=sys.maxsize))
         if report.nothing_compared:
@@ -136,18 +147,18 @@ def check_staged(root):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["ingest", "check-staged", "post-update"])
+    parser.add_argument("command", choices=["ingest", "check-staged", "post-update", "main-updated"])
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--revision", default="HEAD", help="immutable commit to ingest")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     root = args.repo_root.resolve()
     try:
-        if args.command == "post-update":
-            if git(root, "branch", "--show-current") != "main":
+        if args.command in ("main-updated", "post-update"):
+            if args.command == "post-update" and git(root, "branch", "--show-current") != "main":
                 return 0
             try:
-                ingest(root)
+                ingest(root, args.revision, branch_override="main")
             except Exception:
                 print("main was updated, but its graph refresh failed. Fix configuration/service availability "
                       "and run scripts/code_intelligence.py ingest. The Git update is not rolled back.", file=sys.stderr)
