@@ -363,6 +363,9 @@ func TestBuiltInProcedureSignatureMetadataDefaults(t *testing.T) {
 		t.Run(signature, func(t *testing.T) {
 			registry := NewProcedureRegistry()
 			replaceProcedureRegistryForTest(t, registry)
+			// A built-in registers only with its reviewed privilege class.
+			builtinProcedureClasses["custom.defaults"] = PrivilegeRead
+			t.Cleanup(func() { delete(builtinProcedureClasses, "custom.defaults") })
 			registerProcedure(ProcedureSpec{Name: "custom.defaults", Signature: signature, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 2}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 				return &ExecuteResult{}, nil
 			})
