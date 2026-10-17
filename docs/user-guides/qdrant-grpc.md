@@ -136,8 +136,11 @@ A Qdrant `Search` runs on the collection database's search index, the same index
 - **`hnsw_ef`:** `params.hnsw_ef` sets the HNSW beam width for that request on HNSW-based strategies. Without it, a search uses
   the configured preset's `efSearch` (50 for `fast`, 100 for `balanced`, 200 for `accurate`, or `NORNICDB_VECTOR_HNSW_EF_SEARCH`), as
   Qdrant does. IVF-PQ, k-means routing and brute force don't search a graph and ignore it.
+- **Exact queries:** `params.exact=true` evaluates the complete indexed population; `Query` and `QueryBatch` preserve `params`, as `Search` and `SearchBatch` do.
+- **Readiness:** lazy indexes warm before the first answer. A failed or incomplete build returns an error rather than a successful partial result.
+- **Collection configuration:** `CreateCollection.hnsw_config` and `quantization_config` are accepted but do not configure per-collection indexes. Configure ANN through NornicDB settings; `GetCollection` reports the configured HNSW preset's M and construction beam. `quantization.rescore` does not disable NornicDB's exact rescoring.
 - **Payload filters:** filters are applied while the search widens, so a selective filter still returns its top matches.
-- **Scores:** Qdrant's raw similarities: cosine and dot as-is, Euclid as `1 / (1 + distance)`.
+- **Scores:** Dot and Euclid use original stored magnitudes, including with file-backed indexes. Qdrant's raw similarities: cosine and dot as-is, Euclid as `1 / (1 + distance)`.
 - **Restart:** points stay searchable across a restart, since the index is rebuilt from the stored vectors.
 - **Vector search disabled:** a database with vector search disabled returns no hits, as it does for Cypher.
 

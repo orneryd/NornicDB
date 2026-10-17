@@ -293,28 +293,7 @@ func TestMetalResidentCandidateSearchIsExact(t *testing.T) {
 	if err != nil {
 		t.Skipf("Metal unavailable: %v", err)
 	}
-	defer accel.Close()
-	rng := rand.New(rand.NewSource(3))
-	const dims = 32
-	data := clusteredUnitVectors(rng, 3000, dims, 30)
-	queries := clusteredUnitVectors(rng, 50, dims, 30)
-	require.NoError(t, accel.Prepare(dims, 1000))
-	require.True(t, accel.ResidentReady())
-	for start := 0; start < len(data); start += 700 {
-		require.NoError(t, accel.AppendInserted(data[start:min(start+700, len(data))]))
-	}
-
-	got, dists, err := accel.CandidateSearchInserted(context.Background(), queries, 20)
-	require.NoError(t, err)
-	want, wantDists, err := exactGraphBuildAccelerator{}.candidateSearch(context.Background(), queries, data, 20, true)
-	require.NoError(t, err)
-	for qi := range queries {
-		require.Len(t, got[qi], 20)
-		for i := range got[qi] {
-			require.InDelta(t, wantDists[qi][i], dists[qi][i], 1e-4, "query %d rank %d", qi, i)
-			require.InDelta(t, wantDists[qi][i], 1-vector.DotProductSIMD(queries[qi], data[got[qi][i]]), 1e-4, "query %d rank %d: id %d (exact %d)", qi, i, got[qi][i], want[qi][i])
-		}
-	}
+	verifyResidentCandidateSearch(t, accel)
 }
 
 // A score row's top k come highest first, equal scores lower index first, as
@@ -352,6 +331,50 @@ func TestMetalCandidateSearchIsExact(t *testing.T) {
 		require.InDeltaSlice(t, wantDists[qi], dists[qi], 1e-4, "query %d", qi)
 		for i, id := range got[qi] {
 			require.InDelta(t, dists[qi][i], 1-vector.DotProductSIMD(queries[qi], frontier[id]), 1e-4)
+		}
+	}
+}
+
+func TestCUDAResidentCandidateSearchIsExact(t *testing.T) {
+	accel, err := NewCudaHNSWBuildAccelerator()
+	if err != nil {
+		t.Skipf("CUDA unavailable: %v", err)
+	}
+	verifyResidentCandidateSearch(t, accel)
+}
+
+func TestVulkanResidentCandidateSearchIsExact(t *testing.T) {
+	accel, err := NewVulkanHNSWBuildAccelerator()
+	if err != nil {
+		t.Skipf("Vulkan unavailable: %v", err)
+	}
+	verifyResidentCandidateSearch(t, accel)
+}
+
+func verifyResidentCandidateSearch(t *testing.T, accel HNSWBuildAccelerator) {
+	t.Helper()
+	defer accel.Close()
+	resident, ok := accel.(HNSWResidentBuildAccelerator)
+	require.True(t, ok, "native accelerator must retain build vectors")
+	rng := rand.New(rand.NewSource(3))
+	const dims = 32
+	data := clusteredUnitVectors(rng, 3000, dims, 30)
+	queries := clusteredUnitVectors(rng, 50, dims, 30)
+	require.NoError(t, accel.Prepare(dims, 1000))
+	require.True(t, resident.ResidentReady())
+	for start := 0; start < len(data); start += 700 {
+		require.NoError(t, resident.AppendInserted(data[start:min(start+700, len(data))]))
+	}
+
+	got, dists, err := resident.CandidateSearchInserted(context.Background(), queries, 20)
+	require.NoError(t, err)
+	want, wantDists, err := exactGraphBuildAccelerator{}.candidateSearch(context.Background(), queries, data, 20, true)
+	require.NoError(t, err)
+	for qi := range queries {
+		require.Len(t, got[qi], 20)
+		for i := range got[qi] {
+			require.InDelta(t, wantDists[qi][i], dists[qi][i], 1e-4, "query %d rank %d", qi, i)
+			require.InDelta(t, wantDists[qi][i], 1-vector.DotProductSIMD(queries[qi], data[got[qi][i]]), 1e-4, "query %d rank %d: id %d (exact %d)", qi, i, got[qi][i], want[qi][i])
 		}
 	}
 }

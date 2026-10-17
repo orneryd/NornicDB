@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -80,4 +81,36 @@ func TestBuildIndexesUnfixedDimensionsFollowFirstStoredVector(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, 2, svc.VectorIndexDimensions())
 	require.Equal(t, 1, svc.EmbeddingCount(), "the stored 2-dimension vector is indexed")
+}
+
+func TestFixedDimensionsRejectExplicitEmbeddingsBeforeMutation(t *testing.T) {
+	svc := NewServiceWithDimensions(newNamespacedEngine(t), 4)
+	svc.FixVectorDimensions()
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "point", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}))
+	for _, node := range []*storage.Node{
+		{ID: "point", NamedEmbeddings: map[string][]float32{"default": {1, 0}}},
+		{ID: "point", ChunkEmbeddings: [][]float32{{1, 0}}},
+	} {
+		require.ErrorIs(t, svc.IndexNode(node), ErrDimensionMismatch)
+		require.Equal(t, 1, svc.EmbeddingCount())
+	}
+}
+
+func TestAdoptingCollectionDimensionsUpdatesClusterBackend(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
+	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+	svc := NewServiceWithDimensions(newNamespacedEngine(t), 1024)
+	svc.EnableClustering(nil, 2)
+	svc.SetMinEmbeddingsForClustering(10)
+	for i := 0; i < 20; i++ {
+		indexTestNode(t, svc, fmt.Sprintf("point-%d", i), []float32{float32(i + 1), 1, 0, 0})
+	}
+	require.Equal(t, 4, svc.VectorIndexDimensions())
+	require.Equal(t, 4, svc.clusterIndex.Dimensions())
+	require.Equal(t, 20, svc.clusterIndex.Count())
+	require.NoError(t, svc.TriggerClustering(context.Background()))
+	require.NotZero(t, svc.ClusterStats().NumClusters)
+	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
+	require.NoError(t, err)
+	require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
 }

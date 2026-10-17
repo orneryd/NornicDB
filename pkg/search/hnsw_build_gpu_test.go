@@ -452,3 +452,38 @@ func readVectorStoreMetaDimensions(path string) (int, error) {
 	}
 	return meta.Dimensions, nil
 }
+
+type depthRecordingBuildAccelerator struct {
+	*CPUHNSWBuildAccelerator
+	depth int
+}
+
+func (a *depthRecordingBuildAccelerator) CandidateSearch(ctx context.Context, queries, frontier [][]float32, topK int) ([][]int, [][]float32, error) {
+	a.depth = max(a.depth, topK)
+	return a.CPUHNSWBuildAccelerator.CandidateSearch(ctx, queries, frontier, topK)
+}
+
+func TestGPUBuildCandidateDepthReachesConstruction(t *testing.T) {
+	for _, requested := range []int{32, 220} {
+		config := DefaultHNSWConfig()
+		config.EfConstruction = 100
+		config.GPUBuildCandidateK = requested
+		config.GPUBuildBatchSize = 4
+		accel := &depthRecordingBuildAccelerator{CPUHNSWBuildAccelerator: NewCPUHNSWBuildAccelerator()}
+		pairs := deterministicHNSWBuildPairs(16, 4)
+		_, stats, err := buildHNSWWithOptionalGPU(context.Background(), 4, config, nil, len(pairs), hnswPairSliceIterator(pairs), accel)
+		require.NoError(t, err)
+		require.False(t, stats.Fallback)
+		require.Equal(t, max(requested, 100), accel.depth)
+	}
+}
+
+func TestCPUBackendDisablesHNSWGPUConstruction(t *testing.T) {
+	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "true")
+	require.False(t, HNSWConfigFromEnv().UseGPUBuild)
+	accel, err := newBestHNSWBuildAccelerator()
+	require.NoError(t, err)
+	defer accel.Close()
+	require.IsType(t, &CPUHNSWBuildAccelerator{}, accel)
+}
