@@ -115,3 +115,31 @@ func TestDynamicGlobalPoolReportsTheEnforcedLimit(t *testing.T) {
 	}
 	require.Equal(t, strconv.FormatInt(transactionMemory.global.limit.Load(), 10), reported())
 }
+
+// dbms.setConfigValue with an empty value resets a dynamic setting to its
+// default, as in Neo4j: the global pool returns to the limit the process
+// was configured with, and SHOW SETTINGS no longer reports a value set at
+// runtime (#1343).
+func TestSetConfigValueEmptyResetsToTheConfiguredValue(t *testing.T) {
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(8<<20, TransactionMemoryLimits{})
+	ctx := context.Background()
+	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+
+	_, err := executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '2m')", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(ctx, heavyCollectQuery, nil)
+	requireMemoryError(t, err, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", "dbms.memory.transaction.total.max")
+	requirePoolsEmpty(t, "nornic")
+
+	for _, empty := range []string{"''", "' '"} {
+		_, err = executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', "+empty+")", nil)
+		require.NoError(t, err, "an empty value resets the setting")
+		require.Equal(t, int64(8<<20), transactionMemory.global.limit.Load())
+		_, live := liveProcessSetting(globalTransactionMemorySetting)
+		require.False(t, live, "a reset setting reports its configured value")
+		result, err := executor.Execute(ctx, heavyCollectQuery, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(200000), result.Rows[0][0])
+	}
+}

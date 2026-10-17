@@ -92,8 +92,12 @@ type transactionMemoryRegistry struct {
 	mu        sync.RWMutex
 	defaults  TransactionMemoryLimits
 	databases map[string]*databaseMemory
+
+	// configuredGlobal is the global limit the process was configured with
+	// (ConfigureTransactionMemory), which dbms.setConfigValue resets to;
 	// globalSet is set once dbms.setConfigValue set the global limit.
-	globalSet bool
+	configuredGlobal int64
+	globalSet        bool
 }
 
 var transactionMemory = &transactionMemoryRegistry{
@@ -123,7 +127,8 @@ func ConfigureTransactionMemory(global int64, defaults TransactionMemoryLimits) 
 	r := transactionMemory
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.global.limit.Store(nonNegativeBytes(global))
+	r.configuredGlobal = nonNegativeBytes(global)
+	r.global.limit.Store(r.configuredGlobal)
 	r.defaults = TransactionMemoryLimits{TransactionMax: nonNegativeBytes(defaults.TransactionMax), DatabaseTotalMax: nonNegativeBytes(defaults.DatabaseTotalMax)}
 	for _, database := range r.databases {
 		if !database.explicit {
@@ -785,6 +790,18 @@ func SetGlobalTransactionMemoryLimit(limit int64) {
 	defer r.mu.Unlock()
 	r.global.limit.Store(nonNegativeBytes(limit))
 	r.globalSet = true
+	r.updateActiveLocked()
+}
+
+// ResetGlobalTransactionMemoryLimit returns dbms.memory.transaction.total.max
+// to the limit the process was configured with (dbms.setConfigValue with an
+// empty value), with the same rule for running statements as a change.
+func ResetGlobalTransactionMemoryLimit() {
+	r := transactionMemory
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.global.limit.Store(r.configuredGlobal)
+	r.globalSet = false
 	r.updateActiveLocked()
 }
 

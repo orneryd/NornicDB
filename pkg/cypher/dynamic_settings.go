@@ -15,12 +15,15 @@ import (
 // the per-database config API instead.
 
 // processSetting is a dynamic process setting: apply gives it a new value,
-// in force once apply returns; live is the value in force once
-// dbms.setConfigValue set it, read from where it is enforced, so SHOW
-// SETTINGS and dbms.listConfig report what is enforced, whichever change
-// came last.
+// in force once apply returns; reset returns it to the value the process
+// was configured with (dbms.setConfigValue with an empty value, as in
+// Neo4j); live is the value in force once dbms.setConfigValue set it, read
+// from where it is enforced, so SHOW SETTINGS and dbms.listConfig report
+// what is enforced, whichever change came last. Every setting has all
+// three.
 type processSetting struct {
 	apply func(value string) error
+	reset func()
 	live  func() (string, bool)
 }
 
@@ -34,6 +37,7 @@ var processSettings = map[string]processSetting{
 			SetGlobalTransactionMemoryLimit(limit)
 			return nil
 		},
+		reset: ResetGlobalTransactionMemoryLimit,
 		live: func() (string, bool) {
 			limit, set := liveGlobalTransactionMemoryLimit()
 			return strconv.FormatInt(limit, 10), set
@@ -99,7 +103,10 @@ func (e *StorageExecutor) callDbmsSetConfigValue(_ context.Context, arguments []
 	if !definition.Dynamic || !applicable {
 		return nil, failed(localization.CypherSettingsSettingNotDynamic(definition.Name))
 	}
-	if err := setting.apply(strings.TrimSpace(value)); err != nil {
+	// An empty value resets the setting, before any value is parsed.
+	if value = strings.TrimSpace(value); value == "" {
+		setting.reset()
+	} else if err := setting.apply(value); err != nil {
 		return nil, failed(localization.CypherSettingsInvalidSettingValue(definition.Name, value, err))
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
