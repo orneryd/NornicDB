@@ -16,16 +16,68 @@ type RemoteFragmentExecutor struct {
 	// engineCache caches RemoteEngine instances by URI+database key to avoid
 	// reconnecting on every fragment execution.
 	engineCache map[string]*storage.RemoteEngine
-	txHandles   map[string]storage.RemoteCypherTx
+	txHandles   map[string]*remoteParticipant
 	mu          sync.RWMutex
+}
+
+// remoteParticipant is a remote sub-transaction, which ends once: after
+// RollbackParticipants rolled it back early, the transaction's COMMIT,
+// ROLLBACK and Close report that outcome instead of ending it again.
+type remoteParticipant struct {
+	tx        storage.RemoteCypherTx
+	mu        sync.Mutex
+	ended     bool
+	committed bool
+	err       error // the outcome of the end that ran
+}
+
+func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch {
+	case !p.ended:
+		p.ended, p.committed = true, commit
+		if commit {
+			p.err = p.tx.Commit(ctx)
+		} else {
+			p.err = p.tx.Rollback(ctx)
+		}
+		return p.err
+	case commit && !p.committed:
+		return fmt.Errorf("remote sub-transaction was rolled back")
+	default:
+		return p.err
+	}
 }
 
 // NewRemoteFragmentExecutor creates a remote executor.
 func NewRemoteFragmentExecutor() *RemoteFragmentExecutor {
 	return &RemoteFragmentExecutor{
 		engineCache: make(map[string]*storage.RemoteEngine),
-		txHandles:   make(map[string]storage.RemoteCypherTx),
+		txHandles:   make(map[string]*remoteParticipant),
 	}
+}
+
+// RollbackParticipants rolls back every remote sub-transaction now, for a
+// transaction that failed and can no longer commit: each remote server
+// releases what its sub-transaction holds (MERGE key locks) instead of
+// keeping it until the client ends the transaction. A rollback error is
+// recorded on its participant, which reports it when the transaction ends;
+// the first one is returned.
+func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error {
+	r.mu.RLock()
+	participants := make([]*remoteParticipant, 0, len(r.txHandles))
+	for _, participant := range r.txHandles {
+		participants = append(participants, participant)
+	}
+	r.mu.RUnlock()
+	var first error
+	for _, participant := range participants {
+		if err := participant.end(ctx, false); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // Execute runs a Cypher query against a remote NornicDB instance.
@@ -72,7 +124,7 @@ func (r *RemoteFragmentExecutor) Close() error {
 
 	var lastErr error
 	for key, handle := range r.txHandles {
-		if err := handle.Rollback(context.Background()); err != nil {
+		if err := handle.end(context.Background(), false); err != nil {
 			lastErr = fmt.Errorf("failed to rollback remote tx handle '%s': %w", key, err)
 		}
 		delete(r.txHandles, key)
@@ -182,10 +234,10 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	if err != nil {
 		return nil, nil, err
 	}
-	return handle.QueryCypher(ctx, query, params)
+	return handle.tx.QueryCypher(ctx, query, params)
 }
 
-func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (storage.RemoteCypherTx, error) {
+func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (*remoteParticipant, error) {
 	r.mu.RLock()
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
 		r.mu.RUnlock()
@@ -198,19 +250,20 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
 		return handle, nil
 	}
-	handle, err := engine.BeginCypherTx(ctx)
+	tx, err := engine.BeginCypherTx(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tx, ok := FabricTransactionFromContext(ctx)
-	if !ok || tx == nil {
-		_ = handle.Rollback(ctx)
+	handle := &remoteParticipant{tx: tx}
+	fabricTx, ok := FabricTransactionFromContext(ctx)
+	if !ok || fabricTx == nil {
+		_ = handle.end(ctx, false)
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
-	commitFn := func(_ *SubTransaction) error { return handle.Commit(ctx) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.Rollback(ctx) }
-	if err := tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
-		_ = handle.Rollback(ctx)
+	commitFn := func(_ *SubTransaction) error { return handle.end(ctx, true) }
+	rollbackFn := func(_ *SubTransaction) error { return handle.end(ctx, false) }
+	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
+		_ = handle.end(ctx, false)
 		return nil, err
 	}
 	r.txHandles[sub.ShardName] = handle
