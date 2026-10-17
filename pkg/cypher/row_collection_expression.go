@@ -24,9 +24,11 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	for name, value := range values {
 		scope[name] = value
 	}
+	plan := form.appendPlan()
 	return rowReduceLoop(form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
-		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
+		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) },
+		func(index int) (interface{}, bool, error) { return evaluate(plan.terms[index], scope) })
 }
 
 func rowTopLevelPipeIndex(expression string) int {
