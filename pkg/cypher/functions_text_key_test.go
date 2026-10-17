@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,10 +284,14 @@ func TestTextKeyAllocations(t *testing.T) {
 	_ = sink
 }
 
-// textKeyOracleDir holds the oracle's files: text-key-curated.json and
-// text-key-codepoints.json.gz, vectors {"in": …, "out": …} (each a string or
-// null) as one JSON array or one after another, and versions.json, the
-// versions they were produced with. NORNICDB_TEXT_KEY_ORACLE_DIR names
+// textKeyOracleDir holds an external oracle's vectors, keys the same steps
+// written in Cypher gave on NornicDB (the default parser, develop 1b436931)
+// with a digit map from Python's unicodedata: text-key-curated.json and
+// text-key-codepoints.json.gz (every scalar value), vectors {"in": …,
+// "out": …} (each a string or null) as one JSON array or one after another;
+// versions.json, the versions and the statement they were produced with;
+// SHA256SUMS, their digests. The code point file (5.6 MB) isn't committed:
+// put it there, untracked, to run it. NORNICDB_TEXT_KEY_ORACLE_DIR names
 // another directory.
 func textKeyOracleDir() string {
 	if dir := os.Getenv("NORNICDB_TEXT_KEY_ORACLE_DIR"); dir != "" {
@@ -360,6 +366,7 @@ func TestTextKeyOracleVectors(t *testing.T) {
 	}
 	t.Logf("NornicDB's tables: unicode %s (%d decimal digits beyond ASCII), x/text norm %s, x/text cases %s",
 		unicode.Version, len(referenceDigits()), norm.Version, cases.UnicodeVersion)
+	checkTextKeyOracleSums(t, dir)
 	found := false
 	for _, name := range textKeyOracleFiles {
 		vectors, ok := readTextKeyVectors(t, filepath.Join(dir, name))
@@ -376,20 +383,39 @@ func TestTextKeyOracleVectors(t *testing.T) {
 	}
 }
 
-// checkTextKeyVectors checks that each vector's out is its in's key, a null
-// in through a statement. A mismatch only in digits, where the oracle's
+// checkTextKeyOracleSums checks each oracle file that is there against its
+// digest in SHA256SUMS, when that is there.
+func checkTextKeyOracleSums(t *testing.T, dir string) {
+	sums, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	require.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(sums)), "\n") {
+		fields := strings.Fields(line)
+		require.Len(t, fields, 2, "SHA256SUMS line %q", line)
+		name := strings.TrimPrefix(fields[1], "*")
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err)
+		digest := sha256.Sum256(data)
+		require.Equal(t, fields[0], hex.EncodeToString(digest[:]), "%s's SHA-256", name)
+	}
+}
+
+// checkTextKeyVectors checks that each vector's out is its in's key. A null
+// in is skipped: the key of null is null (TestTextKeyFunction), where the
+// oracle's Cypher gives ''. A mismatch only in digits, where the oracle's
 // digit table and Go's unicode.Nd read a code point differently, is counted
 // apart too.
 func checkTextKeyVectors(t *testing.T, vectors []textKeyVector) {
 	require.NotEmpty(t, vectors)
-	mismatches, digitMismatches := 0, 0
+	mismatches, digitMismatches, nulls := 0, 0, 0
 	for _, vector := range vectors {
 		if vector.In == nil {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "textkeyoracle"))
-			result, err := exec.Execute(context.Background(), "RETURN nornicdb.text.key($text) AS key", map[string]interface{}{"text": nil})
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{nil}}, result.Rows)
-			require.Nil(t, vector.Out, "the oracle's key of null")
+			nulls++
 			continue
 		}
 		got := textKey(*vector.In)
@@ -408,7 +434,7 @@ func checkTextKeyVectors(t *testing.T, vectors []textKeyVector) {
 			t.Errorf("textKey(%+q) (%s) = %+q, oracle %s", *vector.In, textKeyCodePoints(*vector.In), got, want)
 		}
 	}
-	t.Logf("%d vectors: %d mismatches, %d of them only in digits", len(vectors), mismatches, digitMismatches)
+	t.Logf("%d vectors (%d with a null input, skipped): %d mismatches, %d of them only in digits", len(vectors), nulls, mismatches, digitMismatches)
 	require.Zero(t, mismatches)
 }
 

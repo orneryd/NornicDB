@@ -1,0 +1,7 @@
+{
+ "python": "3.13.15 (main, Sep 19 2026, 01:05:56) [GCC 12.2.0]",
+ "unidata_version": "15.1.0",
+ "digits": 670,
+ "engine": "1b436931bfd424e6a3288588badfde6fdbff3d9e",
+ "statement": "UNWIND $inputs AS s RETURN s AS input, trim(string.regexReplace(apoc.text.join([fold_char IN split(normalize(replace(replace(toLower(normalize(s, NFKC)), '\u00df', 'ss'), '\u03c2', '\u03c3'), NFKC), '') | coalesce($digits[fold_char], fold_char)], ''), '[\\\\s\\\\x{0b}\\\\x{1c}-\\\\x{1f}\\\\x{85}\\\\p{Z}]+', ' ')) AS output"
+}
