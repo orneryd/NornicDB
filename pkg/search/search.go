@@ -2278,25 +2278,27 @@ func (s *Service) schedulePersist() {
 // persistBaseIndexes writes BM25 + vector store only (no HNSW/IVF-HNSW).
 // Used after BuildIndexes iteration to make base indexes durable before HNSW/k-means.
 func (s *Service) persistBaseIndexes() error {
-	_, err := s.persistBaseIndexesCheckpoint()
-	return err
+	return s.persistBaseIndexesAndPark(false)
 }
 
-// persistBaseIndexesCheckpoint is persistBaseIndexes reporting the BM25
-// checkpoint it wrote: the path saved by this call, or "" when BM25 was
-// skipped, not configured or not saved.
-func (s *Service) persistBaseIndexesCheckpoint() (string, error) {
+// persistBaseIndexesAndPark is persistBaseIndexes that, when park is set,
+// parks BM25 at the checkpoint it wrote. Parking happens under persistRunMu,
+// so no BM25 writer runs between the save and the park, and only when the
+// whole persist succeeded and the index still matches the saved snapshot. An
+// index never written, a skipped or failed save, or a change after the save
+// leaves no current checkpoint, so BM25 stays resident.
+func (s *Service) persistBaseIndexesAndPark(park bool) error {
 	if !s.nodePopulationForPersist(context.Background()) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
-		return "", nil
+		return nil
 	}
 	if !s.persistEnabled.Load() {
-		return "", nil
+		return nil
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
 	if !s.persistEnabled.Load() {
-		return "", nil
+		return nil
 	}
 	s.mu.RLock()
 	ftPath := s.fulltextIndexPath
@@ -2305,23 +2307,16 @@ func (s *Service) persistBaseIndexesCheckpoint() (string, error) {
 	vfs := s.vectorFileStore
 	s.mu.RUnlock()
 	if ftPath == "" && vPath == "" && hnswPath == "" {
-		return "", nil
+		return nil
 	}
 	var persistErr error
-	fulltextCheckpoint := ""
+	fulltextSaved := false
 	if ftPath != "" {
-		if !s.fulltext().IsDirty() {
-			s.logPrintf("📇 Persist: BM25 skip (unchanged)")
-		} else {
-			s.logPrintf("📇 Persist: saving BM25 to %s...", ftPath)
-			if err := s.fulltext().SaveNoCopy(ftPath); err != nil {
-				s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", ftPath, err)
-				persistErr = errors.Join(persistErr, fmt.Errorf("save BM25 index: %w", err))
-			} else {
-				fulltextCheckpoint = ftPath
-				s.logPrintf("📇 Background persist: BM25 index saved to %s", ftPath)
-			}
+		saved, err := s.persistFulltext(ftPath, true)
+		if err != nil {
+			persistErr = errors.Join(persistErr, fmt.Errorf("save BM25 index: %w", err))
 		}
+		fulltextSaved = saved
 	}
 	if vPath != "" {
 		if vfs != nil {
@@ -2349,7 +2344,60 @@ func (s *Service) persistBaseIndexesCheckpoint() (string, error) {
 		}
 	}
 	s.persistSearchBuildSettings(ftPath, vPath, hnswPath)
-	return fulltextCheckpoint, persistErr
+	if persistErr == nil && park && fulltextSaved {
+		s.parkFulltext(ftPath)
+	}
+	return persistErr
+}
+
+// persistFulltext is the one BM25 writer for every persist entry point. Caller
+// holds persistRunMu. A parked placeholder is never serialized: while BM25 is
+// parked its checkpoint is the text source and is kept as it is.
+func (s *Service) persistFulltext(path string, noCopy bool) (saved bool, err error) {
+	s.indexMu.RLock()
+	parked := s.nodeSources.fulltextCheckpoint != ""
+	s.indexMu.RUnlock()
+	if parked {
+		s.logPrintf("📇 Persist: BM25 is parked; keeping its checkpoint")
+		return false, nil
+	}
+	if !s.fulltext().IsDirty() {
+		s.logPrintf("📇 Persist: BM25 skip (unchanged)")
+		// The saved snapshot is still the index; record the storage it
+		// matches now, so a restart does not rebuild it needlessly.
+		if _, err := security.RootedStat(path); err == nil {
+			s.recordFulltextCheckpoint(path)
+		}
+		return false, nil
+	}
+	s.logPrintf("📇 Persist: saving BM25 to %s...", path)
+	save := s.fulltext().Save
+	if noCopy {
+		save = s.fulltext().SaveNoCopy
+	}
+	if err := save(path); err != nil {
+		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", path, err)
+		return false, err
+	}
+	s.recordFulltextCheckpoint(path)
+	s.logPrintf("📇 Background persist: BM25 index saved to %s", path)
+	return true, nil
+}
+
+// parkFulltext clears resident BM25 through the warmup, recording the
+// checkpoint at path as the text source. Caller holds persistRunMu and has
+// just saved path; an index changed since then stays resident.
+func (s *Service) parkFulltext(path string) {
+	s.indexMu.Lock()
+	parked := !s.fulltext().IsDirty()
+	if parked {
+		s.setNodeFulltextCheckpointLocked(path, s.fulltext().Count())
+		s.fulltext().Clear()
+	}
+	s.indexMu.Unlock()
+	if parked {
+		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
+	}
 }
 
 func (s *Service) runPersist() {
@@ -2442,16 +2490,8 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 	if fulltextPath == "" || s.buildInProgress.Load() {
 		return
 	}
-	if !s.fulltext().IsDirty() {
-		s.logPrintf("📇 Background persist: BM25 skip (unchanged)")
-		return
-	}
-	s.logPrintf("📇 Persist: saving BM25 to %s...", fulltextPath)
-	if err := s.fulltext().Save(fulltextPath); err != nil {
-		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", fulltextPath, err)
-		return
-	}
-	s.logPrintf("📇 Background persist: BM25 index saved to %s", fulltextPath)
+	// runPersistWithContext holds persistRunMu.
+	_, _ = s.persistFulltext(fulltextPath, false)
 }
 
 func (s *Service) persistVectorStoreBackground(vectorPath string, vfs *VectorFileStore) {
@@ -3891,11 +3931,26 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 // runBasePopulationOperation owns the existing base lifetime and NODE phase.
 // Caller holds buildMu. Live first mutation stops at NODE completion.
-func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
-	defer func() { s.finishNodeAdmission(job, resultErr) }()
+//
+// It also owns the parked-BM25 lifetime: every attempt restores parked BM25
+// on exit. When the checkpoint cannot be reloaded it is retired, and this
+// operation rebuilds BM25 from storage at once with one more attempt under the
+// same buildMu, a new NODE admission and readiness still false, so no search
+// answers from the partial index meanwhile.
+func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	err := s.runBasePopulationAttempt(ctx, job, explicit)
+	if !errors.Is(err, errFulltextCheckpointRetired) || ctx.Err() != nil {
+		return err
+	}
+	s.logPrintf("📇 BuildIndexes: BM25 checkpoint was not restored (%v); rebuilding BM25 from storage", err)
+	return s.runBasePopulationAttempt(ctx, s.claimNodeAdmission(), explicit)
+}
+
+func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
+	defer func() { s.finishNodeAdmission(job, resultErr) }()
 	// Base loading and its persisted graph install share service lifetime.
 	ctx, releaseBuild, buildErr := s.ownBaseBuildContext(ctx)
 	if buildErr != nil {
@@ -3907,6 +3962,15 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	}
 	if explicit {
 		s.buildAttempted.Store(true)
+	}
+	// A checkpoint parked by an earlier attempt that could not restore it is
+	// restored now; a retired one leaves the text source incomplete, so this
+	// population rebuilds BM25 from storage.
+	s.indexMu.Lock()
+	reloadErr := s.materializeNodeFulltextLocked()
+	s.indexMu.Unlock()
+	if reloadErr != nil && !errors.Is(reloadErr, errFulltextCheckpointRetired) {
+		return reloadErr
 	}
 	// Per-DB master switches: when both indexes are disabled, mark ready
 	// (search handler returns 503 search_disabled_for_database upstream)
@@ -3922,12 +3986,6 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		s.setBuildPhase("ready")
 		s.ready.Store(true)
 		return nil
-	}
-	s.indexMu.Lock()
-	reloadErr := s.materializeNodeFulltextLocked()
-	s.indexMu.Unlock()
-	if reloadErr != nil {
-		return reloadErr
 	}
 	// Prevent a new snapshot while the base vector store is being replaced.
 	s.hnswVectorsChanging.Store(true)
@@ -3946,6 +4004,18 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		s.indexChanged()
 		if !s.ready.Load() {
 			s.setBuildPhase("idle")
+		}
+	}()
+	// Every exit, including cancellation in any phase, restores BM25 parked
+	// by this attempt before the build ends; the success path already did.
+	// It runs before buildInProgress clears, so no persist sees the parked
+	// placeholder as the index. After Close the checkpoint stays parked.
+	defer func() {
+		s.indexMu.Lock()
+		exitErr := s.materializeNodeFulltextLocked()
+		s.indexMu.Unlock()
+		if exitErr != nil && resultErr == nil {
+			resultErr = exitErr
 		}
 	}()
 
@@ -4055,6 +4125,15 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	forceHNSWRebuild = forceHNSWRebuild || unpopulatedWrites
 	if fulltextPath != "" && !textComplete && !unpopulatedWrites && !s.fulltext().IsDirty() {
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
+		if loadErr == nil && accepted && !s.fulltextCheckpointMatchesStorage(fulltextPath) {
+			// A snapshot that is not the one recorded, or was taken before
+			// storage changed (e.g. Close while BM25 was parked), is rebuilt.
+			s.logPrintf("📇 BuildIndexes: BM25 checkpoint does not match storage (%s); rebuilding from storage", fulltextPath)
+			s.indexMu.Lock()
+			s.fulltext().Clear()
+			s.indexMu.Unlock()
+			accepted = false
+		}
 		if loadErr == nil && accepted {
 			s.indexMu.Lock()
 			s.changeNodeSourcesLocked(nodeTextRestored)
