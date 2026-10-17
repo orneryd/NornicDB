@@ -916,7 +916,10 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 		for i := range batch {
 			queries[i] = batch[i].vec
 			if batch[i].hasHint {
-				built.setBuildLexicalHint(batch[i].hint)
+				// BM25 metadata keeps the document ID; the graph cache owns embedding IDs.
+				hint := batch[i].hint
+				hint.ID = batch[i].id
+				built.setBuildLexicalHint(hint)
 			}
 		}
 

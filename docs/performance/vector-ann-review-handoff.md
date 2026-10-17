@@ -89,8 +89,10 @@ approximation and higher probe counts must still be measured.
 
 Lexical regression fixtures also found a shared identity mismatch. BM25 owns
 node IDs while named, property and later-chunk vectors have embedding IDs.
-Construction iterators now prioritize and bind their existing hints consistently,
-and clustering/PQ seed selection resolves the same document metadata. This is
+The shared construction boundary now binds cached hints to embedding IDs while
+iterators retain their parent-document metadata and document-anchor ordering.
+Clustering/PQ seed selection resolves the same indexed document metadata,
+preserving a directly indexed document anchor when one exists. This is
 shared preparation for CPU, Metal, CUDA and Vulkan, not a new ranking formula.
 A public hybrid-search regression proves that an exact fallback for a small
 cluster retains lexical selection and contributes the selected results to the
