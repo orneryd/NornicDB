@@ -13,25 +13,47 @@ import (
 
 type clusterHNSWLookup func(clusterID int) *HNSWIndex
 
-// clusterServing is where a clustered candidate generator reads the cluster
-// generation a query uses: resolve returns its routing index and probe
-// count, called with lock held (the lock publication takes exclusively), so
-// a query routes on one published generation and never on a copy a
-// pipeline took earlier.
-type clusterServing struct {
-	lock    sync.Locker
-	resolve func() (*gpu.ClusterIndex, int)
+// clusterView is the cluster generation one call routes on: its routing
+// (centroids and membership), its population, the clusters a query probes
+// and its graphs.
+type clusterView struct {
+	routing *gpu.Clustering
+	index   *gpu.ClusterIndex
+	probes  int
+	graph   clusterHNSWLookup
 }
 
-// route returns the routing index and probe count for one query, starting
-// from the generator's own; the caller releases with the returned func.
-func (c *clusterServing) route(index *gpu.ClusterIndex, probes int) (*gpu.ClusterIndex, int, func()) {
+// clusterServing is where a clustered candidate generator reads the cluster
+// generation a call uses: view returns the one the query took at its start
+// (and the call's hold on it, ended by done), so every call of a query,
+// adaptive overfetch rounds included, routes on that generation and never on
+// a copy a pipeline took earlier. The selector reads the generation's
+// lexical profiles with lock held (the lock publication takes exclusively).
+type clusterServing struct {
+	lock sync.Locker
+	view func(ctx context.Context) (context.Context, clusterView, func())
+}
+
+// open returns the view for one call, starting from the generator's own
+// when no serving source is set. unlock ends the routing section; done the
+// call's hold on the generation.
+func (c *clusterServing) open(ctx context.Context, own clusterView) (context.Context, clusterView, func(), func()) {
 	if c == nil {
-		return index, probes, func() {}
+		return ctx, own, func() {}, func() {}
 	}
+	ctx, view, done := c.view(ctx)
 	c.lock.Lock()
-	index, probes = c.resolve()
-	return index, probes, c.lock.Unlock
+	return ctx, view, c.lock.Unlock, done
+}
+
+// ownClusterView is a generator's view without a serving source: the
+// index's published routing.
+func ownClusterView(index *gpu.ClusterIndex, probes int, graph clusterHNSWLookup) clusterView {
+	view := clusterView{index: index, probes: probes, graph: graph}
+	if index != nil {
+		view.routing = index.PublishedClustering()
+	}
+	return view
 }
 
 // IVFHNSWCandidateGen implements IVF-HNSW: centroid routing (IVF) into per-cluster HNSW indexes.
@@ -68,12 +90,11 @@ func (g *IVFHNSWCandidateGen) SetClusterSelector(fn func(ctx context.Context, qu
 	return g
 }
 
-// SetServing makes the generator read the published cluster generation per
-// query: resolve (called with lock held, the lock publication takes
-// exclusively) returns its routing index and probe count; the graph lookup
-// and selector are then called with lock held and must not lock it.
-func (g *IVFHNSWCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.ClusterIndex, int)) *IVFHNSWCandidateGen {
-	g.serving = &clusterServing{lock: lock, resolve: resolve}
+// SetServing makes the generator serve each query from the cluster
+// generation the query holds (see clusterServing); the selector is then
+// called with lock held and must not lock it.
+func (g *IVFHNSWCandidateGen) SetServing(lock sync.Locker, view func(context.Context) (context.Context, clusterView, func())) *IVFHNSWCandidateGen {
+	g.serving = &clusterServing{lock: lock, view: view}
 	return g
 }
 
@@ -81,7 +102,10 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	indexes, err := g.routedGraphs(ctx, query)
+	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
+	defer done()
+	indexes, err := g.routedGraphs(ctx, query, view)
+	unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -151,32 +175,30 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	return out, nil
 }
 
-// routedGraphs routes query and snapshots the routed clusters' graphs from one
-// cluster generation. Missing graphs are incomplete ANN state, not permission
-// to scan the entire routed population.
-func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32) ([]*HNSWIndex, error) {
-	clusterIndex, probes, release := g.serving.route(g.clusterIndex, g.numClustersToSearch)
-	defer release()
-	if clusterIndex == nil || !clusterIndex.IsClustered() {
+// routedGraphs routes query on view's generation and takes the routed
+// clusters' graphs from the same generation. Missing graphs are incomplete
+// ANN state, not permission to scan the entire routed population.
+func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32, view clusterView) ([]*HNSWIndex, error) {
+	if view.routing == nil {
 		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
-	if g.getClusterHNSW == nil {
+	if view.graph == nil {
 		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
 	}
 
 	clusterIDs := []int(nil)
 	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, probes)
+		clusterIDs = g.clusterSelector(ctx, query, view.probes)
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = clusterIndex.FindNearestClusters(query, probes)
+		clusterIDs = view.routing.NearestClusters(query, view.probes)
 	}
 	indexes := make([]*HNSWIndex, len(clusterIDs))
 	for i, cid := range clusterIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		indexes[i] = g.getClusterHNSW(cid)
+		indexes[i] = view.graph(cid)
 		if indexes[i] == nil {
 			return nil, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
 		}

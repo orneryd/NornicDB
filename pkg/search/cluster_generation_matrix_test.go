@@ -207,11 +207,12 @@ func assertClusterGenerationCoherent(t *testing.T, svc *Service, check cgCheck) 
 			require.Equal(t, view.configuredPolicy, mode, "cluster %d graph uses the configured policy", cid)
 		}
 	}
-	// The serving pipeline routes on this generation with its probe count.
-	clustered, ivf, index, probes := cgServing(t, svc)
+	// A query routes on this generation's own routing with its probe count.
+	clustered, ivf, served := cgServing(t, svc)
 	require.True(t, clustered, "a published generation is served by a clustered strategy")
-	require.Same(t, view.index, index, "queries route on the published generation's index")
-	require.Equal(t, cgExpectedProbes(view.numClusters), probes, "probe count follows the published generation")
+	require.Same(t, view.index, served.index, "queries score on the published generation's population")
+	require.Same(t, view.index.PublishedClustering(), served.routing, "queries route on the published generation's routing")
+	require.Equal(t, cgExpectedProbes(view.numClusters), served.probes, "probe count follows the published generation")
 	if check.ivf {
 		require.True(t, ivf, "a generation with graphs is served by IVF-HNSW")
 	}
