@@ -171,7 +171,8 @@ func newUseTargetFixture(t *testing.T) *StorageExecutor {
 
 // TestUseTargetAuthorizationOnEveryRoute: a USE clause's database is
 // authorized on the top-level route, in CALL subqueries and in a statement
-// apoc.cypher.run executes (#738); an alias needs its target.
+// apoc.cypher.run executes (#738); an alias needs its target. A refusal is
+// Neo4j's database-access refusal.
 func TestUseTargetAuthorizationOnEveryRoute(t *testing.T) {
 	exec := newUseTargetFixture(t)
 	refuseOther := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool {
@@ -186,9 +187,7 @@ func TestUseTargetAuthorizationOnEveryRoute(t *testing.T) {
 		"CALL apoc.cypher.run('USE other RETURN 1 AS x', {}) YIELD value RETURN value",
 	} {
 		_, err := exec.Execute(refuseOther, query, nil)
-		var denied *PermissionDeniedError
-		require.ErrorAs(t, err, &denied, query)
-		require.Equal(t, "read", denied.Permission, query)
+		requireDatabaseAccessDenied(t, err, query)
 	}
 
 	allowAll := WithDatabasePermissionResolver(context.Background(), "nornic", func(string, string) bool { return true })
