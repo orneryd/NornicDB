@@ -324,14 +324,7 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	requests := make([]uniqueConstraintLockRequest, 0, len(keys))
 	seen := make(map[uniqueConstraintLockKey]struct{}, len(keys))
 	for _, k := range keys {
-		valueType := reflect.TypeOf(k.value)
-		if valueType != nil && !valueType.Comparable() {
-			continue
-		}
-		if k.value != nil && k.value != k.value {
-			// Non-reflexive comparable values such as NaN never conflict
-			// under equality and cannot be safely used as registry map keys:
-			// a lookup or delete with the same value would never find them.
+		if !lockableUniqueConstraintKey(k) {
 			continue
 		}
 		if _, dup := seen[k]; dup {
@@ -378,6 +371,19 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	return func() {
 		sm.releaseUniqueConstraintLocks(owner, requests, nil)
 	}, nil
+}
+
+// lockableUniqueConstraintKey reports whether k can key a constraint lock: its
+// value is comparable and equal to itself.
+func lockableUniqueConstraintKey(k uniqueConstraintLockKey) bool {
+	valueType := reflect.TypeOf(k.value)
+	if valueType != nil && !valueType.Comparable() {
+		return false
+	}
+	// Non-reflexive comparable values such as NaN never conflict under
+	// equality and cannot be safely used as registry map keys: a lookup or
+	// delete with the same value would never find them.
+	return k.value == nil || k.value == k.value
 }
 
 // waitForUniqueConstraintLock takes request's lock for owner, waiting while
