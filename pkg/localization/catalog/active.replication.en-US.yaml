@@ -58,6 +58,9 @@
 - id: replication.config.invalid_tls_min_version
   description: Invalid TLS minimum version. Version values are untranslated protocol identifiers.
   other: "invalid TLS min version: {{.Version}} (must be '{{.TLS12}}' or '{{.TLS13}}')"
+- id: replication.config.invalid_boolean
+  description: A security setting holds a value that is not a boolean. EnvVar and Value are untranslated.
+  other: 'invalid value "{{.Value}}" for {{.EnvVar}} (use true or false)'
 - id: replication.transport.closed
   description: Operation attempted on a closed cluster transport.
   other: transport closed

@@ -361,8 +361,11 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 	t.connections[remoteAddr] = conn
 	t.mu.Unlock()
 
+	// The peer is announced only once a message from it has been read and
+	// verified (TLS handshake done, signature checked), so a bare connect
+	// can't change peer state such as an HA standby's primary connection.
 	if onConnect != nil {
-		onConnect(conn)
+		conn.onAuthenticated = func() { onConnect(conn) }
 	}
 
 	conn.wg.Add(1)
@@ -413,6 +416,10 @@ type ClusterConnection struct {
 	pendingRPCs map[uint64]chan *ClusterMessage
 	authSecret  []byte
 	authMaxSkew time.Duration
+
+	// onAuthenticated runs once, after the first verified message on an
+	// inbound connection. Only the read loop uses it.
+	onAuthenticated func()
 }
 
 func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*ClusterMessage, error) {
@@ -505,6 +512,10 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		if err := c.verifyMessage(msg); err != nil {
 			c.transport.logPrintf(ctx, slog.LevelWarn, "[Cluster] Auth failed from %s: %v", c.addr, err)
 			return
+		}
+		if onAuthenticated := c.onAuthenticated; onAuthenticated != nil {
+			c.onAuthenticated = nil
+			onAuthenticated()
 		}
 
 		// Dispatch to pending RPC (single outstanding RPC per connection is expected today).

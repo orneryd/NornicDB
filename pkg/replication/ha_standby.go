@@ -134,7 +134,9 @@ type RaftAppendEntriesResponse struct {
 	CodecVersion  uint32 `json:"codec_version,omitempty"`
 }
 
-// ConnectionHandler handles incoming connections.
+// ConnectionHandler handles incoming connections. ClusterTransport calls it
+// once per inbound connection, after the first message read from it has been
+// verified and before that message is dispatched.
 type ConnectionHandler func(conn PeerConnection)
 
 // WALBatchResponse is the response to a WAL batch.
