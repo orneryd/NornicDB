@@ -22,7 +22,9 @@ select `none` so the application default cannot change their representation.
 
 Apple M2 Max / 32 GiB / native ARM64 CGO; all 88,155 cached 1024-D vectors,
 all 1,000 queries, exact truth, K=10, 100 warmups and eight-client throughput.
-Engines ran one at a time, after tests and builds stopped. No AWS/Titan requests
+Recall and latency come from the sequential pass; the eight-client pass measures
+throughput without separate recall validation. Engines ran one at a time, after
+tests and builds stopped. No AWS/Titan requests
 and no competitor execution. Both cases use float traversal, the same corpus,
 and the same benchmark settings. Each case constructs independent clusters.
 
