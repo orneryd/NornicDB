@@ -146,3 +146,55 @@ func TestPersistedRestoreDoesNotBlockLiveWrites(t *testing.T) {
 		})
 	}
 }
+
+// F-I86: a search during a restore step must not miss a write that already
+// returned success. The step withdraws the recorded writes and re-applies
+// them before releasing indexMu; searches do not take indexMu, so they must
+// not observe the step half-done.
+func TestSearchDuringRestoreStepSeesRecordedWrites(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
+	for _, backend := range []string{"v1", "v2"} {
+		t.Run(backend, func(t *testing.T) {
+			svc, engine := persistedRestartService(t, backend)
+			type seen struct{ text, vector []string }
+			during := make(chan seen, 1)
+			searchMidStep := func(s *Service) {
+				if s != svc {
+					return
+				}
+				go func() {
+					var got seen
+					if resp, err := svc.Search(context.Background(), "bterm", nil, &SearchOptions{Limit: 10}); err == nil {
+						for _, r := range resp.Results {
+							got.text = append(got.text, r.ID)
+						}
+					}
+					if hits, err := svc.VectorSearchCandidates(context.Background(), []float32{0, 1, 0}, &SearchOptions{Limit: 10}); err == nil {
+						for _, h := range hits {
+							got.vector = append(got.vector, normalizeVectorResultIDToNodeID(h.ID))
+						}
+					}
+					during <- got
+				}()
+				// Keep the step open while that search runs.
+				time.Sleep(100 * time.Millisecond)
+			}
+			populationRestoreHook.Store(&searchMidStep)
+			t.Cleanup(func() { populationRestoreHook.Store(nil) })
+
+			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
+			_, err := engine.CreateNode(b)
+			require.NoError(t, err)
+			require.NoError(t, svc.IndexNode(b))
+			var got seen
+			select {
+			case got = <-during:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the population did not reach its restore step")
+			}
+			populationRestoreHook.Store(nil)
+			require.Contains(t, got.text, "nornic:b", "a text search during the restore step missed a successful write")
+			require.Contains(t, got.vector, "nornic:b", "a vector search during the restore step missed a successful write")
+		})
+	}
+}

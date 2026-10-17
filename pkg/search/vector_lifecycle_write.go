@@ -358,6 +358,11 @@ var populationStageHook, populationRestoreHook atomic.Pointer[func(*Service)]
 // non-empty saved file itself, under indexMu. Nil outside tests.
 var vectorStoreLockedLoadHook atomic.Pointer[func(*Service)]
 
+// annWarmupStartedHook runs in an explicit build after NODE admission, once
+// the warmup has started the ANN job and before readiness is published. Nil
+// outside tests.
+var annWarmupStartedHook atomic.Pointer[func(*Service)]
+
 func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
 	if fn := hook.Load(); fn != nil {
 		(*fn)(s)

@@ -4400,6 +4400,7 @@ func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 	s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 	s.setBuildPhase("warmup_hnsw_or_kmeans")
 	s.warmupVectorPipeline(ctx)
+	runPopulationHook(&annWarmupStartedHook, s)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
