@@ -1368,9 +1368,10 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer clientConn.Close()
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "writer", Permissions: []string{"write"}}
-
+			// A statement that reads the graph needs read; RETURN 1 reads nothing
+			// and needs database access alone.
 			done := make(chan error, 1)
-			go func() { done <- session.handleRun(buildRunMessageData("RETURN 1", nil, nil)) }()
+			go func() { done <- session.handleRun(buildRunMessageData("MATCH (n) RETURN n", nil, nil)) }()
 			code, msg, err := AssertFailure(t, clientConn)
 			require.NoError(t, err)
 			require.NoError(t, <-done)
