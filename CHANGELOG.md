@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Honor the configured logger for unary/streaming gRPC request completion: successful requests log at debug,
+  client failures at warning, and internal/service failures at error. Suppressed requests avoid log formatting/output.
+
 - Accelerate ARM64 CPU dot-product scoring with independent NEON fused multiply-add accumulators,
   preserving block/tail handling and normalized signed-vector accuracy.
 
