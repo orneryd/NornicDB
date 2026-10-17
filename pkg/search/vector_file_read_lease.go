@@ -27,6 +27,21 @@ func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 	defer v.appendMu.Unlock()
 	v.mu.RLock()
 	defer v.mu.RUnlock()
+	lease, err := v.newMappedReadLeaseLocked()
+	if err != nil {
+		return nil, err
+	}
+	ordinals := make(map[string]int64, len(v.idToOrdinal))
+	for id, ordinal := range v.idToOrdinal {
+		ordinals[id] = ordinal
+	}
+	lease.idToOrdinal = ordinals
+	return lease, nil
+}
+
+// newMappedReadLeaseLocked maps the current file. Callers own mu and decide
+// whether the ordinal table is borrowed under that lock or copied as a snapshot.
+func (v *VectorFileStore) newMappedReadLeaseLocked() (*vectorFileReadLease, error) {
 	if v.closed || v.file == nil {
 		return nil, errVecFileClosed
 	}
@@ -41,16 +56,7 @@ func (v *VectorFileStore) beginReadLease() (*vectorFileReadLease, error) {
 	if err != nil {
 		return nil, err
 	}
-	ordinals := make(map[string]int64, len(v.idToOrdinal))
-	for id, ordinal := range v.idToOrdinal {
-		ordinals[id] = ordinal
-	}
-	return &vectorFileReadLease{
-		dimensions:  v.dimensions,
-		idToOrdinal: ordinals,
-		data:        data,
-		unmap:       unmap,
-	}, nil
+	return &vectorFileReadLease{dimensions: v.dimensions, idToOrdinal: v.idToOrdinal, data: data, unmap: unmap}, nil
 }
 
 func (l *vectorFileReadLease) Close() error {
