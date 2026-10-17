@@ -105,10 +105,13 @@ func (s *Session) handleRun(data []byte) error {
 	// Pick the effective timeout: client tx_timeout wins over
 	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
 	// per-call cap is authoritative; the server cap is the fallback
-	// for clients that didn't set one).
+	// for clients that didn't set one). The deadline's cause names its
+	// owner, so a statement it ends reports that owner's timeout (#1339).
 	var runTimeout time.Duration
+	runTimeoutCause := nornicerrors.ErrServerStatementTimeout
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		runTimeout = time.Duration(txTimeout) * time.Millisecond
+		runTimeoutCause = nornicerrors.ErrClientTransactionTimeout
 	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
 		runTimeout = s.server.config.BoltStatementTimeout
 	}
@@ -216,7 +219,7 @@ func (s *Session) handleRun(data []byte) error {
 	var ctx context.Context
 	var runCancel context.CancelFunc
 	if runTimeout > 0 {
-		ctx, runCancel = context.WithTimeout(parentCtx, runTimeout)
+		ctx, runCancel = context.WithTimeoutCause(parentCtx, runTimeout, runTimeoutCause)
 	} else {
 		ctx, runCancel = context.WithCancel(parentCtx)
 	}
