@@ -127,7 +127,8 @@ type RaftReplicator struct {
 	commitIndex uint64
 	lastApplied uint64
 
-	// Peer state (leader only)
+	// Peer state (leader only) and config.Raft.Peers (protected by peerMu).
+	// Lock order: mu, then logMu, then peerMu.
 	peerMu            sync.RWMutex
 	nextIndex         map[string]uint64
 	matchIndex        map[string]uint64
@@ -180,6 +181,23 @@ func (r *RaftReplicator) peerCodecVersion(peerID string) uint32 {
 		return CurrentCodecVersion
 	}
 	return 0
+}
+
+// peerConfigs returns a copy of the configured peers. AddVoter and
+// RemoveServer rewrite config.Raft.Peers under peerMu.
+func (r *RaftReplicator) peerConfigs() []PeerConfig {
+	r.peerMu.RLock()
+	defer r.peerMu.RUnlock()
+	peers := make([]PeerConfig, len(r.config.Raft.Peers))
+	copy(peers, r.config.Raft.Peers)
+	return peers
+}
+
+// peerCount returns the number of configured peers.
+func (r *RaftReplicator) peerCount() int {
+	r.peerMu.RLock()
+	defer r.peerMu.RUnlock()
+	return len(r.config.Raft.Peers)
 }
 
 // applyFuture represents a pending apply operation.
@@ -313,7 +331,7 @@ func (r *RaftReplicator) Start(ctx context.Context) error {
 	go r.runRPCHandler(ctx)
 
 	// If bootstrap mode with no peers, immediately become leader
-	if r.config.Raft.Bootstrap && len(r.config.Raft.Peers) == 0 {
+	if r.config.Raft.Bootstrap && r.peerCount() == 0 {
 		r.mu.Lock()
 		r.state = StateLeader
 		r.leaderID = r.config.NodeID
@@ -407,11 +425,12 @@ func (r *RaftReplicator) startElection(ctx context.Context) {
 	// Count votes - we already voted for ourselves
 	var votesMu sync.Mutex
 	votesReceived := 1
-	totalVoters := len(r.config.Raft.Peers) + 1
+	peers := r.peerConfigs()
+	totalVoters := len(peers) + 1
 	votesNeeded := totalVoters/2 + 1
 
 	// If single node, we win immediately
-	if len(r.config.Raft.Peers) == 0 {
+	if len(peers) == 0 {
 		r.becomeLeader(ctx, term)
 		return
 	}
@@ -425,7 +444,7 @@ func (r *RaftReplicator) startElection(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	for _, peer := range r.config.Raft.Peers {
+	for _, peer := range peers {
 		wg.Add(1)
 		go func(p PeerConfig) {
 			defer wg.Done()
@@ -608,12 +627,7 @@ func (r *RaftReplicator) runHeartbeats(ctx context.Context, term uint64) {
 
 // sendHeartbeatsToAllPeers sends AppendEntries RPCs to all peers.
 func (r *RaftReplicator) sendHeartbeatsToAllPeers(ctx context.Context, term uint64) {
-	r.peerMu.RLock()
-	peers := make([]PeerConfig, len(r.config.Raft.Peers))
-	copy(peers, r.config.Raft.Peers)
-	r.peerMu.RUnlock()
-
-	for _, peer := range peers {
+	for _, peer := range r.peerConfigs() {
 		go r.replicateLogToPeer(ctx, peer, term)
 	}
 }
@@ -625,17 +639,7 @@ func (r *RaftReplicator) replicateLogToPeer(ctx context.Context, peer PeerConfig
 		return
 	}
 
-	// TRC-20: leader-side append span.
-	r.logMu.RLock()
-	entryCount := len(r.log) - int(r.nextIndex[peer.ID])
-	if entryCount < 0 {
-		entryCount = 0
-	}
-	r.logMu.RUnlock()
-	ctx, appendSpan := startAppendSpan(ctx, peer.ID, term, entryCount)
-	defer appendSpan.End()
-
-	// Get next index for this peer
+	// Get next index for this peer (guarded by peerMu, not logMu)
 	r.peerMu.RLock()
 	nextIdx := r.nextIndex[peer.ID]
 	r.peerMu.RUnlock()
@@ -657,6 +661,10 @@ func (r *RaftReplicator) replicateLogToPeer(ctx context.Context, peer PeerConfig
 	}
 	commitIndex := r.commitIndex
 	r.logMu.RUnlock()
+
+	// TRC-20: leader-side append span.
+	ctx, appendSpan := startAppendSpan(ctx, peer.ID, term, len(entries))
+	defer appendSpan.End()
 
 	req := &AppendEntriesRequest{
 		Term:         term,
@@ -823,7 +831,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 	r.futuresMu.Unlock()
 
 	// If single node, commit immediately
-	if len(r.config.Raft.Peers) == 0 {
+	if r.peerCount() == 0 {
 		r.logMu.Lock()
 		r.commitIndex = entry.Index
 		r.logMu.Unlock()
@@ -998,12 +1006,7 @@ func (r *RaftReplicator) maintainPeerConnections(ctx context.Context) {
 		return
 	}
 
-	r.peerMu.RLock()
-	peers := make([]PeerConfig, len(r.config.Raft.Peers))
-	copy(peers, r.config.Raft.Peers)
-	r.peerMu.RUnlock()
-
-	for _, peer := range peers {
+	for _, peer := range r.peerConfigs() {
 		r.peerMu.RLock()
 		conn := r.peerConns[peer.ID]
 		r.peerMu.RUnlock()
@@ -1495,12 +1498,11 @@ func (r *RaftReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the replicator.
 func (r *RaftReplicator) Shutdown() error {
-	if r.closed.Load() {
+	if !r.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
 	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
-	r.closed.Store(true)
 	close(r.stopCh)
 
 	// Close transport to stop listener (unblocks listenForPeers goroutine)
@@ -1554,6 +1556,12 @@ func (r *RaftReplicator) AddVoter(id, addr string) error {
 		return ErrNotLeader
 	}
 
+	// Read the log before taking peerMu: the commit path holds logMu while
+	// it takes peerMu, so the reverse order deadlocks.
+	r.logMu.RLock()
+	lastIdx := r.log[len(r.log)-1].Index
+	r.logMu.RUnlock()
+
 	r.peerMu.Lock()
 	defer r.peerMu.Unlock()
 
@@ -1571,10 +1579,6 @@ func (r *RaftReplicator) AddVoter(id, addr string) error {
 	})
 
 	// Initialize tracking for new peer
-	r.logMu.RLock()
-	lastIdx := r.log[len(r.log)-1].Index
-	r.logMu.RUnlock()
-
 	r.nextIndex[id] = lastIdx + 1
 	r.matchIndex[id] = 0
 
