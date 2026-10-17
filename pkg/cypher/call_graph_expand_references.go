@@ -392,24 +392,52 @@ func (r *referenceClosure) run(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			for index := range r.expand {
-				branch := &r.expand[index]
-				if branch.fromSeeds || !r.seeds[node.ID] {
-					r.follow(node, branch, false)
-				}
-			}
-			for index := range r.between {
-				r.follow(node, &r.between[index], true)
-			}
+			r.followAll(node)
 		}
 	}
 	return nil
 }
 
-// follow finds the relationships branch follows from node: for a between
-// branch, only those whose other end is found.
-func (r *referenceClosure) follow(node *storage.Node, branch *referenceBranch, between bool) {
-	for _, edge := range r.e.apocSteps(node.ID, branch.steps) {
+// followAll applies node's branches, reading its relationships once in
+// each direction a branch follows.
+func (r *referenceClosure) followAll(node *storage.Node) {
+	var expand, between []*referenceBranch
+	for index := range r.expand {
+		if branch := &r.expand[index]; branch.fromSeeds || !r.seeds[node.ID] {
+			expand = append(expand, branch)
+		}
+	}
+	for index := range r.between {
+		between = append(between, &r.between[index])
+	}
+	outgoing, incoming := false, false
+	for _, branch := range append(append([]*referenceBranch(nil), expand...), between...) {
+		out, in := apocStepDirections(branch.steps)
+		outgoing, incoming = outgoing || out, incoming || in
+	}
+	if !outgoing && !incoming {
+		return
+	}
+	var out, in []*storage.Edge
+	if outgoing {
+		out, _ = r.e.storage.GetOutgoingEdges(node.ID)
+	}
+	if incoming {
+		in, _ = r.e.storage.GetIncomingEdges(node.ID)
+	}
+	for _, branch := range expand {
+		r.follow(node, branch, false, out, in)
+	}
+	for _, branch := range between {
+		r.follow(node, branch, true, out, in)
+	}
+}
+
+// follow finds the relationships branch follows from node among its
+// relationships out and in: for a between branch, only those whose other
+// end is found.
+func (r *referenceClosure) follow(node *storage.Node, branch *referenceBranch, between bool, out, in []*storage.Edge) {
+	for _, edge := range apocStepsAmong(node.ID, branch.steps, out, in) {
 		if r.edges[edge.ID] {
 			continue
 		}

@@ -26,13 +26,13 @@ var referenceClosureDomains = []string{"Item", "Note", "Person", "Topic"}
 // referenceClosureCall is the closure as one call: Items and HAS selected with
 // the manual links, generated links with a reason as referenced, and from every
 // reached node its generated links, plus every generated link between found
-// nodes.
+// nodes. Each seed list is its own COLLECT subquery: collecting one after
+// another in WITH would group each later row by the earlier lists.
 const referenceClosureCall = `
-MATCH (n:Item) WITH collect(n) AS items
-OPTIONAL MATCH ()-[h:HAS]->() WITH items, collect(h) AS has
-OPTIONAL MATCH ()-[u:LINK {source: 'manual'}]->() WITH items, has, collect(u) AS manual
-OPTIONAL MATCH ()-[x:LINK {source: 'generated'}]->() WHERE x.reason IS NOT NULL
-WITH items, has, manual, collect(x) AS reasoned
+WITH COLLECT { MATCH (n:Item) RETURN n } AS items,
+     COLLECT { MATCH ()-[h:HAS]->() RETURN h } AS has,
+     COLLECT { MATCH ()-[u:LINK {source: 'manual'}]->() RETURN u } AS manual,
+     COLLECT { MATCH ()-[x:LINK {source: 'generated'}]->() WHERE x.reason IS NOT NULL RETURN x } AS reasoned
 CALL nornicdb.graph.expandReferences(
   [{category: 'selected', nodes: items, relationships: has + manual}, {category: 'referenced', relationships: reasoned}],
   {references: $names, domains: $domains,
