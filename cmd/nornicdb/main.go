@@ -859,6 +859,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newCommandError(cmd, localization.NornicDBCLICreateServerFailed(err), err)
 	}
+	// Stop the server on every return, setup failures below included, so its
+	// background embedder initialisation ends before the deferred db.Close.
+	// After the supervisor's drain this is a no-op.
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), lifecycle.ShutdownTimeout)
+		defer cancel()
+		_ = httpServer.Stop(stopCtx)
+	}()
 
 	// HTTP server START is deferred until AFTER observability.New runs
 	// below — Plan 04-02 D-02c init-order chokepoint. The Plan 04-02
