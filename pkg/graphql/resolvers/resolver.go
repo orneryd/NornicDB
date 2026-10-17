@@ -8,6 +8,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -195,6 +196,32 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 		return "", fmt.Errorf("database '%s' not found: %w", database, err)
 	}
 	return resolved, nil
+}
+
+// readDatabase is the database a search or similarity request reads and its
+// storage: the database the request selects, resolved as executeCypher
+// resolves it (resolveCypherDatabase), on which the principal must hold read
+// (the request's entitlement resolver), as a Cypher read there needs.
+func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return "", nil, err
+	}
+	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil && !allows(database, auth.PermRead) {
+		denied := localization.DatabaseAccessDenied(database)
+		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	}
+	// A composite's storage reads every constituent, which this one decision
+	// on the composite does not cover; the REST search and similarity routes
+	// refuse it the same way.
+	if r.dbManager.IsCompositeDatabase(database) {
+		return "", nil, fmt.Errorf("search on composite database '%s' is not supported; target a constituent database explicitly", database)
+	}
+	engine, err := r.dbManager.GetStorage(database)
+	if err != nil {
+		return "", nil, fmt.Errorf("database '%s' not found: %w", database, err)
+	}
+	return database, engine, nil
 }
 
 // executeCypher executes a Cypher query using the specified database's namespaced storage.
