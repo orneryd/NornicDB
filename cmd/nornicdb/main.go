@@ -390,6 +390,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	setEnvIfChanged("gpu-backend", "NORNICDB_GPU_BACKEND", gpuBackend)
+
 	clusterMode, _ := cmd.Flags().GetString("cluster-mode")
 	clusterNodeID, _ := cmd.Flags().GetString("cluster-node-id")
 	clusterBindAddr, _ := cmd.Flags().GetString("cluster-bind-addr")
@@ -667,26 +669,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Initialize GPU acceleration (Metal on macOS, auto-detect otherwise)
 	commandPrintln(cmd, localization.NornicDBCLIInitializingGPU())
-	gpuConfig := gpu.DefaultConfig()
-	gpuConfig.Enabled = true
-	gpuConfig.FallbackOnError = true
-
-	// Set preferred backend from flag/env or platform default
-	switch strings.ToLower(gpuBackend) {
-	case "vulkan":
-		gpuConfig.PreferredBackend = gpu.BackendVulkan
-	case "cuda":
-		gpuConfig.PreferredBackend = gpu.BackendCUDA
-	case "metal":
-		gpuConfig.PreferredBackend = gpu.BackendMetal
-	case "opencl":
-		gpuConfig.PreferredBackend = gpu.BackendOpenCL
-	default:
-		// Auto-detect: prefer Metal on macOS/Apple Silicon
-		if runtime.GOOS == "darwin" {
-			gpuConfig.PreferredBackend = gpu.BackendMetal
-		}
-	}
+	gpuConfig := gpuConfigForBackend(gpuBackend)
 
 	gpuManager, gpuErr := gpu.NewManager(gpuConfig)
 	if gpuErr != nil {

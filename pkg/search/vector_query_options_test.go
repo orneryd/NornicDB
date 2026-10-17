@@ -148,3 +148,24 @@ func TestVectorQueryNodesWithOptions_WhereFindsSelectiveMatch(t *testing.T) {
 		require.Equal(t, "rare", hits[0].ID, similarity)
 	}
 }
+
+func TestVectorQueryExactBypassesApproximateGenerator(t *testing.T) {
+	svc := newOptionsTestService(t, 2, pointNode("best", []float32{1, 0}, nil), pointNode("other", []float32{0, 1}, nil))
+	gen := &efRecordingGen{cands: []Candidate{{ID: "other-named-default", Score: 0}}}
+	svc.pipelineMu.Lock()
+	svc.vectorPipeline = NewVectorSearchPipeline(gen, NewCPUExactScorer(svc.vectorIndex))
+	svc.pipelineMu.Unlock()
+	spec := VectorQuerySpec{Property: "default", Limit: 1, ScoreScale: VectorScoreSimilarity}
+	// The deliberately incomplete generator models ANN's bounded candidate set.
+	hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0}, spec)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, "other", hits[0].ID)
+	// An exact request must evaluate the complete indexed population.
+	spec.Exact = true
+	hits, err = svc.VectorQueryNodes(context.Background(), []float32{1, 0}, spec)
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	require.Equal(t, "best", hits[0].ID)
+	require.Equal(t, 1, gen.calls)
+}

@@ -715,7 +715,8 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	store, meta, err := service.openCollection(ctx, "test_vectors")
 	require.NoError(t, err)
 
-	svc := service.getSearchService("test_vectors", store)
+	svc, err := service.getSearchService(ctx, "test_vectors", store)
+	require.NoError(t, err)
 	require.NotNil(t, svc)
 	query := []float32{1, 0, 0, 0}
 
@@ -753,20 +754,24 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	t.Run("a canceled search fails", func(t *testing.T) {
 		cancelCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err := searchCollection(cancelCtx, svc, meta.Distance, "", query, nil, 2, 0, -1, 0)
+		_, err := searchCollection(cancelCtx, svc, meta.Distance, "", query, nil, 2, 0, -1, 0, false)
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
 	t.Run("getSearchService branches", func(t *testing.T) {
 		service.searchProvider = nil
-		require.Nil(t, service.getSearchService("test_vectors", store))
+		svc, err := service.getSearchService(ctx, "test_vectors", store)
+		require.NoError(t, err)
+		require.Nil(t, svc)
 
 		service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
 			_ = database
 			_ = st
 			return nil, errors.New("boom")
 		}
-		require.Nil(t, service.getSearchService("test_vectors", store))
+		svc, err = service.getSearchService(ctx, "test_vectors", store)
+		require.ErrorContains(t, err, "boom")
+		require.Nil(t, svc)
 
 		expected := search.NewServiceWithDimensions(store, 4)
 		service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
@@ -774,7 +779,9 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 			_ = st
 			return expected, nil
 		}
-		require.Equal(t, expected, service.getSearchService("test_vectors", store))
+		svc, err = service.getSearchService(ctx, "test_vectors", store)
+		require.NoError(t, err)
+		require.Equal(t, expected, svc)
 	})
 
 	t.Run("extractDenseFromVector and resolvePointIDs", func(t *testing.T) {

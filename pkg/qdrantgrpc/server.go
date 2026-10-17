@@ -184,6 +184,8 @@ type Config struct {
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
+// A nil service with nil error means vector search is intentionally disabled;
+// a non-nil error means the index is unavailable and must reach the caller.
 // When nil, Qdrant point writes still persist but do not update NornicDB search indexes.
 type SearchServiceProvider func(database string, store storage.Engine) (*search.Service, error)
 
@@ -834,6 +836,25 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	var dropDatabase func(name string) error
 	if config != nil {
 		dropDatabase = config.DropDatabase
+	}
+	if dropDatabase == nil && searchProvider != nil {
+		dropDatabase = func(name string) error {
+			store, err := dbManager.GetStorage(name)
+			if err != nil {
+				return err
+			}
+			svc, err := searchProvider(name, store)
+			if err != nil {
+				return err
+			}
+			if err := dbManager.DropDatabase(name); err != nil {
+				return err
+			}
+			if svc != nil {
+				return svc.ClearVectorIndex()
+			}
+			return nil
+		}
 	}
 	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {

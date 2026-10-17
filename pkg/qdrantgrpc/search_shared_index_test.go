@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -171,7 +172,7 @@ func TestSearch_SharedIndex_VectorSearchDisabledReturnsNoHits(t *testing.T) {
 	var disabled sync.Map
 	provider := func(database string, store storage.Engine) (*search.Service, error) {
 		if _, off := disabled.Load(database); off {
-			return nil, errors.New("vector search is disabled for database " + database)
+			return nil, nil
 		}
 		return enabled(database, store)
 	}
@@ -188,7 +189,7 @@ func TestSearch_SharedIndex_VectorSearchDisabledReturnsNoHits(t *testing.T) {
 
 func mustSearchCollection(t *testing.T, ctx context.Context, svc *search.Service, dist qpb.Distance, vectorName string, query []float32, filter *qpb.Filter, limit, offset int, minScore float64, ef int) []searchResult {
 	t.Helper()
-	results, err := searchCollection(ctx, svc, dist, vectorName, query, filter, limit, offset, minScore, ef)
+	results, err := searchCollection(ctx, svc, dist, vectorName, query, filter, limit, offset, minScore, ef, false)
 	require.NoError(t, err)
 	return results
 }
@@ -202,4 +203,186 @@ func TestQdrantSearchEf(t *testing.T) {
 	require.Equal(t, 32, qdrantSearchEf(32, 10), "the request's hnsw_ef")
 	require.Equal(t, 40, qdrantSearchEf(16, 40), "at least the results to return")
 	require.Equal(t, 500, qdrantSearchEf(0, 500))
+}
+
+func TestSearchSharedIndexDefaultDropRecreateAndIsolation(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	srv := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+	for _, name := range []string{"replace", "keep"} {
+		createCosineCollection(t, ctx, srv.collections, name, 4)
+	}
+	upsertPoint(t, ctx, srv.points, "replace", 1, unitVector(4, 0), nil)
+	upsertPoint(t, ctx, srv.points, "keep", 2, unitVector(4, 0), nil)
+	_, err = srv.collections.Delete(ctx, &qpb.DeleteCollection{CollectionName: "replace"})
+	require.NoError(t, err)
+	createCosineCollection(t, ctx, srv.collections, "replace", 4)
+	upsertPoint(t, ctx, srv.points, "replace", 3, unitVector(4, 1), nil)
+	require.Equal(t, []uint64{3}, searchIDs(t, ctx, srv.points, &qpb.SearchPoints{CollectionName: "replace", Vector: unitVector(4, 0), Limit: 10}))
+	require.Equal(t, []uint64{2}, searchIDs(t, ctx, srv.points, &qpb.SearchPoints{CollectionName: "keep", Vector: unitVector(4, 0), Limit: 10}))
+}
+
+func TestSharedIndexProviderFailureIsNotAcknowledged(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	srv := startSharedIndexServer(t, dbm, base, func(string, storage.Engine) (*search.Service, error) { return nil, errors.New("index unavailable") })
+	createCosineCollection(t, ctx, srv.collections, "unavailable", 4)
+	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "unavailable", Points: []*qpb.PointStruct{{Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}, Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 0)}}}}}})
+	require.Error(t, err, "an unavailable index cannot acknowledge indexed points")
+	_, err = srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: "unavailable", Vector: unitVector(4, 0), Limit: 1})
+	require.Error(t, err, "an unavailable index cannot report a successful empty search")
+}
+
+func TestSharedIndexColdDatabaseAndServiceReconstruction(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir()
+	base, err := storage.NewBadgerEngine(path)
+	require.NoError(t, err)
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	first := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+	createCosineCollection(t, ctx, first.collections, "cold", 4)
+	upsertPoint(t, ctx, first.points, "cold", 1, unitVector(4, 0), nil)
+	first.stop()
+	require.NoError(t, dbm.Close())
+	base, err = storage.NewBadgerEngine(path)
+	require.NoError(t, err)
+	dbm, err = multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, dbm.Close()) })
+	// Neither the database manager nor the provider's service cache survives.
+	second := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+	upsertPoint(t, ctx, second.points, "cold", 2, unitVector(4, 1), nil)
+	require.Equal(t, []uint64{1}, searchIDs(t, ctx, second.points, &qpb.SearchPoints{CollectionName: "cold", Vector: unitVector(4, 0), Limit: 1}))
+}
+
+func TestSharedIndexFixedProviderDoesNotAcknowledgeLostVectors(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	var svc *search.Service
+	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+		if svc == nil {
+			svc = search.NewServiceWithDimensions(store, 8)
+			svc.FixVectorDimensions()
+		}
+		return svc, nil
+	})
+	createCosineCollection(t, ctx, srv.collections, "fixed", 4)
+	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "fixed", Points: []*qpb.PointStruct{{Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}, Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 0)}}}}}})
+	require.ErrorContains(t, err, search.ErrDimensionMismatch.Error())
+}
+
+func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
+	for _, useQuery := range []bool{false, true} {
+		t.Run(fmt.Sprint("query=", useQuery), func(t *testing.T) {
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			dbm, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			var svc *search.Service
+			var warmed atomic.Bool
+			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+				if svc == nil {
+					svc = search.NewServiceWithDimensions(store, 4)
+					svc.SetLazyWarming(true, func() { require.NoError(t, svc.BuildIndexes(context.Background())); warmed.Store(true) })
+				}
+				return svc, nil
+			})
+			createCosineCollection(t, ctx, srv.collections, "lazy", 4)
+			// Populate storage directly to model an existing database on first read.
+			store, err := dbm.GetStorage("lazy")
+			require.NoError(t, err)
+			_, err = store.CreateNode(&storage.Node{ID: pointIDToNodeID(&qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}), Labels: []string{QdrantPointLabel}, NamedEmbeddings: map[string][]float32{"default": unitVector(4, 0)}})
+			require.NoError(t, err)
+			exact := true
+			if useQuery {
+				response, err := srv.points.Query(ctx, &qpb.QueryPoints{CollectionName: "lazy", Query: &qpb.Query{Variant: &qpb.Query_Nearest{Nearest: &qpb.VectorInput{Variant: &qpb.VectorInput_Dense{Dense: &qpb.DenseVector{Data: unitVector(4, 0)}}}}}, Params: &qpb.SearchParams{Exact: &exact}})
+				require.NoError(t, err)
+				require.Len(t, response.Result, 1)
+				require.Equal(t, uint64(1), response.Result[0].Id.GetNum())
+			} else {
+				require.Equal(t, []uint64{1}, searchIDs(t, ctx, srv.points, &qpb.SearchPoints{CollectionName: "lazy", Vector: unitVector(4, 0), Limit: 1, Params: &qpb.SearchParams{Exact: &exact}}))
+			}
+			require.True(t, warmed.Load())
+		})
+	}
+}
+
+func TestSharedIndexDefaultDropRemovesPersistedCoordinates(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	path := t.TempDir() + "/vectors"
+	provider := sharedSearchProvider()
+	var svc *search.Service
+	srv := startSharedIndexServer(t, dbm, base, func(name string, store storage.Engine) (*search.Service, error) {
+		var err error
+		svc, err = provider(name, store)
+		if err == nil {
+			svc.SetVectorIndexPath(path)
+			svc.SetPersistenceEnabled(true)
+		}
+		return svc, err
+	})
+	t.Cleanup(func() {
+		if svc != nil {
+			require.NoError(t, svc.Close())
+		}
+	})
+	createCosineCollection(t, ctx, srv.collections, "persisted", 4)
+	upsertPoint(t, ctx, srv.points, "persisted", 1, unitVector(4, 0), nil)
+	svc.PersistIndexesToDisk()
+	require.FileExists(t, path+".vec")
+	_, err = srv.collections.Delete(ctx, &qpb.DeleteCollection{CollectionName: "persisted"})
+	require.NoError(t, err)
+	require.NoFileExists(t, path+".vec")
+	require.NoFileExists(t, path+".meta")
+	createCosineCollection(t, ctx, srv.collections, "persisted", 4)
+	upsertPoint(t, ctx, srv.points, "persisted", 2, unitVector(4, 1), nil)
+	require.Equal(t, []uint64{2}, searchIDs(t, ctx, srv.points, &qpb.SearchPoints{CollectionName: "persisted", Vector: unitVector(4, 0), Limit: 10}))
+}
+
+func TestSharedIndexPersistedScoresUseOriginalMagnitudes(t *testing.T) {
+	for _, metric := range []struct {
+		distance qpb.Distance
+		score    float32
+	}{{qpb.Distance_Dot, 25}, {qpb.Distance_Euclid, 1}} {
+		t.Run(metric.distance.String(), func(t *testing.T) {
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			dbm, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			var svc *search.Service
+			path := t.TempDir() + "/vectors"
+			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+				if svc == nil {
+					svc = search.NewServiceWithDimensions(store, 4)
+					svc.SetVectorIndexPath(path)
+					svc.SetPersistenceEnabled(true)
+					return svc, svc.BuildIndexes(ctx)
+				}
+				return svc, nil
+			})
+			t.Cleanup(func() {
+				if svc != nil {
+					require.NoError(t, svc.Close())
+				}
+			})
+			_, err = srv.collections.Create(ctx, &qpb.CreateCollection{CollectionName: "scores", VectorsConfig: &qpb.VectorsConfig{Config: &qpb.VectorsConfig_Params{Params: &qpb.VectorParams{Size: 4, Distance: metric.distance}}}})
+			require.NoError(t, err)
+			upsertPoint(t, ctx, srv.points, "scores", 1, []float32{3, 4, 0, 0}, nil)
+			require.FileExists(t, path+".vec")
+			response, err := srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: "scores", Vector: []float32{3, 4, 0, 0}, Limit: 1})
+			require.NoError(t, err)
+			require.Len(t, response.Result, 1)
+			require.InDelta(t, metric.score, response.Result[0].Score, 1e-6)
+		})
+	}
 }
