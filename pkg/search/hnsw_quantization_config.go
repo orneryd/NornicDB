@@ -130,11 +130,14 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 	if err != nil {
 		return err
 	}
-	if changed, err := s.setHNSWQuantizationOverride(ctx, cfg); err != nil || !changed {
+	if _, err := s.setHNSWQuantizationOverride(ctx, cfg); err != nil {
 		return err
 	}
 	// The cluster generation's graphs take the policy through the owner,
-	// which also republishes the pipeline and advances the index revision.
+	// which also republishes the pipeline and advances the index revision
+	// when they changed. It compares against the policy its graphs are in,
+	// not the configured one, so a retry of a cancelled or failed change
+	// completes it even though the configured policy is already recorded.
 	return s.publishClusterGeneration(ctx, clusterPublication{policy: true})
 }
 

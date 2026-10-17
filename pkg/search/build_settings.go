@@ -117,7 +117,18 @@ func (s *Service) composeVectorBuildSettings() string {
 		dimensions)
 }
 
-func (s *Service) composeHNSWBuildSettings() string {
+func (s *Service) composeHNSWBuildSettings() string { return hnswBuildSettings() }
+
+func (s *Service) composeRoutingBuildSettings() string { return routingBuildSettings() }
+
+// ivfHNSWGenerationSettings are the build settings a persisted IVF-HNSW
+// generation was built with (graph and routing/k-means settings); a
+// generation saved under other settings is not restored.
+func ivfHNSWGenerationSettings() string {
+	return hnswBuildSettings() + "|" + routingBuildSettings()
+}
+
+func hnswBuildSettings() string {
 	hcfg := HNSWConfigFromEnv()
 	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t",
 		hnswSettingsSchemaVersion,
@@ -125,7 +136,7 @@ func (s *Service) composeHNSWBuildSettings() string {
 		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild)
 }
 
-func (s *Service) composeRoutingBuildSettings() string {
+func routingBuildSettings() string {
 	maxIter := envutil.GetInt("NORNICDB_KMEANS_MAX_ITERATIONS", 5)
 	if maxIter < 5 {
 		maxIter = 5
