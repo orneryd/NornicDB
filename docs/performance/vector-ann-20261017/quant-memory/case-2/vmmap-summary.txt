@@ -62,4 +62,3 @@ TOTAL, minus reserved VM space     6.7G     2.7G     1.3G    63.0M       0K     
 MALLOC ZONE                         SIZE       SIZE       SIZE       SIZE      COUNT  ALLOCATED  FRAG SIZE  % FRAG   COUNT
 ===========                      =======  =========  =========  =========  =========  =========  =========  ======  ======
 DefaultMallocZone_0x10a074000      20.8M       784K       784K         0K       1288       123K       661K     85%       7
-
