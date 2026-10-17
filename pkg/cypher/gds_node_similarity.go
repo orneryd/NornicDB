@@ -275,14 +275,14 @@ func readGDSNodeFilter(proj *GraphProjection, value interface{}, selectedLabels 
 // gdsNodeFilterID is a node filter entry's node id: a node's, an integer
 // id, or a numeric or stored string id (including outside the projection).
 func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func(string) bool) (string, bool) {
-	id, ok := gdsNodeID(item)
+	ref, ok := readGDSNode(item, gdsStoredKinds)
 	if !ok {
 		return "", false
 	}
-	node, isString := item.(string)
-	if !isString {
-		return string(id), true
+	if ref.kind != gdsIDText {
+		return ref.key, true
 	}
+	node := ref.key
 	if _, projected := proj.nodeIndex[node]; projected {
 		return node, true
 	}
