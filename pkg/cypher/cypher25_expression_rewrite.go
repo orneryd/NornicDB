@@ -27,8 +27,8 @@ import (
 // client's text.
 
 func init() {
-	cypherfn.Register(interpolateFunction, fnInterpolate)
-	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs)
+	cypherfn.Register(interpolateFunction, cypherfn.PrivilegeNone, fnInterpolate)
+	cypherfn.Register(mapFromPairsFunction, cypherfn.PrivilegeNone, fnMapFromPairs)
 }
 
 // interpolateFunction converts an interpolated value to its text.

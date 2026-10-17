@@ -1544,17 +1544,17 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedStats(rec, req)
+	server.handleEmbedStats(rec, as(req, "admin"))
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedTrigger(rec, req)
+	server.handleEmbedTrigger(rec, as(req, "admin"))
 	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError}, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
 	rec = httptest.NewRecorder()
-	server.handleEmbedTrigger(rec, req)
+	server.handleEmbedTrigger(rec, as(req, "admin"))
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusServiceUnavailable}, rec.Code)
 
 	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil)
@@ -2193,6 +2193,7 @@ func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
 	req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
@@ -2866,7 +2867,7 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	// status with canceled context returns early without writing full response.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req = httptest.NewRequest(http.MethodGet, "/status", nil).WithContext(ctx)
+	req = httptest.NewRequest(http.MethodGet, "/status", nil).WithContext(context.WithValue(ctx, contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleStatus(rec, req)
 	assert.True(t, rec.Code == 0 || rec.Code == http.StatusOK)
@@ -2875,6 +2876,7 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	origManager := server.dbManager
 	server.dbManager = nil
 	req = httptest.NewRequest(http.MethodGet, "/status", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleStatus(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -3061,7 +3063,7 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 		require.Len(t, response.Errors, 1)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", response.Errors[0].Code)
-		require.Contains(t, response.Errors[0].Message, "Access to database")
+		require.Equal(t, "Database access is not allowed for user '' with no roles.", response.Errors[0].Message)
 	})
 
 	// A BOM and a comment are an empty statement: Neo4j's SyntaxError,
@@ -3151,11 +3153,18 @@ func TestDatabaseInfoAndExecuteInTxAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
 
-	// handleDatabaseInfo not found.
+	// handleDatabaseInfo not found, for a principal whose scope includes it.
 	req := httptest.NewRequest(http.MethodGet, "/db/missing", nil)
 	rec := httptest.NewRecorder()
-	server.handleDatabaseInfo(rec, req, "missing")
+	server.handleDatabaseInfo(rec, as(req, "admin"), "missing")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	// Without one, a missing name is refused like an existing one, so the
+	// response doesn't tell which databases exist.
+	req = httptest.NewRequest(http.MethodGet, "/db/missing", nil)
+	rec = httptest.NewRecorder()
+	server.handleDatabaseInfo(rec, req, "missing")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 
 	// handleDatabaseInfo forbidden with no claims.
 	req = httptest.NewRequest(http.MethodGet, "/db/"+dbName, nil)

@@ -57,8 +57,8 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 	// This enables GraphQL subscriptions to receive real-time updates
 	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine)
 	// to reach the BadgerEngine that implements StorageEventNotifier
-	// Note: Events from all namespaces will be published. Namespace filtering
-	// can be added later if needed by checking node/edge ID prefixes.
+	// Events from all namespaces are published, each with its database (the
+	// storage namespace), which scoped subscriptions filter on.
 	if db != nil {
 		underlyingEngine := db.GetStorage()
 
@@ -95,21 +95,33 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 				return id
 			}
 
+			// eventDatabase is the database a stored ID belongs to: its
+			// storage namespace, which the engine (not the user) puts before
+			// the first ':'; an ID without one is the default database's.
+			// Subscribers are scoped by it, never by the published ID, which
+			// a user can give any text, including another database's prefix.
+			eventDatabase := func(id string) string {
+				if namespace, _, ok := strings.Cut(id, ":"); ok {
+					return namespace
+				}
+				return defaultDBName
+			}
+
 			// Node events
 			notifier.OnNodeCreated(func(node *storage.Node) {
 				// Create a copy with unprefixed ID for GraphQL
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeCreated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeCreatedIn(eventDatabase(string(node.ID)), storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeUpdated(func(node *storage.Node) {
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeUpdated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeUpdatedIn(eventDatabase(string(node.ID)), storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
 				unprefixedID := unprefixNodeID(nodeID)
-				broker.PublishNodeDeleted(string(unprefixedID))
+				broker.PublishNodeDeletedIn(eventDatabase(string(nodeID)), string(unprefixedID))
 			})
 
 			// Relationship (edge) events
@@ -118,18 +130,18 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipCreated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipCreatedIn(eventDatabase(string(edge.ID)), storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeUpdated(func(edge *storage.Edge) {
 				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipUpdated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipUpdatedIn(eventDatabase(string(edge.ID)), storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) {
 				unprefixedID := unprefixEdgeID(edgeID)
-				broker.PublishRelationshipDeleted(string(unprefixedID))
+				broker.PublishRelationshipDeletedIn(eventDatabase(string(edgeID)), string(unprefixedID))
 			})
 		}
 	}
@@ -155,7 +167,7 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 		return nil, fmt.Errorf("database '%s' not found: %w", effectiveDb, err)
 	}
 
-	executor := cypher.NewStorageExecutor(storage)
+	executor := cypher.NewStatementExecutor(storage)
 	executor.SetDatabaseManager(&graphqlDatabaseManagerAdapter{manager: r.dbManager})
 
 	// Copy configuration from base DB's executor if available
@@ -181,17 +193,14 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 }
 
 func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (string, error) {
-	if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
-		resolved, allowed := scope.Resolve(database)
-		if !allowed {
-			return "", fmt.Errorf("access to database '%s' is not allowed", database)
-		}
-		return resolved, nil
+	_, selected, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), database, cypher.PrivilegeNone)
+	if err != nil {
+		return "", err
 	}
-	if database == "" {
-		return r.dbManager.DefaultDatabaseName(), nil
+	if auth.RequestDatabaseScopeFromContext(ctx) != nil {
+		return selected, nil
 	}
-	resolved, err := r.dbManager.ResolveDatabase(database)
+	resolved, err := r.dbManager.ResolveDatabase(selected)
 	if err != nil {
 		return "", fmt.Errorf("database '%s' not found: %w", database, err)
 	}
@@ -203,12 +212,17 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 // resolves it (resolveCypherDatabase), on which the principal must hold read
 // (the request's entitlement resolver), as a Cypher read there needs.
 func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
-	database, err := r.resolveCypherDatabase(ctx, "")
+	// Admission's refusal stands as given: a database the principal may not
+	// use is refused with Neo4j's database-access text, a missing read with
+	// the read refusal.
+	_, database, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), "", cypher.PrivilegeRead)
 	if err != nil {
 		return "", nil, err
 	}
-	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil && !allows(database, auth.PermRead) {
-		denied := localization.DatabaseAccessDenied(database)
+	// Search and similarity read around a principal's graph view, so a
+	// principal restricted by collection rules is refused here.
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok && access.RestrictedOn(database) {
+		denied := cypher.DatabaseAccessDeniedMessage(ctx)
 		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
 	}
 	// A composite's storage reads every constituent, which this one decision
@@ -237,10 +251,15 @@ func (r *Resolver) executeCypher(ctx context.Context, query string, params map[s
 	// statement and every database it selects with it, and the principal's
 	// boosted procedure grants come with the request too, as on HTTP and
 	// Bolt.
-	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil {
+	if access, ok := cypher.RequestPrincipalAccess(ctx); ok {
+		ctx = cypher.WithPrincipalAccess(ctx, effectiveDb, access)
+	} else if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil {
 		ctx = cypher.WithDatabasePermissionResolver(ctx, effectiveDb, func(database, permission string) bool {
 			return allows(database, auth.Permission(permission))
 		})
+	}
+	if err := cypher.AdmitStatement(ctx, &graphqlDatabaseManagerAdapter{manager: r.dbManager}, effectiveDb, query); err != nil {
+		return nil, err
 	}
 	executor, err := r.getCypherExecutor(ctx, effectiveDb)
 	if err != nil {

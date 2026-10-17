@@ -30,7 +30,7 @@ func TestReviewR2Differential(t *testing.T) {
 	failures := 0
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			graphProjections = make(map[string]*GraphProjection)
+			graphProjections = make(map[gdsProjectionKey]*GraphProjection)
 			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "reviewr2")
 			exec := NewStorageExecutor(engine)
 			for i := 0; i < c.N; i++ {
@@ -95,7 +95,7 @@ func TestReviewR2SeedTypes(t *testing.T) {
 		{"long_min_missing", int64(-9223372036854775808), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			graphProjections = make(map[string]*GraphProjection)
+			graphProjections = make(map[gdsProjectionKey]*GraphProjection)
 			other := tc.value
 			if _, ok := tc.value.(int64); ok {
 				other = int64(2)
@@ -129,7 +129,7 @@ func TestReviewR2DirectedCycle(t *testing.T) {
 		{"UNDIRECTED", []int64{0, 0, 0}},
 	} {
 		t.Run(tc.orientation, func(t *testing.T) {
-			graphProjections = make(map[string]*GraphProjection)
+			graphProjections = make(map[gdsProjectionKey]*GraphProjection)
 			exec, run := newGDSEngineGraph(t, "cycle", gdsNode("n0", "N", nil), gdsNode("n1", "N", nil), gdsNode("n2", "N", nil))
 			for _, ends := range [][2]string{{"n0", "n1"}, {"n1", "n2"}, {"n2", "n0"}} {
 				_, err := run(fmt.Sprintf("MATCH (a),(b) WHERE id(a)='%s' AND id(b)='%s' CREATE (a)-[:R]->(b)", ends[0], ends[1]))

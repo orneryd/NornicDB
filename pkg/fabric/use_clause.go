@@ -208,7 +208,7 @@ func IsAdministrationCommand(statement string) bool {
 		}
 		switch words[1] {
 		case "DATABASE", "DATABASES", "DEFAULT", "HOME", "SERVER", "SERVERS", "SUPPORTED", "POPULATED",
-			"USERS", "CURRENT", "ROLE", "ROLES", "PRIVILEGE", "PRIVILEGES", "ALIAS", "ALIASES":
+			"USERS", "CURRENT", "ROLE", "ROLES", "PRIVILEGE", "PRIVILEGES", "ALIAS", "ALIASES", "ACCESS":
 			return true
 		case "USER":
 			return len(words) < 3 || words[2] != "DEFINED"
@@ -225,7 +225,7 @@ func IsAdministrationCommand(statement string) bool {
 			return false
 		}
 		switch object[0] {
-		case "DATABASE", "COMPOSITE", "ALIAS", "USER", "ROLE", "SERVER":
+		case "DATABASE", "COMPOSITE", "ALIAS", "USER", "ROLE", "SERVER", "ACCESS":
 			return true
 		case "CURRENT":
 			return words[0] == "ALTER" && len(object) > 1 && object[1] == "USER"

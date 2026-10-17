@@ -632,6 +632,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			Property:   targetProperty,
 			Similarity: similarityFunc,
 			Limit:      k,
+			Restricted: e.restrictedReader(),
 		})
 		if err != nil {
 			return nil, err

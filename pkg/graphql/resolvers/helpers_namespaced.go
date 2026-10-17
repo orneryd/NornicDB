@@ -74,8 +74,8 @@ func (r *Resolver) getRelationshipTypes(ctx context.Context) ([]string, error) {
 }
 
 // stats gets stats using namespaced storage.
-func (r *Resolver) stats() nornicdb.DBStats {
-	return r.statsViaCypher()
+func (r *Resolver) stats(ctx context.Context) (nornicdb.DBStats, error) {
+	return r.statsViaCypher(ctx)
 }
 
 // Cypher-based implementations for namespaced storage
@@ -410,10 +410,13 @@ func (r *Resolver) getRelationshipTypesViaCypher(ctx context.Context) ([]string,
 	return types, nil
 }
 
-func (r *Resolver) statsViaCypher() nornicdb.DBStats {
+func (r *Resolver) statsViaCypher(ctx context.Context) (nornicdb.DBStats, error) {
 	// Get node count
 	nodeQuery := "MATCH (n) RETURN count(n) as count"
-	nodeResult, _ := r.executeCypher(context.Background(), nodeQuery, nil, "")
+	nodeResult, err := r.executeCypher(ctx, nodeQuery, nil, "")
+	if err != nil {
+		return nornicdb.DBStats{}, err
+	}
 	nodeCount := int64(0)
 	if len(nodeResult.Rows) > 0 && len(nodeResult.Rows[0]) > 0 {
 		if cnt, ok := nodeResult.Rows[0][0].(int64); ok {
@@ -423,7 +426,10 @@ func (r *Resolver) statsViaCypher() nornicdb.DBStats {
 
 	// Get edge count
 	edgeQuery := "MATCH ()-[r]->() RETURN count(r) as count"
-	edgeResult, _ := r.executeCypher(context.Background(), edgeQuery, nil, "")
+	edgeResult, err := r.executeCypher(ctx, edgeQuery, nil, "")
+	if err != nil {
+		return nornicdb.DBStats{}, err
+	}
 	edgeCount := int64(0)
 	if len(edgeResult.Rows) > 0 && len(edgeResult.Rows[0]) > 0 {
 		if cnt, ok := edgeResult.Rows[0][0].(int64); ok {
@@ -434,7 +440,7 @@ func (r *Resolver) statsViaCypher() nornicdb.DBStats {
 	return nornicdb.DBStats{
 		NodeCount: nodeCount,
 		EdgeCount: edgeCount,
-	}
+	}, nil
 }
 
 // Helper functions

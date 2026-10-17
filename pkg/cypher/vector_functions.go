@@ -20,18 +20,18 @@ func init() {
 	// The public names reach here only with an argument count the
 	// statement rewrite leaves alone: the functions report it.
 	for _, name := range []string{vectorFunction, "vector"} {
-		cypherfn.Register(name, fnVector)
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnVector)
 	}
 	for _, name := range []string{vectorDistanceFunction, "vector_distance"} {
-		cypherfn.Register(name, fnVectorDistance)
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnVectorDistance)
 	}
 	for _, name := range []string{vectorNormFunction, "vector_norm"} {
-		cypherfn.Register(name, fnVectorNorm)
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnVectorNorm)
 	}
-	cypherfn.Register("vector_dimension_count", fnVectorDimensionCount)
-	cypherfn.Register("uuid", fnUUID)
-	cypherfn.Register("uuid.mostsignificantbits", fnUUIDHalf(true))
-	cypherfn.Register("uuid.leastsignificantbits", fnUUIDHalf(false))
+	cypherfn.Register("vector_dimension_count", cypherfn.PrivilegeNone, fnVectorDimensionCount)
+	cypherfn.Register("uuid", cypherfn.PrivilegeNone, fnUUID)
+	cypherfn.Register("uuid.mostsignificantbits", cypherfn.PrivilegeNone, fnUUIDHalf(true))
+	cypherfn.Register("uuid.leastsignificantbits", cypherfn.PrivilegeNone, fnUUIDHalf(false))
 }
 
 const (

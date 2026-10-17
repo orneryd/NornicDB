@@ -19,7 +19,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 				t.Fatalf("expected panic for empty name")
 			}
 		}()
-		Register(" ", func(Context, []string) (interface{}, error) { return nil, nil })
+		Register(" ", PrivilegeNone, func(Context, []string) (interface{}, error) { return nil, nil })
 	})
 
 	t.Run("register panics for nil function", func(t *testing.T) {
@@ -28,10 +28,10 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 				t.Fatalf("expected panic for nil fn")
 			}
 		}()
-		Register("custom_nil", nil)
+		Register("custom_nil", PrivilegeNone, nil)
 	})
 
-	Register("custom_add", func(ctx Context, args []string) (interface{}, error) {
+	Register("custom_add", PrivilegeNone, func(ctx Context, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, errors.New("need two args")
 		}
@@ -65,7 +65,7 @@ func TestEvaluateFunctionRegistryAndValidation(t *testing.T) {
 	}
 
 	calledNow := false
-	Register("custom_now", func(ctx Context, _ []string) (interface{}, error) {
+	Register("custom_now", PrivilegeNone, func(ctx Context, _ []string) (interface{}, error) {
 		calledNow = true
 		return ctx.Now().Unix(), nil
 	})

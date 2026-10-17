@@ -318,7 +318,9 @@ func TestGetStorageWithAuth_RemoteFactoryErrorPaths(t *testing.T) {
 			{DatabaseName: "remote_db", Alias: "r1", Type: "remote", AccessMode: "read", URI: "http://remote.example"},
 		}))
 
-		_, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		engine, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		require.NoError(t, err, "constructing a routing view opens no remote")
+		_, err = engine.(*storage.CompositeEngine).GetConstituentByAlias("r1")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "remote engine factory is not configured")
 	})
@@ -332,7 +334,9 @@ func TestGetStorageWithAuth_RemoteFactoryErrorPaths(t *testing.T) {
 			return nil, fmt.Errorf("dial failed")
 		}
 
-		_, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		engine, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		require.NoError(t, err, "constructing a routing view opens no remote")
+		_, err = engine.(*storage.CompositeEngine).GetConstituentByAlias("r1")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "dial failed")
 	})
@@ -346,7 +350,9 @@ func TestGetStorageWithAuth_RemoteFactoryErrorPaths(t *testing.T) {
 			return nil, nil
 		}
 
-		_, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		engine, err := manager.GetStorageWithAuth("composite_remote", "Bearer token")
+		require.NoError(t, err, "constructing a routing view opens no remote")
+		_, err = engine.(*storage.CompositeEngine).GetConstituentByAlias("r1")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "returned nil")
 	})

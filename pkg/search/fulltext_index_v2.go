@@ -727,10 +727,18 @@ func (f *FulltextIndexV2) putScoreScratch(scratch *bm25ScoreScratch) {
 	f.scoreScratchPool.Put(scratch)
 }
 
-func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
+// expandTermsLocked is the query plan: each query term with weight 1 and,
+// in prefix mode, up to maxPrefixExpansions lexicon terms it prefixes with
+// bm25PrefixWeight. Only terms admit accepts are planned and counted toward
+// that budget (nil: every term), so a restricted reader's plan is the one a
+// corpus of its visible documents would give: a term only hidden documents
+// hold never takes a visible term's place.
+func (f *FulltextIndexV2) expandTermsLocked(queryTerms []string, admit func(term string) bool) map[string]float64 {
 	termWeights := make(map[string]float64, len(queryTerms))
 	for _, term := range queryTerms {
-		termWeights[term] += 1.0
+		if admit == nil || admit(term) {
+			termWeights[term] += 1.0
+		}
 		if utf8.RuneCountInString(term) < f.minPrefixLength || f.maxPrefixExpansions == 0 {
 			continue
 		}
@@ -741,7 +749,7 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 			if !strings.HasPrefix(candidate, term) {
 				break
 			}
-			if candidate == term {
+			if candidate == term || admit != nil && !admit(candidate) {
 				continue
 			}
 			termWeights[candidate] += bm25PrefixWeight
@@ -751,7 +759,11 @@ func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weig
 			}
 		}
 	}
+	return termWeights
+}
 
+func (f *FulltextIndexV2) expandAndWeightTermsLocked(queryTerms []string) []weightedTermPostings {
+	termWeights := f.expandTermsLocked(queryTerms, nil)
 	terms := make([]weightedTermPostings, 0, len(termWeights))
 	for term, weight := range termWeights {
 		st := f.termIndex[term]

@@ -248,23 +248,26 @@ func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
 	}
 }
 
-func TestDropRoleUnsupportedOverHTTPChangesNothing(t *testing.T) {
+// The Cypher role commands move a role's records with it, as the HTTP role
+// API does: RENAME ROLE carries its procedure grant to the new name, DROP
+// ROLE removes it, and GRANT ROLE to a user that doesn't exist changes
+// nothing.
+func TestCypherRoleCommandsCarryRoleRecords(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
 	admin := getAuthToken(t, users, "admin")
 	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
 	require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO ops"))
-	for query, code := range map[string]string{
-		"CREATE ROLE new":             "Neo.ClientError.Statement.SemanticError",
-		"DROP ROLE ops":               "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"RENAME ROLE ops TO new":      "Neo.ClientError.Statement.SyntaxError",
-		"GRANT ROLE ops TO reader":    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"REVOKE ROLE ops FROM reader": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-	} {
-		require.Equal(t, code, txErrorCode(t, server, "system", admin, query))
-	}
-	require.True(t, server.roleStore.Exists("ops"))
-	require.True(t, server.ProcedureGrantChecker([]string{"ops"})("db.a"))
+	require.Equal(t, "Neo.ClientError.Statement.ArgumentError", txErrorCode(t, server, "system", admin, "GRANT ROLE ops TO nobody"))
+
+	require.Empty(t, txErrorCode(t, server, "system", admin, "RENAME ROLE ops TO renamed"))
+	require.False(t, server.roleStore.Exists("ops"))
+	require.False(t, server.ProcedureGrantChecker([]string{"ops"})("db.a"))
+	require.True(t, server.ProcedureGrantChecker([]string{"renamed"})("db.a"))
+
+	require.Empty(t, txErrorCode(t, server, "system", admin, "DROP ROLE renamed"))
+	require.False(t, server.roleStore.Exists("renamed"))
+	require.False(t, server.ProcedureGrantChecker([]string{"renamed"})("db.a"))
 }
 
 func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T) {
@@ -273,13 +276,13 @@ func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T
 			ctx := context.Background()
 			server, users := setupTestServer(t)
 			admin := getAuthToken(t, users, "admin")
-			second := "GRANT EXECUTE PROCEDURE db.b ON DBMS TO viewer"
+			second := "GRANT EXECUTE BOOSTED PROCEDURE db.b ON DBMS TO viewer"
 			if reject {
 				second = "CALL dbms.components()"
 			}
 			resp := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]any{
 				"statements": []map[string]any{
-					{"statement": "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer"},
+					{"statement": "GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO viewer"},
 					{"statement": second},
 				},
 			}, "Bearer "+admin)

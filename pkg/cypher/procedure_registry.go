@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -51,18 +52,25 @@ type ProcedureColumn struct {
 }
 
 // ProcedureSpec is the canonical contract for built-in and user-defined procedures.
-// Admin, IsDeprecated and DeprecatedBy describe the procedure in SHOW PROCEDURES;
-// they do not replace handler authorization or change execution behavior.
+// Privilege is its authoritative operation contract. Mode describes the public
+// signature; Admin and UpdatesDBMS are derived views assigned at registration.
+// IsDeprecated and DeprecatedBy describe the procedure in SHOW PROCEDURES.
 // An empty DeprecatedBy is exposed as null. For example, a deprecated procedure
 // can set IsDeprecated: true and DeprecatedBy: "custom.replacement".
+// UpdatesDBMS marks a procedure that changes the DBMS rather than one
+// database (the server-wide procedure catalog, users, roles, privileges): no
+// statement may call it while impersonating a user, as Neo4j refuses
+// updating system commands then (AuthorizeQuery).
 type ProcedureSpec struct {
 	Name               string
 	Signature          string
 	Description        string
 	DescriptionMessage localization.Message
 	Mode               ProcedureMode
+	Privilege          PrivilegeClass
 	WorksOnSystem      bool
 	Admin              bool
+	UpdatesDBMS        bool
 	IsDeprecated       bool
 	DeprecatedBy       string
 	Params             []ProcedureParam
@@ -72,9 +80,11 @@ type ProcedureSpec struct {
 }
 
 // writes reports whether a call of the procedure changes the database: its
-// data (WRITE) or its schema (SCHEMA).
+// data or its schema, by its declared mode (WRITE, SCHEMA) or its privilege
+// class. Planning and write ordering use it; it is not an authorization
+// decision, so either source makes the call a write.
 func (s ProcedureSpec) writes() bool {
-	return s.Mode == ProcedureModeWrite || s.Mode == ProcedureModeSchema
+	return s.Mode == ProcedureModeWrite || s.Mode == ProcedureModeSchema || s.Privilege.Has(PrivilegeWrite|PrivilegeSchema)
 }
 
 // ProcedureMetadataRenderer renders localized procedure metadata for a request context.
@@ -100,6 +110,11 @@ type ProcedureRegistry struct {
 	builtins map[string]registeredProcedure
 	user     map[string]registeredProcedure
 	userFold map[string]struct{}
+
+	// generation counts registrations and removals, so a decision
+	// memoized from the registry (statement result-cache eligibility) is
+	// recomputed after a procedure is added, replaced or removed.
+	generation atomic.Uint64
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -114,6 +129,10 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
+	if !spec.Privilege.Valid() {
+		return fmt.Errorf("procedure %q: explicit privilege class required", spec.Name)
+	}
+	applyProcedurePrivilegeMetadata(&spec)
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
@@ -121,6 +140,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -128,11 +148,19 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
-	// A user-defined or plugin procedure declares a mode, not an admin
-	// flag: an ADMIN or DBMS one is admin-only.
-	if spec.Mode == ProcedureModeAdmin || spec.Mode == ProcedureModeDBMS {
-		spec.Admin = true
+	// An extension's validated declared mode supplies its contract. No empty
+	// mode or missing class can become an implicitly readable registration.
+	declared := PrivilegeClassForMode(spec.Mode)
+	if !declared.Valid() {
+		return fmt.Errorf("procedure %q: explicit valid mode required", spec.Name)
 	}
+	if spec.Privilege == 0 {
+		spec.Privilege = declared
+	}
+	if !spec.Privilege.Valid() {
+		return fmt.Errorf("procedure %q: explicit privilege class required", spec.Name)
+	}
+	applyProcedurePrivilegeMetadata(&spec)
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
@@ -141,7 +169,16 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
+	r.generation.Add(1)
 	return nil
+}
+
+// applyProcedurePrivilegeMetadata derives display compatibility fields from
+// the canonical contract; authorization never reads the old flags.
+func applyProcedurePrivilegeMetadata(spec *ProcedureSpec) {
+	requirements := requirementsForClass(spec.Privilege)
+	spec.Admin = requirements.Admin
+	spec.UpdatesDBMS = requirements.UpdatesDBMS
 }
 
 func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
@@ -217,6 +254,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
+	r.generation.Add(1)
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {

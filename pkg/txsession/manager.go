@@ -88,6 +88,7 @@ func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, e
 	}
 
 	if _, err := executor.Execute(cypher.WithTransactionControl(ctx), "BEGIN", nil); err != nil {
+		executor.ReleaseOwnedStorage()
 		return nil, err
 	}
 
@@ -134,8 +135,12 @@ func (m *Manager) GetForOwner(txID string, owner string) (*Session, bool) {
 
 func (m *Manager) Delete(txID string) {
 	m.mu.Lock()
+	session := m.sessions[txID]
 	delete(m.sessions, txID)
 	m.mu.Unlock()
+	if session != nil {
+		session.Executor.ReleaseOwnedStorage()
+	}
 }
 
 func (m *Manager) SetTerminalErrorObserver(observer func(*Session, error)) {

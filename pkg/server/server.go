@@ -761,8 +761,10 @@ type Server struct {
 	allowlistStore     *auth.AllowlistStore  // loaded from system DB when auth enabled
 	roleStore          *auth.RoleStore       // user-defined roles when auth enabled
 	privilegesStore    *auth.PrivilegesStore // per-DB read/write (Phase 4) when auth enabled
-	// procedurePrivileges holds EXECUTE [BOOSTED] PROCEDURE grants.
+	// procedurePrivileges holds EXECUTE [BOOSTED] PROCEDURE grants, and
+	// impersonatePrivileges IMPERSONATE grants and denials.
 	procedurePrivileges   *auth.ProcedurePrivilegeStore
+	impersonatePrivileges *auth.ImpersonatePrivilegeStore
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
@@ -1692,6 +1694,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Load RBAC stores from system DB when available so roles/allowlist/privileges/entitlements APIs
 	// work even with --no-auth (e.g. fetch roles, configure RBAC before enabling auth).
 	if systemStorage, err := dbManager.GetStorage("system"); err == nil {
+		if err := cypher.NewStatementExecutor(systemStorage).ReloadProcedureCatalog(); err != nil {
+			return nil, fmt.Errorf("failed to initialize local procedure catalog: %w", err)
+		}
 		ctx := context.Background()
 		roleStore := auth.NewRoleStore(systemStorage)
 		if loadErr := roleStore.Load(ctx); loadErr != nil {
@@ -1721,6 +1726,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		// Read on every check (ProcedureGrantChecker): a grant counts once
 		// committed, and a failed read denies.
 		s.procedurePrivileges = auth.NewProcedurePrivilegeStore(systemStorage)
+		// Likewise read on every check (ImpersonationChecker).
+		s.impersonatePrivileges = auth.NewImpersonatePrivilegeStore(systemStorage)
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))

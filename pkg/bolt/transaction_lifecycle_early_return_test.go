@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,34 @@ import (
 )
 
 const forcedTransactionalRunFailure = "RETURN 1 /* forced transactional failure */"
+
+// runAccessBarrier holds a RUN at its pre-execution access check. BEGIN
+// checks database access too (it admits the transaction's database), so the
+// barrier lets every call through with full access until the test arms it
+// after BEGIN; then the next call, RUN's, signals entered, waits for
+// release and answers mode.
+type runAccessBarrier struct {
+	armed   atomic.Bool
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+	mode    auth.DatabaseAccessMode
+}
+
+func newRunAccessBarrier(mode auth.DatabaseAccessMode) *runAccessBarrier {
+	return &runAccessBarrier{entered: make(chan struct{}), release: make(chan struct{}), mode: mode}
+}
+
+func (b *runAccessBarrier) arm() { b.armed.Store(true) }
+
+func (b *runAccessBarrier) resolve([]string) auth.DatabaseAccessMode {
+	if !b.armed.Load() {
+		return auth.FullDatabaseAccessMode
+	}
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+	return b.mode
+}
 
 type failingRunTransactionalExecutor struct {
 	adapter *transactionalBoltQueryExecutorAdapter
@@ -57,28 +86,23 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 		rollbackEntered: make(chan struct{}),
 		rollbackRelease: rollbackRelease,
 	}
-	resolverEntered := make(chan struct{})
-	resolverRelease := make(chan struct{})
-	var resolverOnce sync.Once
 	server := New(&Config{
 		Port:            0,
 		MaxConnections:  8,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
-		resolverOnce.Do(func() { close(resolverEntered) })
-		<-resolverRelease
-		return auth.DenyAllDatabaseAccessMode
-	}
+	barrier := newRunAccessBarrier(auth.DenyAllDatabaseAccessMode)
+	server.databaseAccessModeResolver = barrier.resolve
 	port := startBoltTestServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
 	})
+	barrier.arm()
 	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))
 	select {
-	case <-resolverEntered:
+	case <-barrier.entered:
 	case <-time.After(time.Second):
 		t.Fatal("RUN did not reach the pre-execution access check")
 	}
@@ -92,7 +116,7 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 	if cleanupStartedBeforeFailure {
 		close(rollbackRelease)
 	}
-	close(resolverRelease)
+	close(barrier.release)
 	if !cleanupStartedBeforeFailure {
 		select {
 		case <-executor.rollbackEntered:
@@ -110,28 +134,23 @@ func TestBoltTimeoutCleanupIsNotOwnedByPreExecutionFailurePath(t *testing.T) {
 
 func TestBoltExpiryBeforeRunClaimNeverExecutesAndResetRecovers(t *testing.T) {
 	executor := &sharedSingleTransactionExecutor{}
-	resolverEntered := make(chan struct{})
-	resolverRelease := make(chan struct{})
-	var resolverOnce sync.Once
 	server := New(&Config{
 		Port:            0,
 		MaxConnections:  8,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
-		resolverOnce.Do(func() { close(resolverEntered) })
-		<-resolverRelease
-		return auth.FullDatabaseAccessMode
-	}
+	barrier := newRunAccessBarrier(auth.FullDatabaseAccessMode)
+	server.databaseAccessModeResolver = barrier.resolve
 	port := startBoltTestServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
 	})
+	barrier.arm()
 	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))
 	select {
-	case <-resolverEntered:
+	case <-barrier.entered:
 	case <-time.After(time.Second):
 		t.Fatal("RUN did not reach the pre-claim resolver barrier")
 	}
@@ -140,7 +159,7 @@ func TestBoltExpiryBeforeRunClaimNeverExecutesAndResetRecovers(t *testing.T) {
 		defer executor.mu.Unlock()
 		return executor.rollbackCalls == 1
 	}, time.Second, time.Millisecond, "timeout cleanup did not finish before resolver release")
-	close(resolverRelease)
+	close(barrier.release)
 	code, _, err := AssertFailure(t, conn)
 	require.NoError(t, err)
 	require.Equal(t, transactionTimedOutCode, code)
@@ -165,28 +184,23 @@ func TestBoltExpiryBeforeRunClaimJoinsCleanupBeforeFailure(t *testing.T) {
 		rollbackEntered: make(chan struct{}),
 		rollbackRelease: rollbackRelease,
 	}
-	resolverEntered := make(chan struct{})
-	resolverRelease := make(chan struct{})
-	var resolverOnce sync.Once
 	server := New(&Config{
 		Port:            0,
 		MaxConnections:  8,
 		ReadBufferSize:  8192,
 		WriteBufferSize: 8192,
 	}, fixedSessionExecutorFactory{QueryExecutor: executor})
-	server.databaseAccessModeResolver = func([]string) auth.DatabaseAccessMode {
-		resolverOnce.Do(func() { close(resolverEntered) })
-		<-resolverRelease
-		return auth.FullDatabaseAccessMode
-	}
+	barrier := newRunAccessBarrier(auth.FullDatabaseAccessMode)
+	server.databaseAccessModeResolver = barrier.resolve
 	port := startBoltTestServer(t, server)
 	conn := openBoltTestConn(t, port)
 	beginExplicitTransaction(t, conn, map[string]any{
 		"tx_timeout": int64(transactionLifecycleShortTimeout / time.Millisecond),
 	})
+	barrier.arm()
 	require.NoError(t, SendRun(t, conn, "RETURN 1", nil, nil))
 	select {
-	case <-resolverEntered:
+	case <-barrier.entered:
 	case <-time.After(time.Second):
 		t.Fatal("RUN did not reach pre-claim resolver barrier")
 	}
@@ -195,7 +209,7 @@ func TestBoltExpiryBeforeRunClaimJoinsCleanupBeforeFailure(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("idle timeout cleanup did not enter rollback")
 	}
-	close(resolverRelease)
+	close(barrier.release)
 
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(100*time.Millisecond)))
 	_, _, err := ReadMessage(conn)

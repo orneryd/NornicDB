@@ -523,8 +523,41 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		return created
 	}
 
+	// A restricted reader (RestrictedReader): every relationship is decided
+	// before rs.mu is taken, since that reads storage. Under the lock, BM25
+	// plans and scores the visible corpus and only visible relationships take
+	// vector ranks, so fusion below combines visible items only.
+	reader := opts.Restricted
+	var visibleIndex visibleStatisticsIndex
+	if reader != nil {
+		var supported bool
+		visibleIndex, supported = rs.fulltext.(visibleStatisticsIndex)
+		rs.mu.RLock()
+		ids := make([]string, 0, len(rs.entries))
+		for id := range rs.entries {
+			ids = append(ids, id)
+		}
+		if supported {
+			ids = append(ids, visibleIndex.documentIDs()...)
+		}
+		rs.mu.RUnlock()
+		reader.decideRelationships(ids)
+	}
+
 	rs.mu.RLock()
-	bm25 := rs.fulltext.Search(query, depth)
+	var bm25 []indexResult
+	var visibleRelationship func(string) bool
+	switch {
+	case reader == nil:
+		bm25 = rs.fulltext.Search(query, depth)
+	case visibleIndex != nil:
+		visibleRelationship = reader.relationshipLookup()
+		bm25 = visibleIndex.SearchVisible(query, depth, visibleRelationship, nil)
+	default:
+		// No visible statistics: keyword search serves the reader nothing
+		// rather than whole-index statistics.
+		visibleRelationship = reader.relationshipLookup()
+	}
 	type scored struct {
 		id    string
 		score float64
@@ -536,6 +569,9 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	if len(embedding) > 0 {
 		normalizedQuery := normalizeVectorCopy(embedding)
 		for id, entry := range rs.entries {
+			if visibleRelationship != nil && !visibleRelationship(id) {
+				continue
+			}
 			best, found := -2.0, false
 			var scores []float64
 			for _, vector := range entry.Vectors {
@@ -568,7 +604,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	var terms map[string]*queryTerm
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	if query != "" && !opts.SkipMatches {
-		terms = matchQueryTerms(analyzer, query, rs.fulltext)
+		terms = matchQueryTermsVisible(analyzer, query, rs.fulltext, visibleRelationship)
 	}
 	rs.mu.RUnlock()
 

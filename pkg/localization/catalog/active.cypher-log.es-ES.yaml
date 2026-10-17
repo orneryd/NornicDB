@@ -22,3 +22,6 @@
 - id: cypher.log.decay_subsystem_disabled
   description: Aviso para operadores cuando se llama a una función de decaimiento mientras el subsistema está deshabilitado.
   other: se llamó a la función de decaimiento, pero el subsistema de decaimiento está deshabilitado; se devuelven puntuaciones neutras
+- id: cypher.log.storage_cleanup_failed
+  description: Registro de error para operadores cuando falla la liberación del almacenamiento de base de datos de una solicitud.
+  other: falló la liberación del almacenamiento de base de datos de la solicitud

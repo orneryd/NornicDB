@@ -78,6 +78,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "status", "") {
+		return
+	}
 	stats := s.Stats()
 
 	// Calculate stats across all user databases (excluding system).

@@ -39,7 +39,7 @@ func TestAdministrationTransactionOpenedOnUserDatabase(t *testing.T) {
 	exec, system := administrationReviewExecutor(t, "nornic")
 	_, err := exec.handleBegin()
 	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err)
 	_, err = exec.handleCommit()
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestAdministrationTransactionOpenedOnUserDatabase(t *testing.T) {
 // can't open the administration transaction, fails and writes nothing.
 func TestAdministrationRoutingFailures(t *testing.T) {
 	ctx := context.Background()
-	grant := "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer"
+	grant := "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer"
 	routed := func(t *testing.T, system storage.Engine, err error) *StorageExecutor {
 		exec, _ := administrationReviewExecutor(t, "nornic")
 		exec.SetDatabaseManager(systemRoutingManager{administrationReviewManager: exec.dbManager.(administrationReviewManager), err: err, system: system})
@@ -92,7 +92,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	ctx := context.Background()
 
 	exec, system := administrationReviewExecutor(t, "nornic")
-	_, err := exec.executeInternal(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+	_, err := exec.executeInternal(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err, "routed to the system database")
 	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestExecuteInternalAdmissionRoutingAndPolicy(t *testing.T) {
 	tx, _ := administrationReviewExecutor(t, "nornic")
 	_, err = tx.handleBegin()
 	require.NoError(t, err)
-	_, err = tx.executeUserStatement(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+	_, err = tx.executeUserStatement(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
 }
 
@@ -225,7 +225,7 @@ type probeContextKey struct{}
 // transaction's commands write through its system view.
 func TestAdministrationTransactionTakeover(t *testing.T) {
 	ctx := context.Background()
-	grant := "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer"
+	grant := "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer"
 
 	exec, _ := administrationReviewExecutor(t, "nornic")
 	_, err := exec.handleBegin()

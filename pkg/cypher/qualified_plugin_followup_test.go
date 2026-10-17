@@ -13,14 +13,14 @@ func TestQualifiedPluginIdentityWithSpacesAndOperatorNames(t *testing.T) {
 	previous := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = previous })
 	names := []string{"custom.range", "custom.truncate", "custom.shortestPath", "custom.allShortestPaths", "custom.and", "custom.or", "custom.xor"}
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = withPurePluginContracts(func(name string) (interface{}, bool) {
 		for _, registered := range names {
 			if name == registered {
 				return func(value interface{}) interface{} { return value }, true
 			}
 		}
 		return nil, false
-	}
+	})
 	for _, explicit := range []bool{false, true} {
 		mode := map[bool]string{false: "auto", true: "explicit"}[explicit]
 		for _, name := range names {
@@ -112,10 +112,10 @@ func TestQualifiedPluginFollowupUnknownAndNativeControls(t *testing.T) {
 func TestQualifiedIdentifierReader(t *testing.T) {
 	previous := PluginFunctionLookup
 	t.Cleanup(func() { PluginFunctionLookup = previous })
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = withPurePluginContracts(func(name string) (interface{}, bool) {
 		require.Equal(t, "custom.deep.And", name)
 		return func(value interface{}) interface{} { return value }, true
-	}
+	})
 	decoded, _, ok := parseFunctionCallWS(" custom . deep . And ('ok') ")
 	require.True(t, ok)
 	_, found := pluginFunctionHandler(decoded)

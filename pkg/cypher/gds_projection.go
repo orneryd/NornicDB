@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -41,6 +42,8 @@ type GraphProjection struct {
 	RelationshipCount        int
 	CreatedAt                time.Time
 	Database                 string
+	Principal                string                 // stable executing identity, assigned at catalog publication
+	Username                 string                 // executing display name, for administrator catalog operations
 	Configuration            map[string]interface{} // as gds.graph.list reports it
 	schema                   map[string]interface{} // GDS's schema, with each relationship type's direction
 	nodeIndex                map[string]int
@@ -63,20 +66,44 @@ type ProjectedRelationship struct {
 // Global graph projection store (thread-safe): one catalog per database, as
 // GDS keeps it (#1161), keyed by gdsCatalogKey.
 var (
-	graphProjections = make(map[string]*GraphProjection)
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
 	projectionsMu    sync.RWMutex
 )
 
 // gdsCatalogKey is a projection's key in the catalog: its database and name.
-func gdsCatalogKey(database, name string) string {
-	return database + "\x00" + name
+type gdsProjectionKey struct {
+	Database, Principal, Name string
+}
+
+func gdsCatalogKey(database, name string, principals ...string) gdsProjectionKey {
+	principal := ""
+	if len(principals) > 0 {
+		principal = principals[0]
+	}
+	return gdsProjectionKey{Database: database, Principal: principal, Name: name}
+}
+
+// gdsCatalogPrincipal uses only the executing identity. An explicitly
+// authentication-disabled or embedded request shares the anonymous catalog.
+func gdsCatalogPrincipal(contexts ...context.Context) string {
+	if len(contexts) == 0 || contexts[0] == nil || authenticationDisabled(contexts[0]) {
+		return ""
+	}
+	ctx := contexts[0]
+	if principal := GetAuthenticatedPrincipalFromContext(ctx); principal != "" {
+		return principal
+	}
+	if user, ok := authenticatedUserFromContext(ctx); ok {
+		return auth.UsernamePrincipalID(user.Name)
+	}
+	return ""
 }
 
 // lookupGraphProjection is database's projection called name, or GDS's
 // error for a graph the catalog doesn't hold.
-func lookupGraphProjection(database, name string) (*GraphProjection, error) {
+func lookupGraphProjection(database, name string, contexts ...context.Context) (*GraphProjection, error) {
 	projectionsMu.RLock()
-	projection, exists := graphProjections[gdsCatalogKey(database, name)]
+	projection, exists := graphProjections[gdsCatalogKey(database, name, gdsCatalogPrincipal(contexts...))]
 	projectionsMu.RUnlock()
 	if !exists {
 		return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
@@ -84,18 +111,19 @@ func lookupGraphProjection(database, name string) (*GraphProjection, error) {
 	return projection, nil
 }
 
-// graphProjection is this database's projection called name.
-func (e *StorageExecutor) graphProjection(name string) (*GraphProjection, error) {
-	return lookupGraphProjection(e.databaseName(), name)
+// graphProjection is this database's projection called name, as the
+// statement's principal may still use it (visibleGraphProjection).
+func (e *StorageExecutor) graphProjection(name string, contexts ...context.Context) (*GraphProjection, error) {
+	return visibleGraphProjection(e.storage, e.databaseName(), name, contexts...)
 }
 
 // databaseProjections is database's projections, by name.
-func databaseProjections(database string) []*GraphProjection {
+func databaseProjections(database string, contexts ...context.Context) []*GraphProjection {
 	projectionsMu.RLock()
 	defer projectionsMu.RUnlock()
 	var projections []*GraphProjection
 	for _, projection := range graphProjections {
-		if projection.Database == database {
+		if projection.Database == database && projection.Principal == gdsCatalogPrincipal(contexts...) {
 			projections = append(projections, projection)
 		}
 	}
@@ -151,6 +179,8 @@ func (spec gdsElementSpec) merges() bool {
 // are refused with GDS's messages.
 func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
+	// Its contract (PrivilegeUnrestrictedView) refuses a restricted principal,
+	// which projects with the Cypher aggregation form from rows its view read.
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -177,7 +207,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...co
 	projection.Configuration = configuration
 	projection.Database = e.databaseName()
 
-	if err := registerGraphProjection(projection, false); err != nil {
+	if err := registerGraphProjection(projection, false, contexts...); err != nil {
 		return nil, err
 	}
 
@@ -945,14 +975,14 @@ func appendUnique(values []string, value string) []string {
 // callGdsGraphList implements CALL gds.graph.list([graphName]) as GDS does
 // (#1161): this database's projections, or the one named, with GDS's
 // columns.
-func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphList(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	name, err := optionalProcedureString("gds.graph.list", args, 0, "graphName", "")
 	if err != nil {
 		return nil, err
 	}
 	columns := append([]string{"degreeDistribution"}, gdsDropColumns...)
 	rows := make([][]any, 0)
-	for _, projection := range databaseProjections(e.databaseName()) {
+	for _, projection := range databaseProjections(e.databaseName(), contexts...) {
 		if name != "" && projection.Name != name {
 			continue
 		}
@@ -1008,28 +1038,52 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	if database == "" {
 		database = e.databaseName()
 	}
-	if _, err := optionalProcedureString(procedure, args, 3, "username", ""); err != nil {
+	username, err := optionalProcedureString(procedure, args, 3, "username", "")
+	if err != nil {
 		return nil, err
 	}
 	// Dropping from another database's catalog needs write there.
 	if err := authorizeDatabase(ctx, database, "write"); err != nil {
 		return nil, err
 	}
+	principal := gdsCatalogPrincipal(ctx)
+	user, signedIn := authenticatedUserFromContext(ctx)
+	otherUser := username != "" && signedIn && username != user.Name
+	if otherUser {
+		if allows := principalPermissions(ctx); allows != nil && !allows("admin") {
+			return nil, &PermissionDeniedError{Permission: "admin"}
+		}
+	}
 
 	projectionsMu.Lock()
 	defer projectionsMu.Unlock()
+	// An administrator may explicitly name another executing username.
+	// Ordinary lookups never search other owners' catalogs.
+	keyFor := func(name string) (gdsProjectionKey, bool) {
+		key := gdsCatalogKey(database, name, principal)
+		if otherUser {
+			for candidate, projection := range graphProjections {
+				if candidate.Database == database && candidate.Name == name && projection.Username == username {
+					return candidate, true
+				}
+			}
+			return gdsProjectionKey{}, false
+		}
+		return key, true
+	}
 	if failIfMissing {
 		for _, name := range names {
-			if _, exists := graphProjections[gdsCatalogKey(database, name)]; !exists {
+			key, selected := keyFor(name)
+			if _, exists := graphProjections[key]; !selected || !exists {
 				return nil, localizedError(localization.CypherGraphProceduresGraphNotFound(name, database), nil)
 			}
 		}
 	}
 	rows := make([][]any, 0, len(names))
 	for _, name := range names {
-		key := gdsCatalogKey(database, name)
+		key, selected := keyFor(name)
 		projection, exists := graphProjections[key]
-		if !exists {
+		if !selected || !exists {
 			continue
 		}
 		delete(graphProjections, key)
@@ -1044,12 +1098,12 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 }
 
 // callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161).
-func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphExists(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	name, err := requiredProcedureString("gds.graph.exists", args, 0, "graphName")
 	if err != nil {
 		return nil, err
 	}
-	_, missing := e.graphProjection(name)
+	_, missing := lookupGraphProjection(e.databaseName(), name, contexts...)
 	return &ExecuteResult{Columns: []string{"graphName", "exists"}, Rows: [][]any{{name, missing == nil}}}, nil
 }
 

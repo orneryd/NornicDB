@@ -15,12 +15,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-collection read access through role membership, administered in Cypher (#935):
+  - **Role commands:** `CREATE` / `DROP` / `RENAME ROLE`, `GRANT` / `REVOKE ROLE` and `SHOW ROLES`.
+  - **Collection rules:** `GRANT` / `DENY` / `REVOKE MATCH {*} ON GRAPH … FOR (n:L) WHERE …`.
+  - **Access scopes:** `CREATE` / `DROP` / `SHOW ACCESS SCOPE` declare collection membership and how other nodes derive their visibility.
+  - **What a restricted login sees:** only what its roles allow, on every read path (Cypher, vector and fulltext search, `db.retrieve`, graph routes, GDS aggregation projections). Routes that read storage directly refuse it.
+  - **Introspection:** `SHOW USER PRIVILEGES` and `SHOW CURRENT USER YIELD collectionLimited` report the limits.
 - Regenerating or clearing embeddings can target any databases: `POST /nornicdb/embed/trigger?regenerate=true` and
   `POST /nornicdb/embed/clear` take `{"databases": [...]}` (or `?database=`), defaulting to the default database as
   before. Each named database needs write access, and an unknown, composite or `system` database rejects the request
   before anything is cleared. The UI's regenerate dialog lists the databases with checkboxes (the default one
   pre-selected) and a "Select all" box.
+- User impersonation, as in Neo4j 5 (#936): `GRANT | DENY | REVOKE [IMMUTABLE] IMPERSONATE (* | user, …) ON DBMS
+  TO | FROM role`, listed by SHOW PRIVILEGES. Bolt 4.4+ `imp_user` on BEGIN, auto-commit RUN and ROUTE runs with
+  the impersonated user's own roles and privileges only; a null `imp_user` is no impersonation. A request without
+  the privilege, or for a user that doesn't exist, fails with `Neo.ClientError.Security.Forbidden` before anything
+  runs. While impersonating, DBMS changes and remote databases are refused. SHOW TRANSACTIONS (`authenticatedUser`,
+  `executingUser` under YIELD), the query log and change-data-capture events keep both the signed-in and the
+  executing user. Impersonation is Bolt-only; the HTTP Query API's `impersonatedUser` is not implemented.
+- One access-control model for every transport: each built-in procedure, function and administration command
+  declares its privilege class (registration fails without one), and Bolt, HTTP, GraphQL, MCP, Heimdall and the
+  Qdrant gRPC API admit an operation for the executing principal before resolving a database or creating storage,
+  executors or services. Refusals use Neo4j 5's texts: database access, schema, admin procedure,
+  administration command ("Permission denied.") and write.
 ### Changed
+
+- A statement that reads nothing from the graph (for example `RETURN 1` or `USE db RETURN 1`) needs database access
+  only, not read, following Neo4j's ACCESS semantics. Index and constraint DDL needs the schema privilege, not read.
+- A refused database, alias, composite or constituent is reported as "Database access is not allowed for user …",
+  naming the principal and never the database, so a missing database and an inaccessible one look alike.
+- `db.embedding.pause`, `db.embedding.resume` and `dbms.setConfigValue` change state every session shares: they need
+  admin and are refused while impersonating. `db.embedding.status` needs admin.
+- Every user may end its own transactions with TERMINATE TRANSACTIONS; another user's need transaction-management
+  rights and are otherwise reported "Transaction not found.". GDS graph projections are kept per executing user.
 
 - Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume

@@ -159,11 +159,11 @@ func TestCypherHelpers_NodeVersionAtNanosFallsBackToCreatedAt(t *testing.T) {
 
 func TestCypherHelpers_ProcedureRegistryAndPatternNames(t *testing.T) {
 	reg := NewProcedureRegistry()
-	err := reg.RegisterBuiltIn(ProcedureSpec{Name: "db.labels", MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+	err := reg.RegisterBuiltIn(ProcedureSpec{Name: "db.labels", Privilege: PrivilegeRead, MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 		return &ExecuteResult{}, nil
 	})
 	require.NoError(t, err)
-	err = reg.RegisterUser(ProcedureSpec{Name: "custom.proc", MinArgs: 0, MaxArgs: 1}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+	err = reg.RegisterUser(ProcedureSpec{Name: "custom.proc", Mode: ProcedureModeRead, MinArgs: 0, MaxArgs: 1}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 		return &ExecuteResult{}, nil
 	})
 	require.NoError(t, err)
@@ -183,7 +183,7 @@ func TestCypherHelpers_ProcedureRegistryAndPatternNames(t *testing.T) {
 func TestCypherHelpers_ProcedureRegistryAndArgParsing_Errors(t *testing.T) {
 	reg := NewProcedureRegistry()
 
-	err := reg.RegisterBuiltIn(ProcedureSpec{Name: "db.bad", MinArgs: 0, MaxArgs: 0}, nil)
+	err := reg.RegisterBuiltIn(ProcedureSpec{Name: "db.bad", Privilege: PrivilegeRead, MinArgs: 0, MaxArgs: 0}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil handler")
 
@@ -239,7 +239,7 @@ func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testi
 	replaceProcedureRegistryForTest(t, NewProcedureRegistry())
 
 	err := globalProcedureRegistry.RegisterUser(
-		ProcedureSpec{Name: "custom.echo", MinArgs: 3, MaxArgs: 3},
+		ProcedureSpec{Name: "custom.echo", Mode: ProcedureModeRead, MinArgs: 3, MaxArgs: 3},
 		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("unexpected arg count: %d", len(args))

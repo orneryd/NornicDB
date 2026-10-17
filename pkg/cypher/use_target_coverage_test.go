@@ -96,11 +96,11 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 
 	asked, resolver := recording()
 	require.NoError(t, exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1"))
-	require.Equal(t, []string{"cmp:access", "dba:read"}, *asked)
+	require.Equal(t, []string{"cmp:access", "dba:access"}, *asked, "a statement that reads nothing needs access alone")
 	for query, permissions := range map[string][]string{
-		"CREATE (:Loaded)":                             {"cmp:access", "dba:write"},
-		"MATCH (n) SET n.loaded = true":                {"cmp:access", "dba:write", "dba:read"},
-		"CREATE INDEX loaded FOR (n:Loaded) ON (n.id)": {"cmp:access", "dba:schema", "dba:read"},
+		"CREATE (:Loaded)":                             {"cmp:access", "dba:access", "dba:write"},
+		"MATCH (n) SET n.loaded = true":                {"cmp:access", "dba:access", "dba:write", "dba:read"},
+		"CREATE INDEX loaded FOR (n:Loaded) ON (n.id)": {"cmp:access", "dba:access", "dba:schema"},
 	} {
 		asked, resolver := recording()
 		require.NoError(t, exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", query))
@@ -110,17 +110,14 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	// Refusing the constituent's database refuses the constituent.
 	asked, resolver = recording("dba")
 	err := exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
-	var denied *PermissionDeniedError
-	require.ErrorAs(t, err, &denied)
-	require.Equal(t, "read", denied.Permission)
-	requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
-	require.Equal(t, []string{"cmp:access", "dba:read"}, *asked)
+	requireDatabaseAccessDenied(t, err)
+	require.Equal(t, []string{"cmp:access", "dba:access"}, *asked)
 
 	// An alias needs its target too.
 	asked, resolver = recording("target")
 	err = exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "al", "RETURN 1")
-	require.ErrorAs(t, err, &denied)
-	require.Equal(t, []string{"al:access", "target:read"}, *asked)
+	requireDatabaseAccessDenied(t, err)
+	require.Equal(t, []string{"al:access", "target:access"}, *asked)
 
 	// Constituents that can't be read: the composite is checked, then the
 	// lookup's error is returned; a refused composite is refused first.
@@ -130,18 +127,18 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	asked, resolver = recording()
 	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
 	require.ErrorIs(t, err, lookupErr)
-	require.Equal(t, []string{"cmp:read"}, *asked)
+	require.Equal(t, []string{"cmp:access"}, *asked)
 	asked, resolver = recording("cmp")
 	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
-	require.ErrorAs(t, err, &denied)
+	requireDatabaseAccessDenied(t, err)
 	require.NotErrorIs(t, err, lookupErr)
-	require.Equal(t, []string{"cmp:read"}, *asked)
+	require.Equal(t, []string{"cmp:access"}, *asked)
 
 	// No database manager: the name alone.
 	embedded := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	asked, resolver = recording()
 	require.NoError(t, embedded.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1"))
-	require.Equal(t, []string{"cmp.a:read"}, *asked)
+	require.Equal(t, []string{"cmp.a:access"}, *asked)
 }
 
 // badEngineDBManager serves a value that is not a storage engine.
@@ -171,7 +168,8 @@ func newUseTargetFixture(t *testing.T) *StorageExecutor {
 
 // TestUseTargetAuthorizationOnEveryRoute: a USE clause's database is
 // authorized on the top-level route, in CALL subqueries and in a statement
-// apoc.cypher.run executes (#738); an alias needs its target.
+// apoc.cypher.run executes (#738); an alias needs its target. A refusal is
+// Neo4j's database-access refusal.
 func TestUseTargetAuthorizationOnEveryRoute(t *testing.T) {
 	exec := newUseTargetFixture(t)
 	refuseOther := WithDatabasePermissionResolver(context.Background(), "nornic", func(database, permission string) bool {
@@ -186,9 +184,7 @@ func TestUseTargetAuthorizationOnEveryRoute(t *testing.T) {
 		"CALL apoc.cypher.run('USE other RETURN 1 AS x', {}) YIELD value RETURN value",
 	} {
 		_, err := exec.Execute(refuseOther, query, nil)
-		var denied *PermissionDeniedError
-		require.ErrorAs(t, err, &denied, query)
-		require.Equal(t, "read", denied.Permission, query)
+		requireDatabaseAccessDenied(t, err, query)
 	}
 
 	allowAll := WithDatabasePermissionResolver(context.Background(), "nornic", func(string, string) bool { return true })

@@ -12,18 +12,18 @@ import (
 )
 
 func init() {
-	Register("id", evalID)
-	Register("elementid", evalElementID)
-	Register("labels", evalLabels)
-	Register("type", evalType)
-	Register("keys", evalKeys)
-	Register("properties", evalProperties)
-	Register("size", evalSize)
-	Register("tolower", evalToLower)
-	Register("toupper", evalToUpper)
-	Register("coalesce", evalCoalesce)
+	Register("id", PrivilegeNone, evalID)
+	Register("elementid", PrivilegeNone, evalElementID)
+	Register("labels", PrivilegeNone, evalLabels)
+	Register("type", PrivilegeNone, evalType)
+	Register("keys", PrivilegeNone, evalKeys)
+	Register("properties", PrivilegeNone, evalProperties)
+	Register("size", PrivilegeNone, evalSize)
+	Register("tolower", PrivilegeNone, evalToLower)
+	Register("toupper", PrivilegeNone, evalToUpper)
+	Register("coalesce", PrivilegeNone, evalCoalesce)
 	for _, name := range []string{"file", "linenumber"} {
-		Register(name, func(ctx Context, args []string) (interface{}, error) {
+		Register(name, PrivilegeNone, func(ctx Context, args []string) (interface{}, error) {
 			if argumentCount(args) != 0 {
 				return nil, &ParameterCountError{Function: name, TooMany: true}
 			}

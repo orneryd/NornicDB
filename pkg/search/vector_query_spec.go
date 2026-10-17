@@ -39,6 +39,11 @@ type VectorQuerySpec struct {
 
 	// Limit is the maximum number of results to return (top-K).
 	Limit int
+
+	// Restricted is a restricted reader's visibility (RestrictedReader; nil:
+	// an unrestricted reader): a node it can't see is never a candidate, so
+	// the top-K are the best visible nodes.
+	Restricted *RestrictedReader
 }
 
 // VectorQueryHit is a lightweight result row for Cypher-compatible vector queries.
@@ -65,6 +70,11 @@ type RelationshipVectorQuerySpec struct {
 
 	// Limit is the maximum number of results to return.
 	Limit int
+
+	// Restricted is a restricted reader's visibility (RestrictedReader; nil:
+	// an unrestricted reader): a relationship it can't see is never a
+	// candidate, so the top-K are the best visible relationships.
+	Restricted *RestrictedReader
 }
 
 // RelationshipVectorQueryHit is a lightweight result row for relationship vector queries.
@@ -180,6 +190,16 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	}
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
+	// Visibility reads storage, so it is decided outside the index locks.
+	if spec.Restricted != nil {
+		visible := candidates[:0]
+		for _, cand := range candidates {
+			if spec.Restricted.RelationshipVisible(cand.id) {
+				visible = append(visible, cand)
+			}
+		}
+		candidates = visible
+	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -296,7 +316,13 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
+		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
+		// A restricted reader's hidden nodes are never scored. Restricted reads
+		// storage, so it runs here, before any index lock or score reader.
+		if spec.Restricted != nil && !spec.Restricted.NodeVisible(nodeID) {
+			continue
+		}
+		candidateNodes[nodeID] = struct{}{}
 	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
@@ -374,7 +400,11 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 	}
 
 	if spec.Property != "" {
-		out = append(out, supplement...)
+		for _, scored := range supplement {
+			if spec.Restricted == nil || spec.Restricted.NodeVisible(scored.id) {
+				out = append(out, scored)
+			}
+		}
 	}
 	out = collapseScoredNodesByID(out)
 	sort.Slice(out, func(i, j int) bool { return out[i].score > out[j].score })
@@ -544,48 +574,73 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		id    string
 		score float64
 	}
-	scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
+	// scoreAll scores every node under the metadata read locks; a restricted
+	// reader's visibility reads storage, so it applies after they are released.
+	scoreAll := func() ([]scoredNode, error) {
+		scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
-	// The node and relationship metadata is written under indexMu (index
-	// writes): lock order indexMu -> mu.
-	s.indexMu.RLock()
-	defer s.indexMu.RUnlock()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+		// The node and relationship metadata is written under indexMu (index
+		// writes): lock order indexMu -> mu.
+		s.indexMu.RLock()
+		defer s.indexMu.RUnlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
 
-	for nodeID, labels := range s.nodeLabels {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+		for nodeID, labels := range s.nodeLabels {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 
-		if spec.Label != "" {
-			has := false
-			for _, l := range labels {
-				if l == spec.Label {
-					has = true
-					break
+			if spec.Label != "" {
+				has := false
+				for _, l := range labels {
+					if l == spec.Label {
+						has = true
+						break
+					}
+				}
+				if !has {
+					continue
 				}
 			}
-			if !has {
-				continue
-			}
-		}
 
-		bestScore := math.Inf(-1)
+			bestScore := math.Inf(-1)
 
-		// Apply Cypher precedence for selecting which vector represents this node.
-		if named := s.nodeNamedVector[nodeID]; named != nil {
-			if vecID, ok := named[vectorName]; ok {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					bestScore = prepared.score(v)
+			// Apply Cypher precedence for selecting which vector represents this node.
+			if named := s.nodeNamedVector[nodeID]; named != nil {
+				if vecID, ok := named[vectorName]; ok {
+					if v, ok := s.getVectorForCypher(vecID); ok {
+						bestScore = prepared.score(v)
+					}
+				}
+				// If there is no explicit Cypher property/index mapping (property key is empty),
+				// fall through to managed named embeddings (any key) before chunk fallback.
+				if math.IsInf(bestScore, -1) && spec.Property == "" {
+					for _, vecID := range named {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							score := prepared.score(v)
+							if score > bestScore {
+								bestScore = score
+							}
+						}
+					}
 				}
 			}
-			// If there is no explicit Cypher property/index mapping (property key is empty),
-			// fall through to managed named embeddings (any key) before chunk fallback.
-			if math.IsInf(bestScore, -1) && spec.Property == "" {
-				for _, vecID := range named {
+
+			if math.IsInf(bestScore, -1) && spec.Property != "" {
+				if props := s.nodePropVector[nodeID]; props != nil {
+					if vecID, ok := props[spec.Property]; ok {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							bestScore = prepared.score(v)
+						}
+					}
+				}
+			}
+
+			if math.IsInf(bestScore, -1) {
+				for _, vecID := range s.nodeChunkVectors[nodeID] {
 					if v, ok := s.getVectorForCypher(vecID); ok {
 						score := prepared.score(v)
 						if score > bestScore {
@@ -594,35 +649,36 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 					}
 				}
 			}
-		}
 
-		if math.IsInf(bestScore, -1) && spec.Property != "" {
-			if props := s.nodePropVector[nodeID]; props != nil {
-				if vecID, ok := props[spec.Property]; ok {
-					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = prepared.score(v)
-					}
-				}
+			if !math.IsInf(bestScore, -1) {
+				scored = append(scored, scoredNode{id: nodeID, score: bestScore})
 			}
 		}
-
-		if math.IsInf(bestScore, -1) {
-			for _, vecID := range s.nodeChunkVectors[nodeID] {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					score := prepared.score(v)
-					if score > bestScore {
-						bestScore = score
-					}
-				}
-			}
-		}
-
-		if !math.IsInf(bestScore, -1) {
-			scored = append(scored, scoredNode{id: nodeID, score: bestScore})
-		}
+		return scored, nil
+	}
+	scored, err := scoreAll()
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	// A restricted reader's top-K are the best nodes it can see: hidden ones
+	// are skipped before the limit, which is reached at the first K visible.
+	if spec.Restricted != nil {
+		admitted := scored[:0]
+		for _, candidate := range scored {
+			if len(admitted) == spec.Limit {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if spec.Restricted.NodeVisible(candidate.id) {
+				admitted = append(admitted, candidate)
+			}
+		}
+		scored = admitted
+	}
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
 	}

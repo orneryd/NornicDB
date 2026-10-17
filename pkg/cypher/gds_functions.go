@@ -25,18 +25,18 @@ func init() {
 		"resourceallocation":     "resource_allocation",
 		"totalneighbors":         "total_neighbors",
 	} {
-		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm))
+		cypherfn.Register("gds.alpha.linkprediction."+name, cypherfn.PrivilegeRead, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm))
 	}
-	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity)
-	cypherfn.Register("gds.util.asnode", fnGDSAsNode)
-	cypherfn.Register("gds.util.asnodes", fnGDSAsNodes)
-	cypherfn.Register("gds.util.nan", gdsConstant("gds.util.NaN", math.NaN()))
-	cypherfn.Register("gds.util.infinity", gdsConstant("gds.util.infinity", math.Inf(1)))
-	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true))
-	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false))
-	cypherfn.Register("gds.version", gdsConstant("gds.version", gdsVersion))
-	cypherfn.Register("gds.graph.exists", fnGDSGraphExists)
-	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty)
+	cypherfn.Register("gds.alpha.linkprediction.samecommunity", cypherfn.PrivilegeRead, fnGDSSameCommunity)
+	cypherfn.Register("gds.util.asnode", cypherfn.PrivilegeRead, fnGDSAsNode)
+	cypherfn.Register("gds.util.asnodes", cypherfn.PrivilegeRead, fnGDSAsNodes)
+	cypherfn.Register("gds.util.nan", cypherfn.PrivilegeNone, gdsConstant("gds.util.NaN", math.NaN()))
+	cypherfn.Register("gds.util.infinity", cypherfn.PrivilegeNone, gdsConstant("gds.util.infinity", math.Inf(1)))
+	cypherfn.Register("gds.util.isfinite", cypherfn.PrivilegeNone, fnGDSIsFinite(true))
+	cypherfn.Register("gds.util.isinfinite", cypherfn.PrivilegeNone, fnGDSIsFinite(false))
+	cypherfn.Register("gds.version", cypherfn.PrivilegeNone, gdsConstant("gds.version", gdsVersion))
+	cypherfn.Register("gds.graph.exists", cypherfn.PrivilegeRead, fnGDSGraphExists)
+	cypherfn.Register("gds.util.nodeproperty", cypherfn.PrivilegeRead, fnGDSNodeProperty)
 }
 
 // fnGDSGraphExists is gds.graph.exists(graphName): whether this database's
@@ -53,7 +53,7 @@ func fnGDSGraphExists(ctx cypherfn.Context, args []string) (interface{}, error) 
 	if !ok {
 		return nil, fmt.Errorf("gds.graph.exists expects a graph name, got %s", cypherTypeSystemName(values[0]))
 	}
-	_, missing := lookupGraphProjection(storageDatabaseName(ctx.Storage), name)
+	_, missing := lookupGraphProjection(storageDatabaseName(ctx.Storage), name, ctx.Request)
 	return missing == nil, nil
 }
 
@@ -84,7 +84,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
 		}
 	}
-	projection, err := lookupGraphProjection(storageDatabaseName(ctx.Storage), graph)
+	projection, err := visibleGraphProjection(ctx.Storage, storageDatabaseName(ctx.Storage), graph, ctx.Request)
 	if err != nil {
 		return nil, err
 	}

@@ -340,7 +340,11 @@ type StorageExecutor struct {
 	// transaction owners run on their own per-session executors, which are
 	// never marked shared.
 	sharedExecutor bool
-	cache          *SmartQueryCache // Query result cache with label-aware invalidation
+	// firstAdmission runs once, when the executor first admits a statement
+	// (SetFirstAdmission); clones don't carry it.
+	firstAdmission      *firstAdmission
+	ownedStorageCleanup *ownedStorageCleanup
+	cache               *SmartQueryCache // Query result cache with label-aware invalidation
 	// Query cache policy is immutable and scoped to this executor's database.
 	queryCacheMaxEntries         int
 	queryCacheTTL                time.Duration
@@ -497,6 +501,12 @@ type StorageExecutor struct {
 	// Empty string is acceptable when the bag was constructed with the
 	// tenant flag off — Bind helpers drop the arg internally.
 	database string
+
+	// visibility is a restricted principal's statement visibility
+	// (GraphVisibility): set on the executor its statement runs on, whose
+	// storage, and every storage it clones or hands out, is a
+	// visibleGraphView. Nil for an unrestricted principal.
+	visibility *visibilityEvaluator
 }
 
 type unwindMergeChainPlanCache struct {
@@ -523,6 +533,12 @@ type syntaxValidationCacheShard struct {
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
+	// A restricted statement's clone reads through the same view: it is
+	// built over the engine beneath the view, and applyVisibility wraps it
+	// again (applyVisibility).
+	if view, ok := override.(*visibleGraphView); ok {
+		override = view.Engine
+	}
 	e.ensureNodeLookupCache()
 	// Transactional clones use the lookup cache pinned to the
 	// transactionStorageWrapper. Concurrent transactions hold distinct
@@ -547,7 +563,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCache = txWrapper.txNodeLookupCache
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
-	return &StorageExecutor{
+	return e.applyVisibility(&StorageExecutor{
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
@@ -600,7 +616,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		// Execute() see the same bag regardless of clone depth.
 		metrics:  e.metrics,
 		database: e.database,
-	}
+	})
 }
 
 func (e *StorageExecutor) nodeLookupCacheLock() *sync.RWMutex {
@@ -720,7 +736,19 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	if !runtimeCfg.Memory.QueryCacheEnabled {
 		maxEntries = 0
 	}
-	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL)
+	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL, true)
+}
+
+// NewStatementExecutor constructs a scoped executor without reading/reloading
+// the process procedure catalog from request-selected storage. The serving
+// process loads its local administrative catalog during trusted startup.
+func NewStatementExecutor(store storage.Engine) *StorageExecutor {
+	runtimeCfg := config.LoadFromEnv()
+	maxEntries := runtimeCfg.Memory.QueryCacheSize
+	if !runtimeCfg.Memory.QueryCacheEnabled {
+		maxEntries = 0
+	}
+	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL, false)
 }
 
 // NewStorageExecutorWithQueryCachePolicy creates an executor whose query-result
@@ -728,7 +756,11 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 // entries disables caching. A non-positive TTL uses the process default.
 func NewStorageExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
 	runtimeCfg := config.LoadFromEnv()
-	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL)
+	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL, true)
+}
+
+func NewStatementExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, ttl time.Duration) *StorageExecutor {
+	return newStorageExecutor(store, config.LoadFromEnv(), maxEntries, ttl, false)
 }
 
 // QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
@@ -736,7 +768,7 @@ func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration)
 	return e.queryCacheMaxEntries, e.queryCacheTTL
 }
 
-func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration, loadCatalog bool) *StorageExecutor {
 	if queryCacheTTL <= 0 {
 		queryCacheTTL = runtimeCfg.Memory.QueryCacheTTL
 	}
@@ -782,7 +814,9 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 	}
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
 	ensureBuiltInProceduresRegistered()
-	_ = exec.loadPersistedProcedures()
+	if loadCatalog {
+		_ = exec.loadPersistedProcedures()
+	}
 	return exec
 }
 
@@ -1186,6 +1220,14 @@ func (e *StorageExecutor) GetEmbedder() QueryEmbedder {
 //	})
 func (e *StorageExecutor) SetNodeMutatedCallback(cb NodeMutatedCallback) {
 	e.onNodeMutated = cb
+}
+
+// ShareMutationCallbackFrom inherits the already configured mutation sink.
+// Like ShareEmbedderFrom, this only binds metadata during construction.
+func (e *StorageExecutor) ShareMutationCallbackFrom(parent *StorageExecutor) {
+	if parent != nil {
+		e.onNodeMutated = parent.onNodeMutated
+	}
 }
 
 // SetDefaultEmbeddingDimensions sets the default dimensions for vector indexes.
@@ -1610,7 +1652,7 @@ type implicitTxEngines struct {
 }
 
 func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
-	engine := e.storage
+	engine := engineBeneathView(e.storage)
 	visited := make(map[storage.Engine]bool)
 	out := implicitTxEngines{}
 
@@ -2061,6 +2103,9 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
 	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+		if e.visibility != nil {
+			return newVisibleGraphView(txWrapper, e.visibility)
+		}
 		return txWrapper
 	}
 	return e.storage
@@ -2243,9 +2288,23 @@ func statementReadsGraphText(cypher string) bool {
 			break
 		}
 		from = at + len("CALL")
-		if _, procedure := procedureNameAt(cypher, queryGapEnd(cypher, from)); procedure {
-			return true
+		if name, procedure := procedureNameAt(cypher, queryGapEnd(cypher, from)); procedure {
+			ensureBuiltInProceduresRegistered()
+			registered, found := globalProcedureRegistry.Get(name)
+			if !found || requirementsForClass(registered.Spec.Privilege).Read {
+				return true
+			}
 		}
+	}
+	readsFunction := false
+	_ = forEachFunctionCall(cypher, func(name, _ string) error {
+		if class, found := functionPrivilegeClass(name); found && requirementsForClass(class).Read {
+			readsFunction = true
+		}
+		return nil
+	})
+	if readsFunction {
+		return true
 	}
 	return expressionReadsGraphText(cypher)
 }

@@ -61,7 +61,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	ctx := context.Background()
 	_, ok, _ := parseProcedurePrivilegeCommand("GRANT EXECUTE FUNCTION db.x ON DBMS TO r")
 	require.False(t, ok)
-	_, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE PROCEDURE db.x TO r")
+	_, ok, err := parseProcedurePrivilegeCommand("GRANT EXECUTE BOOSTED PROCEDURE db.x TO r")
 	require.True(t, ok)
 	require.ErrorContains(t, err, "expected ON DBMS")
 
@@ -94,14 +94,14 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "a", result.Rows[0][5])
 
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.x TO a")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.x TO a")
 	require.ErrorContains(t, err, "expected ON DBMS")
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE PROCEDURE db.x ON DBMS FROM nobody")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE BOOSTED PROCEDURE db.x ON DBMS FROM nobody")
 	require.NoError(t, err) // REVOKE from a role that does not exist changes nothing
 
 	// The database manager can't resolve the system database.
 	exec.SetDatabaseManager(systemOnlyManager{err: errSystemStorage})
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.x ON DBMS TO a")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.x ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
 	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
@@ -110,10 +110,10 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	failing := &failingScanEngine{Engine: system}
 	exec.SetDatabaseManager(systemOnlyManager{engine: storage.Engine(failing)})
 	failing.failCreate = true
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
 	failing.failCreate, failing.failGet = false, true
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
 	failing.failScan = true
 	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
@@ -121,7 +121,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	// A REVOKE checks for immutable grants first: a read that fails is its
 	// error, not "no grant".
 	failing.failScan, failing.failGet = false, true
-	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE PROCEDURE db.y ON DBMS FROM a")
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE BOOSTED PROCEDURE db.y ON DBMS FROM a")
 	require.ErrorIs(t, err, errSystemStorage)
 }
 

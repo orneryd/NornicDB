@@ -178,7 +178,8 @@ const rowStatementContextKey = "\x00statement_context"
 // relationship pattern, which reads the graph of the statement's transaction.
 func needsRowStatementContext(expression string) bool {
 	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression)
+		containsRelationshipPattern(expression) || containsContextPluginCall(expression) ||
+		containsPrivilegedFunctionCall(expression)
 }
 
 // rowStatementContextOrBackground is the statement context a row carries, or

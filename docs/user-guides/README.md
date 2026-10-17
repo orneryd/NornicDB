@@ -11,6 +11,7 @@ Use this section for task-oriented product workflows and examples.
 - BM25 stemmer plugins: [bm25-stemmers.md](bm25-stemmers.md)
 - Transactions: [transactions.md](transactions.md)
 - GraphQL usage: [graphql.md](graphql.md)
+- Collection access: [collection-access.md](collection-access.md)
 
 ## Find by Task
 
@@ -22,6 +23,7 @@ Use this section for task-oriented product workflows and examples.
 - Design knowledge decay and promotion rules: [knowledge-layer-policies.md](knowledge-layer-policies.md)
 - Tune and regression-test knowledge policy behavior: [knowledge-policy-tuning-testing.md](knowledge-policy-tuning-testing.md)
 - Use ACID transactions: [transactions.md](transactions.md)
+- Limit a login to the documents of some collections: [collection-access.md](collection-access.md)
 - Configure opt-in retention enforcement: [retention-policies.md](retention-policies.md)
 - Query historical state and retention: [historical-reads-mvcc-retention.md](historical-reads-mvcc-retention.md)
 - Operate MVCC lifecycle controls: [mvcc-lifecycle-admin-api.md](mvcc-lifecycle-admin-api.md)

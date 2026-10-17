@@ -85,7 +85,15 @@ func statementTypeError(query, kind, previousKind string, transaction any) error
 }
 
 func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, query string) (*StorageExecutor, error) {
-	if StatementDatabase("", query) != "system" || strings.EqualFold(e.currentDatabaseName(), "system") {
+	if StatementDatabase("", query) != "system" {
+		return e, nil
+	}
+	// The shared route owns admission before it can resolve the system store,
+	// whether the statement came from a transport or nested execution.
+	if err := AuthorizeQuery(ctx, query); err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(e.currentDatabaseName(), "system") {
 		return e, nil
 	}
 	system, err := e.systemStorage()

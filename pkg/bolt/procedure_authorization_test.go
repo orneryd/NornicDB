@@ -94,7 +94,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatalf("handle RUN: %v", err)
 		}
-		if code != "Neo.ClientError.Security.Forbidden" || message != "Schema operations require schema permission" {
+		if code != "Neo.ClientError.Security.Forbidden" || message != "Schema operation 'create_index' on database 'nornic' is not allowed for user '' with no roles." {
 			t.Fatalf("unexpected failure %q: %s", code, message)
 		}
 	})
@@ -118,7 +118,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		if err := <-done; err != nil {
 			t.Fatalf("handle RUN: %v", err)
 		}
-		if code != "Neo.ClientError.Security.Forbidden" || message != "Admin operations require admin permission" {
+		if code != "Neo.ClientError.Security.Forbidden" || message != "Executing admin procedure 'dbms.listConfig' permission has not been granted for user '' with no roles." {
 			t.Fatalf("unexpected failure %q: %s", code, message)
 		}
 	})
@@ -171,7 +171,7 @@ func TestBoltRejectsParameterizedDynamicWriteForReadOnlyPrincipal(t *testing.T) 
 	if err := <-done; err != nil {
 		t.Fatalf("handle RUN: %v", err)
 	}
-	if code != "Neo.ClientError.Security.Forbidden" || message != "Write operations require write permission" {
+	if code != "Neo.ClientError.Security.Forbidden" || message != "Write operations are not allowed for user '' with no roles." {
 		t.Fatalf("unexpected failure %q: %s", code, message)
 	}
 }

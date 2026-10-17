@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -41,7 +42,11 @@ func (s *PointsService) allowAccess(ctx context.Context, collectionName string, 
 	if s.checker == nil {
 		return nil
 	}
-	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+	class := cypher.PrivilegeRead
+	if write {
+		class = cypher.PrivilegeWrite
+	}
+	return s.checker.AllowDatabaseOperation(ctx, collectionName, class)
 }
 
 func (s *PointsService) openCollection(ctx context.Context, name string) (storage.Engine, *CollectionMeta, error) {

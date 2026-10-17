@@ -271,7 +271,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	query := statementTextFromContext(ctx)
 	configuration["query"] = query
 	projection.Configuration = configuration
-	if err := registerGraphProjection(projection, true); err != nil {
+	if err := registerGraphProjection(projection, true, ctx); err != nil {
 		return nil, err
 	}
 

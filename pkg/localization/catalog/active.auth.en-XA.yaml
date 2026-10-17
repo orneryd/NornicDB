@@ -40,3 +40,6 @@
 - id: server.method_put_required
   description: Expanded pseudo-locale PUT method response.
   other: "[!! PUT required !!]"
+- id: auth.operation_contract_required
+  description: Expanded pseudo-locale missing privilege contract refusal.
+  other: "[!! Operation requires a valid privilege contract !!]"

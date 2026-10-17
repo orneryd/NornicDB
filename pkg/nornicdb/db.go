@@ -1035,7 +1035,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		if !found {
 			return nil, false
 		}
-		return fn.Handler, true
+		return cypher.PluginFunctionContract{Handler: fn.Handler, Privilege: fn.Privilege}, true
 	}
 
 	// Configure parallel execution

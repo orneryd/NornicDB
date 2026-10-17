@@ -66,11 +66,11 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 	// Without read on the selected database, both are refused.
 	unreadable := withResolvedAccess(otherCtx, func(string) auth.ResolvedAccess { return auth.ResolvedAccess{Write: true} })
 	_, err = qr.querySearch(unreadable, "Alice graph", &models.SearchOptions{Limit: &limit})
-	require.ErrorContains(t, err, "other")
+	require.ErrorContains(t, err, "Read operations require read permission")
 	_, err = qr.querySimilar(unreadable, string(defaultID), &limit, nil)
-	require.ErrorContains(t, err, "other")
+	require.ErrorContains(t, err, "Read operations require read permission")
 	_, err = nr.nodeSimilar(unreadable, &models.Node{ID: string(defaultID)}, &limit, nil)
-	require.ErrorContains(t, err, "other")
+	require.ErrorContains(t, err, "Read operations require read permission")
 }
 
 // Search and similarity refuse a composite database, as the REST routes do:

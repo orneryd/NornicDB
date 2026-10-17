@@ -29,6 +29,7 @@ type lazyResult struct {
 	query    string
 	database string
 	start    time.Time
+	context  context.Context
 	rows     int
 
 	// helperDone is closed when serveLazyResult returns; nil until the
@@ -56,6 +57,7 @@ var errStatementAborted = errors.New("statement aborted")
 func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time) (result *QueryResult, served bool, err error) {
 	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start}
 	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
+	lazy.context = context.WithoutCancel(ctx)
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
 	lazy.result, lazy.err, lazy.finished = result, err, true
@@ -74,6 +76,7 @@ func (l *lazyResult) ResultStreamStarted() {
 	s.lastQueryIsWrite = false
 	s.lastQueryDatabase = l.database
 	s.lastResult = &QueryResult{Columns: l.stream.Columns()}
+	s.bindResultEntityDatabase(l.context, s.lastResult, l.database)
 	s.resultIndex = 0
 	s.lastLazy = l
 	l.helperDone = make(chan struct{})

@@ -24,6 +24,9 @@ type CompositeEngine struct {
 
 	// Constituents maps alias names to their storage engines
 	constituents map[string]Engine
+	// Deferred factories are metadata until an admitted operation selects a
+	// constituent. Opening a composite must not open unrelated remote drivers.
+	constituentFactories map[string]func() (Engine, error)
 
 	// ConstituentNames maps alias to actual database name (for routing)
 	constituentNames map[string]string
@@ -41,6 +44,15 @@ type CompositeEngine struct {
 	nodeToConstituent map[NodeID]string
 
 	mu sync.RWMutex
+}
+
+// NewDeferredCompositeEngine creates the same composite routing view with
+// deferred constituent resolution. Factories are called only by getConstituent;
+// inspecting routing metadata and closing an unused view call none of them.
+func NewDeferredCompositeEngine(factories map[string]func() (Engine, error), names map[string]string, modes map[string]string) *CompositeEngine {
+	engine := NewCompositeEngine(make(map[string]Engine), names, modes)
+	engine.constituentFactories = factories
+	return engine
 }
 
 func anyToStringSlice(raw interface{}) []string {
@@ -144,7 +156,7 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 	for alias, mode := range c.accessModes {
 		if mode == "read" || mode == "read_write" {
 			// Check if constituent engine exists and is accessible
-			if engine, exists := c.constituents[alias]; exists && engine != nil {
+			if c.constituents[alias] != nil || c.constituentFactories[alias] != nil {
 				result = append(result, alias)
 			}
 		}
@@ -162,7 +174,7 @@ func (c *CompositeEngine) getConstituentsForWrite() []string {
 	for alias, mode := range c.accessModes {
 		if mode == "write" || mode == "read_write" {
 			// Check if constituent engine exists and is accessible
-			if engine, exists := c.constituents[alias]; exists && engine != nil {
+			if c.constituents[alias] != nil || c.constituentFactories[alias] != nil {
 				result = append(result, alias)
 			}
 		}
@@ -172,14 +184,21 @@ func (c *CompositeEngine) getConstituentsForWrite() []string {
 
 // getConstituent returns a constituent engine by alias.
 func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	engine, exists := c.constituents[alias]
-	if !exists {
-		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
+	if engine := c.constituents[alias]; engine != nil {
+		return engine, nil
 	}
-	return engine, nil
+	if factory := c.constituentFactories[alias]; factory != nil {
+		engine, err := factory()
+		if err != nil {
+			return nil, err
+		}
+		c.constituents[alias] = engine
+		return engine, nil
+	}
+	return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 }
 
 // GetConstituentByAlias returns the storage engine for a specific constituent

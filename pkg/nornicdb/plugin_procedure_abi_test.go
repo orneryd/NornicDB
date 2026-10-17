@@ -64,19 +64,20 @@ func TestPluginProcedureDeclarationChecks(t *testing.T) {
 	raw := func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
 		return &cypher.ExecuteResult{}, nil
 	}
-	for _, mode := range []string{"", "READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
+	for _, mode := range []string{"READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
 		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.mode", Mode: mode, Handler: raw})
 		require.NoError(t, err)
 		require.NotNil(t, d.handler)
 	}
 	for _, proc := range []PluginProcedure{
+		{Name: "bad", Handler: raw},
 		{Name: "bad", Handler: raw, Mode: "TYPO"}, {Name: "bad", Handler: cypher.ProcedureHandler(nil)},
 		{Name: "bad", Handler: (func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))(nil)},
-		{Name: "bad", Handler: 3}, {Name: "", Handler: raw}, {Name: "bad", Handler: raw, MinArgs: 2, MaxArgs: 1},
+		{Name: "bad", Handler: 3, Mode: "READ"}, {Name: "", Handler: raw, Mode: "READ"}, {Name: "bad", Handler: raw, Mode: "READ", MinArgs: 2, MaxArgs: 1},
 	} {
 		require.Error(t, registerProcedureWithCypher(proc))
 	}
-	require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
+	require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw, Mode: "READ"}, {Name: "atomic.bad", Handler: 3, Mode: "READ"}}))
 	_, found := cypher.RegisteredProcedureForCall("CALL atomic.good()")
 	require.False(t, found)
 }
@@ -97,12 +98,12 @@ func TestPluginProcedureInvocationChecks(t *testing.T) {
 			return nil, sentinel
 		}, "fixture error"},
 	} {
-		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Handler: tc.handler})
+		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Mode: "READ", Handler: tc.handler})
 		require.NoError(t, err)
 		_, err = d.handler(context.Background(), nil, "", nil)
 		require.ErrorContains(t, err, tc.want)
 	}
-	d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+	d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Mode: "READ", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
 		panic("not invoked")
 	})})
 	require.NoError(t, err)

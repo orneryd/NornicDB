@@ -219,14 +219,16 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 }
 
 // changeMetadataValue is an event's metadata as Neo4j gives it. The users
-// and connection are those NornicDB records (none yet).
+// are those its transaction ran for ("" when no one signed in, and for
+// events written before users were recorded); NornicDB records no
+// connection yet.
 func changeMetadataValue(event *storage.ChangeEvent, databaseID string) map[string]interface{} {
 	txMetadata := map[string]interface{}{}
 	for key, value := range event.TxMetadata {
 		txMetadata[key] = cdcValue(value)
 	}
 	return map[string]interface{}{
-		"executingUser": "", "authenticatedUser": "",
+		"executingUser": event.ExecutingUser, "authenticatedUser": event.AuthenticatedUser,
 		"captureMode":    event.Mode.String(),
 		"connectionType": "", "connectionClient": "", "connectionServer": "",
 		"serverId": "", "databaseId": databaseID,
@@ -507,8 +509,9 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 		return false
 	case s.operation != "" && s.operation != string(event.Operation):
 		return false
-	case s.executingUser != nil && *s.executingUser != "", s.authenticatedUser != nil && *s.authenticatedUser != "":
-		return false // NornicDB doesn't record users yet: they are ""
+	case s.executingUser != nil && *s.executingUser != "" && *s.executingUser != event.ExecutingUser,
+		s.authenticatedUser != nil && *s.authenticatedUser != "" && *s.authenticatedUser != event.AuthenticatedUser:
+		return false
 	}
 	elementID := storage.NodeElementID(database, storage.NodeID(event.ID))
 	if !event.Node {

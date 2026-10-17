@@ -166,10 +166,10 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 // read privilege of a signed-in principal; a request without claims passes
 // the allowlist only when authentication is disabled).
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	if err := s.admitGraph(claims, dbName); err != nil {
 		return false, false
 	}
-	return true, claims == nil || s.getResolvedAccess(claims, dbName).Read
+	return true, cypher.AdmitOperation(context.Background(), s.principalAccess(claims).Allows, dbName, cypher.PrivilegeRead) == nil
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
@@ -177,7 +177,13 @@ func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (acce
 // whether the request may go on.
 func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
 	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		s.writeNeo4jDatabaseAccessDenied(w, r)
+		return false
+	}
+	// These routes search or read storage around a principal's graph view,
+	// so a principal restricted by collection rules is refused.
+	if s.principalAccess(getClaims(r)).RestrictedOn(dbName) {
+		s.writeNeo4jDatabaseAccessDenied(w, r)
 		return false
 	}
 	return true
@@ -196,6 +202,7 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx := r.Context()
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
+	ctx = auth.WithRequestPrincipalName(ctx, claims.Username)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
 	// The principal's one permission resolver (principalAccess), which
 	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
@@ -204,6 +211,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		return access.Allows(database, string(permission))
 	})
+	// The whole resolver too, so the Cypher these routes run reads through
+	// the principal's graph visibility, and their direct reads can refuse a
+	// restricted principal.
+	ctx = cypher.WithRequestPrincipalAccess(ctx, access)
 	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	selections := make(map[string]string)
 	defaultDatabase := ""
@@ -313,24 +324,46 @@ func hasPermission(s *Server, roles []string, required auth.Permission) bool {
 	return auth.EntitlementsAllow(auth.PermissionsForRoles(roles, store), string(required))
 }
 
-// principalAccess is the principal's permission resolver
-// (cypher.PrincipalAccess), the one Bolt builds too: graph access from the
-// database allowlist, read and write from the database privileges, and the
-// other permissions from the role entitlements. Without RBAC every graph the
-// access mode allows is open for every permission.
+// principalAccess is the principal's permission resolver, built by the one
+// constructor Bolt uses too (cypher.NewPrincipalAccess): graph access from
+// the database allowlist, read and write from the database privileges, and
+// the other permissions from the role entitlements. Without RBAC every graph
+// the access mode allows is open for every permission; a request without
+// claims has no database (getDatabaseAccessMode), so it is allowed nothing.
 func (s *Server) principalAccess(claims *auth.JWTClaims) cypher.PrincipalAccess {
 	mode := s.getDatabaseAccessMode(claims)
-	access := cypher.PrincipalAccess{
+	sources := cypher.PrincipalAccessSources{
 		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
 	}
 	if !s.isRBACEnforced() {
-		return access
+		return cypher.NewPrincipalAccess(sources, nil)
 	}
-	access.DatabaseAccess = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
-	access.Entitlement = func(permission string) bool {
-		return claims != nil && hasPermission(s, claims.Roles, auth.Permission(permission))
+	sources.DatabaseAccess = s.GetResolvedAccessForRoles
+	if claims == nil {
+		return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{})
 	}
-	return access
+	sources.Visibility = s.GraphVisibilityForRoles
+	roles := claims.Roles
+	return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{
+		Roles:       roles,
+		Entitlement: func(permission string) bool { return hasPermission(s, roles, auth.Permission(permission)) },
+	})
+}
+
+// GraphVisibilityForRoles is a set of roles' graph visibility on database
+// (cypher.PrincipalAccessSources.Visibility): their graph privileges and the
+// database's access scope, read from the system database for each
+// statement, so a change applies from the next one. Bolt uses it too. A
+// server without databases restricts no one.
+func (s *Server) GraphVisibilityForRoles(roles []string, database string) (*cypher.GraphVisibility, error) {
+	if s == nil || s.dbManager == nil {
+		return nil, nil
+	}
+	system, err := s.dbManager.GetStorage("system")
+	if err != nil {
+		return nil, err
+	}
+	return cypher.ResolveGraphVisibility(context.Background(), system, roles, database)
 }
 
 // ProcedureGrantChecker reports, for a principal's roles, whether they hold
@@ -350,6 +383,21 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 	}
 }
 
+// ImpersonationChecker reports whether a principal with roles (and the admin
+// entitlement when admin) may impersonate user (Bolt imp_user): the
+// IMPERSONATE privileges, where a DENY wins. Without a privilege store no
+// one may; when the privileges can't be read it denies, and logs the error.
+func (s *Server) ImpersonationChecker(roles []string, admin bool, user string) bool {
+	if s == nil || s.impersonatePrivileges == nil {
+		return false
+	}
+	allowed, err := s.impersonatePrivileges.AllowsImpersonation(roles, admin, user)
+	if err != nil {
+		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(err))
+	}
+	return allowed
+}
+
 func isMutationQuery(query string) bool {
 	requirements := cypher.QueryPermissionRequirements(query)
 	return requirements.Write || requirements.Schema
@@ -360,8 +408,16 @@ func isMutationQuery(query string) bool {
 // access to its composite and its database (graphAccess), as the executor
 // checks a USE of the same name.
 func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
-	_, allowed := s.graphAccess(s.getDatabaseAccessMode(claims), graph)
-	return allowed
+	return s.admitGraph(claims, graph) == nil
+}
+
+// admitGraph takes the common selection decision before any route resolves,
+// opens, configures or publishes resources for the requested graph.
+func (s *Server) admitGraph(claims *auth.JWTClaims, graph string) error {
+	if claims == nil {
+		return cypher.AdmitGraphFor("", nil, s.principalAccess(claims).Allows, graph)
+	}
+	return cypher.AdmitGraphFor(claims.Username, claims.Roles, s.principalAccess(claims).Allows, graph)
 }
 
 // graphAccess reports whether mode allows graph and the database its data
@@ -441,6 +497,16 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func (s *Server) applyMVCCPressureWarnings(w http.ResponseWriter, dbName string, response *TransactionResponse) {
 	if s.dbManager == nil || dbName == "" || response == nil {
+		return
+	}
+	// A denied request opens nothing, including optional response metadata.
+	// Composite/remote scopes do not own this server's local MVCC lifecycle.
+	for _, failure := range response.Errors {
+		if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
+			return
+		}
+	}
+	if s.dbManager.IsCompositeDatabase(dbName) || cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
 		return
 	}
 	storageEngine, err := s.dbManager.GetStorage(dbName)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"golang.org/x/text/language"
@@ -142,12 +143,31 @@ func (s *Server) writeNeo4jDatabaseNotFound(w http.ResponseWriter, r *http.Reque
 	s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Database.DatabaseNotFound", localization.HTTPDatabaseNotFound(name))
 }
 
-func (s *Server) writeNeo4jDatabaseAccessDenied(w http.ResponseWriter, r *http.Request, name string) {
-	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(name))
+// writeNeo4jDatabaseAccessDenied writes Neo4j's refusal of a database for
+// the request's principal (its claims' user and roles); Neo4j names the
+// principal, not the database.
+func (s *Server) writeNeo4jDatabaseAccessDenied(w http.ResponseWriter, r *http.Request) {
+	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", databaseAccessDeniedFor(getClaims(r)))
 }
 
-func (s *Server) writeNeo4jDatabaseWriteDenied(w http.ResponseWriter, r *http.Request, name string) {
-	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(name))
+// databaseAccessDeniedFor is Neo4j's refusal of a database for claims'
+// principal; no claims is a user with no name and no roles.
+func databaseAccessDeniedFor(claims *auth.JWTClaims) localization.Message {
+	if claims == nil {
+		return localization.DatabaseAccessDenied("", nil)
+	}
+	return localization.DatabaseAccessDenied(claims.Username, claims.Roles)
+}
+
+// writeNeo4jDatabaseWriteDenied writes the refusal of a write by the
+// request principal's privileges (its claims' user and roles).
+func (s *Server) writeNeo4jDatabaseWriteDenied(w http.ResponseWriter, r *http.Request) {
+	claims := getClaims(r)
+	message := localization.DatabaseWriteDenied("", nil)
+	if claims != nil {
+		message = localization.DatabaseWriteDenied(claims.Username, claims.Roles)
+	}
+	s.writeLocalizedNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", message)
 }
 
 func (s *Server) writeAuthenticationNotConfigured(w http.ResponseWriter, r *http.Request) {

@@ -302,14 +302,25 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		}
 		return svc
 	}
+	// A restricted principal searches only what it can see
+	// (search.RestrictedReader): node, relationship and graph search rank the
+	// visible corpus alone, and a continuation's later pages are checked
+	// again through the same reader. Where and RelationshipWhere stay the
+	// caller's own filters.
+	var authorizeNode search.NodeAuthorizationFunc
+	if reader := e.restrictedReader(); reader != nil {
+		opts.Restricted = reader
+		authorizeNode = func(node *storage.Node) (bool, error) { return reader.NodeVisible(string(node.ID)), nil }
+	}
 	continuationRequest := search.SearchContinuationRequest{
-		Owner:    searchContinuationOwner(ctx),
-		Database: GetUseDatabaseFromContext(ctx),
-		QID:      qid,
-		N:        n,
-		Discard:  discard,
-		Mode:     mode,
-		GroupBy:  groupBy,
+		Owner:         searchContinuationOwner(ctx),
+		Database:      GetUseDatabaseFromContext(ctx),
+		QID:           qid,
+		N:             n,
+		Discard:       discard,
+		Mode:          mode,
+		GroupBy:       groupBy,
+		AuthorizeNode: authorizeNode,
 	}
 	if rankedLimit > 0 {
 		continuationRequest.RankedLimit = rankedLimit

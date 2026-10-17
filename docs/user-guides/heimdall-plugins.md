@@ -848,13 +848,18 @@ type HeimdallInvoker interface {
     // Send a prompt directly to the LLM without action routing
     SendRawPrompt(ctx context.Context, prompt string) (*ActionResult, error)
 
-    // Async versions (fire-and-forget, results via Bifrost)
-    InvokeActionAsync(action string, params map[string]interface{})
-    SendPromptAsync(prompt string)
+    // Async versions keep the context's principal, but outlive its cancellation.
+    // Results are sent via Bifrost.
+    InvokeActionAsync(ctx context.Context, action string, params map[string]interface{})
+    SendPromptAsync(ctx context.Context, prompt string)
 }
 ```
 
 **Example: Autonomous Anomaly Detection Based on Event Accumulation**
+
+Trigger request-scoped actions from a lifecycle hook that supplies the request
+context. A `DatabaseEvent` alone does not carry the principal needed to authorize
+database work; keep the hook's context when invoking Heimdall.
 
 ```go
 type SecurityPlugin struct {
@@ -863,9 +868,9 @@ type SecurityPlugin struct {
     lastReset       time.Time
 }
 
-func (p *SecurityPlugin) OnDatabaseEvent(event *heimdall.DatabaseEvent) {
+func (p *SecurityPlugin) PostExecute(ctx *heimdall.PostExecuteContext) {
     // Track query failures
-    if event.Type == heimdall.EventQueryFailed {
+    if ctx.Result != nil && !ctx.Result.Success {
         // Reset counter every 5 minutes
         if time.Since(p.lastReset) > 5*time.Minute {
             p.failedQueries = 0
@@ -876,13 +881,13 @@ func (p *SecurityPlugin) OnDatabaseEvent(event *heimdall.DatabaseEvent) {
         // AUTONOMOUS ACTION: After 5 failures, trigger analysis
         if p.failedQueries >= 5 && p.ctx.Heimdall != nil {
             // Option 1: Directly invoke an action
-            p.ctx.Heimdall.InvokeActionAsync("heimdall.anomaly.detect", map[string]interface{}{
+            p.ctx.Heimdall.InvokeActionAsync(ctx.Context, "heimdall.anomaly.detect", map[string]interface{}{
                 "trigger": "autonomous",
                 "reason":  "query_failures",
             })
 
             // Option 2: Send natural language prompt to SLM
-            p.ctx.Heimdall.SendPromptAsync(
+            p.ctx.Heimdall.SendPromptAsync(ctx.Context,
                 "Multiple query failures detected. Analyze for potential issues.")
 
             p.failedQueries = 0

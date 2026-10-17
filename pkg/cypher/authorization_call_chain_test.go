@@ -59,7 +59,11 @@ func TestProcedureCaseAuthorizationPreservesExactContracts(t *testing.T) {
 	ensureBuiltInProceduresRegistered()
 	names := []string{"caseAuthorization.Read", "caseAuthorization.read"}
 	for i, name := range names {
-		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: name, Mode: ProcedureModeRead, Admin: i == 1}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+		class := PrivilegeRead
+		if i == 1 {
+			class |= PrivilegeAdmin
+		}
+		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: name, Mode: ProcedureModeRead, Privilege: class}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 			return &ExecuteResult{}, nil
 		}))
 	}

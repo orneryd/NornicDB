@@ -26,10 +26,10 @@ import (
 // null out; an argument of a type the signature excludes is the "Type
 // mismatch: expected … but was …" SyntaxError (cypherfn.TypeMismatchError).
 func init() {
-	cypherfn.Register("radians", fnRadians)
-	cypherfn.Register("pi", fnMathConstant("pi", math.Pi))
-	cypherfn.Register("e", fnMathConstant("e", math.E))
-	cypherfn.Register("round", fnRound)
+	cypherfn.Register("radians", cypherfn.PrivilegeNone, fnRadians)
+	cypherfn.Register("pi", cypherfn.PrivilegeNone, fnMathConstant("pi", math.Pi))
+	cypherfn.Register("e", cypherfn.PrivilegeNone, fnMathConstant("e", math.E))
+	cypherfn.Register("round", cypherfn.PrivilegeNone, fnRound)
 	for name, operation := range map[string]func(float64) float64{
 		"sin":      math.Sin,
 		"cos":      math.Cos,
@@ -49,34 +49,34 @@ func init() {
 		"tanh":     math.Tanh,
 		"coth":     rowMathCoth,
 	} {
-		cypherfn.Register(name, fnMathUnary(name, operation))
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnMathUnary(name, operation))
 	}
-	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
-	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
-	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
-	cypherfn.Register("power", fnMathBinary("power", math.Pow))
-	cypherfn.Register("isnan", fnIsNaN)
-	cypherfn.Register("char_length", fnCharLength)
-	cypherfn.Register("character_length", fnCharLength)
-	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
-	cypherfn.Register("lower", fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
-	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
-	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
-	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
-	cypherfn.Register("trim", fnTrim)
-	cypherfn.Register("normalize", fnNormalize)
-	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)))
-	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)))
-	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringInVersion))
-	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)))
-	cypherfn.Register("valuetype", fnValueType)
-	cypherfn.Register("nullif", fnNullIf)
-	cypherfn.Register("tail", fnTail)
+	cypherfn.Register("ceil", cypherfn.PrivilegeNone, fnMathUnary("ceil", math.Ceil))
+	cypherfn.Register("floor", cypherfn.PrivilegeNone, fnMathUnary("floor", math.Floor))
+	cypherfn.Register("atan2", cypherfn.PrivilegeNone, fnMathBinary("atan2", math.Atan2))
+	cypherfn.Register("power", cypherfn.PrivilegeNone, fnMathBinary("power", math.Pow))
+	cypherfn.Register("isnan", cypherfn.PrivilegeNone, fnIsNaN)
+	cypherfn.Register("char_length", cypherfn.PrivilegeNone, fnCharLength)
+	cypherfn.Register("character_length", cypherfn.PrivilegeNone, fnCharLength)
+	cypherfn.Register("upper", cypherfn.PrivilegeNone, fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
+	cypherfn.Register("lower", cypherfn.PrivilegeNone, fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
+	cypherfn.Register("btrim", cypherfn.PrivilegeNone, fnTrimFunction("btrim", true, true))
+	cypherfn.Register("ltrim", cypherfn.PrivilegeNone, fnTrimFunction("ltrim", true, false))
+	cypherfn.Register("rtrim", cypherfn.PrivilegeNone, fnTrimFunction("rtrim", false, true))
+	cypherfn.Register("trim", cypherfn.PrivilegeNone, fnTrim)
+	cypherfn.Register("normalize", cypherfn.PrivilegeNone, fnNormalize)
+	cypherfn.Register("tointegerlist", cypherfn.PrivilegeNone, fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)))
+	cypherfn.Register("tofloatlist", cypherfn.PrivilegeNone, fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)))
+	cypherfn.Register("tostringlist", cypherfn.PrivilegeNone, fnListConversion("toStringList", convertToStringInVersion))
+	cypherfn.Register("tobooleanlist", cypherfn.PrivilegeNone, fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)))
+	cypherfn.Register("valuetype", cypherfn.PrivilegeNone, fnValueType)
+	cypherfn.Register("nullif", cypherfn.PrivilegeNone, fnNullIf)
+	cypherfn.Register("tail", cypherfn.PrivilegeNone, fnTail)
 	for name, fn := range singleValueFunctions {
-		cypherfn.Register(name, singleValueFunction(name, fn))
+		cypherfn.Register(name, cypherfn.PrivilegeNone, singleValueFunction(name, fn))
 	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
-		cypherfn.Register(name, fnStringOperation(name))
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnStringOperation(name))
 	}
 	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
 		convert := map[string]versionedConversion{
@@ -84,9 +84,9 @@ func init() {
 			"tofloat": sameInEveryVersion(convertToFloatOrNull), "toboolean": sameInEveryVersion(convertToBooleanOrNull),
 			"tostring": convertToStringInVersion,
 		}[name]
-		cypherfn.Register(name, fnScalarConversion(name, convert, false))
+		cypherfn.Register(name, cypherfn.PrivilegeNone, fnScalarConversion(name, convert, false))
 		if name != "toint" {
-			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true))
+			cypherfn.Register(name+"ornull", cypherfn.PrivilegeNone, fnScalarConversion(name, convert, true))
 		}
 	}
 }

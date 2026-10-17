@@ -58,6 +58,7 @@ func (a *transactionalBoltQueryExecutorAdapter) BeginTransaction(ctx context.Con
 // CommitTransaction releases adapter ownership after the terminal storage call;
 // lifecycle treats returned errors and panics as uncertain outcomes.
 func (a *transactionalBoltQueryExecutorAdapter) CommitTransaction(ctx context.Context) error {
+	defer a.executor.ReleaseOwnedStorage()
 	if !a.inTx {
 		return nil
 	}
@@ -69,6 +70,9 @@ func (a *transactionalBoltQueryExecutorAdapter) CommitTransaction(ctx context.Co
 // RollbackTransaction issues at most one compensating storage rollback for the
 // adapter-owned transaction.
 func (a *transactionalBoltQueryExecutorAdapter) RollbackTransaction(ctx context.Context) error {
+	// The lifecycle's automatic timeout uses this same terminal owner even
+	// when no further protocol message clears the session state.
+	defer a.executor.ReleaseOwnedStorage()
 	if !a.inTx {
 		return nil
 	}

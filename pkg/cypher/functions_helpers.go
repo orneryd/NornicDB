@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -32,6 +33,14 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
 func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
+	contract, declared := handler.(PluginFunctionContract)
+	if !declared {
+		return nil, true, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.OperationContractRequired())
+	}
+	if err := authorizeRequirements(ctx, requirementsForClass(contract.Privilege)); err != nil {
+		return nil, true, err
+	}
+	handler = contract.Handler
 	if nativeAPOCForeignGraphHandler(name, handler) {
 		return nil, false, nil
 	}

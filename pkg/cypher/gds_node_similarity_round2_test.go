@@ -17,8 +17,8 @@ type reviewEdge struct {
 
 func reviewGraph(t *testing.T, props []map[string]interface{}, edges []reviewEdge, nodeProjection, relProjection string) *StorageExecutor {
 	t.Helper()
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "review1197")
 	for i, p := range props {
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprint(i)), Labels: []string{"N"}, Properties: p})

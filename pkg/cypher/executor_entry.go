@@ -409,6 +409,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
+		if err := e.restrictedMultiGraphError(ctx); err != nil {
+			return nil, err
+		}
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
@@ -473,6 +476,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if execErr != nil {
 			return nil, execErr
 		}
+		// Fabric admits each actual fragment before its target is resolved.
+		// Publish the source's metadata executor only after that admission has
+		// succeeded; composite roots do not own a graph search service.
+		e.statementAdmitted(ctx, cypher)
 
 		if fabricResultCacheKey != "" {
 			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
@@ -520,9 +527,22 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
-	e.statementAdmitted(ctx)
+	e.statementAdmitted(ctx, cypher)
 	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
+	}
+	// A restricted principal's statement runs on a clone reading through its
+	// graph view (GraphVisibility); transaction control and administration
+	// commands read no graph and run as they are.
+	if e.visibility == nil && bareTransactionCommand(cypher) == "" && !transactionScriptShape(cypher) &&
+		!isSystemCommandNoGraph(cypher) && StatementDatabase("", cypher) != "system" {
+		eval, err := e.statementVisibility(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if eval != nil {
+			return e.withStatementVisibility(eval).Execute(ctx, cypher, params)
+		}
 	}
 
 	// Reject data queries on composite root — callers must USE a constituent.
@@ -653,7 +673,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// end in UNWIND when the surrounding statement continues in another
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
-	if !finishTerminated {
+	// SHOW ROLES WITH USERS ends in WITH USERS, an administration command's
+	// own grammar, not a WITH projection.
+	if !finishTerminated && !isPrivilegeAdministrationCommand(cypher) {
 		last := lastTopLevelClauseWord(cypher)
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,12 +36,14 @@ func TestPluginFunctionE2E(t *testing.T) {
 			Name:        "test.double",
 			Handler:     func(x float64) float64 { return x * 2 },
 			Description: "Double a number",
+			Privilege:   cypher.PrivilegeRead,
 			Category:    "test",
 		}
 		pluginFunctions["test.greet"] = PluginFunction{
 			Name:        "test.greet",
 			Handler:     func(name string) string { return "Hello, " + name + "!" },
 			Description: "Greet someone",
+			Privilege:   cypher.PrivilegeRead,
 			Category:    "test",
 		}
 		pluginFunctions["test.sum"] = PluginFunction{
@@ -60,6 +63,7 @@ func TestPluginFunctionE2E(t *testing.T) {
 				return sum
 			},
 			Description: "Sum numbers",
+			Privilege:   cypher.PrivilegeRead,
 			Category:    "test",
 		}
 		pluginsInitialized = true
@@ -128,6 +132,7 @@ func TestPluginLookupWiring(t *testing.T) {
 		Name:        "myplugin.compute",
 		Handler:     func(x float64) float64 { return x * x },
 		Description: "Square a number",
+		Privilege:   cypher.PrivilegeRead,
 		Category:    "myplugin",
 	}
 	pluginsMu.Unlock()
@@ -215,6 +220,7 @@ func TestPluginOverridesBuiltIn(t *testing.T) {
 			return 999.0
 		},
 		Description: "Custom sum that always returns 999",
+		Privilege:   cypher.PrivilegeRead,
 		Category:    "apoc.coll",
 	}
 	pluginsInitialized = true

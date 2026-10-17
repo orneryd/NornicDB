@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
 )
 
 // FunctionRegistry manages all registered APOC functions.
@@ -19,6 +21,7 @@ type FunctionRegistry struct {
 
 // FunctionDescriptor describes a registered function.
 type FunctionDescriptor struct {
+	Privilege   auth.OperationClass
 	Name        string                               // Full name (e.g., "apoc.coll.sum")
 	Category    string                               // Category (e.g., "coll", "text", "math")
 	Function    interface{}                          // The actual function
@@ -41,13 +44,16 @@ func NewFunctionRegistry() *FunctionRegistry {
 //
 // Example:
 //
-//	Register("apoc.coll.sum", "coll", coll.Sum, "Sum numeric values", []string{"apoc.coll.sum([1,2,3]) => 6"})
-func Register(name, category string, fn interface{}, description string, examples []string) error {
-	return globalRegistry.RegisterFunction(name, category, fn, description, examples)
+//	Register("apoc.coll.sum", "coll", coll.Sum, "Sum numeric values", []string{"apoc.coll.sum([1,2,3]) => 6"}, auth.OperationNone)
+func Register(name, category string, fn interface{}, description string, examples []string, class auth.OperationClass) error {
+	return globalRegistry.RegisterFunction(name, category, fn, description, examples, class)
 }
 
 // RegisterFunction registers a function in the registry.
-func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{}, description string, examples []string) error {
+func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{}, description string, examples []string, class auth.OperationClass) error {
+	if !class.Valid() {
+		return fmt.Errorf("function %q: explicit privilege class required", name)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -62,6 +68,7 @@ func (r *FunctionRegistry) RegisterFunction(name, category string, fn interface{
 	}
 
 	r.functions[name] = &FunctionDescriptor{
+		Privilege:   class,
 		Name:        name,
 		Category:    category,
 		Function:    fn,

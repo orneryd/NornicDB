@@ -15,25 +15,25 @@ import (
 // retain precedence; this owner supplies the native-value fallback.
 func nativeAPOCFunctionCatalog() []cypherFunctionSpec {
 	var out []cypherFunctionSpec
-	add := func(name, result string, arguments ...ProcedureParam) {
-		out = append(out, cypherFunctionSpec{name: name, category: "APOC", signature: nativeAPOCSignature(name, result, arguments), arguments: arguments, listed: true, userDefined: true, description: "Operates on native query values in the current graph."})
+	add := func(class PrivilegeClass, name, result string, arguments ...ProcedureParam) {
+		out = append(out, cypherFunctionSpec{privilege: class, name: name, category: "APOC", signature: nativeAPOCSignature(name, result, arguments), arguments: arguments, listed: true, userDefined: true, description: "Operates on native query values in the current graph."})
 	}
 	node := ProcedureParam{Name: "node", Type: "NODE"}
 	rel := ProcedureParam{Name: "relationship", Type: "RELATIONSHIP"}
 	path := ProcedureParam{Name: "path", Type: "PATH"}
 	filter := ProcedureParam{Name: "relationshipFilter", Type: "STRING", Optional: true, Default: ""}
-	add("apoc.node.id", "STRING", node)
-	add("apoc.node.labels", "LIST<STRING>", node)
-	add("apoc.node.degree", "INTEGER", node, filter)
-	add("apoc.rel.id", "STRING", rel)
-	add("apoc.rel.type", "STRING", rel)
-	add("apoc.rel.startNode", "NODE", rel)
-	add("apoc.rel.endNode", "NODE", rel)
-	add("apoc.nodes.connected", "BOOLEAN", node, ProcedureParam{Name: "other", Type: "NODE"}, filter)
-	add("apoc.path.elements", "LIST<ANY>", path)
-	add("apoc.path.slice", "PATH", path, ProcedureParam{Name: "offset", Type: "INTEGER", Optional: true, Default: "0"}, ProcedureParam{Name: "length", Type: "INTEGER", Optional: true, Default: "-1"})
-	add("apoc.path.combine", "PATH", path, ProcedureParam{Name: "other", Type: "PATH"})
-	add("apoc.temporal.format", "STRING", ProcedureParam{Name: "input", Type: "ANY"}, ProcedureParam{Name: "format", Type: "STRING", Optional: true, Default: "yyyy-MM-dd"})
+	add(PrivilegeNone, "apoc.node.id", "STRING", node)
+	add(PrivilegeNone, "apoc.node.labels", "LIST<STRING>", node)
+	add(PrivilegeRead, "apoc.node.degree", "INTEGER", node, filter)
+	add(PrivilegeNone, "apoc.rel.id", "STRING", rel)
+	add(PrivilegeNone, "apoc.rel.type", "STRING", rel)
+	add(PrivilegeRead, "apoc.rel.startNode", "NODE", rel)
+	add(PrivilegeRead, "apoc.rel.endNode", "NODE", rel)
+	add(PrivilegeRead, "apoc.nodes.connected", "BOOLEAN", node, ProcedureParam{Name: "other", Type: "NODE"}, filter)
+	add(PrivilegeNone, "apoc.path.elements", "LIST<ANY>", path)
+	add(PrivilegeNone, "apoc.path.slice", "PATH", path, ProcedureParam{Name: "offset", Type: "INTEGER", Optional: true, Default: "0"}, ProcedureParam{Name: "length", Type: "INTEGER", Optional: true, Default: "-1"})
+	add(PrivilegeNone, "apoc.path.combine", "PATH", path, ProcedureParam{Name: "other", Type: "PATH"})
+	add(PrivilegeNone, "apoc.temporal.format", "STRING", ProcedureParam{Name: "input", Type: "ANY"}, ProcedureParam{Name: "format", Type: "STRING", Optional: true, Default: "yyyy-MM-dd"})
 	return out
 }
 
@@ -91,7 +91,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		if name == "apoc.rel.type" {
 			builtin = "type"
 		}
-		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
+		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Request: ctx, Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
 		if err != nil {
 			err = functionEvaluationError(err)
 		}

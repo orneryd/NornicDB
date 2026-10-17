@@ -28,8 +28,8 @@ func newLouvainKarateGraph(t *testing.T) func(string) [][]interface{} {
 // each one's extra properties, projected with the node projection.
 func newLouvainKarateGraphOf(t *testing.T, order []int, extra func(int, map[string]interface{}), nodeProjection string) func(string) [][]interface{} {
 	t.Helper()
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv")
 	exec := NewStorageExecutor(engine)
 	run := func(query string) [][]interface{} {
@@ -307,8 +307,8 @@ func TestGDSLouvainCommunityIDsAsGDS(t *testing.T) {
 // TestGDSLouvainIsolatedNodes: with no relationships GDS runs one level,
 // each node its own community.
 func TestGDSLouvainIsolatedNodes(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv"))
 	for _, query := range []string{"UNWIND range(1, 3) AS i CREATE (:Z {seq: i})", "CALL gds.graph.project('iso', 'Z', '*')"} {
 		_, err := exec.Execute(context.Background(), query, nil)
@@ -325,8 +325,8 @@ func TestGDSLouvainIsolatedNodes(t *testing.T) {
 // missing weight is NaN (no node moves), GDS's gain arithmetic decides a
 // tie, and large seeds keep every digit.
 func TestGDSLouvainReadsTheProjectionAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	communities := func(run func(string) (*ExecuteResult, error), query string) []interface{} {
 		t.Helper()
 		result, err := run(query)

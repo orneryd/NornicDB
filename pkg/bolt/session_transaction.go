@@ -137,6 +137,7 @@ func (s *Session) failClosedTransactionCleanup(_ error) {
 // a completed terminal path cannot persist stale transaction work later.
 func (s *Session) clearExplicitTransactionState() {
 	s.inTransaction = false
+	s.impersonated = nil
 	s.txMetadata = nil
 	s.txDatabase = ""
 	s.txHasMerge = false

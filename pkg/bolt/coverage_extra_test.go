@@ -1177,8 +1177,8 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				query   string
 				message string
 			}{
-				{name: "write", query: "CREATE (n)", message: "Write operations require write permission"},
-				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operations require schema permission"},
+				{name: "write", query: "CREATE (n)", message: "Write operations are not allowed for user 'viewer' with no roles."},
+				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operation 'create_index' on database 'nornic' is not allowed for user 'viewer' with no roles."},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
@@ -1193,7 +1193,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, <-done)
 					assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-					assert.Contains(t, msg, tc.message)
+					assert.Equal(t, tc.message, msg)
 				})
 			}
 		})
@@ -1215,7 +1215,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Access to database 'allowed' is not allowed")
+			assert.Equal(t, "Database access is not allowed for user 'reader' with no roles.", msg)
 
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
@@ -1292,7 +1292,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Write operations require write permission")
+			assert.Equal(t, "Write operations are not allowed for user 'editor' with roles [editor].", msg)
 		})
 
 		t.Run("returns executor error and success metadata", func(t *testing.T) {
@@ -1368,9 +1368,10 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer clientConn.Close()
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "writer", Permissions: []string{"write"}}
-
+			// A statement that reads the graph needs read; RETURN 1 reads nothing
+			// and needs database access alone.
 			done := make(chan error, 1)
-			go func() { done <- session.handleRun(buildRunMessageData("RETURN 1", nil, nil)) }()
+			go func() { done <- session.handleRun(buildRunMessageData("MATCH (n) RETURN n", nil, nil)) }()
 			code, msg, err := AssertFailure(t, clientConn)
 			require.NoError(t, err)
 			require.NoError(t, <-done)
@@ -1392,7 +1393,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Access to database 'nornic' is not allowed")
+			assert.Equal(t, "Database access is not allowed for user 'reader' with no roles.", msg)
 
 			serverConn3, clientConn3 := net.Pipe()
 			defer serverConn3.Close()

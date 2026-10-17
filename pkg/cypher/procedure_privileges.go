@@ -22,19 +22,22 @@ type procedurePrivilegeCommand struct {
 }
 
 // isProcedurePrivilegeCommand reports whether cypher is a GRANT or REVOKE of
-// procedure execution, the privilege statements NornicDB runs; every other
-// GRANT, REVOKE or DENY is unsupported.
+// procedure execution, privilege statements NornicDB runs, as it runs those
+// of impersonation (isImpersonatePrivilegeCommand); every other GRANT,
+// REVOKE or DENY is unsupported.
 func isProcedurePrivilegeCommand(cypher string) bool {
 	_, ok, _ := parseProcedurePrivilegeCommand(cypher)
 	return ok
 }
 
 // isPrivilegeAdministrationCommand reports whether cypher is a GRANT, REVOKE
-// or DENY, or a SHOW of privileges, which administrators alone may run.
+// or DENY, a SHOW of privileges, a role command (isRoleCommand) or an access
+// scope command (isAccessScopeCommand), which administrators alone may run.
 func isPrivilegeAdministrationCommand(cypher string) bool {
 	trimmed := strings.TrimSpace(cypher)
 	return startsWithKeywordFold(trimmed, "GRANT") || startsWithKeywordFold(trimmed, "REVOKE") ||
-		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed)
+		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed) || isRoleCommand(trimmed) ||
+		isAccessScopeCommand(trimmed)
 }
 
 // isPrivilegeCommandShaped reports a GRANT, REVOKE or DENY shaped as a
@@ -227,6 +230,10 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	if !command.boosted {
+		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
+			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
+	}
 	locked := !authenticationDisabled(ctx)
 	if command.grant && command.immutable && locked {
 		return nil, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeGrantForbidden())
@@ -328,14 +335,10 @@ func showPrivilegeRoles(head string) []string {
 	return roles
 }
 
-// executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
-// access, action, resource, graph, segment, role, immutable.
+// executeShowPrivileges lists the procedure and impersonation privileges, in
+// Neo4j's columns: access, action, resource, graph, segment, role, immutable.
 func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string) (*ExecuteResult, error) {
 	system, err := e.privilegeStorage(false)
-	if err != nil {
-		return nil, err
-	}
-	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +346,24 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 	for _, role := range showPrivilegeRoles(head) {
 		only[role] = true
 	}
-	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}
+	rows, err := privilegeRecordRows(ctx, system, only)
+	if err != nil {
+		return nil, err
+	}
+	return &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: rows}, nil
+}
+
+// privilegeRecordRows is the one enumerator of stored privileges, in SHOW
+// PRIVILEGES' row shape: EXECUTE procedure grants, IMPERSONATE privileges and
+// graph (MATCH) privileges, of the roles in only (every role when only is
+// empty). SHOW ROLE … PRIVILEGES and SHOW USER … PRIVILEGES both list
+// through it, so a privilege kind is listed everywhere or nowhere.
+func privilegeRecordRows(ctx context.Context, system storage.Engine, only map[string]bool) ([][]interface{}, error) {
+	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows := [][]interface{}{}
 	for _, grant := range grants {
 		if len(only) > 0 && !only[grant.Role] {
 			continue
@@ -352,7 +372,16 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		if grant.Boosted {
 			action = "execute_boosted"
 		}
-		result.Rows = append(result.Rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
+		rows = append(rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
 	}
-	return result, nil
+	impersonation, err := impersonatePrivilegeRows(ctx, system, only)
+	if err != nil {
+		return nil, err
+	}
+	rows = append(rows, impersonation...)
+	graphPrivileges, err := auth.NewGraphPrivilegeStore(system).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(rows, graphPrivilegeRows(graphPrivileges, only)...), nil
 }

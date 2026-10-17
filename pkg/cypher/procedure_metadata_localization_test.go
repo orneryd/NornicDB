@@ -332,7 +332,7 @@ func TestShowProceduresPreservesCanonicalFieldMetadata(t *testing.T) {
 		Name:         "custom.old",
 		Signature:    "custom.old(value :: STRING = 'sample') :: (value :: STRING)",
 		Mode:         ProcedureModeRead,
-		Admin:        true,
+		Privilege:    PrivilegeRead | PrivilegeAdmin,
 		IsDeprecated: true,
 		DeprecatedBy: "custom.new",
 		MinArgs:      0,
@@ -363,6 +363,9 @@ func TestBuiltInProcedureSignatureMetadataDefaults(t *testing.T) {
 		t.Run(signature, func(t *testing.T) {
 			registry := NewProcedureRegistry()
 			replaceProcedureRegistryForTest(t, registry)
+			// A built-in registers only with its reviewed privilege class.
+			builtinProcedureClasses["custom.defaults"] = PrivilegeRead
+			t.Cleanup(func() { delete(builtinProcedureClasses, "custom.defaults") })
 			registerProcedure(ProcedureSpec{Name: "custom.defaults", Signature: signature, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 2}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 				return &ExecuteResult{}, nil
 			})

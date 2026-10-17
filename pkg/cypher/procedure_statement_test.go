@@ -77,7 +77,7 @@ func TestGrantGoesThroughTheRoleRecordOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, allowed)
 
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO nobody", nil)
+	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO nobody", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
-	require.ErrorContains(t, err, "Failed to grant execute privilege to role 'nobody': Role does not exist.")
+	require.ErrorContains(t, err, "Failed to grant execute_boosted privilege to role 'nobody': Role does not exist.")
 }

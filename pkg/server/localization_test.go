@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
@@ -258,7 +260,7 @@ func TestLocalizedDatabaseAccessDeniedPreservesNeo4jContract(t *testing.T) {
 	require.NoError(t, err)
 	server := &Server{localizer: manager}
 	handler := server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		server.writeNeo4jDatabaseAccessDenied(w, r, "tenant-a")
+		server.writeNeo4jDatabaseAccessDenied(w, r.WithContext(context.WithValue(r.Context(), contextKeyClaims, &auth.JWTClaims{Username: "ana", Roles: []string{"lectora", "editora"}})))
 	}))
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("Accept-Language", "es-ES")
@@ -272,8 +274,8 @@ func TestLocalizedDatabaseAccessDeniedPreservesNeo4jContract(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 	require.Len(t, body.Errors, 1)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", body.Errors[0].Code)
-	require.Equal(t, "No se permite el acceso a la base de datos 'tenant-a'.", body.Errors[0].Message)
-	require.Equal(t, "Access to database 'tenant-a' is not allowed.", localization.DatabaseAccessDenied("tenant-a").Fallback)
+	require.Equal(t, "No se permite el acceso a la base de datos al usuario 'ana' con los roles [editora, lectora].", body.Errors[0].Message)
+	require.Equal(t, "Database access is not allowed for user 'ana' with roles [editora, lectora].", localization.DatabaseAccessDenied("ana", []string{"lectora", "editora"}).Fallback)
 }
 
 func TestLocalizedDatabaseWriteDeniedPreservesNeo4jContract(t *testing.T) {
@@ -281,7 +283,7 @@ func TestLocalizedDatabaseWriteDeniedPreservesNeo4jContract(t *testing.T) {
 	require.NoError(t, err)
 	server := &Server{localizer: manager}
 	handler := server.localizationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		server.writeNeo4jDatabaseWriteDenied(w, r, "tenant-a")
+		server.writeNeo4jDatabaseWriteDenied(w, r.WithContext(context.WithValue(r.Context(), contextKeyClaims, &auth.JWTClaims{Username: "ana", Roles: []string{"lectora"}})))
 	}))
 	request := httptest.NewRequest(http.MethodPost, "/", nil)
 	request.Header.Set("Accept-Language", "es-ES")
@@ -294,8 +296,8 @@ func TestLocalizedDatabaseWriteDeniedPreservesNeo4jContract(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 	require.Len(t, body.Errors, 1)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", body.Errors[0].Code)
-	require.Equal(t, "No se permite escribir en la base de datos 'tenant-a'.", body.Errors[0].Message)
-	require.Equal(t, "Write on database 'tenant-a' is not allowed.", localization.DatabaseWriteDenied("tenant-a").Fallback)
+	require.Equal(t, "No se permiten operaciones de escritura al usuario 'ana' con los roles [lectora].", body.Errors[0].Message)
+	require.Equal(t, "Write operations are not allowed for user 'ana' with roles [lectora].", localization.DatabaseWriteDenied("ana", []string{"lectora"}).Fallback)
 }
 
 func TestLocalizedHTTPAuthenticationResponsesPreserveStatus(t *testing.T) {

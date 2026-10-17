@@ -236,13 +236,15 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		return result, nil
 	}
 
-	hits, err := svc.VectorQueryNodes(ctx, queryVector, search.VectorQuerySpec{
+	spec := search.VectorQuerySpec{
 		IndexName:  indexName,
 		Label:      targetLabel,
 		Property:   targetProperty,
 		Similarity: similarityFunc,
 		Limit:      k,
-	})
+		Restricted: e.restrictedReader(),
+	}
+	hits, err := svc.VectorQueryNodes(ctx, queryVector, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +253,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	for _, hit := range hits {
 		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
 		if err != nil || node == nil {
-			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
+			// An embedding is orphaned only when its node is gone from the
+			// database, not when it is hidden from a restricted principal.
+			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil && orphanedNode(e.storage, hit.ID) {
 				if !seenOrphans[hit.ID] {
 					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
 					if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {

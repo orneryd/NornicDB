@@ -77,6 +77,10 @@ type TransactionContext struct {
 
 	// statementKind keeps administration commands apart from data statements.
 	statementKind string
+
+	// restrictedCreated is what a restricted principal's statements created
+	// in this transaction, visible to its later statements (createdNodes).
+	restrictedCreated *createdNodes
 }
 
 // failTransaction records err as the active explicit transaction's failure
@@ -153,7 +157,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	// statements, so a snapshot opened here observes every acknowledged write.
 
 	// Unwrap engine wrappers (WAL/Namespaced) recursively.
-	engine := e.storage
+	engine := engineBeneathView(e.storage)
 	namespaceHint := ""
 	visited := map[storage.Engine]bool{}
 	for engine != nil && !visited[engine] {

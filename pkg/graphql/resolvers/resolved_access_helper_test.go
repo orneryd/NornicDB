@@ -11,8 +11,13 @@ import (
 // server attaches (auth.WithRequestEntitlementResolver); it holds no other
 // permission.
 func withResolvedAccess(ctx context.Context, access func(database string) auth.ResolvedAccess) context.Context {
+	if auth.RequestDatabaseScopeFromContext(ctx) == nil {
+		ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope("nornic", map[string]string{"nornic": "nornic"}))
+	}
 	return auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		switch permission {
+		case auth.Permission("access"):
+			return true // selection is independently limited by the fixture scope
 		case auth.PermRead:
 			return access(database).Read
 		case auth.PermWrite:

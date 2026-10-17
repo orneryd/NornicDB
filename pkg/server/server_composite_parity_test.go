@@ -197,7 +197,7 @@ func TestCompositeConstituentStatsPartialBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	missingReq := httptest.NewRequest(http.MethodGet, "/db/missing_cmp", nil)
-	stats, partial := server.compositeConstituentStats(missingReq, "missing_cmp")
+	stats, partial := server.compositeConstituentStats(as(missingReq, "admin"), "missing_cmp")
 	require.True(t, partial)
 	require.Nil(t, stats)
 
@@ -217,7 +217,7 @@ func TestCompositeConstituentStatsPartialBranches(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/db/cmp_partial_stats", nil)
 	req.Header.Set("Authorization", "Bearer remote-token")
-	stats, partial = server.compositeConstituentStats(req, "cmp_partial_stats")
+	stats, partial = server.compositeConstituentStats(as(req, "admin"), "cmp_partial_stats")
 	require.True(t, partial)
 	require.Len(t, stats, 1)
 	require.Equal(t, false, stats[0]["reachable"])
