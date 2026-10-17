@@ -1,5 +1,7 @@
 package search
 
+import "github.com/orneryd/nornicdb/pkg/gpu"
+
 // publishVectorServing is the one owner of a change to what vector search
 // serves: an HNSW graph, cluster index, cluster graphs or routing profiles, a
 // compressed index, a GPU copy, or the retirement of any of them. install sets
@@ -31,3 +33,24 @@ func (s *Service) publishVectorServing(install func(), retirePipeline bool) {
 func (s *Service) cacheDerivedVectorPipelineLocked(pipeline *VectorSearchPipeline) {
 	s.vectorPipeline = pipeline
 }
+
+// The serving fields are read only through these accessors, which do no
+// locking: the caller holds the field's lock as before. Everything else that
+// mentions a serving field is a publication (publishVectorServing) or the
+// derived-pipeline cache (TestServingFieldsAreWrittenOnlyByTheirOwner).
+
+func (s *Service) servingHNSW() *HNSWIndex { return s.hnswIndex }
+
+func (s *Service) servingPipeline() *VectorSearchPipeline { return s.vectorPipeline }
+
+func (s *Service) servingClusterIndex() *gpu.ClusterIndex { return s.clusterIndex }
+
+func (s *Service) servingClusterHNSW() map[int]*HNSWIndex { return s.clusterHNSW }
+
+func (s *Service) servingClusterProfiles() map[int]map[string]float64 {
+	return s.clusterLexicalProfiles
+}
+
+func (s *Service) servingIVFPQ() *IVFPQIndex { return s.ivfpqIndex }
+
+func (s *Service) servingGPUIndex() *gpu.EmbeddingIndex { return s.gpuEmbeddingIndex }

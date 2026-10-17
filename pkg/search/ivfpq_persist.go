@@ -144,7 +144,7 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	}
 	s.indexMu.Lock()
 	s.ivfpqMu.RLock()
-	idx := s.ivfpqIndex
+	idx := s.servingIVFPQ()
 	if s.ivfpqEpoch != s.vectorSourceEpoch.Load() {
 		// Built for a retired source: saving it under the current store's
 		// version would let a later load reuse it for different vectors.
@@ -176,8 +176,8 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		ctx = context.Background()
 	}
 	s.ivfpqMu.RLock()
-	if s.ivfpqIndex != nil && s.ivfpqEpoch == sourceEpoch && s.ivfpqIndex.compatibleProfile(profile) {
-		idx := s.ivfpqIndex
+	if s.servingIVFPQ() != nil && s.ivfpqEpoch == sourceEpoch && s.servingIVFPQ().compatibleProfile(profile) {
+		idx := s.servingIVFPQ()
 		s.ivfpqMu.RUnlock()
 		return idx, nil
 	}
@@ -185,8 +185,8 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()
-	if s.ivfpqIndex != nil && s.ivfpqEpoch == sourceEpoch && s.ivfpqIndex.compatibleProfile(profile) {
-		return s.ivfpqIndex, nil
+	if s.servingIVFPQ() != nil && s.ivfpqEpoch == sourceEpoch && s.servingIVFPQ().compatibleProfile(profile) {
+		return s.servingIVFPQ(), nil
 	}
 	current := func() bool { return s.vectorSourceEpoch.Load() == sourceEpoch }
 
@@ -212,7 +212,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 			s.ivfpqIndex = loaded
 			s.ivfpqEpoch = sourceEpoch
 		}, false)
-		return s.ivfpqIndex, nil
+		return s.servingIVFPQ(), nil
 	}
 
 	if vfs == nil {
@@ -233,5 +233,5 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		s.ivfpqEpoch = sourceEpoch
 		s.ivfpqOverlay.Reset()
 	}, false)
-	return s.ivfpqIndex, nil
+	return s.servingIVFPQ(), nil
 }

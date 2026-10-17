@@ -11,7 +11,7 @@ import (
 func (s *Service) clusterState() (*gpu.ClusterIndex, uint64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.clusterIndex, s.clusterGeneration.Load()
+	return s.servingClusterIndex(), s.clusterGeneration.Load()
 }
 
 // retireClusterGenerationLocked retires the current cluster object's derived

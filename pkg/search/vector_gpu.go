@@ -20,7 +20,7 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	var vfs *VectorFileStore
 	s.publishVectorServing(func() {
 		s.mu.Lock()
-		retired = s.gpuEmbeddingIndex
+		retired = s.servingGPUIndex()
 		s.gpuManager = manager
 		s.gpuEmbeddingIndex = nil
 		vi, vfs = s.vectorIndex, s.vectorFileStore
@@ -49,7 +49,7 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 func (s *Service) gpuVectorState() (*gpu.Manager, *gpu.EmbeddingIndex) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.gpuManager, s.gpuEmbeddingIndex
+	return s.gpuManager, s.servingGPUIndex()
 }
 
 // ensureGPUIndexSynced is the single builder for manager replacement and runtime
