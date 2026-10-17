@@ -94,6 +94,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -216,6 +217,11 @@ type Config struct {
 
 	// TLS holds security configuration for encrypted connections.
 	TLS TLSConfig
+
+	// loadErr records security settings LoadFromEnv could not parse.
+	// Validate reports it, so a malformed value refuses startup instead of
+	// silently reading as false.
+	loadErr error
 }
 
 func (c *Config) logEvent(ctx context.Context, level slog.Level, event localization.LogEvent) {
@@ -569,12 +575,21 @@ func LoadFromEnv() *Config {
 	config.Consistency.DefaultReadConsistency = ConsistencyLevel(envutil.Get("NORNICDB_CLUSTER_READ_CONSISTENCY", string(ConsistencyOne)))
 
 	// TLS settings (STRONGLY RECOMMENDED for production)
-	config.TLS.Enabled = envutil.GetBoolLoose("NORNICDB_CLUSTER_TLS_ENABLED", false)
+	var loadErrs []error
+	securityBool := func(key string, fallback bool) bool {
+		v, err := securityBoolFromEnv(key, fallback)
+		if err != nil {
+			loadErrs = append(loadErrs, err)
+		}
+		return v
+	}
+	config.TLS.Enabled = securityBool("NORNICDB_CLUSTER_TLS_ENABLED", false)
 	config.TLS.CertFile = envutil.Get("NORNICDB_CLUSTER_TLS_CERT_FILE", "")
 	config.TLS.KeyFile = envutil.Get("NORNICDB_CLUSTER_TLS_KEY_FILE", "")
 	config.TLS.CAFile = envutil.Get("NORNICDB_CLUSTER_TLS_CA_FILE", "")
-	config.TLS.VerifyClient = envutil.GetBoolLoose("NORNICDB_CLUSTER_TLS_VERIFY_CLIENT", true) // Default to secure
-	config.TLS.InsecureSkipVerify = envutil.GetBoolLoose("NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY", false)
+	config.TLS.VerifyClient = securityBool("NORNICDB_CLUSTER_TLS_VERIFY_CLIENT", true) // Default to secure
+	config.TLS.InsecureSkipVerify = securityBool("NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY", false)
+	config.loadErr = errors.Join(loadErrs...)
 	config.TLS.ServerName = envutil.Get("NORNICDB_CLUSTER_TLS_SERVER_NAME", "")
 	config.TLS.MinVersion = envutil.Get("NORNICDB_CLUSTER_TLS_MIN_VERSION", "1.2")
 	config.TLS.CipherSuites = parseCSV(envutil.Get("NORNICDB_CLUSTER_TLS_CIPHER_SUITES", ""))
@@ -634,6 +649,9 @@ func (c *Config) Validate() error {
 
 	// TLS validation for non-standalone modes
 	if c.Mode != ModeStandalone {
+		if c.loadErr != nil {
+			return c.loadErr
+		}
 		if err := c.validateTLS(); err != nil {
 			return err
 		}
@@ -644,6 +662,23 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// securityBoolFromEnv reads a boolean security setting. It accepts what
+// envutil.GetBoolLoose accepts as true (true/1/yes/on) and the matching false
+// words (false/0/no/off), case-insensitive and trimmed. Anything else is an
+// error rather than false, so a typo can't turn TLS or client verification off.
+func securityBoolFromEnv(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return fallback, nil
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	}
+	return fallback, localizedError(localization.ReplicationConfigInvalidBoolean(key, raw), nil)
 }
 
 // validateTLS validates TLS configuration.
