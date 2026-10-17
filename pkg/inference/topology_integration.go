@@ -147,11 +147,12 @@ type TopologyIntegration struct {
 	predictionCount int64
 	graphMu         sync.RWMutex
 
-	// Stats
+	// Build stats: a set (average build = total/builds), written together by
+	// a rebuild under graphMu's write lock and read together under graphMu.
 	lastBuildTime   time.Duration
 	totalBuildTime  time.Duration
 	buildsCompleted int64
-	predictionsRun  int64
+	predictionsRun  int64 // atomic; a single counter, not part of a set
 
 	// Delta tracking for incremental updates
 	pendingDelta *linkpredict.GraphDelta
@@ -340,7 +341,7 @@ func (t *TopologyIntegration) ensureGraph(ctx context.Context) error {
 	buildTime := time.Since(startTime)
 	t.lastBuildTime = buildTime
 	t.totalBuildTime += buildTime
-	atomic.AddInt64(&t.buildsCompleted, 1)
+	t.buildsCompleted++
 
 	return nil
 }
@@ -499,6 +500,8 @@ func (t *TopologyIntegration) Stats() TopologyStats {
 			edgeCount += len(neighbors)
 		}
 	}
+	// The build stats are written under graphMu; read them as one set here.
+	buildsCompleted, lastBuildTime, totalBuildTime := t.buildsCompleted, t.lastBuildTime, t.totalBuildTime
 	t.graphMu.RUnlock()
 
 	t.deltaMu.Lock()
@@ -514,9 +517,9 @@ func (t *TopologyIntegration) Stats() TopologyStats {
 		GraphNodeCount:  nodeCount,
 		GraphEdgeCount:  edgeCount,
 		PredictionsRun:  atomic.LoadInt64(&t.predictionsRun),
-		BuildsCompleted: atomic.LoadInt64(&t.buildsCompleted),
-		LastBuildTime:   t.lastBuildTime,
-		TotalBuildTime:  t.totalBuildTime,
+		BuildsCompleted: buildsCompleted,
+		LastBuildTime:   lastBuildTime,
+		TotalBuildTime:  totalBuildTime,
 		PendingChanges:  pendingChanges,
 		CacheHits:       builderStats.CacheHits,
 		CacheMisses:     builderStats.CacheMisses,
