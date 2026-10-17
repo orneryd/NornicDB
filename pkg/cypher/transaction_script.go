@@ -107,7 +107,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 	queryUpper := upperASCII(strings.TrimSpace(queryBody))
 	result, err := e.executeInTransaction(ctx, queryBody, queryUpper)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
 	switch action {
@@ -119,7 +119,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 	case "ROLLBACK":
 		return e.handleRollback()
 	default:
-		return nil, e.abortTransaction(localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil))
+		return nil, e.abortTransaction(ctx, localizedError(localization.CypherTransactionsInvalidScriptAction(action), nil))
 	}
 }
 
@@ -146,7 +146,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	callUpper := upperASCII(strings.TrimSpace(callQuery))
 	callResult, err := e.executeInTransaction(ctx, callQuery, callUpper)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
 	rollbackRequired := false
@@ -154,7 +154,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		nodes, rels := buildRowGraphContext(callResult.Columns, row)
 		shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
 		if err != nil {
-			return nil, e.abortTransaction(err)
+			return nil, e.abortTransaction(ctx, err)
 		}
 		if shouldRollback {
 			rollbackRequired = true
@@ -167,7 +167,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 
 	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
 	if err != nil {
-		return nil, e.abortTransaction(err)
+		return nil, e.abortTransaction(ctx, err)
 	}
 
 	if _, err := e.handleCommit(ctx); err != nil {
