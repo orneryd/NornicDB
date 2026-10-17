@@ -18,14 +18,18 @@ func TestIVFHNSWPublicQueryPreservesConcentratedNeighbours(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "32")
-	const dimensions, clusters, perCluster = 32, 32, 40
+	// One spare dimension: wrapping the last topic's offset onto the query's
+	// axis would give its points the query's sign bits, an exact tie for
+	// 1-bit binary codes unrelated to the candidate budget checked here.
+	const clusters, perCluster = 32, 40
+	const dimensions = clusters + 1
 	engine := newNamespacedEngine(t)
 	want := make([]string, 0, perCluster)
 	for cluster := 0; cluster < clusters; cluster++ {
 		for point := 0; point < perCluster; point++ {
 			vec := make([]float32, dimensions)
 			vec[cluster] = 1
-			vec[(cluster+1)%dimensions] = float32(point) / 1000
+			vec[cluster+1] = float32(point) / 1000
 			id := fmt.Sprintf("topic-%02d-point-%02d", cluster, point)
 			_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
 			require.NoError(t, err)
@@ -106,4 +110,61 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 		}
 	}
 	require.Equal(t, 2, found)
+}
+
+// 1-bit binary codes can tie points of different clusters: here the last
+// topic's offset wraps onto the query's axis, so its points share the query's
+// sign bits with the nearest topic. Quantization oversampling widens the pool
+// kept for exact rescoring; IVF-HNSW honours it as single-graph HNSW does.
+func TestIVFHNSWBinaryTiesResolvedByOversampling(t *testing.T) {
+	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "binary")
+	t.Setenv("NORNICDB_KMEANS_NPROBE", "32")
+	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
+	const dimensions, clusters, perCluster = 32, 32, 40
+	for _, ivf := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ivf=%t", ivf), func(t *testing.T) {
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", fmt.Sprint(ivf))
+			engine := newNamespacedEngine(t)
+			want := make([]string, 0, perCluster)
+			for cluster := 0; cluster < clusters; cluster++ {
+				for point := 0; point < perCluster; point++ {
+					vec := make([]float32, dimensions)
+					vec[cluster] = 1
+					vec[(cluster+1)%dimensions] = float32(point) / 1000
+					id := fmt.Sprintf("topic-%02d-point-%02d", cluster, point)
+					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, NamedEmbeddings: map[string][]float32{"default": vec}})
+					require.NoError(t, err)
+					if cluster == 0 {
+						want = append(want, id)
+					}
+				}
+			}
+			svc := NewServiceWithDimensions(engine, dimensions)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			if ivf {
+				svc.EnableClustering(nil, clusters)
+				svc.SetMinEmbeddingsForClustering(1)
+			}
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+			pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
+			require.NoError(t, err)
+			if ivf {
+				require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
+			} else {
+				require.IsType(t, &HNSWCandidateGen{}, pipeline.candidateGen)
+			}
+			query := make([]float32, dimensions)
+			query[0] = 1
+			hits, err := svc.VectorQueryNodesWithOptions(context.Background(), query, VectorQuerySpec{Limit: perCluster}, &SearchOptions{QuantizationOversampling: 2})
+			require.NoError(t, err)
+			ids := make([]string, len(hits))
+			for i, hit := range hits {
+				ids[i] = hit.ID
+			}
+			require.ElementsMatch(t, want, ids)
+		})
+	}
 }
