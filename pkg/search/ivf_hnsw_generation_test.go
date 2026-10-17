@@ -175,7 +175,7 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 		}, replacing: true},
 		{name: "ClearVectorIndex", replace: func(s *Service) error { return s.ClearVectorIndex() }, retired: true},
 		{name: "ClearIndexes", replace: func(s *Service) error { return s.ClearIndexes() }, retired: true},
-		{name: "build reset", replace: func(s *Service) error { s.resetANNForBuild(); return nil }},
+		{name: "build reset", replace: func(s *Service) error { s.resetANNForBuild(); return nil }, retired: true},
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
@@ -194,7 +194,7 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 				require.Never(t, func() bool { return len(replaced) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
 			}
 			t.Cleanup(func() { clusterPublishHook = nil })
-			gen, err := svc.buildClusterGeneration(context.Background(), original, clustering, nil)
+			gen, err := svc.buildClusterGeneration(context.Background(), original, clustering, nil, nil)
 			require.NoError(t, err)
 			require.NoError(t, svc.publishClusterGeneration(context.Background(), clusterPublication{generation: gen}))
 			select {
@@ -206,13 +206,8 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 
 			svc.clusterStateMu.RLock()
 			defer svc.clusterStateMu.RUnlock()
-			// The derived state retires; an index that keeps its routing keeps
-			// a routing-only generation maintaining membership.
-			if retiredGen := svc.clusterGen; retiredGen != nil {
-				require.True(t, retiredGen.routingOnly, "the published generation retires")
-				require.Nil(t, retiredGen.graphs, "the published graphs retire with the generation")
-				require.Empty(t, retiredGen.profiles)
-			}
+			// The published generation retires with its graphs and profiles.
+			require.Nil(t, svc.clusterGen, "the published generation retires")
 			if path.retired {
 				require.False(t, original.IsClustered(), "a retired index is not left published")
 			}

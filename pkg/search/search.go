@@ -1588,9 +1588,14 @@ func (s *Service) resetANNForBuild() {
 	s.hnswRebuildOverlay.Reset()
 	s.hnswMu.Unlock()
 
+	// The build derives the cluster population again from the canonical store
+	// it (re)loads: the build's own admissions and the warmup's backfill.
 	s.clusterStateMu.Lock()
-	s.retireClusterGeneration(nil, false)
+	s.mu.Lock()
+	s.retireClusterGeneration(nil, true)
+	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
+	s.publishClusterServing()
 	s.ivfpqMu.Lock()
 	s.ivfpqIndex = nil
 	s.ivfpqOverlay.Reset()
@@ -1642,24 +1647,23 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 //	svc.BuildIndexes(ctx)
 //	svc.TriggerClustering(ctx) // Run k-means
 func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
-	// Replacement and backfill are one admission-boundary section, so no
-	// vector added or removed in between is lost or resurrected; then the
-	// pipeline is republished for the new index.
+	// The replacement is one admission-boundary section; the new index's
+	// population is then reconciled with the canonical store, each vector
+	// read from the store as it is admitted, so a vector written or removed
+	// in between is neither lost nor resurrected.
 	s.indexMu.Lock()
-	ids, embs, replaced := s.replaceClusterIndex(gpuManager, numClusters)
-	if replaced && len(ids) > 0 {
-		s.admitClusterVectorsLocked(ids, embs)
-	}
+	replaced := s.replaceClusterIndex(gpuManager, numClusters)
 	s.indexMu.Unlock()
-	if replaced {
-		s.publishClusterServing()
+	if !replaced {
+		return
 	}
+	s.publishClusterServing()
+	s.reconcileClusterPopulation(s.EmbeddingCount())
 }
 
 // replaceClusterIndex installs a new cluster index for EnableClustering (a
-// cluster-state change: clusterStateMu, then mu) and returns the in-memory
-// vectors to backfill into it.
-func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) ([]string, [][]float32, bool) {
+// cluster-state change: clusterStateMu, then mu).
+func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) bool {
 	s.clusterStateMu.Lock()
 	defer s.clusterStateMu.Unlock()
 	s.mu.Lock()
@@ -1669,7 +1673,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	if s.clusterEnabled && s.clusterIndex != nil {
 		requestGPU := gpuManager != nil && gpuManager.IsEnabled()
 		if s.clusterUsesGPU == requestGPU {
-			return nil, nil, false
+			return false
 		}
 	}
 
@@ -1702,7 +1706,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	// Use the same dimensions as the vector index (no hardcoded fallback)
 	if s.vectorIndex == nil {
 		s.logPrintf("[K-MEANS] ⚠️ Cannot enable clustering: vector index not initialized")
-		return nil, nil, false
+		return false
 	}
 	dimensions := s.vectorIndex.dimensions
 	embConfig := gpu.DefaultEmbeddingIndexConfig(dimensions)
@@ -1711,26 +1715,6 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	s.retireClusterGeneration(gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig), false)
 	s.clusterEnabled = true
 	s.clusterUsesGPU = gpuManager != nil && gpuManager.IsEnabled()
-
-	// Backfill embeddings from the current vector index so clustering can run
-	// immediately, even if indexes were built before clustering was enabled.
-	var ids []string
-	var embs [][]float32
-	if s.vectorIndex != nil {
-		s.vectorIndex.mu.RLock()
-		ids = make([]string, 0, len(s.vectorIndex.vectors))
-		embs = make([][]float32, 0, len(s.vectorIndex.vectors))
-		for id, vec := range s.vectorIndex.vectors {
-			if len(vec) == 0 {
-				continue
-			}
-			copyVec := make([]float32, len(vec))
-			copy(copyVec, vec)
-			ids = append(ids, id)
-			embs = append(embs, copyVec)
-		}
-		s.vectorIndex.mu.RUnlock()
-	}
 
 	mode := "CPU"
 	if gpuManager != nil {
@@ -1742,7 +1726,7 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	}
 	s.logPrintf("[K-MEANS] ✅ Clustering ENABLED | mode=%s clusters=%s max_iter=%d init=%s",
 		mode, clusterDesc, kmeansConfig.MaxIterations, kmeansConfig.InitMethod)
-	return ids, embs, true
+	return true
 }
 
 // DefaultMinEmbeddingsForClustering is the default minimum number of embeddings
@@ -1777,56 +1761,58 @@ const fulltextIndexChunkSize = 250
 // buildIndexPersistInterval removed: we no longer checkpoint persist during BuildIndexes
 // because the append-only vector store can be rebuilt from .vec on resume.
 
-// ensureClusterIndexBackfilled backfills the cluster index from the canonical vector store
-// (file-backed or in-memory) when clusterIndex has fewer than targetCount embeddings.
-// This ensures k-means runs on the full set when the cluster index was lagging (e.g. after
-// BuildIndexes or when stats haven't caught up). The backfill is admitted
-// through the admission boundary (indexMu). Caller must not hold s.mu.
-func (s *Service) ensureClusterIndexBackfilled(targetCount int) {
+// clusterBackfillChunk bounds how long one backfill step holds the admission
+// boundary.
+const clusterBackfillChunk = 5000
+
+// reconcileClusterPopulation brings the cluster index's population in line
+// with the canonical vector store (file-backed or in-memory) when their counts
+// differ (e.g. clustering enabled after the vectors were built, or a build
+// that reloaded the store): vectors the index lacks or holds stale are
+// admitted, and entries the store no longer holds are retired. Only IDs are
+// listed outside the admission boundary; each vector is read from the store
+// when it is admitted (admitClusterVectorsLocked, under indexMu), so a write
+// or removal made after the listing is never overwritten or resurrected.
+// Callers hold neither indexMu nor s.mu.
+func (s *Service) reconcileClusterPopulation(targetCount int) {
 	s.mu.RLock()
 	clusterIndex := s.clusterIndex
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
-	if clusterIndex == nil || clusterIndex.Count() >= targetCount {
+	if clusterIndex == nil || clusterIndex.Count() == targetCount {
 		return
 	}
-	if vfs != nil {
-		// IterateChunked holds the store's read lock across fn, and a writer
-		// holding indexMu may wait for the store's write lock: read first,
-		// admit after.
-		var chunks [][]string
-		var chunkVecs [][][]float32
-		_ = vfs.IterateChunked(5000, func(ids []string, vecs [][]float32) error {
-			chunks = append(chunks, append([]string(nil), ids...))
-			chunkVecs = append(chunkVecs, append([][]float32(nil), vecs...))
-			return nil
-		})
-		for i := range chunks {
-			s.indexMu.Lock()
-			s.admitClusterVectorsLocked(chunks[i], chunkVecs[i])
-			s.indexMu.Unlock()
-		}
-		s.logPrintf("[K-MEANS] 🔍 Backfilled cluster index from file store (target=%d → count=%d)", targetCount, clusterIndex.Count())
-	} else if vi != nil {
+	var ids []string
+	switch {
+	case vfs != nil:
+		ids = vfs.IDs()
+	case vi != nil:
 		vi.mu.RLock()
-		ids := make([]string, 0, len(vi.vectors))
-		embs := make([][]float32, 0, len(vi.vectors))
+		ids = make([]string, 0, len(vi.vectors))
 		for id, vec := range vi.vectors {
-			if len(vec) == 0 {
-				continue
+			if len(vec) > 0 {
+				ids = append(ids, id)
 			}
-			copyVec := make([]float32, len(vec))
-			copy(copyVec, vec)
-			ids = append(ids, id)
-			embs = append(embs, copyVec)
 		}
 		vi.mu.RUnlock()
-		s.indexMu.Lock()
-		s.admitClusterVectorsLocked(ids, embs)
-		s.indexMu.Unlock()
-		s.logPrintf("[K-MEANS] 🔍 Backfilled cluster index from in-memory store (%d vectors)", len(ids))
 	}
+	listed := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		listed[id] = struct{}{}
+	}
+	for _, id := range clusterIndex.NodeIDs() {
+		if _, ok := listed[id]; !ok {
+			ids = append(ids, id)
+		}
+	}
+	for start := 0; start < len(ids); start += clusterBackfillChunk {
+		end := min(start+clusterBackfillChunk, len(ids))
+		s.indexMu.Lock()
+		s.admitClusterVectorsLocked(ids[start:end])
+		s.indexMu.Unlock()
+	}
+	s.logPrintf("[K-MEANS] 🔍 Reconciled cluster index with the vector store (target=%d → count=%d)", targetCount, clusterIndex.Count())
 }
 
 // TriggerClustering runs k-means clustering on all indexed embeddings.
@@ -1849,12 +1835,14 @@ func (s *Service) ensureClusterIndexBackfilled(targetCount int) {
 func (s *Service) TriggerClustering(ctx context.Context) error {
 	s.buildMu.RLock()
 	defer s.buildMu.RUnlock()
-	return s.triggerClustering(ctx)
+	return s.triggerClustering(ctx, nil)
 }
 
 // triggerClustering runs with the base operation already owned, either by
-// BuildIndexes or the public TriggerClustering wrapper.
-func (s *Service) triggerClustering(ctx context.Context) error {
+// BuildIndexes or the public TriggerClustering wrapper. lexicalReady, when
+// set, makes the served fulltext available before the generation's lexical
+// state is derived (see buildClusterGeneration).
+func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1885,8 +1873,9 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 		return nil
 	}
 
-	// Backfill cluster index from store so k-means runs on full set when cluster index was lagging.
-	s.ensureClusterIndexBackfilled(totalCount)
+	// Reconcile the cluster index with the store so k-means runs on the
+	// canonical population when the cluster index was lagging.
+	s.reconcileClusterPopulation(totalCount)
 	embeddingCount := clusterIndex.Count()
 	if embeddingCount < totalCount {
 		s.logPrintf("[K-MEANS] ⚠️  Cluster index has %d embeddings (store has %d); clustering with %d",
@@ -1921,7 +1910,7 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 	elapsed := time.Since(startTime)
 	// Graphs built from persisted files belong to the generation those files
 	// describe; a new k-means generation builds its own.
-	gen, err := s.buildClusterGeneration(ctx, clusterIndex, clustering, nil)
+	gen, err := s.buildClusterGeneration(ctx, clusterIndex, clustering, nil, lexicalReady)
 	if err != nil {
 		return err
 	}
@@ -1939,23 +1928,17 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 	return nil
 }
 
-// buildClusterGeneration builds everything derived from clustering (lexical
-// terms and, when enabled, IVF-HNSW graphs) outside the owner's locks;
-// publishClusterGeneration then makes it current.
-func (s *Service) buildClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, persisted *ivfHNSWManifest) (*clusterGeneration, error) {
+// buildClusterGeneration builds everything derived from clustering (when
+// enabled, IVF-HNSW graphs; then lexical terms) outside the owner's locks;
+// publishClusterGeneration then makes it current. Lexical terms are derived
+// from the fulltext index the service serves: lexicalReady, when set, makes
+// it available first (a persistent build drops BM25 from memory while the
+// graphs are built and reloads it here).
+func (s *Service) buildClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, persisted *ivfHNSWManifest, lexicalReady func() error) (*clusterGeneration, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	gen := &clusterGeneration{
-		index:  clusterIndex,
-		staged: clustering,
-		terms:  make(map[int]*clusterTerms, clustering.NumClusters()),
-	}
-	for cluster := 0; cluster < clustering.NumClusters(); cluster++ {
-		if terms := s.deriveClusterTerms(clustering.MemberIDs(cluster)); terms != nil {
-			gen.terms[cluster] = terms
-		}
-	}
+	var graphs map[int]*HNSWIndex
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) {
 		built, err := s.buildClusterHNSWIndexes(ctx, clustering, persisted)
 		if err != nil {
@@ -1964,12 +1947,26 @@ func (s *Service) buildClusterGeneration(ctx context.Context, clusterIndex *gpu.
 			}
 			s.logPrintf("[IVF-HNSW] ⚠️  build skipped: %v", err)
 		}
-		gen.graphs = built
+		graphs = built
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return gen, nil
+	if lexicalReady != nil {
+		if err := lexicalReady(); err != nil {
+			return nil, err
+		}
+	}
+	terms := make(map[int]*clusterTerms, clustering.NumClusters())
+	for cluster := 0; cluster < clustering.NumClusters(); cluster++ {
+		if t := s.deriveClusterTerms(clustering.MemberIDs(cluster)); t != nil {
+			terms[cluster] = t
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return newClusterGeneration(clusterIndex, clustering, graphs, terms), nil
 }
 
 // ivfHNSWBuildHook, set by tests only, runs when the graphs of a replacement
@@ -1979,7 +1976,9 @@ var ivfHNSWBuildHook func()
 // buildClusterHNSWIndexes builds one graph per cluster of clustering, empty
 // clusters included, so every cluster the generation can route to has a graph.
 // A restored generation loads the graphs of the persisted generation it was
-// derived from (persisted) where they are valid.
+// derived from (persisted) where they are valid, then brings each to the
+// cluster's members and the configured policy. These graphs are private to
+// the generation until it is published.
 func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.Clustering, persisted *ivfHNSWManifest) (map[int]*HNSWIndex, error) {
 	s.mu.RLock()
 	clusterUsesGPU := s.clusterUsesGPU
@@ -2019,6 +2018,10 @@ func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.C
 		if persisted != nil && len(memberIDs) > 0 && s.persistEnabled.Load() && vectorLookup != nil {
 			loaded, _ := persisted.loadCluster(cid, vectorLookup)
 			if loaded != nil && loaded.GetDimensions() == dims {
+				alignClusterGraph(loaded, memberIDs, vectorLookup)
+				if err := loaded.SetQuantization(ctx, config.Quantization); err != nil {
+					return nil, err
+				}
 				idx = loaded
 			}
 		}
@@ -2041,6 +2044,32 @@ func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.C
 	}
 	s.logPrintf("[IVF-HNSW] 🔨 Built %d cluster HNSW indexes", len(rebuilt))
 	return rebuilt, nil
+}
+
+// alignClusterGraph makes a loaded (still private) cluster graph hold exactly
+// members: entries of other clusters are removed, missing members added with
+// their canonical vectors.
+func alignClusterGraph(graph *HNSWIndex, members []string, lookup VectorLookup) {
+	want := make(map[string]struct{}, len(members))
+	for _, id := range members {
+		want[id] = struct{}{}
+	}
+	for _, id := range graph.liveIDs() {
+		if _, ok := want[id]; !ok {
+			graph.Remove(id)
+		}
+		delete(want, id)
+	}
+	missing := make([]string, 0, len(want))
+	for id := range want {
+		missing = append(missing, id)
+	}
+	sort.Strings(missing)
+	for _, id := range missing {
+		if vec, ok := lookup(id); ok && len(vec) > 0 {
+			_ = graph.Add(id, vec)
+		}
+	}
 }
 
 // ClusteringInProgress returns true if k-means is currently running for this service.
@@ -2489,26 +2518,21 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 	if err := ctx.Err(); err != nil {
 		return
 	}
-	// One published generation's graphs, saved as one persisted generation
-	// (manifest written last). Admissions after the snapshot are reconciled
-	// with the population when the generation is restored.
+	// One published generation, captured as one population under the
+	// owner's read lock, saved as one persisted generation (manifest written
+	// last) after the lock is released. Vectors admitted after the capture are
+	// placed when the generation is restored.
 	s.clusterStateMu.RLock()
-	var graphs map[int]*HNSWIndex
-	if gen := s.clusterGen; gen != nil && len(gen.graphs) > 0 {
-		graphs = make(map[int]*HNSWIndex, len(gen.graphs))
-		for cid, graph := range gen.graphs {
-			graphs[cid] = graph
-		}
-	}
+	save := s.snapshotClusterGenerationLocked()
 	s.clusterStateMu.RUnlock()
-	if len(graphs) == 0 {
+	if save == nil {
 		return
 	}
-	if err := SaveIVFHNSWWithContext(ctx, hnswPath, graphs); err != nil {
+	if err := saveIVFHNSWSnapshots(ctx, hnswPath, save.graphs); err != nil {
 		s.logPrintf("⚠️ Background persist: failed to save IVF-HNSW clusters to %s: %v", hnswPath, err)
 		return
 	}
-	s.logPrintf("📇 Background persist: IVF-HNSW clusters saved to %s (%d clusters)", hnswPath, len(graphs))
+	s.logPrintf("📇 Background persist: IVF-HNSW clusters saved to %s (%d clusters)", hnswPath, len(save.graphs))
 }
 
 // PersistIndexesToDisk writes the current BM25, vector, HNSW, and IVF-HNSW (per-cluster) indexes to disk immediately.
@@ -2761,6 +2785,8 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	}
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
+	// A pipeline built between the reset above and the retirement is dropped.
+	s.publishClusterServing()
 
 	s.ivfpqMu.Lock()
 	s.ivfpqIndex = nil
@@ -3133,7 +3159,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.hnswUpdateLive(namedID, embedding)
 
 			// Also add to cluster index if enabled
-			s.admitClusterVectorLocked(namedID, embedding)
+			s.admitClusterVectorLocked(namedID)
 		}
 	}
 
@@ -3170,7 +3196,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.hnswUpdateLive(string(node.ID), mainEmbedding)
 
 			// Also add to cluster index if enabled
-			s.admitClusterVectorLocked(string(node.ID), mainEmbedding)
+			s.admitClusterVectorLocked(nodeIDStr)
 		}
 
 		// For multi-chunk nodes, index later chunks with a chunk suffix. Chunk 0 is
@@ -3200,7 +3226,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 					s.hnswUpdateLive(chunkID, embedding)
 
 					// Also add to cluster index if enabled
-					s.admitClusterVectorLocked(chunkID, embedding)
+					s.admitClusterVectorLocked(chunkID)
 				}
 			}
 		}
@@ -3233,7 +3259,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 				_ = s.gpuEmbeddingIndex.Add(propID, vec) // Best effort
 			}
 			s.hnswUpdateLive(propID, vec)
-			s.admitClusterVectorLocked(propID, vec)
+			s.admitClusterVectorLocked(propID)
 		}
 	}
 
@@ -3935,10 +3961,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 	}
 	if forceRoutingRebuild {
+		// The cluster generation was retired with its population at the
+		// start of the build (resetANNForBuild); a persisted one built under
+		// the old settings is not restored (its manifest records them).
 		forceHNSWRebuild = true
-		s.clusterStateMu.Lock()
-		s.retireClusterGeneration(nil, false)
-		s.clusterStateMu.Unlock()
 	}
 	// When both paths are set and both indexes have content, skip the full iteration.
 	vectorCount := s.EmbeddingCount()
@@ -4094,7 +4120,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
-		s.warmupVectorPipeline(ctx)
+		s.warmupVectorPipeline(ctx, nil)
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
 	}
@@ -4240,20 +4266,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
-		// Drop BM25 from RAM during HNSW/IVF build to keep memory bounded.
-		expectedFulltextCount := s.fulltext().Count()
-		if fulltextPath != "" {
-			s.fulltext().Clear()
-			s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-		}
-		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
-		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		s.warmupVectorPipeline(ctx)
-		if fulltextPath != "" {
-			if err := s.reloadFulltextAfterWarmup(fulltextPath, expectedFulltextCount); err != nil {
-				return err
-			}
-			s.logPrintf("📇 BuildIndexes: reloaded BM25 from disk after warmup")
+		if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
+			return err
 		}
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
@@ -4358,23 +4372,40 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if err := s.persistBaseIndexes(); err != nil {
 		return err
 	}
-	// Drop BM25 from RAM during HNSW/IVF build to keep memory bounded.
-	expectedFulltextCount := s.fulltext().Count()
-	if fulltextPath != "" {
-		s.fulltext().Clear()
-		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-	}
-	s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
-	s.setBuildPhase("warmup_hnsw_or_kmeans")
-	s.warmupVectorPipeline(ctx)
-	if fulltextPath != "" {
-		if err := s.reloadFulltextAfterWarmup(fulltextPath, expectedFulltextCount); err != nil {
-			return err
-		}
-		s.logPrintf("📇 BuildIndexes: reloaded BM25 from disk after warmup")
+	if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
+		return err
 	}
 	s.finishBuildWithFinalPersist(ctx)
 	return nil
+}
+
+// warmupDroppingFulltext runs the vector warmup of a population build. A
+// persisted BM25 is dropped from memory while graphs are built (keeping
+// memory bounded) and reloaded from disk before anything reads it: before a
+// cluster generation derives its lexical state from it, else after warmup.
+func (s *Service) warmupDroppingFulltext(ctx context.Context, fulltextPath string) error {
+	s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
+	s.setBuildPhase("warmup_hnsw_or_kmeans")
+	if fulltextPath == "" {
+		s.warmupVectorPipeline(ctx, nil)
+		return nil
+	}
+	expectedFulltextCount := s.fulltext().Count()
+	s.fulltext().Clear()
+	s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
+	reloaded := false
+	var reloadErr error
+	reload := func() error {
+		if !reloaded {
+			reloaded = true
+			if reloadErr = s.reloadFulltextAfterWarmup(fulltextPath, expectedFulltextCount); reloadErr == nil {
+				s.logPrintf("📇 BuildIndexes: reloaded BM25 from disk")
+			}
+		}
+		return reloadErr
+	}
+	s.warmupVectorPipeline(ctx, reload)
+	return reload()
 }
 
 func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) error {
@@ -4399,7 +4430,11 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 // warmupVectorPipeline creates the vector search pipeline (and builds HNSW or IVF-HNSW if needed) so that
 // the first user search is fast. When clustering is enabled and there are enough embeddings, runs
 // k-means and builds per-cluster HNSW (IVF-HNSW) first so the pipeline uses IVF-HNSW instead of global HNSW.
-func (s *Service) warmupVectorPipeline(ctx context.Context) {
+//
+// lexicalReady, when set, makes the served fulltext available before a
+// cluster generation's lexical state is derived (a persistent build drops BM25
+// from memory during warmup).
+func (s *Service) warmupVectorPipeline(ctx context.Context, lexicalReady func() error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -4414,7 +4449,7 @@ func (s *Service) warmupVectorPipeline(ctx context.Context) {
 	s.logPrintf("🔍 Warming up vector search pipeline (%d vectors)...", n)
 	start := time.Now()
 
-	if err := s.warmupClusteredStrategy(ctx, n); err != nil {
+	if err := s.warmupClusteredStrategy(ctx, n, lexicalReady); err != nil {
 		if ctx.Err() != nil {
 			return
 		}
@@ -4428,7 +4463,7 @@ func (s *Service) warmupVectorPipeline(ctx context.Context) {
 	s.logPrintf("🔍 Vector search pipeline ready in %v", time.Since(start))
 }
 
-func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int) error {
+func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int, lexicalReady func() error) error {
 	// When clustering is enabled and we have enough embeddings, restore or run k-means and build IVF-HNSW.
 	// If centroids are persisted (from previous IVF-HNSW save), load them and skip k-means so warmup is fast.
 	if !s.IsClusteringEnabled() || vectorCount < s.GetMinEmbeddingsForClustering() {
@@ -4438,20 +4473,21 @@ func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int) 
 	clusterIndex := s.clusterIndex
 	hnswPath := s.hnswIndexPath
 	s.mu.RUnlock()
-	// Backfill cluster index from vector store so k-means sees full count (same as TriggerClustering).
-	s.ensureClusterIndexBackfilled(vectorCount)
-	if s.tryRestoreClusteredWarmupFromDisk(ctx, clusterIndex, hnswPath) {
+	// Reconcile the cluster index with the vector store so restore and
+	// k-means see the canonical population (same as TriggerClustering).
+	s.reconcileClusterPopulation(vectorCount)
+	if s.tryRestoreClusteredWarmupFromDisk(ctx, clusterIndex, hnswPath, lexicalReady) {
 		return nil
 	}
-	if err := s.triggerClustering(ctx); err != nil {
+	if err := s.triggerClustering(ctx, lexicalReady); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, clusterIndex *gpu.ClusterIndex, hnswPath string) bool {
+func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, clusterIndex *gpu.ClusterIndex, hnswPath string, lexicalReady func() error) bool {
 	// Skip k-means only on initial load when we have persisted IVF-HNSW cluster files.
-	// Centroids and idToCluster are derived from hnsw_ivf/ cluster files + vectors (graph-only).
+	// Centroids are derived from the live members of the hnsw_ivf/ cluster files + vectors (graph-only).
 	// The re-cluster timer still runs later and will re-run k-means when enabled.
 	if clusterIndex == nil || hnswPath == "" || s.EmbeddingCount() == 0 {
 		return false
@@ -4461,12 +4497,16 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 		return false
 	}
 	// One manifest is read once: the routing and the graphs restored both come
-	// from the generation it names.
+	// from the generation it names, built under the current settings.
 	manifest, manifestErr := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
 	var centroids [][]float32
 	var idToCluster map[string]int
 	deriveErr := manifestErr
-	if manifest != nil && manifest.Dimensions == s.VectorIndexDimensions() {
+	switch {
+	case manifest == nil:
+	case manifest.Settings != ivfHNSWGenerationSettings():
+		deriveErr = fmt.Errorf("generation %d was built with other settings (%q, now %q)", manifest.Seq, manifest.Settings, ivfHNSWGenerationSettings())
+	case manifest.Dimensions == s.VectorIndexDimensions():
 		centroids, idToCluster, deriveErr = deriveIVFCentroidsFromManifest(manifest, vectorLookup)
 	}
 	if len(centroids) == 0 || len(idToCluster) == 0 {
@@ -4478,17 +4518,18 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 	// k-means generation.
 	s.openClusterStaging()
 	defer s.closeClusterStaging()
-	clustering, err := clusterIndex.RestoredClustering(centroids, idToCluster)
+	// Every vector is placed at the restored centroid nearest its current
+	// coordinates: vectors added or moved after the files were saved route
+	// where a query for them looks. The saved graphs are then brought to that
+	// membership while still private (buildClusterHNSWIndexes).
+	clustering, err := clusterIndex.AssignedClustering(ctx, centroids)
 	if err != nil {
 		return false
 	}
-	gen, err := s.buildClusterGeneration(ctx, clusterIndex, clustering, manifest)
+	gen, err := s.buildClusterGeneration(ctx, clusterIndex, clustering, manifest, lexicalReady)
 	if err != nil {
 		return false
 	}
-	// The files describe the population when they were saved; publication
-	// reconciles the generation with the population now.
-	gen.reconcilePopulation = true
 	if err := s.publishClusterGeneration(ctx, clusterPublication{generation: gen}); err != nil {
 		return false
 	}
@@ -6053,7 +6094,10 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seed
 			scorerPolicy: exactScorerPolicyCPU,
 		}, nil
 	}
-	if s.clusterIndex != nil && s.clusterIndex.IsClustered() {
+	s.clusterStateMu.RLock()
+	clustered, _ := s.clusterServingLocked()
+	s.clusterStateMu.RUnlock()
+	if clustered != nil && clustered.IsClustered() {
 		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
 	}
 	// Large dataset: use HNSW (lazy-initialize if needed)
@@ -6072,21 +6116,21 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 	// If clustering is enabled and clusters are built, use centroid routing on CPU
 	// (GPU subset scoring when GPU is enabled but full brute is out-of-range, else IVF-HNSW when available,
 	// else CPU k-means candidate generation).
-	// Clusters each query searches: NORNICDB_KMEANS_NPROBE, by default the IVF
-	// rule (defaultListsToProbe) over the clusters k-means built.
-	numClusters := 0
-	if s.clusterIndex != nil {
-		numClusters = s.clusterIndex.NumClusters()
-	}
-	numClustersToSearch := clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters))
+	// The generators read the published cluster generation per query under
+	// clusterStateMu (clusterServingLocked): its routing index and the
+	// clusters a query searches (NORNICDB_KMEANS_NPROBE, by default the IVF
+	// rule over its clusters). The pipeline holds no copy of either, so a
+	// publication or retirement is seen by the next query.
+	serving := s.clusterStateMu.RLocker()
 	// When GPU is enabled but full brute-force is not selected (e.g. N too large),
 	// still use k-means centroids to route and score only the cluster subset.
 	// ScoreSubset uses GPU when possible and falls back to CPU gracefully.
 	if gpuEnabled && vectorCount > gpuMaxN {
 		return &vectorStrategyDescriptor{
 			name: "GPU k-means (cluster routing)",
-			candidateGen: NewGPUKMeansCandidateGen(s.clusterIndex, numClustersToSearch).
-				SetClusterSelector(s.selectHybridClusters),
+			candidateGen: NewGPUKMeansCandidateGen(nil, 0).
+				SetClusterSelector(s.selectHybridClustersLocked).
+				SetServing(serving, s.clusterServingLocked),
 			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
@@ -6099,14 +6143,9 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 			// The generator holds clusterStateMu while it routes and reads
 			// graphs, so the lookup and the selector do not lock; both read the
 			// generation current at query time.
-			gen := NewIVFHNSWCandidateGen(s.clusterIndex, func(clusterID int) *HNSWIndex {
-				if s.clusterGen == nil {
-					return nil
-				}
-				return s.clusterGen.graphs[clusterID]
-			}, numClustersToSearch).
+			gen := NewIVFHNSWCandidateGen(nil, s.clusterGraphLocked, 0).
 				SetClusterSelector(s.selectHybridClustersLocked).
-				SetGenerationLock(s.clusterStateMu.RLocker())
+				SetServing(serving, s.clusterServingLocked)
 			return &vectorStrategyDescriptor{
 				name:         "IVF-HNSW (per-cluster HNSW)",
 				candidateGen: gen,
@@ -6115,8 +6154,9 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 		}
 	}
 
-	gen := NewKMeansCandidateGen(s.clusterIndex, s.vectorIndex, numClustersToSearch).
-		SetClusterSelector(s.selectHybridClusters)
+	gen := NewKMeansCandidateGen(nil, s.vectorIndex, 0).
+		SetClusterSelector(s.selectHybridClustersLocked).
+		SetServing(serving, s.clusterServingLocked)
 	return &vectorStrategyDescriptor{
 		name:         "CPU k-means (cluster routing)",
 		candidateGen: gen,
