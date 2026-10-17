@@ -18,6 +18,11 @@ import (
 // retireClusterGeneration change it, under clusterStateMu. A generation
 // being built receives the same admissions through the staging log, replayed
 // at publication by applyClusterAdmission.
+//
+// Its inputs are the canonical population: the cluster index holds exactly
+// the canonical vector store's vectors (every admission reads the vector from
+// the store under the admission boundary), and lexical terms are derived from
+// the fulltext index the service serves.
 type clusterGeneration struct {
 	index    *gpu.ClusterIndex // population; published routing and membership
 	staged   *gpu.Clustering   // membership while unpublished; nil once published
@@ -25,14 +30,17 @@ type clusterGeneration struct {
 	terms    map[int]*clusterTerms
 	profiles map[int]map[string]float64
 	dirty    map[int]struct{} // clusters whose profile (published) or terms (staged) must be re-derived
-	policy   HNSWQuantizationConfig
-	// restored from persisted files: reconcile with the index's population
-	// when published.
-	reconcilePopulation bool
-	// routingOnly: the derived state (graphs, lexical terms and profiles) was
-	// retired while the index kept its published routing; only membership is
-	// kept current until the next publication.
-	routingOnly bool
+	// policy is the graph policy applied to every graph; it changes only once
+	// all of them are in the new one, so a failed or cancelled policy change
+	// leaves it different from the configured policy and the next
+	// publication completes it.
+	policy HNSWQuantizationConfig
+}
+
+// newClusterGeneration is an unpublished generation for clustering of index,
+// with its graphs (nil without IVF-HNSW) and the terms of its clusters.
+func newClusterGeneration(index *gpu.ClusterIndex, clustering *gpu.Clustering, graphs map[int]*HNSWIndex, terms map[int]*clusterTerms) *clusterGeneration {
+	return &clusterGeneration{index: index, staged: clustering, graphs: graphs, terms: terms}
 }
 
 // clusterTerms counts the analyzed tokens of a cluster's members' documents.
@@ -333,7 +341,7 @@ func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmiss
 	switch op.kind {
 	case clusterVectorAdded, clusterVectorRemoved:
 		var tokens map[string]float64
-		if op.withText && published && !gen.routingOnly {
+		if op.withText && published {
 			tokens = s.clusterTextTokens(op.id)
 		}
 		// A staged generation re-derives the terms of clusters whose
@@ -361,9 +369,6 @@ func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmiss
 			gen.touch(cluster)
 		}
 	case clusterNodeChanged:
-		if gen.routingOnly {
-			return
-		}
 		ids := s.nodeVectorIDsLocked(op.id)
 		if !published {
 			for _, id := range ids {
@@ -390,10 +395,6 @@ func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmiss
 			gen.addTerms(cluster, tokens, 1)
 		}
 	}
-	if gen.routingOnly {
-		gen.dirty = nil
-		return
-	}
 	if published {
 		for cluster := range gen.dirty {
 			if profile := clusterProfileFromTerms(gen.terms[cluster]); profile != nil {
@@ -417,30 +418,54 @@ func (s *Service) admitLocked(op clusterAdmission) {
 	}
 }
 
-// admitClusterVectorLocked adds or updates id in the cluster population and
-// the generation(s). Callers hold indexMu, the admission boundary.
-func (s *Service) admitClusterVectorLocked(id string, vec []float32) {
+// admitClusterVectorLocked brings id's entry in the cluster population and
+// the generation(s) to the canonical vector store's current vector (just
+// written by the caller). Callers hold indexMu, the admission boundary.
+func (s *Service) admitClusterVectorLocked(id string) {
 	s.clusterStateMu.Lock()
 	defer s.clusterStateMu.Unlock()
-	if s.clusterIndex == nil {
-		return
-	}
-	_ = s.clusterIndex.Add(id, vec) // Best effort
-	s.admitLocked(clusterAdmission{kind: clusterVectorAdded, id: id})
+	s.admitCanonicalLocked(id, false, false)
 }
 
-// admitClusterVectorsLocked backfills vectors into the cluster population
-// outside a node change; callers hold indexMu.
-func (s *Service) admitClusterVectorsLocked(ids []string, vecs [][]float32) {
+// admitClusterVectorsLocked reconciles the cluster population entries of ids
+// with the canonical vector store outside a node change (backfill): each is
+// resolved from the store now, under the admission boundary, so an entry
+// listed before a later write is admitted with that write's vector, and one
+// removed since is not resurrected. Callers hold indexMu.
+func (s *Service) admitClusterVectorsLocked(ids []string) {
 	s.clusterStateMu.Lock()
 	defer s.clusterStateMu.Unlock()
+	for _, id := range ids {
+		s.admitCanonicalLocked(id, true, true)
+	}
+}
+
+// admitCanonicalLocked admits id from the canonical store: added or updated
+// with the store's vector when the store holds one, retired when it does
+// not. onlyChanged skips an entry that already holds the store's vector;
+// withText carries the vector's document tokens (outside a node change).
+// Callers hold indexMu and clusterStateMu.
+func (s *Service) admitCanonicalLocked(id string, withText, onlyChanged bool) {
 	if s.clusterIndex == nil {
 		return
 	}
-	_ = s.clusterIndex.AddBatch(ids, vecs) // Best effort
-	for _, id := range ids {
-		s.admitLocked(clusterAdmission{kind: clusterVectorAdded, id: id, withText: true})
+	vec, ok := s.getVectorLookup()(id)
+	if !ok || len(vec) == 0 {
+		if _, admitted := s.clusterIndex.Get(id); admitted {
+			s.admitLocked(clusterAdmission{kind: clusterVectorRemoved, id: id, withText: withText})
+			s.clusterIndex.Remove(id)
+		}
+		return
 	}
+	if onlyChanged {
+		if current, admitted := s.clusterIndex.Get(id); admitted && slices.Equal(current, vec) {
+			return
+		}
+	}
+	if err := s.clusterIndex.Add(id, vec); err != nil {
+		return
+	}
+	s.admitLocked(clusterAdmission{kind: clusterVectorAdded, id: id, withText: withText})
 }
 
 // retireClusterVectorLocked removes id from the cluster population and the
@@ -462,7 +487,7 @@ func (s *Service) beginClusterNodeChangeLocked(nodeID string) *clusterNodeChange
 	s.clusterStateMu.RLock()
 	defer s.clusterStateMu.RUnlock()
 	gen := s.clusterGen
-	if gen == nil || gen.routingOnly {
+	if gen == nil {
 		return nil
 	}
 	change := &clusterNodeChange{gen: gen}
@@ -518,23 +543,26 @@ type clusterPublication struct {
 
 // publishClusterGeneration makes a generation current, atomically with
 // respect to every admission (indexMu) and every replacement (clusterStateMu):
-// it replays the admissions made since the snapshot, reconciles a restored
-// generation with the population, re-derives the terms of affected clusters,
-// applies the current graph policy, publishes routing and membership, then
-// publishes the serving pipeline and advances the index revision.
+// it replays the admissions made since the snapshot, re-derives the terms of
+// affected clusters, applies the current graph policy, publishes routing and
+// membership, then publishes the serving pipeline and advances the index
+// revision. A policy publication brings the published generation's graphs to
+// the configured policy; it compares against the policy the graphs were last
+// fully brought to, so retrying a cancelled one completes it.
 func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPublication) error {
 	s.indexMu.Lock()
 	s.clusterStateMu.Lock()
 	if pub.policy {
 		// The policy is read under the owner's locks, so concurrent
 		// reconfigurations leave the graphs in the latest one.
+		var changed bool
 		var err error
 		if gen := s.clusterGen; gen != nil {
-			err = s.applyClusterPolicyLocked(ctx, gen, s.hnswConfig().Quantization)
+			changed, err = s.applyClusterPolicyLocked(ctx, gen, s.hnswConfig().Quantization)
 		}
 		s.clusterStateMu.Unlock()
 		s.indexMu.Unlock()
-		if err == nil {
+		if changed {
 			s.publishClusterServing()
 		}
 		return err
@@ -562,9 +590,6 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 		}
 	}
 	s.clusterStaging = nil
-	if gen.reconcilePopulation {
-		s.reconcileClusterPopulationLocked(gen)
-	}
 	if gen.terms == nil {
 		gen.terms = make(map[int]*clusterTerms)
 	}
@@ -582,7 +607,10 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 			gen.profiles[cluster] = profile
 		}
 	}
-	err := s.applyClusterPolicyLocked(ctx, gen, s.hnswConfig().Quantization)
+	// Graphs were brought to the policy when they were built; this applies a
+	// policy configured since. A failure leaves gen.policy behind the
+	// configured one, so the next policy publication completes it.
+	_, err := s.applyClusterPolicyLocked(ctx, gen, s.hnswConfig().Quantization)
 	gen.index.PublishClustering(gen.staged)
 	gen.staged = nil
 	s.clusterGen = gen
@@ -592,74 +620,31 @@ func (s *Service) publishClusterGeneration(ctx context.Context, pub clusterPubli
 	return err
 }
 
-// applyClusterPolicyLocked encodes gen's graphs with policy. A published
-// generation is re-encoded only when the policy changed; a generation being
-// published is always brought to it (restored graphs carry the policy they
-// were saved with, and SetQuantization is a no-op for a graph already in it).
+// applyClusterPolicyLocked brings gen's graphs to policy and reports whether
+// any graph had to change. gen.policy records the policy every graph is in:
+// it is set only once all graphs reached it, so a cancelled or failed apply
+// is completed by the next one (SetQuantization is a no-op for a graph
+// already in the policy). A generation being published is always checked.
 // Callers hold clusterStateMu.
-func (s *Service) applyClusterPolicyLocked(ctx context.Context, gen *clusterGeneration, policy HNSWQuantizationConfig) error {
+func (s *Service) applyClusterPolicyLocked(ctx context.Context, gen *clusterGeneration, policy HNSWQuantizationConfig) (bool, error) {
 	if gen.staged == nil && gen.policy == policy {
-		return nil
+		return false, nil
 	}
 	for _, graph := range gen.graphs {
 		if err := graph.SetQuantization(ctx, policy); err != nil {
-			return err
+			return true, err
 		}
 	}
 	gen.policy = policy
-	return nil
+	return true, nil
 }
 
-// reconcileClusterPopulationLocked brings a restored generation in line with
-// the index's population: vectors missing from it are assigned, members no
-// longer in the population are removed, and each graph is made to hold
-// exactly its cluster's members. Every cluster's terms are re-derived.
-func (s *Service) reconcileClusterPopulationLocked(gen *clusterGeneration) {
-	population := gen.index.NodeIDs()
-	present := make(map[string]struct{}, len(population))
-	for _, id := range population {
-		present[id] = struct{}{}
-		if _, ok := gen.clusterOf(id); !ok {
-			s.applyClusterAdmission(gen, clusterAdmission{kind: clusterVectorAdded, id: id})
-		}
-	}
-	lookup := s.getVectorLookup()
-	for cluster := 0; cluster < gen.numClusters(); cluster++ {
-		members := gen.members(cluster)
-		want := make(map[string]struct{}, len(members))
-		for _, id := range members {
-			if _, ok := present[id]; !ok {
-				s.applyClusterAdmission(gen, clusterAdmission{kind: clusterVectorRemoved, id: id})
-				continue
-			}
-			want[id] = struct{}{}
-		}
-		if graph := gen.graphs[cluster]; graph != nil {
-			for _, id := range graph.liveIDs() {
-				if _, ok := want[id]; !ok {
-					graph.Remove(id)
-				}
-				delete(want, id)
-			}
-			ids := make([]string, 0, len(want))
-			for id := range want {
-				ids = append(ids, id)
-			}
-			sort.Strings(ids)
-			for _, id := range ids {
-				gen.graphAdd(cluster, id, lookup)
-			}
-		}
-		gen.touch(cluster)
-	}
-}
-
-// retireClusterGeneration retires the published generation's derived state.
-// A non-nil replacement also replaces the cluster index; clearIndex empties
-// the index it retires (and releases it when replaced). An index that keeps
-// its published routing keeps a routing-only generation, so its membership
-// stays current until the next publication. Callers hold clusterStateMu and,
-// when replacing or clearing the index, mu.
+// retireClusterGeneration retires the published generation. A non-nil
+// replacement also replaces the cluster index; clearIndex empties the index
+// it retires (and releases it when replaced), so the population is derived
+// again from the canonical store. Callers hold clusterStateMu and, when
+// replacing or clearing the index, mu; they publish the serving pipeline
+// (publishClusterServing) once they release the owner's locks.
 func (s *Service) retireClusterGeneration(replacement *gpu.ClusterIndex, clearIndex bool) {
 	old := s.clusterIndex
 	s.clusterGen = nil
@@ -672,19 +657,62 @@ func (s *Service) retireClusterGeneration(replacement *gpu.ClusterIndex, clearIn
 			old.Release()
 		}
 	}
-	if replacement == nil && !clearIndex && old != nil && old.IsClustered() {
-		s.clusterGen = &clusterGeneration{index: old, routingOnly: true}
-	}
 }
 
 // publishClusterServing publishes the serving pipeline for the current
 // cluster generation and advances the index revision. Callers hold none of
-// the owner's locks.
+// the owner's locks. Clustered pipelines read the generation, its routing
+// and its probe count per query (clusterServingLocked), so a pipeline built
+// before a publication never serves a copy of an older one.
 func (s *Service) publishClusterServing() {
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
 	s.indexChanged()
+}
+
+// clusterServingLocked is the published generation's routing index and the
+// number of clusters a query probes (NORNICDB_KMEANS_NPROBE, by default the
+// IVF rule over its clusters); a nil index when none is published. Callers
+// hold clusterStateMu.
+func (s *Service) clusterServingLocked() (*gpu.ClusterIndex, int) {
+	gen := s.clusterGen
+	if gen == nil || gen.staged != nil {
+		return nil, 0
+	}
+	numClusters := gen.index.NumClusters()
+	return gen.index, clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters))
+}
+
+// clusterGraphLocked is the published generation's graph for cluster;
+// callers hold clusterStateMu.
+func (s *Service) clusterGraphLocked(cluster int) *HNSWIndex {
+	if s.clusterGen == nil {
+		return nil
+	}
+	return s.clusterGen.graphs[cluster]
+}
+
+// clusterGenerationSave is a published generation's graphs, captured as one
+// population for persistence.
+type clusterGenerationSave struct {
+	graphs map[int]*hnswIndexSnapshot
+}
+
+// snapshotClusterGenerationLocked captures every graph of the published
+// generation under the owner's read lock, which excludes every admission and
+// publication: the saved graphs hold one population. The disk writes run
+// after the lock is released. Callers hold clusterStateMu (read).
+func (s *Service) snapshotClusterGenerationLocked() *clusterGenerationSave {
+	gen := s.clusterGen
+	if gen == nil || len(gen.graphs) == 0 {
+		return nil
+	}
+	save := &clusterGenerationSave{graphs: make(map[int]*hnswIndexSnapshot, len(gen.graphs))}
+	for cid, graph := range gen.graphs {
+		save.graphs[cid] = graph.snapshot()
+	}
+	return save
 }
 
 // liveIDs lists the graph's live (not deleted) vector IDs.

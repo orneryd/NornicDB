@@ -23,6 +23,7 @@ package search
 
 import (
 	"context"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -43,6 +44,7 @@ type KMeansCandidateGen struct {
 	vectorIndex         *VectorIndex // For fallback and ID mapping
 	numClustersToSearch int          // Number of clusters to search (default: 3)
 	clusterSelector     func(ctx context.Context, query []float32, defaultN int) []int
+	serving             *clusterServing // when set: the published generation, per query
 }
 
 // NewKMeansCandidateGen creates a new k-means candidate generator.
@@ -69,6 +71,14 @@ func (k *KMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, que
 	return k
 }
 
+// SetServing makes the generator route each query on the published cluster
+// generation (see IVFHNSWCandidateGen.SetServing); the selector is then
+// called with lock held.
+func (k *KMeansCandidateGen) SetServing(lock sync.Locker, resolve func() (*gpu.ClusterIndex, int)) *KMeansCandidateGen {
+	k.serving = &clusterServing{lock: lock, resolve: resolve}
+	return k
+}
+
 // SearchCandidates generates candidates using k-means cluster routing.
 //
 // Algorithm:
@@ -78,29 +88,38 @@ func (k *KMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, que
 //
 // If clustering is not available or not clustered, falls back to brute-force.
 func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]Candidate, error) {
+	// Route on one cluster generation: the routing and the routed members
+	// are read under its lock; scoring runs after it.
+	clusterIndex, probes, release := k.serving.route(k.clusterIndex, k.numClustersToSearch)
 	// Check if clustering is available and clustered
-	if k.clusterIndex == nil || !k.clusterIndex.IsClustered() {
+	if clusterIndex == nil || !clusterIndex.IsClustered() {
+		release()
 		// Fall back to brute-force
 		bruteGen := NewBruteForceCandidateGen(k.vectorIndex)
 		return bruteGen.SearchCandidates(ctx, query, limit, minSimilarity)
 	}
-	if dims := k.clusterIndex.Dimensions(); dims > 0 && len(query) != dims {
+	if dims := clusterIndex.Dimensions(); dims > 0 && len(query) != dims {
+		release()
 		return nil, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
 	}
 
 	candidateLimit := boundCandidateLimit(limit)
 	clusterIDs := []int(nil)
 	if k.clusterSelector != nil {
-		clusterIDs = k.clusterSelector(ctx, query, k.numClustersToSearch)
+		clusterIDs = k.clusterSelector(ctx, query, probes)
 	}
+	var ids []string
+	if len(clusterIDs) > 0 {
+		ids = clusterIndex.GetClusterMemberIDs(clusterIDs)
+	}
+	release()
 	var results []gpu.SearchResult
 	var err error
 	if len(clusterIDs) > 0 {
-		ids := k.clusterIndex.GetClusterMemberIDs(clusterIDs)
-		results, err = k.clusterIndex.ScoreSubset(query, ids)
+		results, err = clusterIndex.ScoreSubset(query, ids)
 	} else {
 		// Default nearest-centroid routing.
-		results, err = k.clusterIndex.SearchWithClusters(query, candidateLimit, k.numClustersToSearch)
+		results, err = clusterIndex.SearchWithClusters(query, candidateLimit, probes)
 	}
 	if err != nil {
 		return nil, localizedError(localization.SearchClusterFailed(err), err)

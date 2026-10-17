@@ -64,11 +64,12 @@ func TestClusterIndexRestoreClusteringState(t *testing.T) {
 		if got := ci.NumClusters(); got != 2 {
 			t.Fatalf("NumClusters() = %d, want 2", got)
 		}
-		if got := ci.GetClusterMemberIDsForCluster(0); !reflect.DeepEqual(got, []string{"a", "c"}) {
-			t.Fatalf("cluster 0 members = %v, want [a c]", got)
+		// c is not in the saved map: it joins its nearest centroid (1), not cluster 0.
+		if got := ci.GetClusterMemberIDsForCluster(0); !reflect.DeepEqual(got, []string{"a"}) {
+			t.Fatalf("cluster 0 members = %v, want [a]", got)
 		}
-		if got := ci.GetClusterMemberIDs([]int{1, 99}); !reflect.DeepEqual(got, []string{"b"}) {
-			t.Fatalf("cluster 1 members = %v, want [b]", got)
+		if got := ci.GetClusterMemberIDs([]int{1, 99}); !reflect.DeepEqual(got, []string{"b", "c"}) {
+			t.Fatalf("cluster 1 members = %v, want [b c]", got)
 		}
 
 		gotCentroids := ci.GetCentroids()
@@ -80,6 +81,38 @@ func TestClusterIndexRestoreClusteringState(t *testing.T) {
 			t.Fatalf("GetCentroids() did not return a deep copy")
 		}
 	})
+}
+
+// AssignedClustering places every embedding at the centroid nearest its
+// current coordinates, without publishing.
+func TestClusterIndexAssignedClustering(t *testing.T) {
+	ci := NewClusterIndex(nil, embConfig(2), nil)
+	if _, err := ci.AssignedClustering(nil, [][]float32{{1, 0}}); err == nil {
+		t.Fatalf("expected error before embeddings are loaded")
+	}
+	requireNoError(t, ci.AddBatch([]string{"a", "b", "c"}, [][]float32{{1, 0}, {0, 1}, {0.9, 0.2}}))
+	if _, err := ci.AssignedClustering(context.Background(), nil); err == nil {
+		t.Fatalf("expected error without centroids")
+	}
+	if _, err := ci.AssignedClustering(context.Background(), [][]float32{{1, 0, 0}}); err == nil {
+		t.Fatalf("expected centroid dimension error")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := ci.AssignedClustering(ctx, [][]float32{{1, 0}, {0, 1}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("AssignedClustering(cancelled) = %v, want context.Canceled", err)
+	}
+	c, err := ci.AssignedClustering(context.Background(), [][]float32{{1, 0}, {0, 1}})
+	requireNoError(t, err)
+	if got := sortedIDs(c.MemberIDs(0)); !reflect.DeepEqual(got, []string{"a", "c"}) {
+		t.Fatalf("cluster 0 = %v, want [a c]", got)
+	}
+	if got := c.MemberIDs(1); !reflect.DeepEqual(got, []string{"b"}) {
+		t.Fatalf("cluster 1 = %v, want [b]", got)
+	}
+	if ci.IsClustered() {
+		t.Fatalf("AssignedClustering must not publish")
+	}
 }
 
 // Membership is keyed by node ID: moves and swap-removals keep every

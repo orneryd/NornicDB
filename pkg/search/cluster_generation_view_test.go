@@ -5,6 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/stretchr/testify/require"
 )
 
 // View adapter for the F-1372-CLUSTER matrix: how this tree stores a cluster
@@ -13,6 +18,7 @@ import (
 // differs (baseline trees read the pre-owner fields).
 
 type cgGenerationView struct {
+	index            *gpu.ClusterIndex
 	clustered        bool
 	numClusters      int
 	membership       map[string]int
@@ -64,6 +70,7 @@ func cgView(svc *Service) cgGenerationView {
 	if ci == nil || !ci.IsClustered() {
 		return v
 	}
+	v.index = ci
 	v.clustered = true
 	v.numClusters = ci.NumClusters()
 	for cid := 0; cid < v.numClusters; cid++ {
@@ -165,3 +172,57 @@ func cgSimulateCrashBeforeManifest(dir string) error {
 }
 
 func cgClearVectors(svc *Service) error { return svc.ClearVectorIndex() }
+
+// cgServing builds (or reuses) the serving pipeline and reports how its
+// clustered generator routes a query now: whether it serves IVF-HNSW, the
+// routing index and the probe count. clustered is false for a non-clustered
+// strategy.
+func cgServing(t *testing.T, svc *Service) (clustered, ivf bool, index *gpu.ClusterIndex, probes int) {
+	t.Helper()
+	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
+	require.NoError(t, err)
+	var serving *clusterServing
+	switch gen := pipeline.candidateGen.(type) {
+	case *IVFHNSWCandidateGen:
+		ivf, serving = true, gen.serving
+	case *KMeansCandidateGen:
+		serving = gen.serving
+	case *GPUKMeansCandidateGen:
+		serving = gen.serving
+	default:
+		return false, false, nil, 0
+	}
+	require.NotNil(t, serving, "a clustered generator reads the published generation per query")
+	index, probes, release := serving.route(nil, 0)
+	release()
+	return true, ivf, index, probes
+}
+
+// cgExpectedProbes is the probe count for a generation of numClusters:
+// NORNICDB_KMEANS_NPROBE clamped to [1, K], by default the IVF rule.
+func cgExpectedProbes(numClusters int) int {
+	probes := envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters))
+	return min(max(probes, 1), max(1, numClusters))
+}
+
+// cgPersistedMembership is the live membership of the persisted generation
+// the manifest names, with any ID live in more than one cluster.
+func cgPersistedMembership(t *testing.T, dir string) (map[string]int, []string) {
+	t.Helper()
+	m, err := readIVFHNSWManifest(filepath.Join(dir, "hnsw_ivf"))
+	require.NoError(t, err)
+	require.NotNil(t, m, "a persisted generation")
+	membership := map[string]int{}
+	var duplicates []string
+	for cid := range m.Files {
+		ids, err := loadIVFClusterMemberIDs(m.clusterPath(cid))
+		require.NoError(t, err)
+		for _, id := range ids {
+			if _, dup := membership[id]; dup {
+				duplicates = append(duplicates, id)
+			}
+			membership[id] = cid
+		}
+	}
+	return membership, duplicates
+}
