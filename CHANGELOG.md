@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
+  order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
+  vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
+- Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
+- Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
+  merging reuse the existing kernels. Graph search explores the retained beam completely instead of truncating it
+  at a round cap; the candidate-depth setting remains effective above the construction-quality floor.
+- Recreate the cluster backend when an unfixed collection adopts a new vector dimension, retaining its k-means policy.
+- Support `--gpu-backend cpu` / `NORNICDB_GPU_BACKEND=cpu` to disable all GPU-manager paths, including clustering.
+- Replace a full HNSW result beam's worst heap member with one sift rather than a push/pop pair.
+
 - Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
   `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
   (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
