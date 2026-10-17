@@ -748,7 +748,7 @@ func (e *StorageExecutor) compareBindingValuesEqual(leftValue, rightValue interf
 
 func parseBindingLiteralList(raw string) ([]interface{}, bool) {
 	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+	if !isListLiteral(raw) {
 		return nil, false
 	}
 	inner := strings.TrimSpace(raw[1 : len(raw)-1])

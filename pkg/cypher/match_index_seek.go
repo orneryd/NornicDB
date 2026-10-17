@@ -1391,7 +1391,7 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	if !ok {
 		return "", nil, false
 	}
-	if !strings.HasPrefix(right, "[") || !strings.HasSuffix(right, "]") {
+	if !isListLiteral(right) {
 		return "", nil, false
 	}
 	rawList, constant := e.indexSeekConstant(ctx, right)

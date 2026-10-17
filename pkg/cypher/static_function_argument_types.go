@@ -666,7 +666,7 @@ func unwindParameterBindings(cypher string) map[string]string {
 		}
 		source := strings.TrimSpace(body[:as])
 		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
-		if !ok || len(source) < 4 || source[0] != '[' || source[len(source)-1] != ']' {
+		if !ok || len(source) < 4 || !isListLiteral(source) {
 			continue
 		}
 		parameter := strings.TrimSpace(source[1 : len(source)-1])
