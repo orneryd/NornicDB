@@ -2,7 +2,10 @@ package search
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -63,51 +66,51 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		return []Candidate{}, nil
 	}
 
-	// If any required per-cluster index is missing, fall back to the existing
-	// exact cluster search (which still benefits from centroid routing).
-	for _, cid := range clusterIDs {
-		if g.getClusterHNSW(cid) == nil {
-			// Keep the chosen (possibly lexical) route when a small list has no graph.
-			ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
-			results, err := g.clusterIndex.ScoreSubset(query, ids)
-			if err != nil {
-				return nil, err
-			}
-			// ScoreSubset orders the selected population by similarity. Bound
-			// it before conversion, including an empty/non-positive budget.
-			results = results[:min(len(results), boundCandidateLimit(k))]
-			out := make([]Candidate, 0, len(results))
-			for _, r := range results {
-				score := float64(r.Score)
-				if score < minSimilarity {
-					continue
-				}
-				out = append(out, Candidate{ID: r.ID, Score: score})
-			}
-			return out, nil
-		}
-	}
-
 	totalLimit := boundCandidateLimit(k)
-
-	best := make(map[string]float64, totalLimit)
-	for _, cid := range clusterIDs {
+	// Snapshot every required graph before starting workers. Missing graphs are
+	// incomplete ANN state, not permission to scan the entire routed population.
+	indexes := make([]*HNSWIndex, len(clusterIDs))
+	for i, cid := range clusterIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		idx := g.getClusterHNSW(cid)
-		if idx == nil {
-			continue
+		indexes[i] = g.getClusterHNSW(cid)
+		if indexes[i] == nil {
+			return nil, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
 		}
-		// Any list may contain the entire global top-K. Splitting the quota
-		// between lists silently discards closer neighbours before the merge.
-		// SearchWithEf with ef 0 uses the cluster graph's configured EfSearch; a
-		// request's own ef (SearchOptions.HNSWEf) replaces it.
-		results, err := idx.SearchWithEf(ctx, query, totalLimit, minSimilarity, hnswEfFromContext(ctx))
-		if err != nil {
-			return nil, err
+	}
+	results := make([][]ANNResult, len(indexes))
+	errors := make([]error, len(indexes))
+	ef := hnswEfFromContext(ctx)
+	workers := min(4, runtime.GOMAXPROCS(0), len(indexes))
+	search := func(worker int) {
+		for i := worker; i < len(indexes); i += workers {
+			if err := ctx.Err(); err != nil {
+				errors[i] = err
+				return
+			}
+			// Any list may contain the entire global top-K: retain its full budget.
+			// ef=0 uses the cluster graph's configured EfSearch.
+			results[i], errors[i] = indexes[i].SearchWithEf(ctx, query, totalLimit, minSimilarity, ef)
 		}
-		for _, r := range results {
+	}
+	if workers == 1 {
+		search(0)
+	} else {
+		var pending sync.WaitGroup
+		pending.Add(workers)
+		for w := 0; w < workers; w++ {
+			go func(worker int) { defer pending.Done(); search(worker) }(w)
+		}
+		pending.Wait()
+	}
+	// Merge in route order after all workers finish, preserving error and score policy.
+	best := make(map[string]float64, totalLimit)
+	for i, hits := range results {
+		if errors[i] != nil {
+			return nil, errors[i]
+		}
+		for _, r := range hits {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
 				best[r.ID] = score

@@ -13,7 +13,7 @@ import (
 )
 
 func TestQuantizedHNSWPublicServicePreservesLexicalSeedsAndExactResults(t *testing.T) {
-	for _, mode := range []string{"scalar", "binary", "pq"} {
+	for _, mode := range []string{"", "none", "scalar", "binary", "pq"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
 			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
@@ -35,10 +35,21 @@ func TestQuantizedHNSWPublicServicePreservesLexicalSeedsAndExactResults(t *testi
 			require.Equal(t, "0", hits[0].ID)
 			require.InDelta(t, 1, hits[0].Score, 1e-6)
 			require.NotNil(t, svc.hnswIndex)
-			require.Positive(t, svc.hnswIndex.QuantizationBytes())
+			if mode == "none" {
+				require.Zero(t, svc.hnswIndex.QuantizationBytes())
+			} else {
+				require.Positive(t, svc.hnswIndex.QuantizationBytes())
+			}
 			svc.hnswIndex.mu.RLock()
 			defer svc.hnswIndex.mu.RUnlock()
-			require.Equal(t, HNSWQuantization(mode), svc.hnswIndex.config.Quantization.Mode)
+			expected := HNSWQuantization(mode)
+			if mode == "" {
+				expected = HNSWQuantizationScalar
+			}
+			if mode == "none" {
+				expected = HNSWQuantizationNone
+			}
+			require.Equal(t, expected, svc.hnswIndex.config.Quantization.Mode)
 			require.NotEmpty(t, svc.hnswIndex.buildLexicalHints)
 			for _, hint := range svc.hnswIndex.buildLexicalHints {
 				require.NotZero(t, hint.Signature)
@@ -250,4 +261,21 @@ func TestHNSWQuantizationCanceledReencodingKeepsPublishedModel(t *testing.T) {
 	require.ErrorIs(t, idx.SetQuantization(ctx, HNSWQuantizationConfig{Mode: HNSWQuantizationBinary}), context.Canceled)
 	require.Same(t, published, idx.quantized)
 	require.Equal(t, HNSWQuantizationScalar, idx.Config().Quantization.Mode)
+}
+
+func TestHNSWDefaultScalarPreservesQualityAndCollectionOverride(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "")
+	for _, quality := range []string{"fast", "balanced", "accurate"} {
+		t.Run(quality, func(t *testing.T) {
+			t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", quality)
+			cfg := HNSWConfigFromEnv()
+			require.Equal(t, HNSWQuantizationScalar, cfg.Quantization.Mode)
+			require.Equal(t, presetDefaults(HNSWQualityPreset(quality)).EfSearch, cfg.EfSearch)
+		})
+	}
+	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.Equal(t, HNSWQuantizationScalar, svc.hnswConfig().Quantization.Mode)
+	require.NoError(t, svc.ConfigureHNSWQuantization(context.Background(), HNSWQuantizationConfig{}))
+	require.Equal(t, HNSWQuantizationNone, svc.hnswConfig().Quantization.Mode)
 }

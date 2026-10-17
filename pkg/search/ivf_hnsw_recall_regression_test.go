@@ -56,14 +56,14 @@ func TestIVFHNSWPublicQueryPreservesConcentratedNeighbours(t *testing.T) {
 	}
 }
 
-// A small lexical-selected cluster legitimately has no HNSW graph. Its exact
-// fallback must keep that selection, just as the CPU/GPU k-means paths do.
-func TestIVFHNSWPublicHybridSearchPreservesLexicalFallbackRoute(t *testing.T) {
+// Every nonempty cluster, including small lexical-selected clusters, has a graph.
+func TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute(t *testing.T) {
 	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "3")
+	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", "0.1")
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
@@ -89,7 +89,8 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalFallbackRoute(t *testing.T) {
 	selected := svc.selectHybridClusters(withQueryText(context.Background(), "beta auth"), query, 1)
 	require.Len(t, selected, 1)
 	require.NotEqual(t, semantic, selected, "the real BM25-derived profile must select the lexical topic")
-	require.Nil(t, svc.clusterHNSW[selected[0]], "exercise exact fallback for the small selected cluster")
+	require.NotNil(t, svc.clusterHNSW[selected[0]], "small lexical-selected cluster must have a graph")
+	require.Len(t, svc.clusterHNSW, svc.clusterIndex.NumClusters())
 	options := DefaultSearchOptions()
 	options.Limit = 6
 	options.MinRRFScore = 0.001
@@ -101,7 +102,7 @@ func TestIVFHNSWPublicHybridSearchPreservesLexicalFallbackRoute(t *testing.T) {
 		if hit.ID == "point-4" || hit.ID == "point-5" {
 			found++
 			require.Positive(t, hit.BM25Rank)
-			require.Positive(t, hit.VectorRank, "lexical routing must survive the vector fallback")
+			require.Positive(t, hit.VectorRank, "lexical routing must reach the cluster graph")
 		}
 	}
 	require.Equal(t, 2, found)

@@ -1979,19 +1979,14 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 	}
 	vectorLookup := s.getVectorLookup()
 
-	minClusterSize := envutil.GetInt("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", 200)
-	maxClusters := envutil.GetInt("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", 1024)
 	numClusters := clusterIndex.NumClusters()
 	if numClusters <= 0 {
 		return localizedError(localization.SearchNoClusters(), nil)
 	}
-	if numClusters > maxClusters {
-		numClusters = maxClusters
-	}
 
 	config := s.hnswConfig()
 	rebuilt := make(map[int]*HNSWIndex, numClusters)
-	s.logPrintf("[IVF-HNSW] 🔨 Building per-cluster HNSW: %d clusters (min size %d)", numClusters, minClusterSize)
+	s.logPrintf("[IVF-HNSW] 🔨 Building per-cluster HNSW: %d clusters (min size %d)", numClusters, 1)
 	const ivfProgressInterval = 50 // log every N clusters built
 	var builtCount int
 	for cid := 0; cid < numClusters; cid++ {
@@ -1999,7 +1994,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 			return ctx.Err()
 		}
 		memberIDs := clusterIndex.GetClusterMemberIDsForCluster(cid)
-		if len(memberIDs) < minClusterSize {
+		if len(memberIDs) == 0 {
 			continue
 		}
 		// Try loading persisted IVF-HNSW cluster first only when persistence is enabled

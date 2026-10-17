@@ -158,3 +158,27 @@ For mm0nst3r's machine, use the existing [native backend commands](../../../test
 and select `VECTOR_MODES=sq-int8,pq-x16,pq-x32,pq-x64,bq,bq-asym4,bq-asym8`.
 Keep the cached corpus, confirm the native `build_backend` in every HNSW result,
 and compare CPU/GPU on the same machine. CUDA/Vulkan skips remain unverified.
+
+## Default selected from these measurements
+
+Application single-graph HNSW configuration now defaults to scalar int8, retaining the fast
+graph preset and exact original-vector rescoring. Set
+`NORNICDB_VECTOR_HNSW_QUANTIZATION=none` to disable compression, or select
+`pq`/`binary` explicitly. Explicit collection policies (including no quantization)
+still override the application default; the low-level index configuration remains
+explicit. Existing checkpoints and GPU construction remain supported.
+
+On this corpus, scalar int8 achieved 99.59% recall@10, 0.551 ms p50,
+0.669 ms p95 and 7,998 queries/s. Its 3,221 MB RSS was 13.5% below the ordinary
+fast-HNSW run (3,723 MB), but slightly above the file-backed float control
+(about 3,180 MB). These storage configurations differ: scalar compression alone
+does not establish process-memory savings when original vectors stay in RAM.
+Encoded scalar coordinates occupy 90.6 MB versus 361.1 MB of raw float coordinates;
+originals remain available for construction/rescoring. This is a workload-scoped
+default choice, not a universal accuracy or GPU-performance guarantee.
+
+The 18.177 ms row is IVF-HNSW, not IVF-PQ (5.175 ms). IVF-HNSW routes into
+multiple clusters, searches their graphs sequentially, then merges candidates;
+its missing-graph path scores the selected cluster population exactly. IVF-PQ
+uses compressed product codes. The existing timings do not isolate the cost of
+full-precision distances from routing, per-cluster traversal, merging or fallback.
