@@ -171,7 +171,7 @@ func TestVectorSourceMigrationReleasesMemoryLockBeforeServicePublication(t *test
 	go func() { id <- serviceTestGoroutineID(); done <- svc.BuildIndexes(context.Background()) }()
 	builderID := <-id
 	require.Eventually(t, func() bool {
-		return serviceStackContains(builderID, "(*Service).admitVectorFileStore", "sync.(*RWMutex).Lock")
+		return serviceStackContains(builderID, "(*Service).admitStagedVectorFileStore", "sync.(*RWMutex).Lock")
 	}, 5*time.Second, time.Millisecond)
 	countDone := make(chan struct{})
 	go func() { _ = svc.vectorIndex.Count(); close(countDone) }()
