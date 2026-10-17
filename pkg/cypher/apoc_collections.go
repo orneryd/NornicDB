@@ -117,29 +117,45 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 //
 //	toSet([1, 2, 2, 3, 1])  // [1, 2, 3]
 //	toSet(["a", "b", "a"]) // ["a", "b"]
+//
+// A list of any element type gives a list, an empty one too; anything else
+// gives an empty list. Two items are duplicates when they have the same
+// type and printed value; strings, integers and booleans are compared as
+// themselves, without printing them.
 func toSet(val interface{}) []interface{} {
-	var result []interface{}
-	seen := make(map[string]bool)
-
-	addUnique := func(item interface{}) {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if !seen[key] {
-			seen[key] = true
-			result = append(result, item)
+	items, _ := cypherListValue(val)
+	result := make([]interface{}, 0, len(items))
+	seen := make(map[interface{}]struct{}, len(items))
+	var printed map[string]struct{}
+	for _, item := range items {
+		switch item.(type) {
+		case string, int64, bool:
+			if _, duplicate := seen[item]; duplicate {
+				continue
+			}
+			seen[item] = struct{}{}
+		default:
+			if printed == nil {
+				printed = make(map[string]struct{})
+			}
+			key := fmt.Sprintf("%T:%v", item, item)
+			if _, duplicate := printed[key]; duplicate {
+				continue
+			}
+			printed[key] = struct{}{}
 		}
-	}
-
-	switch v := val.(type) {
-	case []interface{}:
-		for _, item := range v {
-			addUnique(item)
-		}
-	case []string:
-		for _, s := range v {
-			addUnique(s)
-		}
+		result = append(result, item)
 	}
 	return result
+}
+
+// apocCollToSet is apoc.coll.toSet(list): toSet, and null for null, as
+// APOC gives it.
+func apocCollToSet(val interface{}) interface{} {
+	if val == nil {
+		return nil
+	}
+	return toSet(val)
 }
 
 // ========================================
