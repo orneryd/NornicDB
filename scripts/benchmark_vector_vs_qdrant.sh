@@ -35,6 +35,7 @@
 #   VECTOR_CORPUS_MAX_CHUNKS  sample at most this many chunks (default 100000; 0 = all)
 #   VECTOR_EMBEDDER           titan (Amazon Titan Text Embeddings V2; AWS credentials from the
 #                             usual chain, e.g. AWS_PROFILE, and AWS_REGION, default us-east-1)
+#   VECTOR_VENV_DIR          Python environment (default ${WORK_DIR}/.venv)
 #   VECTOR_QUERIES=1000       held-out queries
 #   VECTOR_K=10               recall@K and Search limit
 #   VECTOR_WARMUP=100         warm-up queries per measurement (not recorded)
