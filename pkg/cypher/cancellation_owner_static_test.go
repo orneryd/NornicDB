@@ -415,7 +415,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 						if call, ok := n.(*ast.CallExpr); ok && callName(call) == "pipelineWorkerContext" {
 							forks = true
 						}
-						if d, ok := n.(*ast.DeferStmt); ok && callName(d.Call) == "recoverCancelledWorker" {
+						if d, ok := n.(*ast.DeferStmt); ok && callName(d.Call) == "recoverWorkerPanic" {
 							recovers = true
 						}
 						return true
@@ -426,7 +426,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 					}
 					if forks && !recovers {
 						counts["E"]++
-						findings = append(findings, cancellationFinding{rule: "E", key: key + " go without recoverCancelledWorker", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
+						findings = append(findings, cancellationFinding{rule: "E", key: key + " go without recoverWorkerPanic", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
 					}
 				}
 				call, ok := node.(*ast.CallExpr)
@@ -466,6 +466,10 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 					}
 				}
 				if !isWrapper || wrapperKey == selfKey && !resolved || resolved && varTypes[call.Fun.(*ast.SelectorExpr).X.(*ast.Ident).Name]+"."+name == key {
+					return true
+				}
+				if cancellationExactHelpers[name] != "" {
+					counts["Bexact"]++
 					return true
 				}
 				counts["B"]++
@@ -516,13 +520,14 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 			}
 		}
 	}
+	findings = append(findings, collectSentinelFindings(fset, files, wrappers, counts)...)
 	return findings, counts
 }
 
 func TestCancellationOwnerStaticInventory(t *testing.T) {
 	findings, counts := collectCancellationFindings(t)
-	t.Logf("no-probe wrappers %d; findings A=%d B=%d C=%d D=%d E=%d",
-		counts["wrappers"], counts["A"], counts["B"], counts["C"], counts["D"], counts["E"])
+	t.Logf("no-probe wrappers %d, sentinel-shaped probe forms %d, exact-helper calls %d; findings A=%d B=%d C=%d D=%d E=%d F=%d",
+		counts["wrappers"], counts["sentinelHelpers"], counts["Bexact"], counts["A"], counts["B"], counts["C"], counts["D"], counts["E"], counts["F"])
 	seen := map[string]bool{}
 	var open []string
 	var rewrites bytes.Buffer
@@ -639,4 +644,164 @@ func cancellationForwardingCall(fn *ast.FuncDecl) ast.Node {
 		}
 	}
 	return nil
+}
+
+// sentinelShaped: a probe form whose cancelled return cannot be told apart
+// from a result (no error, and no ok flag beside its value). A caller must
+// check the probe right after calling one, or use the exact plain form.
+func sentinelShaped(fn *ast.FuncDecl) bool {
+	if !probeForm(fn.Name.Name) || fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+		return false
+	}
+	count, hasBool := 0, false
+	for _, field := range fn.Type.Results.List {
+		names := max(1, len(field.Names))
+		count += names
+		if id, ok := field.Type.(*ast.Ident); ok {
+			if id.Name == "error" {
+				return false
+			}
+			if id.Name == "bool" {
+				hasBool = true
+			}
+		}
+	}
+	return !(hasBool && count > 1)
+}
+
+// cancellationCheck reports whether node checks the probe or the context.
+func cancellationCheck(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			if n.Sel.Name == "err" {
+				found = true
+			}
+		case *ast.CallExpr:
+			switch callName(n) {
+			case "check", "poll", "Err", "statementCancellationErr":
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// unrewriteCall rebuilds a call of a probe form as its plain wrapper's call.
+func unrewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, plain string, wrapper cancellationWrapper) (string, bool) {
+	if wrapper.variadic || wrapper.context || len(call.Args) != len(wrapper.args) {
+		return "", false
+	}
+	text := func(node ast.Node) string {
+		return string(src[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset])
+	}
+	args := make([]string, len(wrapper.params))
+	for index, arg := range wrapper.args {
+		if nilArg(arg) {
+			continue
+		}
+		id, ok := arg.(*ast.Ident)
+		if !ok {
+			return "", false
+		}
+		position := -1
+		for p, name := range wrapper.params {
+			if name == id.Name {
+				position = p
+			}
+		}
+		if position < 0 {
+			return "", false
+		}
+		args[position] = text(call.Args[index])
+	}
+	for _, arg := range args {
+		if arg == "" {
+			return "", false
+		}
+	}
+	fun := text(call.Fun)
+	name := callName(call)
+	index := strings.LastIndex(fun, name)
+	if index < 0 {
+		return "", false
+	}
+	return fun[:index] + plain + fun[index+len(name):] + "(" + strings.Join(args, ", ") + ")", true
+}
+
+// collectSentinelFindings is rule F: every call of a sentinel-shaped probe
+// form is followed at once by a probe or context check, or is the plain
+// exact form of a statement-text helper (cancellationExactHelpers).
+func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wrappers map[string]cancellationWrapper, counts map[string]int) []cancellationFinding {
+	sentinel := map[string]bool{}
+	for _, f := range files {
+		for _, decl := range f.file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && sentinelShaped(fn) {
+				sentinel[fn.Name.Name] = true
+			}
+		}
+	}
+	plainOf := map[string]string{}
+	wrapperOf := map[string]cancellationWrapper{}
+	for name, wrapper := range wrappers {
+		if wrapper.context {
+			continue
+		}
+		plain := strings.TrimPrefix(name, ".")
+		plainOf[wrapper.target] = plain
+		wrapperOf[wrapper.target] = wrapper
+	}
+	counts["sentinelHelpers"] = len(sentinel)
+	var findings []cancellationFinding
+	for _, f := range files {
+		for _, decl := range f.file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			key := funcKey(fn)
+			delegates := probeForm(fn.Name.Name)
+			var visit func(list []ast.Stmt)
+			visit = func(list []ast.Stmt) {
+				for index, stmt := range list {
+					_, isReturn := stmt.(*ast.ReturnStmt)
+					ast.Inspect(stmt, func(node ast.Node) bool {
+						switch node := node.(type) {
+						case *ast.BlockStmt:
+							visit(node.List)
+							return false
+						case *ast.CaseClause:
+							visit(node.Body)
+							return false
+						case *ast.CommClause:
+							visit(node.Body)
+							return false
+						case *ast.CallExpr:
+							name := callName(node)
+							if !sentinel[name] || name == fn.Name.Name || isReturn && delegates {
+								return true
+							}
+							if cancellationCheck(stmt) || index+1 < len(list) && cancellationCheck(list[index+1]) {
+								return true
+							}
+							counts["F"]++
+							finding := cancellationFinding{rule: "F", key: key + " -> " + name, where: fmt.Sprintf("%s:%d", f.name, fset.Position(node.Pos()).Line)}
+							if plain := plainOf[name]; plain != "" && cancellationExactHelpers[plain] != "" {
+								if text, ok := unrewriteCall(fset, f.src, node, plain, wrapperOf[name]); ok {
+									start, end := fset.Position(node.Pos()), fset.Position(node.End())
+									finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, start.Line, start.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
+								}
+							}
+							findings = append(findings, finding)
+						}
+						return true
+					})
+				}
+			}
+			visit(fn.Body.List)
+		}
+	}
+	return findings
 }

@@ -197,6 +197,9 @@ type pipelineCancellation struct {
 	// forks saw the statement cancelled: a value built after that point is
 	// not the statement's result.
 	observed atomic.Bool
+	// failure is a worker's recovered panic, reported to the statement probe:
+	// the statement fails with it (recoverWorkerPanic).
+	failure atomic.Pointer[error]
 }
 
 func (probe *pipelineCancellation) check() bool {
@@ -273,6 +276,9 @@ func statementCancellationErr(ctx context.Context) error {
 	if probe == nil {
 		return nil
 	}
+	if failure := probe.failure.Load(); failure != nil {
+		return *failure
+	}
 	if probe.err != nil {
 		return probe.err
 	}
@@ -302,16 +308,4 @@ func probeStatementContext(probe *pipelineCancellation) context.Context {
 		return context.Background()
 	}
 	return context.WithValue(probe.ctx, pipelineCancellationKey{}, probe)
-}
-
-// cancelledPanic reports whether a panic the statement recovered is a
-// consequence of its cancellation: once a reader has stopped early, the
-// values after it (an empty prefix, a -1 index) are not the statement's, and
-// using them may panic. The statement's result is then its cancellation.
-// Any other panic is not this owner's to absorb.
-func cancelledPanic(ctx context.Context) error {
-	if err := statementCancellationErr(ctx); err != nil {
-		return err
-	}
-	return ctx.Err()
 }

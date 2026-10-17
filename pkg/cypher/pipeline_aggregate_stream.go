@@ -369,7 +369,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	var next atomic.Int64
 	run := func(worker int) {
 		workerContext := pipelineWorkerContext(context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{}))
-		defer recoverCancelledWorker(workerContext)
+		defer recoverWorkerPanic(workerContext)
 		// A recursive expression probe belongs to its evaluating goroutine,
 		// just like the worker's failure slot. Never inherit a parent's budget.
 		workerProbe := pipelineCancellationForContext(workerContext)

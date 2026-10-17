@@ -212,13 +212,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// after a reader saw the cancellation is not returned.
 	statementCtx := ctx
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			if err := cancelledPanic(statementCtx); err != nil {
-				result, retErr = nil, err
-				return
-			}
-			panic(recovered)
-		}
 		if retErr != nil {
 			if err := statementCtx.Err(); err != nil && !errors.Is(retErr, err) {
 				result, retErr = nil, err

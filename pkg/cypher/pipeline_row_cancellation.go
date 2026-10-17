@@ -1,6 +1,11 @@
 package cypher
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"log"
+	"runtime/debug"
+)
 
 // pipelineWorkerContext gives a goroutine that runs part of the statement its
 // own probe (a probe's counter is not shared across goroutines). The fork
@@ -24,22 +29,35 @@ func clearPipelineRow(row pipelineRow, probe *pipelineCancellation) bool {
 	return true
 }
 
-// recoverCancelledWorker is deferred by a goroutine running part of a
-// statement under its forked probe (pipelineWorkerContext): a panic that
-// follows the statement's cancellation ends the worker and is reported to the
-// statement's owner, which returns the cancellation. Any other panic is
-// re-raised.
-func recoverCancelledWorker(ctx context.Context) {
-	if recovered := recover(); recovered != nil {
-		if cancelledPanic(ctx) != nil {
-			if probe := contextPipelineProbe(ctx); probe != nil {
-				probe.observed.Store(true)
-				if probe.parent != nil {
-					probe.parent.observed.Store(true)
-				}
-			}
-			return
-		}
+// recoverWorkerPanic is the last line of defence of a goroutine that runs
+// part of a statement under its forked probe (pipelineWorkerContext): a panic
+// there would end the process. It is not how a statement stops at its
+// deadline (readers return their cancellation). It logs the panic with its
+// stack and fails the statement through its owner: with the cancellation when
+// the statement was cancelled, otherwise with an internal error naming the
+// panic. Without a statement probe to report to, it re-raises the panic.
+func recoverWorkerPanic(ctx context.Context) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	stack := debug.Stack()
+	log.Printf("cypher: recovered panic in a statement worker: %v\n%s", recovered, stack)
+	probe := contextPipelineProbe(ctx)
+	if probe == nil || probe.parent == nil {
+		// No statement owner to fail: the panic stays a panic.
 		panic(recovered)
 	}
+	root := probe.parent
+	for root.parent != nil {
+		root = root.parent
+	}
+	var err error
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	} else {
+		err = newSemanticError("Neo.DatabaseError.General.UnknownError", "UnknownError", fmt.Sprintf("internal error in a statement worker: %v", recovered))
+	}
+	root.failure.CompareAndSwap(nil, &err)
+	root.observed.Store(true)
 }

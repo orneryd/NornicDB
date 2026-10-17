@@ -614,7 +614,7 @@ func (e *StorageExecutor) executeCallTailParallel(
 		go func() {
 			defer wg.Done()
 			workerCtx := pipelineWorkerContext(context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{}))
-			defer recoverCancelledWorker(workerCtx)
+			defer recoverWorkerPanic(workerCtx)
 			workerProbe := pipelineCancellationForContext(workerCtx)
 			for j := range jobs {
 				if !workerProbe.check() {
