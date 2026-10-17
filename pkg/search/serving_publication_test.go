@@ -336,10 +336,67 @@ var vectorServingHelpers = map[string]bool{
 	"rebuildClusterLexicalProfiles": true, "installClusterIndex": true,
 }
 
-// servingOwnershipViolations lists serving-field writes and helper references
-// outside the owners: a write is admitted in an owner, a helper, a constructor
-// or a function literal handed to an owner; a helper reference only inside an
-// owner's install, as an owner's argument, or inside an owner or helper.
+// servingFieldOf reports the serving field an expression writes through: the
+// field itself (s.f), one of its elements (s.f[k]) or a dereference (*s.f).
+func servingFieldOf(expr ast.Expr) (recv, field string, ok bool) {
+	for {
+		switch x := expr.(type) {
+		case *ast.IndexExpr:
+			expr = x.X
+			continue
+		case *ast.StarExpr:
+			expr = x.X
+			continue
+		case *ast.ParenExpr:
+			expr = x.X
+			continue
+		case *ast.SelectorExpr:
+			if id, isIdent := x.X.(*ast.Ident); isIdent && vectorServingFields[x.Sel.Name] {
+				return id.Name, x.Sel.Name, true
+			}
+		}
+		return "", "", false
+	}
+}
+
+// freshServiceLocals lists the locals a receiver-less constructor binds to a
+// new Service (s := &Service{...} or s := Service{...}): initializing those
+// is not a publication.
+func freshServiceLocals(fn *ast.FuncDecl) map[string]bool {
+	fresh := map[string]bool{}
+	if fn.Recv != nil || !(strings.HasPrefix(fn.Name.Name, "New") || strings.HasPrefix(fn.Name.Name, "new")) {
+		return fresh
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE {
+			return true
+		}
+		for i, rhs := range assign.Rhs {
+			if i >= len(assign.Lhs) {
+				break
+			}
+			if unary, ok := rhs.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+				rhs = unary.X
+			}
+			if lit, ok := rhs.(*ast.CompositeLit); ok {
+				if typ, ok := lit.Type.(*ast.Ident); ok && typ.Name == "Service" {
+					if id, ok := assign.Lhs[i].(*ast.Ident); ok {
+						fresh[id.Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return fresh
+}
+
+// servingOwnershipViolations lists every write to a serving field, and every
+// use of a serving helper, outside the owners. A write is an assignment to the
+// field or one of its elements, or delete/clear of it. It is admitted inside an
+// owner or helper, inside a function literal handed to an owner, or on a fresh
+// Service a receiver-less constructor is initializing.
 func servingOwnershipViolations(file *ast.File, name string) []string {
 	var out []string
 	for _, decl := range file.Decls {
@@ -348,9 +405,15 @@ func servingOwnershipViolations(file *ast.File, name string) []string {
 			continue
 		}
 		fnName := fn.Name.Name
-		trusted := vectorServingOwners[fnName] || vectorServingHelpers[fnName]
-		if trusted || strings.HasPrefix(fnName, "New") || strings.HasPrefix(fnName, "new") {
+		if fn.Recv != nil && (vectorServingOwners[fnName] || vectorServingHelpers[fnName]) {
 			continue
+		}
+		fresh := freshServiceLocals(fn)
+		report := func(recv, field, what string, inOwner bool) {
+			if inOwner || fresh[recv] {
+				return
+			}
+			out = append(out, fmt.Sprintf("%s: %s %s %s", name, fnName, what, field))
 		}
 		var walk func(n ast.Node, inOwner bool)
 		walk = func(n ast.Node, inOwner bool) {
@@ -364,17 +427,24 @@ func servingOwnershipViolations(file *ast.File, name string) []string {
 						}
 						return false
 					}
+					if id, ok := x.Fun.(*ast.Ident); ok && (id.Name == "delete" || id.Name == "clear") && len(x.Args) > 0 {
+						if recv, field, ok := servingFieldOf(x.Args[0]); ok {
+							report(recv, field, id.Name+"s", inOwner)
+						}
+					}
 				case *ast.SelectorExpr:
 					if vectorServingHelpers[x.Sel.Name] && !inOwner {
 						out = append(out, fmt.Sprintf("%s: %s uses %s outside an owner", name, fnName, x.Sel.Name))
 					}
 				case *ast.AssignStmt:
 					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && vectorServingFields[sel.Sel.Name] && !inOwner {
-							if _, isIdent := sel.X.(*ast.Ident); isIdent {
-								out = append(out, fmt.Sprintf("%s: %s writes %s", name, fnName, sel.Sel.Name))
-							}
+						if recv, field, ok := servingFieldOf(lhs); ok {
+							report(recv, field, "writes", inOwner)
 						}
+					}
+				case *ast.IncDecStmt:
+					if recv, field, ok := servingFieldOf(x.X); ok {
+						report(recv, field, "writes", inOwner)
 					}
 				}
 				return true
@@ -388,15 +458,26 @@ func servingOwnershipViolations(file *ast.File, name string) []string {
 func TestServingFieldsAreWrittenOnlyByTheirOwner(t *testing.T) {
 	probe, err := parser.ParseFile(token.NewFileSet(), "probe.go", "package search\n"+
 		"func (s *Service) leak() { s.vectorPipeline = nil }\n"+
+		"func (s *Service) leakElement() { s.clusterHNSW[0] = nil }\n"+
+		"func (s *Service) leakDelete() { delete(s.clusterHNSW, 0) }\n"+
+		"func (s *Service) leakClear() { clear(s.clusterLexicalProfiles) }\n"+
+		"func (s *Service) NewGraph() { s.hnswIndex = nil }\n"+
+		"func NewWrapped(s *Service) *Service { s.ivfpqIndex = nil; return s }\n"+
 		"func (s *Service) leakHelper() { s.invalidateHNSWLocked() }\n"+
-		"func (s *Service) viaOwner() { s.publishVectorServing(func() { s.hnswIndex = nil; s.invalidateHNSWLocked() }, true) }\n"+
+		"func NewFresh() *Service { s := &Service{}; s.vectorPipeline = nil; s.clusterHNSW[0] = nil; return s }\n"+
+		"func (s *Service) viaOwner() { s.publishVectorServing(func() { s.hnswIndex = nil; s.clusterHNSW[0] = nil; delete(s.clusterHNSW, 1); s.invalidateHNSWLocked() }, true) }\n"+
 		"func (s *Service) viaMethodValue() { s.publishVectorServing(s.clearClusterLexicalProfiles, false) }\n"+
 		"func (s *Service) publishVectorServing(install func(), retire bool) { s.vectorPipeline = nil }\n", 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{
 		"probe.go: leak writes vectorPipeline",
+		"probe.go: leakElement writes clusterHNSW",
+		"probe.go: leakDelete deletes clusterHNSW",
+		"probe.go: leakClear clears clusterLexicalProfiles",
+		"probe.go: NewGraph writes hnswIndex",
+		"probe.go: NewWrapped writes ivfpqIndex",
 		"probe.go: leakHelper uses invalidateHNSWLocked outside an owner",
-	}, servingOwnershipViolations(probe, "probe.go"), "negative fixture: direct writes and helper uses outside an owner are reported, the owner's are admitted")
+	}, servingOwnershipViolations(probe, "probe.go"), "negative fixture: every write shape and helper use outside an owner is reported; owner installs and fresh constructors are admitted")
 
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
