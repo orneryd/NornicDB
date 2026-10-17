@@ -509,6 +509,32 @@ func (s *Service) openClusterStaging() {
 	s.indexMu.Unlock()
 }
 
+// stageStaleClusterMembers records, for a restored generation being built,
+// an admission for every retained graph member whose saved coordinates are
+// not the canonical store's (its vector changed after the save, possibly
+// within the same cluster). Publication replays them through
+// applyClusterAdmission like any admission made during the build: the
+// member is re-placed and re-inserted with its current vector, so its
+// quantized code and links describe where it is now.
+func (s *Service) stageStaleClusterMembers(gen *clusterGeneration) {
+	lookup := s.getVectorLookup()
+	var stale []string
+	for _, graph := range gen.graphs {
+		stale = append(stale, graph.staleMembers(lookup)...)
+	}
+	if len(stale) == 0 {
+		return
+	}
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	if s.clusterStaging == nil {
+		return
+	}
+	for _, id := range stale {
+		*s.clusterStaging = append(*s.clusterStaging, clusterAdmission{kind: clusterVectorAdded, id: id})
+	}
+}
+
 // closeClusterStaging stops recording when no generation will be installed.
 func (s *Service) closeClusterStaging() {
 	s.indexMu.Lock()
@@ -642,17 +668,29 @@ func (s *Service) applyClusterPolicyLocked(ctx context.Context, gen *clusterGene
 // index is released, after its last query holder finished.
 var clusterIndexReleaseHook func(*gpu.ClusterIndex)
 
+// emptyClusterIndex replaces a cluster index with an empty one of the same
+// settings, so the population is derived again from the canonical store.
+func emptyClusterIndex(old *gpu.ClusterIndex) *gpu.ClusterIndex {
+	if old == nil {
+		return nil
+	}
+	return old.Empty()
+}
+
 // retireClusterGeneration retires the published generation and replaces the
-// cluster index with replacement (a fresh, empty one when the population is
-// to be derived again from the canonical store). The retired index and
-// generation are never changed in place: queries that took the generation
-// at their start finish on it, and the index's GPU buffers are released only
-// after the last of them (GPU subset scoring reads the device without the
-// index's lock). Callers hold clusterStateMu and mu; they publish the
-// serving pipeline (publishClusterServing) once they release the owner's
-// locks.
-func (s *Service) retireClusterGeneration(replacement *gpu.ClusterIndex) {
+// cluster index with replace(old); a nil replace leaves no index (Close).
+// The retired index and generation are never changed in place: queries that
+// took the generation at their start finish on it, and the index's GPU
+// buffers are released only after the last of them (GPU subset scoring reads
+// the device without the index's lock). Callers hold clusterStateMu and mu;
+// they publish the serving pipeline (publishClusterServing) once they
+// release the owner's locks.
+func (s *Service) retireClusterGeneration(replace func(old *gpu.ClusterIndex) *gpu.ClusterIndex) {
 	old, gen := s.clusterIndex, s.clusterGen
+	var replacement *gpu.ClusterIndex
+	if replace != nil {
+		replacement = replace(old)
+	}
 	s.clusterGen = nil
 	s.clusterIndex = replacement
 	if old == nil || old == replacement {
@@ -682,6 +720,21 @@ func (s *Service) publishClusterServing() {
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
 	s.indexChanged()
+}
+
+// currentClusterIndex is the cluster index (the clustered population) for
+// code outside the owner; its routing is read through a generation. Callers
+// hold mu where they did for the field.
+func (s *Service) currentClusterIndex() *gpu.ClusterIndex { return s.clusterIndex }
+
+// clusterGenerationPublishedLocked reports whether a generation is
+// published; callers hold clusterStateMu.
+func (s *Service) clusterGenerationPublishedLocked() bool { return s.clusterGen != nil }
+
+// clusterGenerationHasGraphsLocked reports whether the published generation
+// has IVF-HNSW graphs; callers hold clusterStateMu.
+func (s *Service) clusterGenerationHasGraphsLocked() bool {
+	return s.clusterGen != nil && len(s.clusterGen.graphs) > 0
 }
 
 // clusterSnapshot is the cluster generation one query serves from, taken
