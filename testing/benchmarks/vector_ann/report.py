@@ -54,13 +54,14 @@ def header(env, corpus, k):
         f"- **Corpus:** {corpus['vectors']:,} vectors × {corpus['dimensions']} dimensions ({corpus['model']}, {corpus['metric']}), "
         f"chunks of {', '.join(corpus['roots'])} ({corpus['kinds'].get('doc', 0):,} documentation, "
         f"{corpus['kinds'].get('code', 0):,} code); {env['queries']:,} held-out queries; exact top-{corpus['truth_k']} ground truth.",
-        f"- **Measured:** recall@{k} against exact ground truth; single-client latency over {env['queries']:,} queries "
-        f"after {env['warmup']} warm-up; throughput with {env['concurrency']} concurrent clients.",
+        f"- **Measured:** recall@{k} against exact ground truth; sequential client latency over {env['queries']:,} queries "
+        f"after {env['warmup']} warm-up; throughput with {env['concurrency']} concurrent RPCs on one shared channel.",
         f"- **Engines:** NornicDB {env['nornic_version']} (`{env['nornic_commit']}`), Qdrant {env['qdrant_version']} "
         f"(native binary); one server at a time, each on a fresh data directory, both driven over the Qdrant gRPC API "
         f"(Upsert batches of {env['batch']}, Search).",
         f"- **Machine:** {env['machine']}.",
-        f"- **NornicDB GPU paths:** {'on' if env['nornic_gpu'] else 'off (CPU only, as Qdrant)'}.",
+        f"- **Provenance:** effective settings and binary/corpus SHA-256 hashes are recorded in each result JSON; resolved dependencies are in `environment.json`.",
+        "- **NornicDB GPU paths:** see each run's effective settings in its JSON; CPU-only runs disable the GPU manager, including GPU clustering.",
     ]
     return lines
 
@@ -69,7 +70,7 @@ def comparison(runs, modes, env, corpus):
     k = env["k"]
     out = ["# Vector ANN benchmark: NornicDB vs Qdrant", ""] + header(env, corpus, k) + [""]
     out += ["## Summary", "",
-            f"Each mode at its server default (no `hnsw_ef`). N/A: the engine has no equivalent mode.", "",
+            f"Each mode at its preset beam (explicit on Qdrant; configured preset on NornicDB). Missing cells are unmeasured, not passing runs.", "",
             f"| Mode | NornicDB recall@{k} | NornicDB p50 | NornicDB p95 | NornicDB QPS | Qdrant recall@{k} | Qdrant p50 | Qdrant p95 | Qdrant QPS |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for mode in modes:
@@ -86,8 +87,8 @@ def comparison(runs, modes, env, corpus):
     sweep_modes = [m for m in modes if any(len(runs.get((e, m["name"]), {}).get("runs", [])) > 1 for e in ENGINES)]
     if sweep_modes:
         out += ["", "## `hnsw_ef` sweeps", "",
-                "The same Search parameter on both engines. Without `hnsw_ef` (server default), NornicDB searches with "
-                "its preset's efSearch, raised to the result count; Qdrant with its own default ef.", ""]
+                "The same Search beam on both engines. The baseline uses each named preset's efSearch "
+                "(explicitly sent on Qdrant), raised to the result count on NornicDB.", ""]
         for mode in sweep_modes:
             out += [f"### {mode['title']}", "",
                     f"| hnsw_ef | NornicDB recall@{k} | NornicDB p50 | NornicDB QPS | Qdrant recall@{k} | Qdrant p50 | Qdrant QPS |",
@@ -98,7 +99,7 @@ def comparison(runs, modes, env, corpus):
                     if r["hnsw_ef"] not in efs:
                         efs.append(r["hnsw_ef"])
             for ef in efs:
-                cells = ["server default" if ef is None else str(ef)]
+                cells = ["preset beam" if ef is None else str(ef)]
                 for engine in ENGINES:
                     result = runs.get((engine, mode["name"]))
                     r = next((x for x in result["runs"] if x["hnsw_ef"] == ef), None) if result else None
@@ -121,10 +122,10 @@ def comparison(runs, modes, env, corpus):
                        f"{result['load_vectors_per_s']:,.0f} vec/s | {result['index_ready_s']:.1f} s | {mb(result['disk_bytes'])} | "
                        f"{mb(result['rss_bytes_after_queries'])} |")
     out += ["", "## Notes", "",
-            "- **Strategy** is what the engine reports: NornicDB's from its `Vector search strategy:` log line, Qdrant's from the collection configuration.",
+            "- **Strategy:** NornicDB's observed pipeline strategy is checked against the requested mode. Qdrant's collection configuration and request parameters are checked; its internal per-query planner is not observed. Qdrant uses its minimum supported full-scan threshold (10 KB), so small populations may still use exact scanning.",
             "- **Index ready**: NornicDB's search index built and its first search answered; Qdrant's collection green with every vector indexed "
-            "(`indexing_threshold` is 1 KB so every segment gets its HNSW index).",
-            "- **Disk** counts allocated blocks under the data directory after the load; **RSS** is the server process after the queries.",
+            "(`indexing_threshold` is 1 KB for ANN modes; exact mode has HNSW disabled).",
+            "- **Disk** counts allocated blocks and **RSS** is a process snapshot after all queries and a final readiness check; neither is a peak measurement.",
             "- NornicDB's quantization is IVF-PQ (`compressed`); Qdrant quantizes on top of HNSW. The modes are listed separately, not as equivalents.",
             ""]
     return "\n".join(out)
@@ -143,10 +144,10 @@ def engine_report(engine, runs, modes, env, corpus):
                 f"**index ready:** {result['index_ready_s']:.1f} s; **disk:** {mb(result['disk_bytes'])}; "
                 f"**RSS:** {mb(result['rss_bytes_after_load'])} after load, {mb(result['rss_bytes_after_queries'])} after queries",
                 "",
-                "| hnsw_ef | recall@1 | recall@10 | mean | p50 | p95 | p99 | QPS |",
+                f"| hnsw_ef | recall@1 | recall@{k} | mean | p50 | p95 | p99 | QPS |",
                 "|---|---:|---:|---:|---:|---:|---:|---:|"]
         for r in result["runs"]:
-            out.append(f"| {'server default' if r['hnsw_ef'] is None else r['hnsw_ef']} | {fmt(r.get('recall@1'), '.4f')} | "
+            out.append(f"| {'preset beam' if r['hnsw_ef'] is None else r['hnsw_ef']} | {fmt(r.get('recall@1'), '.4f')} | "
                        f"{fmt(r.get(f'recall@{k}'), '.4f')} | {r['mean_ms']:.3f} ms | {r['p50_ms']:.3f} ms | {r['p95_ms']:.3f} ms | "
                        f"{r['p99_ms']:.3f} ms | {r['qps']:,.0f} |")
         out.append("")
@@ -163,7 +164,16 @@ def main():
     env = json.loads((args.results / "environment.json").read_text())
     env.setdefault("machine", machine())
     corpus = json.loads((args.corpus / "meta.json").read_text())
-    modes = [m for m in run.MODES if any((e, m["name"]) in runs for e in ENGINES)]
+    # Results define the measured population, including every tagged variant.
+    order = {m["name"]: i for i, m in enumerate(run.MODES)}
+    measured = {}
+    for (_, name), result in runs.items():
+        measured[name] = {"name": name, "title": result["title"],
+                          "base_mode": result.get("base_mode", name.split("+", 1)[0])}
+    modes = sorted(measured.values(), key=lambda m: (order.get(m["base_mode"], len(order)), m["name"]))
+    for result in runs.values():
+        if result.get("k", env["k"]) != env["k"]:
+            raise ValueError("results with different K require separate report directories")
     (args.results / "comparison.md").write_text(comparison(runs, modes, env, corpus))
     for engine in ENGINES:
         if any(e == engine for e, _ in runs):

@@ -254,11 +254,20 @@ def main():
     np.save(args.out / "vectors.npy", corpus.astype(np.float32))
     np.save(args.out / "queries.npy", queries.astype(np.float32))
     np.save(args.out / "truth.npy", truth)
+    # Keep text aligned with vector row IDs so construction can use the same
+    # lexical hints as production ingestion. Queries remain held out.
+    for filename, rows in (("payloads.jsonl", corpus_chunks), ("query_chunks.jsonl", query_chunks)):
+        with open(args.out / filename, "w") as output:
+            for chunk in rows:
+                output.write(json.dumps(chunk) + "\n")
     kinds = {k: sum(1 for c in corpus_chunks if c["kind"] == k) for k in ("doc", "code")}
     meta = {
         "embedder": args.embedder, "model": embedder.model, "dimensions": int(corpus.shape[1]),
         "metric": "cosine", "vectors": int(len(corpus)), "queries": int(len(queries)), "truth_k": args.truth_k,
         "roots": [repo_name(r) for r in roots], "kinds": kinds, "seed": args.seed,
+        "source_revisions": {repo_name(r): subprocess.run(["git", "-C", str(r), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True).stdout.strip() for r in roots},
+        "payloads": "payloads.jsonl",
         "chunking": {"target": args.chunk_chars, "max": args.max_chunk_chars, "min": args.min_chunk_chars},
         "vectors_sha256": hashlib.sha256(corpus.astype(np.float32).tobytes()).hexdigest()[:16],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
