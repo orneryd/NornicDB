@@ -1915,8 +1915,40 @@ func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, val
 			return nil, resolved, err
 		}
 	}
-	result, err := e.relationshipEndpointValue(value, equalFoldASCII(function, "endNode"))
-	return result, true, err
+	end := equalFoldASCII(function, "endNode")
+	memo, memoized := values[rowEndpointMemoKey].(map[rowEndpointMemoEntry]interface{})
+	if !memoized {
+		result, err := e.relationshipEndpointValue(value, end)
+		return result, true, err
+	}
+	edge, err := relationshipEndpointArgument(value, end)
+	if err != nil {
+		return nil, true, err
+	}
+	if edge == nil {
+		return nil, true, nil
+	}
+	entry := rowEndpointMemoEntry{id: edge.ID, end: end}
+	if result, read := memo[entry]; read {
+		return result, true, nil
+	}
+	result := e.relationshipEndpoint(edge, end)
+	memo[entry] = result
+	return result, true, nil
+}
+
+// rowEndpointMemoKey binds, in a row whose predicate reads a relationship's
+// endpoints many times (an EXISTS body's WHERE, boundExpandCount), the
+// endpoints read so far: startNode(r) / endNode(r) is read from storage once
+// per relationship and end. Nothing writes while a predicate is evaluated,
+// so a second read would give the same node.
+const rowEndpointMemoKey = "\x00endpoint_memo"
+
+// rowEndpointMemoEntry is one relationship's start (end false) or end node
+// in a rowEndpointMemoKey memo.
+type rowEndpointMemoEntry struct {
+	id  storage.EdgeID
+	end bool
 }
 
 func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool) (interface{}, error) {
