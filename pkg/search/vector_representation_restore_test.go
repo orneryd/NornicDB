@@ -84,15 +84,17 @@ func TestVectorScaleReplacementPreservesRawCoordinates(t *testing.T) {
 }
 
 func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
+	// A metadata budget of exactly one single-letter node with one named vector.
+	oneNode := nodeVectorMetadataBytes("a", nil) + vectorEntryMetadataBytes(nodeNamedVectorKey("a", "v"))
 	for _, bm25Engine := range []string{"v1", "v2"} {
-		for _, limit := range []int64{42, 41} {
-			t.Run(fmt.Sprintf("%s/limit=%d", bm25Engine, limit), func(t *testing.T) {
+		for _, limit := range []int64{oneNode, oneNode - 1} {
+			t.Run(fmt.Sprintf("%s/limit=one_node%+d", bm25Engine, limit-oneNode), func(t *testing.T) {
 				engine := newNamespacedEngine(t)
 				node := &storage.Node{ID: "a", NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}, Properties: map[string]any{"text": "x"}}
 				_, err := engine.CreateNode(node)
 				require.NoError(t, err)
 				dir := t.TempDir()
-				options := &ServiceOptions{MetadataMemoryMaxBytes: 42}
+				options := &ServiceOptions{MetadataMemoryMaxBytes: oneNode}
 				configure := func(s *Service) {
 					s.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
 					s.SetVectorIndexPath(filepath.Join(dir, "vectors"))
@@ -101,7 +103,7 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				first := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, bm25Engine, options)
 				configure(first)
 				require.NoError(t, first.IndexNode(node))
-				require.Equal(t, int64(42), first.vectorMetadataBytes)
+				require.Equal(t, oneNode, first.vectorMetadataBytes)
 				fulltextResident, fulltextMetadata := first.bm25ResidentBytes, first.bm25MetadataBytes
 				first.PersistIndexesToDisk()
 				require.NoError(t, first.Close())
@@ -109,10 +111,10 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, restored.Close()) })
 				configure(restored)
 				err = restored.BuildIndexes(context.Background())
-				if limit < 42 {
+				if limit < oneNode {
 					require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
 					require.False(t, restored.IsReady())
-					require.Equal(t, int64(42), restored.vectorMetadataBytes, "an over-budget source must still be charged")
+					require.Equal(t, oneNode, restored.vectorMetadataBytes, "an over-budget source must still be charged")
 					require.ErrorIs(t, restored.IndexNode(&storage.Node{ID: "b", NamedEmbeddings: map[string][]float32{"v": {0, 1, 0}}}), ErrIndexMemoryBudgetExceeded)
 					require.Equal(t, 1, restored.EmbeddingCount())
 					return
@@ -122,7 +124,7 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				require.NotNil(t, restored.vectorFileStore)
 				require.Equal(t, 1, restored.fulltext().Count())
 				require.Equal(t, nodeNamedVectorKey("a", "v"), restored.nodeNamedVector["a"]["v"])
-				assert.Equal(t, int64(42), restored.vectorMetadataBytes, "restored metadata must retain its admission charges")
+				assert.Equal(t, oneNode, restored.vectorMetadataBytes, "restored metadata must retain its admission charges")
 				require.Equal(t, fulltextResident, restored.bm25ResidentBytes)
 				require.Equal(t, fulltextMetadata, restored.bm25MetadataBytes)
 				err = restored.IndexNode(&storage.Node{ID: "b", NamedEmbeddings: map[string][]float32{"v": {0, 1, 0}}})
@@ -130,16 +132,16 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				require.Equal(t, 1, restored.EmbeddingCount(), "rejection must precede mutation")
 				node.NamedEmbeddings["v"] = []float32{0, 0, 1}
 				require.NoError(t, restored.IndexNode(node))
-				require.Equal(t, int64(42), restored.vectorMetadataBytes)
+				require.Equal(t, oneNode, restored.vectorMetadataBytes)
 				restored.SetPersistenceEnabled(false)
 				require.Nil(t, restored.vectorFileStore)
 				require.Equal(t, int64(12), restored.vectorResidentBytes)
-				require.Equal(t, int64(42), restored.vectorMetadataBytes)
+				require.Equal(t, oneNode, restored.vectorMetadataBytes)
 				restored.SetPersistenceEnabled(true)
 				require.NoError(t, restored.IndexNode(node))
 				require.NotNil(t, restored.vectorFileStore)
 				require.Zero(t, restored.vectorResidentBytes)
-				require.Equal(t, int64(42), restored.vectorMetadataBytes)
+				require.Equal(t, oneNode, restored.vectorMetadataBytes)
 				restored.ClearVectorIndex()
 				restored.ClearVectorIndex()
 				require.Zero(t, restored.vectorMetadataBytes)
@@ -148,7 +150,7 @@ func TestVectorRestoreReconstructsMetadataCapacity(t *testing.T) {
 				require.NoError(t, restored.IndexNode(&storage.Node{ID: "b", NamedEmbeddings: map[string][]float32{"v": {0, 1, 0}}}))
 				require.NoError(t, restored.RemoveNode("a"))
 				require.NoError(t, restored.RemoveNode("a"))
-				require.Equal(t, int64(42), restored.vectorMetadataBytes)
+				require.Equal(t, oneNode, restored.vectorMetadataBytes)
 				require.Zero(t, restored.bm25MetadataBytes)
 				require.NoError(t, restored.RemoveNode("b"))
 				require.Zero(t, restored.vectorMetadataBytes)
