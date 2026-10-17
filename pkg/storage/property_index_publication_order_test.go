@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,9 +98,7 @@ func TestPropertyIndexPublicationOutOfOrder(t *testing.T) {
 
 				// The committed state, read past the node cache: the cache has its
 				// own publication-order race, outside this index's contract.
-				current, err := b.committedNodeProperties(id, []string{"p"})
-				require.NoError(t, err)
-				require.Equal(t, scenario.live, current.Properties["p"])
+				require.Equal(t, scenario.live, committedValue(t, b, id, "p"))
 				require.Equal(t, []NodeID{id}, sm.PropertyIndexLookup("L", "p", scenario.live), "the live node must stay findable")
 				if scenario.stale != "" {
 					require.Empty(t, sm.PropertyIndexLookup("L", "p", scenario.stale))
@@ -122,4 +121,26 @@ func writeMaybeInTransaction(b *BadgerEngine, explicit bool, inTx func(*BadgerTr
 		return err
 	}
 	return tx.Commit()
+}
+
+// committedValue reads property of the committed node body directly from
+// Badger, past the node cache.
+func committedValue(t *testing.T, b *BadgerEngine, id NodeID, property string) interface{} {
+	t.Helper()
+	var value interface{}
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(id))
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			namespace, _, _ := ParseDatabasePrefix(string(id))
+			node, err := b.decodeNode(namespace, val)
+			if err == nil {
+				value = node.Properties[property]
+			}
+			return err
+		})
+	}))
+	return value
 }
