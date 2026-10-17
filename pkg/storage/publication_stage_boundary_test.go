@@ -87,6 +87,13 @@ var heldAcrossCommit = map[string]string{
 	"FindNodeNeedingEmbedding holds pendingEmbeddingCandidates.mu across withUpdate": "the commit only deletes pending-embedding keys: no publish and no pending-embedding adds, so it carries no publication and does not run the stage",
 }
 
+// lockOrderReviewed classifies every place that holds a stage lock while it
+// takes a lock some committer holds across its stage wait: why the two are
+// never the same instance in a wait cycle.
+var lockOrderReviewed = map[string]string{
+	"StageSchemaChanges holds SchemaManager.mu while taking BadgerTransaction.mu": "the SchemaManager is the transaction's private schema view (tx.knowledgeSchema), never a schema a publication locks, and the BadgerTransaction is the staging transaction itself, which cannot be committing at the same time",
+}
+
 // commitFunctions must never be reachable from a publication.
 var commitFunctions = []string{
 	"commitEngineWrite", "commitEngineWriteWithRead", "commitEngineWriteHeld", "withUpdate", "withNotifyingUpdate",
@@ -358,51 +365,72 @@ func chain(via map[string]string, name string) string {
 	return strings.Join(path, " -> ")
 }
 
-// reachesCommit reports whether fn can reach one of the oracle's commit
-// entry points.
-func (src *packageSource) reachesCommit(fn *types.Func, memo map[*types.Func]int) bool {
-	switch memo[fn] {
-	case 1:
-		return true
-	case 2, 3:
-		return false // known not to, or on the current path
-	}
-	if name := fn.Name(); name == "commitPublishing" || (name == "finish" && strings.Contains(fn.FullName(), "largeCommit")) {
-		memo[fn] = 1
-		return true
-	}
-	decl, own := src.decls[fn]
-	if !own {
-		memo[fn] = 2
-		return false
-	}
-	memo[fn] = 3
-	found := false
-	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if found {
-			return false
+// publishingCommits returns every function of the package that can reach a
+// commit carrying a publication, the commits that wait for the stage: a
+// function that sets a commit writer's publish, hands withPublishingUpdate a
+// publication, or stages pending-embedding candidates (which the commit
+// writer publishes), and every function that can call one, found by a
+// reverse search of the call graph. Stored closures are not calls.
+func (src *packageSource) publishingCommits() map[*types.Func]bool {
+	callers := map[*types.Func][]*types.Func{}
+	reaches := map[*types.Func]bool{}
+	var queue []*types.Func
+	for fn, decl := range src.decls {
+		// Closures a function defines run within its own commit, so they
+		// count as its calls here.
+		publishes := false
+		ast.Inspect(decl.Body, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.AssignStmt:
+				for _, lhs := range n.Lhs {
+					if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "publish" {
+						publishes = true
+					}
+				}
+			case *ast.CallExpr:
+				callee := src.callee(n)
+				if callee == nil {
+					return true
+				}
+				switch callee.Name() {
+				case "withPublishingUpdate":
+					if len(n.Args) >= 2 {
+						if ident, isNil := n.Args[1].(*ast.Ident); !isNil || ident.Name != "nil" {
+							publishes = true
+						}
+					}
+				case "setPendingEmbeddingInTxn", "setKeyWithPendingHint":
+					publishes = true
+				}
+				callers[callee] = append(callers[callee], fn)
+			}
+			return true
+		})
+		if publishes {
+			reaches[fn] = true
+			queue = append(queue, fn)
 		}
-		if call, ok := n.(*ast.CallExpr); ok {
-			if callee := src.callee(call); callee != nil && src.reachesCommit(callee, memo) {
-				found = true
+	}
+	for len(queue) > 0 {
+		fn := queue[0]
+		queue = queue[1:]
+		for _, caller := range callers[fn] {
+			if !reaches[caller] {
+				reaches[caller] = true
+				queue = append(queue, caller)
 			}
 		}
-		return true
-	})
-	if found {
-		memo[fn] = 1
-	} else {
-		memo[fn] = 2
 	}
-	return found
+	return reaches
 }
 
 // heldAcrossCommits finds, in every function of the package, the calls that
-// can reach a commit while the function holds one of locks: a lock taken
-// earlier in the function (in source order) and not yet released. A deferred
-// unlock holds to the end. Closures are their own scope.
+// can reach a commit carrying a publication (publishingCommits), which waits
+// for the stage, while the function holds one of locks (nil: any lock): a
+// lock taken earlier in the function (in source order) and not yet released.
+// A deferred unlock holds to the end. Closures are their own scope.
 func (src *packageSource) heldAcrossCommits(locks map[string]bool) []string {
-	memo := map[*types.Func]int{}
+	publishing := src.publishingCommits()
 	var hits []string
 	for fn, decl := range src.decls {
 		held := map[string]int{}
@@ -434,7 +462,7 @@ func (src *packageSource) heldAcrossCommits(locks map[string]bool) []string {
 							return true
 						}
 					}
-					if src.reachesCommit(callee, memo) {
+					if publishing[callee] {
 						for lock, count := range held {
 							if count > 0 && (locks == nil || locks[lock]) {
 								hits = append(hits, fmt.Sprintf("%s holds %s across %s", fn.Name(), lock, callee.Name()))
@@ -466,7 +494,11 @@ func (src *packageSource) locksReached(fn *types.Func, memo map[*types.Func]map[
 	if !own {
 		return got
 	}
+	stored := storedClosures(decl.Body)
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.FuncLit); ok && stored[lit] {
+			return false
+		}
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -641,8 +673,9 @@ func TestPublicationStageBoundary(t *testing.T) {
 	order := src.stageLockOrder(lockSet, committerLocks)
 	for _, hit := range order {
 		t.Logf("stage lock order: %s", hit)
+		_, known := lockOrderReviewed[hit]
+		assert.True(t, known, "%s: a goroutine holding a stage lock waits for a lock a committer may hold; classify it in lockOrderReviewed", hit)
 	}
-	assert.Empty(t, order, "a goroutine holding a stage lock waits for a lock a committer holds: the stage could wait on it")
 	for _, lock := range lockNames {
 		_, known := stageLocks[lock]
 		assert.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
