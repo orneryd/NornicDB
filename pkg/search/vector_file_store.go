@@ -434,8 +434,9 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 			batchLen := int(end - start)
 			n, err := v.file.ReadAt(batch[:batchLen], start)
 			if err != nil && err != io.EOF {
-				i = j
-				continue
+				// A row that cannot be read is an error, not a missing candidate;
+				// rows past the end of the file (io.EOF) stay absent as before.
+				return nil, err
 			}
 			limit := n
 			for k := i; k < j; k++ {
