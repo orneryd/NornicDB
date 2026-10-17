@@ -352,3 +352,172 @@ func floatSum(values ...float64) float64 {
 	}
 	return total
 }
+
+// TestSimilarityRowsRemoteNodes: rows from a composite database's remote
+// constituent carry remote node values; they are sources and things by
+// their elementId, their properties order ties, and a remote relationship
+// is refused as a node.
+func TestSimilarityRowsRemoteNodes(t *testing.T) {
+	remote := func(id, property string) storage.RemoteEntityValue {
+		return storage.RemoteEntityValue{"elementId": "4:remote:" + id, "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{"id": property}}
+	}
+	a, b, c, x := remote("a", "a"), remote("b", "z"), remote("c", "y"), remote("x", "x")
+	rows := []interface{}{
+		map[string]interface{}{"source": a, "thing": x}, map[string]interface{}{"source": a, "thing": "local"},
+		map[string]interface{}{"source": b, "thing": x}, map[string]interface{}{"source": c, "thing": x},
+		map[string]interface{}{"source": b, "thing": "local"}, map[string]interface{}{"source": c, "thing": "local"},
+	}
+	result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{
+		"sourceNode": a, "similarityMetric": "RESOURCE_ALLOCATION", "tieBreakProperty": "id",
+	}})
+	require.NoError(t, err)
+	shared := []interface{}{
+		map[string]interface{}{"nodeId": "4:remote:x", "weight": 1.0 / 3},
+		map[string]interface{}{"nodeId": "local", "weight": 1.0 / 3},
+	}
+	score := floatSum(1.0/3, 1.0/3)
+	// c's id "y" sorts before b's "z"; equal shared weights by id: x, then the id-only thing.
+	require.Equal(t, [][]interface{}{
+		{"4:remote:a", "4:remote:c", score, shared},
+		{"4:remote:a", "4:remote:b", score, shared},
+	}, result.Rows)
+	// A list sourceNode of remote nodes: one source, node1 their elementIds.
+	grouped, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{
+		"sourceNode": []interface{}{a, b}, "similarityMetric": "RESOURCE_ALLOCATION", "tieBreakProperty": "id",
+	}})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{"4:remote:a", "4:remote:b"}, "4:remote:c", score, shared}}, grouped.Rows)
+	// A local node and a remote node with the same raw id ("n1" as the
+	// local id and as the remote elementId) are different things, as are
+	// two constituents' nodes with one internal id: only "z" is shared.
+	sameID := storage.RemoteEntityValue{"elementId": "n1", "id": "n1", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	other := storage.RemoteEntityValue{"elementId": "4:other:7", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	another := storage.RemoteEntityValue{"elementId": "4:another:7", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	mixed, err := callNornicSimilarityStream([]interface{}{[]interface{}{
+		map[string]interface{}{"source": "a", "thing": "n1"}, map[string]interface{}{"source": "b", "thing": sameID},
+		map[string]interface{}{"source": "a", "thing": other}, map[string]interface{}{"source": "b", "thing": another},
+		map[string]interface{}{"source": "a", "thing": "z"}, map[string]interface{}{"source": "b", "thing": "z"},
+	}, map[string]interface{}{"sourceNode": "a", "similarityMetric": "RESOURCE_ALLOCATION"}})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a", "b", 0.5, []interface{}{map[string]interface{}{"nodeId": "z", "weight": 0.5}}}}, mixed.Rows)
+	// Sources too: the remote "a" is not the local "a".
+	remoteA := storage.RemoteEntityValue{"elementId": "a", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	split, err := callNornicSimilarityStream([]interface{}{[]interface{}{
+		map[string]interface{}{"source": "a", "thing": "z"}, map[string]interface{}{"source": remoteA, "thing": "z"},
+	}, map[string]interface{}{"sourceNode": "a", "similarityMetric": "RESOURCE_ALLOCATION"}})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"a", "a", 0.5, []interface{}{map[string]interface{}{"nodeId": "z", "weight": 0.5}}}}, split.Rows)
+	relationship := storage.RemoteEntityValue{"elementId": "5:remote:r", "type": "R", "properties": map[string]interface{}{}}
+	_, err = callNornicSimilarityStream([]interface{}{[]interface{}{map[string]interface{}{"source": relationship, "thing": x}}, map[string]interface{}{"sourceNode": a}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Row 0 of the similarity rows needs a node or node id for `source`")
+	_, err = callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": relationship}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "sourceNode")
+}
+
+// TestSimilarityRowsSelfIncidence: rows are used as given, so a
+// self-incidence a→a is one of a's things, where the GDS projection drops the
+// self-loop; without that row the two agree (the documented condition for
+// parity).
+func TestSimilarityRowsSelfIncidence(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns")
+	exec := NewStorageExecutor(engine)
+	for _, id := range []string{"a", "b", "x"} {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"N"}})
+		require.NoError(t, err)
+	}
+	for i, edge := range [][2]string{{"a", "a"}, {"a", "x"}, {"b", "x"}} {
+		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), StartNode: storage.NodeID(edge[0]), EndNode: storage.NodeID(edge[1]), Type: "H"}))
+	}
+	run := func(query string) [][]interface{} {
+		t.Helper()
+		result, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err, query)
+		return result.Rows
+	}
+	run("CALL gds.graph.project('self', 'N', 'H')")
+	rows := func(self bool) []interface{} {
+		list := []interface{}{map[string]interface{}{"source": "a", "thing": "x"}, map[string]interface{}{"source": "b", "thing": "x"}}
+		if self {
+			list = append(list, map[string]interface{}{"source": "a", "thing": "a"})
+		}
+		return list
+	}
+	for _, tc := range []struct {
+		metric   string
+		withSelf float64
+	}{{"JACCARD", 0.5}, {"COSINE", 1 / math.Sqrt(2)}} {
+		gds := run("CALL gds.nodeSimilarity.filtered.stream('self', {sourceNodeFilter: 'a', similarityMetric: '" + tc.metric + "'}) YIELD node2, similarity RETURN node2, similarity")
+		require.Equal(t, [][]interface{}{{"b", 1.0}}, gds, tc.metric)
+		for _, self := range []bool{true, false} {
+			result, err := callNornicSimilarityStream([]interface{}{rows(self), map[string]interface{}{"sourceNode": "a", "similarityMetric": tc.metric}})
+			require.NoError(t, err)
+			want := 1.0
+			if self {
+				want = tc.withSelf
+			}
+			require.Len(t, result.Rows, 1, "%s self=%v", tc.metric, self)
+			require.Equal(t, "b", result.Rows[0][1])
+			require.InDelta(t, want, result.Rows[0][2], 1e-15, "%s self=%v", tc.metric, self)
+		}
+	}
+}
+
+// TestSimilarityRowsRemoteIDsAsGiven: a sourceNode given as a remote node's
+// elementId string finds the remote rows' source, and ties order local and
+// remote nodes by the ids the output shows, not their internal keys.
+func TestSimilarityRowsRemoteIDsAsGiven(t *testing.T) {
+	remote := func(id string) storage.RemoteEntityValue {
+		return storage.RemoteEntityValue{"elementId": id, "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	}
+	seed, z := remote("4:r:seed"), remote("z")
+	rows := []interface{}{
+		map[string]interface{}{"source": seed, "thing": "x"},
+		map[string]interface{}{"source": z, "thing": "x"},
+		map[string]interface{}{"source": "a", "thing": "x"},
+	}
+	for _, source := range []interface{}{"4:r:seed", []interface{}{"4:r:seed"}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source, "similarityMetric": "RESOURCE_ALLOCATION"}})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 2, "sourceNode=%v", source)
+		// Equal scores: local "a" before remote "z", by the shown ids.
+		require.Equal(t, "a", result.Rows[0][1])
+		require.Equal(t, "z", result.Rows[1][1])
+	}
+	// Shared things tie the same way: local "b" before remote "y".
+	y := remote("y")
+	shared, err := callNornicSimilarityStream([]interface{}{[]interface{}{
+		map[string]interface{}{"source": "s", "thing": y}, map[string]interface{}{"source": "s", "thing": "b"},
+		map[string]interface{}{"source": "t", "thing": y}, map[string]interface{}{"source": "t", "thing": "b"},
+	}, map[string]interface{}{"sourceNode": "s", "similarityMetric": "RESOURCE_ALLOCATION"}})
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{
+		map[string]interface{}{"nodeId": "b", "weight": 0.5}, map[string]interface{}{"nodeId": "y", "weight": 0.5},
+	}, shared.Rows[0][3])
+}
+
+func TestSimilarityRowsLocalNodeSourceStaysLocal(t *testing.T) {
+	// A stored node absent from the rows is no source, even when a remote
+	// node's elementId equals its id: only an id string may name a remote
+	// node.
+	rows := []interface{}{
+		map[string]interface{}{"source": storage.RemoteEntityValue{"elementId": "a", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}, "thing": "x"},
+		map[string]interface{}{"source": "b", "thing": "x"},
+	}
+	local := &storage.Node{ID: "a"}
+	for _, source := range []interface{}{local, []interface{}{local}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source}})
+		require.NoError(t, err)
+		require.Empty(t, result.Rows, "sourceNode=%v", source)
+	}
+	// The id string still names the remote node.
+	for _, source := range []interface{}{"a", []interface{}{"a"}} {
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": source}})
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1, "sourceNode=%v", source)
+		require.Equal(t, []interface{}{"b", 1.0}, result.Rows[0][1:3], "sourceNode=%v", source)
+	}
+}

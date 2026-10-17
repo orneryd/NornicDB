@@ -15,8 +15,8 @@ import (
 // the scores follow the graph as the statement sees it (its snapshot, its own
 // writes, and a restricted login's view) with nothing to project, maintain or
 // drop. Nothing is read from storage: node1, node2 and shared.nodeId are the
-// ids the rows carry, and a tieBreakProperty is read from the node values the
-// rows carry. A NornicDB extension; GDS has no row-input similarity.
+// ids the rows carry (a remote constituent's node by its elementId), and a
+// tieBreakProperty is read from the node values the rows carry. A NornicDB extension; GDS has no row-input similarity.
 
 // similarityRowsConfigKeys are the configuration keys nornicdb.similarity.stream
 // takes; the shared ones keep GDS's names.
@@ -24,7 +24,7 @@ var similarityRowsConfigKeys = []string{"sourceNode", "similarityMetric", "simil
 
 // similarityRowsConfig is nornicdb.similarity.stream's configuration.
 type similarityRowsConfig struct {
-	sources     []string // the source's ids: one node, or the nodes of a list, scored as one
+	sources     []gdsNodeRef // the source: one node, or the nodes of a list, scored as one
 	group       bool     // sourceNode was a list: node1 is its ids
 	metric      string   // JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION
 	cutoff      float64
@@ -58,7 +58,9 @@ func callNornicSimilarityStream(args []interface{}) (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(incidence, config)}, nil
+	result := &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(incidence, config)}
+	renderGDSRowKeys(result, gdsNodeProcedures["nornicdb.similarity.stream"].columns)
+	return result, nil
 }
 
 func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsConfig, error) {
@@ -74,18 +76,18 @@ func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsCon
 	if items, isList := cypherListValue(value); isList && value != nil {
 		config.group = true
 		for _, item := range items {
-			source, ok := gdsNodeID(item)
+			source, ok := readGDSNode(item, gdsRowKinds)
 			if !ok {
 				return config, c.typeError("sourceNode", "Node")
 			}
-			config.sources = append(config.sources, string(source))
+			config.sources = append(config.sources, source)
 		}
 	} else if value != nil {
-		source, ok := gdsNodeID(value)
+		source, ok := readGDSNode(value, gdsRowKinds)
 		if !ok {
 			return config, c.typeError("sourceNode", "Node")
 		}
-		config.sources = []string{string(source)}
+		config.sources = []gdsNodeRef{source}
 	}
 	if len(config.sources) == 0 {
 		return config, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
@@ -163,10 +165,10 @@ func (w *similarityWeight) resolve(fallback float64) float64 {
 // rows are one, with the largest weight given.
 func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) {
 	incidence := &similarityIncidence{things: make(map[string]map[string]*similarityWeight), nodes: make(map[string]interface{})}
-	remember := func(id string, value interface{}) {
-		if _, isID := value.(string); !isID && !isIntegerProcedureValue(value) {
-			if _, seen := incidence.nodes[id]; !seen {
-				incidence.nodes[id] = value
+	remember := func(ref gdsNodeRef, value interface{}) {
+		if ref.isNode() {
+			if _, seen := incidence.nodes[ref.key]; !seen {
+				incidence.nodes[ref.key] = value
 			}
 		}
 	}
@@ -181,16 +183,17 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 				return nil, localizedError(localization.CypherGraphProceduresSimilarityRowKey(position, key), nil)
 			}
 		}
-		source, ok := gdsNodeID(row["source"])
+		sourceRef, ok := readGDSNode(row["source"], gdsRowKinds)
 		if !ok {
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "source", gdsJavaType(row["source"])), nil)
 		}
-		remember(string(source), row["source"])
-		things, seen := incidence.things[string(source)]
+		remember(sourceRef, row["source"])
+		source := sourceRef.key
+		things, seen := incidence.things[source]
 		if !seen {
 			things = make(map[string]*similarityWeight)
-			incidence.things[string(source)] = things
-			incidence.sources = append(incidence.sources, string(source))
+			incidence.things[source] = things
+			incidence.sources = append(incidence.sources, source)
 		}
 		value, hasWeight := row["weight"]
 		if row["thing"] == nil {
@@ -201,11 +204,12 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			}
 			continue
 		}
-		thing, ok := gdsNodeID(row["thing"])
+		thingRef, ok := readGDSNode(row["thing"], gdsRowKinds)
 		if !ok {
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "thing", gdsJavaType(row["thing"])), nil)
 		}
-		remember(string(thing), row["thing"])
+		remember(thingRef, row["thing"])
+		thing := thingRef.key
 		number, isNumber := gdsScalarNumber(value)
 		switch {
 		case !hasWeight:
@@ -218,10 +222,10 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			}
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowWeight(position, text), nil)
 		}
-		weight := things[string(thing)]
+		weight := things[thing]
 		if weight == nil {
 			weight = &similarityWeight{}
-			things[string(thing)] = weight
+			things[thing] = weight
 		}
 		if !hasWeight {
 			weight.hasDefault = true
@@ -315,9 +319,16 @@ func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
 func similarityRowsScores(incidence *similarityIncidence, config similarityRowsConfig) [][]interface{} {
 	excluded := make(map[int]bool, len(config.sources))
 	var members []int
-	for _, id := range config.sources {
-		index := sort.SearchStrings(incidence.sources, id)
-		if index < len(incidence.sources) && incidence.sources[index] == id && !excluded[index] {
+	has := func(key string) bool {
+		index := sort.SearchStrings(incidence.sources, key)
+		return index < len(incidence.sources) && incidence.sources[index] == key
+	}
+	for _, ref := range config.sources {
+		key, ok := ref.find(has)
+		if !ok {
+			continue
+		}
+		if index := sort.SearchStrings(incidence.sources, key); !excluded[index] {
 			excluded[index] = true
 			members = append(members, index)
 		}
@@ -357,7 +368,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 				return order < 0
 			}
 		}
-		return a < b
+		return gdsShownBefore(a, b)
 	}
 	sort.Slice(scored, func(i, j int) bool {
 		if scored[i].similarity != scored[j].similarity {
@@ -368,10 +379,14 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	if len(scored) > config.topK {
 		scored = scored[:config.topK]
 	}
-	var node1 interface{} = config.sources[0]
+	// Keys here; renderGDSRowKeys shows them.
+	var node1 interface{} = config.sources[0].key
 	if config.group {
-		ids := append([]string(nil), config.sources...)
-		sort.Strings(ids)
+		ids := make([]string, len(config.sources))
+		for i, ref := range config.sources {
+			ids[i] = ref.key
+		}
+		sort.Slice(ids, func(i, j int) bool { return gdsShownBefore(ids[i], ids[j]) })
 		list := make([]interface{}, len(ids))
 		for i, id := range ids {
 			list[i] = id
@@ -381,17 +396,15 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	rows := make([][]interface{}, len(scored))
 	for i, pair := range scored {
 		_, shared := nodeSimilarity(source, neighbors[pair.target], config.metric, true, things, true)
-		if config.tieBreak != "" {
-			// Most weight first, as the kernel orders them; equal weights
-			// by the tieBreakProperty, then by id.
-			sort.Slice(shared, func(i, j int) bool {
-				left, right := shared[i].(map[string]interface{}), shared[j].(map[string]interface{})
-				if lw, rw := left["weight"].(float64), right["weight"].(float64); lw != rw {
-					return lw > rw
-				}
-				return tieBefore(left["nodeId"].(string), right["nodeId"].(string))
-			})
-		}
+		// Most weight first, as the kernel orders them; equal weights
+		// by the tieBreakProperty, then by id.
+		sort.Slice(shared, func(i, j int) bool {
+			left, right := shared[i].(map[string]interface{}), shared[j].(map[string]interface{})
+			if lw, rw := left["weight"].(float64), right["weight"].(float64); lw != rw {
+				return lw > rw
+			}
+			return tieBefore(left["nodeId"].(string), right["nodeId"].(string))
+		})
 		rows[i] = []interface{}{node1, incidence.sources[pair.target], pair.similarity, shared}
 	}
 	return rows

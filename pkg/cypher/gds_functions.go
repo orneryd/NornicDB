@@ -97,11 +97,12 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 	if !projected {
 		return nil, localizedError(localization.CypherGraphProceduresNodePropertyNotInGraph(key), nil)
 	}
-	id, ok := gdsNodeID(values[1])
+	ref, ok := readGDSNode(values[1], gdsStoredKinds)
+	id := ref.key
 	if !ok {
 		return nil, fmt.Errorf("%s expects a node or node id as argument 2, got %s", name, cypherTypeSystemName(values[1]))
 	}
-	if _, inGraph := projection.nodeIndex[string(id)]; !inGraph || !projection.matchesNodeLabels(string(id), []string{label}) {
+	if _, inGraph := projection.nodeIndex[id]; !inGraph || !projection.matchesNodeLabels(id, []string{label}) {
 		return nil, nil
 	}
 	// GDS's utility reads scalars as Double and arrays in their projected
@@ -230,13 +231,14 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 func gdsNodePair(name string, values []interface{}) (*storage.Node, *storage.Node, error) {
 	nodes := make([]*storage.Node, 2)
 	for index := range nodes {
-		switch value := values[index].(type) {
-		case nil:
-		case *storage.Node:
-			nodes[index] = value
-		default:
-			return nil, nil, fmt.Errorf("%s expects a node as argument %d, got %s", name, index+1, cypherTypeSystemName(value))
+		if values[index] == nil {
+			continue
 		}
+		node, ok := readGDSNodeValue(values[index])
+		if !ok {
+			return nil, nil, fmt.Errorf("%s expects a node as argument %d, got %s", name, index+1, cypherTypeSystemName(values[index]))
+		}
+		nodes[index] = node
 	}
 	return nodes[0], nodes[1], nil
 }
@@ -398,7 +400,8 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
-	id, ok := gdsNodeID(value)
+	ref, ok := readGDSNode(value, gdsStoredKinds)
+	id := storage.NodeID(ref.key)
 	if !ok {
 		// Preserve asNode's extension: other values may name string IDs.
 		id = storage.NodeID(fmt.Sprint(value))

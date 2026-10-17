@@ -9,7 +9,6 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // gdsProjectionRow is one row of gds.graph.project's Cypher aggregation
@@ -95,6 +94,14 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		if err != nil {
 			return "", err
 		}
+		// A node named by an INTEGER anywhere shows as that INTEGER,
+		// whatever the rows' order.
+		if integer {
+			if projection.integerNodeIDs == nil {
+				projection.integerNodeIDs = make(map[string]bool)
+			}
+			projection.integerNodeIDs[id] = true
+		}
 		// A node's labels and properties are its first occurrence's, as in
 		// GDS: a later row naming it adds only its relationship.
 		if seen[id] {
@@ -102,12 +109,6 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		}
 		seen[id] = true
 		projection.NodeIDs = append(projection.NodeIDs, id)
-		if integer {
-			if projection.integerNodeIDs == nil {
-				projection.integerNodeIDs = make(map[string]bool)
-			}
-			projection.integerNodeIDs[id] = true
-		}
 		if len(nodeLabels) == 0 {
 			nodeLabels = []string{"__ALL__"}
 		}
@@ -286,15 +287,15 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 // id, which the algorithms' rows return as an INTEGER.
 func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
 	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
-	if isIntegerProcedureValue(value) {
+	if ref, ok := readGDSNode(value, gdsAggregationKinds); ok {
+		if ref.kind != gdsIntegerID {
+			return ref.key, false, nil
+		}
 		number := gdsInteger(value)
 		if number < 0 {
 			return "", false, localizedError(localization.CypherGraphProceduresNodeIDNegative(strconv.FormatInt(number, 10)), nil)
 		}
 		return strconv.FormatInt(number, 10), true, nil
-	}
-	if node, ok := value.(*storage.Node); ok && node != nil {
-		return string(node.ID), false, nil
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {

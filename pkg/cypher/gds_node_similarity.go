@@ -275,14 +275,14 @@ func readGDSNodeFilter(proj *GraphProjection, value interface{}, selectedLabels 
 // gdsNodeFilterID is a node filter entry's node id: a node's, an integer
 // id, or a numeric or stored string id (including outside the projection).
 func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func(string) bool) (string, bool) {
-	id, ok := gdsNodeID(item)
+	ref, ok := readGDSNode(item, gdsStoredKinds)
 	if !ok {
 		return "", false
 	}
-	node, isString := item.(string)
-	if !isString {
-		return string(id), true
+	if ref.kind != gdsIDText {
+		return ref.key, true
 	}
+	node := ref.key
 	if _, projected := proj.nodeIndex[node]; projected {
 		return node, true
 	}
@@ -472,6 +472,10 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 		weight float64
 	}
 	var shared []sharedNeighbor
+	// Only an explanation or the ordered resource-allocation sum needs the
+	// shared neighbours themselves; the other metrics only count them.
+	resourceAllocation := metric == "RESOURCE_ALLOCATION"
+	keepShared := explain || resourceAllocation
 	for _, edge := range a {
 		weight := weightOf(edge)
 		normA += weight * weight
@@ -497,7 +501,9 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 			intersection += math.Min(wa, wb)
 			union += math.Max(wa, wb)
 			dot += wa * wb
-			shared = append(shared, sharedNeighbor{a[i].target, math.Min(wa, wb)})
+			if keepShared {
+				shared = append(shared, sharedNeighbor{a[i].target, math.Min(wa, wb)})
+			}
 			i++
 			j++
 		}
@@ -514,7 +520,6 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 	default:
 		similarity = intersection / union
 	}
-	resourceAllocation := metric == "RESOURCE_ALLOCATION"
 	if !explain && !resourceAllocation {
 		return similarity, nil
 	}
