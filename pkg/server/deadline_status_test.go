@@ -21,17 +21,22 @@ import (
 // not SyntaxError (#1339).
 func TestHTTPDeadlineStatus(t *testing.T) {
 	for _, err := range []error{
-		nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, true),
-		fmt.Errorf("route: %w", nornicerrors.MarkStatementTimeout(fmt.Errorf("pipeline stage: %w", context.DeadlineExceeded), false)),
+		nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, nornicerrors.ErrDatabaseQueryTimeLimit),
+		fmt.Errorf("route: %w", nornicerrors.MarkStatementTimeout(fmt.Errorf("pipeline stage: %w", context.DeadlineExceeded), nornicerrors.ErrDatabaseQueryTimeLimit)),
 	} {
 		failure := statementError(err)
 		require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOut", failure.Code)
 		require.Equal(t, nornicerrors.TransactionTimedOutMessage, failure.Message)
 	}
-	// A dependency's own deadline the executor did not mark is not the
-	// statement's timeout (review 4300775974).
-	failure := statementError(fmt.Errorf("embedder: %w", context.DeadlineExceeded))
-	require.NotEqual(t, "Neo.ClientError.Transaction.TransactionTimedOut", failure.Code)
+	// A deadline no owner installed (a dependency's own, review 4300775974;
+	// an inherited request deadline, sol-r2-1392) is not the statement's timeout.
+	for _, err := range []error{
+		fmt.Errorf("embedder: %w", context.DeadlineExceeded),
+		nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, context.DeadlineExceeded),
+	} {
+		failure := statementError(err)
+		require.NotEqual(t, "Neo.ClientError.Transaction.TransactionTimedOut", failure.Code)
+	}
 }
 
 // End to end: a statement the database's query time limit stops is reported

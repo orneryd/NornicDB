@@ -1,57 +1,64 @@
 package errors
 
-import stderrors "errors"
-
-// statementTimeoutError is a statement's error after the statement's own
-// deadline stopped it: Neo4j's transaction timeout. Only the statement's owner
-// (the executor, which knows the statement's context) marks one; a
-// dependency's own deadline (an embedder, a remote call) keeps its status.
-// callerDeadline records which deadline stopped it: the caller's (a Bolt
-// client's tx_timeout or the server's statement timeout, an HTTP request's)
-// or only the database's query time limit the executor applied.
-type statementTimeoutError struct {
-	cause          error
-	callerDeadline bool
-}
-
-func (e *statementTimeoutError) Error() string         { return e.cause.Error() }
-func (e *statementTimeoutError) Unwrap() error         { return e.cause }
-func (e *statementTimeoutError) BoltErrorCode() string { return TransactionTimedOut }
-func (e *statementTimeoutError) StatusMessage() string { return TransactionTimedOutMessage }
-
-// MarkStatementTimeout marks err as the error of a statement its own deadline
-// stopped (Transaction.TransactionTimedOut); callerDeadline says the caller's
-// deadline expired, not only the database's query time limit. nil stays nil.
-func MarkStatementTimeout(err error, callerDeadline bool) error {
-	if err == nil {
-		return nil
-	}
-	var marked *statementTimeoutError
-	if stderrors.As(err, &marked) {
-		return err
-	}
-	return &statementTimeoutError{cause: err, callerDeadline: callerDeadline}
-}
-
-// CallerDeadlineTimeout reports whether err is a statement timeout its
-// caller's deadline caused (MarkStatementTimeout with callerDeadline): a Bolt
-// client's tx_timeout then reports TransactionTimedOutClientConfiguration.
-func CallerDeadlineTimeout(err error) bool {
-	var marked *statementTimeoutError
-	return stderrors.As(err, &marked) && marked.callerDeadline
-}
+import (
+	"context"
+	stderrors "errors"
+)
 
 // statementDeadline is the cancellation cause a statement deadline's owner
-// installs it with (context.WithTimeoutCause).
+// installs it with (context.WithTimeoutCause): the cause records which owner's
+// deadline ended the statement, whatever expires after it. It is a deadline,
+// so errors.Is(cause, context.DeadlineExceeded) holds.
 type statementDeadline struct {
 	text, code, message string
 }
 
 func (d *statementDeadline) Error() string { return d.text }
+func (d *statementDeadline) Unwrap() error { return context.DeadlineExceeded }
 
-// The owned statement deadlines.
+// The owned statement deadlines. A deadline installed with any other cause
+// (an embedder's request budget, an inherited HTTP request deadline, a
+// dependency's own timeout) is not a transaction timeout.
 var (
-	ErrDatabaseQueryTimeLimit   error = &statementDeadline{"database query time limit exceeded", TransactionTimedOut, TransactionTimedOutMessage}
-	ErrServerStatementTimeout   error = &statementDeadline{"server statement timeout exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	// ErrDatabaseQueryTimeLimit ends a statement at its database's query
+	// time limit (multidb query limits).
+	ErrDatabaseQueryTimeLimit error = &statementDeadline{"database query time limit exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	// ErrServerStatementTimeout ends a Bolt statement at the server's
+	// statement timeout, for a client that set no tx_timeout.
+	ErrServerStatementTimeout error = &statementDeadline{"server statement timeout exceeded", TransactionTimedOut, TransactionTimedOutMessage}
+	// ErrClientTransactionTimeout ends a Bolt statement at its client's
+	// tx_timeout.
 	ErrClientTransactionTimeout error = &statementDeadline{"client transaction timeout exceeded", TransactionTimedOutClientConfiguration, TransactionTimedOutClientConfigurationMessage}
 )
+
+// statementTimeoutError is a statement's error after one of its owned
+// deadlines stopped it: Neo4j's transaction timeout, with the status of the
+// deadline that ended it first.
+type statementTimeoutError struct {
+	err      error
+	deadline *statementDeadline
+}
+
+func (e *statementTimeoutError) Error() string         { return e.err.Error() }
+func (e *statementTimeoutError) Unwrap() error         { return e.err }
+func (e *statementTimeoutError) BoltErrorCode() string { return e.deadline.code }
+func (e *statementTimeoutError) StatusMessage() string { return e.deadline.message }
+
+// MarkStatementTimeout marks err, a statement's deadline error, with the
+// status of the owned deadline that ended its context first: cause is
+// context.Cause of the statement's context. Any other cause leaves err as it
+// is. nil stays nil; marking is idempotent.
+func MarkStatementTimeout(err, cause error) error {
+	if err == nil || !stderrors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	var deadline *statementDeadline
+	if !stderrors.As(cause, &deadline) {
+		return err
+	}
+	var marked *statementTimeoutError
+	if stderrors.As(err, &marked) {
+		return err
+	}
+	return &statementTimeoutError{err: err, deadline: deadline}
+}

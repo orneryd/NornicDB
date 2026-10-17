@@ -108,8 +108,9 @@ type statusMessenger interface {
 //   - a transaction over the storage size limit is
 //     General.TransactionOutOfMemoryError, a ClientError drivers don't retry,
 //     with a message saying to split it;
-//   - a statement its own deadline stopped (MarkStatementTimeout, set by the
-//     statement's owner) is Transaction.TransactionTimedOut;
+//   - a statement an owned deadline stopped (MarkStatementTimeout, from its
+//     context's cause) is Transaction.TransactionTimedOut, or
+//     TransactionTimedOutClientConfiguration for a Bolt client's tx_timeout;
 //   - a constraint violation is Schema.ConstraintValidationFailed;
 //   - a message that starts with (or contains) a "Neo.…: " code keeps that code;
 //   - anything else is Statement.SyntaxError.

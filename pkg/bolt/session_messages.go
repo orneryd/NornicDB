@@ -105,12 +105,13 @@ func (s *Session) handleRun(data []byte) error {
 	// Pick the effective timeout: client tx_timeout wins over
 	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
 	// per-call cap is authoritative; the server cap is the fallback
-	// for clients that didn't set one).
+	// for clients that didn't set one). The deadline's cause names its
+	// owner, so a statement it ends reports that owner's timeout (#1339).
 	var runTimeout time.Duration
-	clientTimeout := false
+	runTimeoutCause := nornicerrors.ErrServerStatementTimeout
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		runTimeout = time.Duration(txTimeout) * time.Millisecond
-		clientTimeout = true
+		runTimeoutCause = nornicerrors.ErrClientTransactionTimeout
 	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
 		runTimeout = s.server.config.BoltStatementTimeout
 	}
@@ -218,7 +219,7 @@ func (s *Session) handleRun(data []byte) error {
 	var ctx context.Context
 	var runCancel context.CancelFunc
 	if runTimeout > 0 {
-		ctx, runCancel = context.WithTimeout(parentCtx, runTimeout)
+		ctx, runCancel = context.WithTimeoutCause(parentCtx, runTimeout, runTimeoutCause)
 	} else {
 		ctx, runCancel = context.WithCancel(parentCtx)
 	}
@@ -244,7 +245,7 @@ func (s *Session) handleRun(data []byte) error {
 		// once it has more than lazyResultThreshold (#939); RUN and those
 		// PULLs are then already answered.
 		var served bool
-		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart, clientTimeout)
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
 		if served {
 			return nil
 		}
@@ -283,7 +284,6 @@ func (s *Session) handleRun(data []byte) error {
 			}
 		}
 		code, msg := mapBoltQueryErrorForQuery(err, query)
-		code, msg = clientTimeoutStatus(err, code, msg, clientTimeout)
 		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
 	}
 	rows := 0
@@ -1881,16 +1881,4 @@ func (s *Session) requestIdentity() *cypher.RequestIdentity {
 	}
 	s.identity, s.identityAuth = identity, s.authResult
 	return identity
-}
-
-// clientTimeoutStatus is a statement failure's status when the deadline that
-// stopped the statement was its client's tx_timeout (not a shorter database
-// query time limit the executor applied): Neo4j reports the timeout the client
-// configured (TransactionTimedOutClientConfiguration), on every path a
-// failure reaches the client, streamed results included.
-func clientTimeoutStatus(err error, code, message string, clientTimeout bool) (string, string) {
-	if clientTimeout && code == nornicerrors.TransactionTimedOut && nornicerrors.CallerDeadlineTimeout(err) {
-		return transactionTimedOutCode, transactionTimedOutMsg
-	}
-	return code, message
 }

@@ -52,6 +52,7 @@ import (
 	"sync"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -446,10 +447,11 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 		c.activeQueriesMu.Unlock()
 	}
 
-	// Create context with timeout if limit is set
+	// Create context with timeout if limit is set. Its cause names the
+	// database's limit as the deadline that ended the statement.
 	var cancel context.CancelFunc
 	if queryLimits.MaxQueryTime > 0 {
-		ctx, cancel = context.WithTimeout(ctx, queryLimits.MaxQueryTime)
+		ctx, cancel = context.WithTimeoutCause(ctx, queryLimits.MaxQueryTime, nornicerrors.ErrDatabaseQueryTimeLimit)
 	} else {
 		cancel = func() {}
 	}

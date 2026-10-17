@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -99,15 +98,17 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
-	// The statement owns its deadline: its client's tx_timeout and, once they
-	// apply, the database's query limits (deadlineCtx). An error the statement
-	// returns because that deadline passed is Neo4j's transaction timeout
-	// (#1339); a dependency's own deadline (an embedder, a remote call) is not.
-	callerCtx, deadlineCtx := ctx, ctx
+	// The statement's context (deadlineCtx, once the database's query limits
+	// apply) ends at the first of its deadlines, and its cause names that
+	// deadline's owner: a Bolt client's tx_timeout, the server's statement
+	// timeout, the database's query time limit. A deadline error the
+	// statement returns is that owner's transaction timeout (#1339); a
+	// deadline no owner installed (a caller's own budget, a dependency's
+	// timeout) keeps its error as it is.
+	deadlineCtx := ctx
 	defer func() {
-		if retErr != nil && errors.Is(retErr, context.DeadlineExceeded) && errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
-			// The caller's deadline, or only the database's query time limit.
-			retErr = nornicerrors.MarkStatementTimeout(retErr, errors.Is(callerCtx.Err(), context.DeadlineExceeded))
+		if retErr != nil {
+			retErr = nornicerrors.MarkStatementTimeout(retErr, context.Cause(deadlineCtx))
 		}
 	}()
 	// Every rejection of the caller's statement fails its explicit transaction,
