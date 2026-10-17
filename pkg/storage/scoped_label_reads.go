@@ -4,9 +4,9 @@ import "strings"
 
 // ScopedLabelNodeReader is an optional extension interface for label reads
 // within one database. The label index is shared by every database on the
-// server, so an unscoped label read loads and decodes the label's nodes in
-// all of them; a scoped read skips another database's index entries before
-// reading their nodes (#851). scope is the database's node ID prefix ("db:");
+// server. Scoped Badger reads retain an in-scope streaming prefix, then use
+// the existing namespace dictionary at the first foreign boundary without
+// enumerating that foreign run. scope is the database's node ID prefix ("db:");
 // "" reads every database, as the unscoped methods do.
 //
 // Engines that wrap another engine pass the scope down when the inner engine
@@ -19,6 +19,21 @@ type ScopedLabelNodeReader interface {
 	StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error
 	GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error)
 }
+
+// ScopedLabelNodeIDReader is the ID-only counterpart to ScopedLabelNodeReader.
+// Its scope uses the same physical database prefix, and false stops the visit.
+type ScopedLabelNodeIDReader interface {
+	ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error
+}
+
+var (
+	_ ScopedLabelNodeIDReader = (*BadgerEngine)(nil)
+	_ ScopedLabelNodeIDReader = (*MemoryEngine)(nil)
+	_ ScopedLabelNodeIDReader = (*WALEngine)(nil)
+	_ ScopedLabelNodeIDReader = (*TracedEngine)(nil)
+	_ LabelNodeIDLookupEngine = (*TracedEngine)(nil)
+	_ ScopedLabelNodeReader   = (*TracedEngine)(nil)
+)
 
 // nodeIDInScope reports whether id belongs to the database scope ("" is every
 // database).
@@ -62,4 +77,64 @@ func getNodesByLabelVisibleAtInScope(engine Engine, scope, label string, version
 		return provider.GetNodesByLabelVisibleAt(label, version)
 	}
 	return nil, ErrNotImplemented
+}
+
+func forEachNodeIDByLabelInScope(engine Engine, scope, label string, visit func(NodeID) bool) error {
+	if visit == nil {
+		return nil
+	}
+	if scoped, ok := engine.(ScopedLabelNodeIDReader); ok {
+		return scoped.ForEachNodeIDByLabelInScope(scope, label, visit)
+	}
+	inScope := func(id NodeID) bool {
+		return !nodeIDInScope(id, scope) || visit(id)
+	}
+	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
+		return lookup.ForEachNodeIDByLabel(label, inScope)
+	}
+	nodes, err := getNodesByLabelInScope(engine, scope, label)
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if node != nil && !inScope(node.ID) {
+			break
+		}
+	}
+	return nil
+}
+
+// ForEachNodeIDByLabelInScope forwards scoped ID iteration through WAL.
+func (w *WALEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
+	return forEachNodeIDByLabelInScope(w.engine, scope, label, visit)
+}
+
+// ForEachNodeIDByLabelInScope forwards scoped ID iteration through tracing.
+func (t *TracedEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
+	return forEachNodeIDByLabelInScope(t.Engine, scope, label, visit)
+}
+
+// ForEachNodeIDByLabel forwards ID iteration through tracing.
+func (t *TracedEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+	return t.ForEachNodeIDByLabelInScope("", label, visit)
+}
+
+// GetNodesByLabelInScope forwards the scoped label reader through tracing.
+func (t *TracedEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
+	return getNodesByLabelInScope(t.Engine, scope, label)
+}
+
+// GetFirstNodeByLabelInScope forwards the scoped first reader through tracing.
+func (t *TracedEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
+	return getFirstNodeByLabelInScope(t.Engine, scope, label)
+}
+
+// StreamNodesByLabelProjectedInScope forwards the scoped stream through tracing.
+func (t *TracedEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+	return streamNodesByLabelProjectedInScope(t.Engine, scope, label, properties, visit)
+}
+
+// GetNodesByLabelVisibleAtInScope forwards the scoped snapshot read through tracing.
+func (t *TracedEngine) GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error) {
+	return getNodesByLabelVisibleAtInScope(t.Engine, scope, label, version)
 }

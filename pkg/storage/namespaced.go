@@ -481,29 +481,12 @@ func (n *NamespacedEngine) ForEachNodeIDByLabel(label string, visit func(NodeID)
 		return nil
 	}
 
-	if lookup, ok := n.inner.(LabelNodeIDLookupEngine); ok {
-		prefix := n.namespace + n.separator
-		return lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
-			if !strings.HasPrefix(string(id), prefix) {
-				return true
-			}
-			return visit(n.unprefixNodeID(id))
-		})
-	}
-
-	nodes, err := n.GetNodesByLabel(label)
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		if node == nil {
-			continue
+	return forEachNodeIDByLabelInScope(n.inner, n.nodeScope(), label, func(id NodeID) bool {
+		if !n.hasNodePrefix(id) {
+			return true
 		}
-		if !visit(node.ID) {
-			return nil
-		}
-	}
-	return nil
+		return visit(n.unprefixNodeID(id))
+	})
 }
 
 func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {

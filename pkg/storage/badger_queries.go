@@ -25,22 +25,26 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // (ScopedLabelNodeReader).
 func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	var node *Node
+	if b.writeBehind != nil {
+		// Share the overlay's shadowing and current-label decisions with the
+		// ordinary stream, while stopping after its first visible node.
+		err := b.StreamNodesByLabelProjectedInScope(scope, label, nil, func(first *Node) error {
+			node = first
+			return ErrIterationStopped
+		})
+		if err == ErrIterationStopped {
+			err = nil
+		}
+		return node, err
+	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
+			nodeID := it.NodeID()
 
 			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
@@ -68,7 +72,7 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 
 			return nil // Found first node, stop
 		}
-		return nil
+		return it.Err()
 	})
 
 	return node, err
@@ -77,14 +81,37 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 // ForEachNodeIDByLabel streams node IDs for a label without decoding nodes.
 // Stops early when visit returns false.
 func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+	return b.ForEachNodeIDByLabelInScope("", label, visit)
+}
+
+// ForEachNodeIDByLabelInScope streams only this database's label IDs. Empty
+// scope preserves the unscoped interface's behavior.
+func (b *BadgerEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	if b.writeBehind != nil {
+		err := b.StreamNodesByLabelProjectedInScope(scope, label, []string{}, func(node *Node) error {
+			if !visit(node.ID) {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		if err == ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
 
 	cachedID, cachedOK := b.labelCacheGetFirst(label)
+	// The first-ID cache is global. Scoped reads keep their own ordered
+	// candidate stream instead of borrowing or replacing another scope's hint.
+	if scope != "" {
+		cachedID, cachedOK = "", false
+	}
 	cachedValid := false
 
 	labelGen := b.labelFirstCacheGen.current()
@@ -109,22 +136,13 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 			}
 		}
 
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
-		labelLen := len(label)
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, labelLen)
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" {
-				continue
-			}
+			nodeID := it.NodeID()
 			if cachedValid && nodeID == cachedID {
 				continue
 			}
@@ -132,7 +150,9 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 				continue
 			}
 			if !cachedValid {
-				b.labelCacheSetFirst(labelGen, label, nodeID)
+				if scope == "" {
+					b.labelCacheSetFirst(labelGen, label, nodeID)
+				}
 				cachedValid = true
 			}
 			if !visit(nodeID) {
@@ -140,7 +160,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 			}
 		}
 
-		return nil
+		return it.Err()
 	})
 	if err == ErrIterationStopped {
 		return nil
@@ -163,20 +183,12 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
+			nodeID := it.NodeID()
 
 			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
@@ -220,7 +232,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			loaded = append(loaded, node)
 			nodes = append(nodes, node)
 		}
-		return nil
+		return it.Err()
 	})
 
 	if err != nil {
@@ -329,18 +341,13 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			err  error
 		}
 		var pending []pendingNode
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 		lookups := 0
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			nodeID := it.NodeID()
+			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -365,6 +372,9 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if err := readPoint(nodeID); err != nil {
 				return err
 			}
+		}
+		if err := it.Err(); err != nil {
+			return err
 		}
 		if len(pending) == 0 {
 			return nil

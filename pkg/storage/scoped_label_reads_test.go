@@ -170,5 +170,6 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 		require.NoError(t, err)
 	}
 	shared := scan()
+	t.Logf("scoped label read cost: alone=%s shared=%s bound=%s", alone, shared, 5*alone+200*time.Millisecond)
 	require.Less(t, shared, 5*alone+200*time.Millisecond, "alone %s, with 50,000 :Person in another database %s", alone, shared)
 }
