@@ -33,16 +33,16 @@ import (
 // publishingPaths maps each function that hands the stage a publication to
 // the test that runs it under a held older publication.
 var publishingPaths = map[string]string{
-	"CreateNode":                 "TestPostCommitPublicationOrder (create)",
-	"UpdateNode":                 "TestPostCommitPublicationOrder (update, restore, label add and remove)",
-	"DeleteNode":                 "TestPostCommitPublicationOrder (delete)",
-	"CreateEdge":                 "TestPostCommitEdgePublicationOrder (create)",
-	"UpdateEdge":                 "TestPostCommitEdgePublicationOrder (update, restore, type change)",
-	"DeleteEdge":                 "TestPostCommitEdgePublicationOrder (delete)",
-	"publication":                "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx); the commit writer's pending-embedding candidates",
+	"CreateNode":  "TestPostCommitPublicationOrder (create)",
+	"UpdateNode":  "TestPostCommitPublicationOrder (update, restore, label add and remove)",
+	"DeleteNode":  "TestPostCommitPublicationOrder (delete)",
+	"CreateEdge":  "TestPostCommitEdgePublicationOrder (create)",
+	"UpdateEdge":  "TestPostCommitEdgePublicationOrder (update, restore, type change)",
+	"DeleteEdge":  "TestPostCommitEdgePublicationOrder (delete)",
+	"publication": "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx); the commit writer's pending-embedding candidates",
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
-	"EnqueueDeindexIfSuppressed": "TestPostCommitPublicationOrderSuppression",
-	"UpdateNodeEmbeddingSidecar": "TestPostCommitPublicationOrderEmbeddingSidecar",
+	"EnqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
+	"UpdateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
 }
 
 // stageLocks classifies every lock a publication takes, by the struct field
@@ -89,7 +89,7 @@ var heldAcrossCommit = map[string]string{}
 // takes a lock some committer holds across its stage wait: why the two are
 // never the same instance in a wait cycle.
 var lockOrderReviewed = map[string]string{
-	"StageSchemaChanges holds SchemaManager.mu while taking BadgerTransaction.mu": "the SchemaManager is the transaction's private schema view (tx.knowledgeSchema), never a schema a publication locks, and the BadgerTransaction is the staging transaction itself, which cannot be committing at the same time",
+	"StageSchemaChanges holds SchemaManager.mu while taking BadgerTransaction.mu":                                    "the SchemaManager is the transaction's private schema view (tx.knowledgeSchema), never a schema a publication locks, and the BadgerTransaction is the staging transaction itself, which cannot be committing at the same time",
 	"FindNodeNeedingEmbedding holds pendingEmbeddingCandidates.mu while withUpdate takes managedBadgerDB.commitGate": "commitGate is held only while a commit takes its timestamp and writes (commitShared), by a large commit until it releases the intent (beginLargeCommit to release) and by the write-behind acknowledgement (commitBufferedLocked); none of them waits for the stage, which applyThrough runs after the gate is released. FindNodeNeedingEmbedding's own commit carries no publication (it only deletes pending-embedding keys), so it does not run the stage",
 }
 
