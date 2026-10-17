@@ -62,66 +62,15 @@ func (a *CudaHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries 
 	if a.device == nil {
 		return nil, nil, cuda.ErrCUDANotAvailable
 	}
-	if topK > 256 {
-		topK = 256
-	}
-	shardSize := a.maxFrontierPerShard
-	if shardSize <= 0 {
-		shardSize = 65536
-	}
-	merged := make([][]hnswCandidateDistance, len(queries))
-	flat := make([]float32, 0, min(len(frontier), shardSize)*a.dim)
-	for start := 0; start < len(frontier); start += shardSize {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		end := start + shardSize
-		if end > len(frontier) {
-			end = len(frontier)
-		}
-		flat = flattenHNSWBuildFrontierInto(flat[:0], frontier[start:end], a.dim)
-		if len(flat) == 0 {
-			continue
-		}
+	return shardedFrontierCandidateSearch(ctx, frontier, a.dim, a.maxFrontierPerShard, topK, queries, wantDistances, func(ctx context.Context, flat []float32, n int, queries [][]float32, k int) ([][]uint32, [][]float32, error) {
 		frontierBuf, err := a.device.NewBuffer(flat, cuda.MemoryDevice)
 		if err != nil {
 			return nil, nil, err
 		}
-		indices, distances, err := a.scoreResidentBuffer(ctx, frontierBuf, end-start, queries, min(topK, end-start))
-		if err != nil {
-			frontierBuf.Release()
-			return nil, nil, err
-		}
-		for qi, row := range indices {
-			for j, id := range row {
-				merged[qi] = append(merged[qi], hnswCandidateDistance{index: start + int(id), dist: distances[qi][j]})
-			}
-		}
+		indices, distances, err := a.scoreResidentBuffer(ctx, frontierBuf, n, queries, k)
 		frontierBuf.Release()
-	}
-
-	outIdx := make([][]int, len(queries))
-	var outDist [][]float32
-	if wantDistances {
-		outDist = make([][]float32, len(queries))
-	}
-	for qi := range queries {
-		sortHNSWBuildCandidates(merged[qi])
-		if topK < len(merged[qi]) {
-			merged[qi] = merged[qi][:topK]
-		}
-		outIdx[qi] = make([]int, len(merged[qi]))
-		if wantDistances {
-			outDist[qi] = make([]float32, len(merged[qi]))
-		}
-		for i, c := range merged[qi] {
-			outIdx[qi][i] = c.index
-			if wantDistances {
-				outDist[qi][i] = c.dist
-			}
-		}
-	}
-	return outIdx, outDist, nil
+		return indices, distances, err
+	})
 }
 
 func (a *CudaHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, queries [][]float32, graph *hnswBuildGraphSnapshot, topK int) ([][]uint32, [][]float32, error) {
@@ -130,9 +79,6 @@ func (a *CudaHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, que
 	}
 	if a.device == nil {
 		return nil, nil, cuda.ErrCUDANotAvailable
-	}
-	if topK > 256 {
-		topK = 256
 	}
 	return candidateSearchGraphBatched(ctx, a, queries, graph, topK)
 }
