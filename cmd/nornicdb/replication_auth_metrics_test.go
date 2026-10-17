@@ -159,5 +159,5 @@ func (cmdNullStorage) GetWALPosition() (uint64, error)         { return 0, nil }
 func (cmdNullStorage) GetWALEntries(uint64, int) ([]*replication.WALEntry, error) {
 	return nil, nil
 }
-func (cmdNullStorage) WriteSnapshot(replication.SnapshotWriter) error  { return nil }
+func (cmdNullStorage) WriteSnapshot(replication.SnapshotWriter) error   { return nil }
 func (cmdNullStorage) RestoreSnapshot(replication.SnapshotReader) error { return nil }

@@ -195,15 +195,15 @@ func TestAppendValue_ExtraTypes(t *testing.T) {
 		args        []any
 		wantContain string
 	}{
-		"uint64":   {[]any{slog.Uint64("u", 42)}, `"u":42`},
-		"NaN":      {[]any{slog.Float64("f", math.NaN())}, `"NaN"`},
-		"+Inf":     {[]any{slog.Float64("f", math.Inf(1))}, `"+Inf"`},
-		"-Inf":     {[]any{slog.Float64("f", math.Inf(-1))}, `"-Inf"`},
-		"time":     {[]any{slog.Time("t", time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))}, `"t":"2020-01-02T03:04:05Z"`},
-		"bytes":    {[]any{slog.Any("b", []byte{0x01, 0xab})}, `"b":"01ab"`},
-		"error":    {[]any{slog.Any("e", errors.New("boom"))}, `"e":"boom"`},
-		"strings":  {[]any{slog.Any("ss", []string{"a", "b"})}, `"ss":["a","b"]`},
-		"nilany":   {[]any{slog.Any("n", nil)}, `"n":null`},
+		"uint64":  {[]any{slog.Uint64("u", 42)}, `"u":42`},
+		"NaN":     {[]any{slog.Float64("f", math.NaN())}, `"NaN"`},
+		"+Inf":    {[]any{slog.Float64("f", math.Inf(1))}, `"+Inf"`},
+		"-Inf":    {[]any{slog.Float64("f", math.Inf(-1))}, `"-Inf"`},
+		"time":    {[]any{slog.Time("t", time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))}, `"t":"2020-01-02T03:04:05Z"`},
+		"bytes":   {[]any{slog.Any("b", []byte{0x01, 0xab})}, `"b":"01ab"`},
+		"error":   {[]any{slog.Any("e", errors.New("boom"))}, `"e":"boom"`},
+		"strings": {[]any{slog.Any("ss", []string{"a", "b"})}, `"ss":["a","b"]`},
+		"nilany":  {[]any{slog.Any("n", nil)}, `"n":null`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
