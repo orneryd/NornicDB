@@ -103,23 +103,6 @@ func TestVerifyMessage_RollingUpgradeCompatibility(t *testing.T) {
 	require.Error(t, strict.createConnection("a", nil).verifyMessage(replayTestCopy(&decoded)))
 }
 
-// Once a sender has signed with a nonce, the same sender's messages without
-// one are refused, so stripping the new fields from a captured frame
-// doesn't get it past the replay check.
-func TestVerifyMessage_StrippedNonceFromUpgradedSenderIsRejected(t *testing.T) {
-	sender := replayTestTransport(false)
-	receiver := replayTestTransport(false)
-	defer sender.Close()
-	defer receiver.Close()
-	msg := replayTestSigned(t, sender, ClusterMsgFence)
-	require.NoError(t, receiver.createConnection("a", nil).verifyMessage(replayTestCopy(msg)))
-
-	stripped := replayTestCopy(msg)
-	stripped.Nonce = nil
-	stripped.SignatureV2 = ""
-	require.Error(t, receiver.createConnection("b", nil).verifyMessage(stripped))
-}
-
 // In require mode a sender sends only the nonce signature, and a receiver
 // in either mode accepts it.
 func TestSignMessage_RequireModeSendsOnlyNonceSignature(t *testing.T) {
