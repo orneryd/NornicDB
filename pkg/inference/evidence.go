@@ -71,6 +71,10 @@ import (
 )
 
 // DefaultThresholds defines standard evidence thresholds per edge label.
+// Read-only: buffers copy it when they are created, and nothing in NornicDB
+// writes it after package initialization; changing it at run time would race
+// with NewEvidenceBuffer. Override thresholds per buffer (WithThreshold,
+// SetThreshold).
 var DefaultThresholds = map[string]EvidenceThreshold{
 	"relates_to": {
 		MinCount:    3,
@@ -105,6 +109,7 @@ var DefaultThresholds = map[string]EvidenceThreshold{
 }
 
 // DefaultEvidenceThreshold is used when no label-specific threshold is configured.
+// Read-only after package initialization, like DefaultThresholds.
 var DefaultEvidenceThreshold = EvidenceThreshold{
 	MinCount:    3,
 	MinScore:    0.5,
@@ -408,7 +413,7 @@ func (eb *EvidenceBuffer) GetThreshold(label string) EvidenceThreshold {
 }
 
 // GetEvidence returns the current evidence for an edge pair.
-// Returns nil if no evidence exists.
+// Returns nil if no evidence exists. The result is an independent copy.
 func (eb *EvidenceBuffer) GetEvidence(src, dst, label string) *Evidence {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
@@ -419,8 +424,16 @@ func (eb *EvidenceBuffer) GetEvidence(src, dst, label string) *Evidence {
 		return nil
 	}
 
-	// Return a copy to prevent mutation
-	return &Evidence{
+	snapshot := ev.snapshot()
+	return &snapshot
+}
+
+// snapshot returns an independent copy of ev: its scalars and new copies of
+// Sessions, Signals and Metadata, which AddEvidence keeps changing in place.
+// It is the one reader that hands buffered evidence to callers. Caller holds
+// the buffer's lock.
+func (ev *Evidence) snapshot() Evidence {
+	return Evidence{
 		Key:      ev.Key,
 		Count:    ev.Count,
 		ScoreSum: ev.ScoreSum,
@@ -542,7 +555,8 @@ func (eb *EvidenceBuffer) Size() int {
 }
 
 // GetPendingEdges returns evidence entries that are close to threshold.
-// Useful for monitoring and proactive materialization.
+// Useful for monitoring and proactive materialization. Each entry is an
+// independent copy, safe to read while evidence keeps arriving.
 func (eb *EvidenceBuffer) GetPendingEdges(minProgress float64) []Evidence {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
@@ -552,7 +566,7 @@ func (eb *EvidenceBuffer) GetPendingEdges(minProgress float64) []Evidence {
 		threshold := eb.getThreshold(ev.Key.Label)
 		progress := calculateProgress(ev, threshold)
 		if progress >= minProgress && progress < 1.0 {
-			pending = append(pending, *ev)
+			pending = append(pending, ev.snapshot())
 		}
 	}
 	return pending
@@ -625,21 +639,27 @@ func NewEvidenceBufferWithOptions(opts ...EvidenceBufferOption) *EvidenceBuffer 
 	return eb
 }
 
-// Global singleton for convenience
-var globalEvidenceBuffer *EvidenceBuffer
-var globalEvidenceOnce sync.Once
+// Global singleton for convenience. globalEvidenceMu owns the pointer, so
+// GlobalEvidenceBuffer and ResetGlobalEvidenceBuffer may run concurrently.
+var (
+	globalEvidenceMu     sync.Mutex
+	globalEvidenceBuffer *EvidenceBuffer
+)
 
 // GlobalEvidenceBuffer returns the global evidence buffer singleton.
 func GlobalEvidenceBuffer() *EvidenceBuffer {
-	globalEvidenceOnce.Do(func() {
+	globalEvidenceMu.Lock()
+	defer globalEvidenceMu.Unlock()
+	if globalEvidenceBuffer == nil {
 		globalEvidenceBuffer = NewEvidenceBuffer()
-	})
+	}
 	return globalEvidenceBuffer
 }
 
-// ResetGlobalEvidenceBuffer resets the global evidence buffer.
-// Primarily for testing.
+// ResetGlobalEvidenceBuffer resets the global evidence buffer; the next
+// GlobalEvidenceBuffer call creates a new one. Primarily for testing.
 func ResetGlobalEvidenceBuffer() {
-	globalEvidenceOnce = sync.Once{}
+	globalEvidenceMu.Lock()
+	defer globalEvidenceMu.Unlock()
 	globalEvidenceBuffer = nil
 }
