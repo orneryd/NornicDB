@@ -94,10 +94,6 @@ func (s *Service) applyWrite(dimensions int, m liveMutation, load func() (liveMu
 		start = s.claimNodeAdmission()
 		s.recordPopulationWriteLocked(m)
 	}
-	if err := s.materializeNodeFulltextLocked(); err != nil {
-		unlock()
-		return m, nil, err
-	}
 	s.provisionalWrite = restorable && !s.nodeSourcesCompleteLocked()
 	return m, func() {
 		s.provisionalWrite = false

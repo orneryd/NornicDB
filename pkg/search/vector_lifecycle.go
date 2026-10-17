@@ -276,11 +276,6 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 	}
 }
 
-func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
-	s.nodeSources.fulltextCheckpoint = path
-	s.nodeSources.fulltextCheckpointCount = count
-}
-
 // beginSourceStepLocked marks a source-replacement step as running. Caller
 // holds indexMu (steps never overlap) and calls the returned end once the
 // recorded writes are re-applied.

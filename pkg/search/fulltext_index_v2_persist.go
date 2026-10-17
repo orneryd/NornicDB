@@ -33,6 +33,18 @@ type bm25V1Snapshot struct {
 }
 
 func (f *FulltextIndexV2) Save(path string) error {
+	version, err := f.saveSnapshot(path)
+	if err != nil {
+		return err
+	}
+	f.markPersisted(version)
+	return nil
+}
+
+// saveSnapshot writes a copy of the index to path and returns the version it
+// captured, without marking the index persisted: a caller that publishes the
+// file elsewhere acknowledges it with markPersisted once that succeeds.
+func (f *FulltextIndexV2) saveSnapshot(path string) (uint64, error) {
 	f.lockWithCurrentLexicon()
 	docs := make(map[string]string, len(f.documents))
 	for k, v := range f.documents {
@@ -66,7 +78,7 @@ func (f *FulltextIndexV2) Save(path string) error {
 	version := f.version
 	f.mu.RUnlock()
 
-	return saveBM25V2Snapshot(path, bm25V2Snapshot{
+	err := saveBM25V2Snapshot(path, bm25V2Snapshot{
 		Version:        bm25V2FormatVersion,
 		Documents:      docs,
 		DocIDToNum:     docIDToNum,
@@ -77,9 +89,11 @@ func (f *FulltextIndexV2) Save(path string) error {
 		AvgDocLength:   avg,
 		DocCount:       docCount,
 		TotalDocLength: total,
-	}, func() {
-		f.markPersisted(version)
-	})
+	}, func() {})
+	if err != nil {
+		return 0, err
+	}
+	return version, nil
 }
 
 func (f *FulltextIndexV2) SaveNoCopy(path string) error {

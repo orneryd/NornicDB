@@ -176,6 +176,8 @@ type bm25Index interface {
 	SaveNoCopy(path string) error
 	Load(path string) error
 	loadSnapshot(path string) (bool, error)
+	saveSnapshot(path string) (uint64, error)
+	markPersisted(version uint64)
 	IsDirty() bool
 	IndexBatch(entries []FulltextBatchEntry)
 }
@@ -235,6 +237,8 @@ func (disabledBM25Index) SaveNoCopy(string) error                     { return n
 func (disabledBM25Index) Load(string) error                           { return nil }
 func (disabledBM25Index) loadSnapshot(string) (bool, error)           { return false, nil }
 func (disabledBM25Index) IsDirty() bool                               { return false }
+func (disabledBM25Index) saveSnapshot(string) (uint64, error)         { return 0, nil }
+func (disabledBM25Index) markPersisted(uint64)                        {}
 func (disabledBM25Index) IndexBatch([]FulltextBatchEntry)             {}
 
 var searchablePropertiesSet = func() map[string]struct{} {
@@ -2291,7 +2295,10 @@ func (s *Service) persistBaseIndexes() error {
 			s.logPrintf("📇 Persist: BM25 skip (unchanged)")
 		} else {
 			s.logPrintf("📇 Persist: saving BM25 to %s...", ftPath)
-			if err := s.fulltext().SaveNoCopy(ftPath); err != nil {
+			// Save copies the index under its lock and encodes the copy: live
+			// writes are admitted during a population (F-I86 B1), so the
+			// encoder must not read the live maps (sol r3 finding 1).
+			if err := s.fulltext().Save(ftPath); err != nil {
 				s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", ftPath, err)
 				persistErr = errors.Join(persistErr, fmt.Errorf("save BM25 index: %w", err))
 			} else {
@@ -2426,7 +2433,12 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 	// Published only while this index is still live and no population owns the
 	// text source: a population clears and restores it in place.
 	fulltext := s.fulltext()
-	published, err := s.publishStagedArtifact(fulltextPath, fulltext.Save, func() bool {
+	var version uint64
+	published, err := s.publishStagedArtifact(fulltextPath, func(staged string) error {
+		var saveErr error
+		version, saveErr = fulltext.saveSnapshot(staged)
+		return saveErr
+	}, func() bool {
 		return s.fulltext() == fulltext && !s.buildInProgress.Load()
 	})
 	if err != nil {
@@ -2437,6 +2449,9 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 		s.logPrintf("📇 Background persist: BM25 index changed owner while it was saved; not published")
 		return
 	}
+	// Acknowledged only once published: a rejected or failed publication
+	// leaves the index dirty, so a later persist retries (sol r3 finding 3).
+	fulltext.markPersisted(version)
 	s.logPrintf("📇 Background persist: BM25 index saved to %s", fulltextPath)
 }
 
@@ -3990,12 +4005,6 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	// From here the operation replaces sources and readiness; a cancelled or
 	// refused build before this point leaves the current indexes serving.
 	sourcesTouched = true
-	s.indexMu.Lock()
-	reloadErr := s.materializeNodeFulltextLocked()
-	s.indexMu.Unlock()
-	if reloadErr != nil {
-		return reloadErr
-	}
 	// Prevent a new snapshot while the base vector store is being replaced.
 	s.setVectorsChanging(true)
 	defer s.setVectorsChanging(false)
@@ -4455,12 +4464,6 @@ func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 	runPopulationHook(&annWarmupStartedHook, s)
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	s.indexMu.Lock()
-	reloadErr := s.materializeNodeFulltextLocked()
-	s.indexMu.Unlock()
-	if reloadErr != nil {
-		return reloadErr
 	}
 	return s.finishBuildWithFinalPersist(ctx)
 }

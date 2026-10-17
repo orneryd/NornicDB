@@ -28,11 +28,9 @@ func (m *baseOperationMutex) Unlock() { m.token() <- struct{}{} }
 // indexMu protects it; identity, dirty state and positive counts do not establish
 // completeness. A parked fulltext checkpoint remains the logical text source.
 type nodeSourceRecord struct {
-	textComplete            bool
-	vectorsComplete         bool
-	memoryAuthoritative     bool
-	fulltextCheckpoint      string
-	fulltextCheckpointCount int
+	textComplete        bool
+	vectorsComplete     bool
+	memoryAuthoritative bool
 }
 
 type nodeSourceChange uint8
@@ -133,22 +131,6 @@ func (s *Service) needsVectorDimensionsLocked(dimensions int) bool {
 	return s.embeddingCountLocked() == 0 && s.vectorIndexDimensionsLocked() != dimensions
 }
 
-// materializeNodeFulltextLocked is the single checkpoint reader for a live
-// mutation or the post-ANN tail. Once a writer restores it, the tail cannot
-// overwrite that writer's newer documents with the older checkpoint.
-func (s *Service) materializeNodeFulltextLocked() error {
-	if s.nodeSources.fulltextCheckpoint == "" {
-		return nil
-	}
-	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
-		return s.lifecycleCtx.Err()
-	}
-	if err := s.reloadFulltextAfterWarmup(s.nodeSources.fulltextCheckpoint, s.nodeSources.fulltextCheckpointCount); err != nil {
-		return err
-	}
-	s.setNodeFulltextCheckpointLocked("", 0)
-	return nil
-}
 
 func (s *Service) nodePopulationCanPersist() bool {
 	s.indexMu.RLock()
@@ -288,14 +270,11 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
+		// The live BM25 index stays resident through the warmup. Parking it
+		// (clear now, reload the saved checkpoint later) lost writes accepted
+		// after the save, which live writes during a population make
+		// reachable (sol r3 finding 2).
 		runPopulationHook(&basePersistedHook, s)
-		if plan.fulltextPath != "" {
-			s.indexMu.Lock()
-			s.setNodeFulltextCheckpointLocked(plan.fulltextPath, s.fulltext().Count())
-			s.fulltext().Clear()
-			s.indexMu.Unlock()
-			s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
