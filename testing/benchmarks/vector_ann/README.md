@@ -32,7 +32,7 @@ export AWS_PROFILE=my-profile AWS_REGION=us-east-1
 ./scripts/benchmark_vector_vs_qdrant.sh
 ```
 
-A full run takes about an hour on an M4 Pro, and most of that is building indexes. The reports go to `testing/benchmarks/vector_ann/reports/<timestamp>/`:
+Runtime depends on corpus size, hardware and modes; index construction can dominate. The reports go to `testing/benchmarks/vector_ann/reports/<timestamp>/`:
 
 | File | Contents |
 |---|---|
@@ -179,7 +179,7 @@ do not describe those results as lexical-hint benchmarks.
 On the CUDA machine, build with the native CUDA toolkit and the `cuda` tag:
 
 ```sh
-go test -tags cuda ./pkg/search -run 'TestCUDAResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+go test -tags 'noui nolocalllm cuda' ./pkg/search -run 'TestCUDAResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
 VECTOR_GO_TAGS='noui nolocalllm cuda' VECTOR_GPU_BACKEND=cuda NORNIC_GPU=1 \
   VECTOR_MODES=hnsw-balanced VECTOR_ENGINES=nornicdb \
   ./scripts/benchmark_vector_vs_qdrant.sh
@@ -188,7 +188,7 @@ VECTOR_GO_TAGS='noui nolocalllm cuda' VECTOR_GPU_BACKEND=cuda NORNIC_GPU=1 \
 On the Vulkan machine:
 
 ```sh
-go test ./pkg/search -run 'TestVulkanResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+go test -tags 'noui nolocalllm' ./pkg/search -run 'TestVulkanResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
 VECTOR_GPU_BACKEND=vulkan NORNIC_GPU=1 VECTOR_MODES=hnsw-balanced \
   VECTOR_ENGINES=nornicdb ./scripts/benchmark_vector_vs_qdrant.sh
 ```
