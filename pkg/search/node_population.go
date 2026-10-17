@@ -383,20 +383,26 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	s.indexMu.Unlock()
 	if explicit && plan.nodesRebuilt {
 		s.setBuildPhase("persisting_base_indexes")
-		// BM25 is parked through the warmup only when this persist wrote its
-		// checkpoint: the index was dirty and the save marked it persisted. An
-		// empty index never written has no checkpoint to reload, and a failed
-		// save leaves none current, so it stays resident.
-		fulltextUnsaved := s.fulltext().IsDirty()
-		if err := s.persistBaseIndexes(); err != nil {
+		// BM25 is parked through the warmup only at the checkpoint this persist
+		// wrote, and only while the index still matches it. An empty index never
+		// written, a skipped or failed save, or a change after the save leaves no
+		// current checkpoint, so it stays resident. The path is the one written,
+		// not the one this build started with.
+		fulltextCheckpoint, err := s.persistBaseIndexesCheckpoint()
+		if err != nil {
 			return err
 		}
-		if plan.fulltextPath != "" && fulltextUnsaved && !s.fulltext().IsDirty() {
+		if plan.fulltextPath != "" && fulltextCheckpoint != "" {
 			s.indexMu.Lock()
-			s.setNodeFulltextCheckpointLocked(plan.fulltextPath, s.fulltext().Count())
-			s.fulltext().Clear()
+			parked := !s.fulltext().IsDirty()
+			if parked {
+				s.setNodeFulltextCheckpointLocked(fulltextCheckpoint, s.fulltext().Count())
+				s.fulltext().Clear()
+			}
 			s.indexMu.Unlock()
-			s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
+			if parked {
+				s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {

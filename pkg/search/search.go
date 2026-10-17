@@ -2278,17 +2278,25 @@ func (s *Service) schedulePersist() {
 // persistBaseIndexes writes BM25 + vector store only (no HNSW/IVF-HNSW).
 // Used after BuildIndexes iteration to make base indexes durable before HNSW/k-means.
 func (s *Service) persistBaseIndexes() error {
+	_, err := s.persistBaseIndexesCheckpoint()
+	return err
+}
+
+// persistBaseIndexesCheckpoint is persistBaseIndexes reporting the BM25
+// checkpoint it wrote: the path saved by this call, or "" when BM25 was
+// skipped, not configured or not saved.
+func (s *Service) persistBaseIndexesCheckpoint() (string, error) {
 	if !s.nodePopulationForPersist(context.Background()) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
-		return nil
+		return "", nil
 	}
 	if !s.persistEnabled.Load() {
-		return nil
+		return "", nil
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
 	if !s.persistEnabled.Load() {
-		return nil
+		return "", nil
 	}
 	s.mu.RLock()
 	ftPath := s.fulltextIndexPath
@@ -2297,9 +2305,10 @@ func (s *Service) persistBaseIndexes() error {
 	vfs := s.vectorFileStore
 	s.mu.RUnlock()
 	if ftPath == "" && vPath == "" && hnswPath == "" {
-		return nil
+		return "", nil
 	}
 	var persistErr error
+	fulltextCheckpoint := ""
 	if ftPath != "" {
 		if !s.fulltext().IsDirty() {
 			s.logPrintf("📇 Persist: BM25 skip (unchanged)")
@@ -2309,6 +2318,7 @@ func (s *Service) persistBaseIndexes() error {
 				s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", ftPath, err)
 				persistErr = errors.Join(persistErr, fmt.Errorf("save BM25 index: %w", err))
 			} else {
+				fulltextCheckpoint = ftPath
 				s.logPrintf("📇 Background persist: BM25 index saved to %s", ftPath)
 			}
 		}
@@ -2339,7 +2349,7 @@ func (s *Service) persistBaseIndexes() error {
 		}
 	}
 	s.persistSearchBuildSettings(ftPath, vPath, hnswPath)
-	return persistErr
+	return fulltextCheckpoint, persistErr
 }
 
 func (s *Service) runPersist() {
