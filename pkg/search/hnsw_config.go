@@ -93,6 +93,7 @@ func HNSWConfigFromEnv() HNSWConfig {
 		config.GPUBuildDistancePrecision = "fp32"
 	}
 
+	config.Quantization = HNSWQuantizationConfigFromEnv()
 	return config
 }
 

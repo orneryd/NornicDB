@@ -25,6 +25,7 @@ import shutil
 import signal
 import subprocess
 import time
+import math
 from pathlib import Path
 
 import grpc
@@ -58,11 +59,28 @@ MODES = [
     {"name": "ivf-pq", "title": "IVF-PQ (compressed)",
      "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "compressed", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"}},
     {"name": "sq-int8", "title": "HNSW + scalar int8 quantization (rescore)", "sweep": True,
+     "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "fast", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"},
      "qdrant": {"hnsw": HNSW_PRESETS["fast"][:2], "quantization": "scalar", "default_ef": 50}},
     {"name": "pq-x16", "title": "HNSW + product quantization x16 (rescore)", "sweep": True,
+     "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "fast", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"},
      "qdrant": {"hnsw": HNSW_PRESETS["fast"][:2], "quantization": "product", "default_ef": 50}},
     {"name": "bq", "title": "HNSW + binary quantization (rescore, 2x oversampling)", "sweep": True,
+     "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "fast", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"},
      "qdrant": {"hnsw": HNSW_PRESETS["fast"][:2], "quantization": "binary", "default_ef": 50}},
+]
+
+MODES += [
+    {"name": f"bq-asym{width}", "title": f"HNSW + binary storage, int{width} query (rescore, 2x oversampling)", "sweep": True,
+     "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "fast", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"},
+     "qdrant": {"hnsw": HNSW_PRESETS["fast"][:2], "quantization": "binary", "query_bits": width, "default_ef": 50}}
+    for width in (4, 8)
+]
+
+MODES += [
+    {"name": f"pq-x{ratio}", "title": f"HNSW + product quantization x{ratio} (rescore)", "sweep": True,
+     "nornic": {"NORNICDB_VECTOR_ANN_QUALITY": "fast", "NORNICDB_PERSIST_SEARCH_INDEXES": "true"},
+     "qdrant": {"hnsw": HNSW_PRESETS["fast"][:2], "quantization": "product", "compression": ratio, "default_ef": 50}}
+    for ratio in (4, 8, 32, 64)
 ]
 
 COLLECTION = "bench"
@@ -189,6 +207,19 @@ class Engine:
             self.channel.close()
 
 
+def quantization_config(mode):
+    kind = mode.get("qdrant", {}).get("quantization")
+    if kind == "scalar":
+        return qg.QuantizationConfig(scalar=qg.ScalarQuantization(type=qg.QuantizationType.Int8, always_ram=True))
+    if kind == "product":
+        return qg.QuantizationConfig(product=qg.ProductQuantization(compression=getattr(qg.CompressionRatio, f"x{mode['qdrant'].get('compression', 16)}"), always_ram=True))
+    if kind == "binary":
+        query_bits = mode["qdrant"].get("query_bits")
+        query_encoding = qg.BinaryQuantizationQueryEncoding(setting=getattr(qg.BinaryQuantizationQueryEncoding, f"Scalar{query_bits}Bits")) if query_bits else None
+        return qg.QuantizationConfig(binary=qg.BinaryQuantization(always_ram=True, query_encoding=query_encoding))
+    return None
+
+
 class NornicEngine(Engine):
     name = "nornicdb"
     mode_key = "nornic"
@@ -221,7 +252,12 @@ class NornicEngine(Engine):
 
     def create(self, collections, mode, dims):
         collections.Create(qg.CreateCollection(collection_name=COLLECTION, vectors_config=qg.VectorsConfig(
-            params=qg.VectorParams(size=dims, distance=qg.Distance.Cosine))), timeout=60)
+            params=qg.VectorParams(size=dims, distance=qg.Distance.Cosine)),
+            quantization_config=quantization_config(mode)), timeout=60)
+        if quantization_config(mode) is not None:
+            actual = collections.Get(qg.GetCollectionInfoRequest(collection_name=COLLECTION), timeout=60).result.config
+            if actual.quantization_config != quantization_config(mode):
+                raise RuntimeError("NornicDB collection did not retain requested quantization config")
 
     def wait_ready(self, points, query):
         def ready():
@@ -237,21 +273,27 @@ class NornicEngine(Engine):
         strategy = found[-1][0] if found else "unknown"
         expected = mode.get("base_mode", mode["name"].split("+", 1)[0])
         valid = ((strategy.startswith("CPU brute-force") or (self.args.nornic_gpu and strategy.startswith("GPU brute-force"))) if expected == "exact" else
-                 strategy.startswith("HNSW") if expected.startswith("hnsw-") else
+                 strategy.startswith("HNSW") and "pending" not in strategy if expected.startswith("hnsw-") else
+                 bool(re.fullmatch(r"HNSW scalar int8 \(\d+ encoded bytes\)", strategy)) if expected == "sq-int8" else
+                 bool(re.fullmatch(r"HNSW PQ x" + str(mode["qdrant"].get("compression", 16)) + r" \(\d+ encoded bytes\)", strategy)) if expected.startswith("pq-x") else
+                 bool(re.fullmatch(r"HNSW binary \(\d+ encoded bytes\)", strategy)) if expected == "bq" else
+                 bool(re.fullmatch(r"HNSW binary query int" + str(mode["qdrant"]["query_bits"]) + r" \(\d+ encoded bytes\)", strategy)) if expected.startswith("bq-asym") else
                  "IVFPQ" in strategy if expected == "ivf-pq" else
                  ("IVF-HNSW" in strategy or (self.args.nornic_gpu and "GPU k-means" in strategy)) if expected == "ivf-hnsw" else False)
         backend = re.findall(r"build_backend=\*search\.(\w+)HNSWBuildAccelerator", text)
         self.build_backend = backend[-1] if backend else None
-        if self.args.nornic_gpu and expected.startswith("hnsw-") and self.build_backend in (None, "CPU"):
+        if self.args.nornic_gpu and (expected.startswith("hnsw-") or quantization_config(mode) is not None) and self.build_backend in (None, "CPU"):
             raise RuntimeError("GPU construction requested but no native GPU build was observed")
         selected = self.effective_settings.get("NORNICDB_GPU_BACKEND", "auto").lower()
-        if self.args.nornic_gpu and expected.startswith("hnsw-") and selected in ("cuda", "vulkan", "metal") and self.build_backend.lower() != selected:
+        if self.args.nornic_gpu and (expected.startswith("hnsw-") or quantization_config(mode) is not None) and selected in ("cuda", "vulkan", "metal") and self.build_backend.lower() != selected:
             raise RuntimeError(f"requested GPU backend {selected}, observed {self.build_backend}")
         if not valid:
             raise RuntimeError(f"mode {expected} resolved to unexpected strategy {strategy!r}")
         return strategy + (f" [{built[-1].strip()}]" if built else "")
 
     def search_params(self, mode, ef):
+        if quantization_config(mode) is not None:
+            return QdrantEngine.search_params(self, mode, ef)
         return qg.SearchParams(hnsw_ef=ef) if ef else None
 
 
@@ -279,13 +321,7 @@ class QdrantEngine(Engine):
     def create(self, collections, mode, dims):
         cfg = mode["qdrant"]
         m, efc = cfg["hnsw"]
-        quantization = None
-        if cfg.get("quantization") == "scalar":
-            quantization = qg.QuantizationConfig(scalar=qg.ScalarQuantization(type=qg.QuantizationType.Int8, always_ram=True))
-        elif cfg.get("quantization") == "product":
-            quantization = qg.QuantizationConfig(product=qg.ProductQuantization(compression=qg.CompressionRatio.x16, always_ram=True))
-        elif cfg.get("quantization") == "binary":
-            quantization = qg.QuantizationConfig(binary=qg.BinaryQuantization(always_ram=True))
+        quantization = quantization_config(mode)
         collections.Create(qg.CreateCollection(
             collection_name=COLLECTION,
             vectors_config=qg.VectorsConfig(params=qg.VectorParams(size=dims, distance=qg.Distance.Cosine)),
@@ -315,6 +351,12 @@ class QdrantEngine(Engine):
         quantization = actual.get("quantization_config") or {}
         if cfg.get("quantization") and cfg["quantization"] not in quantization:
             raise RuntimeError("Qdrant quantization does not match the requested mode")
+        if cfg.get("quantization") == "product" and quantization.get("product", {}).get("compression") != f"x{cfg.get('compression', 16)}":
+            raise RuntimeError("Qdrant product compression ratio differs from the requested mode")
+        if cfg.get("query_bits"):
+            # HTTP serializes these settings as scalar4bits/scalar8bits.
+            if quantization.get("binary", {}).get("query_encoding") != f"scalar{cfg['query_bits']}bits":
+                raise RuntimeError("Qdrant binary query encoding differs from the requested mode")
         self.collection_settings = actual
         text = f"HNSW m={m} ef_construct={efc}"
         if cfg.get("quantization"):
@@ -332,7 +374,7 @@ class QdrantEngine(Engine):
             params.hnsw_ef = ef or cfg["default_ef"]
         if cfg.get("quantization"):
             params.quantization.CopyFrom(qg.QuantizationSearchParams(
-                rescore=True, oversampling=2.0 if cfg["quantization"] == "binary" else 1.0))
+                rescore=True, oversampling=getattr(self.args, "quantization_oversampling", None) or (2.0 if cfg["quantization"] == "binary" else 1.0)))
         return params
 
 
@@ -460,6 +502,7 @@ def main():
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--batch", type=int, default=500)
     ap.add_argument("--ef-sweep", default="16,32,64,128,256,512")
+    ap.add_argument("--quantization-oversampling", type=float, help="explicit rescoring multiplier on both engines; tag tuning variants")
     ap.add_argument("--nornic-gpu", action="store_true", help="leave NornicDB's GPU brute force and GPU HNSW build on")
     ap.add_argument("--keep-data", action="store_true")
     ap.add_argument("--nornic-env", action="append", default=[], metavar="KEY=VALUE",
@@ -472,6 +515,8 @@ def main():
     ap.add_argument("--qdrant-http-port", type=int, default=17333)
     ap.add_argument("--qdrant-grpc-port", type=int, default=17334)
     args = ap.parse_args()
+    if args.quantization_oversampling is not None and (not math.isfinite(args.quantization_oversampling) or args.quantization_oversampling < 1):
+        ap.error("quantization-oversampling must be finite and at least 1")
     if not re.fullmatch(r"[A-Za-z0-9_.-]*", args.tag):
         ap.error("tag must contain only letters, digits, underscore, period or hyphen")
     if min(args.k, args.queries, args.batch, args.concurrency) <= 0 or args.warmup < 0:

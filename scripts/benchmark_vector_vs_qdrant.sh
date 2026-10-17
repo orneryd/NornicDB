@@ -25,9 +25,9 @@
 #   hnsw-accurate    NornicDB ANN quality accurate     | Qdrant HNSW m=32 ef_construct=400
 #   ivf-hnsw         NornicDB k-means routing (IVF)    | N/A
 #   ivf-pq           NornicDB compressed (IVF-PQ)      | N/A
-#   sq-int8          N/A                               | Qdrant HNSW + scalar int8 quantization
-#   pq-x16           N/A                               | Qdrant HNSW + product quantization x16
-#   bq               N/A                               | Qdrant HNSW + binary quantization
+#   sq-int8          NornicDB HNSW + scalar int8        | Qdrant HNSW + scalar int8 quantization
+#   pq-x16           NornicDB HNSW + PQ x16            | Qdrant HNSW + product quantization x16
+#   bq               NornicDB HNSW + binary            | Qdrant HNSW + binary quantization
 #
 # Configuration via env (with defaults):
 #   VECTOR_CORPUS_ROOTS       colon-separated git repositories to chunk (default: this repository)

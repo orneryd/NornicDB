@@ -91,9 +91,24 @@ $PY testing/benchmarks/vector_ann/report.py --results testing/benchmarks/vector_
 | `hnsw-accurate` | `accurate` (32 / 400 / 200) | m 32, ef_construct 400 |
 | `ivf-hnsw` | k-means routing (`NORNICDB_KMEANS_CLUSTERING_ENABLED`); restarts after loading, since clustering runs while the index warms up | N/A |
 | `ivf-pq` | `compressed` (IVF-PQ) | N/A |
-| `sq-int8` | N/A | HNSW + scalar int8 quantization, rescored |
-| `pq-x16` | N/A | HNSW + product quantization x16, rescored |
-| `bq` | N/A | HNSW + binary quantization, rescored, 2× oversampling |
+| `sq-int8` | HNSW fast + scalar int8, rescored; persisted originals | HNSW + scalar int8 quantization, rescored |
+| `pq-x4`, `pq-x8`, `pq-x16`, `pq-x32`, `pq-x64` | HNSW fast + product quantization at the named ratio, rescored; persisted originals | HNSW + the same product compression ratio, rescored |
+| `bq` | HNSW fast + binary, rescored, 2× oversampling; persisted originals | HNSW + binary quantization, rescored, 2× oversampling |
+| `bq-asym4`, `bq-asym8` | Binary storage with a 4/8-bit scalar query, rescored, 2× oversampling | Same stored/query precision and rescoring settings |
+
+Compressed HNSW modes create the same quantization policy and send the same
+rescore/oversampling parameters through gRPC on both engines. NornicDB's
+collection metadata must round-trip the requested policy, and its strategy must
+report an active encoded model; pending or uncompressed traversal is rejected.
+`x16` means four float32 dimensions per byte (256 code bytes at 1,024 dimensions),
+which differs from the separate IVF-PQ profile's segment count. Coordinate bytes
+exclude originals, graph links, and storage caches; compare full RSS and disk as
+well as latency and recall. The cached vector-only corpus does not establish a
+lexical-seeding gain; lexical behavior has separate regression fixtures.
+
+Use `--quantization-oversampling 4 --tag rescore4` with `run.py` to measure a
+larger exact-rescoring pool on both engines without changing their storage
+precision. Results retain the explicit parameters and variant tag.
 
 The HNSW modes also sweep `hnsw_ef` (16, 32, 64, 128, 256, 512), the same Search parameter on both engines. The baseline uses the named preset's `efSearch` on both engines (explicitly sent to Qdrant); sweep values are also explicit on both.
 
