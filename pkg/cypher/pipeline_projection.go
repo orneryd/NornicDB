@@ -719,6 +719,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 	}
 	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct}
 	scope := newRowEvaluationScope(ctx)
+	defer scope.release()
 	for _, row := range rows {
 		scope.reset(row)
 		if !state.addInScope(ctx, e, scope) {
