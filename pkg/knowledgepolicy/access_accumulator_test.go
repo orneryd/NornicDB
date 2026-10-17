@@ -178,6 +178,10 @@ func TestAccumulator_Timestamps_MaxWins(t *testing.T) {
 func TestAccumulator_CrossShardMergeRules(t *testing.T) {
 	newSpread := func() *AccessAccumulator {
 		a := newAccessAccumulator(true, 0, 3)
+		// The shard writes below bypass the public methods, so fix the custom
+		// keys' kinds the way their first public use would.
+		a.claimCustomKind("seenAt", customTimestamp)
+		a.claimCustomKind("views", customCounter)
 		for i, ts := range []timestamp{100, 50, 200} {
 			a.shards[i].setTimestamp("n1", "seenAt", ts)
 			a.shards[i].incrementCustom("n1", "views", counter(i+1))
