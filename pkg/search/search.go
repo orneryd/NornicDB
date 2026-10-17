@@ -5365,6 +5365,26 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if err != nil {
 		return nil, err
 	}
+	if strategy.needsGPUUpload {
+		// Compressed construction may fall back to GPU brute force. Upload
+		// only after that choice, releasing pipelineMu before indexMu.
+		s.pipelineMu.Unlock()
+		uploadErr := s.ensureGPUIndexSynced(vi, vfs)
+		s.pipelineMu.Lock()
+		if s.vectorPipeline != nil {
+			return s.vectorPipeline, nil
+		}
+		if uploadErr != nil {
+			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", uploadErr)
+		}
+		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, uploadErr == nil)
+		if err != nil {
+			return nil, err
+		}
+		if ANNQualityFromEnv() == ANNQualityCompressed {
+			strategy.name = "compressed-fallback -> " + strategy.name
+		}
+	}
 
 	s.logPrintf("🔍 Vector search strategy: %s (N=%d vectors)", strategy.name, vectorCount)
 
@@ -5669,6 +5689,12 @@ func (s *Service) prepareGPUIndexForCurrentStrategy() error {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	count, vi, vfs := s.snapshotStrategyInputs()
+	if ANNQualityFromEnv() == ANNQualityCompressed {
+		profile := ResolveCompressedANNProfile(count, s.VectorIndexDimensions(), vfs != nil && vfs.Count() > 0)
+		if profile.Active {
+			return nil
+		} // Compressed retrieval owns its model, not a flat GPU copy.
+	}
 	if s.desiredRuntimeStrategy(count) != strategyModeBruteGPU {
 		return nil
 	}
@@ -5850,6 +5876,8 @@ type vectorStrategyDescriptor struct {
 	name         string
 	candidateGen CandidateGenerator
 	scorerPolicy exactScorerPolicy
+	// needsGPUUpload is resolved outside pipelineMu, under mutation admission.
+	needsGPUUpload bool
 }
 
 func (s *Service) resolveVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
@@ -5905,6 +5933,10 @@ func ivfpqProfileFromCompressed(profile CompressedANNProfile) IVFPQProfile {
 }
 
 func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+	return s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, true)
+}
+
+func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, allowGPU bool) (*vectorStrategyDescriptor, error) {
 	// Auto strategy: choose candidate generator based on dataset size and clustering
 	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled()
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
@@ -5912,10 +5944,13 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 	// Prefer GPU brute-force (exact) when enabled and within configured thresholds.
 	// This path is exact and typically highest-throughput within its tuned N range.
 	// The first pipeline read prepares its GPU copy before taking pipelineMu.
-	if s.desiredRuntimeStrategy(vectorCount) == strategyModeBruteGPU {
+	if allowGPU && s.desiredRuntimeStrategy(vectorCount) == strategyModeBruteGPU {
 		s.mu.RLock()
 		gi := s.gpuEmbeddingIndex
 		s.mu.RUnlock()
+		if gi == nil {
+			return &vectorStrategyDescriptor{name: "GPU brute-force", needsGPUUpload: true}, nil
+		}
 		if gi != nil {
 			return &vectorStrategyDescriptor{
 				name:         "GPU brute-force",
