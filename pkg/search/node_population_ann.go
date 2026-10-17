@@ -44,9 +44,11 @@ func (s *Service) restoreNodePopulationANN(ctx context.Context, plan nodePopulat
 				if ctx.Err() != nil {
 					return
 				}
-				s.hnswMu.Lock()
-				s.hnswIndex = loaded
-				s.hnswMu.Unlock()
+				s.publishVectorServing(func() {
+					s.hnswMu.Lock()
+					s.hnswIndex = loaded
+					s.hnswMu.Unlock()
+				}, true)
 				hnswLoadedFromDisk = true
 				s.logPrintf("📇 HNSW index loaded from disk: vectors=%d tombstone_ratio=%.2f", loaded.Size(), loaded.TombstoneRatio())
 			}
