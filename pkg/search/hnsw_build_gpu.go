@@ -61,6 +61,82 @@ type gpuBuildCandidateSearcher interface {
 	candidateSearch(ctx context.Context, queries [][]float32, frontier [][]float32, topK int, wantDistances bool) ([][]int, [][]float32, error)
 }
 
+// hnswBuildTopKLimit caps a build search's top-K at the native GPU selector
+// bound. One owner for the graph beam search, the resident search and the
+// sharded frontier search, so the three paths cannot drift.
+func hnswBuildTopKLimit(topK int) int {
+	return min(topK, 256)
+}
+
+// hnswBuildScoreShard scores one flattened, normalized frontier shard of n
+// vectors against normalized queries, returning each query's k closest
+// internal shard IDs and cosine distances. Backends own only this kernel call.
+type hnswBuildScoreShard func(ctx context.Context, flat []float32, n int, queries [][]float32, k int) ([][]uint32, [][]float32, error)
+
+// shardedFrontierCandidateSearch is the shared frontier-shard owner for the
+// CUDA, Metal and Vulkan build accelerators. It flattens the frontier in
+// shards (frontier vectors are already normalized at insert, so no second
+// pass), validates each shard's vector count, scores through the backend's
+// kernel, merges each query's per-shard best and cuts to topK. One owner
+// keeps the shard bounds, offsets and tie-breaking identical across
+// backends; only scoreShard stays backend-specific.
+func shardedFrontierCandidateSearch(ctx context.Context, frontier [][]float32, dim, shardSize, topK int, queries [][]float32, wantDistances bool, scoreShard hnswBuildScoreShard) ([][]int, [][]float32, error) {
+	topK = hnswBuildTopKLimit(topK)
+	if shardSize <= 0 {
+		shardSize = 65536
+	}
+	merged := make([][]hnswCandidateDistance, len(queries))
+	flat := make([]float32, 0, min(len(frontier), shardSize)*dim)
+	for start := 0; start < len(frontier); start += shardSize {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		end := min(start+shardSize, len(frontier))
+		n := end - start
+		flat = flattenHNSWBuildFrontierInto(flat[:0], frontier[start:end], dim)
+		if len(flat) != n*dim {
+			return nil, nil, localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(dim), nil)
+		}
+		if len(flat) == 0 {
+			continue
+		}
+		indices, distances, err := scoreShard(ctx, flat, n, queries, min(topK, n))
+		if err != nil {
+			return nil, nil, err
+		}
+		for qi, row := range indices {
+			for j, id := range row {
+				if int(id) < n && j < len(distances[qi]) {
+					merged[qi] = append(merged[qi], hnswCandidateDistance{index: start + int(id), dist: distances[qi][j]})
+				}
+			}
+		}
+	}
+
+	outIdx := make([][]int, len(queries))
+	var outDist [][]float32
+	if wantDistances {
+		outDist = make([][]float32, len(queries))
+	}
+	for qi := range queries {
+		sortHNSWBuildCandidates(merged[qi])
+		if topK < len(merged[qi]) {
+			merged[qi] = merged[qi][:topK]
+		}
+		outIdx[qi] = make([]int, len(merged[qi]))
+		if wantDistances {
+			outDist[qi] = make([]float32, len(merged[qi]))
+		}
+		for i, c := range merged[qi] {
+			outIdx[qi][i] = c.index
+			if wantDistances {
+				outDist[qi][i] = c.dist
+			}
+		}
+	}
+	return outIdx, outDist, nil
+}
+
 // candidateSearchGraphBatched finds each query's level-0 neighbour candidates
 // with a beam search over the build graph, in groups of
 // NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP queries. Query i starts from
@@ -71,6 +147,7 @@ type gpuBuildCandidateSearcher interface {
 // CandidateSearchGraph (CUDA, Metal, Vulkan) keeps only its backend-specific
 // precondition and device checks and delegates here.
 func candidateSearchGraphBatched[A gpuBuildCandidateSearcher](ctx context.Context, a A, queries [][]float32, graph *hnswBuildGraphSnapshot, topK int) ([][]uint32, [][]float32, error) {
+	topK = hnswBuildTopKLimit(topK)
 	groupSize := envutil.GetInt("NORNICDB_HNSW_BUILD_GPU_BEAM_QUERY_GROUP", 32)
 	if groupSize <= 0 {
 		groupSize = 32
@@ -454,7 +531,7 @@ func (a *MetalHNSWBuildAccelerator) CandidateSearchInserted(ctx context.Context,
 	if !a.ResidentReady() {
 		return nil, nil, metal.ErrMetalNotAvailable
 	}
-	return a.scoreTopK(ctx, a.resident, a.residentN, queries, min(topK, 256))
+	return a.scoreTopK(ctx, a.resident, a.residentN, queries, hnswBuildTopKLimit(topK))
 }
 
 func (a *MetalHNSWBuildAccelerator) releaseResident() {
@@ -479,62 +556,15 @@ func (a *MetalHNSWBuildAccelerator) candidateSearch(ctx context.Context, queries
 	if a.device == nil {
 		return nil, nil, metal.ErrMetalNotAvailable
 	}
-	if topK > 256 {
-		topK = 256
-	}
-	shardSize := a.maxFrontierPerShard
-	if shardSize <= 0 {
-		shardSize = 65536
-	}
-	merged := make([][]hnswCandidateDistance, len(queries))
-	flat := make([]float32, 0, min(len(frontier), shardSize)*a.dim)
-	for start := 0; start < len(frontier); start += shardSize {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		end := min(start+shardSize, len(frontier))
-		flat = flattenHNSWBuildQueriesInto(flat[:0], frontier[start:end], a.dim)
-		if len(flat) != (end-start)*a.dim {
-			return nil, nil, localizedError(localization.SearchHNSWGPUBuildDimensionInvalid(a.dim), nil)
-		}
+	return shardedFrontierCandidateSearch(ctx, frontier, a.dim, a.maxFrontierPerShard, topK, queries, wantDistances, func(ctx context.Context, flat []float32, n int, queries [][]float32, k int) ([][]uint32, [][]float32, error) {
 		frontierBuf, err := a.device.NewBuffer(flat, metal.StorageShared)
 		if err != nil {
 			return nil, nil, err
 		}
-		ids, dists, err := a.scoreTopK(ctx, frontierBuf, end-start, queries, topK)
+		ids, dists, err := a.scoreTopK(ctx, frontierBuf, n, queries, k)
 		frontierBuf.Release()
-		if err != nil {
-			return nil, nil, err
-		}
-		for qi := range ids {
-			for i, id := range ids[qi] {
-				merged[qi] = append(merged[qi], hnswCandidateDistance{index: start + int(id), dist: dists[qi][i]})
-			}
-		}
-	}
-
-	outIdx := make([][]int, len(queries))
-	var outDist [][]float32
-	if wantDistances {
-		outDist = make([][]float32, len(queries))
-	}
-	for qi := range queries {
-		sortHNSWBuildCandidates(merged[qi])
-		if topK < len(merged[qi]) {
-			merged[qi] = merged[qi][:topK]
-		}
-		outIdx[qi] = make([]int, len(merged[qi]))
-		if wantDistances {
-			outDist[qi] = make([]float32, len(merged[qi]))
-		}
-		for i, c := range merged[qi] {
-			outIdx[qi][i] = c.index
-			if wantDistances {
-				outDist[qi][i] = c.dist
-			}
-		}
-	}
-	return outIdx, outDist, nil
+		return ids, dists, err
+	})
 }
 
 // scoreTopK scores queries against the first frontierN normalized vectors of
@@ -661,9 +691,6 @@ func (a *MetalHNSWBuildAccelerator) CandidateSearchGraph(ctx context.Context, qu
 	}
 	if a.device == nil {
 		return nil, nil, metal.ErrMetalNotAvailable
-	}
-	if topK > 256 {
-		topK = 256
 	}
 	return candidateSearchGraphBatched(ctx, a, queries, graph, topK)
 }
