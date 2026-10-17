@@ -112,6 +112,8 @@ func TestIndexNodeSkipsMismatchedEntriesAndKeepsTheRest(t *testing.T) {
 	embCfg.GPUEnabled = false
 	embCfg.AutoSync = false
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
+	// The first stored vector fixes the dimension; seed it so map order cannot.
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "seed", ChunkEmbeddings: [][]float32{{0, 1}}}))
 	node := &storage.Node{
 		ID:              "n",
 		NamedEmbeddings: map[string][]float32{"wide": {1, 0, 0}, "v": {0, 1}},
@@ -119,10 +121,10 @@ func TestIndexNodeSkipsMismatchedEntriesAndKeepsTheRest(t *testing.T) {
 	}
 	for range 2 {
 		require.NoError(t, svc.IndexNode(node))
-		assert.Equal(t, 2, svc.EmbeddingCount(), "the mismatched named vector is skipped")
+		assert.Equal(t, 3, svc.EmbeddingCount(), "the mismatched named vector is skipped")
 		assert.Equal(t, map[string]string{"v": nodeNamedVectorKey("n", "v")}, svc.nodeNamedVector["n"])
 		assert.Equal(t, []string{"n"}, svc.nodeChunkVectors["n"])
-		assert.Equal(t, 2, svc.gpuEmbeddingIndex.Count())
+		assert.Equal(t, 3, svc.gpuEmbeddingIndex.Count())
 		svc.indexMu.RLock()
 		unchanged := svc.nodeVectorStateUnchangedLocked(node)
 		svc.indexMu.RUnlock()
