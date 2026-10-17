@@ -29,7 +29,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	if err := internalFunctionCallError(statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
-		return nil, e.failTransaction(err)
+		return nil, e.failTransaction(ctx, err)
 	}
 	if StatementDatabase("", statement) == "system" {
 		var transaction any
@@ -38,14 +38,14 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		} else if e.txContext != nil && e.txContext.active {
 			transaction = e.txContext.tx
 		}
-		return nil, e.failTransaction(statementTypeError(statement, "Administration", "Data", transaction))
+		return nil, e.failTransaction(ctx, statementTypeError(statement, "Administration", "Data", transaction))
 	}
 	return e.executeInternal(ctx, statement, params)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	if e.txContext != nil && e.txContext.active {
-		defer func() { e.failTransaction(retErr) }()
+		defer func() { e.failTransaction(ctx, retErr) }()
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

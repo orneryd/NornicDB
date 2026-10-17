@@ -114,7 +114,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Every rejection of the caller's statement fails its explicit transaction,
 	// including errors before parsing, routing or the system statement policy.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
-		defer func() { e.failTransaction(retErr) }()
+		defer func() { e.failTransaction(ctx, retErr) }()
 	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {

@@ -41,6 +41,7 @@ func createKeyNode(t *testing.T, engine *BadgerEngine, id string, k int64) NodeI
 // TestPrepareMergeKeyMovesSnapshotToCommittedNode: a transaction that has
 // observed nothing sees a key's node committed after it began once a MERGE
 // prepares that key, and can write it; one that has read keeps its snapshot
+// and fails with ErrConflict, so its MERGE doesn't create the key again
 // (#961).
 func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 	engine, _ := newMergeKeyTestEngine(t)
@@ -59,7 +60,7 @@ func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 	require.NoError(t, fresh.UpdateNode(node))
 	require.NoError(t, fresh.Commit())
 
-	require.NoError(t, reader.PrepareMergeKey(ctx, "U", "k", int64(1)))
+	require.ErrorIs(t, reader.PrepareMergeKey(ctx, "U", "k", int64(1)), ErrConflict)
 	_, err = reader.GetNode(nodeID)
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, reader.Rollback())
@@ -125,6 +126,86 @@ func TestPrepareMergeKeyWaitsForCreator(t *testing.T) {
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 }
 
+// TestPrepareMergeKeyAfterWrites: a transaction that has already written
+// still locks a MERGE key with no node, and every key it MERGEs, so a
+// concurrent MERGE of the key waits for it. The waiter, which has written
+// too, can't move its snapshot to the node committed meanwhile: it fails
+// with ErrConflict, and its retry matches the node.
+func TestPrepareMergeKeyAfterWrites(t *testing.T) {
+	engine, schema := newMergeKeyTestEngine(t)
+	ctx := context.Background()
+	write := func(tx *BadgerTransaction, id string) {
+		t.Helper()
+		_, err := tx.CreateNode(&Node{ID: NodeID(prefixTestID(id)), Labels: []string{"Source"}})
+		require.NoError(t, err)
+	}
+
+	creator := beginMergeKeyTx(t, engine)
+	write(creator, "src1")
+	require.NoError(t, creator.PrepareMergeKey(ctx, "U", "k", int64(30)))
+	require.NoError(t, creator.PrepareMergeKey(ctx, "U", "k", int64(31)))
+	require.NoError(t, creator.PrepareMergeKey(ctx, "U", "k", int64(30)), "a key it already holds")
+	waiter := beginMergeKeyTx(t, engine)
+	write(waiter, "src2")
+	done := make(chan error, 1)
+	go func() { done <- waiter.PrepareMergeKey(ctx, "U", "k", int64(31)) }()
+	select {
+	case err := <-done:
+		t.Fatalf("waiter didn't wait for the key's creator: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	nodeID := NodeID(prefixTestID("n31"))
+	_, err := creator.CreateNode(&Node{ID: nodeID, Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(31)}})
+	require.NoError(t, err)
+	require.NoError(t, creator.Commit())
+	require.ErrorIs(t, <-done, ErrConflict)
+	require.NoError(t, waiter.Rollback())
+
+	retry := beginMergeKeyTx(t, engine)
+	write(retry, "src2")
+	require.NoError(t, retry.PrepareMergeKey(ctx, "U", "k", int64(31)), "the node is in the retry's snapshot")
+	node, err := retry.GetNode(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, int64(31), node.Properties["k"])
+	require.NoError(t, retry.Commit())
+
+	schema.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, schema.uniqueConstraintCommitLocks, "every key lock is released")
+	schema.uniqueConstraintCommitLocksMu.Unlock()
+}
+
+// TestReleaseMergeKeysLetsWaitersProceed: a transaction whose MERGE keys are
+// released (a statement failed in it) no longer keeps another transaction's
+// MERGE of the key waiting, though it is still open.
+func TestReleaseMergeKeysLetsWaitersProceed(t *testing.T) {
+	engine, schema := newMergeKeyTestEngine(t)
+	ctx := context.Background()
+	failed := beginMergeKeyTx(t, engine)
+	_, _ = failed.GetNodesByLabel("U") // observed: the lock applies after reads too
+	require.NoError(t, failed.PrepareMergeKey(ctx, "U", "k", int64(40)))
+	waiter := beginMergeKeyTx(t, engine)
+	done := make(chan error, 1)
+	go func() { done <- waiter.PrepareMergeKey(ctx, "U", "k", int64(40)) }()
+	select {
+	case err := <-done:
+		t.Fatalf("waiter didn't wait for the key's holder: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	failed.ReleaseMergeKeys()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiter still waits after the holder released its MERGE keys")
+	}
+	failed.ReleaseMergeKeys() // idempotent
+	require.NoError(t, failed.Rollback())
+	require.NoError(t, waiter.Rollback())
+	schema.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, schema.uniqueConstraintCommitLocks)
+	schema.uniqueConstraintCommitLocksMu.Unlock()
+}
+
 // TestPrepareMergeKeyDeadlockAtCommit: two transactions holding each other's
 // MERGE key and creating the other's key wait for each other at commit; one
 // fails with ErrDeadlock, the other commits.
@@ -166,7 +247,8 @@ func TestPrepareMergeKeyDeadlockAtCommit(t *testing.T) {
 // TestPrepareMergeKeyEdgeBranches covers PrepareMergeKey's rarer paths: a
 // transaction closed while it waited for the key, a stale cache entry whose
 // node has no head, a transaction that observed its snapshot between the
-// checks, and a storage error reading the node's head.
+// checks with the node in its snapshot, and a storage error reading the
+// node's head.
 func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 	engine, schema := newMergeKeyTestEngine(t)
 	ctx := context.Background()
@@ -196,7 +278,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 	nodeID := createKeyNode(t, engine, "n11", 11)
 	observed := beginMergeKeyTx(t, engine)
 	_, _ = observed.GetNodesByLabel("U")
-	require.NoError(t, observed.catchUpToNode(nodeID))
+	require.NoError(t, observed.catchUpToNode(nodeID), "the node is in its snapshot")
 	require.NoError(t, observed.Rollback())
 
 	closing := beginMergeKeyTx(t, engine)
