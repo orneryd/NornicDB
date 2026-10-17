@@ -11,7 +11,7 @@ import (
 // TestGDSStreamsRenderNodeIDs: every GDS algorithm stream over an aggregation
 // projection of INTEGER ids returns those INTEGER ids, as GDS does, through
 // the one renderer. A registered gds.*.stream that has no call here, or no
-// entry in gdsStreamNodeIDColumns, fails the test, so a new algorithm can't
+// projection-rendered entry in gdsNodeProcedures, fails the test, so a new algorithm can't
 // skip the renderer unnoticed.
 func TestGDSStreamsRenderNodeIDs(t *testing.T) {
 	gdsFollowUpCatalog(t)
@@ -45,7 +45,7 @@ func TestGDSStreamsRenderNodeIDs(t *testing.T) {
 		}
 		streams++
 		require.Contains(t, calls, spec.Name, "a GDS stream without a node-id case here")
-		require.Contains(t, gdsStreamNodeIDColumns, spec.Name, "a GDS stream the renderer doesn't know")
+		require.Equal(t, gdsRenderProjection, gdsNodeProcedures[spec.Name].rendering, "a GDS stream the renderer doesn't know: %s", spec.Name)
 	}
 	require.Equal(t, len(calls), streams)
 
