@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"go/ast"
 	"go/build"
 	"go/importer"
@@ -48,6 +49,11 @@ var publishingPaths = map[string]string{
 // hold any of them across its commit (the deadlock analysis in the PR body);
 // a new one fails the test.
 var stageLocks = map[string]string{}
+
+// heldAcrossCommit classifies every place that holds a stage lock across a
+// call that can commit: why the commit carries no publication, so it does
+// not run the stage.
+var heldAcrossCommit = map[string]string{}
 
 // commitFunctions must never be reachable from a publication.
 var commitFunctions = []string{
@@ -211,8 +217,8 @@ func (src *packageSource) lockName(x ast.Expr) string {
 
 // reach walks the type-resolved call graph from roots: the package's own
 // functions are followed, others recorded by name.
-func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, locks map[string][]string, dynamic []string) {
-	reached, locks = map[string]bool{}, map[string][]string{}
+func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, locks map[string][]string, dynamic []string, via map[string]string) {
+	reached, locks, via = map[string]bool{}, map[string][]string{}, map[string]string{}
 	seen := map[*types.Func]bool{}
 	var visit func(owner string, node ast.Node)
 	visit = func(owner string, node ast.Node) {
@@ -223,7 +229,7 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 			}
 			fn := src.callee(call)
 			if fn == nil {
-				if _, isLit := call.Fun.(*ast.FuncLit); !isLit && !isConversion(src.info, call) {
+				if _, isLit := call.Fun.(*ast.FuncLit); !isLit && !isConversion(src.info, call) && !isBuiltin(src.info, call) {
 					entry := owner + ": " + exprString(call.Fun)
 					if !slices.Contains(dynamic, entry) {
 						dynamic = append(dynamic, entry)
@@ -239,6 +245,9 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 				}
 				return true
 			}
+			if !reached[name] {
+				via[name] = owner
+			}
 			reached[name] = true
 			if decl, own := src.decls[fn]; own && !seen[fn] {
 				seen[fn] = true
@@ -250,7 +259,120 @@ func (src *packageSource) reach(roots []ast.Node) (reached map[string]bool, lock
 	for _, root := range roots {
 		visit("publication", root)
 	}
-	return reached, locks, dynamic
+	return reached, locks, dynamic, via
+}
+
+func isBuiltin(info *types.Info, call *ast.CallExpr) bool {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, builtin := info.Uses[ident].(*types.Builtin)
+	return builtin
+}
+
+// chain is the call path that first reached name.
+func chain(via map[string]string, name string) string {
+	path := []string{name}
+	for at := name; via[at] != "" && len(path) < 40; at = via[at] {
+		path = append(path, via[at])
+	}
+	slices.Reverse(path)
+	return strings.Join(path, " -> ")
+}
+
+// reachesCommit reports whether fn can reach one of the oracle's commit
+// entry points.
+func (src *packageSource) reachesCommit(fn *types.Func, memo map[*types.Func]int) bool {
+	switch memo[fn] {
+	case 1:
+		return true
+	case 2, 3:
+		return false // known not to, or on the current path
+	}
+	if name := fn.Name(); name == "commitPublishing" || (name == "finish" && strings.Contains(fn.FullName(), "largeCommit")) {
+		memo[fn] = 1
+		return true
+	}
+	decl, own := src.decls[fn]
+	if !own {
+		memo[fn] = 2
+		return false
+	}
+	memo[fn] = 3
+	found := false
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok {
+			if callee := src.callee(call); callee != nil && src.reachesCommit(callee, memo) {
+				found = true
+			}
+		}
+		return true
+	})
+	if found {
+		memo[fn] = 1
+	} else {
+		memo[fn] = 2
+	}
+	return found
+}
+
+// heldAcrossCommits finds, in every function of the package, the calls that
+// can reach a commit while the function holds one of locks: a lock taken
+// earlier in the function (in source order) and not yet released. A deferred
+// unlock holds to the end. Closures are their own scope.
+func (src *packageSource) heldAcrossCommits(locks map[string]bool) []string {
+	memo := map[*types.Func]int{}
+	var hits []string
+	for fn, decl := range src.decls {
+		held := map[string]int{}
+		var walk func(n ast.Node, deferred bool)
+		walk = func(n ast.Node, deferred bool) {
+			ast.Inspect(n, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.FuncLit:
+					return false
+				case *ast.DeferStmt:
+					walk(n.Call, true)
+					return false
+				case *ast.CallExpr:
+					callee := src.callee(n)
+					if callee == nil {
+						return true
+					}
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok {
+						switch callee.Name() {
+						case "Lock", "RLock":
+							if !deferred {
+								held[src.lockName(sel.X)]++
+							}
+							return true
+						case "Unlock", "RUnlock":
+							if !deferred {
+								held[src.lockName(sel.X)]--
+							}
+							return true
+						}
+					}
+					if src.reachesCommit(callee, memo) {
+						for lock, count := range held {
+							if count > 0 && locks[lock] {
+								hits = append(hits, fmt.Sprintf("%s holds %s across %s", fn.Name(), lock, callee.Name()))
+							}
+						}
+					}
+				}
+				return true
+			})
+		}
+		walk(decl.Body, false)
+		_ = fn
+	}
+	sort.Strings(hits)
+	return slices.Compact(hits)
 }
 
 func isConversion(info *types.Info, call *ast.CallExpr) bool {
@@ -295,7 +417,7 @@ func TestPublicationStageBoundary(t *testing.T) {
 		require.True(t, found, "publishingPaths lists %s, which no longer hands the stage a publication", path)
 	}
 
-	reached, locks, dynamic := src.reach(all)
+	reached, locks, dynamic, via := src.reach(all)
 	var names []string
 	for name := range reached {
 		names = append(names, name)
@@ -305,7 +427,7 @@ func TestPublicationStageBoundary(t *testing.T) {
 	sort.Strings(dynamic)
 	t.Logf("calls of function values inside publications (%d): %s", len(dynamic), strings.Join(dynamic, "; "))
 	for _, name := range commitFunctions {
-		require.False(t, reached[name], "a publication reaches %s: the stage could wait on itself", name)
+		require.False(t, reached[name], "a publication reaches %s: the stage could wait on itself (%s)", name, chain(via, name))
 	}
 
 	var lockNames []string
@@ -316,9 +438,24 @@ func TestPublicationStageBoundary(t *testing.T) {
 	for _, lock := range lockNames {
 		t.Logf("stage lock %-40s taken in %s", lock, strings.Join(locks[lock], ", "))
 	}
+	lockSet := map[string]bool{}
+	for _, lock := range lockNames {
+		lockSet[lock] = true
+	}
+	// The other half of the deadlock analysis: a function that holds a stage
+	// lock across a commit. Such a commit must carry no publication (it then
+	// skips the stage) or the stage could wait for that lock.
+	held := src.heldAcrossCommits(lockSet)
+	for _, hit := range held {
+		t.Logf("held across a commit: %s", hit)
+	}
 	for _, lock := range lockNames {
 		_, known := stageLocks[lock]
 		require.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
+	}
+	for _, hit := range held {
+		_, known := heldAcrossCommit[hit]
+		require.True(t, known, "%s: classify it in heldAcrossCommit (its commit must carry no publication)", hit)
 	}
 
 	// Every operation type a commit carries is covered.
