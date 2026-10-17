@@ -8,10 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Authorization asks for admin for a procedure call exactly when the
-// procedure's Admin flag (the admin column of SHOW PROCEDURES) is set: the
-// flag is the one source of that requirement, for every registered
-// procedure.
+// The displayed Admin column agrees with the authoritative class contract
+// used by authorization for every registered procedure.
 func TestProcedureAdminFlagIsTheAuthorizationRequirement(t *testing.T) {
 	ensureBuiltInProceduresRegistered()
 	procedures := globalProcedureRegistry.List()

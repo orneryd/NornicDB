@@ -2,11 +2,13 @@ package cypher
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -616,12 +618,11 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 // constituent that actually holds the entity (#745 §3).
 func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor storage.NodeID) string {
 	db := e.executionDatabaseName(ctx)
-	if e.dbManager != nil && e.dbManager.IsCompositeDatabase(db) {
-		if composite, ok := e.storage.(*storage.CompositeEngine); ok {
-			if constituent := composite.ConstituentDatabaseForNode(anchor); constituent != "" {
-				return constituent
-			}
-		}
+	resolve := NewEntityDatabaseResolver(ctx, e.dbManager, db, func(database string, err error) {
+		e.logEvent(slog.LevelError, localization.OperationStorageCleanupFailedEvent(database, err))
+	})
+	if resolve != nil {
+		return resolve(anchor, "")
 	}
 	return db
 }

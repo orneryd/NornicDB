@@ -244,9 +244,9 @@ The server has `RequireTLS=true` and the connection arrived as plaintext (raw `b
 
 The cookie is missing or expired. Either log in again at `/login` or send `Authorization: Bearer <jwt>` explicitly. Check `document.cookie` (the cookie itself is HttpOnly, but its presence is signaled by a successful `/auth/me` response).
 
-### `Access to database 'nornic' is not allowed.`
+### `Database access is not allowed for user 'alice' with roles [viewer].`
 
-Bolt successfully authenticated, but the principal's roles don't include access to the requested database. Either:
+Bolt successfully authenticated, but the principal's roles don't include access to the requested database. The message is Neo4j's: it names the user and its roles (or "no roles"), not the database, so a refused database and a missing one read the same. Either:
 
 - The user is missing the `admin` / `editor` / `viewer` role bound to the database, or
 - `RequireAuth=true` is set without a `DatabaseAccessModeResolver` wired (rare; see operator docs).

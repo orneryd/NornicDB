@@ -28,9 +28,9 @@ func TestQualifiedPluginNamesWithLexicalTrivia(t *testing.T) {
 				}
 				for _, call := range forms {
 					t.Run(fmt.Sprintf("normalize=%v/explicit=%v/%s", normalize, explicit, call), func(t *testing.T) {
-						PluginFunctionLookup = func(name string) (interface{}, bool) {
+						PluginFunctionLookup = withPurePluginContracts(func(name string) (interface{}, bool) {
 							return func(value interface{}) interface{} { return value }, name == "custom."+suffix
-						}
+						})
 						executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lexical_plugin"))
 						ctx := context.Background()
 						if explicit {

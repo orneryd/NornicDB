@@ -14,7 +14,7 @@ import (
 // server without the APOC plugin (on Windows, plugins can't load).
 func TestExecutorImplementedFunctionsAreKnown(t *testing.T) {
 	previous := PluginFunctionLookup
-	PluginFunctionLookup = func(string) (interface{}, bool) { return nil, false }
+	PluginFunctionLookup = withPurePluginContracts(func(string) (interface{}, bool) { return nil, false })
 	t.Cleanup(func() { PluginFunctionLookup = previous })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "executor_functions_known"))
 	ctx := context.Background()

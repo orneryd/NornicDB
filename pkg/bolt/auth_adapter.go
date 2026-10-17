@@ -288,17 +288,20 @@ func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAu
 		userID = ""
 	}
 	roles, permissions := []string{}, []string{}
+	authenticated := false
 	if current, err := a.auth.CurrentClaims(&auth.JWTClaims{Sub: userID, Username: result.Username, Roles: result.Roles}); err == nil {
+		authenticated = true
 		roles = current.Roles
 		permissions = result.Permissions
 		if a.getEffectivePermissions != nil {
 			permissions = a.getEffectivePermissions(roles)
 		}
 	}
-	if slices.Equal(roles, result.Roles) && slices.Equal(permissions, result.Permissions) {
+	if authenticated == result.Authenticated && slices.Equal(roles, result.Roles) && slices.Equal(permissions, result.Permissions) {
 		return result
 	}
 	current := *result
+	current.Authenticated = authenticated
 	current.Roles = roles
 	current.Permissions = permissions
 	return &current

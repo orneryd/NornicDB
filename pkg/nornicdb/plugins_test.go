@@ -534,13 +534,14 @@ var Plugin PluginValue
 		require.Contains(t, err.Error(), "unknown plugin type")
 
 		functionPlugin := buildTestPluginSO(t, tmpDir, "function_ok", `package main
+import "github.com/orneryd/nornicdb/pkg/auth"
 type TestPlugin struct{}
 func (TestPlugin) Type() string { return "function" }
 func (TestPlugin) Name() string { return "func_ok" }
 func (TestPlugin) Version() string { return "1.0.0" }
 func (TestPlugin) Functions() map[string]interface{} {
 	return map[string]interface{}{
-		"double": func(x float64) float64 { return x * 2 },
+		"double": struct { Handler interface{}; Privilege auth.OperationClass }{Handler: func(x float64) float64 { return x * 2 }, Privilege: auth.OperationNone},
 	}
 }
 var Plugin TestPlugin
@@ -567,13 +568,14 @@ var Plugin TestPlugin
 		// A good plugin next to the bad one still loads (#867).
 		resetPluginTestState()
 		_ = buildTestPluginSO(t, dir, "good_next_to_bad", `package main
+import "github.com/orneryd/nornicdb/pkg/auth"
 type TestPlugin struct{}
 func (TestPlugin) Type() string { return "function" }
 func (TestPlugin) Name() string { return "good_next_to_bad" }
 func (TestPlugin) Version() string { return "1.0.0" }
 func (TestPlugin) Functions() map[string]interface{} {
 	return map[string]interface{}{
-		"double": func(x float64) float64 { return x * 2 },
+		"double": struct { Handler interface{}; Privilege auth.OperationClass }{Handler: func(x float64) float64 { return x * 2 }, Privilege: auth.OperationNone},
 	}
 }
 var Plugin TestPlugin
@@ -592,13 +594,14 @@ var Plugin TestPlugin
 
 		dir := t.TempDir()
 		_ = buildTestPluginSO(t, dir, "dir_function_ok", `package main
+import "github.com/orneryd/nornicdb/pkg/auth"
 type TestPlugin struct{}
 func (TestPlugin) Type() string { return "function" }
 func (TestPlugin) Name() string { return "dir_func_ok" }
 func (TestPlugin) Version() string { return "1.0.0" }
 func (TestPlugin) Functions() map[string]interface{} {
 	return map[string]interface{}{
-		"double": func(x float64) float64 { return x * 2 },
+		"double": struct { Handler interface{}; Privilege auth.OperationClass }{Handler: func(x float64) float64 { return x * 2 }, Privilege: auth.OperationNone},
 	}
 }
 var Plugin TestPlugin
@@ -819,7 +822,11 @@ func (m *mockFunctionPlugin) Name() string    { return m.name }
 func (m *mockFunctionPlugin) Version() string { return m.version }
 func (m *mockFunctionPlugin) Type() string    { return m.ptype }
 func (m *mockFunctionPlugin) Functions() map[string]interface{} {
-	return m.functions
+	functions := make(map[string]interface{}, len(m.functions))
+	for name, handler := range m.functions {
+		functions[name] = PluginFunction{Handler: handler, Privilege: cypher.PrivilegeNone}
+	}
+	return functions
 }
 
 type mockHeimdallPlugin struct {
@@ -879,9 +886,11 @@ func (fqPlugin) Functions() map[string]interface{} {
 	return map[string]interface{}{
 		"apoc.custom.echo": struct {
 			Handler     interface{}
+			Privilege   cypher.PrivilegeClass
 			Description string
 		}{
 			Handler:     func(x string) string { return x },
+			Privilege:   cypher.PrivilegeNone,
 			Description: "echo",
 		},
 	}
@@ -1024,9 +1033,11 @@ func (m mockFunctionPluginWithProcedures) Functions() map[string]interface{} {
 	return map[string]interface{}{
 		"double": struct {
 			Handler     interface{}
+			Privilege   cypher.PrivilegeClass
 			Description string
 		}{
 			Handler:     func(x float64) float64 { return x * 2 },
+			Privilege:   cypher.PrivilegeNone,
 			Description: "double input",
 		},
 	}
@@ -1034,6 +1045,7 @@ func (m mockFunctionPluginWithProcedures) Functions() map[string]interface{} {
 func (m mockFunctionPluginWithProcedures) Procedures() map[string]mockProcedureMeta {
 	return map[string]mockProcedureMeta{
 		"readProc": {
+			Mode: "READ",
 			Handler: func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error) {
 				return &cypher.ExecuteResult{}, nil
 			},

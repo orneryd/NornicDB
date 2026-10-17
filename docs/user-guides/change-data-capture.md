@@ -60,9 +60,12 @@ Each row is one change:
   `operation`, `keys`, `start` and `end` (each `{elementId, keys, labels}`),
   and `state` with `before` and `after`, each `null` or `{properties}`.
 - `metadata`: `captureMode`, `txStartTime`, `txCommitTime`, `txMetadata`,
-  `databaseId`, and the user and connection fields of Neo4j's format
-  (`executingUser`, `authenticatedUser`, `connectionType`, …), which NornicDB
-  does not record yet and leaves empty.
+  `databaseId`, `executingUser` and `authenticatedUser` (the user whose
+  privileges the transaction ran with, and the signed-in user; they differ
+  only when the signed-in user impersonated the other over Bolt, and both are
+  empty when no one signed in and for changes recorded before NornicDB kept
+  users), and the connection fields of Neo4j's format (`connectionType`, …),
+  which NornicDB does not record yet and leaves empty.
 
 A `DETACH DELETE` reports the relationships it removes before the node.
 

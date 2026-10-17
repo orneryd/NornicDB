@@ -239,8 +239,15 @@ func BoltHelloEvent(remote, user string, roles []string, database string) LogEve
 }
 
 // BoltQueryEvent describes a query selected for operator diagnostic logging.
-func BoltQueryEvent(user, remote, query string, params map[string]any) LogEvent {
-	attrs := []slog.Attr{slog.String("user", user), slog.String("remote", remote), slog.String("query", query)}
+// user is the authenticated user; executingUser, when not "", the user it
+// impersonates, whose security context the query runs in (Neo4j's query log
+// authenticatedUser and executingUser).
+func BoltQueryEvent(user, executingUser, remote, query string, params map[string]any) LogEvent {
+	attrs := []slog.Attr{slog.String("user", user)}
+	if executingUser != "" && executingUser != user {
+		attrs = append(attrs, slog.String("authenticatedUser", user), slog.String("executingUser", executingUser))
+	}
+	attrs = append(attrs, slog.String("remote", remote), slog.String("query", query))
 	if len(params) > 0 {
 		attrs = append(attrs, slog.Any("params", params))
 	}

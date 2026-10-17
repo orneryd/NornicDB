@@ -72,8 +72,9 @@ func gdsProjectDistinctCallError(text, normalized string, arguments int) error {
 }
 
 // internalFunctionCallError rejects a statement, as its client sent it, that
-// calls one of NornicDB's internal functions (__nornic_interpolate, …, the
-// catalog's __nornic_* names), in any letter case, with Neo4j's "Unknown
+// calls one of NornicDB's internal functions (__nornic_interpolate, …: every
+// __nornic_* function the function classification knows, from the catalog
+// or the function registry), in any letter case, with Neo4j's "Unknown
 // function" (#1105). NornicDB's own rewrites produce these calls from
 // standard syntax (string interpolation, map comprehension, vector(…),
 // dynamic labels, path selectors), so the check reads the text before any
@@ -84,7 +85,7 @@ func internalFunctionCallError(text string) error {
 		return nil
 	}
 	return forEachFunctionCall(text, func(name, normalized string) error {
-		if _, internal := builtInCypherFunctions[normalized]; internal && strings.HasPrefix(normalized, "__nornic_") {
+		if _, internal := functionPrivilegeClass(normalized); internal && strings.HasPrefix(normalized, "__nornic_") {
 			return unknownFunctionError(name)
 		}
 		return nil

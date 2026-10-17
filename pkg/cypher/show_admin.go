@@ -30,8 +30,13 @@ type ctxKeyRunningTransaction struct{}
 // a statement carries one context value for all three.
 type RequestIdentity struct {
 	Connection ClientConnection
-	// User is nil when no one signed in.
+	// User is nil when no one signed in. While the signed-in user
+	// impersonates another, it is the impersonated user, whose security
+	// context the statement runs in (Neo4j's executing user).
 	User *AuthenticatedUser
+	// ImpersonatedBy is the signed-in user while User is a user it
+	// impersonates (Neo4j's authenticated user); nil otherwise.
+	ImpersonatedBy *AuthenticatedUser
 	// Users lists the user store; nil without one, and SHOW USERS then
 	// lists the signed-in user only.
 	Users func() []UserListing
@@ -77,6 +82,28 @@ func authenticatedUserFromContext(ctx context.Context) (AuthenticatedUser, bool)
 		return AuthenticatedUser{}, false
 	}
 	return *identity.User, true
+}
+
+// StatementUsers is who a statement runs for, as Neo4j attributes it: the
+// executing user, whose security context applies, and the authenticated
+// user, who signed in; they differ only while the authenticated user
+// impersonates the executing one. Both are "" when no one signed in.
+func StatementUsers(ctx context.Context) (executing, authenticated string) {
+	user, signedIn := authenticatedUserFromContext(ctx)
+	if !signedIn {
+		return "", ""
+	}
+	if by := requestIdentityFromContext(ctx).ImpersonatedBy; by != nil && by.Name != "" {
+		return user.Name, by.Name
+	}
+	return user.Name, user.Name
+}
+
+// impersonating reports whether the statement runs as a user the signed-in
+// user impersonates.
+func impersonating(ctx context.Context) bool {
+	executing, authenticated := StatementUsers(ctx)
+	return executing != authenticated
 }
 
 // UserListing is one SHOW USERS row.
@@ -207,12 +234,13 @@ func unsupportedAdministrationCommandError(cypher string) error {
 // strings are built only when SHOW or TERMINATE TRANSACTIONS reads them, so
 // a statement registers without formatting any.
 type runningTransaction struct {
-	number     uint64
-	database   string
-	username   string
-	connection ClientConnection
-	started    time.Time
-	terminated atomic.Bool
+	number            uint64
+	database          string
+	username          string
+	authenticatedUser string
+	connection        ClientConnection
+	started           time.Time
+	terminated        atomic.Bool
 	// committed is set when an auto-commit statement's transaction has
 	// committed: a TERMINATE that arrives after that doesn't fail the
 	// statement, whose writes are stored (Execute).
@@ -260,9 +288,7 @@ func (r *runningTransactionRegistry) register(ctx context.Context, tx *runningTr
 	tx.database = database
 	tx.connection = clientConnectionFromContext(ctx)
 	tx.started = started
-	if user, ok := authenticatedUserFromContext(ctx); ok {
-		tx.username = user.Name
-	}
+	tx.username, tx.authenticatedUser = StatementUsers(ctx)
 	r.mu.Lock()
 	r.byNumber[tx.number] = tx
 	r.mu.Unlock()
@@ -310,6 +336,12 @@ func (r *runningTransactionRegistry) snapshot() []*runningTransaction {
 // terminate terminates the transaction with id, a checked
 // <database>-transaction-<n> (terminateTransactionID).
 func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, bool) {
+	return r.terminateIf(id, func(*runningTransaction) bool { return true })
+}
+
+// terminateIf is terminate for a transaction allowed allows; one it doesn't
+// is reported not found, so its existence isn't revealed.
+func (r *runningTransactionRegistry) terminateIf(id string, allowed func(*runningTransaction) bool) (*runningTransaction, bool) {
 	separator := strings.LastIndex(id, "-transaction-")
 	if separator < 0 {
 		return nil, false
@@ -321,7 +353,7 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	r.mu.RLock()
 	tx, ok := r.byNumber[number]
 	r.mu.RUnlock()
-	if !ok || !strings.EqualFold(tx.database, id[:separator]) {
+	if !ok || !strings.EqualFold(tx.database, id[:separator]) || !allowed(tx) {
 		return nil, false
 	}
 	tx.terminated.Store(true)
@@ -517,9 +549,10 @@ func (e *StorageExecutor) withRunningStatement(ctx context.Context, query string
 }
 
 // showTransactionsColumns is SHOW TRANSACTIONS' full column set in Neo4j
-// 5.26's order; showTransactionsDefaultColumns its default set.
+// 5.26's order, followed by NornicDB's dual-user attribution columns.
+// showTransactionsDefaultColumns keeps Neo4j's default set.
 var (
-	showTransactionsColumns        = []string{"database", "transactionId", "currentQueryId", "outerTransactionId", "connectionId", "clientAddress", "username", "metaData", "currentQuery", "parameters", "planner", "runtime", "indexes", "startTime", "currentQueryStartTime", "protocol", "requestUri", "status", "currentQueryStatus", "statusDetails", "resourceInformation", "activeLockCount", "currentQueryActiveLockCount", "elapsedTime", "cpuTime", "waitTime", "idleTime", "currentQueryElapsedTime", "currentQueryCpuTime", "currentQueryWaitTime", "currentQueryIdleTime", "currentQueryAllocatedBytes", "allocatedDirectBytes", "estimatedUsedHeapMemory", "pageHits", "pageFaults", "currentQueryPageHits", "currentQueryPageFaults", "initializationStackTrace"}
+	showTransactionsColumns        = []string{"database", "transactionId", "currentQueryId", "outerTransactionId", "connectionId", "clientAddress", "username", "metaData", "currentQuery", "parameters", "planner", "runtime", "indexes", "startTime", "currentQueryStartTime", "protocol", "requestUri", "status", "currentQueryStatus", "statusDetails", "resourceInformation", "activeLockCount", "currentQueryActiveLockCount", "elapsedTime", "cpuTime", "waitTime", "idleTime", "currentQueryElapsedTime", "currentQueryCpuTime", "currentQueryWaitTime", "currentQueryIdleTime", "currentQueryAllocatedBytes", "allocatedDirectBytes", "estimatedUsedHeapMemory", "pageHits", "pageFaults", "currentQueryPageHits", "currentQueryPageFaults", "initializationStackTrace", "authenticatedUser", "executingUser"}
 	showTransactionsDefaultColumns = []string{"database", "transactionId", "currentQueryId", "connectionId", "clientAddress", "username", "currentQuery", "startTime", "status", "elapsedTime"}
 )
 
@@ -671,8 +704,10 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 				row[i] = tx.connection.ID
 			case "clientAddress":
 				row[i] = tx.connection.Address
-			case "username":
+			case "username", "executingUser":
 				row[i] = tx.username
+			case "authenticatedUser":
+				row[i] = tx.authenticatedUser
 			case "metaData":
 				row[i] = map[string]interface{}{}
 			case "currentQuery":
@@ -719,7 +754,8 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 
 // executeTerminateTransactions terminates the named transactions: one row
 // per id with its username and "Transaction terminated." or "Transaction
-// not found.", as in Neo4j.
+// not found.", as in Neo4j; one the statement may not end (mayTerminate)
+// is reported not found and keeps running.
 func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "TERMINATE")
 	if err != nil {
@@ -740,6 +776,7 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		}
 		ids[index] = normalized
 	}
+	allowed := mayTerminate(ctx)
 	rows := make([][]interface{}, 0, len(ids))
 	for _, id := range ids {
 		text, isString := id.(string)
@@ -747,7 +784,7 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 			rows = append(rows, []interface{}{nil, nil, "Transaction not found."})
 			continue
 		}
-		tx, found := runningTransactions.terminate(text)
+		tx, found := runningTransactions.terminateIf(text, allowed)
 		if !found {
 			rows = append(rows, []interface{}{id, nil, "Transaction not found."})
 			continue
@@ -755,6 +792,23 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		rows = append(rows, []interface{}{id, tx.username, "Transaction terminated."})
 	}
 	return &ExecuteResult{Columns: []string{"transactionId", "username", "message"}, Rows: rows}, nil
+}
+
+// mayTerminate is which transactions a TERMINATE TRANSACTIONS statement may
+// end, as Neo4j decides: every user its own, which are the executing user's
+// (so, while impersonating, the impersonated user's), and another user's
+// only with transaction-management rights, which in NornicDB are the admin
+// permission. A statement without authorization (no principal, as with
+// authentication disabled) may end any.
+func mayTerminate(ctx context.Context) func(*runningTransaction) bool {
+	allows := principalPermissions(ctx)
+	if allows == nil || allows("admin") {
+		return func(*runningTransaction) bool { return true }
+	}
+	user, signedIn := authenticatedUserFromContext(ctx)
+	return func(tx *runningTransaction) bool {
+		return signedIn && tx.username == user.Name
+	}
 }
 
 // terminateTransactionID checks a TERMINATE TRANSACTIONS id as Neo4j does:

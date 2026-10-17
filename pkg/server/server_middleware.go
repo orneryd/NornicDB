@@ -111,7 +111,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 		}
 
 		// Check permission
-		if !hasPermission(s, claims.Roles, requiredPerm) {
+		if requiredPerm != "" && !hasPermission(s, claims.Roles, requiredPerm) {
 			s.logAudit(r, claims.Sub, "access_denied", false,
 				fmt.Sprintf("required permission: %s", requiredPerm))
 			s.writeNeo4jInsufficientPermissions(w, r)

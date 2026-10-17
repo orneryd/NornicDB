@@ -3642,7 +3642,7 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 		ClearUserProcedures()
 		t.Cleanup(ClearUserProcedures)
 		require.NoError(t, RegisterUserProcedure(
-			ProcedureSpec{Name: "custom.const", MinArgs: 0, MaxArgs: 0},
+			ProcedureSpec{Name: "custom.const", Mode: ProcedureModeRead, MinArgs: 0, MaxArgs: 0},
 			func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 				return &ExecuteResult{
 					Columns: []string{"x"},
@@ -3674,7 +3674,7 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 		ClearUserProcedures()
 		t.Cleanup(ClearUserProcedures)
 		require.NoError(t, RegisterUserProcedure(
-			ProcedureSpec{Name: "custom.nil", MinArgs: 0, MaxArgs: 0},
+			ProcedureSpec{Name: "custom.nil", Mode: ProcedureModeRead, MinArgs: 0, MaxArgs: 0},
 			func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
 				return nil, nil
 			},

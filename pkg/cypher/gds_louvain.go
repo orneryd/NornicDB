@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ var louvainConfigKeys = []string{
 // the largest seed + its numeric original ID (string IDs use 1 + their
 // projection position). This can collide with a seed, as in GDS.
 // consecutiveIds numbers them 0, 1, … by first node.
-func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLouvainStream(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -39,7 +40,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.graphProjection(graphName)
+	projection, err := e.graphProjection(graphName, contexts...)
 	if err != nil {
 		return nil, err
 	}

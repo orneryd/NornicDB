@@ -183,11 +183,11 @@
   description: Legacy HTTP and Neo4j response when the requested database does not exist. Name is the database identifier.
   other: "Database '{{.Name}}' not found"
 - id: security.database_access_denied
-  description: Authorization response when the principal cannot access a database. Name is the database identifier.
-  other: "Access to database '{{.Name}}' is not allowed."
+  description: Neo4j's refusal of a database the principal may not access. User is the principal's name, Roles its sorted role names joined with ", " (HasRoles false when it has none); neither is translated.
+  other: "Database access is not allowed for user '{{.User}}' with {{if .HasRoles}}roles [{{.Roles}}]{{else}}no roles{{end}}."
 - id: security.database_write_denied
-  description: Authorization response when the principal cannot write to a database. Name is the database identifier.
-  other: "Write on database '{{.Name}}' is not allowed."
+  description: A write refused by the principal's privileges, in Neo4j's words. User is the principal's name, Roles its sorted role names joined with ", " (HasRoles false when it has none); neither is translated.
+  other: "Write operations are not allowed for user '{{.User}}' with {{if .HasRoles}}roles [{{.Roles}}]{{else}}no roles{{end}}."
 - id: server.authentication_not_configured
   description: HTTP response when authentication services are unavailable or disabled.
   other: authentication not configured
@@ -257,6 +257,18 @@
 - id: bolt.bookmark_validation_failed
   description: Bolt RUN failure for an invalid causal-consistency bookmark. Cause is diagnostic text and must not be translated.
   other: "Bookmark validation failed: {{.Cause}}"
+- id: bolt.impersonation_forbidden
+  description: Bolt failure for a request to impersonate a user the authenticated user may not impersonate. User is the requested user name and must not be translated.
+  other: "Permission denied: impersonating user '{{.User}}' is not allowed."
+- id: bolt.impersonation_auth_disabled
+  description: Bolt failure for a request to impersonate a user while authentication is disabled.
+  other: "Impersonation is not supported with auth disabled."
+- id: bolt.impersonation_unsupported
+  description: Bolt failure for a request to impersonate a user on a server whose authenticator cannot resolve users.
+  other: "Impersonation is not supported by this server's authenticator."
+- id: bolt.impersonated_user_invalid
+  description: Bolt failure for an imp_user field that is neither a string nor null. imp_user is protocol syntax and must not be translated.
+  other: "imp_user must be a string or null."
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required

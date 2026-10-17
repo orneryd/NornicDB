@@ -86,7 +86,10 @@ func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int,
 		}
 		return len(nodes), nil
 	}
-	stats := r.stats()
+	stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.NodeCount), nil
 }
 
@@ -166,7 +169,10 @@ func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *str
 		}
 		return len(edges), nil
 	}
-	stats := r.stats()
+	stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.EdgeCount), nil
 }
 
@@ -314,7 +320,10 @@ func (r *queryResolver) queryCypher(ctx context.Context, input models.CypherInpu
 
 // QueryStats returns database statistics
 func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, error) {
-	stats := r.stats()
+	stats, err := r.stats(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	labels, _ := r.getLabels(ctx)
 	labelStats := make([]*models.LabelStats, 0, len(labels))
@@ -348,11 +357,11 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		typeStats = append(typeStats, &models.RelationshipTypeStats{Type: typ, Count: count})
 	}
 
-	searchStats := r.DB.GetSearchStats()
-	embeddedCount := 0
-	if searchStats != nil {
-		embeddedCount = searchStats.EmbeddingCount
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return nil, err
 	}
+	embeddedCount, _, _ := r.DB.GetDatabaseManagedEmbeddingStats(database)
 
 	return &models.DatabaseStats{
 		NodeCount:         util.ClampInt64ToInt(stats.NodeCount),

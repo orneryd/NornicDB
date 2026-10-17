@@ -183,11 +183,11 @@
   description: Respuesta HTTP y Neo4j cuando no existe la base de datos solicitada.
   other: "No se encontró la base de datos '{{.Name}}'"
 - id: security.database_access_denied
-  description: Respuesta de autorización cuando no se permite acceder a una base de datos.
-  other: "No se permite el acceso a la base de datos '{{.Name}}'."
+  description: Respuesta de Neo4j cuando el principal no puede acceder a una base de datos. User y Roles no se traducen.
+  other: "No se permite el acceso a la base de datos al usuario '{{.User}}' con {{if .HasRoles}}los roles [{{.Roles}}]{{else}}ningún rol{{end}}."
 - id: security.database_write_denied
-  description: Respuesta de autorización cuando no se permite escribir en una base de datos.
-  other: "No se permite escribir en la base de datos '{{.Name}}'."
+  description: Escritura rechazada por los privilegios del principal, en palabras de Neo4j. User y Roles no se traducen.
+  other: "No se permiten operaciones de escritura al usuario '{{.User}}' con {{if .HasRoles}}los roles [{{.Roles}}]{{else}}ningún rol{{end}}."
 - id: server.authentication_not_configured
   description: Respuesta HTTP cuando los servicios de autenticación no están disponibles.
   other: autenticación no configurada
@@ -257,6 +257,18 @@
 - id: bolt.bookmark_validation_failed
   description: Error de Bolt RUN para un marcador no válido. Cause no se traduce.
   other: "Error de validación del marcador: {{.Cause}}"
+- id: bolt.impersonation_forbidden
+  description: Error de Bolt al pedir suplantar a un usuario que el usuario autenticado no puede suplantar. User no se traduce.
+  other: "Permiso denegado: no se permite suplantar al usuario '{{.User}}'."
+- id: bolt.impersonation_auth_disabled
+  description: Error de Bolt al pedir suplantar a un usuario con la autenticación desactivada.
+  other: "La suplantación no se admite con la autenticación desactivada."
+- id: bolt.impersonation_unsupported
+  description: Error de Bolt al pedir suplantar a un usuario en un servidor cuyo autenticador no resuelve usuarios.
+  other: "El autenticador de este servidor no admite la suplantación."
+- id: bolt.impersonated_user_invalid
+  description: Error de Bolt para un campo imp_user que no es una cadena ni null. imp_user es sintaxis del protocolo y no se traduce.
+  other: "imp_user debe ser una cadena o null."
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

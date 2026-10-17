@@ -172,7 +172,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 
 	captured := expr
 	return func(row traversalOptRow) interface{} {
-		fnCtx := cypherfn.Context{
+		fnCtx := cypherfn.Context{Request: ctx,
 			Nodes:    row.nodes,
 			Rels:     row.rels,
 			Storage:  e.storage,

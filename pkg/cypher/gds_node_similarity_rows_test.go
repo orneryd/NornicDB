@@ -421,8 +421,8 @@ func TestSimilarityRowsRemoteNodes(t *testing.T) {
 // self-loop; without that row the two agree (the documented condition for
 // parity).
 func TestSimilarityRowsSelfIncidence(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns")
 	exec := NewStorageExecutor(engine)
 	for _, id := range []string{"a", "b", "x"} {

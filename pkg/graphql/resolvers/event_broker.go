@@ -9,10 +9,11 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ch     interface{} // Channel (type varies by subscription type)
-	labels []string
-	types  []string
-	id     *string
+	visible func(database string) bool
+	ch      interface{} // Channel (type varies by subscription type)
+	labels  []string
+	types   []string
+	id      *string
 }
 
 // EventBroker is a thread-safe pub/sub system for GraphQL subscriptions.
@@ -111,8 +112,9 @@ func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string)
 
 	b.mu.Lock()
 	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
 	})
 	b.mu.Unlock()
 
@@ -132,9 +134,10 @@ func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labe
 
 	b.mu.Lock()
 	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
-		id:     id,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
+		id:      id,
 	})
 	b.mu.Unlock()
 
@@ -153,8 +156,9 @@ func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string)
 
 	b.mu.Lock()
 	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
 	})
 	b.mu.Unlock()
 
@@ -173,8 +177,9 @@ func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []
 
 	b.mu.Lock()
 	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
 	})
 	b.mu.Unlock()
 
@@ -193,9 +198,10 @@ func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *stri
 
 	b.mu.Lock()
 	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
-		id:    id,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
+		id:      id,
 	})
 	b.mu.Unlock()
 
@@ -214,8 +220,9 @@ func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []
 
 	b.mu.Lock()
 	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
 	})
 	b.mu.Unlock()
 
@@ -228,7 +235,15 @@ func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []
 }
 
 // PublishNodeCreated publishes a node created event to all matching subscribers.
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishNodeCreatedIn).
 func (b *EventBroker) PublishNodeCreated(node *models.Node) {
+	b.PublishNodeCreatedIn("", node)
+}
+
+// PublishNodeCreatedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishNodeCreatedIn(database string, node *models.Node) {
 	if node == nil {
 		return
 	}
@@ -240,7 +255,7 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
+		if (sub.visible == nil || sub.visible(database)) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -253,7 +268,15 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 }
 
 // PublishNodeUpdated publishes a node updated event to all matching subscribers.
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishNodeUpdatedIn).
 func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
+	b.PublishNodeUpdatedIn("", node)
+}
+
+// PublishNodeUpdatedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishNodeUpdatedIn(database string, node *models.Node) {
 	if node == nil {
 		return
 	}
@@ -264,7 +287,7 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
+		if (sub.visible == nil || sub.visible(database)) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -279,7 +302,15 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 // PublishNodeDeleted publishes a node deleted event to all matching subscribers.
 // Note: For deleted events, we only have the ID, so label filtering is not possible.
 // We send to all subscriptions (label filters are ignored for deletions).
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishNodeDeletedIn).
 func (b *EventBroker) PublishNodeDeleted(nodeID string) {
+	b.PublishNodeDeletedIn("", nodeID)
+}
+
+// PublishNodeDeletedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishNodeDeletedIn(database string, nodeID string) {
 	if nodeID == "" {
 		return
 	}
@@ -291,6 +322,9 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
+		if sub.visible != nil && !sub.visible(database) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- nodeID:
@@ -302,7 +336,15 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 }
 
 // PublishRelationshipCreated publishes a relationship created event to all matching subscribers.
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishRelationshipCreatedIn).
 func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
+	b.PublishRelationshipCreatedIn("", rel)
+}
+
+// PublishRelationshipCreatedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishRelationshipCreatedIn(database string, rel *models.Relationship) {
 	if rel == nil {
 		return
 	}
@@ -313,7 +355,7 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
+		if (sub.visible == nil || sub.visible(database)) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -326,7 +368,15 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 }
 
 // PublishRelationshipUpdated publishes a relationship updated event to all matching subscribers.
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishRelationshipUpdatedIn).
 func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
+	b.PublishRelationshipUpdatedIn("", rel)
+}
+
+// PublishRelationshipUpdatedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishRelationshipUpdatedIn(database string, rel *models.Relationship) {
 	if rel == nil {
 		return
 	}
@@ -337,7 +387,7 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
+		if (sub.visible == nil || sub.visible(database)) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -352,7 +402,15 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 // PublishRelationshipDeleted publishes a relationship deleted event to all matching subscribers.
 // Note: For deleted events, we only have the ID, so type filtering is not possible.
 // We send to all subscriptions (type filters are ignored for deletions).
+// The event names no database, so a
+// subscription scoped to a database never receives it (PublishRelationshipDeletedIn).
 func (b *EventBroker) PublishRelationshipDeleted(relID string) {
+	b.PublishRelationshipDeletedIn("", relID)
+}
+
+// PublishRelationshipDeletedIn publishes the event of database, which a subscription
+// scoped to a database checks instead of reading it from the payload's ID.
+func (b *EventBroker) PublishRelationshipDeletedIn(database string, relID string) {
 	if relID == "" {
 		return
 	}
@@ -364,6 +422,9 @@ func (b *EventBroker) PublishRelationshipDeleted(relID string) {
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
+		if sub.visible != nil && !sub.visible(database) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- relID:

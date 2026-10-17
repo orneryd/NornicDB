@@ -13,11 +13,13 @@ type transactionHTTPOrderedMap struct {
 }
 
 type transactionHTTPValueState struct {
-	rest         bool
-	graph        *GraphResult
-	mapKeyOrders map[uintptr][]string
-	nodes        map[string]struct{}
-	edges        map[string]struct{}
+	rest               bool
+	graph              *GraphResult
+	mapKeyOrders       map[uintptr][]string
+	nodes              map[string]struct{}
+	edges              map[string]struct{}
+	entityDatabase     cypher.EntityDatabaseResolver
+	entityContextBound bool
 }
 
 func (state *transactionHTTPValueState) addNode(node GraphNode) {

@@ -25,6 +25,7 @@ func TestUserStatementsCannotCallInternalFunctions(t *testing.T) {
 		"RETURN `__nornic_interpolate`(1) AS v",
 		"RETURN __nornic_map_from_pairs([['a', 1]]) AS v",
 		"MATCH (n:IF) WHERE __nornic_haslabels(n, 'IF', false) RETURN n.v AS v",
+		"MATCH (n:IF) WHERE __nornic_labelpredicate(n, 'IF', false) RETURN n.v AS v",
 		"WITH __nornic_vector('[1, 2]', 2, 'INTEGER') AS v RETURN v",
 		"UNWIND [1] AS x RETURN __nornic_vector_norm(x, 'EUCLIDEAN') AS v",
 		"RETURN __nornic_vector_distance(1, 2, 'EUCLIDEAN') AS v",

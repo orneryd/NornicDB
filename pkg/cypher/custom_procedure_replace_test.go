@@ -95,6 +95,7 @@ func TestCallsUserProcedureWithExactRegistryKeys(t *testing.T) {
 // statement apoc.cypher.run runs.
 func TestCustomProcedureDefinitionNeedsAdmin(t *testing.T) {
 	t.Cleanup(ClearUserProcedures)
+	ensureBuiltInProceduresRegistered()
 	for _, name := range []string{"apoc.custom.installProcedure", "apoc.custom.declareProcedure", "apoc.custom.dropProcedure"} {
 		procedure, found := globalProcedureRegistry.Get(name)
 		require.True(t, found, name)
@@ -109,16 +110,21 @@ func TestCustomProcedureDefinitionNeedsAdmin(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	editor := WithPermissionChecker(ctx, func(permission string) bool { return permission != "admin" && permission != "schema" })
-	for _, query := range []string{
-		"CALL apoc.custom.installProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c', 'nornic', 'read')",
-		"CALL apoc.custom.declareProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c')",
-		"CALL apoc.custom.dropProcedure('report')",
-		"CREATE OR REPLACE PROCEDURE custom.report() MODE READ AS RETURN 1 AS c",
-		"CALL apoc.cypher.run(\"CALL apoc.custom.installProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c')\", {}) YIELD value RETURN value",
+	// Neo4j 5.26's refusals: an admin procedure names itself, an
+	// administration command is "Permission denied.".
+	adminProcedure := func(name string) string {
+		return (&PermissionDeniedError{Permission: "admin", Procedure: name}).Error()
+	}
+	for query, refusal := range map[string]string{
+		"CALL apoc.custom.installProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c', 'nornic', 'read')":                                      adminProcedure("apoc.custom.installProcedure"),
+		"CALL apoc.custom.declareProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c')":                                                        adminProcedure("apoc.custom.declareProcedure"),
+		"CALL apoc.custom.dropProcedure('report')":                                                                                                adminProcedure("apoc.custom.dropProcedure"),
+		"CREATE OR REPLACE PROCEDURE custom.report() MODE READ AS RETURN 1 AS c":                                                                  (&PermissionDeniedError{Permission: "admin"}).Error(),
+		"CALL apoc.cypher.run(\"CALL apoc.custom.installProcedure('report() :: (c :: INTEGER)', 'RETURN 1 AS c')\", {}) YIELD value RETURN value": adminProcedure("apoc.custom.installProcedure"),
 	} {
 		_, err := exec.Execute(editor, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), (&PermissionDeniedError{Permission: "admin"}).Error(), query)
+		require.Contains(t, err.Error(), refusal, query)
 	}
 	_, found := globalProcedureRegistry.Get("custom.report")
 	require.False(t, found, "nothing was installed")

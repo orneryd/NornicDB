@@ -123,10 +123,14 @@ func (r *heimdallDBRouter) cachedExecutor(dbName string) *cypher.StorageExecutor
 // embedder, localization and logging, and multi-database commands, but not
 // yet the database's search service or embed queue (finishExecutor).
 func (r *heimdallDBRouter) newExecutor(engine storage.Engine) *cypher.StorageExecutor {
-	exec := cypher.NewStorageExecutor(engine)
+	exec := cypher.NewStatementExecutor(engine)
+	// Every router executor is shared once published, as the HTTP server's
+	// are, so a reusable USE target it routes to is published too.
+	exec.SetSharedExecutor(true)
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)
+			exec.ShareMutationCallbackFrom(baseExecutor)
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
@@ -139,13 +143,35 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine) *cypher.StorageExe
 	// Enable multi-db commands (SHOW/CREATE/DROP DATABASE...) when supported.
 	// The adapter lives in server_db.go (same package), so we can reuse it here.
 	if r.dbManager != nil {
-		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, server: nil})
+		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, finish: r.finishRoutedExecutor})
 	}
 	return exec
 }
 
+// finishRoutedExecutor finishes a USE target or Fabric fragment executor
+// that one of the router's executors created, after it admitted its
+// statement: the physical target's search service and embed queue
+// (finishExecutor), and publication of a reusable local target.
+func (r *heimdallDBRouter) finishRoutedExecutor(database string, engine storage.Engine, exec *cypher.StorageExecutor, shared bool) {
+	manager := &databaseManagerAdapter{manager: r.dbManager, db: r.db}
+	remote := cypher.GraphIsRemote(manager, database)
+	if physical, allowed := cypher.GraphAccess(manager, database, nil); allowed && !remote {
+		database = physical
+	}
+	r.finishExecutor(database, engine, exec)
+	if shared && !remote {
+		r.publishExecutor(database, exec)
+	}
+}
+
 // finishExecutor gives exec dbName's search service and the embed queue.
 func (r *heimdallDBRouter) finishExecutor(dbName string, engine storage.Engine, exec *cypher.StorageExecutor) {
+	if composite, ok := engine.(interface{ IsComposite() bool }); ok && composite.IsComposite() {
+		return
+	}
+	if r.dbManager != nil && cypher.GraphIsRemote(&databaseManagerAdapter{manager: r.dbManager, db: r.db}, dbName) {
+		return
+	}
 	// Reuse DB's cached search service instead of creating a new one.
 	if r.db != nil {
 		if searchSvc, err := r.db.GetOrCreateSearchService(dbName, engine); err == nil && searchSvc != nil {
@@ -208,8 +234,8 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // server attaches the principal to the request (withBifrostRBAC): its one
 // permission resolver, which HTTP, Bolt and GraphQL use, and the databases
 // and aliases it may select. A selection outside that scope, or one where
-// the principal lacks permission, gets the same Forbidden error naming the
-// selection as given. Otherwise it returns the canonical name and ctx
+// the principal lacks permission, gets the same Forbidden error, Neo4j's,
+// which names the principal. Otherwise it returns the canonical name and ctx
 // carrying the resolver for the executor, which then authorizes each
 // statement as on the other transports. A context the server marked as
 // served with authentication disabled resolves the name as given; a context
@@ -217,12 +243,12 @@ func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database strin
 // (auth.WithRequestPrincipal attaches both), or no context at all is refused.
 func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
 	if ctx == nil {
-		return nil, "", r.databaseForbidden(database)
+		return nil, "", r.databaseForbidden(ctx)
 	}
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
-			return nil, "", r.databaseForbidden(database)
+			return nil, "", r.databaseForbidden(ctx)
 		}
 		dbName, err := r.ResolveDatabase(database)
 		if err != nil {
@@ -230,27 +256,24 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 		}
 		return ctx, dbName, nil
 	}
-	scope := auth.RequestDatabaseScopeFromContext(ctx)
-	if scope == nil {
-		return nil, "", r.databaseForbidden(database)
+	class := cypher.PrivilegeClass(0)
+	switch permission {
+	case auth.Permission("access"):
+		class = cypher.PrivilegeNone
+	case auth.PermRead:
+		class = cypher.PrivilegeRead
 	}
-	dbName, selectable := scope.Resolve(database)
-	if !selectable || !allows(dbName, permission) {
-		return nil, "", r.databaseForbidden(database)
+	admittedCtx, dbName, err := cypher.AdmitRequestOperation(ctx, r.DefaultDatabaseName(), database, class)
+	if err != nil {
+		return nil, "", r.databaseForbidden(ctx)
 	}
-	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
-		return allows(database, auth.Permission(permission))
-	}), dbName, nil
+	return admittedCtx, dbName, nil
 }
 
-// databaseForbidden is Neo4j's Forbidden error for the selection as the
-// caller gave it (the default database's name when it gave none).
-func (r *heimdallDBRouter) databaseForbidden(database string) error {
-	if database == "" {
-		database = r.DefaultDatabaseName()
-	}
-	denied := localization.DatabaseAccessDenied(database)
-	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+// databaseForbidden is Neo4j's Forbidden error for ctx's principal, which
+// Neo4j names instead of the selection (cypher.DatabaseAccessDeniedMessage).
+func (r *heimdallDBRouter) databaseForbidden(ctx context.Context) error {
+	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", cypher.DatabaseAccessDeniedMessage(ctx), nil)
 }
 
 // requireNonComposite refuses a composite database for the calls that read
@@ -267,6 +290,13 @@ func (r *heimdallDBRouter) requireNonComposite(dbName string) error {
 func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQuery string, params map[string]interface{}) ([]map[string]interface{}, error) {
 	ctx, dbName, err := r.authorizeDatabase(ctx, database, auth.Permission("access"))
 	if err != nil {
+		return nil, err
+	}
+	var manager cypher.DatabaseManagerInterface
+	if r.dbManager != nil {
+		manager = &databaseManagerAdapter{manager: r.dbManager, db: r.db}
+	}
+	if err := cypher.AdmitStatement(ctx, manager, dbName, cypherQuery); err != nil {
 		return nil, err
 	}
 	ctx, exec, err := r.statementExecutor(ctx, dbName)

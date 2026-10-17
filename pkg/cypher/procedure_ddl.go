@@ -306,7 +306,22 @@ func ensureLabel(labels []string, label string) []string {
 	return append(labels, label)
 }
 
+// ReloadProcedureCatalog loads this process's local catalog during trusted
+// startup. Request-selected statement executors never reload global metadata.
+func (e *StorageExecutor) ReloadProcedureCatalog() error { return e.loadPersistedProcedures() }
+
 func (e *StorageExecutor) loadPersistedProcedures() error {
+	// A composite owns routing metadata, never the procedure catalog of its
+	// constituents. Catalog loading must not open every constituent while a
+	// transport is constructing a session before its first graph statement.
+	if isCompositeRoot(e.storage) {
+		return nil
+	}
+	// A remote alias's catalog belongs to that server. It must not be loaded
+	// or registered as this server's local procedure catalog.
+	if _, remote := e.storage.(*storage.RemoteEngine); remote {
+		return nil
+	}
 	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)

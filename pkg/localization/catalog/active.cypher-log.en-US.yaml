@@ -22,3 +22,6 @@
 - id: cypher.log.decay_subsystem_disabled
   description: Operator warning when a decay function is called while the decay subsystem is disabled.
   other: decay function called but decay subsystem is disabled; returning neutral scores
+- id: cypher.log.storage_cleanup_failed
+  description: Operator error record when releasing a request's database storage fails. The database and error remain structured data.
+  other: Request-scoped database storage cleanup failed

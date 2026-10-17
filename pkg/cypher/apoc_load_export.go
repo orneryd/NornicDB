@@ -128,7 +128,12 @@ func (e *StorageExecutor) resolveAPOCLocalImportFilePath(source string) (string,
 	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCImportFileAccessAllowed)
 }
 
-func (e *StorageExecutor) resolveAPOCLocalExportFilePath(source string) (string, error) {
+func (e *StorageExecutor) resolveAPOCLocalExportFilePath(source string, contexts ...context.Context) (string, error) {
+	if len(contexts) > 0 {
+		if err := authorizeRequirements(contexts[0], requirementsForClass(PrivilegeFileIO|PrivilegeWrite)); err != nil {
+			return "", err
+		}
+	}
 	return e.resolveAPOCLocalFilePath(source, e.ensureLocalAPOCExportFileAccessAllowed)
 }
 
@@ -472,7 +477,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -528,7 +533,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -583,7 +588,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -656,7 +661,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
-		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath)
+		resolvedPath, err = e.resolveAPOCLocalExportFilePath(filePath, ctx)
 		if err != nil {
 			return nil, err
 		}

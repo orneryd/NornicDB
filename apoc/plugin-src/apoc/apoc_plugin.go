@@ -8,10 +8,12 @@ package main
 import (
 	"github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/pkg/auth"
 )
 
 // PluginFunction matches the struct expected by the plugin loader
 type PluginFunction struct {
+	Privilege   auth.OperationClass
 	Handler     interface{}
 	Description string
 	Examples    []string
@@ -44,6 +46,7 @@ func (p APOCPlugin) Functions() map[string]PluginFunction {
 		// the plugin loader will add "apoc.<pluginname>." prefix
 		// Actually, keep the full name for direct mapping
 		functions[name] = PluginFunction{
+			Privilege:   info.Privilege,
 			Handler:     info.Handler,
 			Description: info.Description,
 			Examples:    info.Examples,

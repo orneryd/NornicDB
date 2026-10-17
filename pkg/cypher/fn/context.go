@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,8 +13,10 @@ import (
 // Eval must evaluate a Cypher expression in the caller's scope (row bindings).
 // Functions can use Eval for lazy argument evaluation (e.g. coalesce).
 type Context struct {
-	Nodes map[string]*storage.Node
-	Rels  map[string]*storage.Edge
+	// Request carries the executing principal through graph/catalog readers.
+	Request context.Context
+	Nodes   map[string]*storage.Node
+	Rels    map[string]*storage.Edge
 	// Storage is the graph the statement reads, for functions over the
 	// graph (GDS's link-prediction functions, gds.util.asNode).
 	Storage storage.Engine

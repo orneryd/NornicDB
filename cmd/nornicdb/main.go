@@ -945,6 +945,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	boltServer.SetResolvedAccessResolver(httpServer.GetResolvedAccessForRoles)
 	// EXECUTE BOOSTED PROCEDURE grants, as the HTTP server applies them.
 	boltServer.SetProcedureGrantResolver(httpServer.ProcedureGrantChecker)
+	// IMPERSONATE privileges for Bolt imp_user.
+	boltServer.SetImpersonationResolver(httpServer.ImpersonationChecker)
 
 	// Phase 1 OBS-07/OBS-08: lifecycle.Run is the canonical supervisor.
 	// The previous channel-based pattern (signal.Notify + sequential

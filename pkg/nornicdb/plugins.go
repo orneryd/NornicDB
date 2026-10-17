@@ -35,6 +35,7 @@ type PluginFunction struct {
 	Handler     interface{}
 	Description string
 	Category    string
+	Privilege   cypher.PrivilegeClass
 }
 
 // PluginProcedure represents a Cypher procedure provided by a plugin.
@@ -393,9 +394,13 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 	for _, key := range mapVal.MapKeys() {
 		funcName := key.String()
 		funcVal := mapVal.MapIndex(key)
+		if funcVal.Kind() == reflect.Interface && !funcVal.IsNil() {
+			funcVal = funcVal.Elem()
+		}
 
 		var handler interface{}
 		var desc string
+		var privilege cypher.PrivilegeClass
 
 		if funcVal.Kind() == reflect.Struct {
 			if field := funcVal.FieldByName("Handler"); field.IsValid() {
@@ -404,6 +409,12 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 			if field := funcVal.FieldByName("Description"); field.IsValid() && field.Kind() == reflect.String {
 				desc = field.String()
 			}
+			if field := funcVal.FieldByName("Privilege"); field.IsValid() && field.CanInterface() {
+				privilege, _ = field.Interface().(cypher.PrivilegeClass)
+			}
+		}
+		if !privilege.Valid() {
+			return nil, fmt.Errorf("plugin function %q: explicit privilege class required", funcName)
 		}
 
 		// Use fully qualified name if provided, otherwise add plugin prefix
@@ -417,6 +428,7 @@ func extractFunctions(val reflect.Value, pluginName string) ([]PluginFunction, e
 			Handler:     handler,
 			Description: desc,
 			Category:    pluginName,
+			Privilege:   privilege,
 		})
 	}
 

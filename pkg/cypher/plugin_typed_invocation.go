@@ -221,6 +221,9 @@ func containsContextPluginCall(expression string) bool {
 	found := false
 	_ = forEachFunctionCall(expression, func(name, _ string) error {
 		if handler, ok := pluginFunctionHandler(name); ok && handler != nil {
+			if contract, declared := handler.(PluginFunctionContract); declared {
+				handler = contract.Handler
+			}
 			typ := reflect.TypeOf(handler)
 			if typ.Kind() == reflect.Func && typ.NumIn() > 0 && typ.In(0) == pluginContextType {
 				found = true

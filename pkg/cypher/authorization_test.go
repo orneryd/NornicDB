@@ -35,19 +35,19 @@ func TestQueryPermissionRequirementsRecognizesCypherKeywords(t *testing.T) {
 		"scalar relationship write": {query: "WITH 1 AS x WHERE x > 0 CREATE (a)-[:R]->(b)", write: true, noRead: true},
 		"pattern filter reads":      {query: "WITH 1 AS x WHERE ()-->() CREATE (:A)", write: true},
 		"subquery match reads":      {query: "CALL { MATCH (n) RETURN n } CREATE (:A)", write: true},
-		"schema":                    {query: "CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
-		"commented schema":          {query: "/* migration */ CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
-		"admin database DDL":        {query: "DROP DATABASE restricted", admin: true},
-		"commented admin DDL":       {query: "// maintenance\nDROP DATABASE restricted", admin: true},
-		"show users":                {query: "SHOW USERS", admin: true},
-		"show transactions":         {query: "SHOW TRANSACTIONS", admin: true},
-		"terminate transactions":    {query: "/* audit */ TERMINATE TRANSACTIONS 'db-transaction-1'", admin: true},
-		"show current user":         {query: "SHOW CURRENT USER"},
+		"schema":                    {query: "CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true, noRead: true},
+		"commented schema":          {query: "/* migration */ CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true, noRead: true},
+		"admin database DDL":        {query: "DROP DATABASE restricted", admin: true, noRead: true},
+		"commented admin DDL":       {query: "// maintenance\nDROP DATABASE restricted", admin: true, noRead: true},
+		"show users":                {query: "SHOW USERS", admin: true, noRead: true},
+		"show transactions":         {query: "SHOW TRANSACTIONS", admin: true, noRead: true},
+		"terminate transactions":    {query: "/* audit */ TERMINATE TRANSACTIONS 'db-transaction-1'", noRead: true},
+		"show current user":         {query: "SHOW CURRENT USER", noRead: true},
 		"write procedure":           {query: "CALL db.create.setNodeVectorProperty('id', 'embedding', [1.0])", write: true},
-		"keyword in string":         {query: "RETURN 'SET value' AS text"},
+		"keyword in string":         {query: "RETURN 'SET value' AS text", noRead: true},
 		"keyword in identifier":     {query: "MATCH (n:`CREATE`) RETURN n"},
 		"keyword property":          {query: "MATCH (n) RETURN n.set"},
-		"keyword map key":           {query: "RETURN {create: true} AS value"},
+		"keyword map key":           {query: "RETURN {create: true} AS value", noRead: true},
 		"keyword in comment":        {query: "// DELETE n\nMATCH (n) RETURN n"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestStorageExecutorEnforcesQueryPermissions(t *testing.T) {
 		require.Equal(t, "admin", denied.Permission)
 	})
 
-	for _, query := range []string{"SHOW USERS", "SHOW TRANSACTIONS", "TERMINATE TRANSACTIONS 'authorization-transaction-1'"} {
+	for _, query := range []string{"SHOW USERS", "SHOW TRANSACTIONS"} {
 		t.Run(query, func(t *testing.T) {
 			_, err := executor.Execute(readOnlyCtx, query, nil)
 			var denied *PermissionDeniedError
@@ -120,7 +120,7 @@ func TestStorageExecutorEnforcesQueryPermissions(t *testing.T) {
 
 func TestDatabasePermissionResolverFollowsExecutionDatabase(t *testing.T) {
 	ctx := WithDatabasePermissionResolver(context.Background(), "writable", func(database, permission string) bool {
-		return permission == "read" || permission == "write" && database == "writable"
+		return permission == "access" || permission == "read" || permission == "write" && database == "writable"
 	})
 	require.NoError(t, AuthorizeQuery(ctx, "CREATE (:Allowed)"))
 

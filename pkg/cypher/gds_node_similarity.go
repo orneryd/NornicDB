@@ -77,7 +77,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.graphProjection(graphName)
+	projection, err := e.graphProjection(graphName, ctx)
 	if err != nil {
 		return nil, err
 	}

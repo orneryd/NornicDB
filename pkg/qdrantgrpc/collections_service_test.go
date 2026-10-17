@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -15,10 +16,10 @@ import (
 
 type denyCollectionChecker struct{}
 
-func (denyCollectionChecker) AllowDatabaseAccess(ctx context.Context, database string, write bool) error {
+func (denyCollectionChecker) AllowDatabaseOperation(ctx context.Context, database string, class cypher.PrivilegeClass) error {
 	_ = ctx
 	_ = database
-	_ = write
+	_ = class
 	return errors.New("denied")
 }
 

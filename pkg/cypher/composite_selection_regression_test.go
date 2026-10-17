@@ -21,9 +21,7 @@ func TestStatementCompositeSelection(t *testing.T) {
 			require.NoError(t, err)
 			ctx := WithDatabasePermissionResolver(context.Background(), "pcomp", func(database, _ string) bool { return database != "pcomp" })
 			result, err := exec.Execute(ctx, query, nil)
-			t.Logf("result=%v err=%v", result, err)
-			var denied *PermissionDeniedError
-			require.ErrorAs(t, err, &denied, "composite access was denied")
+			requireDatabaseAccessDenied(t, err, "composite access was denied")
 			require.Nil(t, result)
 		})
 	}

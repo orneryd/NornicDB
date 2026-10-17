@@ -40,3 +40,6 @@
 - id: server.method_put_required
   description: Respuesta HTTP para un endpoint que solo acepta solicitudes PUT.
   other: se requiere PUT
+- id: auth.operation_contract_required
+  description: Rechazo de un procedimiento, función u operación que no declara un contrato de privilegios válido; no se puede ejecutar.
+  other: la operación requiere un contrato de privilegios válido

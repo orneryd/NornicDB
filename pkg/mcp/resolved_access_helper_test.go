@@ -13,6 +13,8 @@ import (
 func withResolvedAccess(ctx context.Context, access func(database string) auth.ResolvedAccess) context.Context {
 	return auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		switch permission {
+		case auth.Permission("access"):
+			return true // selection is independently limited by the fixture scope
 		case auth.PermRead:
 			return access(database).Read
 		case auth.PermWrite:

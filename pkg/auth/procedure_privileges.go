@@ -4,8 +4,8 @@
 // A grant names a role, a procedure name or glob (db.cdc.*) and whether it
 // is boosted; a role holds at most one such grant, which is immutable or
 // not. A boosted grant lets the role run a matching procedure that needs
-// administrator rights; a plain EXECUTE grant adds nothing to what the role
-// may already run.
+// administrator rights. The Cypher administration boundary rejects ordinary
+// EXECUTE grants because this coarse privilege model cannot enforce them.
 //
 // Grants are stored in the system database as _ProcedurePrivilege nodes,
 // kept apart from graph data the way the other system stores keep theirs:

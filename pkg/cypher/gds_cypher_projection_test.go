@@ -14,8 +14,8 @@ import (
 // document.
 func newAggregationProjectionGraph(t *testing.T) (*StorageExecutor, func(string) [][]interface{}, func(string) error) {
 	t.Helper()
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "agg"))
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, `CREATE (d1:Doc {name:'d1'}), (d2:Doc {name:'d2'}), (d3:Doc {name:'d3'}), (p1:Party {name:'p1', size: 2}), (p2:Party {name:'p2', size: 2.5}), (lone:Doc {name:'lone'}),

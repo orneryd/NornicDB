@@ -1,7 +1,7 @@
 package fn
 
 func init() {
-	Register("reveal", evalReveal)
+	Register("reveal", PrivilegeNone, evalReveal)
 }
 
 func evalReveal(ctx Context, args []string) (interface{}, error) {

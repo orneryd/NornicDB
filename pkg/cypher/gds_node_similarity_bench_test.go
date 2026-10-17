@@ -12,8 +12,8 @@ import (
 // BenchmarkNodeSimilarity measures procedure execution on a projected graph
 // with parallel relationships in two types, shared targets and distinct targets.
 func BenchmarkNodeSimilarity(b *testing.B) {
-	graphProjections = make(map[string]*GraphProjection)
-	b.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	b.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "nsbench")
 	for i := 0; i < 96; i++ {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("n%03d", i)), Labels: []string{"N"}})

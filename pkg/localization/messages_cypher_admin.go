@@ -275,6 +275,35 @@ func CypherAdminPrivilegeRoleNotFound(action, role string) Message {
 	return Message{ID: MessageCypherAdminPrivilegeRoleNotFound, Fallback: "Failed to grant " + action + " privilege to role '" + role + "': Role does not exist.", Data: map[string]any{"Action": action, "Role": role}}
 }
 
+// Impersonation: a DENY to a role that does not exist, an updating
+// administration command run while impersonating a user, and a remote
+// database reached while impersonating one.
+const (
+	MessageCypherAdminPrivilegeDenyRoleNotFound       MessageID = "cypheradmin.privilege_deny_role_not_found"
+	MessageCypherAdminImpersonationSystemUpdateDenied MessageID = "cypheradmin.impersonation_system_update_denied"
+	MessageCypherAdminImpersonationRemoteDenied       MessageID = "cypheradmin.impersonation_remote_database_denied"
+)
+
+// CypherAdminPrivilegeDenyRoleNotFound identifies a DENY to a role that does
+// not exist; action is the privilege's action (impersonate).
+func CypherAdminPrivilegeDenyRoleNotFound(action, role string) Message {
+	return Message{ID: MessageCypherAdminPrivilegeDenyRoleNotFound, Fallback: "Failed to deny " + action + " privilege to role '" + role + "': Role does not exist.", Data: map[string]any{"Action": action, "Role": role}}
+}
+
+// CypherAdminImpersonationSystemUpdateDenied identifies an updating
+// administration command run while impersonating a user, in Neo4j's words.
+func CypherAdminImpersonationSystemUpdateDenied() Message {
+	return Message{ID: MessageCypherAdminImpersonationSystemUpdateDenied, Fallback: "Not allowed to run updating system commands when impersonating a user."}
+}
+
+// CypherAdminImpersonationRemoteDenied identifies a statement or transaction
+// impersonating a user whose graph is (or includes) a remote constituent: as
+// Neo4j documents for remote database aliases, a user can't be impersonated
+// on the remote database.
+func CypherAdminImpersonationRemoteDenied(database string) Message {
+	return Message{ID: MessageCypherAdminImpersonationRemoteDenied, Fallback: "Impersonating a user is not supported on remote database '" + database + "'.", Data: map[string]any{"Database": database}}
+}
+
 const (
 	MessageCypherAdminSystemGraphAccessUnsupported MessageID = "cypheradmin.system_graph_access_unsupported"
 	MessageCypherAdminSystemProcedureUnsupported   MessageID = "cypheradmin.system_procedure_unsupported"

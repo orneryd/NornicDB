@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc/codes"
@@ -31,7 +32,11 @@ func (s *CollectionsService) allowAccess(ctx context.Context, collectionName str
 	if s.checker == nil {
 		return nil
 	}
-	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+	class := cypher.PrivilegeRead
+	if write {
+		class = cypher.PrivilegeDBMS
+	}
+	return s.checker.AllowDatabaseOperation(ctx, collectionName, class)
 }
 
 func (s *CollectionsService) Create(ctx context.Context, req *qpb.CreateCollection) (*qpb.CollectionOperationResponse, error) {

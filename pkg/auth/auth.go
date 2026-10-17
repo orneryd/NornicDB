@@ -1263,6 +1263,24 @@ func (a *Authenticator) CurrentClaims(claims *JWTClaims) (*JWTClaims, error) {
 	return &current, nil
 }
 
+// ImpersonationClaims is the identity a transaction impersonating username
+// runs as: the account's ID, name and current roles, as CurrentClaims gives
+// a signed-in user's. An account that doesn't exist or is disabled can't be
+// impersonated: ErrUserNotFound.
+func (a *Authenticator) ImpersonationClaims(username string) (*JWTClaims, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	user, stored := a.users[username]
+	if !stored || user.Disabled {
+		return nil, ErrUserNotFound
+	}
+	claims := &JWTClaims{Sub: user.ID, Username: user.Username, Roles: make([]string, len(user.Roles))}
+	for i, role := range user.Roles {
+		claims.Roles[i] = string(role)
+	}
+	return claims, nil
+}
+
 // GetUserByID retrieves a user by their ID.
 func (a *Authenticator) GetUserByID(id string) (*User, error) {
 	a.mu.RLock()

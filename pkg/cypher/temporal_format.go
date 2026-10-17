@@ -16,7 +16,7 @@ import (
 // first argument is NornicDB's printf extension, format(template, values…),
 // which Neo4j rejects as a type mismatch.
 func init() {
-	cypherfn.Register("format", fnFormat)
+	cypherfn.Register("format", cypherfn.PrivilegeNone, fnFormat)
 }
 
 // temporalFormatTypes is the type mismatch text of a format() value that

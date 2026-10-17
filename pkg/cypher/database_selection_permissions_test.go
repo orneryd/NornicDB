@@ -29,7 +29,8 @@ func TestDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 					if database != route.database {
 						return true
 					}
-					return permission == "read" && access.read || permission == "write" && access.write
+					// The database is selectable; only its read and write vary.
+					return permission == "access" || permission == "read" && access.read || permission == "write" && access.write
 				})
 				for _, statement := range []string{
 					"CREATE (:Loaded)",
@@ -75,7 +76,8 @@ func TestFabricDatabaseSelectionUsesFragmentPermissions(t *testing.T) {
 				if database != "pother" {
 					return true
 				}
-				return permission == "read" && access.read || permission == "write" && access.write
+				// The database is selectable; only its read and write vary.
+				return permission == "access" || permission == "read" && access.read || permission == "write" && access.write
 			})
 			for _, prefix := range []string{"USE pcomp.other ", "USE graph.byName('pcomp.other') ", ":USE pcomp.other\n"} {
 				result, err := exec.Execute(ctx, prefix+"CREATE (:Loaded)", nil)
@@ -101,7 +103,7 @@ func TestFabricDatabaseSelectionUsesFragmentPermissions(t *testing.T) {
 	t.Run("read one database and write another", func(t *testing.T) {
 		exec := newCompositeFixture(t)
 		ctx := WithDatabasePermissionResolver(context.Background(), "pcomp", func(database, permission string) bool {
-			return database != "pother" || permission == "read"
+			return permission == "access" || database != "pother" || permission == "read"
 		})
 		result, err := exec.Execute(ctx, "CALL { USE pcomp.other MATCH (n:EI) RETURN n.v AS v } CALL { USE pcomp.third WITH v CREATE (n:Loaded {v: v}) RETURN n.v AS loaded } RETURN loaded", nil)
 		require.NoError(t, err)

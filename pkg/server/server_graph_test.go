@@ -826,11 +826,15 @@ func TestResolveGraphStorage_Branches(t *testing.T) {
 	_, _, err = server.resolveGraphStorage(req)
 	require.ErrorIs(t, err, errGraphForbidden)
 
-	server.auth = nil
+	// A principal whose roles grant nothing is refused while authentication
+	// is on; with it off, every request is open, whatever claims it carries.
 	req = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Roles: []string{"unknown"}}))
 	req.SetPathValue("database", "nornic")
 	_, _, err = server.resolveGraphStorage(req)
 	require.ErrorIs(t, err, errGraphForbidden)
+	server.auth = nil
+	_, _, err = server.resolveGraphStorage(req)
+	require.NoError(t, err)
 
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "nornic")

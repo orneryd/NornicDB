@@ -79,7 +79,7 @@ func TestBoltDatabaseSelectionUsesStatementPermissions(t *testing.T) {
 						var denied *neo4jdriver.Neo4jError
 						require.ErrorAs(t, err, &denied)
 						require.Equal(t, "Neo.ClientError.Security.Forbidden", denied.Code)
-						require.Contains(t, denied.Msg, "Write operations require write permission")
+						require.Equal(t, fmt.Sprintf("Write operations are not allowed for user '%s' with roles [%s].", access.role, access.role), denied.Msg)
 					}
 				})
 			}

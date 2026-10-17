@@ -19,6 +19,9 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 		s.writePostRequired(w, r)
 		return
 	}
+	if !s.admitHTTPOperation(w, r, "gdpr.export", "") {
+		return
+	}
 
 	var req struct {
 		UserID string `json:"user_id"`
@@ -59,6 +62,9 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
+		return
+	}
+	if !s.admitHTTPOperation(w, r, "gdpr.delete", "") {
 		return
 	}
 

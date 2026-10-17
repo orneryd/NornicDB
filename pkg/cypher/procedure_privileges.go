@@ -22,8 +22,9 @@ type procedurePrivilegeCommand struct {
 }
 
 // isProcedurePrivilegeCommand reports whether cypher is a GRANT or REVOKE of
-// procedure execution, the privilege statements NornicDB runs; every other
-// GRANT, REVOKE or DENY is unsupported.
+// procedure execution, privilege statements NornicDB runs, as it runs those
+// of impersonation (isImpersonatePrivilegeCommand); every other GRANT,
+// REVOKE or DENY is unsupported.
 func isProcedurePrivilegeCommand(cypher string) bool {
 	_, ok, _ := parseProcedurePrivilegeCommand(cypher)
 	return ok
@@ -227,6 +228,10 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
+	if !command.boosted {
+		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
+			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
+	}
 	locked := !authenticationDisabled(ctx)
 	if command.grant && command.immutable && locked {
 		return nil, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeGrantForbidden())
@@ -328,8 +333,8 @@ func showPrivilegeRoles(head string) []string {
 	return roles
 }
 
-// executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
-// access, action, resource, graph, segment, role, immutable.
+// executeShowPrivileges lists the procedure and impersonation privileges, in
+// Neo4j's columns: access, action, resource, graph, segment, role, immutable.
 func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string) (*ExecuteResult, error) {
 	system, err := e.privilegeStorage(false)
 	if err != nil {
@@ -354,5 +359,10 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		}
 		result.Rows = append(result.Rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
 	}
+	impersonation, err := impersonatePrivilegeRows(ctx, system, only)
+	if err != nil {
+		return nil, err
+	}
+	result.Rows = append(result.Rows, impersonation...)
 	return result, nil
 }

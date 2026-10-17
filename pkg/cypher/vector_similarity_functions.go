@@ -17,8 +17,8 @@ import (
 // Neo4j's ArgumentErrors.
 
 func init() {
-	cypherfn.Register("vector.similarity.cosine", fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64]))
-	cypherfn.Register("vector.similarity.euclidean", fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64]))
+	cypherfn.Register("vector.similarity.cosine", cypherfn.PrivilegeNone, fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64]))
+	cypherfn.Register("vector.similarity.euclidean", cypherfn.PrivilegeNone, fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64]))
 }
 
 // fnVectorSimilarity checks a, then b, then their dimensions, as Neo4j does.

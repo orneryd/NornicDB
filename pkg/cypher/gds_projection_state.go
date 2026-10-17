@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,8 +91,14 @@ func gdsRelationshipTypeOrder(types []string, nativeContexts int) []string {
 
 // registerGraphProjection owns the atomic catalog insertion for both imports.
 // Only the duplicate-name message differs between GDS's two entry points.
-func registerGraphProjection(p *GraphProjection, aggregation bool) error {
-	key := gdsCatalogKey(p.Database, p.Name)
+func registerGraphProjection(p *GraphProjection, aggregation bool, contexts ...context.Context) error {
+	p.Principal = gdsCatalogPrincipal(contexts...)
+	if len(contexts) > 0 && contexts[0] != nil {
+		if user, ok := authenticatedUserFromContext(contexts[0]); ok {
+			p.Username = user.Name
+		}
+	}
+	key := gdsCatalogKey(p.Database, p.Name, p.Principal)
 	projectionsMu.Lock()
 	defer projectionsMu.Unlock()
 	if _, exists := graphProjections[key]; exists {

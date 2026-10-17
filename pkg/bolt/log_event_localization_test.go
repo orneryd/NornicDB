@@ -53,7 +53,7 @@ func TestBoltLogEventsRenderDeterministicallyAcrossLocales(t *testing.T) {
 		{"basic auth", localization.BoltBasicAuthenticationFailedEvent("alice", "remote", testErr), "auth failed", "error de autenticación"},
 		{"bearer auth", localization.BoltBearerAuthenticationFailedEvent("remote", testErr), "auth failed", "error de autenticación"},
 		{"hello", localization.BoltHelloEvent("remote", "alice", []string{"reader"}, "neo4j"), "hello", "saludo"},
-		{"query", localization.BoltQueryEvent("alice", "remote", "RETURN 1", nil), "query", "consulta"},
+		{"query", localization.BoltQueryEvent("alice", "", "remote", "RETURN 1", nil), "query", "consulta"},
 		{"query error", localization.BoltQueryErrorEvent(), "query error", "error de consulta"},
 		{"run error", localization.BoltRunErrorEvent("neo4j", "ERROR", 0, time.Second, "failure"), "run", "ejecución"},
 		{"run", localization.BoltRunEvent("neo4j", "OK", 1, time.Second), "run", "ejecución"},
@@ -99,7 +99,7 @@ func TestBoltTypedLogEventsPreserveSecurityAndErrorFields(t *testing.T) {
 	require.Same(t, testErr, authEvent.Attrs[3].Value.Any())
 
 	params := map[string]any{"limit": 5}
-	queryEvent := localization.BoltQueryEvent("alice", "remote", "RETURN $limit", params)
+	queryEvent := localization.BoltQueryEvent("alice", "", "remote", "RETURN $limit", params)
 	require.Equal(t, "params", queryEvent.Attrs[3].Key)
 	require.Equal(t, params, queryEvent.Attrs[3].Value.Any())
 
