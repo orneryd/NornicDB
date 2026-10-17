@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"sync"
 
@@ -188,10 +190,7 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 		}
 		s.baseBuildControlMu.Unlock()
 		if !pending {
-			if nodeWrite && !s.nodeSourcesCompleteLocked() {
-				s.changeNodeSourcesLocked(nodeWriteUnpopulated)
-			}
-			if err := s.materializeNodeFulltextLocked(); err != nil {
+			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
 				s.indexMu.Unlock()
 				return nil, err
 			}
@@ -225,7 +224,7 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 				resume()
 				continue
 			}
-			if err := s.materializeNodeFulltextLocked(); err != nil {
+			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
 				s.indexMu.Unlock()
 				resume()
 				return nil, err
@@ -244,6 +243,20 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 	}
 }
 
+// admitNodeWriteLocked restores parked BM25 before a live write, then records
+// a node write applied to incomplete sources. A retired checkpoint leaves the
+// text source incomplete, so the write applies as an unpopulated write and the
+// next population rebuilds BM25 from storage. Caller holds indexMu.
+func (s *Service) admitNodeWriteLocked(nodeWrite bool) error {
+	if err := s.materializeNodeFulltextLocked(); err != nil && !errors.Is(err, errFulltextCheckpointRetired) {
+		return err
+	}
+	if nodeWrite && !s.nodeSourcesCompleteLocked() {
+		s.changeNodeSourcesLocked(nodeWriteUnpopulated)
+	}
+	return nil
+}
+
 func (s *Service) needsVectorDimensionsLocked(dimensions int) bool {
 	if dimensions <= 0 || s.vectorDimensionsFixed.Load() {
 		return false
@@ -253,21 +266,33 @@ func (s *Service) needsVectorDimensionsLocked(dimensions int) bool {
 	return s.embeddingCountLocked() == 0 && s.vectorIndexDimensionsLocked() != dimensions
 }
 
-// materializeNodeFulltextLocked is the single checkpoint reader for a live
-// mutation or the post-ANN tail. Once a writer restores it, the tail cannot
-// overwrite that writer's newer documents with the older checkpoint.
+// materializeNodeFulltextLocked is the single checkpoint reader: population
+// entry and exit, the post-ANN tail, and live mutations. Once a writer
+// restores it, the tail cannot overwrite that writer's newer documents with
+// the older checkpoint. A checkpoint that cannot be reloaded is retired:
+// BM25 is cleared, the text source becomes incomplete and the snapshot is
+// removed, so the next population rebuilds BM25 from storage; the error then
+// wraps errFulltextCheckpointRetired. After Close the checkpoint stays parked:
+// the service is gone, and the restart checks the snapshot against storage.
 func (s *Service) materializeNodeFulltextLocked() error {
-	if s.nodeSources.fulltextCheckpoint == "" {
+	path := s.nodeSources.fulltextCheckpoint
+	if path == "" {
 		return nil
 	}
 	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
 		return s.lifecycleCtx.Err()
 	}
-	if err := s.reloadFulltextAfterWarmup(s.nodeSources.fulltextCheckpoint, s.nodeSources.fulltextCheckpointCount); err != nil {
-		return err
-	}
+	err := s.reloadFulltextAfterWarmup(path, s.nodeSources.fulltextCheckpointCount)
 	s.setNodeFulltextCheckpointLocked("", 0)
-	return nil
+	if err == nil {
+		return nil
+	}
+	s.fulltext().Clear()
+	s.changeNodeSourcesLocked(nodeFulltextReset)
+	if removeErr := removeFulltextCheckpoint(path); removeErr != nil {
+		err = errors.Join(err, removeErr)
+	}
+	return fmt.Errorf("%w: %w", errFulltextCheckpointRetired, err)
 }
 
 func (s *Service) nodePopulationCanPersist() bool {
@@ -384,25 +409,10 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if explicit && plan.nodesRebuilt {
 		s.setBuildPhase("persisting_base_indexes")
 		// BM25 is parked through the warmup only at the checkpoint this persist
-		// wrote, and only while the index still matches it. An empty index never
-		// written, a skipped or failed save, or a change after the save leaves no
-		// current checkpoint, so it stays resident. The path is the one written,
-		// not the one this build started with.
-		fulltextCheckpoint, err := s.persistBaseIndexesCheckpoint()
-		if err != nil {
+		// wrote (persistBaseIndexesAndPark). Every exit of the population
+		// restores it (runBasePopulationAttempt).
+		if err := s.persistBaseIndexesAndPark(plan.fulltextPath != ""); err != nil {
 			return err
-		}
-		if plan.fulltextPath != "" && fulltextCheckpoint != "" {
-			s.indexMu.Lock()
-			parked := !s.fulltext().IsDirty()
-			if parked {
-				s.setNodeFulltextCheckpointLocked(fulltextCheckpoint, s.fulltext().Count())
-				s.fulltext().Clear()
-			}
-			s.indexMu.Unlock()
-			if parked {
-				s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
