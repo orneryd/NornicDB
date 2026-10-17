@@ -158,9 +158,9 @@ type ClusterTransportConfig struct {
 	Logger       *slog.Logger
 	Localizer    *localization.Manager
 
-	// RequireReplayProtection refuses signed messages without a nonce
-	// (ReplayProtectionRequire); otherwise they're accepted from peers not
-	// yet upgraded (ReplayProtectionCompat).
+	// RequireReplayProtection sends and accepts only nonce-signed messages
+	// (ReplayProtectionRequire). Without it (ReplayProtectionCompat),
+	// messages without a nonce are accepted too, with no replay guarantee.
 	RequireReplayProtection bool
 }
 
@@ -843,7 +843,6 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 		return localizedError(localization.ReplicationRPCTimestampOutsideAllowedSkew(), nil)
 	}
 
-	replay := c.replayState()
 	if msg.SignatureV2 != "" {
 		if len(msg.Nonce) != messageNonceSize {
 			return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
@@ -852,13 +851,14 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 		if !hmac.Equal([]byte(expected), []byte(msg.SignatureV2)) {
 			return localizedError(localization.ReplicationRPCInvalidSignature(), nil)
 		}
-		return replay.admit(msg.NodeID, msg.Nonce, ts.Add(skew).UnixNano(), now.UnixNano())
+		return c.replayState().admit(msg.NodeID, msg.Nonce, ts.Add(skew).UnixNano(), now.UnixNano())
 	}
 
-	// A message signed the original way only: a node from before replay
-	// protection. Accepted in compat mode, unless the sender has already
-	// shown it signs with nonces.
-	if (c.transport != nil && c.transport.requireReplay) || replay.isUpgraded(msg.NodeID) {
+	// A message signed the original way only: from a node that predates
+	// replay protection, or an upgraded node's message with its nonce
+	// removed; the two can't be told apart. Compat mode accepts it, without
+	// replay protection; require mode refuses it.
+	if c.transport != nil && c.transport.requireReplay {
 		return localizedError(localization.ReplicationRPCReplayProtectionRequired(), nil)
 	}
 	expected := computeMessageSignature(c.authSecret, msg)

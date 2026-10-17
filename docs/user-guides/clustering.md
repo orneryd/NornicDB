@@ -718,16 +718,16 @@ The cluster port carries WAL batches, Raft votes and appends, fencing and forwar
 | `NORNICDB_CLUSTER_TLS_CA_FILE`              | -        | CA that peer certificates must chain to. |
 | `NORNICDB_CLUSTER_TLS_VERIFY_CLIENT`        | `true`   | Peers must present a client certificate from the CA (mutual TLS). Needs `NORNICDB_CLUSTER_TLS_CA_FILE`. |
 | `NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY` | `false`  | Skip verification of peer server certificates. Testing only. |
-| `NORNICDB_CLUSTER_REPLAY_PROTECTION`        | `compat` | `compat` or `require`; see below. |
+| `NORNICDB_CLUSTER_REPLAY_PROTECTION`        | `compat` | `require` (replay-protected) or `compat` (transition mode, no replay guarantee); see below. |
 
 Boolean settings accept `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off`. Any other value, or a certificate, key or CA that can't be read, stops replication from starting rather than letting it run unprotected.
 
-**Replay protection.** Each signed message carries a random nonce covered by its signature, and a node accepts each nonce from a given peer only once while the message's timestamp is within the 30-second window. Nodes that predate replay protection don't send nonces, so `NORNICDB_CLUSTER_REPLAY_PROTECTION` controls them:
+**Replay protection.** Each signed message carries a random nonce covered by its signature. A node accepts each nonce from a given peer only once while the message's timestamp is within the 30-second window. Nodes that predate replay protection don't send nonces, so `NORNICDB_CLUSTER_REPLAY_PROTECTION` selects the guarantee:
 
-- `compat` (default): messages are signed both the new and the original way, so older nodes still accept them, and messages from older nodes are still accepted. Once a peer has sent a message with a nonce, its messages without one are refused.
-- `require`: only messages with a nonce are sent and accepted. Needs `NORNICDB_CLUSTER_REPLICATION_SECRET`.
+- `require`: the replay-protected mode. Only messages with a nonce are sent and accepted, so a running node accepts a given signed message at most once. The guarantee is per receiving node: a nonce isn't bound to one recipient, and a restarted node starts with an empty cache, still within the timestamp window. Needs `NORNICDB_CLUSTER_REPLICATION_SECRET`.
+- `compat` (default): a transition mode for the rolling upgrade, with **no replay guarantee**. Messages are signed both the new and the original way, so older nodes still accept them, and messages without a nonce are accepted. A node can't tell an older node's message from an upgraded node's message with its nonce removed, so anyone who can capture and inject cluster traffic can replay a signed message within the window. TLS keeps outsiders from doing that, but it doesn't make compat a protected mode. A node in compat mode with a secret logs a warning at startup.
 
-**Rolling upgrade.** Upgrade the nodes one at a time with the default `compat`; the cluster keeps replicating throughout. When every node runs the new version, set `NORNICDB_CLUSTER_REPLAY_PROTECTION=require` on each node and restart them one at a time. Until then, messages from nodes that haven't been upgraded have no replay protection.
+**Rolling upgrade.** Upgrade the nodes one at a time with the default `compat`; the cluster keeps replicating throughout. When every node runs the new version, set `NORNICDB_CLUSTER_REPLAY_PROTECTION=require` on each node and restart them one at a time. Replay protection holds once every node is in `require`.
 
 ---
 

@@ -198,10 +198,11 @@ type Config struct {
 	// Environment: NORNICDB_CLUSTER_REPLICATION_SECRET
 	ReplicationSecret string
 
-	// ReplayProtection decides whether signed messages without a nonce are
-	// accepted: "compat" (default) accepts them from peers not yet upgraded,
-	// for rolling upgrades; "require" refuses them. Set "require" once every
-	// node runs a version with replay protection.
+	// ReplayProtection selects the replay guarantee. "require" sends and
+	// accepts only nonce-signed messages: the replay-protected mode.
+	// "compat" (default) is the rolling-upgrade transition mode: it also
+	// accepts messages without a nonce, so it gives no replay guarantee.
+	// Set "require" once every node runs a version with replay protection.
 	// Environment: NORNICDB_CLUSTER_REPLAY_PROTECTION
 	ReplayProtection string
 

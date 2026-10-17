@@ -1,8 +1,10 @@
 package replication
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"log/slog"
 	"os"
 	"time"
 
@@ -39,7 +41,18 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 		transportCfg.AuthMaxSkew = 30 * time.Second
 	}
 
-	return NewClusterTransport(transportCfg), nil
+	transport := NewClusterTransport(transportCfg)
+	if len(transportCfg.AuthSecret) > 0 {
+		if transportCfg.RequireReplayProtection {
+			transport.logPrintf(context.Background(), slog.LevelInfo,
+				"[Cluster] Replay protection: require; only nonce-signed messages are sent and accepted")
+		} else {
+			transport.logPrintf(context.Background(), slog.LevelWarn,
+				"[Cluster] Replay protection: compat (transition mode); messages without a nonce are accepted, so signed messages can be replayed within the %s window. Set NORNICDB_CLUSTER_REPLAY_PROTECTION=require once every node is upgraded",
+				transportCfg.AuthMaxSkew)
+		}
+	}
+	return transport, nil
 }
 
 func buildTLSConfigs(cfg TLSConfig) (*tls.Config, *tls.Config, error) {
