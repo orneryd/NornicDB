@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -78,4 +79,50 @@ func TestEntityDatabaseAttributionOpensEachConstituentOnce(t *testing.T) {
 	require.Nil(t, NewEntityDatabaseAttribution(context.Background(), &testDatabaseManagerAdapter{manager: manager}, "attr_local", nil), "a standard database needs no attribution")
 	var none *EntityDatabaseAttribution
 	none.Release()
+}
+
+// A constituent whose factory fails is tried once per lookup, not once per
+// entity: the failure is kept until the result is released, and a new entity
+// after the release tries it once more.
+func TestEntityDatabaseAttributionTriesFailedConstituentOnce(t *testing.T) {
+	var attempts atomic.Int64
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+		DefaultDatabase: "nornic",
+		SystemDatabase:  "system",
+		RemoteEngineFactory: func(multidb.ConstituentRef, string) (storage.Engine, error) {
+			attempts.Add(1)
+			return nil, errors.New("remote unreachable")
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("fail_local"))
+	local, err := manager.GetStorage("fail_local")
+	require.NoError(t, err)
+	for _, id := range []storage.NodeID{"l1", "l2", "l3"} {
+		_, err = local.CreateNode(&storage.Node{ID: id, Labels: []string{"Local"}})
+		require.NoError(t, err)
+	}
+	require.NoError(t, manager.CreateCompositeDatabase("fail_cmp", []multidb.ConstituentRef{
+		{Alias: "rem", DatabaseName: "fail_remote", Type: "remote", AccessMode: "read", URI: "http://unused.invalid"},
+		{Alias: "loc", DatabaseName: "fail_local", Type: "local", AccessMode: "read"},
+	}))
+
+	attribution := NewEntityDatabaseAttribution(context.Background(), &testDatabaseManagerAdapter{manager: manager}, "fail_cmp", nil)
+	require.NotNil(t, attribution)
+	// Entities no constituent holds visit every constituent, the failing one
+	// included, whatever order the constituents are visited in.
+	for _, id := range []storage.NodeID{"missing1", "missing2", "missing3"} {
+		require.Equal(t, "fail_cmp", attribution.Resolve(id, ""))
+	}
+	for _, id := range []storage.NodeID{"l1", "l2", "l3"} {
+		require.Equal(t, "fail_local", attribution.Resolve(id, ""))
+	}
+	require.EqualValues(t, 1, attempts.Load(), "a failed constituent is tried once per lookup")
+
+	attribution.Release()
+	require.Equal(t, "fail_cmp", attribution.Resolve("missing4", ""))
+	require.Equal(t, "fail_cmp", attribution.Resolve("missing5", ""))
+	require.EqualValues(t, 2, attempts.Load(), "a new lookup after release tries it once more")
+	attribution.Release()
 }
