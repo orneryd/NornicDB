@@ -111,10 +111,10 @@ func (s *Service) composeBM25BuildSettings() string {
 
 func (s *Service) composeVectorBuildSettings() string {
 	dimensions := s.VectorIndexDimensions()
-	return fmt.Sprintf("schema=%s;format=%s;dimensions=%d",
+	return fmt.Sprintf("schema=%s;format=%s;dimensions=%d;keys=%s",
 		vectorSettingsSchemaVersion,
 		vectorIndexFormatVersion,
-		dimensions)
+		dimensions, vectorEntryKeyFormat)
 }
 
 func (s *Service) composeHNSWBuildSettings() string { return hnswBuildSettings() }
@@ -130,10 +130,10 @@ func ivfHNSWGenerationSettings() string {
 
 func hnswBuildSettings() string {
 	hcfg := HNSWConfigFromEnv()
-	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t",
+	return fmt.Sprintf("schema=%s;format=%s;m=%d;efc=%d;efs=%d;gpu_build=%t;keys=%s",
 		hnswSettingsSchemaVersion,
 		hnswIndexFormatVersionGraphOnly,
-		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild)
+		hcfg.M, hcfg.EfConstruction, hcfg.EfSearch, hcfg.UseGPUBuild, vectorEntryKeyFormat)
 }
 
 func routingBuildSettings() string {
@@ -150,9 +150,9 @@ func routingBuildSettings() string {
 	}
 	wSem := envFloat("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM", 0.7)
 	wLex := envFloat("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", 0.3)
-	return fmt.Sprintf("schema=%s;mode=%s;w_sem=%.4f;w_lex=%.4f;lex_profile=%s;kmeans_max_iter=%d",
+	return fmt.Sprintf("schema=%s;mode=%s;w_sem=%.4f;w_lex=%.4f;lex_profile=%s;kmeans_max_iter=%d;keys=%s",
 		routingSettingsSchemaVersion,
-		routingMode, wSem, wLex, routingSettingsSchemaVersion, maxIter)
+		routingMode, wSem, wLex, routingSettingsSchemaVersion, maxIter, vectorEntryKeyFormat)
 }
 
 func (s *Service) composeStrategyBuildSettings() string {
