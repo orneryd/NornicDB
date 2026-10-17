@@ -153,8 +153,11 @@ func TestLargeStringIndexesChargeTheirBytes(t *testing.T) {
 	for i := range items {
 		items[i] = large[:len(large)-i%2]
 	}
+	// Charged per byte, the build samples about len(items)*perItem/interval
+	// times (a reset after each sample drops the overshoot); charged per
+	// item, about len(items)/interval.
 	perItem := len(large) / pipelineTextCostUnit
-	minimumPolls := len(items) * perItem / pipelineCancellationInterval
+	minimumPolls := len(items) * perItem / pipelineCancellationInterval / 2
 
 	build := map[string]func(*pipelineCancellation) bool{
 		"membership": func(probe *pipelineCancellation) bool {
