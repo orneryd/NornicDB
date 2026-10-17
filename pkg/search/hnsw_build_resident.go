@@ -43,7 +43,7 @@ func (r *residentBuildVectors[B]) search(ctx context.Context, queries [][]float3
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	topK = min(topK, 256)
+	topK = hnswBuildTopKLimit(topK)
 	ids := make([][]uint32, len(queries))
 	distances := make([][]float32, len(queries))
 	if topK <= 0 || r.count == 0 {
