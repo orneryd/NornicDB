@@ -55,7 +55,7 @@ func TestAccumulator_SuperNode_DrainUnderContention(t *testing.T) {
 		merged := a.DrainAll()
 		if m, ok := merged["hot-node"]; ok {
 			drainMu.Lock()
-			totalDrained += m.accessCount
+			totalDrained += int64(m.accessCount)
 			drainMu.Unlock()
 		}
 	}
@@ -64,7 +64,7 @@ func TestAccumulator_SuperNode_DrainUnderContention(t *testing.T) {
 
 	finalMerged := a.DrainAll()
 	if m, ok := finalMerged["hot-node"]; ok {
-		totalDrained += m.accessCount
+		totalDrained += int64(m.accessCount)
 	}
 
 	expected := int64(goroutines * increments)
