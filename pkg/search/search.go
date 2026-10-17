@@ -173,7 +173,6 @@ type bm25Index interface {
 	Clear()
 	Count() int
 	Save(path string) error
-	SaveNoCopy(path string) error
 	Load(path string) error
 	loadSnapshot(path string) (bool, error)
 	saveSnapshot(path string) (uint64, error)
@@ -233,7 +232,6 @@ func (disabledBM25Index) LexicalSeedHints(int, int) []LexicalSeedHint { return n
 func (disabledBM25Index) Clear()                                      {}
 func (disabledBM25Index) Count() int                                  { return 0 }
 func (disabledBM25Index) Save(string) error                           { return nil }
-func (disabledBM25Index) SaveNoCopy(string) error                     { return nil }
 func (disabledBM25Index) Load(string) error                           { return nil }
 func (disabledBM25Index) loadSnapshot(string) (bool, error)           { return false, nil }
 func (disabledBM25Index) IsDirty() bool                               { return false }
@@ -4466,20 +4464,6 @@ func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 		return err
 	}
 	return s.finishBuildWithFinalPersist(ctx)
-}
-
-func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) error {
-	accepted, err := s.fulltext().loadSnapshot(path)
-	if err != nil {
-		return fmt.Errorf("reload BM25 index after vector warmup: %w", err)
-	}
-	if !accepted {
-		return fmt.Errorf("reload BM25 index after vector warmup: snapshot was not accepted: %s", path)
-	}
-	if actual := s.fulltext().Count(); actual != expectedCount {
-		return fmt.Errorf("reload BM25 index after vector warmup: document count mismatch: got %d, want %d", actual, expectedCount)
-	}
-	return nil
 }
 
 // finishBuildWithFinalPersist persists the completed build and publishes

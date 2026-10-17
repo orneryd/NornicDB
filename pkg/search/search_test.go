@@ -2098,7 +2098,7 @@ func TestFulltextIndex_IndexBatch(t *testing.T) {
 	assert.Equal(t, 4, idx.Count())
 }
 
-func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
+func TestFulltextIndex_DirtySaveClearAndSeeds(t *testing.T) {
 	idx := NewFulltextIndex()
 	assert.False(t, idx.IsDirty())
 
@@ -2115,7 +2115,7 @@ func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
 	assert.Nil(t, idx.LexicalSeedDocIDs(1, 0))
 
 	path := filepath.Join(t.TempDir(), "bm25")
-	require.NoError(t, idx.SaveNoCopy(path))
+	require.NoError(t, idx.Save(path))
 	assert.False(t, idx.IsDirty())
 
 	idx.Clear()

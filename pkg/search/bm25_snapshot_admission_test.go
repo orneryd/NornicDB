@@ -255,35 +255,6 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 	}
 }
 
-func TestBM25WarmupCheckpointRequiresAcceptedSnapshot(t *testing.T) {
-	for _, backend := range []string{"v1", "v2"} {
-		for _, kind := range []string{"valid_empty", "rejected_empty", "missing"} {
-			t.Run(backend+"/"+kind, func(t *testing.T) {
-				engine := storage.NewMemoryEngine()
-				t.Cleanup(func() { require.NoError(t, engine.Close()) })
-				svc := NewServiceWithDimensionsAndBM25Engine(engine, 3, backend)
-				t.Cleanup(func() { require.NoError(t, svc.Close()) })
-				path := filepath.Join(t.TempDir(), "bm25")
-				require.Zero(t, svc.fulltext().Count())
-				require.NoError(t, svc.fulltext().Save(path))
-				switch kind {
-				case "rejected_empty":
-					require.NoError(t, os.WriteFile(path, []byte("not-msgpack"), 0600))
-				case "missing":
-					require.NoError(t, os.Remove(path))
-				}
-				err := svc.reloadFulltextAfterWarmup(path, 0)
-				if kind == "valid_empty" {
-					require.NoError(t, err)
-					assert.Zero(t, svc.fulltext().Count())
-				} else {
-					assert.Error(t, err, "zero documents cannot establish checkpoint acceptance")
-				}
-			})
-		}
-	}
-}
-
 func TestBM25SnapshotAcceptanceOutcome(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		kinds := []string{"valid_nonempty", "valid_empty", "missing", "corrupt", "incompatible", "io_error"}

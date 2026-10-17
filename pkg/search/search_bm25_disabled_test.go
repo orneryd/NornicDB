@@ -42,7 +42,6 @@ func TestDisabledBM25Index_NoOpContract(t *testing.T) {
 	require.Nil(t, idx.LexicalSeedDocIDs(5, 3))
 	require.Equal(t, 0, idx.Count())
 	require.NoError(t, idx.Save(""))
-	require.NoError(t, idx.SaveNoCopy(""))
 	require.NoError(t, idx.Load(""))
 	require.False(t, idx.IsDirty())
 }

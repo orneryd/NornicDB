@@ -515,21 +515,16 @@ func (s *Service) restorePersistedSourcesStep(ctx context.Context, fulltextPath 
 	runPopulationHook(&populationRestoreHook, s)
 	textComplete := s.nodeSources.textComplete
 	fulltextUnchanged := !s.fulltext().IsDirty() || s.fulltext().Count() == 0
-	if fulltextPath != "" && !textComplete && fulltextUnchanged {
-		var accepted bool
-		var loadErr error
-		if staged.fulltextStaged {
-			// With the record withdrawn the live index holds nothing the saved
-			// image lacks, so installing the staged copy equals loading it in
-			// place; the replay below re-applies the record to it.
-			accepted, loadErr = staged.fulltextAccepted, staged.fulltextErr
-			if loadErr == nil && accepted {
-				s.setFulltext(staged.fulltext)
-			}
-		} else {
-			accepted, loadErr = s.fulltext().loadSnapshot(fulltextPath)
-		}
+	// Only the staged copy is installed: the saved image is never read under
+	// indexMu. Staging covers every case this step restores, since only the
+	// population itself changes the text record or disables the backend.
+	if fulltextPath != "" && !textComplete && fulltextUnchanged && staged.fulltextStaged {
+		// With the record withdrawn the live index holds nothing the saved
+		// image lacks, so installing the staged copy equals loading it in
+		// place; the replay below re-applies the record to it.
+		accepted, loadErr := staged.fulltextAccepted, staged.fulltextErr
 		if loadErr == nil && accepted {
+			s.setFulltext(staged.fulltext)
 			s.changeNodeSourcesLocked(nodeTextRestored)
 		}
 		if !accepted && s.fulltext().Count() == 0 {

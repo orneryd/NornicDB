@@ -27,7 +27,6 @@ func TestDisabledBM25IndexMethods(t *testing.T) {
 	require.False(t, ok)
 	require.Empty(t, doc)
 	require.NoError(t, idx.Save("ignored"))
-	require.NoError(t, idx.SaveNoCopy("ignored"))
 	require.NoError(t, idx.Load("ignored"))
 }
 

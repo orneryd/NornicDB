@@ -89,43 +89,20 @@ func (f *FulltextIndexV2) saveSnapshot(path string) (uint64, error) {
 		AvgDocLength:   avg,
 		DocCount:       docCount,
 		TotalDocLength: total,
-	}, func() {})
+	})
 	if err != nil {
 		return 0, err
 	}
 	return version, nil
 }
 
-func (f *FulltextIndexV2) SaveNoCopy(path string) error {
-	f.lockWithCurrentLexicon()
-	version := f.version
-	snap := bm25V2Snapshot{
-		Version:        bm25V2FormatVersion,
-		Documents:      f.documents,
-		DocIDToNum:     f.docIDToNum,
-		DocNumToID:     f.docNumToID,
-		DocLengths:     f.docLengths,
-		TermIndex:      f.termIndex,
-		Lexicon:        f.lexicon,
-		AvgDocLength:   f.avgDocLength,
-		DocCount:       f.docCount,
-		TotalDocLength: f.totalDocLength,
-	}
-	f.mu.RUnlock()
-	return saveBM25V2Snapshot(path, snap, func() {
-		f.markPersisted(version)
-	})
-}
-
-func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) error {
+// saveBM25V2Snapshot encodes snap, which must own its maps and slices: live
+// writes are admitted while a checkpoint is written.
+func saveBM25V2Snapshot(path string, snap bm25V2Snapshot) error {
 	if fn := bm25SnapshotEncodeHook.Load(); fn != nil {
 		(*fn)()
 	}
-	if err := writeMsgpackSnapshot(path, &snap); err != nil {
-		return err
-	}
-	onSuccess()
-	return nil
+	return writeMsgpackSnapshot(path, &snap)
 }
 
 func (f *FulltextIndexV2) Load(path string) error {
@@ -214,9 +191,9 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.docLengths = s.DocLengths
 	f.docIDsLexicalByNum = docIDsAreLexicalByNumber(s.DocNumToID)
 	f.termIndex = s.TermIndex
-	// SaveNoCopy writes the term index as it is, with the postings of
-	// removed documents, and dead counts are not persisted: drop those
-	// postings, and terms left without any (#826).
+	// Snapshots written by earlier releases can hold the postings of removed
+	// documents, and dead counts are not persisted: drop those postings, and
+	// terms left without any (#826).
 	for term, st := range f.termIndex {
 		if st != nil {
 			st.compactLocked(f.docLengths)

@@ -133,30 +133,6 @@ func (f *FulltextIndex) saveSnapshot(path string) (uint64, error) {
 	return version, nil
 }
 
-// SaveNoCopy writes the fulltext index to path without deep-copying the maps.
-// This avoids doubling memory during large builds, but holds the read lock during I/O.
-// Use during BuildIndexes when search is not serving live traffic.
-func (f *FulltextIndex) SaveNoCopy(path string) error {
-	f.mu.RLock()
-	version := f.version
-
-	snap := fulltextIndexSnapshot{
-		Version:       fulltextIndexFormatVersion,
-		Documents:     f.documents,
-		InvertedIndex: f.invertedIndex,
-		DocLengths:    f.docLengths,
-		AvgDocLength:  f.avgDocLength,
-		DocCount:      f.docCount,
-	}
-	err := writeMsgpackSnapshot(path, &snap)
-	f.mu.RUnlock()
-	if err != nil {
-		return err
-	}
-	f.markPersisted(version)
-	return nil
-}
-
 // Load replaces the fulltext index with the one stored at path (msgpack format).
 // If the file does not exist or decode fails, the index is left empty (or unchanged on
 // missing file) and no error is returned, so the caller can proceed with a full rebuild.
