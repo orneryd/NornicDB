@@ -801,7 +801,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		}
 
 		if deletedNode != nil {
-			b.cacheOnNodeDeletedWithLabels(id, deletedNode.Labels, totalEdgesDeleted)
+			b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
 		} else {
 			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
 		}
