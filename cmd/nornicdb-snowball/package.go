@@ -27,6 +27,11 @@ type packageOptions struct {
 	Module   string
 	Source   string
 	Output   string
+
+	// BuildFlags are extra `go build` flags for the plugin. The command line
+	// sets none; tests pass the running test binary's flags
+	// (plugintest.BuildFlags), so plugin.Open accepts the plugin under -race.
+	BuildFlags []string
 }
 
 func parsePackageArgs(args []string) (packageOptions, error) {
@@ -133,7 +138,9 @@ func packageSnowball(opts packageOptions) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "build", "-mod=vendor", "-buildmode=plugin", "-o", outputPath, ".")
+	args := append([]string{"build", "-mod=vendor", "-buildmode=plugin"}, opts.BuildFlags...)
+	args = append(args, "-o", outputPath, ".")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = buildDir
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
 	var stderr bytes.Buffer
