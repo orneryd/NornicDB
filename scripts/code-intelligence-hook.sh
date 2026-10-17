@@ -15,4 +15,6 @@ if [ ! -x "$python" ]; then
     echo "Create a venv, install scripts/requirements-code-intelligence.txt, and set git config codeIntelligence.python /absolute/path/to/python." >&2
     exit 1
 fi
-exec "$python" "$script_dir/code_intelligence.py" "${1:?hook command required}" --repo-root "$repo_root"
+command="${1:?hook command required}"
+shift
+exec "$python" "$script_dir/code_intelligence.py" "$command" --repo-root "$repo_root" "$@"
