@@ -21,9 +21,11 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 		return nil, true, nil
 	}
 	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
+	plan := form.appendPlan()
 	return rowReduceLoop(form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
-		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
+		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) },
+		func(index int) (interface{}, bool, error) { return evaluate(plan.terms[index], scope) })
 }
 
 func rowTopLevelPipeIndex(expression string) int {

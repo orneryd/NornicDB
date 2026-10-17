@@ -103,9 +103,11 @@ func rowConditionHolds(condition interface{}, evaluated bool, err error) (bool, 
 
 // rowReduceLoop folds reduce / allReduce (runReduceForm) over listValue from
 // accumulator: step and predicate evaluate the form's step and predicate
-// with the accumulator and the variable bound in scope. A step or predicate
-// that can't be evaluated leaves the form unresolved.
-func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
+// with the accumulator and the variable bound in scope, and term the
+// step's operand index when the step has an append plan (nil: none). A
+// step, operand or predicate that can't be evaluated leaves the form
+// unresolved.
+func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error), term func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	bind := func(evaluate func() (interface{}, bool, error)) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
 			scope[form.accumulator], scope[form.variable] = accumulator, item
@@ -116,7 +118,13 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 			return value, err
 		}
 	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
+	var appender *reduceAppender
+	if plan := form.appendPlan(); term != nil && plan.usable(scope) {
+		appender = &reduceAppender{plan: plan, term: func(index int, accumulator, item interface{}) (interface{}, error) {
+			return bind(func() (interface{}, bool, error) { return term(index) })(accumulator, item)
+		}}
+	}
+	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate), appender)
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}
