@@ -51,6 +51,7 @@ func TestExecutorImplementedFunctionsAreKnown(t *testing.T) {
 		"apoc.map.frompairs",
 		"apoc.map.merge",
 		"apoc.map.removekey",
+		"apoc.map.removekeys",
 		"apoc.map.setkey",
 		"apoc.meta.istype",
 		"apoc.meta.type",
