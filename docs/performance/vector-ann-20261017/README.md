@@ -23,7 +23,9 @@ target. CUDA/Vulkan device execution remains for the hardware handoff.
 - Apple M2 Max, 12 cores, 32 GiB, Darwin 25.5.0; native ARM64/CGO. Qdrant 1.19.2.
 - 88,155 normalized 1,024-dimensional cached Titan V2 vectors, all 1,000 queries,
   exact top-100 ground truth, measured K=10. Each curve uses 100 warm-ups, sequential
-  latency and 8-client throughput on one shared gRPC channel. No AWS requests.
+  latency and 8-client throughput on one shared gRPC channel. Recall is checked
+  against truth in the sequential pass; the concurrent pass measures throughput
+  and does not separately validate recall. No AWS requests.
 - **41 cases / 263 query curves**: all 15 NornicDB modes and 13 corresponding Qdrant
   modes, matched float-file controls, five paired 8× rescoring variants, and a
   RAM-originals control. Each case loads fresh data. Engines and heavy verification
@@ -78,8 +80,11 @@ parameters; its original-vector storage uses its default configuration.
 ## Rescoring depth and original-vector storage
 
 All rows below use an explicit 8× rescoring pool and the preset request beam.
-A top-10 pool of 80 raises a narrower traversal beam to at least 80. The same
-request parameters go to both engines. NornicDB searches one global graph;
+On the public NornicDB path, top-10 requests first apply the default 1.5×
+initial overfetch, giving 15 candidates before quantization oversampling. Thus
+1×/2×/8× settings score up to 15/30/120 candidates, and 8× raises a narrower
+traversal beam to at least 120. The same request parameters go to both engines;
+they do not guarantee identical candidate work. NornicDB searches one global graph;
 Qdrant searches segments and merges their results, so global candidate work can
 still differ. Exact rescoring improves order among discovered candidates.
 

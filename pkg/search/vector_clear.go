@@ -70,6 +70,7 @@ func (s *Service) clearIndexes(all bool) error {
 	s.vectorResidentBytes = 0
 	s.vectorMetadataBytes = 0
 	if all {
+		s.hnswQuantizationOverride = nil
 		if ft := s.fulltext(); ft != nil {
 			ft.Clear()
 		}
