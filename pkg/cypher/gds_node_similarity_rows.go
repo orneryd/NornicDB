@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // nornicdb.similarity.stream scores node similarity for one source over
@@ -15,8 +16,8 @@ import (
 // the scores follow the graph as the statement sees it (its snapshot, its own
 // writes, and a restricted login's view) with nothing to project, maintain or
 // drop. Nothing is read from storage: node1, node2 and shared.nodeId are the
-// ids the rows carry, and a tieBreakProperty is read from the node values the
-// rows carry. A NornicDB extension; GDS has no row-input similarity.
+// ids the rows carry (a remote constituent's node by its elementId), and a
+// tieBreakProperty is read from the node values the rows carry. A NornicDB extension; GDS has no row-input similarity.
 
 // similarityRowsConfigKeys are the configuration keys nornicdb.similarity.stream
 // takes; the shared ones keep GDS's names.
@@ -74,14 +75,14 @@ func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsCon
 	if items, isList := cypherListValue(value); isList && value != nil {
 		config.group = true
 		for _, item := range items {
-			source, ok := gdsNodeID(item)
+			source, ok := similarityNodeID(item)
 			if !ok {
 				return config, c.typeError("sourceNode", "Node")
 			}
 			config.sources = append(config.sources, string(source))
 		}
 	} else if value != nil {
-		source, ok := gdsNodeID(value)
+		source, ok := similarityNodeID(value)
 		if !ok {
 			return config, c.typeError("sourceNode", "Node")
 		}
@@ -181,7 +182,7 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 				return nil, localizedError(localization.CypherGraphProceduresSimilarityRowKey(position, key), nil)
 			}
 		}
-		source, ok := gdsNodeID(row["source"])
+		source, ok := similarityNodeID(row["source"])
 		if !ok {
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "source", gdsJavaType(row["source"])), nil)
 		}
@@ -201,7 +202,7 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			}
 			continue
 		}
-		thing, ok := gdsNodeID(row["thing"])
+		thing, ok := similarityNodeID(row["thing"])
 		if !ok {
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "thing", gdsJavaType(row["thing"])), nil)
 		}
@@ -368,13 +369,13 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	if len(scored) > config.topK {
 		scored = scored[:config.topK]
 	}
-	var node1 interface{} = config.sources[0]
+	var node1 interface{} = similarityDisplayID(config.sources[0])
 	if config.group {
 		ids := append([]string(nil), config.sources...)
 		sort.Strings(ids)
 		list := make([]interface{}, len(ids))
 		for i, id := range ids {
-			list[i] = id
+			list[i] = similarityDisplayID(id)
 		}
 		node1 = list
 	}
@@ -392,7 +393,40 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 				return tieBefore(left["nodeId"].(string), right["nodeId"].(string))
 			})
 		}
-		rows[i] = []interface{}{node1, incidence.sources[pair.target], pair.similarity, shared}
+		for _, entry := range shared {
+			item := entry.(map[string]interface{})
+			item["nodeId"] = similarityDisplayID(item["nodeId"].(string))
+		}
+		rows[i] = []interface{}{node1, similarityDisplayID(incidence.sources[pair.target]), pair.similarity, shared}
 	}
 	return rows
+}
+
+// similarityRemoteKey prefixes a remote node's elementId in the reader's
+// keys, so a remote node never shares a key with a local stored id or id
+// as given, even when the strings are equal. Output shows the elementId.
+const similarityRemoteKey = "\x00remote\x00"
+
+// similarityNodeID is the identity of a node a row or the configuration
+// gives: a stored node's id, an id as given, or, for a node of a remote
+// constituent (a composite database's USE), its elementId, which carries the
+// constituent's database, in a key space of its own. Nothing here reads
+// storage, so the identity a value carries is enough; a remote relationship
+// is not a node.
+func similarityNodeID(value interface{}) (string, bool) {
+	if remote, isRemote := value.(storage.RemoteEntityValue); isRemote {
+		if remote == nil || cypherValueKindOf(remote) != valueKindNode {
+			return "", false
+		}
+		id, ok := remote["elementId"].(string)
+		return similarityRemoteKey + id, ok && id != ""
+	}
+	id, ok := gdsNodeID(value)
+	return string(id), ok
+}
+
+// similarityDisplayID is a key as the output shows it: a remote node's
+// elementId, or the local id.
+func similarityDisplayID(key string) string {
+	return strings.TrimPrefix(key, similarityRemoteKey)
 }
