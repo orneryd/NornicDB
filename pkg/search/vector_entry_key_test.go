@@ -173,3 +173,16 @@ func mustVectorEntryOwner(t testing.TB, key string) string {
 	require.True(t, ok, "vector-entry key %q has no owner", key)
 	return owner
 }
+
+// Results are decoded on the search path, so decoding must not allocate,
+// whatever the chunk index.
+func TestDecodeVectorEntryKeyDoesNotAllocate(t *testing.T) {
+	for _, key := range []string{"doc", nodeChunkVectorKey("doc", 3), nodeChunkVectorKey("doc", 1234), nodeNamedVectorKey("doc", "v"), nodePropertyVectorKey("doc", "p")} {
+		allocs := testing.AllocsPerRun(100, func() {
+			if _, ok := decodeVectorEntryKey(key); !ok {
+				t.Fatalf("%q must decode", key)
+			}
+		})
+		assert.Zero(t, allocs, "decoding %q allocated", key)
+	}
+}
