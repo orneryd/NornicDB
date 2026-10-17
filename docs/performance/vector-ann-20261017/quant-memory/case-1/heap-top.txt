@@ -1,0 +1,25 @@
+File: nornicdb-memory-current
+Type: inuse_space
+Time: 2026-10-17 14:00:41 MST
+Showing nodes accounting for 731.92MB, 95.48% of 766.60MB total
+Dropped 167 nodes (cum <= 3.83MB)
+Showing top 18 nodes out of 153
+      flat  flat%   sum%        cum   cum%
+  301.75MB 39.36% 39.36%   301.75MB 39.36%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  166.41MB 21.71% 61.07%   166.41MB 21.71%  github.com/dgraph-io/badger/v4/skl.newArena (inline)
+   86.09MB 11.23% 72.30%    86.09MB 11.23%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedVectors).grow
+   39.97MB  5.21% 77.51%    63.37MB  8.27%  github.com/orneryd/nornicdb/pkg/search.(*Service).indexNodeLocked
+   34.10MB  4.45% 81.96%    34.10MB  4.45%  github.com/orneryd/nornicdb/pkg/search.cloneNestedStringMaps
+   33.62MB  4.39% 86.35%    36.12MB  4.71%  github.com/orneryd/nornicdb/pkg/storage.copyNode
+   18.83MB  2.46% 88.80%    18.83MB  2.46%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).addLocked
+   11.03MB  1.44% 90.24%    11.03MB  1.44%  github.com/orneryd/nornicdb/pkg/search.(*FulltextIndexV2).IndexBatch
+    9.29MB  1.21% 91.45%     9.29MB  1.21%  github.com/orneryd/nornicdb/pkg/search.cloneStringSlices
+    6.50MB  0.85% 92.30%   308.25MB 40.21%  github.com/dgraph-io/badger/v4/table.(*Table).block
+    6.16MB   0.8% 93.11%     6.16MB   0.8%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).nodePairStore
+    5.28MB  0.69% 93.79%     5.28MB  0.69%  github.com/orneryd/nornicdb/pkg/search.(*Service).commitNodeIndexCapacityLocked (inline)
+    5.10MB  0.67% 94.46%     5.10MB  0.67%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+    4.68MB  0.61% 95.07%     4.68MB  0.61%  github.com/dgraph-io/ristretto/v2.(*Cache[go.shape.[]uint8,go.shape.*uint8]).processItems.func1
+    2.61MB  0.34% 95.41%     4.40MB  0.57%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+    0.51MB 0.067% 95.48%    36.63MB  4.78%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).putNodeLocked
+         0     0% 95.48%   166.41MB 21.71%  github.com/dgraph-io/badger/v4.(*DB).doWrites.func1
+         0     0% 95.48%   166.41MB 21.71%  github.com/dgraph-io/badger/v4.(*DB).ensureRoomForWrite

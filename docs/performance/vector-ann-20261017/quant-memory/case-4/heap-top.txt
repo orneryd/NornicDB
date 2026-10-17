@@ -1,0 +1,25 @@
+File: nornicdb-memory-current
+Type: inuse_space
+Time: 2026-10-17 14:03:47 MST
+Showing nodes accounting for 753.58MB, 95.66% of 787.77MB total
+Dropped 165 nodes (cum <= 3.94MB)
+Showing top 18 nodes out of 168
+      flat  flat%   sum%        cum   cum%
+  293.70MB 37.28% 37.28%   293.70MB 37.28%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  166.41MB 21.12% 58.41%   166.41MB 21.12%  github.com/dgraph-io/badger/v4/skl.newArena
+   86.09MB 10.93% 69.34%    86.09MB 10.93%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedVectors).grow
+   44.41MB  5.64% 74.97%    72.99MB  9.27%  github.com/orneryd/nornicdb/pkg/search.(*Service).indexNodeLocked
+   39.14MB  4.97% 79.94%    41.64MB  5.29%  github.com/orneryd/nornicdb/pkg/storage.copyNode
+   31.10MB  3.95% 83.89%    31.10MB  3.95%  github.com/orneryd/nornicdb/pkg/search.cloneNestedStringMaps
+   20.50MB  2.60% 86.49%    20.50MB  2.60%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).addLocked
+   11.57MB  1.47% 87.96%    11.57MB  1.47%  github.com/orneryd/nornicdb/pkg/search.resizeQuantizationBuffer[go.shape.float32]
+   11.56MB  1.47% 89.43%    11.56MB  1.47%  github.com/orneryd/nornicdb/pkg/search.(*FulltextIndexV2).IndexBatch
+    9.83MB  1.25% 90.68%     9.83MB  1.25%  github.com/orneryd/nornicdb/pkg/search.cloneStringSlices
+    8.95MB  1.14% 91.81%     8.95MB  1.14%  github.com/orneryd/nornicdb/pkg/search.(*Service).commitNodeIndexCapacityLocked (inline)
+    6.67MB  0.85% 92.66%     6.67MB  0.85%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).nodePairStore
+    6.50MB  0.83% 93.48%     6.50MB  0.83%  fmt.Sprintf
+    6.03MB  0.77% 94.25%     6.03MB  0.77%  github.com/orneryd/nornicdb/pkg/search.trainVectorKMeans
+       4MB  0.51% 94.76%        4MB  0.51%  github.com/nicksnyder/go-i18n/v2/i18n.setPluralTemplate (inline)
+       4MB  0.51% 95.26%   297.70MB 37.79%  github.com/dgraph-io/badger/v4/table.(*Table).block
+    2.60MB  0.33% 95.59%     4.39MB  0.56%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+    0.51MB 0.065% 95.66%     5.01MB  0.64%  github.com/nicksnyder/go-i18n/v2/i18n.(*Bundle).AddMessages
