@@ -157,14 +157,14 @@ func TestDetectCgroupMemoryLimitFromMountinfo(t *testing.T) {
 		// /sys/fs/cgroup; the process is in /tenant/app, whose limit is
 		// sys/fs/cgroup/app/memory.max.
 		{"v2 partially mounted hierarchy", files{
-			"proc/self/cgroup":    "0::/tenant/app\n",
-			"proc/self/mountinfo": "30 25 0:26 /tenant /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:4 - cgroup2 cgroup2 rw,nsdelegate\n",
+			"proc/self/cgroup":             "0::/tenant/app\n",
+			"proc/self/mountinfo":          "30 25 0:26 /tenant /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:4 - cgroup2 cgroup2 rw,nsdelegate\n",
 			"sys/fs/cgroup/app/memory.max": "6442450944\n",
 			"sys/fs/cgroup/memory.max":     "max\n",
 		}, 6 * gib, true},
 		{"v2 mounted elsewhere, with an escaped space", files{
-			"proc/self/cgroup":    "0::/c1\n",
-			"proc/self/mountinfo": "30 25 0:26 / /run/cg\040two rw,relatime - cgroup2 cgroup2 rw\n",
+			"proc/self/cgroup":         "0::/c1\n",
+			"proc/self/mountinfo":      "30 25 0:26 / /run/cg\\040two rw,relatime - cgroup2 cgroup2 rw\n",
 			"run/cg two/c1/memory.max": "2147483648\n",
 		}, 2 * gib, true},
 		// v1 memory controller co-mounted with cpu at a combined mount point.
@@ -176,14 +176,14 @@ func TestDetectCgroupMemoryLimitFromMountinfo(t *testing.T) {
 		// v1 with only the container's subtree mounted: its own file says
 		// unlimited, its parent's limit shows only in memory.stat.
 		{"v1 inherited hierarchical limit", files{
-			"proc/self/cgroup":    "9:memory:/docker/abc\n",
-			"proc/self/mountinfo": "40 25 0:35 /docker/abc /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+			"proc/self/cgroup":                           "9:memory:/docker/abc\n",
+			"proc/self/mountinfo":                        "40 25 0:35 /docker/abc /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
 			"sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
 			"sys/fs/cgroup/memory/memory.stat":           "cache 0\nrss 0\nhierarchical_memory_limit 6442450944\nhierarchical_memsw_limit 9223372036854771712\n",
 		}, 6 * gib, true},
 		{"v1 hierarchical limit unlimited too", files{
-			"proc/self/cgroup":    "9:memory:/\n",
-			"proc/self/mountinfo": "40 25 0:35 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+			"proc/self/cgroup":                           "9:memory:/\n",
+			"proc/self/mountinfo":                        "40 25 0:35 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
 			"sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
 			"sys/fs/cgroup/memory/memory.stat":           "hierarchical_memory_limit 9223372036854771712\n",
 		}, 0, false},
@@ -200,4 +200,88 @@ func TestDetectCgroupMemoryLimitFromMountinfo(t *testing.T) {
 	}
 	require.Equal(t, "a b\tc", unescapeMountPath(`a\040b\011c`))
 	require.Equal(t, `no\escape`, unescapeMountPath(`no\escape`))
+}
+
+// A mount exposing another part of the hierarchy doesn't hold the process's
+// limit, wherever mountinfo lists it: detection reads the mounts that
+// contain the process's cgroup and takes the tightest limit among them.
+func TestDetectCgroupMemoryLimitSkipsMountsOfOtherCgroups(t *testing.T) {
+	const gib = int64(1) << 30
+	type files = map[string]string
+	v2Other := "31 25 0:26 /other /run/other-cg rw,relatime - cgroup2 cgroup2 rw\n"
+	v2Root := "30 25 0:26 / /sys/fs/cgroup rw,relatime - cgroup2 cgroup2 rw\n"
+	v1Other := "41 25 0:35 /other /run/other-mem rw - cgroup cgroup rw,memory\n"
+	v1Root := "40 25 0:35 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n"
+	for _, test := range []struct {
+		name  string
+		files files
+		limit int64
+		found bool
+	}{
+		{"v2 unrelated subtree listed first", files{
+			"proc/self/cgroup":                    "0::/tenant/app\n",
+			"proc/self/mountinfo":                 v2Other + v2Root,
+			"run/other-cg/memory.max":             "8589934592\n",
+			"sys/fs/cgroup/tenant/app/memory.max": "1073741824\n",
+		}, 1 * gib, true},
+		{"v2 unrelated subtree listed last", files{
+			"proc/self/cgroup":                    "0::/tenant/app\n",
+			"proc/self/mountinfo":                 v2Root + v2Other,
+			"run/other-cg/memory.max":             "8589934592\n",
+			"sys/fs/cgroup/tenant/app/memory.max": "1073741824\n",
+		}, 1 * gib, true},
+		{"v1 unrelated subtree listed first", files{
+			"proc/self/cgroup":                                      "9:memory:/tenant/app\n",
+			"proc/self/mountinfo":                                   v1Other + v1Root,
+			"run/other-mem/memory.limit_in_bytes":                   "8589934592\n",
+			"sys/fs/cgroup/memory/tenant/app/memory.limit_in_bytes": "1073741824\n",
+		}, 1 * gib, true},
+		{"v1 unrelated subtree listed last", files{
+			"proc/self/cgroup":                                      "9:memory:/tenant/app\n",
+			"proc/self/mountinfo":                                   v1Root + v1Other,
+			"run/other-mem/memory.limit_in_bytes":                   "8589934592\n",
+			"sys/fs/cgroup/memory/tenant/app/memory.limit_in_bytes": "1073741824\n",
+		}, 1 * gib, true},
+		{"only an unrelated subtree mounted", files{
+			"proc/self/cgroup":        "0::/tenant/app\n",
+			"proc/self/mountinfo":     v2Other,
+			"run/other-cg/memory.max": "8589934592\n",
+		}, 0, false},
+		// Outside the process's cgroup namespace: its path can't be mapped
+		// onto a mount, and the namespace root's limit isn't its own.
+		{"v2 cgroup outside the namespace", files{
+			"proc/self/cgroup":                 "0::/../sibling\n",
+			"proc/self/mountinfo":              v2Root,
+			"sys/fs/cgroup/memory.max":         "8589934592\n",
+			"sys/fs/cgroup/sibling/memory.max": "1073741824\n",
+		}, 0, false},
+		{"v2 unlimited leaf below a finite parent", files{
+			"proc/self/cgroup":                          "0::/kubepods/pod1/c1\n",
+			"proc/self/mountinfo":                       v2Root,
+			"sys/fs/cgroup/kubepods/pod1/c1/memory.max": "max\n",
+			"sys/fs/cgroup/kubepods/pod1/memory.max":    "3221225472\n",
+		}, 3 * gib, true},
+		{"v1 limit without memory.stat", files{
+			"proc/self/cgroup":    "9:memory:/docker/abc\n",
+			"proc/self/mountinfo": v1Root,
+			"sys/fs/cgroup/memory/docker/abc/memory.limit_in_bytes": "2147483648\n",
+		}, 2 * gib, true},
+		{"v1 limit with a malformed memory.stat", files{
+			"proc/self/cgroup":    "9:memory:/docker/abc\n",
+			"proc/self/mountinfo": v1Root,
+			"sys/fs/cgroup/memory/docker/abc/memory.limit_in_bytes": "2147483648\n",
+			"sys/fs/cgroup/memory/docker/abc/memory.stat":           "hierarchical_memory_limit lots\n",
+		}, 2 * gib, true},
+		{"v1 hierarchical limit without a leaf limit file", files{
+			"proc/self/cgroup":                            "9:memory:/docker/abc\n",
+			"proc/self/mountinfo":                         v1Root,
+			"sys/fs/cgroup/memory/docker/abc/memory.stat": "hierarchical_memory_limit 4294967296\n",
+		}, 4 * gib, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limit, found := fakeCgroupFS(t, test.files).memoryLimit()
+			require.Equal(t, test.found, found)
+			require.Equal(t, test.limit, limit)
+		})
+	}
 }
