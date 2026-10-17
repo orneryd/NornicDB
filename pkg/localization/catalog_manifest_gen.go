@@ -376,6 +376,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.fulltext_unexpected_token", Constructor: "CypherCoreFulltextUnexpectedToken", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_argument_count", Constructor: "CypherCoreFunctionArgumentCount", Fields: []string{"Expected", "Function", "Got"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_argument_invalid", Constructor: "CypherCoreFunctionArgumentInvalid", Fields: []string{"Expected", "Function", "Value"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.function_argument_null", Constructor: "CypherCoreFunctionArgumentNull", Fields: []string{"Argument", "Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_argument_out_of_range", Constructor: "CypherCoreFunctionArgumentOutOfRange", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_list_argument_empty", Constructor: "CypherCoreFunctionListArgumentEmpty", Fields: []string{"Argument", "Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.group_by_implicit_grouping_key", Constructor: "CypherCoreGroupByImplicitGroupingKey", Fields: []string{"Illegal"}, PluralForms: []string{"other"}},

@@ -440,27 +440,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		return map[string]interface{}{}
 	}
 
-	// apoc.map.removeKey(map, key) - remove key from map
-	if matchFuncStartAndSuffix(expr, "apoc.map.removekey") {
-		inner := extractFuncArgs(expr, "apoc.map.removekey")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 2 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			keyVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				if key, ok := keyVal.(string); ok {
-					result := make(map[string]interface{})
-					for k, v := range m {
-						if k != key {
-							result[k] = v
-						}
-					}
-					return result
-				}
-			}
-		}
-		return map[string]interface{}{}
-	}
+	// apoc.map.removeKey and apoc.map.removeKeys are registered functions
+	// (apoc_map_functions.go), dispatched above.
 
 	// apoc.map.setKey(map, key, value) - set key in map
 	if matchFuncStartAndSuffix(expr, "apoc.map.setkey") {
