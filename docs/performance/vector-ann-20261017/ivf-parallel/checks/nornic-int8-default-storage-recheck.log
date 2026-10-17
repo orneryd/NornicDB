@@ -1,0 +1,24 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.18s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.17s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.16s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.16s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.16s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.14s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.15s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.16s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.15s)
+=== RUN   TestScopedLabelReadCostIgnoresOtherDatabases
+--- PASS: TestScopedLabelReadCostIgnoresOtherDatabases (1.15s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	12.283s
