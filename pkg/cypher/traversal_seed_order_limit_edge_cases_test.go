@@ -166,12 +166,12 @@ func TestTraversalStartPropertyScan_EmptyCandidateBranch(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name = 'x'")
+	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(ctx, nil, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name = 'x'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name IS NOT NULL")
+	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(ctx, nil, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name IS NOT NULL")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)

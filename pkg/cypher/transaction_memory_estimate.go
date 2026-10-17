@@ -129,30 +129,11 @@ func (r *rowEstimator) bindingBytes(name string, value interface{}) int64 {
 
 // columnBytes is the estimated size of a value in a row's column.
 func (r *rowEstimator) columnBytes(column string, value interface{}) int64 {
-	var identity unsafe.Pointer
-	var length int
-	switch v := value.(type) {
-	case []interface{}:
-		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
-	case []string:
-		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
-	case []int64:
-		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
-	case []float64:
-		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
-	case []float32:
-		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
-	case map[string]interface{}:
-		if len(v) > 0 {
-			identity, length = reflect.ValueOf(v).UnsafePointer(), len(v)
-		}
-	default:
+	key, shared := sharedValueKey(value)
+	if !shared {
 		return estimateValueBytes(value)
 	}
-	if identity == nil {
-		return estimateValueBytes(value)
-	}
-	key := sizedValueKey{data: identity, length: length}
+	identity, length := key.data, key.length
 	if _, counted := r.shared[key]; counted {
 		return valueSlotBytes + sliceHeaderBytes
 	}
@@ -177,6 +158,70 @@ func (r *rowEstimator) columnBytes(column string, value interface{}) int64 {
 		r.count++
 	}
 	return r.known.sizedValue(identity, length, value)
+}
+
+// sharedValueKey is the identity of a list or map, a value rows and builders
+// can share without copying it: its backing storage and length. false for
+// any other value, and for an empty one (no storage).
+func sharedValueKey(value interface{}) (sizedValueKey, bool) {
+	var identity unsafe.Pointer
+	var length int
+	switch v := value.(type) {
+	case []interface{}:
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
+	case []string:
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
+	case []int64:
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
+	case []float64:
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
+	case []float32:
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
+	case map[string]interface{}:
+		if len(v) > 0 {
+			identity, length = reflect.ValueOf(v).UnsafePointer(), len(v)
+		}
+	}
+	return sizedValueKey{data: identity, length: length}, identity != nil
+}
+
+// estimateHeldBytes is estimateValueBytes of a value a builder keeps, where
+// a list or map in seen, at any depth, counts as its slot: one the builder
+// already counted, or one its input holds. What it counts is added to seen.
+// A list of maps that all hold the same list counts that list once.
+func estimateHeldBytes(value interface{}, seen map[sizedValueKey]struct{}) int64 {
+	observeSizing()
+	return estimateHeldBytesAt(value, seen, 0)
+}
+
+func estimateHeldBytesAt(value interface{}, seen map[sizedValueKey]struct{}, depth int) int64 {
+	if depth > maxEstimateDepth {
+		return unknownValueBytes
+	}
+	key, shared := sharedValueKey(value)
+	if !shared {
+		return estimateValueBytesAt(value, depth)
+	}
+	if _, counted := seen[key]; counted {
+		return valueSlotBytes + sliceHeaderBytes
+	}
+	seen[key] = struct{}{}
+	switch v := value.(type) {
+	case []interface{}:
+		total := valueSlotBytes + sliceHeaderBytes + int64(cap(v)-len(v))*valueSlotBytes
+		for _, element := range v {
+			total += estimateHeldBytesAt(element, seen, depth+1)
+		}
+		return total
+	case map[string]interface{}:
+		total := int64(valueSlotBytes + mapHeaderBytes)
+		for name, element := range v {
+			total += mapEntryBytes + stringHeaderBytes + int64(len(name)) + estimateHeldBytesAt(element, seen, depth+1)
+		}
+		return total
+	default:
+		return estimateValueBytesAt(value, depth)
+	}
 }
 
 // estimateResultRowBytes is the estimated size of a result row; lists

@@ -1207,11 +1207,18 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
+	// The candidates count while the read holds them (#1343).
+	owner := trackedRetention(ctx)
+	defer owner.release()
 	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 	if err != nil {
 		return nil, true, err
 	}
-	if !usedIndex {
+	if usedIndex {
+		if err := owner.reserveCandidates(len(candidates)); err != nil {
+			return nil, true, err
+		}
+	} else {
 		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
 			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
 				return result, true, streamErr
@@ -1222,7 +1229,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 		// boundedSimpleProjection requires an empty WHERE, so no seek can
 		// have applied one here.
-		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, hint)
+		candidates, _, err = e.collectPipelineInitialNodeCandidates(ctx, owner, nodePattern, whereClause, hint)
 		if err != nil {
 			return nil, true, err
 		}
@@ -1331,6 +1338,12 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return nil, true, err
 	}
 	if indexed {
+		// The seek's candidates count while they are counted (#1343).
+		owner := trackedRetention(ctx)
+		defer owner.release()
+		if err := owner.reserveCandidates(len(candidates)); err != nil {
+			return nil, true, err
+		}
 		for _, node := range candidates {
 			if err := countNode(node, whereApplied); err != nil {
 				return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
@@ -1702,9 +1715,16 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		whereApplied bool
 	}
 	candidateCache := make(map[string]initialCandidates)
+	// The cached candidates count until the match is done, a row's own
+	// while its row is matched (#1343).
+	cachedCandidates := trackedRetention(ctx)
+	defer cachedCandidates.release()
+	rowCandidates := trackedRetention(ctx)
+	defer rowCandidates.release()
 	template := e.pipelineNodeMatchTemplateFor(clause)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		rowCandidates.release()
 		materializedWhere := whereClause
 		// The pattern parsed once and its properties evaluated for the row;
 		// the text route for a row the template can't evaluate.
@@ -1750,11 +1770,18 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		candidates, cached := candidateCache[cacheKey]
 		if cacheKey == "" || !cached {
 			var err error
-			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, candidateWhere, candidateHint)
+			owner := rowCandidates
+			if cacheKey != "" {
+				owner = cachedCandidates
+			}
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), owner, nodePattern, candidateWhere, candidateHint)
 			if err != nil {
 				return nil, true, err
 			}
 			if cacheKey != "" {
+				if err := cachedCandidates.reserveCacheKey(cacheKey); err != nil {
+					return nil, true, err
+				}
 				candidateCache[cacheKey] = candidates
 			}
 		}
@@ -1896,7 +1923,24 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 // never the logical result.
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
-func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+// collectPipelineInitialNodeCandidates is a MATCH's candidate nodes, from an
+// indexed seed or the label scan (above). They come back reserved in owner
+// (#1343): the caller holds them
+// and gives owner's reservation back (release) once it drops them, so no
+// caller holds candidates the statement's limit doesn't see. owner is nil
+// while no limit is configured (trackedRetention).
+func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+	nodes, whereApplied, err = e.collectPipelineInitialNodeCandidatesUnreserved(ctx, nodePattern, whereClause, hint)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := owner.reserveCandidates(len(nodes)); err != nil {
+		return nil, false, err
+	}
+	return nodes, whereApplied, nil
+}
+
+func (e *StorageExecutor) collectPipelineInitialNodeCandidatesUnreserved(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
 	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}

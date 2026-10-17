@@ -149,7 +149,12 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	}
 	nodeWhere, _ := splitWhereByVariable(where, names)
 	var out []pipelineRow
+	// A row's candidates and their combinations count while its joined rows
+	// are made (#1343).
+	rowCandidates := trackedRetention(ctx)
+	defer rowCandidates.release()
 	for _, row := range rows {
+		rowCandidates.release()
 		if err := ctx.Err(); err != nil {
 			return nil, true, err
 		}
@@ -172,7 +177,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 				rowCtx := withValueBindings(ctx, row)
 				var whereApplied bool
 				var err error
-				nodes, whereApplied, err = e.collectPipelineInitialNodeCandidates(rowCtx, pattern, own, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+				nodes, whereApplied, err = e.collectPipelineInitialNodeCandidates(rowCtx, rowCandidates, pattern, own, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 				if err != nil {
 					return nil, true, err
 				}
@@ -183,6 +188,9 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
 		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
+		if err := rowCandidates.reserveSlots(len(combinations), mapHeaderBytes+int64(len(templates))*(mapEntryBytes+stringHeaderBytes+valueSlotBytes)); err != nil {
+			return nil, true, err
+		}
 		for _, combination := range combinations {
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {
