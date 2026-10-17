@@ -512,7 +512,7 @@ func planRowLiteralListMembership(text string) (rowPredicatePart, bool) {
 	if !ok || needle.kind == rowOperandLiteral {
 		return rowPredicatePart{}, false
 	}
-	if len(right) < 2 || right[0] != '[' {
+	if !isListLiteral(right) {
 		return rowPredicatePart{}, false
 	}
 	values := []interface{}{}
