@@ -24,8 +24,6 @@ type pooledValidator struct {
 	tokens        *antlr.CommonTokenStream
 	parser        *CypherParser
 	errorListener *parseErrorListener
-	// prediction is the prediction generation parser currently uses.
-	prediction *parserPrediction
 }
 
 var validatorPool = sync.Pool{
@@ -73,9 +71,6 @@ func Parse(query string) (*ParseResult, error) {
 
 	// Create parser
 	parser := NewCypherParser(tokens)
-	prediction := acquirePrediction()
-	defer prediction.release()
-	usePrediction(parser, nil, prediction)
 
 	// Add error listener
 	errorListener := &parseErrorListener{}
@@ -115,9 +110,6 @@ func Validate(query string) error {
 	v := validatorPool.Get().(*pooledValidator)
 	v.errorListener.reset()
 	defer validatorPool.Put(v)
-	prediction := acquirePrediction()
-	defer prediction.release()
-	v.prediction = usePrediction(v.parser, v.prediction, prediction)
 
 	var input antlr.CharStream
 	if isASCII(query) {
