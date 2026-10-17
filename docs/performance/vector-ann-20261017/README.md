@@ -10,6 +10,16 @@ The full corpus shows useful compression/latency tradeoffs. Overall process RSS
 and several latency comparisons still trail Qdrant; all-metric parity is an open
 target. CUDA/Vulkan device execution remains for the hardware handoff.
 
+## Memory accounting on the pulled PR head
+
+[Fresh heap and OS memory profiles](quant-memory/README.md) on
+`92e1c44138aecac592bd421e94de67fcd5a90b9f` show scalar → PQ ×64 reducing encoded
+coordinates **90.62 → 6.69 MB** and live Go heap **790.6 → 707.4 MB**, despite
+similar whole-process RSS. Binary query-int4/int8 both store one-bit coordinates;
+their encoded sizes are identical by design. Storage caches, idle/released heap
+and resident original-vector mappings explain why RSS is not an index-size metric.
+These are five selected full-corpus diagnostic cases, not a new all-mode timing sweep.
+
 ## Latest query-cost correction
 
 [Full-corpus compressed HNSW refresh and profiles](hnsw-query-cost/README.md)
