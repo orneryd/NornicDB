@@ -103,7 +103,8 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 			}
 			arguments[index] = value
 		}
-		items, err := evaluateCypherRange(arguments)
+		budget := expressionBudgetOf(ctx)
+		items, err := evaluateCypherRange(&budget, arguments)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil, false

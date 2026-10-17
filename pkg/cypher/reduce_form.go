@@ -70,13 +70,22 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 // step, and the result is false when it is false once, else null when it
 // is null once, else true (an empty list is true). The callbacks get the
 // accumulator and the item to bind.
-func runReduceForm(form reduceForm, accumulator interface{}, items []interface{},
+//
+// The accumulator counts against the statement's memory limit as it grows
+// (budget, #1343): checked after each step, so a step that takes it over
+// the limit fails the statement before the next step; given back at the end,
+// where the row or list that keeps the result counts it.
+func runReduceForm(budget *expressionBudget, form reduceForm, accumulator interface{}, items []interface{},
 	step func(accumulator, item interface{}) (interface{}, error),
 	predicate func(accumulator, item interface{}) (interface{}, error)) (interface{}, error) {
+	defer budget.release()
 	var result interface{} = true
 	for _, item := range items {
 		var err error
 		if accumulator, err = step(accumulator, item); err != nil {
+			return nil, err
+		}
+		if err := budget.holdAccumulator(accumulator); err != nil {
 			return nil, err
 		}
 		if !form.all {

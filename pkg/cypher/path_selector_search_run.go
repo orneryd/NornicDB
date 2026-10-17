@@ -126,13 +126,17 @@ type pathSearch struct {
 	closed     map[int32]bool
 	// from is the node the search starts at.
 	from *storage.Node
+	// memory is the search's account in the statement's memory scope: its
+	// frontiers, visited products and predecessors count against the limit as
+	// they grow, and go back when the search ends (retain, #1343).
+	memory memoryRetention
 }
 
 // newPathSearch starts a search over automaton a for row. Its state is
 // made when the search begins (begin), so the walk search of a uniform
 // pattern (uniformPair) doesn't pay for it.
 func (e *StorageExecutor) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
-	return &pathSearch{e: e, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
+	return &pathSearch{e: e, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx), memory: newMemoryRetention(ctx)}
 }
 
 // slotHolds reports whether node may take slot: the node a row binds to
@@ -233,6 +237,7 @@ func (s *pathSearch) relationships(node storage.NodeID, direction string) []*sto
 		}
 	}
 	s.edges[key] = edges
+	s.retain(searchEntryBytes + sliceHeaderBytes + int64(len(edges))*8)
 	return edges
 }
 
@@ -256,6 +261,7 @@ func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) 
 	index := int32(len(s.products))
 	s.products = append(s.products, pathSearchProduct{node: node, slot: slot, counts: counts})
 	s.index[key] = index
+	s.retain(searchProductBytes + int64(len(counts))*8)
 	if len(s.a.slots[slot].transitions) > 0 {
 		s.unexpanded++
 	}
@@ -383,6 +389,7 @@ func (s *pathSearch) nextLevel() bool {
 			}
 			added := &next.entries[index]
 			added.preds = append(added.preds, pathSearchPred{entry: int32(entryIndex), step: int32(stepIndex)})
+			s.retain(8)
 			if added.witness == nil && (s.repeatable || !entry.witness.uses(s, step.edge.ID)) {
 				added.witness = &pathSearchLink{product: entry.product, step: int32(stepIndex), prev: entry.witness}
 			}
@@ -429,6 +436,7 @@ func (s *pathSearch) nextLevel() bool {
 		next.index[entry.product] = int32(index)
 	}
 	s.levels = append(s.levels, next)
+	s.retain(searchEntryBytes)
 	return true
 }
 
@@ -756,6 +764,8 @@ func (s *pathSearch) dominate() {
 	}
 	// Reverse postorder of the nodes the source reaches.
 	nodes := int32(len(successors))
+	// Its order, stack, postorder and predecessors take about 40 bytes a node.
+	s.retain(int64(nodes) * 40)
 	order := make([]int32, nodes)
 	for index := range order {
 		order[index] = -1
@@ -828,4 +838,24 @@ func (s *pathSearch) dominate() {
 			}
 		}
 	}
+}
+
+// Estimated sizes of a search's state: a map entry with its key, and a
+// product with its index entry.
+const (
+	searchEntryBytes   = 48
+	searchProductBytes = 96
+)
+
+// retain counts n bytes of search state the search keeps against the
+// statement's memory limit (#1343). Going over cancels the statement, and
+// every loop of the search stops on cancellation.
+func (s *pathSearch) retain(n int64) {
+	_ = s.memory.reserveBytes(n)
+}
+
+// releaseMemory gives back what the search's state took, when the search
+// ends: its result rows count where they are kept.
+func (s *pathSearch) releaseMemory() {
+	s.memory.release()
 }

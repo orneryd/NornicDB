@@ -113,6 +113,11 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			}
 		}
 	}
+	// What the call yields counts against the statement's memory limit
+	// before it is kept: each result once, each extended row before it is
+	// built (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
@@ -126,11 +131,21 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			if err != nil {
 				return nil, nil, true, err
 			}
+			if result != nil {
+				for _, record := range result.Rows {
+					if err := retention.reserveResultRow(record); err != nil {
+						return nil, nil, true, err
+					}
+				}
+			}
 			if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
 				shared = result
 			}
 		}
 		if yieldIndex < 0 {
+			if err := retention.reserveExtendedRow(row, nil, nil); err != nil {
+				return nil, nil, true, err
+			}
 			out = append(out, row)
 			continue
 		}
@@ -142,6 +157,10 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		}
 		extended := make([]pipelineRow, 0, len(result.Rows))
 		for _, record := range result.Rows {
+			// The record's values counted when the call returned it.
+			if err := retention.reserveExtendedRow(row, result.Columns, nil); err != nil {
+				return nil, nil, true, err
+			}
 			next := make(pipelineRow, len(row)+len(result.Columns))
 			for key, value := range row {
 				next[key] = value
@@ -158,7 +177,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		}
 		out = append(out, extended...)
 	}
-	return out, yielded, true, nil
+	// Every row kept is charged in full: the rows they replace give theirs
+	// back (rowGenerations).
+	return retention.owned(out), yielded, true, nil
 }
 
 // argumentUsesRowVariable reports whether a procedure argument refers to a

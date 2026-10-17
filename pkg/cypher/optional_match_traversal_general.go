@@ -134,6 +134,10 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 // no-op). An unbound variable is an independent node scan: each row joins
 // with every matching node, or carries a null binding when nothing matches.
 func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+	// Each candidate row counts against the statement's memory limit before
+	// it is kept (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	group := firstParenGroup(clause.pattern)
 	if group == "" {
 		return rows, nil
@@ -180,11 +184,18 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 				continue
 			}
 			cand.optionalMatched = true
+			if err := retention.reserveTraversalRow(cand); err != nil {
+				return nil, err
+			}
 			out = append(out, cand)
 			matched = true
 		}
 		if !matched {
-			out = append(out, extendTraversalRow(row, varName, nil, "", nil))
+			unmatched := extendTraversalRow(row, varName, nil, "", nil)
+			if err := retention.reserveTraversalRow(unmatched); err != nil {
+				return nil, err
+			}
+			out = append(out, unmatched)
 		}
 	}
 	return out, nil
@@ -238,6 +249,10 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // candidate are preserved with null bindings for the new variables — the
 // Apply + Optional contract.
 func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+	// Each candidate row counts against the statement's memory limit before
+	// it is kept (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	pattern := ensureLeadingNodeNamedFor(ctx, clause.pattern)
 	structure := matchPatternStructureFor(ctx, pattern)
 	nodeVars := extractNodeVariables(structure)
@@ -288,6 +303,9 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				}
 			}
 			candidate.optionalMatched = true
+			if err := retention.reserveTraversalRow(candidate); err != nil {
+				return nil, err
+			}
 			out = append(out, candidate)
 		}
 		if len(matched) == 0 {
@@ -309,6 +327,9 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				} else {
 					candidate.rels[name] = nil
 				}
+			}
+			if err := retention.reserveTraversalRow(candidate); err != nil {
+				return nil, err
 			}
 			out = append(out, candidate)
 		}

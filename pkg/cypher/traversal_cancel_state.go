@@ -38,12 +38,12 @@ func (state *TraversalContext) traversalCancelled() bool {
 	}
 }
 
-// memoryAccount is the traversal's account in the statement's memory
+// memoryRetention is the traversal's owner in the statement's memory
 // scope; it tracks nothing when no limit is configured.
-func (state *TraversalContext) memoryAccount() *memoryAccount {
+func (state *TraversalContext) memoryRetention() *memoryRetention {
 	if !state.memoryResolved {
 		state.memoryResolved = true
-		state.memory.scope = memoryScopeFromContext(state.cancelCtx)
+		state.memory = newMemoryRetention(state.cancelCtx)
 	}
 	return &state.memory
 }
