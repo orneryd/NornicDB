@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestAccumulator_Disabled(t *testing.T) {
@@ -157,14 +158,107 @@ func TestAccumulator_ClearEntity(t *testing.T) {
 	}
 }
 
+// TestAccumulator_Timestamps_MaxWins places each write on its own shard, so
+// DrainAll always merges them across shards; the latest must win, not the sum.
 func TestAccumulator_Timestamps_MaxWins(t *testing.T) {
-	a := NewAccessAccumulator(true, 0)
-	a.SetTimestamp("n1", "lastAccessedAt", 100)
-	a.SetTimestamp("n1", "lastAccessedAt", 50)
-	a.SetTimestamp("n1", "lastAccessedAt", 200)
+	a := newAccessAccumulator(true, 0, 3)
+	a.shards[0].setTimestamp("n1", "lastAccessedAt", 100)
+	a.shards[1].setTimestamp("n1", "lastAccessedAt", 50)
+	a.shards[2].setTimestamp("n1", "lastAccessedAt", 200)
 
 	merged := a.DrainAll()
-	if merged["n1"].overflow["lastAccessedAt"] != 200 {
-		t.Errorf("expected max timestamp 200, got %d", merged["n1"].overflow["lastAccessedAt"])
+	if got := merged["n1"].timestamps["lastAccessedAt"]; got != 200 {
+		t.Errorf("expected max timestamp 200, got %d", got)
 	}
+}
+
+// TestAccumulator_CrossShardMergeRules pins one merge rule per kind of value
+// wherever buffered values from different shards meet: counters add,
+// timestamps keep the latest.
+func TestAccumulator_CrossShardMergeRules(t *testing.T) {
+	newSpread := func() *AccessAccumulator {
+		a := newAccessAccumulator(true, 0, 3)
+		for i, ts := range []timestamp{100, 50, 200} {
+			a.shards[i].setTimestamp("n1", "seenAt", ts)
+			a.shards[i].incrementCustom("n1", "views", counter(i+1))
+			a.shards[i].recordAccess("n1", ts)
+			a.shards[i].recordTraversal("n1", ts)
+		}
+		return a
+	}
+
+	t.Run("ReadThrough", func(t *testing.T) {
+		a := newSpread()
+		cases := []struct {
+			key       string
+			persisted int64
+			want      int64
+		}{
+			{"seenAt", 0, 200},
+			{"seenAt", 150, 200},
+			{"seenAt", 300, 300},
+			{"lastAccessedAt", 0, 200},
+			{"lastTraversedAt", 300, 300},
+			{"views", 10, 16},
+			{"accessCount", 10, 13},
+			{"traversalCount", 0, 3},
+		}
+		for _, tc := range cases {
+			if got := a.ReadThrough("n1", tc.key, tc.persisted); got != tc.want {
+				t.Errorf("ReadThrough(%s, persisted %d) = %d, want %d", tc.key, tc.persisted, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("DrainAll", func(t *testing.T) {
+		d := newSpread().DrainAll()["n1"]
+		if d == nil {
+			t.Fatal("expected a drained delta for n1")
+		}
+		if d.timestamps["seenAt"] != 200 || d.lastAccessedAt != 200 || d.lastTraversedAt != 200 {
+			t.Errorf("timestamps: seenAt=%d lastAccessedAt=%d lastTraversedAt=%d, want 200 each",
+				d.timestamps["seenAt"], d.lastAccessedAt, d.lastTraversedAt)
+		}
+		if d.counters["views"] != 6 || d.accessCount != 3 || d.traversalCount != 3 {
+			t.Errorf("counters: views=%d accessCount=%d traversalCount=%d, want 6, 3, 3",
+				d.counters["views"], d.accessCount, d.traversalCount)
+		}
+		if _, ok := d.counters["seenAt"]; ok {
+			t.Error("timestamp seenAt was buffered as a counter")
+		}
+	})
+
+	t.Run("Flush", func(t *testing.T) {
+		for _, tc := range []struct {
+			stored int64
+			want   int64
+		}{{0, 200}, {150, 200}, {300, 300}} {
+			store := newMockStore()
+			if tc.stored != 0 {
+				_ = store.PutAccessMeta("n1", &AccessMetaEntry{
+					TargetID: "n1",
+					Overflow: map[string]interface{}{"seenAt": tc.stored, "views": int64(10)},
+				})
+			}
+			NewAccessFlusher(newSpread(), store, time.Hour).Flush()
+			e := store.get("n1")
+			if e == nil {
+				t.Fatal("expected a stored entry for n1")
+			}
+			if got := e.Overflow["seenAt"]; got != tc.want {
+				t.Errorf("stored seenAt %d: got %v, want %d", tc.stored, got, tc.want)
+			}
+			wantViews := int64(6)
+			if tc.stored != 0 {
+				wantViews = 16
+			}
+			if got := e.Overflow["views"]; got != wantViews {
+				t.Errorf("stored views: got %v, want %d", got, wantViews)
+			}
+			if e.Fixed.LastAccessedAt != 200 || e.Fixed.AccessCount != 3 {
+				t.Errorf("stored fixed: lastAccessedAt=%d accessCount=%d, want 200, 3",
+					e.Fixed.LastAccessedAt, e.Fixed.AccessCount)
+			}
+		}
+	})
 }
