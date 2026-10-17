@@ -57,6 +57,8 @@ var listMembershipQueries = []string{
 	// The downstream mention-match shape over stored keys.
 	"MATCH (i:GraphNode:Identity) WHERE coalesce(i.current, true) AND (i.id IN $ids OR i.name_key IN $names OR any(a IN i.alias_keys WHERE a IN $names) OR any(v IN i.identifier_value_keys WHERE v IN $values)) RETURN i.id ORDER BY i.id",
 	"MATCH (i:Identity) WHERE any(v IN i.identifier_value_keys WHERE v IN $values) RETURN i.id ORDER BY i.id",
+	// An OR term that is an indexable conjunct AND a residual.
+	"WITH $values AS values MATCH (i:GraphNode:Identity) WHERE coalesce(i.current, true) AND (i.id IN $ids OR i.name_key IN $names OR (any(value IN i.identifier_value_keys WHERE value IN values) AND any(theirs IN i.identifier_value_keys WHERE theirs STARTS WITH 'tax'))) RETURN i.id ORDER BY i.id",
 	"MATCH (n:Identity) WHERE $x IN n.alias_keys AND n.current RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.current AND any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
 	"MATCH (n:Identity) WHERE n.id IN $ids OR n.name_key IN $names OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id",
@@ -189,6 +191,8 @@ func TestListMembershipSeekUsesIndex(t *testing.T) {
 				{"MATCH (n:Identity) WHERE any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE any(k IN n.alias_keys WHERE k IN $keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE any(v IN n.identifier_value_keys WHERE v IN $values) RETURN n.id ORDER BY n.id", [][]interface{}{{"id12"}, {"id21"}, {"id30"}, {"id39"}, {"id48"}, {"id57"}}},
+				// An indexable conjunct AND a residual answers its OR term.
+				{"MATCH (n:Identity) WHERE n.id IN $ids OR (any(v IN n.identifier_value_keys WHERE v IN $values) AND n.current) RETURN n.id ORDER BY n.id", [][]interface{}{{"id12"}, {"id21"}, {"id39"}, {"id48"}, {"id57"}, {"id9"}}},
 				{"WITH $keys AS scopes MATCH (n:Identity) WHERE any(k IN coalesce(n.alias_keys, []) WHERE k IN scopes) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}}},
 				{"MATCH (n:Identity) WHERE n.id IN $ids OR any(k IN $keys WHERE k IN n.alias_keys) RETURN n.id ORDER BY n.id", [][]interface{}{{"id5"}, {"id9"}}},
 				{"MATCH (n:Identity) WHERE (n.id IN $ids OR $x IN n.alias_keys) AND n.current RETURN n.id ORDER BY n.id", [][]interface{}{{"id9"}}},
@@ -233,6 +237,59 @@ func TestDisjunctionSeekNeedsEveryTermIndexed(t *testing.T) {
 				require.NoError(t, err, query)
 				require.Equal(t, [][]interface{}{{"x"}, {"y"}}, result.Rows, query)
 			}
+		})
+	}
+}
+
+// A term of the disjunction seek is answered by the index of any label of
+// the pattern: here the index a uniqueness constraint owns on the other label
+// of a two-label pattern serves i.id IN $ids. A node hidden from that index
+// is not found by the seek, and rows equal the scan's.
+func TestDisjunctionSeekUsesConstraintIndexOfPatternLabel(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			ctx := context.Background()
+			setup := func(namespace string, indexed bool) *StorageExecutor {
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace))
+				if indexed {
+					for _, ddl := range []string{
+						"CREATE CONSTRAINT graph_node_id FOR (n:GraphNode) REQUIRE n.id IS UNIQUE",
+						"CREATE INDEX identity_name_key FOR (n:Identity) ON (n.name_key)",
+					} {
+						_, err := exec.Execute(ctx, ddl, nil)
+						require.NoError(t, err, ddl)
+					}
+				}
+				_, err := exec.Execute(ctx, "UNWIND range(0, 9) AS i CREATE (:GraphNode:Identity {id: 'x' + toString(i), name_key: 'n' + toString(i)}), (:GraphNode {id: 'g' + toString(i)})", nil)
+				require.NoError(t, err)
+				return exec
+			}
+			indexed, scanned := setup("pattern_label_indexed", true), setup("pattern_label_scanned", false)
+			query := "MATCH (i:GraphNode:Identity) WHERE i.id IN $ids OR i.name_key IN $names RETURN i.id ORDER BY i.id"
+			params := map[string]interface{}{"ids": []interface{}{"x2", "x3", "g4"}, "names": []interface{}{"n5"}}
+			if explicit {
+				for _, exec := range []*StorageExecutor{indexed, scanned} {
+					_, err := exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					exec := exec
+					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+				}
+			}
+			want, err := scanned.Execute(ctx, query, params)
+			require.NoError(t, err)
+			got, err := indexed.Execute(ctx, query, params)
+			require.NoError(t, err)
+			require.Equal(t, want.Rows, got.Rows)
+			require.Equal(t, [][]interface{}{{"x2"}, {"x3"}, {"x5"}}, got.Rows)
+
+			schema := indexed.storage.GetSchema()
+			hidden := schema.PropertyIndexLookup("GraphNode", "id", "x2")
+			require.Len(t, hidden, 1)
+			require.NoError(t, schema.PropertyIndexDelete("GraphNode", "id", hidden[0], "x2"))
+			indexed.ClearQueryCaches()
+			got, err = indexed.Execute(ctx, query, params)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{"x3"}, {"x5"}}, got.Rows, "the id term is answered by the GraphNode constraint index")
 		})
 	}
 }

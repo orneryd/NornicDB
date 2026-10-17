@@ -880,7 +880,11 @@ func (e *StorageExecutor) collectIndexSeekTermNodes(nodePattern nodePatternInfo,
 }
 
 // indexSeekDisjunction reads clause as one index seek term or a disjunction
-// of them (t1 OR t2 OR …), every one of them read by parseIndexSeekTerm.
+// of them (t1 OR t2 OR …), every one of them read by parseIndexSeekTerm. A
+// disjunct that is a conjunction is answered by its first conjunct
+// parseIndexSeekTerm reads (any(v IN n.keys WHERE v IN $values) AND
+// <residual>): its other conjuncts only narrow it, and the caller applies
+// the whole WHERE.
 func (e *StorageExecutor) indexSeekDisjunction(ctx context.Context, variable, clause string, params map[string]interface{}) ([]indexSeekTerm, bool) {
 	disjuncts := splitTopLevelOrTerms(unwrapOuterParens(strings.TrimSpace(clause)))
 	if len(disjuncts) == 0 {
@@ -889,6 +893,13 @@ func (e *StorageExecutor) indexSeekDisjunction(ctx context.Context, variable, cl
 	terms := make([]indexSeekTerm, 0, len(disjuncts))
 	for _, disjunct := range disjuncts {
 		term, ok := e.parseIndexSeekTerm(ctx, variable, disjunct, params)
+		if !ok && len(disjuncts) > 1 {
+			for _, conjunct := range splitTopLevelAndConjuncts(unwrapOuterParens(strings.TrimSpace(disjunct))) {
+				if term, ok = e.parseIndexSeekTerm(ctx, variable, conjunct, params); ok {
+					break
+				}
+			}
+		}
 		if !ok {
 			return nil, false
 		}
