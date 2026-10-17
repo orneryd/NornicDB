@@ -43,13 +43,29 @@ func effectiveHNSWQuantizationOptions(opts *SearchOptions) hnswQuantizationOptio
 }
 
 func (h *HNSWCandidateGen) quantizationActive(ctx context.Context) bool {
+	return h.hnswIndex.quantizationActive(ctx)
+}
+
+func (h *HNSWIndex) quantizationActive(ctx context.Context) bool {
 	if quantizationOptions(ctx).ignore {
 		return false
 	}
-	h.hnswIndex.mu.RLock()
-	defer h.hnswIndex.mu.RUnlock()
-	cfg := h.hnswIndex.config.Quantization
-	return cfg.Mode != HNSWQuantizationNone && (cfg.Mode != HNSWQuantizationProduct || h.hnswIndex.liveCount >= 256)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	cfg := h.config.Quantization
+	return cfg.Mode != HNSWQuantizationNone && (cfg.Mode != HNSWQuantizationProduct || h.liveCount >= 256)
+}
+
+// quantizedCandidateLimit is the candidate pool a graph search keeps for
+// exact rescoring: k, widened by the request's oversampling when the graph
+// traverses compressed coordinates and rescoring is on. Single-graph and
+// IVF-HNSW generation share it.
+func quantizedCandidateLimit(ctx context.Context, k int, quantized bool) int {
+	limit := boundCandidateLimit(k)
+	if quantized && quantizationOptions(ctx).rescore {
+		limit = scaledCandidateLimit(limit, quantizationOptions(ctx).oversampling, boundCandidateLimit(int(^uint(0)>>1)))
+	}
+	return limit
 }
 
 // quantizedScoreReader pins codes for public named/property vector selection.

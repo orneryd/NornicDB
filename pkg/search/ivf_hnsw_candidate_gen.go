@@ -66,7 +66,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		return []Candidate{}, nil
 	}
 
-	totalLimit := boundCandidateLimit(k)
+	// Cluster graphs share one compression policy; the pool kept for exact
+	// rescoring follows the single-graph rule, oversampling included.
+	totalLimit := quantizedCandidateLimit(ctx, k, indexes[0].quantizationActive(ctx))
 	results := make([][]ANNResult, len(indexes))
 	errors := make([]error, len(indexes))
 	ef := hnswEfFromContext(ctx)
