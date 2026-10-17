@@ -115,6 +115,9 @@ type HNSWIndex struct {
 	internalToID []string
 	deleted      []bool
 	liveCount    int
+	// fingerprints, when non-nil (cluster graphs), holds the coordinate
+	// fingerprint each node was inserted with, by internal ID (hnsw_fingerprint.go).
+	fingerprints []uint64
 	vectors      []float32
 	quantized    *hnswQuantizedVectors
 
@@ -302,6 +305,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			if h.quantized != nil {
 				h.quantized.set(internalID, dst)
 			}
+			h.recordFingerprintLocked(internalID, vec)
 			return nil
 		}
 
@@ -369,6 +373,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.internalToID = append(h.internalToID, id)
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
+	h.recordFingerprintLocked(internalID, vec)
 	h.liveCount++
 	if h.quantized != nil {
 		h.quantized.set(internalID, normalized)
@@ -579,6 +584,9 @@ func (h *HNSWIndex) Clear() {
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
 	h.liveCount = 0
+	if h.fingerprints != nil {
+		h.fingerprints = h.fingerprints[:0]
+	}
 	h.vectors = make([]float32, 0, util.SafePreallocProduct(1024, h.dimensions))
 	h.entryPoint = 0
 	h.hasEntryPoint = false
@@ -791,6 +799,7 @@ type hnswIndexSnapshot struct {
 	IDToInternal      map[string]uint32
 	InternalToID      []string
 	Deleted           []bool
+	Fingerprints      []uint64 `msgpack:",omitempty"`
 	LiveCount         int
 	Vectors           []float32
 	EntryPoint        uint32
@@ -826,6 +835,7 @@ func (h *HNSWIndex) snapshot() *hnswIndexSnapshot {
 		IDToInternal:      idToInternal,
 		InternalToID:      append([]string(nil), h.internalToID...),
 		Deleted:           append([]bool(nil), h.deleted...),
+		Fingerprints:      append([]uint64(nil), h.fingerprints...),
 		LiveCount:         h.liveCount,
 		EntryPoint:        h.entryPoint,
 		HasEntryPoint:     h.hasEntryPoint,
@@ -926,6 +936,9 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	h.idToInternal = snap.IDToInternal
 	h.internalToID = snap.InternalToID
 	h.deleted = snap.Deleted
+	if len(snap.Fingerprints) == len(snap.InternalToID) {
+		h.fingerprints = snap.Fingerprints
+	}
 	h.liveCount = snap.LiveCount
 	h.entryPoint = snap.EntryPoint
 	h.hasEntryPoint = snap.HasEntryPoint
