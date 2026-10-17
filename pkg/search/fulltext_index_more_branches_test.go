@@ -51,14 +51,14 @@ func TestFulltextIndex_CalculateIDFAndPhraseLimitBranches(t *testing.T) {
 	require.GreaterOrEqual(t, got[0].Score, got[1].Score)
 }
 
-func TestFulltextIndex_SaveNoCopyErrorBranch(t *testing.T) {
+func TestFulltextIndex_SaveErrorBranch(t *testing.T) {
 	idx := NewFulltextIndex()
 	idx.Index("doc-1", "hello world")
 
 	parentFile := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(parentFile, []byte("x"), 0o644))
 
-	err := idx.SaveNoCopy(filepath.Join(parentFile, "bm25"))
+	err := idx.Save(filepath.Join(parentFile, "bm25"))
 	require.Error(t, err)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/security"
 )
@@ -27,11 +28,9 @@ func (m *baseOperationMutex) Unlock() { m.token() <- struct{}{} }
 // indexMu protects it; identity, dirty state and positive counts do not establish
 // completeness. A parked fulltext checkpoint remains the logical text source.
 type nodeSourceRecord struct {
-	textComplete            bool
-	vectorsComplete         bool
-	memoryAuthoritative     bool
-	fulltextCheckpoint      string
-	fulltextCheckpointCount int
+	textComplete        bool
+	vectorsComplete     bool
+	memoryAuthoritative bool
 }
 
 type nodeSourceChange uint8
@@ -48,46 +47,14 @@ const (
 	nodeFulltextReset
 )
 
-// changeNodeSourcesLocked is the sole completion/authority writer. The
-// replacing operation supplies its actual meaning; no caller infers it from
-// counts, a dirty backend, a whole-service ready flag or pointer identity.
-func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
-	switch change {
-	case nodeTextRestored:
-		s.nodeSources.textComplete = true
-	case nodeVectorsRestored:
-		s.nodeSources.vectorsComplete = true
-	case nodePopulationAdmitted:
-		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
-		if s.vectorFileStore == nil {
-			s.nodeSources.memoryAuthoritative = true
-		}
-	case nodePopulationFailed:
-		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = false, false
-	case nodeVectorMemoryMoved:
-		s.nodeSources.memoryAuthoritative = true
-	case nodeVectorCleared:
-		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = true, true
-	case nodeVectorReset:
-		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = false, true
-	case nodeVectorFileMoved:
-		s.nodeSources.memoryAuthoritative = false
-	case nodeFulltextReset:
-		s.nodeSources.textComplete = false
-	}
-}
-
-func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
-	s.nodeSources.fulltextCheckpoint = path
-	s.nodeSources.fulltextCheckpointCount = count
-}
-
 // nodePopulationAdmission is the NODE phase of the existing base operation,
 // not another worker or ANN job. baseBuildControlMu protects publication; err
 // is immutable after done closes. A caller waiting for NODE never waits for ANN.
 type nodePopulationAdmission struct {
 	done chan struct{}
 	err  error
+	// worker is set while a registered admission worker owns the job.
+	worker atomic.Bool
 }
 
 func (s *Service) nodeSourcesCompleteLocked() bool {
@@ -110,7 +77,10 @@ func (s *Service) claimNodeAdmission() *nodePopulationAdmission {
 	return job
 }
 
-func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
+// finishNodeAdmission publishes the job's outcome. A failure retires the
+// completeness record only when the operation had started replacing sources;
+// one refused or cancelled before that left the existing sources intact.
+func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error, sourcesTouched bool) {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.baseBuildControlMu.Lock()
@@ -120,18 +90,22 @@ func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
 		return
 	default:
 	}
-	if err != nil {
+	if err != nil && sourcesTouched {
 		s.changeNodeSourcesLocked(nodePopulationFailed)
+		s.setLifecycleState(lifecycleUnloaded)
+	}
+	if err == nil {
+		// Every recorded write was replayed at admission or applied to the
+		// complete source afterwards.
+		s.clearPopulationWritesLocked()
 	}
 	job.err = err
 	close(job.done)
 }
 
-func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
-	ctx := s.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// waitOrRunNodeAdmission joins job or, once it owns buildMu, runs it. Only
+// background callers use it: the admission worker and persistence.
+func (s *Service) waitOrRunNodeAdmission(ctx context.Context, job *nodePopulationAdmission) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -148,86 +122,6 @@ func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
 	}
 }
 
-// lockNodeMutation admits the initial population before ANY mutation-side
-// effect. On success the caller owns indexMu and must call the returned release.
-// Private node/edge batch writers never enter this public boundary.
-func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
-	for {
-		s.indexMu.Lock()
-		if s.lifecycleCtx != nil {
-			if err := s.lifecycleCtx.Err(); err != nil {
-				s.indexMu.Unlock()
-				return nil, err
-			}
-		}
-		s.baseBuildControlMu.Lock()
-		job, paused := s.nodeAdmission, s.baseBuildPaused > 0
-		pending := false
-		if job != nil {
-			select {
-			case <-job.done:
-			default:
-				pending = true
-			}
-		}
-		s.baseBuildControlMu.Unlock()
-		if !pending && s.nodeSourcesCompleteLocked() {
-			if err := s.materializeNodeFulltextLocked(); err != nil {
-				s.indexMu.Unlock()
-				return nil, err
-			}
-			if !s.needsVectorDimensionsLocked(dimensions) {
-				return s.indexMu.Unlock, nil
-			}
-			// Joining construction must precede indexMu. Recheck the SAME source
-			// record and dimensions after reacquiring mutation ownership.
-			s.indexMu.Unlock()
-			resume := s.pauseHNSWBuild()
-			s.indexMu.Lock()
-			if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
-				err := s.lifecycleCtx.Err()
-				s.indexMu.Unlock()
-				resume()
-				return nil, err
-			}
-			s.baseBuildControlMu.Lock()
-			current := s.nodeAdmission
-			pending = false
-			if current != nil {
-				select {
-				case <-current.done:
-				default:
-					pending = true
-				}
-			}
-			s.baseBuildControlMu.Unlock()
-			if pending || !s.nodeSourcesCompleteLocked() {
-				s.indexMu.Unlock()
-				resume()
-				continue
-			}
-			if err := s.materializeNodeFulltextLocked(); err != nil {
-				s.indexMu.Unlock()
-				resume()
-				return nil, err
-			}
-			s.replaceEmptyVectorDimensionsLocked(dimensions)
-			return func() { s.indexMu.Unlock(); resume() }, nil
-		}
-		if paused {
-			s.indexMu.Unlock()
-			return nil, ErrSearchIndexBuilding
-		}
-		if !pending {
-			job = s.claimNodeAdmission()
-		}
-		s.indexMu.Unlock()
-		if err := s.waitOrRunNodeAdmission(job); err != nil {
-			return nil, err
-		}
-	}
-}
-
 func (s *Service) needsVectorDimensionsLocked(dimensions int) bool {
 	if dimensions <= 0 || s.vectorDimensionsFixed.Load() {
 		return false
@@ -237,22 +131,6 @@ func (s *Service) needsVectorDimensionsLocked(dimensions int) bool {
 	return s.embeddingCountLocked() == 0 && s.vectorIndexDimensionsLocked() != dimensions
 }
 
-// materializeNodeFulltextLocked is the single checkpoint reader for a live
-// mutation or the post-ANN tail. Once a writer restores it, the tail cannot
-// overwrite that writer's newer documents with the older checkpoint.
-func (s *Service) materializeNodeFulltextLocked() error {
-	if s.nodeSources.fulltextCheckpoint == "" {
-		return nil
-	}
-	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
-		return s.lifecycleCtx.Err()
-	}
-	if err := s.reloadFulltextAfterWarmup(s.nodeSources.fulltextCheckpoint, s.nodeSources.fulltextCheckpointCount); err != nil {
-		return err
-	}
-	s.setNodeFulltextCheckpointLocked("", 0)
-	return nil
-}
 
 func (s *Service) nodePopulationCanPersist() bool {
 	s.indexMu.RLock()
@@ -283,6 +161,13 @@ func (s *Service) removeVectorArtifactsLocked() error {
 			return err
 		}
 	}
+	// The per-cluster graphs index the retired vectors too; a restart would
+	// otherwise derive centroids and routing from them.
+	if s.hnswIndexPath != "" {
+		if err := security.RemoveAllRootedPath(ivfHNSWDir(s.hnswIndexPath)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return s.removeSavedGlobalGraphLocked()
 }
 
@@ -310,10 +195,11 @@ func (s *Service) clearNodeVectorMetadataLocked() {
 func (s *Service) resetBaseVectorSource() error {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	defer s.beginSourceStepLocked()()
 	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+		s.setVectorFileStoreLocked(nil)
 	}
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
@@ -321,12 +207,19 @@ func (s *Service) resetBaseVectorSource() error {
 	s.clearNodeVectorMetadataLocked()
 	s.changeNodeSourcesLocked(nodeVectorReset)
 	s.mu.Unlock()
-	capacityErr := s.restoreNodeIndexCapacityLocked()
+	resetErr := s.restoreNodeIndexCapacityLocked()
 	s.retireVectorSourceLocked(false)
-	if capacityErr != nil {
-		return capacityErr
+	if resetErr == nil {
+		resetErr = s.removeVectorArtifactsLocked()
 	}
-	return s.removeVectorArtifactsLocked()
+	// The replacement is a source transition: re-apply the live writes in the
+	// same locked step, so they never leave search (F-I86, decision B), also
+	// when the reset itself failed after clearing the source (sol-r1 finding 2).
+	replayErr := s.replayPopulationWritesLocked(context.Background())
+	if resetErr != nil {
+		return resetErr
+	}
+	return replayErr
 }
 
 type nodePopulationPlan struct {
@@ -344,6 +237,9 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Recorded live writes may carry the first vectors; adopt their dimensions
+	// the same way the population's own first batch does.
+	s.maybeAutoSetVectorDimensions(s.populationWriteDimensions())
 	s.indexMu.Lock()
 	if err := ctx.Err(); err != nil {
 		s.indexMu.Unlock()
@@ -352,11 +248,15 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	// An unadopted saved graph cannot follow the first live mutation. Likewise
 	// a rebuilt/current live population cannot leave its older graph reusable
 	// if the following ANN warmup is cancelled or the process is restarted.
-	if !explicit || plan.nodesRebuilt || plan.forceHNSWRebuild {
+	if !explicit || plan.nodesRebuilt || plan.forceHNSWRebuild || s.hasPopulationWritesLocked() {
 		if err := s.removeSavedGlobalGraphLocked(); err != nil {
 			s.indexMu.Unlock()
 			return err
 		}
+	}
+	if err := s.replayPopulationWritesLocked(ctx); err != nil {
+		s.indexMu.Unlock()
+		return err
 	}
 	s.changeNodeSourcesLocked(nodePopulationAdmitted)
 	// An admitted empty population needs the same durable empty file source as
@@ -370,13 +270,11 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
-		if plan.fulltextPath != "" {
-			s.indexMu.Lock()
-			s.setNodeFulltextCheckpointLocked(plan.fulltextPath, s.fulltext().Count())
-			s.fulltext().Clear()
-			s.indexMu.Unlock()
-			s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-		}
+		// The live BM25 index stays resident through the warmup. Parking it
+		// (clear now, reload the saved checkpoint later) lost writes accepted
+		// after the save, which live writes during a population make
+		// reachable (sol r3 finding 2).
+		runPopulationHook(&basePersistedHook, s)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -386,13 +284,20 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		// excluded. After NODE publication every live delta must reach a graph
 		// already installed or the canonical construction job's snapshot/log.
 		s.indexMu.Lock()
+		if s.hasPopulationWritesLocked() {
+			// Writes since admission are in the source but not in a saved graph.
+			if err := s.removeSavedGlobalGraphLocked(); err != nil {
+				s.indexMu.Unlock()
+				return err
+			}
+		}
 		s.restoreNodePopulationANN(ctx, plan)
 		s.indexMu.Unlock()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.finishNodeAdmission(job, nil)
+	s.finishNodeAdmission(job, nil, true)
 	if !explicit {
 		return nil
 	}

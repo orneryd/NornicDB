@@ -24,6 +24,7 @@ func TestVectorCapacityReplacementIndependentOfFulltext(t *testing.T) {
 				for i := 0; i < 3; i++ {
 					node := &storage.Node{ID: "owner", NamedEmbeddings: map[string][]float32{fmt.Sprintf("name%d", i): {1, 0, 0}}}
 					require.NoError(t, svc.IndexNode(node))
+					require.NoError(t, waitNodeAdmission(t, svc))
 					if i == 0 && transferred {
 						svc.SetPersistenceEnabled(false)
 						require.Nil(t, svc.vectorFileStore)
@@ -50,6 +51,7 @@ func TestVectorCapacityPropertyRemovalReleasesAdmission(t *testing.T) {
 				svc.SetPersistenceEnabled(true)
 			}
 			require.NoError(t, svc.IndexNode(&storage.Node{ID: "owner", Properties: map[string]any{"embedding": []float32{1, 0, 0}}}))
+			require.NoError(t, waitNodeAdmission(t, svc))
 			if transferred {
 				svc.SetPersistenceEnabled(false)
 				require.Nil(t, svc.vectorFileStore)

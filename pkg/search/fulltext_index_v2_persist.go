@@ -33,6 +33,18 @@ type bm25V1Snapshot struct {
 }
 
 func (f *FulltextIndexV2) Save(path string) error {
+	version, err := f.saveSnapshot(path)
+	if err != nil {
+		return err
+	}
+	f.markPersisted(version)
+	return nil
+}
+
+// saveSnapshot writes a copy of the index to path and returns the version it
+// captured, without marking the index persisted: a caller that publishes the
+// file elsewhere acknowledges it with markPersisted once that succeeds.
+func (f *FulltextIndexV2) saveSnapshot(path string) (uint64, error) {
 	f.lockWithCurrentLexicon()
 	docs := make(map[string]string, len(f.documents))
 	for k, v := range f.documents {
@@ -66,7 +78,7 @@ func (f *FulltextIndexV2) Save(path string) error {
 	version := f.version
 	f.mu.RUnlock()
 
-	return saveBM25V2Snapshot(path, bm25V2Snapshot{
+	err := saveBM25V2Snapshot(path, bm25V2Snapshot{
 		Version:        bm25V2FormatVersion,
 		Documents:      docs,
 		DocIDToNum:     docIDToNum,
@@ -77,38 +89,20 @@ func (f *FulltextIndexV2) Save(path string) error {
 		AvgDocLength:   avg,
 		DocCount:       docCount,
 		TotalDocLength: total,
-	}, func() {
-		f.markPersisted(version)
 	})
+	if err != nil {
+		return 0, err
+	}
+	return version, nil
 }
 
-func (f *FulltextIndexV2) SaveNoCopy(path string) error {
-	f.lockWithCurrentLexicon()
-	version := f.version
-	snap := bm25V2Snapshot{
-		Version:        bm25V2FormatVersion,
-		Documents:      f.documents,
-		DocIDToNum:     f.docIDToNum,
-		DocNumToID:     f.docNumToID,
-		DocLengths:     f.docLengths,
-		TermIndex:      f.termIndex,
-		Lexicon:        f.lexicon,
-		AvgDocLength:   f.avgDocLength,
-		DocCount:       f.docCount,
-		TotalDocLength: f.totalDocLength,
+// saveBM25V2Snapshot encodes snap, which must own its maps and slices: live
+// writes are admitted while a checkpoint is written.
+func saveBM25V2Snapshot(path string, snap bm25V2Snapshot) error {
+	if fn := bm25SnapshotEncodeHook.Load(); fn != nil {
+		(*fn)()
 	}
-	f.mu.RUnlock()
-	return saveBM25V2Snapshot(path, snap, func() {
-		f.markPersisted(version)
-	})
-}
-
-func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) error {
-	if err := writeMsgpackSnapshot(path, &snap); err != nil {
-		return err
-	}
-	onSuccess()
-	return nil
+	return writeMsgpackSnapshot(path, &snap)
 }
 
 func (f *FulltextIndexV2) Load(path string) error {
@@ -197,9 +191,9 @@ func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {
 	f.docLengths = s.DocLengths
 	f.docIDsLexicalByNum = docIDsAreLexicalByNumber(s.DocNumToID)
 	f.termIndex = s.TermIndex
-	// SaveNoCopy writes the term index as it is, with the postings of
-	// removed documents, and dead counts are not persisted: drop those
-	// postings, and terms left without any (#826).
+	// Snapshots written by earlier releases can hold the postings of removed
+	// documents, and dead counts are not persisted: drop those postings, and
+	// terms left without any (#826).
 	for term, st := range f.termIndex {
 		if st != nil {
 			st.compactLocked(f.docLengths)

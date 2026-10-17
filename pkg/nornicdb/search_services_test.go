@@ -198,7 +198,12 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		}
 		close(entry.buildDone)
 
-		entry.queueIndex(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
+		// A queued mutation comes from a committed write: the flush publishes
+		// the stored state.
+		debounced := &storage.Node{ID: "nornic:debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}}
+		_, err := engine.CreateNode(debounced)
+		require.NoError(t, err)
+		entry.queueIndex(debounced)
 		db.ensurePendingFlush(entry)
 
 		time.Sleep(5 * time.Millisecond)
@@ -954,6 +959,9 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	// - remove op (should be tolerated even when missing)
 	// - nil node op (should be skipped)
 	// - valid index op (should be applied)
+	// The flush publishes stored state, so the indexed node is stored first.
+	_, err := engine.CreateNode(&storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
+	require.NoError(t, err)
 	entry.pendingMu.Lock()
 	entry.pendingOps = map[string]pendingSearchMutation{
 		"missing": {remove: true},
@@ -990,6 +998,9 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const dbName = "tenant_lazy_ingest"
+	// The event follows a committed write; the flush publishes the stored state.
+	_, err = storage.NewNamespacedEngine(db.baseStorage, dbName).CreateNode(&storage.Node{ID: "n1", Labels: []string{"Entity"}, Properties: map[string]any{"name": "alice"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
+	require.NoError(t, err)
 	db.indexNodeFromEvent(&storage.Node{
 		ID:              storage.NodeID(dbName + ":n1"),
 		Labels:          []string{"Entity"},
@@ -1195,6 +1206,7 @@ func TestSearchServices_RemoveEventDuringBuild_IsDeterministicallyReplayed(t *te
 	require.NoError(t, err)
 
 	// Queue remove while build is blocked.
+	require.NoError(t, tenantStorage.DeleteNode("gone")) // the event follows the committed delete
 	db.removeNodeFromEvent("tenant_remove_race:gone")
 	require.Equal(t, 0, svc.EmbeddingCount())
 

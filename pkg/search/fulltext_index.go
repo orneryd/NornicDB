@@ -84,6 +84,18 @@ type fulltextIndexSnapshot struct {
 // Save writes the fulltext index to path (msgpack format). Dir is created if needed.
 // Copies index data under a short read lock so I/O does not block Search/IndexNode.
 func (f *FulltextIndex) Save(path string) error {
+	version, err := f.saveSnapshot(path)
+	if err != nil {
+		return err
+	}
+	f.markPersisted(version)
+	return nil
+}
+
+// saveSnapshot writes a copy of the index to path and returns the version it
+// captured, without marking the index persisted: a caller that publishes the
+// file elsewhere acknowledges it with markPersisted once that succeeds.
+func (f *FulltextIndex) saveSnapshot(path string) (uint64, error) {
 	f.mu.RLock()
 	// Deep-copy so we can release the lock before slow I/O.
 	documents := make(map[string]string, len(f.documents))
@@ -116,34 +128,9 @@ func (f *FulltextIndex) Save(path string) error {
 		DocCount:      docCount,
 	}
 	if err := writeMsgpackSnapshot(path, &snap); err != nil {
-		return err
+		return 0, err
 	}
-	f.markPersisted(version)
-	return nil
-}
-
-// SaveNoCopy writes the fulltext index to path without deep-copying the maps.
-// This avoids doubling memory during large builds, but holds the read lock during I/O.
-// Use during BuildIndexes when search is not serving live traffic.
-func (f *FulltextIndex) SaveNoCopy(path string) error {
-	f.mu.RLock()
-	version := f.version
-
-	snap := fulltextIndexSnapshot{
-		Version:       fulltextIndexFormatVersion,
-		Documents:     f.documents,
-		InvertedIndex: f.invertedIndex,
-		DocLengths:    f.docLengths,
-		AvgDocLength:  f.avgDocLength,
-		DocCount:      f.docCount,
-	}
-	err := writeMsgpackSnapshot(path, &snap)
-	f.mu.RUnlock()
-	if err != nil {
-		return err
-	}
-	f.markPersisted(version)
-	return nil
+	return version, nil
 }
 
 // Load replaces the fulltext index with the one stored at path (msgpack format).

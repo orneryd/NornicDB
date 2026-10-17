@@ -586,6 +586,15 @@ func (v *VectorFileStore) Save() error {
 		_ = security.RemoveRootedPath(tmpPath)
 		return err
 	}
+	// Publish only while the store is open: Close precedes the removal of a
+	// retired source's artifacts, so a save that raced it must not put the
+	// retired metadata back.
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.closed {
+		_ = security.RemoveRootedPath(tmpPath)
+		return errVecFileClosed
+	}
 	return security.RenameRootedFile(tmpPath, v.metaPath)
 }
 

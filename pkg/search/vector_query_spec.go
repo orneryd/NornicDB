@@ -92,6 +92,11 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
+	if !inSourceStepRead(ctx) {
+		return readAcrossSourceSteps(s, ctx, func(ctx context.Context) ([]VectorQueryHit, error) {
+			return s.VectorQueryNodes(ctx, queryEmbedding, spec)
+		})
+	}
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)
 	}
@@ -138,6 +143,11 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding []float32, spec RelationshipVectorQuerySpec) ([]RelationshipVectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
+	}
+	if !inSourceStepRead(ctx) {
+		return readAcrossSourceSteps(s, ctx, func(ctx context.Context) ([]RelationshipVectorQueryHit, error) {
+			return s.VectorQueryRelationships(ctx, queryEmbedding, spec)
+		})
 	}
 	if len(queryEmbedding) == 0 {
 		return nil, localizedError(localization.SearchQueryEmbeddingRequired(), nil)

@@ -150,9 +150,7 @@ func TestVectorFactoryChangingIntervalCannotBecomeCurrent(t *testing.T) {
 				await(factoryDone, "factory after changing interval")
 				require.NoError(t, factoryErr)
 			}
-			svc.pipelineMu.RLock()
-			cached := svc.vectorPipeline
-			svc.pipelineMu.RUnlock()
+			cached := cachedVectorPipeline(svc)
 			require.Nil(t, cached, "factory admitted during replacement cached a source after warmup cleared the changing flag")
 			release(2)
 			await(buildDone, "completed rebuild")

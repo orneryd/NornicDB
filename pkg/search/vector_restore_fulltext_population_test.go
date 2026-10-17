@@ -42,6 +42,7 @@ func TestVectorRestorePreservesFulltextOutsideVectorMetadata(t *testing.T) {
 					_, err := engine.CreateNode(a)
 					require.NoError(t, err)
 					require.NoError(t, svc.IndexNode(a))
+					require.NoError(t, waitNodeAdmission(t, svc))
 					require.Equal(t, int64(1), svc.bm25ResidentBytes)
 					require.Equal(t, int64(26), svc.bm25MetadataBytes)
 					svc.ClearVectorIndex()
@@ -117,6 +118,7 @@ func TestBaseRestoreCapacityWithoutFileVectors(t *testing.T) {
 				}
 				svc := newService()
 				require.NoError(t, svc.IndexNode(&storage.Node{ID: "a", Properties: map[string]any{"text": "x"}}))
+				require.NoError(t, waitNodeAdmission(t, svc))
 				svc.ClearVectorIndex()
 				if memoryVector {
 					require.NoError(t, svc.IndexNode(&storage.Node{ID: "b", NamedEmbeddings: map[string][]float32{"v": {2, 0, 0}}}))

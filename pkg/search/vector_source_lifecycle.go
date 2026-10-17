@@ -78,7 +78,7 @@ func (s *Service) retireVectorSourceLocked(keepGraph bool) {
 		// Destruction also retires derived compressed indexes. They are not
 		// cleared here: a builder may hold ivfpqMu for a long time, so reuse
 		// and publication check this epoch instead.
-		s.vectorSourceEpoch.Add(1)
+		s.advanceSourceEpoch()
 	}
 	s.hnswMu.Lock()
 	if keepGraph {
@@ -87,9 +87,7 @@ func (s *Service) retireVectorSourceLocked(keepGraph bool) {
 		s.invalidateHNSWLocked()
 	}
 	s.hnswMu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.invalidateVectorPipeline()
 }
 
 // vectorMemoryFromFileStore transfers canonical normalized coordinates in

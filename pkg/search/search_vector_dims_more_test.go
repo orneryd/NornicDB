@@ -32,7 +32,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 
 	svc.maybeAutoSetVectorDimensions(5)
 	require.Equal(t, 5, svc.vectorIndex.GetDimensions())
-	require.Nil(t, svc.vectorPipeline)
+	require.Nil(t, cachedVectorPipeline(svc))
 	require.Nil(t, svc.gpuEmbeddingIndex)
 	require.NotNil(t, svc.clusterIndex)
 	require.Nil(t, svc.clusterHNSW)
@@ -227,7 +227,7 @@ func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 
 	svc.ClearVectorIndex()
 
-	require.Nil(t, svc.vectorPipeline)
+	require.Nil(t, cachedVectorPipeline(svc))
 	require.Nil(t, svc.vectorFileStore)
 	require.Nil(t, svc.clusterHNSW)
 	require.Nil(t, svc.ivfpqIndex)

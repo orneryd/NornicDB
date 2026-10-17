@@ -478,6 +478,11 @@ type relationshipCandidate struct {
 // Each result names the relationship, its type and both endpoints, with its
 // properties. Types filters by relationship type.
 func (s *Service) SearchRelationships(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	if s != nil && !inSourceStepRead(ctx) {
+		return readAcrossSourceSteps(s, ctx, func(ctx context.Context) (*SearchResponse, error) {
+			return s.SearchRelationships(ctx, query, embedding, opts)
+		})
+	}
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return nil, localizedError(localization.SearchRelationshipsDisabled(), ErrRelationshipSearchDisabled)

@@ -26,6 +26,7 @@ func TestVectorClearReleasesNodeMetadataBeforeDifferentIDInsertion(t *testing.T)
 					svc.SetPersistenceEnabled(true)
 				}
 				require.NoError(t, svc.IndexNode(&storage.Node{ID: "a", NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}, Properties: map[string]any{"text": "needle"}}))
+				require.NoError(t, waitNodeAdmission(t, svc))
 				require.Equal(t, int64(42), svc.vectorMetadataBytes)
 				fulltextResident, fulltextMetadata := svc.bm25ResidentBytes, svc.bm25MetadataBytes
 				svc.ClearVectorIndex()

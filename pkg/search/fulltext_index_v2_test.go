@@ -105,7 +105,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	original := NewFulltextIndexV2()
 	original.Index("doc-1", "graph search survives restart")
 	original.Index("doc-2", "persisted keyword index remains searchable")
-	require.NoError(t, original.SaveNoCopy(path))
+	require.NoError(t, original.Save(path))
 	// A sparse tail reproduces the former size-policy failure without consuming
 	// hundreds of MiB in the test process. MessagePack decoding stops after the
 	// persisted object, so trailing file capacity is intentionally irrelevant.
@@ -123,7 +123,7 @@ func TestFulltextIndexV2ReloadsSnapshotWithoutGlobalSizePolicy(t *testing.T) {
 	require.Equal(t, "doc-1", results[0].ID)
 }
 
-func TestFulltextIndexV2_DirtySaveNoCopyPhraseClear(t *testing.T) {
+func TestFulltextIndexV2_DirtySavePhraseClear(t *testing.T) {
 	idx := NewFulltextIndexV2()
 	require.False(t, idx.IsDirty())
 
@@ -135,7 +135,7 @@ func TestFulltextIndexV2_DirtySaveNoCopyPhraseClear(t *testing.T) {
 	require.Len(t, phrase, 2)
 
 	path := filepath.Join(t.TempDir(), "bm25v2")
-	require.NoError(t, idx.SaveNoCopy(path))
+	require.NoError(t, idx.Save(path))
 	require.False(t, idx.IsDirty())
 
 	idx.Clear()

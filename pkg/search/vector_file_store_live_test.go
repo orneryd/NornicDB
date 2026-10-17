@@ -21,6 +21,7 @@ func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 		ID:              "first-live-node",
 		ChunkEmbeddings: [][]float32{{1, 0}},
 	}))
+	require.NoError(t, waitNodeAdmission(t, svc))
 
 	require.NotNil(t, svc.vectorFileStore)
 	require.Equal(t, 1, svc.vectorFileStore.Count())
@@ -53,6 +54,7 @@ func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 		ID:              "after-persistence",
 		ChunkEmbeddings: [][]float32{{1, 0}},
 	}))
+	require.NoError(t, waitNodeAdmission(t, svc))
 
 	require.NotNil(t, svc.vectorFileStore)
 	require.Equal(t, 2, svc.vectorFileStore.Count())

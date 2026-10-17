@@ -65,3 +65,47 @@ func TestCompressedIndexIsRetiredWithItsVectorSource(t *testing.T) {
 	_, statErr = os.Stat(bundleDir)
 	require.True(t, os.IsNotExist(statErr), "a retired compressed index was persisted: %v", statErr)
 }
+
+// A background persist that captured population A's compressed index must not
+// publish it after the source was retired while the bundle was being written.
+func TestCompressedBundlePublicationJoinsSourceRetirement(t *testing.T) {
+	ctx := context.Background()
+	profile := IVFPQProfile{Dimensions: 2, IVFLists: 2, PQSegments: 1, PQBits: 1, NProbe: 1, RerankTopK: 2}
+	base := filepath.Join(t.TempDir(), "hnsw")
+	bundleDir := ivfpqBundleDir(base)
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.hnswIndexPath = base
+
+	epochA := svc.vectorSourceEpoch.Load()
+	svc.ivfpqMu.Lock()
+	svc.ivfpqIndex, svc.ivfpqEpoch = tinyIVFPQIndexForTest(profile), epochA
+	svc.ivfpqMu.Unlock()
+
+	retired := false
+	ivfpqBeforePublishHook = func() {
+		// The snapshot is captured and staged; now the base build replaces A.
+		require.NoError(t, svc.resetBaseVectorSource())
+		retired = true
+	}
+	t.Cleanup(func() { ivfpqBeforePublishHook = nil })
+	svc.persistIVFPQBackground("", base)
+	require.True(t, retired, "the writer did not reach publication")
+	require.NotEqual(t, epochA, svc.vectorSourceEpoch.Load())
+
+	_, statErr := os.Stat(bundleDir)
+	require.True(t, os.IsNotExist(statErr), "a bundle for the retired source was published: %v", statErr)
+	entries, err := os.ReadDir(filepath.Dir(bundleDir))
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.NotContains(t, entry.Name(), ".tmp-", "the discarded staging bundle was left behind")
+	}
+	reused, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, svc.vectorSourceEpoch.Load())
+	require.Error(t, err, "A's index must not be reused for the replacement source")
+	require.Nil(t, reused)
+
+	// Nor does a restarted service find it.
+	loaded, _, err := loadIVFPQBundle(base)
+	require.NoError(t, err)
+	require.Nil(t, loaded)
+}

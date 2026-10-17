@@ -40,9 +40,7 @@ func TestClusterReplacementRetiresClusteredDescriptors(t *testing.T) {
 	gen, ok := pipeline.candidateGen.(*KMeansCandidateGen)
 	require.True(t, ok, "cluster routing selected: %T", pipeline.candidateGen)
 	require.Same(t, old, gen.clusterIndex)
-	svc.pipelineMu.RLock()
-	require.Same(t, pipeline, svc.vectorPipeline, "the descriptor is cached")
-	svc.pipelineMu.RUnlock()
+	require.Same(t, pipeline, cachedVectorPipeline(svc), "the descriptor is cached")
 	svc.clusterHNSWMu.Lock()
 	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
 	svc.clusterHNSWMu.Unlock()
@@ -57,9 +55,7 @@ func TestClusterReplacementRetiresClusteredDescriptors(t *testing.T) {
 	replacement, generation := svc.clusterState()
 	require.NotSame(t, old, replacement)
 	require.NotEqual(t, oldGeneration, generation)
-	svc.pipelineMu.RLock()
-	cached := svc.vectorPipeline
-	svc.pipelineMu.RUnlock()
+	cached := cachedVectorPipeline(svc)
 	require.Nil(t, cached, "a descriptor routing through the retired cluster object stayed cached")
 	svc.clusterHNSWMu.RLock()
 	require.Nil(t, svc.clusterHNSW, "graphs built from the retired cluster object stayed published")
@@ -106,7 +102,7 @@ func TestVectorTeardownJoinsClusteringFromAnyContext(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			}
 			// A DB timer's context outlives a per-database reset or drop.
-			runCtx, finish, ok := svc.ownClusterRun(context.Background())
+			runCtx, finish, ok := svc.runWorker(context.Background(), workerClustering)
 			require.True(t, ok)
 			var finished bool
 			defer func() {
@@ -142,7 +138,7 @@ func TestVectorTeardownJoinsClusteringFromAnyContext(t *testing.T) {
 				t.Fatal("teardown did not finish after clustering returned")
 			}
 
-			_, again, ok := svc.ownClusterRun(context.Background())
+			_, again, ok := svc.runWorker(context.Background(), workerClustering)
 			if operation == "close" {
 				require.False(t, ok, "a closed service admitted clustering")
 				require.ErrorIs(t, svc.TriggerClustering(context.Background()), context.Canceled)

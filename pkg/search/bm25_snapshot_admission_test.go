@@ -76,6 +76,11 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						// The write is searchable at once; the restored node needs the population.
+						if written, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10}); assert.NoError(t, err) && assert.Len(t, written.Results, 1, "the write must be searchable without waiting") {
+							assert.Equal(t, "nornic:b", written.Results[0].ID)
+						}
+						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						// In the live-first route these assertions precede any later
 						// BuildIndexes call that could repair a partial initial base.
 						assert.Positive(t, engine.nodeReads, "rejected text requires real NODE rebuilding")
@@ -206,6 +211,11 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						// The write is searchable at once; the restored node needs the population.
+						if written, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10}); assert.NoError(t, err) && assert.Len(t, written.Results, 1, "the write must be searchable without waiting") {
+							assert.Equal(t, "nornic:b", written.Results[0].ID)
+						}
+						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						assert.Zero(t, engine.nodeReads, "accepted restoration must retain its no-traversal route")
 						response, err := svc.Search(ctx, "aterm", nil, &SearchOptions{Limit: 10})
 						require.NoError(t, err)
@@ -241,35 +251,6 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 					})
 				}
 			}
-		}
-	}
-}
-
-func TestBM25WarmupCheckpointRequiresAcceptedSnapshot(t *testing.T) {
-	for _, backend := range []string{"v1", "v2"} {
-		for _, kind := range []string{"valid_empty", "rejected_empty", "missing"} {
-			t.Run(backend+"/"+kind, func(t *testing.T) {
-				engine := storage.NewMemoryEngine()
-				t.Cleanup(func() { require.NoError(t, engine.Close()) })
-				svc := NewServiceWithDimensionsAndBM25Engine(engine, 3, backend)
-				t.Cleanup(func() { require.NoError(t, svc.Close()) })
-				path := filepath.Join(t.TempDir(), "bm25")
-				require.Zero(t, svc.fulltext().Count())
-				require.NoError(t, svc.fulltext().Save(path))
-				switch kind {
-				case "rejected_empty":
-					require.NoError(t, os.WriteFile(path, []byte("not-msgpack"), 0600))
-				case "missing":
-					require.NoError(t, os.Remove(path))
-				}
-				err := svc.reloadFulltextAfterWarmup(path, 0)
-				if kind == "valid_empty" {
-					require.NoError(t, err)
-					assert.Zero(t, svc.fulltext().Count())
-				} else {
-					assert.Error(t, err, "zero documents cannot establish checkpoint acceptance")
-				}
-			})
 		}
 	}
 }

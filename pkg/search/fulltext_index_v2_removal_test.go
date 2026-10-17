@@ -45,19 +45,17 @@ func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
 	require.Empty(t, index.Search("token1", 10))
 	require.Len(t, index.Search("replaced", 10), 1)
 
-	// Both save paths write, and load keeps, live postings only.
-	for _, save := range []func(string) error{index.Save, index.SaveNoCopy} {
-		path := t.TempDir() + "/bm25"
-		require.NoError(t, save(path))
-		loaded := NewFulltextIndexV2()
-		require.NoError(t, loaded.Load(path))
-		require.Equal(t, index.Count(), loaded.Count())
-		loaded.mu.RLock()
-		require.Equal(t, n/2-1, len(loaded.termIndex["shared"].Postings))
-		require.Zero(t, loaded.termIndex["shared"].dead)
-		loaded.mu.RUnlock()
-		require.Len(t, loaded.Search("shared", n), n/2-1)
-	}
+	// Save writes, and load keeps, live postings only.
+	path := t.TempDir() + "/bm25"
+	require.NoError(t, index.Save(path))
+	loaded := NewFulltextIndexV2()
+	require.NoError(t, loaded.Load(path))
+	require.Equal(t, index.Count(), loaded.Count())
+	loaded.mu.RLock()
+	require.Equal(t, n/2-1, len(loaded.termIndex["shared"].Postings))
+	require.Zero(t, loaded.termIndex["shared"].dead)
+	loaded.mu.RUnlock()
+	require.Len(t, loaded.Search("shared", n), n/2-1)
 }
 
 func BenchmarkFulltextIndexV2RemoveSharedTerm(b *testing.B) {

@@ -566,6 +566,16 @@ LIMIT $limit
 }
 
 func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testing.T) {
+	// In memory the write applies directly; persisted, it is provisional until
+	// the population restores the sources and re-applies it (F-I86 decision B).
+	for _, persisted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persisted=%t", persisted), func(t *testing.T) {
+			liveIndexDuringBackgroundWarmup(t, persisted)
+		})
+	}
+}
+
+func liveIndexDuringBackgroundWarmup(t *testing.T, persisted bool) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -581,8 +591,17 @@ func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testin
 	require.NoError(t, err)
 
 	searchSvc := search.NewServiceWithDimensions(blocking, 4)
+	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
+	if persisted {
+		dir := t.TempDir()
+		searchSvc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
+		searchSvc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
+		searchSvc.SetPersistenceEnabled(true)
+	}
 	exec.SetSearchService(searchSvc)
 
+	// Writes before the first build must not run the population: its
+	// iterator is blocked until releaseBuild.
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
@@ -633,6 +652,34 @@ LIMIT $limit
 	require.Equal(t, 0, counting.labelCalls, "background warmup must not force exact label-scan fallback")
 	require.Equal(t, 0, counting.streamNodesCalls, "background warmup must not force stream-scan fallback")
 
+	// A write during the warmup completes without waiting for the population
+	// and is answered by the live index at once.
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := exec.Execute(ctx, "CREATE (:Entity {uuid:'during', group_id:'g', name_embedding:[0.0,0.0,1.0,0.0]})", nil)
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a write during background warmup waited for the index population")
+	}
+	require.True(t, searchSvc.BuildInProgress())
+	res, err = exec.Execute(ctx, query, map[string]interface{}{
+		"group_id":      "g",
+		"search_vector": []float64{0, 0, 1, 0},
+		"limit":         1,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0])
+	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('entity_name_idx', 1, [0.0,0.0,1.0,0.0]) YIELD node RETURN node.uuid AS uuid", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0], "the vector procedure must see the write during warmup")
+
 	releaseBuild()
 	select {
 	case err := <-buildErr:
@@ -640,6 +687,14 @@ LIMIT $limit
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for BuildIndexes to finish")
 	}
+	require.Equal(t, 3, searchSvc.CountPropertyVectorEntries("name_embedding"))
+	// The write made during the blocked build stays admitted once the build
+	// publishes: the population folded it in rather than overwriting it.
+	require.True(t, searchSvc.IsReady())
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('entity_name_idx', 1, [0.0,0.0,1.0,0.0]) YIELD node RETURN node.uuid AS uuid", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0], "the write during the build must be found after it publishes")
 }
 
 func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *testing.T) {

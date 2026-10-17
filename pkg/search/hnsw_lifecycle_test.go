@@ -232,7 +232,7 @@ func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, &BruteForceCandidateGen{}, pipeline.candidateGen)
 	require.Nil(t, svc.hnswBuild)
-	require.Nil(t, svc.vectorPipeline, "a paused fallback must not prevent construction after reset")
+	require.Nil(t, cachedVectorPipeline(svc), "a paused fallback must not prevent construction after reset")
 	require.NoError(t, svc.RemoveNode("old"))
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "new", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 	svc.hnswVectorsChanging.Store(false)

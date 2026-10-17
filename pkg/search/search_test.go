@@ -499,9 +499,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	// No embeddings: warmup is a no-op.
 	var nilCtx context.Context
 	svc.warmupVectorPipeline(nilCtx)
-	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
-	svc.pipelineMu.RUnlock()
+	require.Nil(t, cachedVectorPipeline(svc))
 
 	_, err := engine.CreateNode(&storage.Node{
 		ID:              "w1",
@@ -514,9 +512,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 
 	// Embeddings present: warmup builds a ready pipeline.
 	svc.warmupVectorPipeline(context.Background())
-	svc.pipelineMu.RLock()
-	require.NotNil(t, svc.vectorPipeline)
-	svc.pipelineMu.RUnlock()
+	require.NotNil(t, cachedVectorPipeline(svc))
 }
 
 func TestSearchEnvDurationAndTimingHelpers(t *testing.T) {
@@ -2102,7 +2098,7 @@ func TestFulltextIndex_IndexBatch(t *testing.T) {
 	assert.Equal(t, 4, idx.Count())
 }
 
-func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
+func TestFulltextIndex_DirtySaveClearAndSeeds(t *testing.T) {
 	idx := NewFulltextIndex()
 	assert.False(t, idx.IsDirty())
 
@@ -2119,7 +2115,7 @@ func TestFulltextIndex_DirtySaveNoCopyClearAndSeeds(t *testing.T) {
 	assert.Nil(t, idx.LexicalSeedDocIDs(1, 0))
 
 	path := filepath.Join(t.TempDir(), "bm25")
-	require.NoError(t, idx.SaveNoCopy(path))
+	require.NoError(t, idx.Save(path))
 	assert.False(t, idx.IsDirty())
 
 	idx.Clear()
@@ -2545,7 +2541,7 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 	svc.buildAttempted.Store(true)
-	svc.ready.Store(false)
+	svc.setLifecycleState(lifecyclePopulating)
 
 	_, err := svc.Search(context.Background(), "query", nil, DefaultSearchOptions())
 	require.ErrorIs(t, err, ErrSearchIndexBuilding)
@@ -2555,7 +2551,7 @@ func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
 	require.Equal(t, localization.MessageSearchIndexBuilding, localizedErr.Message.ID)
 
 	svc.buildAttempted.Store(false)
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 	_, err = svc.VectorSearchCandidates(context.Background(), nil, DefaultSearchOptions())
 	require.EqualError(t, err, "vector search requires embedding")
 	require.ErrorAs(t, err, &localizedErr)
@@ -2786,9 +2782,7 @@ func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
 
 	// Nil manager clears pipeline and keeps GPU index nil.
 	svc.SetGPUManager(nil)
-	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
-	svc.pipelineMu.RUnlock()
+	require.Nil(t, cachedVectorPipeline(svc))
 	require.Nil(t, svc.gpuEmbeddingIndex)
 
 	// Disabled manager follows same non-GPU branch.
@@ -2944,9 +2938,7 @@ func TestSearchHelpers_MaybeRebuildHNSW_RebuildAndCancelBranches(t *testing.T) {
 	require.NotNil(t, rebuilt)
 	require.NotSame(t, old, rebuilt)
 	require.Equal(t, 3, rebuilt.Size())
-	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
-	svc.pipelineMu.RUnlock()
+	require.Nil(t, cachedVectorPipeline(svc))
 
 	// Recreate a tombstoned index and cancel rebuild mid-flight.
 	old2 := NewHNSWIndex(2, DefaultHNSWConfig())
@@ -2998,14 +2990,10 @@ func TestSearchService_CloseStopsHNSWMaintenance(t *testing.T) {
 	svc.hnswMu.Unlock()
 
 	svc.ensureHNSWMaintenance()
-	require.NotNil(t, svc.hnswMaintDone)
+	require.True(t, svc.hnswMaintRunning.Load())
 	require.NoError(t, svc.Close())
-
-	select {
-	case <-svc.hnswMaintDone:
-	case <-time.After(time.Second):
-		t.Fatal("HNSW maintenance did not stop after Close")
-	}
+	// Close joins the registered loop before returning.
+	require.False(t, svc.hnswMaintRunning.Load(), "HNSW maintenance did not stop after Close")
 
 	require.NoError(t, svc.Close())
 }

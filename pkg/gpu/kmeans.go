@@ -1318,17 +1318,24 @@ func sameNodeIDs(a, b []string) bool {
 	return true
 }
 
+// clusterRemoveHook lets tests run a concurrent mutation inside Remove.
+var clusterRemoveHook func()
+
 // Remove deletes an embedding and keeps cluster membership consistent with
-// the slot that EmbeddingIndex.Remove swap-moves into the removed position.
+// the slot the base removal actually swap-moves into the removed position.
+// clusterMu then mu stay held across both, so an append cannot change which
+// slot moves between the removal and the membership repair.
 func (ci *ClusterIndex) Remove(nodeID string) bool {
 	ci.clusterMu.Lock()
 	defer ci.clusterMu.Unlock()
-	ci.mu.RLock()
-	idx, exists := ci.idToIndex[nodeID]
-	last := len(ci.nodeIDs) - 1
-	ci.mu.RUnlock()
-	if !exists || !ci.EmbeddingIndex.Remove(nodeID) {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	idx, last, ok := ci.removeLocked(nodeID)
+	if !ok {
 		return false
+	}
+	if hook := clusterRemoveHook; hook != nil {
+		hook()
 	}
 	if idx >= len(ci.assignments) {
 		return true
@@ -1341,9 +1348,7 @@ func (ci *ClusterIndex) Remove(nodeID string) bool {
 			ci.removeFromClusterMap(moved, last)
 		} else {
 			// The moved vector arrived after clustering and had no slot.
-			ci.mu.RLock()
 			moved = ci.findNearestCentroidLocked(ci.cpuVectors[idx*ci.dimensions : (idx+1)*ci.dimensions])
-			ci.mu.RUnlock()
 		}
 		ci.assignments[idx] = moved
 		if moved >= 0 {
@@ -1408,10 +1413,11 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 		affectedClusters[u.newCluster] = true
 	}
 
-	ci.mu.RLock()
+	// Lock order: clusterMu before mu, as everywhere else.
 	ci.clusterMu.Lock()
-	defer ci.mu.RUnlock()
+	ci.mu.RLock()
 	defer ci.clusterMu.Unlock()
+	defer ci.mu.RUnlock()
 
 	// Recompute centroids for affected clusters
 	dims := ci.dimensions

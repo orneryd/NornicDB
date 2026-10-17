@@ -1,0 +1,106 @@
+package search
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// settableWriteTimeEngine reports a settable storage write time, which decides whether
+// a rebuild may resume the saved vector store or must replace it.
+type settableWriteTimeEngine struct {
+	*storage.MemoryEngine
+	last atomic.Int64
+}
+
+func (e *settableWriteTimeEngine) LastWriteTime() time.Time {
+	if n := e.last.Load(); n != 0 {
+		return time.Unix(0, n)
+	}
+	return time.Time{}
+}
+
+// F-I86 B2 (suspected, refuted; pinned): a rebuild that finds storage newer
+// than the saved vector store replaces that store. The replacement is a source
+// transition through the owner: the closed store is never published to
+// queries, and the rebuilt source answers completely.
+func TestBaseRestartRetiresReplacedVectorStore(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100") // keep the exact pipeline
+	ctx := context.Background()
+	engine := &settableWriteTimeEngine{MemoryEngine: storage.NewMemoryEngine()}
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	for i := 0; i < 3; i++ {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i), 0}}})
+		require.NoError(t, err)
+	}
+	svc := NewServiceWithDimensions(engine, 3)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	// Only a vector path: the rebuild iterates storage instead of restoring.
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+	svc.SetPersistenceEnabled(true)
+	require.NoError(t, svc.BuildIndexes(ctx))
+
+	// Accept every stored vector: the count, not the threshold, is under test.
+	minSimilarity := -1.0
+	query, opts := []float32{1, 0, 0}, &SearchOptions{Limit: 10, MinSimilarity: &minSimilarity}
+	_, err := svc.VectorSearchCandidates(ctx, query, opts)
+	require.NoError(t, err)
+	require.NotNil(t, cachedVectorPipeline(svc), "a query caches the exact pipeline over the saved store")
+
+	engine.last.Store(time.Now().Add(time.Hour).UnixNano())
+	reached := false
+	var cachedAtRestart *VectorSearchPipeline
+	var queryErr error
+	baseSourceRestartHook = func() {
+		reached = true
+		cachedAtRestart = cachedVectorPipeline(svc)
+		_, queryErr = svc.VectorSearchCandidates(ctx, query, opts)
+	}
+	t.Cleanup(func() { baseSourceRestartHook = nil })
+	require.NoError(t, svc.BuildIndexes(ctx))
+	require.True(t, reached, "the rebuild did not replace the saved store")
+	require.Nil(t, cachedAtRestart, "the replaced store is still published to queries")
+	require.NoError(t, queryErr, "a query during the rebuild read the closed store")
+
+	results, err := svc.VectorSearchCandidates(ctx, query, opts)
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+}
+
+// F-I86 B4: the "vectors changing" mark has one owner. It holds while a base
+// population replaces the source, so no graph is snapshotted from a partial
+// source, and it is clear once the population has finished.
+func TestVectorsChangingSpansThePopulation(t *testing.T) {
+	ctx := context.Background()
+	engine := &traversalGatedEngine{MemoryEngine: storage.NewMemoryEngine()}
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	for i := 0; i < 3; i++ {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i), 0}}})
+		require.NoError(t, err)
+	}
+	svc := NewServiceWithDimensions(engine, 3)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.False(t, svc.hnswVectorsChanging.Load())
+
+	entered, release := engine.arm()
+	defer release()
+	done := make(chan error, 1)
+	go func() { done <- svc.BuildIndexes(ctx) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the population did not reach its traversal")
+	}
+	require.True(t, svc.hnswVectorsChanging.Load(), "a population replacing the source must hold the mark")
+	snapshot := svc.captureVectorSnapshot()
+	require.False(t, snapshot.available, "no graph may snapshot a partial source")
+	release()
+	require.NoError(t, <-done)
+	require.False(t, svc.hnswVectorsChanging.Load(), "a finished population must clear the mark")
+}

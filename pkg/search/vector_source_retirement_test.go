@@ -19,6 +19,16 @@ func sourceRetirementNode(t *testing.T, svc *Service, id string, vector []float3
 	_, err := svc.engine.CreateNode(node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
+	// The write is searchable at once. Callers then run lifecycle transitions,
+	// which must not race the population the write may have started.
+	visible, err := svc.VectorSearchCandidates(context.Background(), vector, &SearchOptions{Limit: 100})
+	require.NoError(t, err)
+	found := false
+	for _, r := range visible {
+		found = found || normalizeVectorResultIDToNodeID(r.ID) == id
+	}
+	require.True(t, found, "the write must be searchable without waiting")
+	require.NoError(t, waitNodeAdmission(t, svc))
 }
 
 func sourceRetirementIDs(t *testing.T, svc *Service, want ...string) {
@@ -50,7 +60,7 @@ func TestVectorSourceMigrationRetiresCachedMemoryPipeline(t *testing.T) {
 			// the empty pipeline, since configured dimensions are fixed.
 			_, err := svc.getOrCreateVectorPipeline(context.Background())
 			require.NoError(t, err)
-			require.NotNil(t, svc.vectorPipeline)
+			require.NotNil(t, cachedVectorPipeline(svc))
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			sourceRetirementNode(t, svc, "after", []float32{1, 1, 0})
@@ -147,22 +157,21 @@ func TestVectorSourceMigrationReleasesMemoryLockBeforeServicePublication(t *test
 	sourceRetirementNode(t, svc, "before", []float32{1, 0, 0})
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
-	node := &storage.Node{ID: "after", ChunkEmbeddings: [][]float32{{0, 1, 0}}}
-	_, err := svc.engine.CreateNode(node)
-	require.NoError(t, err)
 	// This is the source ownership held by the factory before its Count read.
-	// Gate real live ingestion at the service publication lock, then verify
-	// that a canonical memory Count can still complete inside that ownership.
+	// The population migrates the live memory source into the file store now
+	// that persistence is on (a live write is provisional and leaves this to
+	// it, F-I86 decision B). Gate that migration at the service publication
+	// lock, then verify that a canonical memory Count still completes.
 	svc.mu.RLock()
 	var once sync.Once
 	release := func() { once.Do(svc.mu.RUnlock) }
 	defer release()
 	id := make(chan string, 1)
 	done := make(chan error, 1)
-	go func() { id <- serviceTestGoroutineID(); done <- svc.IndexNode(node) }()
-	writerID := <-id
+	go func() { id <- serviceTestGoroutineID(); done <- svc.BuildIndexes(context.Background()) }()
+	builderID := <-id
 	require.Eventually(t, func() bool {
-		return serviceStackContains(writerID, "(*Service).admitVectorFileStore", "sync.(*RWMutex).Lock")
+		return serviceStackContains(builderID, "(*Service).admitStagedVectorFileStore", "sync.(*RWMutex).Lock")
 	}, 5*time.Second, time.Millisecond)
 	countDone := make(chan struct{})
 	go func() { _ = svc.vectorIndex.Count(); close(countDone) }()

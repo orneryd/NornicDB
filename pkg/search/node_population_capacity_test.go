@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -75,5 +76,62 @@ func TestNodePopulationRestoresCapacityBeforeFirstMutation(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// The budget is only known once a population has admitted NODE, so on a
+// budgeted service a write waits for that admission; an unbudgeted write never
+// waits (F-I86, orchestrator decision on budgets).
+func TestNodePopulationWriteWaitsOnlyWhenBudgeted(t *testing.T) {
+	for _, budgeted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("budgeted=%t", budgeted), func(t *testing.T) {
+			engine := &traversalGatedEngine{MemoryEngine: storage.NewMemoryEngine()}
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			var options *ServiceOptions
+			if budgeted {
+				options = &ServiceOptions{BM25MemoryMaxBytes: 1 << 30}
+			}
+			svc := configureNodeAdmissionService(t, engine, t.TempDir(), "v2", options)
+			entered, release := engine.arm()
+			defer release()
+
+			a := admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named")
+			_, err := engine.CreateNode(a)
+			require.NoError(t, err)
+			written := make(chan error, 1)
+			go func() { written <- svc.IndexNode(a) }()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the write did not start the population")
+			}
+			if !budgeted {
+				select {
+				case err := <-written:
+					require.NoError(t, err)
+				case <-time.After(time.Second):
+					t.Fatal("an unbudgeted write waited for the population")
+				}
+				resp, err := svc.Search(context.Background(), "aterm", nil, &SearchOptions{Limit: 10})
+				require.NoError(t, err)
+				require.Len(t, resp.Results, 1, "the unbudgeted write is searchable at once")
+				return
+			}
+			select {
+			case err := <-written:
+				t.Fatalf("a budgeted write returned (%v) before its budget was known", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			release()
+			select {
+			case err := <-written:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("the budgeted write did not finish after NODE admission")
+			}
+			resp, err := svc.Search(context.Background(), "aterm", nil, &SearchOptions{Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, resp.Results, 1)
+		})
 	}
 }
