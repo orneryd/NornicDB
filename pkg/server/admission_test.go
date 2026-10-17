@@ -27,7 +27,7 @@ func TestHTTPAdmissionBeforeResolution(t *testing.T) {
 		suffix     string
 		statements []map[string]any
 	}{
-		{"empty commit", http.MethodPost, "/tx/commit", nil},
+		{"empty commit", http.MethodPost, "/tx/commit", []map[string]any{}},
 		{"single commit", http.MethodPost, "/tx/commit", []map[string]any{{"statement": "RETURN 1"}}},
 		{"multiple commit", http.MethodPost, "/tx/commit", []map[string]any{{"statement": "RETURN 1"}, {"statement": "RETURN 2"}}},
 		{"open", http.MethodPost, "/tx", []map[string]any{{"statement": "RETURN 1"}}},

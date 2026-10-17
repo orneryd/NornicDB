@@ -40,7 +40,7 @@ func TestDatabaseAccessFollowsStoredEntitlements(t *testing.T) {
 	}`
 	graphQL := executeGraphQLAuthorizationRequest(t, server, ed, mutation, "CREATE (:W {n: 3})")
 	require.NotEmpty(t, graphQL.Errors)
-	require.Contains(t, graphQL.Errors[0].Message, "write permission")
+	require.Contains(t, graphQL.Errors[0].Message, "Write operations are not allowed for ")
 	rows, code := statementRows(t, server, "nornic", ed, "MATCH (n:W) RETURN count(n) AS c")
 	require.Empty(t, code)
 	require.Equal(t, [][]any{{float64(1)}}, rows)

@@ -23,7 +23,7 @@ func TestStatementGraphFreeWrites(t *testing.T) {
 			exec, _ := nestedUseRouterExecutor(t, "nornic")
 			requirements := QueryPermissionRequirements(query)
 			_, unrestricted := exec.Execute(context.Background(), query, nil)
-			ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(_, permission string) bool { return permission == "write" })
+			ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(_, permission string) bool { return permission == "access" || permission == "write" })
 			result, restricted := exec.Execute(ctx, query, nil)
 			t.Logf("requirements=%+v unrestricted=%v writeOnly=%v result=%v", requirements, unrestricted, restricted, result)
 			require.NoError(t, unrestricted)

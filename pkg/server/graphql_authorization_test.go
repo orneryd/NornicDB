@@ -49,7 +49,7 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 	}`
 	response := executeGraphQLAuthorizationRequest(t, server, viewerToken, mutation, "CREATE (:DeniedMutation)")
 	require.NotEmpty(t, response.Errors)
-	require.Contains(t, response.Errors[0].Message, "write permission")
+	require.Contains(t, response.Errors[0].Message, "Write operations are not allowed for ")
 
 	query := `query Execute($statement: String!) {
 		cypher(input: {statement: $statement}) { rows rowCount }
@@ -57,7 +57,7 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		statement  string
 		permission string
-		// message, when set, is the error instead of a missing permission.
+		// message, when set, is the error instead of the write refusal.
 		message string
 	}{
 		"direct create":               {statement: "CREATE (:DeniedDirect)", permission: "write"},
@@ -66,16 +66,16 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 		"unwind create":               {statement: "UNWIND [1] AS value CREATE (:DeniedUnwind {value: value})", permission: "write"},
 		"with create":                 {statement: "WITH 1 AS value CREATE (:DeniedWith {value: value})", permission: "write"},
 		"call dynamic":                {statement: "CALL apoc.cypher.run('CREATE (:DeniedDynamic)', {})", permission: "write"},
-		"schema":                      {statement: "DROP INDEX denied_index IF EXISTS", permission: "schema"},
-		"admin":                       {statement: "CALL dbms.listConfig()", permission: "admin"},
-		"admin DDL":                   {statement: "DROP DATABASE nornic", permission: "admin"},
+		"schema":                      {statement: "DROP INDEX denied_index IF EXISTS", message: "Schema operation 'drop_index' on database 'nornic' is not allowed for user 'reader' with roles [viewer]."},
+		"admin":                       {statement: "CALL dbms.listConfig()", message: "Executing admin procedure 'dbms.listConfig' permission has not been granted for user 'reader' with roles [viewer]."},
+		"admin DDL":                   {statement: "DROP DATABASE nornic", message: "Permission denied."},
 		"out of scope USE":            {statement: "USE forbidden RETURN 1", message: "Graph not found: forbidden"},
 		"out of scope lower-case USE": {statement: "use forbidden return 1", message: "Graph not found: forbidden"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := executeGraphQLAuthorizationRequest(t, server, viewerToken, query, testCase.statement)
 			require.NotEmpty(t, response.Errors)
-			want := testCase.permission + " permission"
+			want := "Write operations are not allowed for user 'reader' with roles [viewer]."
 			if testCase.message != "" {
 				want = testCase.message // as HTTP answers a USE of a missing graph
 			}

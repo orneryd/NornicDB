@@ -82,7 +82,7 @@ func TestHeimdallRouterChecksDatabasePermissions(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	_, err = router.Query(readOnly, "nornic", "CREATE (:HeimdallDenied)", nil)
-	require.ErrorContains(t, err, "write permission")
+	require.ErrorContains(t, err, "Write operations are not allowed for ")
 
 	rows, err = router.Query(heimdallAuthDisabled(), "nornic", "MATCH (n:HeimdallDenied) RETURN count(n) AS n", nil)
 	require.NoError(t, err)

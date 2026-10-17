@@ -1440,7 +1440,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 		})
 		_, err := resolver.executeCypher(deniedCtx, "CREATE (n:Denied)", nil, "")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "write permission")
+		assert.Contains(t, err.Error(), "Write operations are not allowed for ")
 	})
 
 	t.Run("query cypher rejects writes for read-only access", func(t *testing.T) {
@@ -1484,7 +1484,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 		})
 		_, err := resolver.executeCypher(aliasCtx, "CREATE (:DeniedAlias)", nil, "restricted-alias")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "write permission")
+		require.Contains(t, err.Error(), "Write operations are not allowed for ")
 	})
 }
 
