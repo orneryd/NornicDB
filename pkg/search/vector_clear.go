@@ -39,6 +39,8 @@ func (s *Service) clearIndexes(all bool) error {
 	s.vectorPipeline = nil
 
 	s.indexMu.Lock()
+	// Clearing the cluster generation is one cluster-state change.
+	s.clusterStateMu.Lock()
 	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
@@ -82,16 +84,15 @@ func (s *Service) clearIndexes(all bool) error {
 		s.resultCache.Invalidate()
 	}
 	s.mu.Unlock()
+	s.clusterHNSW = nil
+	s.clearClusterLexicalProfiles()
+	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
 
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
 	s.ivfpqMu.Lock()
 	s.ivfpqIndex = nil
 	s.ivfpqOverlay.Reset()
 	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
 
 	// Also clear HNSW index if it exists (frees memory from tombstones).
 	// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.

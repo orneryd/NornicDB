@@ -889,8 +889,18 @@ type Service struct {
 	// as a routing layer for CPU-only large datasets.
 	// Optional per-database policy supplied by the collection owner; guarded by mu.
 	hnswQuantizationOverride *HNSWQuantizationConfig
-	clusterHNSWMu            sync.RWMutex
-	clusterHNSW              map[int]*HNSWIndex
+
+	// clusterStateMu owns the cluster generation: replacing or clearing
+	// clusterIndex, publishing its clustering, clusterHNSW and the lexical
+	// routing profiles all happen under its write lock, so a generation is
+	// published only for the index it was computed from. IVF-HNSW queries
+	// route and take graphs under its read lock.
+	// Lock order: pipelineMu -> indexMu -> clusterStateMu -> mu.
+	clusterStateMu sync.RWMutex
+	clusterHNSW    map[int]*HNSWIndex
+	// clusterStaging records cluster-index admissions while a generation is
+	// being built (nil otherwise); guarded by indexMu, the admission boundary.
+	clusterStaging *[]clusterStagingOp
 
 	// Optional compressed ANN index (IVF/PQ), active only when
 	// NORNICDB_VECTOR_ANN_QUALITY=compressed and readiness checks pass.
@@ -1586,9 +1596,9 @@ func (s *Service) resetANNForBuild() {
 	s.hnswRebuildOverlay.Reset()
 	s.hnswMu.Unlock()
 
-	s.clusterHNSWMu.Lock()
+	s.clusterStateMu.Lock()
 	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
+	s.clusterStateMu.Unlock()
 	s.ivfpqMu.Lock()
 	s.ivfpqIndex = nil
 	s.ivfpqOverlay.Reset()
@@ -1640,6 +1650,9 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 //	svc.BuildIndexes(ctx)
 //	svc.TriggerClustering(ctx) // Run k-means
 func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
+	// Replacing clusterIndex is a cluster-state change (clusterStateMu).
+	s.clusterStateMu.Lock()
+	defer s.clusterStateMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1685,6 +1698,11 @@ func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
 	dimensions := s.vectorIndex.dimensions
 	embConfig := gpu.DefaultEmbeddingIndexConfig(dimensions)
 
+	if s.clusterIndex != nil {
+		// The replaced index's generation retires with it.
+		s.clusterHNSW = nil
+		s.clearClusterLexicalProfiles()
+	}
 	s.clusterIndex = gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig)
 	s.clusterEnabled = true
 	s.clusterUsesGPU = gpuManager != nil && gpuManager.IsEnabled()
@@ -1860,6 +1878,10 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 	}
 
 	s.applyBM25SeedHints()
+	// Record admissions from before the snapshot until installation; a run
+	// that installs nothing stops recording on return.
+	s.openClusterStaging()
+	defer s.closeClusterStaging()
 	s.logPrintf("[K-MEANS] 🔄 STARTING | embeddings=%d", totalCount)
 	startTime := time.Now()
 
@@ -1897,10 +1919,14 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 // index that was replaced before it could be published; it is discarded.
 var errClusterGenerationSuperseded = errors.New("cluster generation superseded")
 
+// clusterPublishHook, set by tests only, runs after a generation's identity
+// check and before it is published.
+var clusterPublishHook func()
+
 // installClusterGeneration builds everything derived from clustering, then
 // publishes routing, membership, lexical profiles and IVF-HNSW graphs as one
 // generation. Until then queries keep the previous complete generation; an
-// IVF-HNSW query routes and takes its graphs under clusterHNSWMu, so it never
+// IVF-HNSW query routes and takes its graphs under clusterStateMu, so it never
 // pairs one generation's routing with another's graphs.
 func (s *Service) installClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, loadPersistedGraphs bool) error {
 	if ctx == nil {
@@ -1922,23 +1948,39 @@ func (s *Service) installClusterGeneration(ctx context.Context, clusterIndex *gp
 		return err
 	}
 
-	s.clusterHNSWMu.Lock()
+	// One critical section from catch-up to publication: indexMu stops
+	// admission (every cluster-index mutation runs under it), clusterStateMu
+	// stops replacement of the cluster generation.
+	s.indexMu.Lock()
+	s.clusterStateMu.Lock()
 	s.mu.RLock()
 	current := s.clusterIndex
 	s.mu.RUnlock()
 	if current != clusterIndex {
-		// A dimension change replaced the cluster index while this generation
-		// was built (maybeAutoSetVectorDimensions runs beside clustering under
-		// the shared buildMu); the generation describes the retired population.
-		s.clusterHNSWMu.Unlock()
+		// A dimension change or EnableClustering replaced the cluster index
+		// while this generation was built (neither excludes a clustering run);
+		// the generation describes the retired population.
+		// Every replacement holds clusterStateMu, so the index cannot change
+		// between this check and the publication below.
+		s.clusterStaging = nil
+		s.clusterStateMu.Unlock()
+		s.indexMu.Unlock()
 		return errClusterGenerationSuperseded
 	}
+	if clusterPublishHook != nil {
+		clusterPublishHook()
+	}
+	// Vectors admitted or removed since the snapshot enter (or leave) both the
+	// staged membership and the staged graphs before either is published.
+	s.reconcileClusterStagingLocked(clusterIndex, clustering, graphs)
+	s.clusterStaging = nil
 	clusterIndex.PublishClustering(clustering)
 	s.clusterLexicalMu.Lock()
 	s.clusterLexicalProfiles = profiles
 	s.clusterLexicalMu.Unlock()
 	s.clusterHNSW = graphs
-	s.clusterHNSWMu.Unlock()
+	s.clusterStateMu.Unlock()
+	s.indexMu.Unlock()
 	logSearchPrintf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
 
 	s.pipelineMu.Lock()
@@ -2463,9 +2505,9 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 	if err := ctx.Err(); err != nil {
 		return
 	}
-	s.clusterHNSWMu.RLock()
+	s.clusterStateMu.RLock()
 	clusterHNSW := s.clusterHNSW
-	s.clusterHNSWMu.RUnlock()
+	s.clusterStateMu.RUnlock()
 	if len(clusterHNSW) == 0 {
 		return
 	}
@@ -2706,6 +2748,9 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
 
+	// The cluster generation is replaced as one cluster-state change: an
+	// installer holding clusterStateMu publishes only for the index it saw.
+	s.clusterStateMu.Lock()
 	s.mu.Lock()
 	if s.vectorIndex == nil {
 		s.vectorIndex = NewVectorIndex(dimensions)
@@ -2725,15 +2770,14 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		old.Release()
 	}
 	s.mu.Unlock()
-
-	s.clusterHNSWMu.Lock()
 	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
+	s.clearClusterLexicalProfiles()
+	s.clusterStateMu.Unlock()
+
 	s.ivfpqMu.Lock()
 	s.ivfpqIndex = nil
 	s.ivfpqOverlay.Reset()
 	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
 
 	s.hnswMu.Lock()
 	if s.hnswIndex != nil {
@@ -3098,9 +3142,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.hnswUpdateLive(namedID, embedding)
 
 			// Also add to cluster index if enabled
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(namedID, embedding) // Best effort
-			}
+			s.admitClusterVectorLocked(namedID, embedding)
 		}
 	}
 
@@ -3137,9 +3179,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			s.hnswUpdateLive(string(node.ID), mainEmbedding)
 
 			// Also add to cluster index if enabled
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(string(node.ID), mainEmbedding) // Best effort
-			}
+			s.admitClusterVectorLocked(string(node.ID), mainEmbedding)
 		}
 
 		// For multi-chunk nodes, index later chunks with a chunk suffix. Chunk 0 is
@@ -3169,9 +3209,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 					s.hnswUpdateLive(chunkID, embedding)
 
 					// Also add to cluster index if enabled
-					if s.clusterIndex != nil {
-						_ = s.clusterIndex.Add(chunkID, embedding) // Best effort
-					}
+					s.admitClusterVectorLocked(chunkID, embedding)
 				}
 			}
 		}
@@ -3204,9 +3242,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 				_ = s.gpuEmbeddingIndex.Add(propID, vec) // Best effort
 			}
 			s.hnswUpdateLive(propID, vec)
-			if s.clusterIndex != nil {
-				_ = s.clusterIndex.Add(propID, vec) // Best effort
-			}
+			s.admitClusterVectorLocked(propID, vec)
 		}
 	}
 
@@ -3378,9 +3414,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	s.hnswRemoveLive(nodeIDStr)
 
 	// Also remove from cluster index if enabled
-	if s.clusterIndex != nil {
-		s.clusterIndex.Remove(nodeIDStr)
-	}
+	s.retireClusterVectorLocked(nodeIDStr)
 
 	delete(s.nodeLabels, nodeIDStr)
 	delete(s.nodeTypes, nodeIDStr)
@@ -3393,9 +3427,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 				_ = s.gpuEmbeddingIndex.Remove(propID)
 			}
 			s.hnswRemoveLive(propID)
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(propID)
-			}
+			s.retireClusterVectorLocked(propID)
 		}
 	}
 	delete(s.nodePropVector, nodeIDStr)
@@ -3410,9 +3442,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 
 			s.hnswRemoveLive(namedID)
 
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(namedID)
-			}
+			s.retireClusterVectorLocked(namedID)
 		}
 	}
 	delete(s.nodeNamedVector, nodeIDStr)
@@ -3428,9 +3458,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 			// Keep the active graph current with the canonical vector store.
 			s.hnswRemoveLive(chunkID)
 
-			if s.clusterIndex != nil {
-				s.clusterIndex.Remove(chunkID)
-			}
+			s.retireClusterVectorLocked(chunkID)
 		}
 	}
 	delete(s.nodeChunkVectors, nodeIDStr)
@@ -3653,9 +3681,7 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 			_ = s.gpuEmbeddingIndex.Remove(propID)
 		}
 		s.hnswRemoveLive(propID)
-		if s.clusterIndex != nil {
-			s.clusterIndex.Remove(propID)
-		}
+		s.retireClusterVectorLocked(propID)
 		delete(props, propertyKey)
 		if len(props) == 0 {
 			delete(s.nodePropVector, nodeID)
@@ -3907,7 +3933,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	}
 	if forceRoutingRebuild {
 		forceHNSWRebuild = true
+		s.clusterStateMu.Lock()
 		s.clearClusterLexicalProfiles()
+		s.clusterStateMu.Unlock()
 	}
 	// When both paths are set and both indexes have content, skip the full iteration.
 	vectorCount := s.EmbeddingCount()
@@ -6072,17 +6100,17 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 	}
 
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) && !gpuEnabled {
-		s.clusterHNSWMu.RLock()
+		s.clusterStateMu.RLock()
 		hasClusterHNSW := len(s.clusterHNSW) > 0
-		s.clusterHNSWMu.RUnlock()
+		s.clusterStateMu.RUnlock()
 		if hasClusterHNSW {
-			// The generator holds clusterHNSWMu while it routes and reads graphs,
+			// The generator holds clusterStateMu while it routes and reads graphs,
 			// so the lookup itself does not lock.
 			gen := NewIVFHNSWCandidateGen(s.clusterIndex, func(clusterID int) *HNSWIndex {
 				return s.clusterHNSW[clusterID]
 			}, numClustersToSearch).
 				SetClusterSelector(s.selectHybridClusters).
-				SetGenerationLock(s.clusterHNSWMu.RLocker())
+				SetGenerationLock(s.clusterStateMu.RLocker())
 			return &vectorStrategyDescriptor{
 				name:         "IVF-HNSW (per-cluster HNSW)",
 				candidateGen: gen,

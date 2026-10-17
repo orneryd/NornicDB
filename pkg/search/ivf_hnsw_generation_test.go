@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,9 +103,9 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 	}
 
 	require.Equal(t, 24, svc.clusterIndex.NumClusters())
-	svc.clusterHNSWMu.RLock()
+	svc.clusterStateMu.RLock()
 	require.Len(t, svc.clusterHNSW, 24)
-	svc.clusterHNSWMu.RUnlock()
+	svc.clusterStateMu.RUnlock()
 	pipeline, err = svc.getOrCreateVectorPipeline(ctx)
 	require.NoError(t, err)
 	require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
@@ -147,10 +148,207 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 
 	require.NotSame(t, original, svc.clusterIndex, "the dimension change replaced the cluster index")
 	require.False(t, svc.clusterIndex.IsClustered())
-	svc.clusterHNSWMu.RLock()
+	svc.clusterStateMu.RLock()
 	require.Nil(t, svc.clusterHNSW, "the superseded generation's graphs are not published")
-	svc.clusterHNSWMu.RUnlock()
+	svc.clusterStateMu.RUnlock()
 	svc.clusterLexicalMu.RLock()
 	require.Empty(t, svc.clusterLexicalProfiles)
 	svc.clusterLexicalMu.RUnlock()
+}
+
+// Every replacement or clearing of the cluster generation takes
+// clusterStateMu, which the installer holds from its identity check through
+// publication. A replacement that starts after the check therefore waits for
+// the publication and then retires it; the retired index is never left
+// published (sol r9: TestSolR9ReplacementAfterCheck).
+func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) {
+	for _, path := range []struct {
+		name      string
+		replace   func(*Service) error
+		retired   bool // the computed-for index itself is cleared or replaced
+		replacing bool // clusterIndex points to a new index afterwards
+	}{
+		{name: "dimension change", replace: func(s *Service) error { s.maybeAutoSetVectorDimensions(5); return nil }, retired: true, replacing: true},
+		{name: "clustering mode switch", replace: func(s *Service) error {
+			s.mu.Lock()
+			s.clusterUsesGPU = true // the next EnableClustering(nil) switches back to CPU
+			s.mu.Unlock()
+			s.EnableClustering(nil, 1)
+			return nil
+		}, replacing: true},
+		{name: "ClearVectorIndex", replace: func(s *Service) error { return s.ClearVectorIndex() }, retired: true},
+		{name: "ClearIndexes", replace: func(s *Service) error { return s.ClearIndexes() }, retired: true},
+		{name: "build reset", replace: func(s *Service) error { s.resetANNForBuild(); return nil }},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+			t.Cleanup(func() { require.NoError(t, svc.Close()) })
+			svc.EnableClustering(nil, 1)
+			original := svc.clusterIndex
+			require.NoError(t, original.Add("a", []float32{1, 0, 0, 0}))
+			clustering, err := original.ComputeClustering(context.Background())
+			require.NoError(t, err)
+
+			replaced := make(chan error, 1)
+			clusterPublishHook = func() {
+				go func() { replaced <- path.replace(svc) }()
+				// The replacement waits for this publication.
+				require.Never(t, func() bool { return len(replaced) > 0 }, 200*time.Millisecond, 10*time.Millisecond)
+			}
+			t.Cleanup(func() { clusterPublishHook = nil })
+			require.NoError(t, svc.installClusterGeneration(context.Background(), original, clustering, false))
+			select {
+			case err := <-replaced:
+				require.NoError(t, err)
+			case <-time.After(30 * time.Second):
+				t.Fatal("the replacement did not finish after publication")
+			}
+
+			svc.clusterStateMu.RLock()
+			defer svc.clusterStateMu.RUnlock()
+			require.Nil(t, svc.clusterHNSW, "the published graphs retire with the generation")
+			if path.retired {
+				require.False(t, original.IsClustered(), "a retired index is not left published")
+			}
+			if path.replacing {
+				require.NotSame(t, original, svc.clusterIndex)
+				require.False(t, svc.clusterIndex.IsClustered())
+				svc.clusterLexicalMu.RLock()
+				require.Empty(t, svc.clusterLexicalProfiles)
+				svc.clusterLexicalMu.RUnlock()
+			}
+		})
+	}
+}
+
+// pauseAfterSnapshotContext pauses clustering right after k-means copied the
+// population and released the index (the third Err call of a TriggerClustering
+// run: admission check, check under the index locks, first initializer check).
+type pauseAfterSnapshotContext struct {
+	context.Context
+	calls          atomic.Int32
+	paused, resume chan struct{}
+}
+
+func (c *pauseAfterSnapshotContext) Err() error {
+	if c.calls.Add(1) == 3 {
+		close(c.paused)
+		<-c.resume
+	}
+	return c.Context.Err()
+}
+
+func graphHolds(index *HNSWIndex, id string) bool {
+	index.mu.RLock()
+	defer index.mu.RUnlock()
+	internal, ok := index.idToInternal[id]
+	return ok && !index.deleted[internal]
+}
+
+// Vectors admitted or removed while a generation is computed or its graphs
+// are built reach the published membership and graphs together: an added
+// vector is a member, is in its cluster's graph and is found by a public
+// query; a removed vector is in neither (sol r8:
+// TestReviewR8ReclusterIncludesAdmissionDuringCompute).
+func TestIVFHNSWReclusteringReconcilesAdmissionsDuringCompute(t *testing.T) {
+	for _, phase := range []string{"compute", "build"} {
+		for _, mutation := range []string{"add", "remove"} {
+			t.Run(phase+"/"+mutation, func(t *testing.T) {
+				t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+				t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+				t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+				t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+				t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "none")
+				t.Setenv("NORNICDB_KMEANS_NPROBE", "64")
+				const dims = 8
+				engine := newNamespacedEngine(t)
+				rng := rand.New(rand.NewSource(137208))
+				for i := 0; i < 1000; i++ {
+					vec := make([]float32, dims)
+					for d := range vec {
+						vec[d] = float32(rng.NormFloat64())
+					}
+					_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("seed-%04d", i)), ChunkEmbeddings: [][]float32{vec}})
+					require.NoError(t, err)
+				}
+				svc := NewServiceWithDimensions(engine, dims)
+				t.Cleanup(func() { require.NoError(t, svc.Close()) })
+				svc.EnableClustering(nil, 0)
+				svc.SetMinEmbeddingsForClustering(1)
+				require.NoError(t, svc.BuildIndexes(context.Background()))
+				require.Equal(t, 22, svc.clusterIndex.NumClusters())
+
+				late := &storage.Node{ID: "late", ChunkEmbeddings: [][]float32{{1, 0, 0, 0, 0, 0, 0, 0}}}
+				mutate := func() error {
+					if mutation == "add" {
+						if _, err := engine.CreateNode(late); err != nil {
+							return err
+						}
+						return svc.IndexNode(late)
+					}
+					return svc.RemoveNode("seed-0007")
+				}
+				var mutateErr error
+				ctx := &pauseAfterSnapshotContext{Context: context.Background(), paused: make(chan struct{}), resume: make(chan struct{})}
+				if phase == "build" {
+					close(ctx.resume) // no pause in compute
+					ctx.calls.Store(-1 << 20)
+					ivfHNSWBuildHook = func() { mutateErr = mutate() }
+					t.Cleanup(func() { ivfHNSWBuildHook = nil })
+				}
+				done := make(chan error, 1)
+				go func() { done <- svc.TriggerClustering(ctx) }()
+				if phase == "compute" {
+					select {
+					case <-ctx.paused:
+					case err := <-done:
+						t.Fatalf("clustering finished without pausing after its snapshot: %v", err)
+					case <-time.After(time.Minute):
+						t.Fatal("clustering did not reach its snapshot")
+					}
+					mutateErr = mutate()
+					close(ctx.resume)
+				}
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+				case <-time.After(2 * time.Minute):
+					t.Fatal("reclustering did not finish")
+				}
+				require.NoError(t, mutateErr)
+
+				id := string(late.ID)
+				if mutation == "remove" {
+					id = "seed-0007"
+				}
+				member := false
+				for cid := 0; cid < svc.clusterIndex.NumClusters(); cid++ {
+					for _, m := range svc.clusterIndex.GetClusterMemberIDsForCluster(cid) {
+						member = member || m == id
+					}
+				}
+				svc.clusterStateMu.RLock()
+				inGraph := false
+				for _, graph := range svc.clusterHNSW {
+					inGraph = inGraph || graphHolds(graph, id)
+				}
+				svc.clusterStateMu.RUnlock()
+				if mutation == "remove" {
+					require.False(t, member, "a removed vector leaves the published membership")
+					require.False(t, inGraph, "a removed vector leaves the published graphs")
+					return
+				}
+				require.True(t, member, "an admitted vector joins the published membership")
+				require.True(t, inGraph, "an admitted vector joins its cluster's published graph")
+				hits, err := svc.VectorQueryNodesWithOptions(context.Background(), late.ChunkEmbeddings[0], VectorQuerySpec{Limit: 5}, &SearchOptions{HNSWEf: 256})
+				require.NoError(t, err)
+				ids := make([]string, len(hits))
+				for i, hit := range hits {
+					ids[i] = hit.ID
+				}
+				require.Contains(t, ids, id, "the published generation answers queries for the admitted vector")
+			})
+		}
+	}
 }
