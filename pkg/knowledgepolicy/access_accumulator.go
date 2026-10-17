@@ -7,18 +7,115 @@ import (
 	"time"
 )
 
+// counter is a buffered count. Counters from different shards, and a
+// buffered counter on top of the persisted one, combine by addition.
+type counter int64
+
+func (c counter) merge(other counter) counter { return c + other }
+
+// timestamp is a buffered point in time (Unix nanoseconds). Timestamps from
+// different shards, and a buffered timestamp on top of the persisted one,
+// combine by keeping the latest; they are never added.
+type timestamp int64
+
+func (t timestamp) merge(other timestamp) timestamp {
+	if other > t {
+		return other
+	}
+	return t
+}
+
+// entityDelta is one entity's buffered access metadata. Every slot holds
+// either a counter or a timestamp, and merge applies each kind's own rule,
+// so a value can't be combined under the other kind's rule.
 type entityDelta struct {
-	accessCount     int64
-	traversalCount  int64
-	lastAccessedAt  int64
-	lastTraversedAt int64
-	overflow        map[string]int64
+	accessCount     counter
+	traversalCount  counter
+	lastAccessedAt  timestamp
+	lastTraversedAt timestamp
+	counters        map[string]counter   // IncrementCustom keys
+	timestamps      map[string]timestamp // SetTimestamp keys
+}
+
+func (d *entityDelta) addCounter(key string, delta counter) {
+	if d.counters == nil {
+		d.counters = make(map[string]counter)
+	}
+	d.counters[key] = d.counters[key].merge(delta)
+}
+
+func (d *entityDelta) observeTimestamp(key string, ts timestamp) {
+	if ts <= d.timestamps[key] {
+		return
+	}
+	if d.timestamps == nil {
+		d.timestamps = make(map[string]timestamp)
+	}
+	d.timestamps[key] = ts
+}
+
+// merge folds other into d: counters add, timestamps keep the latest.
+func (d *entityDelta) merge(other *entityDelta) {
+	d.accessCount = d.accessCount.merge(other.accessCount)
+	d.traversalCount = d.traversalCount.merge(other.traversalCount)
+	d.lastAccessedAt = d.lastAccessedAt.merge(other.lastAccessedAt)
+	d.lastTraversedAt = d.lastTraversedAt.merge(other.lastTraversedAt)
+	for key, delta := range other.counters {
+		d.addCounter(key, delta)
+	}
+	for key, ts := range other.timestamps {
+		d.observeTimestamp(key, ts)
+	}
 }
 
 type pLocalShard struct {
 	mu     sync.Mutex
 	deltas map[string]*entityDelta
 	_pad   [56]byte // cache-line padding
+}
+
+// delta returns the shard's delta for entityID, creating it when absent.
+// The caller holds s.mu.
+func (s *pLocalShard) delta(entityID string) (d *entityDelta, isNew bool) {
+	d = s.deltas[entityID]
+	if d == nil {
+		d = &entityDelta{}
+		s.deltas[entityID] = d
+		isNew = true
+	}
+	return d, isNew
+}
+
+func (s *pLocalShard) recordAccess(entityID string, now timestamp) (isNew bool) {
+	s.mu.Lock()
+	d, isNew := s.delta(entityID)
+	d.accessCount = d.accessCount.merge(1)
+	d.lastAccessedAt = d.lastAccessedAt.merge(now)
+	s.mu.Unlock()
+	return isNew
+}
+
+func (s *pLocalShard) recordTraversal(entityID string, now timestamp) (isNew bool) {
+	s.mu.Lock()
+	d, isNew := s.delta(entityID)
+	d.traversalCount = d.traversalCount.merge(1)
+	d.lastTraversedAt = d.lastTraversedAt.merge(now)
+	s.mu.Unlock()
+	return isNew
+}
+
+func (s *pLocalShard) incrementCustom(entityID string, key string, delta counter) {
+	s.mu.Lock()
+	d, _ := s.delta(entityID)
+	d.addCounter(key, delta)
+	s.mu.Unlock()
+}
+
+func (s *pLocalShard) setTimestamp(entityID string, key string, ts timestamp) {
+	s.mu.Lock()
+	d, _ := s.delta(entityID)
+	d.observeTimestamp(key, ts)
+	s.mu.Unlock()
 }
 
 // AccessAccumulator is a per-P sharded counter ring for hot-path access
@@ -38,9 +135,12 @@ type AccessAccumulator struct {
 // maxBufferSize limits distinct entity count before triggering an auto-flush.
 // Pass 0 for unlimited (flush only on timer).
 func NewAccessAccumulator(enabled bool, maxBufferSize int) *AccessAccumulator {
-	n := runtime.GOMAXPROCS(0)
+	return newAccessAccumulator(enabled, maxBufferSize, runtime.GOMAXPROCS(0))
+}
+
+func newAccessAccumulator(enabled bool, maxBufferSize int, shardCount int) *AccessAccumulator {
 	a := &AccessAccumulator{
-		shards:        make([]pLocalShard, n),
+		shards:        make([]pLocalShard, shardCount),
 		enabled:       enabled,
 		maxBufferSize: int64(maxBufferSize),
 	}
@@ -70,22 +170,8 @@ func (a *AccessAccumulator) IncrementAccess(entityID string) {
 	if !a.enabled {
 		return
 	}
-	now := time.Now().UnixNano()
-	shard := a.currentShard()
-	isNew := false
-	shard.mu.Lock()
-	d := shard.deltas[entityID]
-	if d == nil {
-		d = &entityDelta{}
-		shard.deltas[entityID] = d
-		isNew = true
-	}
-	d.accessCount++
-	if now > d.lastAccessedAt {
-		d.lastAccessedAt = now
-	}
-	shard.mu.Unlock()
-	if isNew {
+	now := timestamp(time.Now().UnixNano())
+	if a.currentShard().recordAccess(entityID, now) {
 		a.checkBufferFull()
 	}
 }
@@ -94,97 +180,94 @@ func (a *AccessAccumulator) IncrementTraversal(entityID string) {
 	if !a.enabled {
 		return
 	}
-	now := time.Now().UnixNano()
-	shard := a.currentShard()
-	isNew := false
-	shard.mu.Lock()
-	d := shard.deltas[entityID]
-	if d == nil {
-		d = &entityDelta{}
-		shard.deltas[entityID] = d
-		isNew = true
-	}
-	d.traversalCount++
-	if now > d.lastTraversedAt {
-		d.lastTraversedAt = now
-	}
-	shard.mu.Unlock()
-	if isNew {
+	now := timestamp(time.Now().UnixNano())
+	if a.currentShard().recordTraversal(entityID, now) {
 		a.checkBufferFull()
 	}
 }
 
+// IncrementCustom adds delta to the custom counter key. Custom counters are
+// summed across shards and onto the persisted value.
 func (a *AccessAccumulator) IncrementCustom(entityID string, key string, delta int64) {
 	if !a.enabled {
 		return
 	}
-	shard := a.currentShard()
-	shard.mu.Lock()
-	d := shard.deltas[entityID]
-	if d == nil {
-		d = &entityDelta{}
-		shard.deltas[entityID] = d
-	}
-	if d.overflow == nil {
-		d.overflow = make(map[string]int64)
-	}
-	d.overflow[key] += delta
-	shard.mu.Unlock()
+	a.currentShard().incrementCustom(entityID, key, counter(delta))
 }
 
+// SetTimestamp records ts for the custom timestamp key. Custom timestamps keep
+// the latest value across shards and against the persisted value.
 func (a *AccessAccumulator) SetTimestamp(entityID string, key string, ts int64) {
 	if !a.enabled {
 		return
 	}
-	shard := a.currentShard()
-	shard.mu.Lock()
-	d := shard.deltas[entityID]
-	if d == nil {
-		d = &entityDelta{}
-		shard.deltas[entityID] = d
-	}
-	if d.overflow == nil {
-		d.overflow = make(map[string]int64)
-	}
-	if ts > d.overflow[key] {
-		d.overflow[key] = ts
-	}
-	shard.mu.Unlock()
+	a.currentShard().setTimestamp(entityID, key, timestamp(ts))
 }
 
-// ReadThrough returns persisted + sum(buffered deltas) across all P-local shards.
+// ReadThrough returns the persisted value combined with the buffered deltas
+// across all P-local shards: persisted + sum for counters, the latest of the
+// persisted and buffered values for timestamps. The fixed key names read the
+// fixed fields; any other key is a custom timestamp when one was buffered
+// with SetTimestamp, otherwise a custom counter.
 // This is eventually-consistent and NOT bound by MVCC snapshot isolation.
 func (a *AccessAccumulator) ReadThrough(entityID string, key string, persisted int64) int64 {
 	if !a.enabled {
 		return persisted
 	}
-	total := persisted
+	switch key {
+	case "accessCount":
+		return int64(a.sumCounters(entityID, counter(persisted), func(d *entityDelta) counter { return d.accessCount }))
+	case "traversalCount":
+		return int64(a.sumCounters(entityID, counter(persisted), func(d *entityDelta) counter { return d.traversalCount }))
+	case "lastAccessedAt":
+		return int64(a.latestTimestamp(entityID, timestamp(persisted), func(d *entityDelta) timestamp { return d.lastAccessedAt }))
+	case "lastTraversedAt":
+		return int64(a.latestTimestamp(entityID, timestamp(persisted), func(d *entityDelta) timestamp { return d.lastTraversedAt }))
+	}
+	var counted counter
+	latest := timestamp(persisted)
+	isTimestamp := false
 	for i := range a.shards {
 		a.shards[i].mu.Lock()
-		d := a.shards[i].deltas[entityID]
-		if d != nil {
-			switch key {
-			case "accessCount":
-				total += d.accessCount
-			case "traversalCount":
-				total += d.traversalCount
-			case "lastAccessedAt":
-				if d.lastAccessedAt > total {
-					total = d.lastAccessedAt
-				}
-			case "lastTraversedAt":
-				if d.lastTraversedAt > total {
-					total = d.lastTraversedAt
-				}
-			default:
-				if d.overflow != nil {
-					total += d.overflow[key]
-				}
+		if d := a.shards[i].deltas[entityID]; d != nil {
+			counted = counted.merge(d.counters[key])
+			if ts, ok := d.timestamps[key]; ok {
+				latest = latest.merge(ts)
+				isTimestamp = true
 			}
 		}
 		a.shards[i].mu.Unlock()
 	}
+	if isTimestamp {
+		return int64(latest)
+	}
+	return int64(counter(persisted).merge(counted))
+}
+
+// sumCounters merges one counter slot of entityID's deltas across all shards
+// onto total.
+func (a *AccessAccumulator) sumCounters(entityID string, total counter, slot func(*entityDelta) counter) counter {
+	for i := range a.shards {
+		a.shards[i].mu.Lock()
+		if d := a.shards[i].deltas[entityID]; d != nil {
+			total = total.merge(slot(d))
+		}
+		a.shards[i].mu.Unlock()
+	}
 	return total
+}
+
+// latestTimestamp merges one timestamp slot of entityID's deltas across all
+// shards onto latest.
+func (a *AccessAccumulator) latestTimestamp(entityID string, latest timestamp, slot func(*entityDelta) timestamp) timestamp {
+	for i := range a.shards {
+		a.shards[i].mu.Lock()
+		if d := a.shards[i].deltas[entityID]; d != nil {
+			latest = latest.merge(slot(d))
+		}
+		a.shards[i].mu.Unlock()
+	}
+	return latest
 }
 
 func (a *AccessAccumulator) checkBufferFull() {
@@ -228,27 +311,11 @@ func (a *AccessAccumulator) DrainAll() map[string]*entityDelta {
 		a.shards[i].mu.Unlock()
 
 		for id, d := range local {
-			m := merged[id]
-			if m == nil {
-				merged[id] = d
+			if m := merged[id]; m != nil {
+				m.merge(d)
 				continue
 			}
-			m.accessCount += d.accessCount
-			m.traversalCount += d.traversalCount
-			if d.lastAccessedAt > m.lastAccessedAt {
-				m.lastAccessedAt = d.lastAccessedAt
-			}
-			if d.lastTraversedAt > m.lastTraversedAt {
-				m.lastTraversedAt = d.lastTraversedAt
-			}
-			if d.overflow != nil {
-				if m.overflow == nil {
-					m.overflow = make(map[string]int64)
-				}
-				for k, v := range d.overflow {
-					m.overflow[k] += v
-				}
-			}
+			merged[id] = d
 		}
 	}
 	return merged
