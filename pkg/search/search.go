@@ -2874,7 +2874,7 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstVectorDimensions(node))
+	release, err := s.lockNodeMutation(firstVectorDimensions(node), true)
 	if err != nil {
 		return err
 	}
@@ -3582,7 +3582,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
-	release, err := s.lockNodeMutation(0)
+	release, err := s.lockNodeMutation(0, true)
 	if err != nil {
 		return err
 	}
@@ -3612,7 +3612,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		s.IndexRelationship(edge)
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge))
+	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge), false)
 	if err != nil {
 		return err
 	}
@@ -3703,7 +3703,7 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	release, err := s.lockNodeMutation(0)
+	release, err := s.lockNodeMutation(0, false)
 	if err != nil {
 		return err
 	}
@@ -4019,10 +4019,20 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 
 	// Live writes may be newer than the saved image after persistence was off.
 	// Only the source record establishes initial population completeness.
-	s.indexMu.RLock()
+	// Node writes applied before any population are missing from the saved
+	// images, and a removal or an emptied node leaves no trace in the empty
+	// resident indexes. Neither image is restored over them: the resident
+	// writes are kept, the vector file is replaced by them, and storage
+	// completes both sources.
+	s.indexMu.Lock()
 	textComplete := s.nodeSources.textComplete
-	s.indexMu.RUnlock()
-	if fulltextPath != "" && !textComplete && !s.fulltext().IsDirty() {
+	unpopulatedWrites := s.nodeSources.unpopulatedLiveWrites
+	if unpopulatedWrites {
+		s.changeNodeSourcesLocked(nodeVectorMemoryMoved)
+		forceHNSWRebuild = true
+	}
+	s.indexMu.Unlock()
+	if fulltextPath != "" && !textComplete && !unpopulatedWrites && !s.fulltext().IsDirty() {
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
 		if loadErr == nil && accepted {
 			s.indexMu.Lock()
