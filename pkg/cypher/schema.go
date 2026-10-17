@@ -45,6 +45,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 		"SHOW INDEX", "SHOW FULLTEXT INDEX", "SHOW RANGE INDEX", "SHOW VECTOR INDEX", "SHOW LOOKUP INDEX",
 		"SHOW CONSTRAINT",
 		"CREATE INDEX", "CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX", "CREATE LOOKUP INDEX", "CREATE TEXT INDEX", "CREATE POINT INDEX",
+		"CREATE CONTAINED INDEX",
 		"CREATE CONSTRAINT",
 		"DROP INDEX", "DROP CONSTRAINT",
 		"CREATE DATABASE", "DROP DATABASE",
@@ -88,6 +89,8 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 		run = e.executeDropConstraint
 	} else if startsWithKeywords(cypher, "DROP", "INDEX") {
 		run = e.executeDropIndex
+	} else if startsWithKeywords(cypher, "CREATE", "CONTAINED INDEX") {
+		run = e.executeCreateContainedIndex
 	} else if strings.Contains(upper, "CREATE FULLTEXT INDEX") {
 		run = e.executeCreateFulltextIndex
 	} else if strings.Contains(upper, "CREATE VECTOR INDEX") {
@@ -1117,6 +1120,7 @@ func parseVectorOptions(optionsClause string, defaultDimensions int, defaultSimi
 }
 
 type parsedCreateFulltextIndexDDL struct {
+	pattern           string // the FOR pattern as written
 	indexName         string
 	label             string
 	labels            []string
@@ -1192,16 +1196,22 @@ func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
 }
 
 func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCreateFulltextIndexDDL, error) {
+	return e.parseCreateEachIndexDDL(cypher, "CREATE FULLTEXT INDEX")
+}
+
+// parseCreateEachIndexDDL is the one reader of the ON EACH index DDL, after
+// prefix: CREATE FULLTEXT INDEX and CREATE CONTAINED INDEX.
+func (e *StorageExecutor) parseCreateEachIndexDDL(cypher, prefix string) (parsedCreateFulltextIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
 
-	prefixPos := keywordIndexFrom(q, "CREATE FULLTEXT INDEX", 0, defaultKeywordScanOpts())
+	prefixPos := keywordIndexFrom(q, prefix, 0, defaultKeywordScanOpts())
 	if prefixPos != 0 {
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
-	prefixEnd, ok := keywordSpanAt(q, 0, "CREATE FULLTEXT INDEX")
+	prefixEnd, ok := keywordSpanAt(q, 0, prefix)
 	if !ok {
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
@@ -1259,10 +1269,14 @@ func (e *StorageExecutor) parseCreateFulltextIndexDDL(cypher string) (parsedCrea
 
 	properties := e.parseQualifiedIndexProperties(propsSegment)
 	if len(properties) == 0 {
+		if prefix != "CREATE FULLTEXT INDEX" {
+			return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaIndexPropertiesRequired(), nil)
+		}
 		return parsedCreateFulltextIndexDDL{}, localizedError(localization.CypherSchemaFulltextPropertiesRequired(), nil)
 	}
 
 	return parsedCreateFulltextIndexDDL{
+		pattern:           strings.TrimSpace(q[forEnd:onPos]),
 		indexName:         name,
 		label:             label,
 		labels:            labels,
@@ -2344,6 +2358,70 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// executeCreateContainedIndex runs CREATE CONTAINED INDEX [name] [IF NOT
+// EXISTS] FOR (n:Label) ON EACH [n.p, ...] [OPTIONS {...}], a NornicDB
+// extension: a contained-key index (storage.ContainedIndex) over one node
+// label, filled from the label's nodes before the statement returns.
+func (e *StorageExecutor) executeCreateContainedIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	schema := e.storage.GetSchema()
+	if schema == nil {
+		return nil, localizedError(localization.CypherSchemaManagerUnavailable(), nil)
+	}
+	parsed, err := e.parseCreateEachIndexDDL(cypher, "CREATE CONTAINED INDEX")
+	if err != nil {
+		return nil, err
+	}
+	if parsed.isRelationship || len(parsed.labels) != 1 {
+		return nil, localizedError(localization.CypherSchemaInvalidPattern(parsed.pattern), nil)
+	}
+	label := parsed.labels[0]
+	name := parsed.indexName
+	if name == "" {
+		name = fmt.Sprintf("index_%s_%s_contained", label, strings.Join(parsed.properties, "_"))
+	}
+	create, err := e.admitIndexCreationForTargets(cypher, name, "CONTAINED", parsed.labels, parsed.properties, storage.ConstraintEntityNode)
+	if err != nil {
+		return nil, err
+	}
+	empty := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}
+	if !create {
+		return empty, nil
+	}
+	_, existed := schema.GetContainedIndex(name)
+	if err := schema.AddContainedIndex(name, label, parsed.properties); err != nil {
+		return nil, err
+	}
+	if existed {
+		return empty, nil
+	}
+	if err := e.backfillContainedIndex(name, label); err != nil {
+		_ = schema.DropIndex(name)
+		return nil, err
+	}
+	return empty, nil
+}
+
+// backfillContainedIndex fills a new contained-key index from the label's
+// stored nodes. Lookups trust a filled index to hold every node, so a new
+// index whose fill fails is dropped by the caller.
+func (e *StorageExecutor) backfillContainedIndex(name, label string) error {
+	nodes, err := e.storage.GetNodesByLabel(label)
+	if err != nil {
+		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
+	}
+	entries := make(map[storage.NodeID]map[string]interface{}, len(nodes))
+	for _, node := range nodes {
+		if node == nil || node.Properties == nil {
+			continue
+		}
+		entries[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = node.Properties
+	}
+	if err := e.storage.GetSchema().BackfillContainedIndex(name, entries); err != nil {
+		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
+	}
+	return nil
 }
 
 // parseDomainValueList parses a comma-separated list of literal values from a domain constraint.

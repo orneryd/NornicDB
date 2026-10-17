@@ -2113,7 +2113,7 @@ func statementAccessesGraphText(cypher string) bool {
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
 		"SET", "REMOVE", "FOREACH", "LOAD CSV", "CALL", "SHOW", "CREATE INDEX",
 		"CREATE RANGE INDEX", "CREATE FULLTEXT INDEX", "CREATE VECTOR INDEX",
-		"CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
+		"CREATE CONTAINED INDEX", "CREATE CONSTRAINT", "DROP INDEX", "DROP CONSTRAINT",
 	} {
 		if keywordIndexFrom(cypher, keyword, 0, opts) >= 0 {
 			return true

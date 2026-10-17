@@ -6,13 +6,25 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func isOrdinarySchemaDDL(query string) bool {
-	for _, command := range []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONSTRAINT"} {
-		if startsWithKeywords(query, "CREATE", command) {
+// createIndexKinds are the index kinds of CREATE <kind> DDL, including
+// NornicDB's CONTAINED INDEX: the one list the statement router, the
+// transaction DDL check and the CREATE semantic validation read
+// (isCreateIndexCommand).
+var createIndexKinds = []string{"INDEX", "RANGE INDEX", "TEXT INDEX", "POINT INDEX", "VECTOR INDEX", "FULLTEXT INDEX", "LOOKUP INDEX", "CONTAINED INDEX"}
+
+// isCreateIndexCommand reports whether query is CREATE <kind> INDEX DDL.
+func isCreateIndexCommand(query string) bool {
+	for _, kind := range createIndexKinds {
+		if startsWithKeywords(query, "CREATE", kind) {
 			return true
 		}
 	}
-	return startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
+	return false
+}
+
+func isOrdinarySchemaDDL(query string) bool {
+	return isCreateIndexCommand(query) || startsWithKeywords(query, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(query, "DROP", "INDEX") || startsWithKeywords(query, "DROP", "CONSTRAINT")
 }
 
 func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {

@@ -668,6 +668,13 @@ func renderIndexStatement(index any) (string, bool) {
 			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
 		}
 		return "", false
+	case "CONTAINED":
+		properties := stringSliceValue(m["properties"])
+		labels := stringSliceValue(m["labels"])
+		if len(properties) == 0 || len(labels) != 1 {
+			return "", false
+		}
+		return fmt.Sprintf("CREATE CONTAINED INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", quoteCypherIdent(name), quoteCypherIdent(labels[0]), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
 	case "VECTOR":
 		property, _ := m["property"].(string)
 		dimensions, _ := m["dimensions"].(int)

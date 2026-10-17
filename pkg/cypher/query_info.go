@@ -271,6 +271,7 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasSchema = containsKeyword(upper, "CREATE INDEX") ||
 		containsKeyword(upper, "CREATE RANGE INDEX") ||
 		containsKeyword(upper, "CREATE FULLTEXT INDEX") ||
+		containsKeyword(upper, "CREATE CONTAINED INDEX") ||
 		containsKeyword(upper, "CREATE VECTOR INDEX") ||
 		containsKeyword(upper, "CREATE TEXT INDEX") ||
 		containsKeyword(upper, "CREATE POINT INDEX") ||

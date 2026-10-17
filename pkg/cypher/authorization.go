@@ -207,6 +207,7 @@ func isSchemaPermissionQuery(query string) bool {
 		{"CREATE", "INDEX"},
 		{"CREATE", "RANGE INDEX"},
 		{"CREATE", "FULLTEXT INDEX"},
+		{"CREATE", "CONTAINED INDEX"},
 		{"CREATE", "VECTOR INDEX"},
 		{"DROP", "INDEX"},
 		{"CREATE", "CONSTRAINT"},

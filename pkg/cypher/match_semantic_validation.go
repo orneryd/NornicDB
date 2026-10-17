@@ -1079,7 +1079,7 @@ func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind match
 }
 
 // schemaCommandKeywords follow CREATE or DROP in a schema command.
-var schemaCommandKeywords = []string{"CONSTRAINT", "INDEX", "FULLTEXT", "VECTOR", "RANGE", "TEXT", "POINT", "LOOKUP", "BTREE", "OR REPLACE"}
+var schemaCommandKeywords = []string{"CONSTRAINT", "INDEX", "FULLTEXT", "CONTAINED", "VECTOR", "RANGE", "TEXT", "POINT", "LOOKUP", "BTREE", "OR REPLACE"}
 
 // isSchemaCommandStatement reports whether cypher is a schema command
 // (CREATE / DROP CONSTRAINT, INDEX, …): its patterns and expressions declare a

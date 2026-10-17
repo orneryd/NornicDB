@@ -24,6 +24,9 @@ func showIndexProvider(indexType string) string {
 		return "point-1.0"
 	case "FULLTEXT":
 		return "fulltext-1.0"
+	case "CONTAINED":
+		// NornicDB's contained-key index; Neo4j has no such provider.
+		return "contained-1.0"
 	case "VECTOR":
 		return "vector-2.0"
 	case "LOOKUP":
@@ -75,7 +78,7 @@ func schemaProperties(variable string, properties []string) string {
 func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes, properties []string, config map[string]interface{}) string {
 	pattern, variable := schemaPattern(entityType, labelsOrTypes)
 	statement := "CREATE " + indexType + " INDEX " + quoteSchemaName(name) + " FOR " + pattern + " ON "
-	if indexType == "FULLTEXT" {
+	if indexType == "FULLTEXT" || indexType == "CONTAINED" {
 		statement += "EACH [" + schemaProperties(variable, properties) + "]"
 	} else {
 		statement += "(" + schemaProperties(variable, properties) + ")"

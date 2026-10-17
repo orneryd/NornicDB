@@ -196,14 +196,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
-		findKeywordIndex(cypher, "CREATE INDEX") == 0:
+	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"), isCreateIndexCommand(cypher):
 		return e.executeSchemaCommand(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
 		return e.executeCreateCompositeDatabase(ctx, cypher)
@@ -436,15 +429,17 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 // the ANTLR grammar, which the Nornic validator checks instead under
 // NORNICDB_PARSER=antlr (#957): NornicDB's own knowledge-policy DDL,
 // procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP PROCEDURE) and database
-// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
-// the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
-// SET / REMOVE OPTION, #937).
+// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), the contained-key index
+// DDL (CREATE CONTAINED INDEX), and the database options the grammar doesn't
+// model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE … SET / REMOVE OPTION,
+// #937).
 func isNornicExtensionStatement(cypher string) bool {
 	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
 	// GRANT … as the default parser does.
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
+		startsWithKeywords(cypher, "CREATE", "CONTAINED INDEX") ||
 		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
