@@ -383,10 +383,15 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	s.indexMu.Unlock()
 	if explicit && plan.nodesRebuilt {
 		s.setBuildPhase("persisting_base_indexes")
+		// BM25 is parked through the warmup only when this persist wrote its
+		// checkpoint: the index was dirty and the save marked it persisted. An
+		// empty index never written has no checkpoint to reload, and a failed
+		// save leaves none current, so it stays resident.
+		fulltextUnsaved := s.fulltext().IsDirty()
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
-		if plan.fulltextPath != "" {
+		if plan.fulltextPath != "" && fulltextUnsaved && !s.fulltext().IsDirty() {
 			s.indexMu.Lock()
 			s.setNodeFulltextCheckpointLocked(plan.fulltextPath, s.fulltext().Count())
 			s.fulltext().Clear()
