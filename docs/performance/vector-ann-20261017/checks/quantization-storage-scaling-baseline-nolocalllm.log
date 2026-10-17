@@ -1,0 +1,7 @@
+# github.com/orneryd/nornicdb/pkg/storage.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestTemporalCurrentPointerRefresh_ScalesLinearly
+    temporal_index_completeness_test.go:231: commit of 1000 temporal nodes: 17.960875ms, 8000: 192.103292ms, ratio 10.7 (linear ~8)
+--- PASS: TestTemporalCurrentPointerRefresh_ScalesLinearly (0.73s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	1.472s
