@@ -48,6 +48,7 @@ package inference
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -81,10 +82,11 @@ type CooldownTable struct {
 	entries  map[string]*CooldownEntry // key: "src:dst:label"
 	defaults map[string]time.Duration  // per-label defaults
 
-	// Stats
-	totalChecks  int64
-	totalBlocked int64
-	totalAllowed int64
+	// Stats. Checks run under the read lock, concurrently, so the counters are
+	// atomic rather than guarded by mu.
+	totalChecks  atomic.Int64
+	totalBlocked atomic.Int64
+	totalAllowed atomic.Int64
 }
 
 // CooldownStats provides observability into cooldown behavior.
@@ -129,12 +131,12 @@ func (ct *CooldownTable) CanMaterialize(src, dst, label string) bool {
 	ct.mu.RLock()
 	defer ct.mu.RUnlock()
 
-	ct.totalChecks++
+	ct.totalChecks.Add(1)
 
 	key := cooldownKey(src, dst, label)
 	entry, exists := ct.entries[key]
 	if !exists {
-		ct.totalAllowed++
+		ct.totalAllowed.Add(1)
 		return true
 	}
 
@@ -142,11 +144,11 @@ func (ct *CooldownTable) CanMaterialize(src, dst, label string) bool {
 	elapsed := time.Since(entry.LastMaterialized)
 
 	if elapsed >= cooldown {
-		ct.totalAllowed++
+		ct.totalAllowed.Add(1)
 		return true
 	}
 
-	ct.totalBlocked++
+	ct.totalBlocked.Add(1)
 	return false
 }
 
@@ -289,9 +291,9 @@ func (ct *CooldownTable) Clear() {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	ct.entries = make(map[string]*CooldownEntry)
-	ct.totalChecks = 0
-	ct.totalBlocked = 0
-	ct.totalAllowed = 0
+	ct.totalChecks.Store(0)
+	ct.totalBlocked.Store(0)
+	ct.totalAllowed.Store(0)
 }
 
 // Cleanup removes expired entries to prevent memory growth.
@@ -334,9 +336,9 @@ func (ct *CooldownTable) Stats() CooldownStats {
 
 	stats := CooldownStats{
 		TotalEntries: int64(len(ct.entries)),
-		TotalChecks:  ct.totalChecks,
-		TotalBlocked: ct.totalBlocked,
-		TotalAllowed: ct.totalAllowed,
+		TotalChecks:  ct.totalChecks.Load(),
+		TotalBlocked: ct.totalBlocked.Load(),
+		TotalAllowed: ct.totalAllowed.Load(),
 	}
 
 	if stats.TotalChecks > 0 {
