@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"io"
 	"sync"
 	"testing"
 )
@@ -132,7 +133,11 @@ func TestStringBuilderPool(t *testing.T) {
 		}
 
 		b.WriteString("hello")
-		b.WriteByte(' ')
+		// The builder is an io.ByteWriter, as go vet's stdmethods check asks.
+		var w io.ByteWriter = b
+		if err := w.WriteByte(' '); err != nil {
+			t.Errorf("WriteByte() = %v, want nil", err)
+		}
 		b.WriteString("world")
 
 		if b.String() != "hello world" {
