@@ -3753,6 +3753,10 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 	if s == nil || propertyKey == "" {
 		return 0
 	}
+	// The node metadata is written under indexMu (index writes): lock order
+	// indexMu -> mu.
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := 0
