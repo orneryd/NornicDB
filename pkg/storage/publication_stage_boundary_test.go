@@ -49,12 +49,43 @@ var publishingPaths = map[string]string{
 // that holds it: the consumer it guards. A publishing committer must not
 // hold any of them across its commit (the deadlock analysis in the PR body);
 // a new one fails the test.
-var stageLocks = map[string]string{}
+var stageLocks = map[string]string{
+	"BadgerEngine.nodeCacheMu":           "node and query-node caches (TestPostCommitPublicationOrder: node cache, query-node cache)",
+	"BadgerEngine.nodeBodyCacheMu":       "node body cache, versioned per Badger item (dropped with the node)",
+	"BadgerEngine.edgeCacheMu":           "edge cache (TestPostCommitEdgePublicationOrder: edge cache)",
+	"BadgerEngine.adjCacheMu":            "adjacency cache (TestPostCommitEdgePublicationOrder: adjacency, read twice)",
+	"BadgerEngine.edgeTypeCacheMu":       "edge-type index cache (TestPostCommitEdgePublicationOrder: edge-type index)",
+	"BadgerEngine.labelFirstNodeCacheMu": "label index cache (TestPostCommitPublicationOrder: label index)",
+	"BadgerEngine.namespaceCountsMu":     "node and edge counts (both matrices: node, label and edge counts)",
+	"BadgerEngine.schemasMu":             "schema lookup by namespace (read lock)",
+	"SchemaManager.mu":                   "schema: index and unique constraint lookup (read lock)",
+	"CompositeIndex.mu":                  "property and composite indexes (TestPostCommitPublicationOrder: property index, composite index)",
+	"UniqueConstraint.mu":                "unique-value registry (TestPostCommitPublicationOrder: registry holder, duplicate rejected, replaced value free)",
+	"relationshipUniqueIndexSet.mu":      "relationship-uniqueness index (TestPostCommitEdgePublicationOrder: duplicate rejected, replaced value free)",
+	"pendingEmbeddingCandidates.mu":      "pending-embedding candidates, an add-only set of hints (TestPendingCandidates*)",
+}
+
+// uniqueKeyLockWait stands for waiting on a unique constraint key lock
+// (waitForUniqueConstraintLock), which committers hold until they return.
+const uniqueKeyLockWait = "unique key locks (waitForUniqueConstraintLock)"
+
+// knownCommitterLocks are locks committers hold across their commit and its
+// wait for the stage that the scan can't see, because a helper takes them
+// and returns the release: the write barrier (beginNotifyingWrite,
+// beginPublication, beginSchemaWrite), the transaction's mutex and count
+// locks (Commit, acquireCommitPublicationLocked) and unique key locks
+// (lockEngineWriteKeys, PrepareMergeKey).
+var knownCommitterLocks = []string{
+	"BadgerEngine.writeBarrier", "BadgerTransaction.mu", "BadgerEngine.labelCountWriteMu",
+	"BadgerEngine.edgeTypeCountWriteMu", "BadgerEngine.totalCountWriteMu", uniqueKeyLockWait,
+}
 
 // heldAcrossCommit classifies every place that holds a stage lock across a
 // call that can commit: why the commit carries no publication, so it does
 // not run the stage.
-var heldAcrossCommit = map[string]string{}
+var heldAcrossCommit = map[string]string{
+	"FindNodeNeedingEmbedding holds pendingEmbeddingCandidates.mu across withUpdate": "the commit only deletes pending-embedding keys: no publish and no pending-embedding adds, so it carries no publication and does not run the stage",
+}
 
 // commitFunctions must never be reachable from a publication.
 var commitFunctions = []string{
@@ -405,7 +436,7 @@ func (src *packageSource) heldAcrossCommits(locks map[string]bool) []string {
 					}
 					if src.reachesCommit(callee, memo) {
 						for lock, count := range held {
-							if count > 0 && locks[lock] {
+							if count > 0 && (locks == nil || locks[lock]) {
 								hits = append(hits, fmt.Sprintf("%s holds %s across %s", fn.Name(), lock, callee.Name()))
 							}
 						}
@@ -416,6 +447,103 @@ func (src *packageSource) heldAcrossCommits(locks map[string]bool) []string {
 		}
 		walk(decl.Body, false)
 		_ = fn
+	}
+	sort.Strings(hits)
+	return slices.Compact(hits)
+}
+
+// locksReached returns every lock fn can take, transitively.
+func (src *packageSource) locksReached(fn *types.Func, memo map[*types.Func]map[string]bool) map[string]bool {
+	if got, done := memo[fn]; done {
+		return got
+	}
+	got := map[string]bool{}
+	memo[fn] = got // a cycle sees the partial set
+	if fn.Name() == "waitForUniqueConstraintLock" {
+		got[uniqueKeyLockWait] = true
+	}
+	decl, own := src.decls[fn]
+	if !own {
+		return got
+	}
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		callee := src.callee(call)
+		if callee == nil {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (callee.Name() == "Lock" || callee.Name() == "RLock") {
+			got[src.lockName(sel.X)] = true
+			return true
+		}
+		for lock := range src.locksReached(callee, memo) {
+			got[lock] = true
+		}
+		return true
+	})
+	return got
+}
+
+// stageLockOrder finds, in every function, a call made while holding one of
+// stageLocks that can take one of committerLocks: a goroutine that waits for
+// a lock a committer holds while holding a lock the stage needs.
+func (src *packageSource) stageLockOrder(stageLocks, committerLocks map[string]bool) []string {
+	memo := map[*types.Func]map[string]bool{}
+	var hits []string
+	for fn, decl := range src.decls {
+		held := map[string]int{}
+		var walk func(n ast.Node, deferred bool)
+		walk = func(n ast.Node, deferred bool) {
+			ast.Inspect(n, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.FuncLit:
+					return false
+				case *ast.DeferStmt:
+					walk(n.Call, true)
+					return false
+				case *ast.CallExpr:
+					callee := src.callee(n)
+					if callee == nil {
+						return true
+					}
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok {
+						switch callee.Name() {
+						case "Lock", "RLock":
+							lock := src.lockName(sel.X)
+							if !deferred {
+								for h, count := range held {
+									if count > 0 && stageLocks[h] && committerLocks[lock] {
+										hits = append(hits, fmt.Sprintf("%s holds %s while taking %s", fn.Name(), h, lock))
+									}
+								}
+								held[lock]++
+							}
+							return true
+						case "Unlock", "RUnlock":
+							if !deferred {
+								held[src.lockName(sel.X)]--
+							}
+							return true
+						}
+					}
+					for h, count := range held {
+						if count <= 0 || !stageLocks[h] {
+							continue
+						}
+						for lock := range src.locksReached(callee, memo) {
+							if committerLocks[lock] {
+								hits = append(hits, fmt.Sprintf("%s holds %s while %s takes %s", fn.Name(), h, callee.Name(), lock))
+							}
+						}
+					}
+				}
+				return true
+			})
+		}
+		walk(decl.Body, false)
 	}
 	sort.Strings(hits)
 	return slices.Compact(hits)
@@ -495,6 +623,26 @@ func TestPublicationStageBoundary(t *testing.T) {
 	for _, hit := range held {
 		t.Logf("held across a commit: %s", hit)
 	}
+	// Every lock any function holds across a commit (a committer may hold it
+	// while it waits for the stage), and any lock order from a stage lock to
+	// one of them.
+	committerLocks := map[string]bool{}
+	for _, lock := range knownCommitterLocks {
+		committerLocks[lock] = true
+	}
+	allHeld := src.heldAcrossCommits(nil)
+	for _, hit := range allHeld {
+		t.Logf("committer holds: %s", hit)
+		if _, rest, ok := strings.Cut(hit, " holds "); ok {
+			lock, _, _ := strings.Cut(rest, " across ")
+			committerLocks[lock] = true
+		}
+	}
+	order := src.stageLockOrder(lockSet, committerLocks)
+	for _, hit := range order {
+		t.Logf("stage lock order: %s", hit)
+	}
+	assert.Empty(t, order, "a goroutine holding a stage lock waits for a lock a committer holds: the stage could wait on it")
 	for _, lock := range lockNames {
 		_, known := stageLocks[lock]
 		assert.True(t, known, "a publication takes %s, which stageLocks doesn't classify: add its consumer, a matrix case and the deadlock analysis", lock)
