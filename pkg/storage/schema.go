@@ -115,6 +115,7 @@ type SchemaManager struct {
 	// equality indexes.
 	compositeIndexes map[string]*CompositeIndex      // key: index name
 	fulltextIndexes  map[string]*FulltextIndex       // key: index_name
+	containedIndexes map[string]*ContainedIndex      // key: index name (contained_index.go)
 	vectorIndexes    map[string]*VectorIndex         // key: index_name
 	rangeIndexes     map[string]*RangeIndex          // key: index_name
 	lookupIndexes    map[ConstraintEntityType]string // token lookup index name by entity type (schema_lookup_index.go)
@@ -223,6 +224,7 @@ func NewSchemaManager() *SchemaManager {
 		propertyTypeConstraints: make(map[string]PropertyTypeConstraint),
 		compositeIndexes:        make(map[string]*CompositeIndex),
 		fulltextIndexes:         make(map[string]*FulltextIndex),
+		containedIndexes:        make(map[string]*ContainedIndex),
 		vectorIndexes:           make(map[string]*VectorIndex),
 		rangeIndexes:            make(map[string]*RangeIndex),
 		lookupIndexes:           defaultLookupIndexes(),
@@ -1382,6 +1384,72 @@ func (sm *SchemaManager) AddFulltextRelationshipIndex(name string, relTypes, pro
 	return nil
 }
 
+// AddContainedIndex adds a contained-key index over the label's properties
+// (ContainedIndex). It starts unfilled; the caller backfills it from the
+// label's nodes (BackfillContainedIndex). An existing name is left as is.
+func (sm *SchemaManager) AddContainedIndex(name, label string, properties []string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if _, exists := sm.containedIndexes[name]; exists {
+		return nil
+	}
+	idx := newContainedIndex(name, label, properties)
+	idx.unfilled.Store(true)
+	sm.containedIndexes[name] = idx
+
+	if sm.persist != nil {
+		if err := sm.persist(sm.exportDefinitionLocked()); err != nil {
+			delete(sm.containedIndexes, name)
+			return err
+		}
+	}
+	return nil
+}
+
+// GetContainedIndex returns a contained-key index by name.
+func (sm *SchemaManager) GetContainedIndex(name string) (*ContainedIndex, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	idx, exists := sm.containedIndexes[name]
+	return idx, exists
+}
+
+// GetContainedIndexesForLabel returns the contained-key indexes declared on
+// label, filled or not: node writes maintain both.
+func (sm *SchemaManager) GetContainedIndexesForLabel(label string) []*ContainedIndex {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	var out []*ContainedIndex
+	for _, idx := range sm.containedIndexes {
+		if idx.Label == label {
+			out = append(out, idx)
+		}
+	}
+	return out
+}
+
+// BackfillContainedIndex files values (node ID → properties) in a new
+// contained-key index and marks it filled. Nodes with pending writes in an
+// attached AsyncEngine are skipped, as BackfillPropertyIndex skips them: the
+// engine files them when they are flushed.
+func (sm *SchemaManager) BackfillContainedIndex(name string, values map[NodeID]map[string]interface{}) error {
+	idx, exists := sm.GetContainedIndex(name)
+	if !exists {
+		return localizedError(localization.StorageSchemaIndexNotFound(name), nil)
+	}
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+	kept := make(map[NodeID]map[string]interface{}, len(values))
+	for nodeID, properties := range values {
+		if view.keep(nodeID) {
+			kept[nodeID] = properties
+		}
+	}
+	idx.Backfill(kept)
+	return nil
+}
+
 // AddVectorIndex adds a vector index.
 func (sm *SchemaManager) AddVectorIndex(name, label, property string, dimensions int, similarityFunc string) error {
 	return sm.AddVectorIndexForEntity(name, label, property, dimensions, similarityFunc, ConstraintEntityNode)
@@ -1779,6 +1847,8 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		d = dropped{kind: "composite", key: name}
 	} else if _, ok := sm.fulltextIndexes[name]; ok {
 		d = dropped{kind: "fulltext", key: name}
+	} else if _, ok := sm.containedIndexes[name]; ok {
+		d = dropped{kind: "contained", key: name}
 	} else if _, ok := sm.vectorIndexes[name]; ok {
 		d = dropped{kind: "vector", key: name}
 	} else if ri, ok := sm.rangeIndexes[name]; ok {
@@ -1804,6 +1874,7 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	// Stash the old value for rollback, then delete.
 	var oldComposite *CompositeIndex
 	var oldFulltext *FulltextIndex
+	var oldContained *ContainedIndex
 	var oldVector *VectorIndex
 	var oldRange *RangeIndex
 
@@ -1814,6 +1885,9 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	case "fulltext":
 		oldFulltext = sm.fulltextIndexes[d.key]
 		delete(sm.fulltextIndexes, d.key)
+	case "contained":
+		oldContained = sm.containedIndexes[d.key]
+		delete(sm.containedIndexes, d.key)
 	case "vector":
 		oldVector = sm.vectorIndexes[d.key]
 		delete(sm.vectorIndexes, d.key)
@@ -1831,6 +1905,8 @@ func (sm *SchemaManager) DropIndex(name string) error {
 				sm.compositeIndexes[d.key] = oldComposite
 			case "fulltext":
 				sm.fulltextIndexes[d.key] = oldFulltext
+			case "contained":
+				sm.containedIndexes[d.key] = oldContained
 			case "vector":
 				sm.vectorIndexes[d.key] = oldVector
 			case "range":
@@ -1882,7 +1958,7 @@ func (sm *SchemaManager) SchemaObjectCounts() (indexes, constraints int) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	indexes = len(sm.fulltextIndexes) + len(sm.vectorIndexes)
+	indexes = len(sm.fulltextIndexes) + len(sm.containedIndexes) + len(sm.vectorIndexes)
 	for _, idx := range sm.compositeIndexes {
 		if idx.OwningConstraint == "" {
 			indexes++
@@ -1927,6 +2003,15 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 			"labels":            idx.Labels,
 			"relationshipTypes": idx.RelationshipTypes,
 			"properties":        idx.Properties,
+		})
+	}
+
+	for _, idx := range sm.containedIndexes {
+		indexes = append(indexes, map[string]interface{}{
+			"name":       idx.Name,
+			"type":       "CONTAINED",
+			"labels":     []string{idx.Label},
+			"properties": idx.Properties,
 		})
 	}
 
@@ -2466,6 +2551,18 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 			TotalEntries: 0, // Would require integration with fulltext engine
 			UniqueValues: 0,
 			Selectivity:  0,
+		})
+	}
+
+	// Contained-key indexes: nodes filed and distinct keys.
+	for _, idx := range sm.containedIndexes {
+		stats = append(stats, IndexStats{
+			Name:         idx.Name,
+			Type:         "CONTAINED",
+			Label:        idx.Label,
+			Properties:   idx.Properties,
+			TotalEntries: int64(idx.NodeCount()),
+			UniqueValues: int64(idx.KeyCount()),
 		})
 	}
 

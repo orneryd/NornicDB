@@ -109,6 +109,8 @@ func TestPostCommitPublicationOrder(t *testing.T) {
 				require.NoError(t, sm.AddPropertyIndex("idx_l_p", "L", []string{"p"}))
 				require.NoError(t, sm.AddCompositeIndex("idx_l_pq", "L", []string{"p", "q"}))
 				require.NoError(t, sm.AddUniqueConstraint("unique_l_u", "L", "u"))
+				require.NoError(t, sm.AddContainedIndex("contained_l_p", "L", []string{"p"}))
+				require.NoError(t, sm.BackfillContainedIndex("contained_l_p", nil))
 				sm.MarkPropertyIndexesFilled()
 				if scenario.initial != nil {
 					_, err := b.CreateNode(scenario.initial)
@@ -137,6 +139,10 @@ func TestPostCommitPublicationOrder(t *testing.T) {
 				assert.True(t, ok)
 				assert.Equal(t, []NodeID{id}, composite.LookupFull(live, "w"))
 				assert.Equal(t, []NodeID{id}, composite.LookupPrefix(live))
+				contained, containedOK := sm.GetContainedIndex("contained_l_p")
+				if assert.True(t, containedOK) {
+					assert.Equal(t, []ContainedMatch{{NodeID: id, Key: live}}, contained.Lookup(live), "the contained index must hold the live key")
+				}
 
 				holder, found, complete, constrained := sm.lookupUniqueConstraintValueForValidation("L", "u", live)
 				assert.True(t, constrained && complete)
@@ -148,6 +154,9 @@ func TestPostCommitPublicationOrder(t *testing.T) {
 				for _, stale := range scenario.stale {
 					assert.Empty(t, sm.PropertyIndexLookup("L", "p", stale), "a replaced value must not stay filed")
 					assert.Empty(t, composite.LookupFull(stale, "w"))
+					if containedOK {
+						assert.Empty(t, contained.Lookup(stale), "the contained index must not keep a replaced key")
+					}
 					holder, found, _, _ := sm.lookupUniqueConstraintValueForValidation("L", "u", stale)
 					assert.False(t, found && holder == id, "the registry must not keep a replaced value")
 					_, err := b.CreateNode(&Node{ID: NodeID("db:free-" + stale), Labels: []string{"L"}, Properties: map[string]any{"u": stale}})

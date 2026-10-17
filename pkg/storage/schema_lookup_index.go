@@ -112,6 +112,9 @@ func (sm *SchemaManager) indexNameTakenLocked(name string) bool {
 	if _, ok := sm.fulltextIndexes[name]; ok {
 		return true
 	}
+	if _, ok := sm.containedIndexes[name]; ok {
+		return true
+	}
 	if _, ok := sm.vectorIndexes[name]; ok {
 		return true
 	}

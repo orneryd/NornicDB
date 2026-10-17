@@ -28,6 +28,7 @@ type SchemaDefinition struct {
 	PropertyIndexes  []SchemaPropertyIndexDef  `json:"property_indexes,omitempty"`
 	CompositeIndexes []SchemaCompositeIndexDef `json:"composite_indexes,omitempty"`
 	FulltextIndexes  []FulltextIndex           `json:"fulltext_indexes,omitempty"`
+	ContainedIndexes []SchemaContainedIndexDef `json:"contained_indexes,omitempty"`
 	VectorIndexes    []VectorIndex             `json:"vector_indexes,omitempty"`
 	RangeIndexes     []SchemaRangeIndexDef     `json:"range_indexes,omitempty"`
 	// LookupIndexes are the token lookup indexes (schema_lookup_index.go).
@@ -48,6 +49,14 @@ type SchemaPropertyIndexDef struct {
 }
 
 type SchemaCompositeIndexDef struct {
+	Name       string   `json:"name"`
+	Label      string   `json:"label"`
+	Properties []string `json:"properties"`
+}
+
+// SchemaContainedIndexDef is a contained-key index rule (ContainedIndex);
+// its contents are rebuilt from the nodes at open.
+type SchemaContainedIndexDef struct {
 	Name       string   `json:"name"`
 	Label      string   `json:"label"`
 	Properties []string `json:"properties"`
@@ -206,6 +215,18 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 		})
 	}
 
+	// Contained-key indexes.
+	for _, idx := range sm.containedIndexes {
+		def.ContainedIndexes = append(def.ContainedIndexes, SchemaContainedIndexDef{
+			Name:       idx.Name,
+			Label:      idx.Label,
+			Properties: append([]string(nil), idx.Properties...),
+		})
+	}
+	sort.Slice(def.ContainedIndexes, func(i, j int) bool {
+		return def.ContainedIndexes[i].Name < def.ContainedIndexes[j].Name
+	})
+
 	// Vector indexes.
 	if len(sm.vectorIndexes) > 0 {
 		def.VectorIndexes = make([]VectorIndex, 0, len(sm.vectorIndexes))
@@ -339,6 +360,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
 	sm.compositeIndexes = make(map[string]*CompositeIndex)
 	sm.fulltextIndexes = make(map[string]*FulltextIndex)
+	sm.containedIndexes = make(map[string]*ContainedIndex)
 	sm.vectorIndexes = make(map[string]*VectorIndex)
 	sm.rangeIndexes = make(map[string]*RangeIndex)
 	sm.lookupIndexes = importLookupIndexes(def.LookupIndexes)
@@ -450,6 +472,14 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			RelationshipTypes: relTypes,
 			Properties:        props,
 		}
+	}
+
+	// Contained-key indexes load unfilled; the open-time rebuild fills them
+	// from the nodes (rebuildUniqueConstraintValues).
+	for _, idx := range def.ContainedIndexes {
+		contained := newContainedIndex(idx.Name, idx.Label, idx.Properties)
+		contained.unfilled.Store(true)
+		sm.containedIndexes[idx.Name] = contained
 	}
 
 	// Vector indexes.

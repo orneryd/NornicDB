@@ -94,6 +94,11 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 			staged.mu.RUnlock()
 		}
 	}
+	for name, index := range snapshot.containedIndexes {
+		if staged := view.containedIndexes[name]; staged != nil && sameContainedIndexDefinition(index, staged) {
+			index.copyStateFrom(staged)
+		}
+	}
 	for name, index := range snapshot.rangeIndexes {
 		if staged := view.rangeIndexes[name]; staged != nil && sameRangeIndexDefinition(index, staged) {
 			staged.mu.RLock()
@@ -133,6 +138,11 @@ func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager)
 			snapshot.rangeIndexes[name] = existing
 		}
 	}
+	for name, index := range snapshot.containedIndexes {
+		if existing := sm.containedIndexes[name]; existing != nil && sameContainedIndexDefinition(index, existing) {
+			snapshot.containedIndexes[name] = existing
+		}
+	}
 	sm.tokenOrder = snapshot.tokenOrder
 	sm.uniqueConstraints = snapshot.uniqueConstraints
 	sm.constraints = snapshot.constraints
@@ -140,6 +150,7 @@ func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager)
 	sm.propertyTypeConstraints = snapshot.propertyTypeConstraints
 	sm.compositeIndexes = snapshot.compositeIndexes
 	sm.fulltextIndexes = snapshot.fulltextIndexes
+	sm.containedIndexes = snapshot.containedIndexes
 	sm.vectorIndexes = snapshot.vectorIndexes
 	sm.rangeIndexes = snapshot.rangeIndexes
 	sm.lookupIndexes = snapshot.lookupIndexes

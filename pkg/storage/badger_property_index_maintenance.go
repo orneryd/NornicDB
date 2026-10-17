@@ -28,6 +28,7 @@ package storage
 
 import (
 	"log/slog"
+	"slices"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -45,6 +46,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 		return
 	}
 	b.maintainCompositeIndexesOnNodeCreated(node, sm)
+	b.maintainContainedIndexes(sm, node.ID, nil, node)
 }
 
 // maintainCompositeIndexesOnNodeCreated files the node in every equality
@@ -75,6 +77,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 		return
 	}
 	b.maintainCompositeIndexesOnNodeUpdated(node, oldNode, sm)
+	b.maintainContainedIndexes(sm, node.ID, oldNode, node)
 }
 
 // maintainCompositeIndexesOnNodeUpdated moves the node's entries from
@@ -125,6 +128,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeI
 		return
 	}
 	b.maintainCompositeIndexesOnNodeDeleted(nodeID, old, sm)
+	b.maintainContainedIndexes(sm, nodeID, old, nil)
 }
 
 // maintainCompositeIndexesOnNodeDeleted removes the node from every equality
@@ -171,6 +175,67 @@ func (b *BadgerEngine) refileFromCommitted(idx *CompositeIndex, id NodeID, old, 
 		}
 		return []map[string]interface{}{current.Properties}
 	})
+}
+
+// maintainContainedIndexes refiles id in every contained-key index of a
+// label old or written carries (old is the pre-write node, nil for a create;
+// written the result, nil for a delete) from the node's latest committed
+// state, read under the index's lock (F-PUBLISH). An index whose keys the
+// write leaves alone is skipped.
+func (b *BadgerEngine) maintainContainedIndexes(sm *SchemaManager, id NodeID, old, written *Node) {
+	seen := make(map[*ContainedIndex]bool)
+	for _, node := range []*Node{old, written} {
+		if node == nil {
+			continue
+		}
+		for _, label := range node.Labels {
+			for _, idx := range sm.GetContainedIndexesForLabel(label) {
+				if seen[idx] {
+					continue
+				}
+				seen[idx] = true
+				wasIn := old != nil && hasLabel(old.Labels, idx.Label)
+				isIn := written != nil && hasLabel(written.Labels, idx.Label)
+				if wasIn && isIn && sameContainedKeys(idx.Properties, old.Properties, written.Properties) {
+					continue
+				}
+				var fallback map[string]interface{}
+				if isIn {
+					fallback = written.Properties
+				}
+				idx.RefileNode(id, func() (map[string]interface{}, error) {
+					current, err := b.committedNodeProperties(id, idx.Properties)
+					if err != nil {
+						b.log.Warn("contained index refile read failed",
+							slog.String("component", "storage"),
+							slog.String("index", idx.Name),
+							slog.String("error", err.Error()))
+						return nil, err
+					}
+					if current == nil || !hasLabel(current.Labels, idx.Label) {
+						return nil, nil
+					}
+					return current.Properties, nil
+				}, fallback)
+			}
+		}
+	}
+}
+
+// sameContainedKeys reports whether two property maps give a node the same
+// keys in a contained-key index over indexed.
+func sameContainedKeys(indexed []string, first, second map[string]interface{}) bool {
+	firstKeys, firstEmpty := containedKeys(indexed, first)
+	secondKeys, secondEmpty := containedKeys(indexed, second)
+	if firstEmpty != secondEmpty || len(firstKeys) != len(secondKeys) {
+		return false
+	}
+	for _, key := range firstKeys {
+		if !slices.Contains(secondKeys, key) {
+			return false
+		}
+	}
+	return true
 }
 
 // publishUniqueValues is the one post-commit maintenance of the unique-value

@@ -176,9 +176,17 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 	for _, idx := range sm.compositeIndexes {
 		compositeIndexes = append(compositeIndexes, idx)
 	}
+	containedIndexes := make([]*ContainedIndex, 0, len(sm.containedIndexes))
+	for _, idx := range sm.containedIndexes {
+		containedIndexes = append(containedIndexes, idx)
+	}
 	sm.mu.RUnlock()
-	if !hasUnique && !hasCompositeIndexes {
+	hasContainedIndexes := len(containedIndexes) > 0
+	if !hasUnique && !hasCompositeIndexes && !hasContainedIndexes {
 		return nil
+	}
+	for _, idx := range containedIndexes {
+		idx.reset()
 	}
 
 	// Reset all in-memory derived caches first.
@@ -251,10 +259,21 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 					}
 				}
 			}
+
+			if hasContainedIndexes {
+				for _, label := range node.Labels {
+					for _, idx := range sm.GetContainedIndexesForLabel(label) {
+						idx.File(node.ID, node.Properties)
+					}
+				}
+			}
 		}
 		return nil
 	}); err != nil {
 		return err
+	}
+	for _, idx := range containedIndexes {
+		idx.unfilled.Store(false)
 	}
 
 	for _, uc := range uniqueConstraints {

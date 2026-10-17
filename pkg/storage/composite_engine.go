@@ -1141,6 +1141,14 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 						} else if len(relationshipTypes) > 0 && len(properties) > 0 {
 							_ = mergedSchema.AddFulltextRelationshipIndex(idxName, relationshipTypes, properties)
 						}
+					case "CONTAINED":
+						// The definition only: the merged index stays unfilled,
+						// and lookups don't use an unfilled index.
+						labels := anyToStringSlice(idxMap["labels"])
+						properties := anyToStringSlice(idxMap["properties"])
+						if len(labels) == 1 && len(properties) > 0 {
+							_ = mergedSchema.AddContainedIndex(idxName, labels[0], properties)
+						}
 					case "VECTOR":
 						if label, ok := idxMap["label"].(string); ok {
 							if property, ok := idxMap["property"].(string); ok {
