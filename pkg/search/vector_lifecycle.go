@@ -326,6 +326,12 @@ func readAcrossSourceSteps[T any](s *Service, ctx context.Context, read func(con
 	if ctx.Value(sourceStepReadKey{}) != nil {
 		return read(ctx)
 	}
+	// A cancelled request reports its cancellation, whatever the build state:
+	// readiness or a running step must not mask the caller's own context.
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
 	inner := context.WithValue(ctx, sourceStepReadKey{}, true)
 	for {
 		seq, err := s.waitSourceStepIdle(ctx)
