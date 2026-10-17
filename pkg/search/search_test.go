@@ -424,9 +424,9 @@ func TestServicePersistenceAndTimingHelpers(t *testing.T) {
 	// persistIVFHNSWBackground writes per-cluster files when cluster map exists.
 	clusterIdx := NewHNSWIndex(3, HNSWConfigFromEnv())
 	require.NoError(t, clusterIdx.Add("c-1", []float32{1, 0, 0}))
-	svc.clusterHNSWMu.Lock()
+	svc.clusterStateMu.Lock()
 	svc.clusterHNSW = map[int]*HNSWIndex{0: clusterIdx}
-	svc.clusterHNSWMu.Unlock()
+	svc.clusterStateMu.Unlock()
 	svc.persistIVFHNSWBackground(context.Background(), hnswPath)
 	_, err = os.Stat(filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf", "0"))
 	require.NoError(t, err)
