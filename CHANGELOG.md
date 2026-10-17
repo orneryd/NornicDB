@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use store-owned read-only mappings for file-backed query rescoring and final
+  vector selection, avoiding repeated file reads and internal vector copies.
+  Keep public owning-copy semantics and retire mappings on growth, reload,
+  compaction and close. The portable ReadAt path remains available (`nommap` build tag).
+
 - Separate cached search responses by effective quantization ignore/rescore/oversampling
   and HNSW beam settings; retire cached responses when compression policy changes.
   Drop/recreate clears collection-owned compression overrides while embedding regeneration
