@@ -269,7 +269,7 @@ def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_
         if not numbers or len(numbers) < min_body_lines:
             continue
         fraction = sum(1 for n in numbers if n in file_diff.added) / len(numbers)
-        if fraction < min_added_fraction:
+        if fraction <= 0 or fraction < min_added_fraction:
             continue
         body = gi.body_for_node(repo_root, data, symbols, line_cache, state_cache, docstrings)
         if not body or len(tokens(body)) < min_tokens:
