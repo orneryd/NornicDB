@@ -217,17 +217,19 @@ func (s *Service) resetBaseVectorSource() error {
 	s.clearNodeVectorMetadataLocked()
 	s.changeNodeSourcesLocked(nodeVectorReset)
 	s.mu.Unlock()
-	capacityErr := s.restoreNodeIndexCapacityLocked()
+	resetErr := s.restoreNodeIndexCapacityLocked()
 	s.retireVectorSourceLocked(false)
-	if capacityErr != nil {
-		return capacityErr
-	}
-	if err := s.removeVectorArtifactsLocked(); err != nil {
-		return err
+	if resetErr == nil {
+		resetErr = s.removeVectorArtifactsLocked()
 	}
 	// The replacement is a source transition: re-apply the live writes in the
-	// same locked step, so they never leave search (F-I86, decision B).
-	return s.replayPopulationWritesLocked(context.Background())
+	// same locked step, so they never leave search (F-I86, decision B), also
+	// when the reset itself failed after clearing the source (sol-r1 finding 2).
+	replayErr := s.replayPopulationWritesLocked(context.Background())
+	if resetErr != nil {
+		return resetErr
+	}
+	return replayErr
 }
 
 type nodePopulationPlan struct {

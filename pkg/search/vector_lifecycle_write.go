@@ -49,6 +49,11 @@ func (s *Service) applyWrite(dimensions int, m liveMutation, load func() (liveMu
 		unlock()
 		return m, nil, err
 	}
+	// A provisional write (persisted sources not admitted yet) never infers
+	// dimensions: the empty memory index says nothing about the saved source,
+	// and replacing it would mark that source cleared and authoritative. The
+	// population adopts the record's dimensions if the restored source is empty.
+	provisional := s.nodePopulationRestorable() && !s.nodeSourcesCompleteLocked()
 	for loaded := false; ; {
 		if load != nil && !loaded {
 			if m, dimensions, err = load(); err != nil {
@@ -57,7 +62,7 @@ func (s *Service) applyWrite(dimensions int, m liveMutation, load func() (liveMu
 			}
 			loaded = true
 		}
-		if !s.needsVectorDimensionsLocked(dimensions) {
+		if provisional || !s.needsVectorDimensionsLocked(dimensions) {
 			break
 		}
 		// Joining construction must precede indexMu. Retirement cancels the
@@ -370,7 +375,20 @@ type stagedPersistedSources struct {
 	fulltextAccepted bool
 	fulltextErr      error
 
-	vectors *VectorFileStore // nil once adopted
+	// The vector file attempt: which file and dimensions, and its outcome.
+	// vectors is nil once adopted or when the load failed (vectorsErr).
+	vectorsAttempted bool
+	vectorsPath      string
+	vectorsDims      int
+	vectorsErr       error
+	vectors          *VectorFileStore
+
+	// restage asks the population to read the image again outside indexMu:
+	// admission found an existing saved file with no matching staged
+	// candidate (sol-r1 finding 3). lockedLoadAllowed lets a final attempt
+	// load it under indexMu instead of retrying forever.
+	restage           bool
+	lockedLoadAllowed bool
 }
 
 // stagePersistedSources reads the saved image for a population that may
@@ -389,50 +407,68 @@ func (s *Service) stagePersistedSources(fulltextPath string) *stagedPersistedSou
 		staged.fulltext, staged.fulltextStaged = index, true
 	}
 	if !memoryAuthoritative {
-		staged.vectors = s.stageVectorFileStore()
+		s.stageVectorFileStore(staged)
 	}
 	return staged
 }
 
 // stageVectorFileStore opens and loads the saved vector file when the live
-// source is not file-backed yet. Call without indexMu.
-func (s *Service) stageVectorFileStore() *VectorFileStore {
+// source is not file-backed yet, recording the attempt and its outcome. Call
+// without indexMu.
+func (s *Service) stageVectorFileStore(staged *stagedPersistedSources) {
 	if s.vectorStorageMode == "memory" || !s.persistEnabled.Load() {
-		return nil
+		return
 	}
 	s.mu.RLock()
 	path, memory, current := s.vectorIndexPath, s.vectorIndex, s.vectorFileStore
 	s.mu.RUnlock()
 	if path == "" || memory == nil || current != nil {
-		return nil
+		return
 	}
 	dims := memory.GetDimensions()
-	if dims <= 0 {
-		return nil
+	if dims <= 0 || !savedVectorFilePresent(path) {
+		return
 	}
-	if _, err := security.RootedStat(path + ".vec"); err != nil {
-		return nil
-	}
+	staged.vectorsAttempted, staged.vectorsPath, staged.vectorsDims = true, path, dims
 	store, err := NewVectorFileStore(path, dims)
 	if err != nil {
-		return nil
+		staged.vectorsErr = err
+		return
 	}
 	if err := store.Load(); err != nil {
 		_ = store.Close()
-		return nil
+		staged.vectorsErr = err
+		return
 	}
-	return store
+	staged.vectors = store
+}
+
+// savedVectorFilePresent reports whether a non-empty saved vector file exists:
+// one whose load is real disk work.
+func savedVectorFilePresent(path string) bool {
+	info, err := security.RootedStat(path + ".vec")
+	return err == nil && info.Size() > 0
 }
 
 // takeVectors hands the staged store to a caller that adopts it, if it was
 // opened for path with dims.
 func (st *stagedPersistedSources) takeVectors(path string, dims int) *VectorFileStore {
-	if st == nil || st.vectors == nil || st.vectors.vecPath != path+".vec" || st.vectors.GetDimensions() != dims {
+	if !st.attemptedFor(path, dims) || st.vectors == nil {
 		return nil
 	}
 	store := st.vectors
 	st.vectors = nil
 	return store
+}
+
+func (st *stagedPersistedSources) attemptedFor(path string, dims int) bool {
+	return st != nil && st.vectorsAttempted && st.vectorsPath == path && st.vectorsDims == dims
+}
+
+// failedFor reports a staged load of path with dims that failed. Admission
+// uses the in-memory index instead of repeating that load under indexMu.
+func (st *stagedPersistedSources) failedFor(path string, dims int) bool {
+	return st.attemptedFor(path, dims) && st.vectorsErr != nil
 }
 
 // close releases a staged store that was not adopted.
@@ -441,4 +477,56 @@ func (st *stagedPersistedSources) close() {
 		_ = st.vectors.Close()
 		st.vectors = nil
 	}
+}
+
+// restorePersistedSourcesStep stages the saved image without indexMu, then
+// restores the sources and the live writes in one locked step (F-I86,
+// decision B): the recorded writes are withdrawn, so their provisional
+// entries cannot make the saved image look out of date; the sources are
+// restored or selected; and the record is re-applied before indexMu is
+// released. Live writes may still be newer than the saved image after
+// persistence was off; only the source record establishes completeness.
+//
+// It reports whether a live vector source was selected, and restage when
+// admission found an existing saved vector file with no matching staged
+// candidate; the caller then repeats the step. lockedLoadAllowed lets a final
+// attempt load that file under indexMu instead.
+func (s *Service) restorePersistedSourcesStep(ctx context.Context, fulltextPath string, storageEmpty, lockedLoadAllowed bool) (liveSelected, restage bool, err error) {
+	staged := s.stagePersistedSources(fulltextPath)
+	staged.lockedLoadAllowed = lockedLoadAllowed
+	defer staged.close()
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	s.withdrawPopulationWritesLocked()
+	runPopulationHook(&populationRestoreHook, s)
+	textComplete := s.nodeSources.textComplete
+	fulltextUnchanged := !s.fulltext().IsDirty() || s.fulltext().Count() == 0
+	if fulltextPath != "" && !textComplete && fulltextUnchanged {
+		var accepted bool
+		var loadErr error
+		if staged.fulltextStaged {
+			// With the record withdrawn the live index holds nothing the saved
+			// image lacks, so installing the staged copy equals loading it in
+			// place; the replay below re-applies the record to it.
+			accepted, loadErr = staged.fulltextAccepted, staged.fulltextErr
+			if loadErr == nil && accepted {
+				s.setFulltext(staged.fulltext)
+			}
+		} else {
+			accepted, loadErr = s.fulltext().loadSnapshot(fulltextPath)
+		}
+		if loadErr == nil && accepted {
+			s.changeNodeSourcesLocked(nodeTextRestored)
+		}
+		if !accepted && s.fulltext().Count() == 0 {
+			if info, statErr := security.RootedStat(fulltextPath); statErr == nil {
+				s.logPrintf("📇 BuildIndexes: BM25 file present but loaded 0 docs (%s, %d bytes); rebuilding from storage",
+					fulltextPath, info.Size())
+			}
+		}
+	}
+	// A persistence-off snapshot remains authoritative after re-enable, and an
+	// active VFS must not be reopened with older saved query metadata.
+	liveSelected = s.admitStagedVectorFileStore(storageEmpty, staged)
+	return liveSelected, staged.restage, s.replayPopulationWritesLocked(ctx)
 }

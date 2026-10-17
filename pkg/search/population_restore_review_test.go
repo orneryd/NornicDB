@@ -39,29 +39,54 @@ func searchIDs(t *testing.T, svc *Service, term string) []string {
 
 // Review 4300779913: a population cancelled after it withdrew the recorded
 // live writes must re-apply them. The writes already returned success, so
-// they stay searchable whether or not the population completes.
+// they stay in effect, by text and by vector, whether or not the population
+// completes; a recorded removal also holds against the restored image.
 func TestCancelledPopulationReappliesWithdrawnWrites(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
 			svc, engine := persistedRestartService(t, backend)
+			entered, release := make(chan struct{}), make(chan struct{})
+			holdStage := func(s *Service) {
+				if s == svc {
+					close(entered)
+					<-release
+				}
+			}
+			populationStageHook.Store(&holdStage)
 			cancelAfterWithdraw := func(s *Service) {
 				if s == svc {
 					s.cancelWorkers(workerAdmission)
 				}
 			}
 			populationRestoreHook.Store(&cancelAfterWithdraw)
-			t.Cleanup(func() { populationRestoreHook.Store(nil) })
+			t.Cleanup(func() {
+				populationStageHook.Store(nil)
+				populationRestoreHook.Store(nil)
+			})
 
 			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
 			_, err := engine.CreateNode(b)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(b)) // starts the write-started population
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the write-started population did not reach staging")
+			}
+			populationStageHook.Store(nil)
+			require.NoError(t, engine.DeleteNode("nornic:a"))
+			require.NoError(t, svc.RemoveNode("nornic:a")) // recorded removal of a saved node
+			close(release)
 			require.Eventually(t, func() bool { return svc.pendingNodeAdmission() == nil }, 10*time.Second, 10*time.Millisecond,
 				"the write-started population did not finish after cancellation")
 			populationRestoreHook.Store(nil)
 
 			require.Equal(t, []string{"nornic:b"}, searchIDs(t, svc, "bterm"),
 				"a successful write disappeared when its population was cancelled after withdrawal")
+			require.Contains(t, vectorHitNodeIDs(t, svc, []float32{0, 1, 0}), "nornic:b", "the write's vector")
+			require.Empty(t, searchIDs(t, svc, "aterm"), "a successful removal came back with the restored image")
+			require.NotContains(t, vectorHitNodeIDs(t, svc, []float32{1, 0, 0}), "nornic:a", "the removed node's vector")
 		})
 	}
 }
