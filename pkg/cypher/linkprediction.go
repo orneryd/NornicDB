@@ -299,14 +299,21 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 
 	// The semantic score: the best cosine similarity between the nodes'
 	// embeddings, every chunk, each named embedding with its namesake
-	// (#1186). The source's embeddings are read once.
+	// (#1186). The source's embeddings are read once. An aggregation
+	// projection's INTEGER id is no stored node, so it has none.
+	stored := func(id storage.NodeID) bool { return projection == nil || !projection.integerNodeIDs[string(id)] }
 	var sourceEmbeddings map[string][][]float32
-	if sourceNode, err := e.storage.GetNode(config.SourceNode); err == nil {
-		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
+	if stored(config.SourceNode) {
+		if sourceNode, err := e.storage.GetNode(config.SourceNode); err == nil {
+			sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
+		}
 	}
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
+		if source != config.SourceNode || !stored(target) {
+			return 0.0
+		}
 		targetNode, err := e.storage.GetNode(target)
-		if err != nil || source != config.SourceNode {
+		if err != nil {
 			return 0.0
 		}
 		return linkpredict.BestCosineSimilarity(sourceEmbeddings, nodeEmbeddingGroups(targetNode))
@@ -527,11 +534,11 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		return nil, err
 	}
 	if value := c.value("sourceNode"); value != nil {
-		source, ok := gdsNodeID(value)
+		source, ok := readGDSNode(value, gdsStoredKinds)
 		if !ok {
 			return nil, c.typeError("sourceNode", "Node")
 		}
-		config.SourceNode = source
+		config.SourceNode = storage.NodeID(source.key)
 	}
 	if value := c.value("targetNodes"); value != nil {
 		targets, isList := cypherListValue(value)
@@ -540,11 +547,11 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		}
 		config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
 		for _, target := range targets {
-			id, ok := gdsNodeID(target)
+			id, ok := readGDSNode(target, gdsStoredKinds)
 			if !ok {
 				return nil, c.typeError("targetNodes", "List")
 			}
-			config.TargetNodes[id] = true
+			config.TargetNodes[storage.NodeID(id.key)] = true
 		}
 	}
 	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
