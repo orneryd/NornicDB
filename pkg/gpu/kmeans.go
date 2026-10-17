@@ -300,12 +300,6 @@ func (c *Clustering) MemberIDs(clusterID int) []string {
 	return append([]string(nil), c.members[clusterID]...)
 }
 
-// ClusterOf returns the cluster id belongs to in this generation.
-func (c *Clustering) ClusterOf(id string) (int, bool) {
-	cluster, ok := c.idToCluster[id]
-	return cluster, ok
-}
-
 // Remove drops id from the generation and returns the cluster it was in.
 func (c *Clustering) Remove(id string) (int, bool) {
 	cluster, ok := c.idToCluster[id]
