@@ -381,45 +381,63 @@ func TestValidatePredictionDrainedGenerationPastLimitStaysRetired(t *testing.T) 
 	}
 }
 
-// Drains nest: a stand-in the estimate passes drains in turn and is restored
-// when its own parse ends, and the generation it stood in for is restored in
-// its place when the long parse ends.
-func TestValidatePredictionNestedDrainsRestoreInCreationOrder(t *testing.T) {
-	const limit = 3000
-	first := drainPredictionPastEstimate(t, limit)
-	second := acquirePrediction()
-	if second == first || !second.standIn {
-		t.Fatalf("new parses did not take a stand-in while the generation drains")
-	}
-	for seed := 100; seed < 140 && currentPrediction.Load() == second; seed++ {
-		if err := Validate(longFlatStatement(seed)); err != nil {
-			t.Fatal(err)
+// The budget covers every live generation, not only the current one: while
+// long parses hold generations, the ones made meanwhile stay small instead
+// of each growing to the budget again, so staggered long parses don't keep
+// a full generation each (bot P1 on #1382).
+func TestValidatePredictionBudgetCoversHeldGenerations(t *testing.T) {
+	const limit = 2000
+	setMaxParserDFAStates(t, limit)
+	retireCurrentPredictionForTest()
+	r := rand.New(rand.NewSource(7))
+	var held []*parserPrediction
+	for len(held) < 4 {
+		h := acquirePrediction()
+		held = append(held, h)
+		for n := 0; n < 400 && currentPrediction.Load() == h; n++ {
+			if err := Validate(distinctStatement(r)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if currentPrediction.Load() == h {
+			t.Fatalf("generation %d never passed the budget", len(held))
 		}
 	}
-	if currentPrediction.Load() == second {
-		t.Fatalf("the estimate never passed the limit on the stand-in")
+	shapes := func(p *parserPrediction) int {
+		p.shapesMu.Lock()
+		defer p.shapesMu.Unlock()
+		return len(p.shapes)
 	}
-	second.release(nil)
-	if currentPrediction.Load() != second {
-		t.Fatalf("a drained stand-in within its state limit was not restored")
+	seen := map[*parserPrediction]bool{}
+	total := 0
+	for i, h := range held {
+		h.release(nil)
+		if seen[h] {
+			t.Fatalf("held parse %d took a generation an earlier held parse holds", i)
+		}
+		seen[h] = true
+		total += int(h.exactStates.Load())
+		t.Logf("held generation %d: statements=%d states=%d", i, shapes(h), h.exactStates.Load())
+		// Each generation made while the earlier ones are held takes only
+		// the statement that passed the budget.
+		if i > 0 && shapes(h) > 1 {
+			t.Fatalf("generation %d made while earlier ones held the budget took %d statements, %d states", i, shapes(h), h.exactStates.Load())
+		}
 	}
-	first.release(nil)
-	if currentPrediction.Load() != first {
-		t.Fatalf("the drained generation was not restored over its stand-in")
-	}
-	if sparePrediction.Load() != second {
-		t.Fatalf("the stand-in the restore replaced is not the spare")
+	t.Logf("held generations total %d states, budget %d", total, limit)
+	if live := liveStates.Load(); live > limit {
+		t.Fatalf("%d states still accounted after every held generation ended, past the budget of %d", live, limit)
 	}
 }
 
-// A drain hands new parses to the spare, which keeps the predictions it
-// built as a stand-in, instead of a cold generation.
+// A drain hands new parses to the spare, the stand-in the last restore
+// replaced, instead of a cold generation.
 func TestValidatePredictionDrainUsesSpare(t *testing.T) {
 	const limit = 3000
 	first := drainPredictionPastEstimate(t, limit)
-	standIn := currentPrediction.Load()
 	first.release(nil)
-	if currentPrediction.Load() != first || sparePrediction.Load() != standIn {
+	spare := sparePrediction.Load()
+	if currentPrediction.Load() != first || spare == nil {
 		t.Fatalf("the restore did not keep the stand-in as the spare")
 	}
 	holder := acquirePrediction()
@@ -428,7 +446,7 @@ func TestValidatePredictionDrainUsesSpare(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if currentPrediction.Load() != standIn {
+	if currentPrediction.Load() != spare {
 		t.Fatalf("the drain did not make the spare current")
 	}
 	if sparePrediction.Load() != nil {
@@ -463,17 +481,16 @@ func drainPredictionPastEstimate(t *testing.T, limit int) *parserPrediction {
 	if currentPrediction.Load() == first {
 		t.Fatalf("new-shape tokens=%d never passed the limit of %d", first.newShapeTokens.Load(), limit)
 	}
-	for seed := 40; seed < 50; seed++ {
-		if err := Validate(longFlatStatement(seed)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return holder
 }
 
 // retireCurrentPredictionForTest starts a fresh generation that stands in
 // for none, with no spare.
 func retireCurrentPredictionForTest() {
-	sparePrediction.Store(nil)
-	currentPrediction.Store(newParserPrediction(false))
+	if spare := sparePrediction.Swap(nil); spare != nil {
+		spare.settle()
+	}
+	if old := currentPrediction.Swap(newParserPrediction(false)); old != nil {
+		old.settle()
+	}
 }
