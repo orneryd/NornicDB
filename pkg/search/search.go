@@ -4447,6 +4447,13 @@ func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 	}
 	s.indexMu.Lock()
 	reloadErr := s.materializeNodeFulltextLocked()
+	// NODE admission completed the text source, so only a retired checkpoint
+	// leaves it incomplete here, whoever reloaded it first (this tail or a
+	// live mutation). Readiness is published only for a complete text
+	// source: runBasePopulationOperation rebuilds BM25 from storage first.
+	if reloadErr == nil && s.bm25Enabled.Load() && !s.nodeSources.textComplete {
+		reloadErr = fmt.Errorf("%w: retired during the build", errFulltextCheckpointRetired)
+	}
 	s.indexMu.Unlock()
 	if reloadErr != nil {
 		return reloadErr
