@@ -1,0 +1,42 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 05:56:44 🔬 K-means iteration 1 complete (reassignments: 0)
+--- FAIL: TestIVFHNSWCandidateGen_ErrorBranches (0.00s)
+    ivf_hnsw_candidate_gen_test.go:91: 
+        	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/ivf_hnsw_candidate_gen_test.go:91
+        	Error:      	An error is expected but got nil.
+        	Test:       	TestIVFHNSWCandidateGen_ErrorBranches
+2026/10/17 05:56:44 🔬 K-means iteration 1 complete (reassignments: 1)
+2026/10/17 05:56:44 🔬 K-means iteration 2 complete (reassignments: 0)
+--- FAIL: TestIVFHNSWCandidateGen_MoreSearchBranches (0.00s)
+    --- FAIL: TestIVFHNSWCandidateGen_MoreSearchBranches/one_missing_routed_graph_fails_the_complete_query (0.00s)
+        ivf_hnsw_candidate_gen_test.go:138: 
+            	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/ivf_hnsw_candidate_gen_test.go:138
+            	Error:      	An error is expected but got nil.
+            	Test:       	TestIVFHNSWCandidateGen_MoreSearchBranches/one_missing_routed_graph_fails_the_complete_query
+2026/10/17 05:56:44 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 05:56:44 INFO [K-MEANS] ✅ Clustering ENABLED | mode=CPU clusters=2 max_iter=5 init=kmeans++ event_id=search.operator.4b3a1e6f54727c19 component=search message_template="[K-MEANS] ✅ Clustering ENABLED | mode=%s clusters=%s max_iter=%d init=%s" arg_0=CPU arg_1=2 arg_2=5 arg_3=kmeans++
+2026/10/17 05:56:44 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/17 05:56:44 INFO 📊 Indexed 6 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=6
+2026/10/17 05:56:44 INFO 📇 BuildIndexes: base index iteration complete (processed=6) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=6
+2026/10/17 05:56:44 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/17 05:56:44 INFO 🔍 Warming up vector search pipeline (6 vectors)... event_id=search.operator.b35df112977624a0 component=search message_template="🔍 Warming up vector search pipeline (%d vectors)..." arg_0=6
+2026/10/17 05:56:44 INFO [K-MEANS] 🔍 Applied BM25 seed hints: 2 preferred seeds event_id=search.operator.fd350190065b0e9d component=search message_template="[K-MEANS] 🔍 Applied BM25 seed hints: %d preferred seeds" arg_0=2
+2026/10/17 05:56:44 INFO [K-MEANS] 🔄 STARTING | embeddings=6 event_id=search.operator.5efb610dd2d769e8 component=search message_template="[K-MEANS] 🔄 STARTING | embeddings=%d" arg_0=6
+2026/10/17 05:56:44 🔬 K-means iteration 1 complete (reassignments: 2)
+2026/10/17 05:56:44 🔬 K-means iteration 2 complete (reassignments: 0)
+2026/10/17 05:56:44 INFO [K-MEANS] ✅ COMPLETE | clusters=2 embeddings=6 iterations=2 duration=4.292µs avg_cluster_size=3.0 event_id=search.operator.ba9dc54e71cf5b56 component=search message_template="[K-MEANS] ✅ COMPLETE | clusters=%d embeddings=%d iterations=%d duration=%v avg_cluster_size=%.1f" arg_0=2 arg_1=6 arg_2=2 arg_3=4.292µs arg_4=3
+2026/10/17 05:56:44 INFO 🔍 Hybrid routing lexical profiles built for 2 clusters event_id=search.operator.5db4bbea301bb08e component=search message_template="🔍 Hybrid routing lexical profiles built for %d clusters" arg_0=2
+2026/10/17 05:56:44 INFO [IVF-HNSW] 🔨 Building per-cluster HNSW: 2 clusters (min size 3) event_id=search.operator.21ae6846d97acdd7 component=search message_template="[IVF-HNSW] 🔨 Building per-cluster HNSW: %d clusters (min size %d)" arg_0=2 arg_1=3
+2026/10/17 05:56:44 INFO [IVF-HNSW] 🔨 Built 1 cluster HNSW indexes event_id=search.operator.fb0964dc6199b6f1 component=search message_template="[IVF-HNSW] 🔨 Built %d cluster HNSW indexes" arg_0=1
+2026/10/17 05:56:44 INFO 🔍 Vector search strategy: IVF-HNSW (per-cluster HNSW) (N=6 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="IVF-HNSW (per-cluster HNSW)" arg_1=6
+2026/10/17 05:56:44 INFO 🔍 Vector search pipeline ready in 196.5µs event_id=search.operator.4cbb2bbd194dd189 component=search message_template="🔍 Vector search pipeline ready in %v" arg_0=196.5µs
+--- FAIL: TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute (0.01s)
+    ivf_hnsw_recall_regression_test.go:91: 
+        	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/ivf_hnsw_recall_regression_test.go:91
+        	Error:      	Expected value not to be nil.
+        	Test:       	TestIVFHNSWPublicHybridSearchPreservesLexicalGraphRoute
+        	Messages:   	small lexical-selected cluster must have a graph
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/search	0.539s
+FAIL
