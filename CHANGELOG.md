@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
+  query, retaining full per-cluster candidate budgets and merging in route order.
+
 - Resolve named/property/chunk lexical HNSW seeds using indexed identities while preserving
   direct document anchors in insertion order.
   Train PQ codebooks with the same squared-distance assignments used by encoding, retaining
