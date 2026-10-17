@@ -1,0 +1,91 @@
+{
+  "result": "pass",
+  "scope": "five completed selected full-corpus diagnostic cases; no runtime edits",
+  "cases": [
+    {
+      "mode": "sq-int8",
+      "case": 1,
+      "encoded_bytes": 90623340,
+      "heap": {
+        "HeapAlloc": 790565912,
+        "HeapSys": 2821554176,
+        "HeapIdle": 1942298624,
+        "HeapInuse": 879255552,
+        "HeapReleased": 1154998272
+      },
+      "rss_after_gc": 3383508992,
+      "physical_footprint_vmmap": "1.6G",
+      "recall_at_10": 0.9959,
+      "source": "92e1c44138aecac592bd421e94de67fcd5a90b9f",
+      "json_sha256": "08bacd8724cb2aa9d67b9422dafe1642c62fdac31154d29e785c69e3c43931a2"
+    },
+    {
+      "mode": "bq-asym4",
+      "case": 2,
+      "encoded_bytes": 11283840,
+      "heap": {
+        "HeapAlloc": 710543288,
+        "HeapSys": 2825715712,
+        "HeapIdle": 2024390656,
+        "HeapInuse": 801325056,
+        "HeapReleased": 1241841664
+      },
+      "rss_after_gc": 2575597568,
+      "physical_footprint_vmmap": "1.4G",
+      "recall_at_10": 0.9925,
+      "source": "92e1c44138aecac592bd421e94de67fcd5a90b9f",
+      "json_sha256": "c130b2cc8443c0ed92b4b31d9ad965e0b9acf231efd3a5fbcd5e2a65e0c46901"
+    },
+    {
+      "mode": "bq-asym8",
+      "case": 3,
+      "encoded_bytes": 11283840,
+      "heap": {
+        "HeapAlloc": 710084632,
+        "HeapSys": 2825650176,
+        "HeapIdle": 2028683264,
+        "HeapInuse": 796966912,
+        "HeapReleased": 1286307840
+      },
+      "rss_after_gc": 3472736256,
+      "physical_footprint_vmmap": "1.4G",
+      "recall_at_10": 0.9939,
+      "source": "92e1c44138aecac592bd421e94de67fcd5a90b9f",
+      "json_sha256": "b20641b4cdb42dfaa52235c78bff0b6697fca8827c5d2dff83ea3729ae2b623e"
+    },
+    {
+      "mode": "pq-x4",
+      "case": 4,
+      "encoded_bytes": 91319296,
+      "heap": {
+        "HeapAlloc": 809035712,
+        "HeapSys": 2754412544,
+        "HeapIdle": 1829249024,
+        "HeapInuse": 925163520,
+        "HeapReleased": 979550208
+      },
+      "rss_after_gc": 3409281024,
+      "physical_footprint_vmmap": "1.4G",
+      "recall_at_10": 0.9958,
+      "source": "92e1c44138aecac592bd421e94de67fcd5a90b9f",
+      "json_sha256": "6409c1ead216f9144f0862bcb6deaeec05440c9f3540c56e00dd17b2f7a76a92"
+    },
+    {
+      "mode": "pq-x64",
+      "case": 5,
+      "encoded_bytes": 6690496,
+      "heap": {
+        "HeapAlloc": 707399808,
+        "HeapSys": 2821586944,
+        "HeapIdle": 2022883328,
+        "HeapInuse": 798703616,
+        "HeapReleased": 1310851072
+      },
+      "rss_after_gc": 3420438528,
+      "physical_footprint_vmmap": "1.4G",
+      "recall_at_10": 0.8571,
+      "source": "92e1c44138aecac592bd421e94de67fcd5a90b9f",
+      "json_sha256": "ecfe0f09ccc94f2df95f9fd79cfe27bb00cb5c80092ef51c22effc095e24542b"
+    }
+  ]
+}
