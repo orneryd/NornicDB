@@ -52,20 +52,23 @@ func TestMaintainPropertyIndexesOnNodeDeletedWithNode_EarlyReturns(t *testing.T)
 	engine.maintainPropertyIndexesOnNodeDeletedWithNode("unprefixed", &Node{ID: "unprefixed", Labels: []string{"Person"}})
 }
 
-// Deleting a node removes its index entries on the auto-commit and the
-// explicit-transaction delete paths. Both clear the node cache before index
-// maintenance runs, so the entries must come from the deleted node itself.
+// Deleting a node removes its index entries, scalar values and list elements,
+// on the auto-commit and the explicit-transaction delete paths. Both clear the
+// node cache before index maintenance runs, so the entries must come from the
+// deleted node itself.
 func TestDeleteNodeRemovesPropertyIndexEntries(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
 			engine := newTestEngine(t)
 			sm := engine.GetSchemaForNamespace("db")
 			require.NoError(t, sm.AddPropertyIndex("idx_name", "Identity", []string{"name"}))
+			require.NoError(t, sm.AddPropertyIndex("idx_alias_keys", "Identity", []string{"alias_keys"}))
 			sm.MarkPropertyIndexesFilled()
 
-			_, err := engine.CreateNode(&Node{ID: "db:a", Labels: []string{"Identity"}, Properties: map[string]any{"name": "acme"}})
+			_, err := engine.CreateNode(&Node{ID: "db:a", Labels: []string{"Identity"}, Properties: map[string]any{"name": "acme", "alias_keys": []any{"x", "y"}}})
 			require.NoError(t, err)
 			require.Equal(t, []NodeID{"db:a"}, sm.PropertyIndexLookup("Identity", "name", "acme"))
+			require.Equal(t, []NodeID{"db:a"}, sm.PropertyIndexMemberLookup("Identity", "alias_keys", "x"))
 
 			if explicit {
 				tx, err := engine.BeginTransaction()
@@ -76,6 +79,9 @@ func TestDeleteNodeRemovesPropertyIndexEntries(t *testing.T) {
 				require.NoError(t, engine.DeleteNode("db:a"))
 			}
 			require.Empty(t, sm.PropertyIndexLookup("Identity", "name", "acme"))
+			require.Empty(t, sm.PropertyIndexLookup("Identity", "alias_keys", []any{"x", "y"}))
+			require.Empty(t, sm.PropertyIndexMemberLookup("Identity", "alias_keys", "x"))
+			require.Empty(t, sm.PropertyIndexMemberLookup("Identity", "alias_keys", "y"))
 		})
 	}
 }
