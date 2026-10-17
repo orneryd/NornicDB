@@ -1,0 +1,31 @@
+{
+  "embedder": "titan",
+  "model": "amazon.titan-embed-text-v2:0",
+  "dimensions": 1024,
+  "metric": "cosine",
+  "vectors": 88155,
+  "queries": 1000,
+  "truth_k": 100,
+  "roots": [
+    "NornicDB",
+    "code-intelligence",
+    "soraban-api",
+    "soraban-connect",
+    "soraban-react-app",
+    "atlas-backend",
+    "atlas-frontend",
+    "soraban-infra"
+  ],
+  "kinds": {
+    "doc": 4362,
+    "code": 83793
+  },
+  "seed": 42,
+  "chunking": {
+    "target": 1500,
+    "max": 2400,
+    "min": 200
+  },
+  "vectors_sha256": "00c581d81c9a33c9",
+  "created_at": "2026-10-16T21:38:35Z"
+}

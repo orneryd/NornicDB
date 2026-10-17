@@ -1,0 +1,208 @@
+{
+  "engine": "nornicdb",
+  "mode": "hnsw-balanced+metal",
+  "title": "HNSW balanced (M=16, efConstruction=200, efSearch=100) [metal]",
+  "strategy": "HNSW",
+  "base_mode": "hnsw-balanced",
+  "tag": "metal",
+  "gpu_requested": true,
+  "settings": {
+    "NORNICDB_CONFIG": "/private/tmp/nornic-ann-real-20261016-YeAi7Q/review4-data/nornicdb-hnsw-balanced+metal-r5go078n.empty-config.yaml",
+    "NORNICDB_EMBEDDING_ENABLED": "false",
+    "NORNICDB_MCP_ENABLED": "false",
+    "NORNICDB_HEIMDALL_ENABLED": "false",
+    "NORNICDB_QDRANT_GRPC_ENABLED": "true",
+    "NORNICDB_QDRANT_GRPC_LISTEN_ADDR": "127.0.0.1:16334",
+    "NORNICDB_QDRANT_GRPC_MAX_TOP_K": "10000",
+    "NORNICDB_VECTOR_CPU_BRUTE_MAX_N": "0",
+    "NORNICDB_KMEANS_CLUSTERING_ENABLED": "false",
+    "NORNICDB_TELEMETRY_LISTEN": "127.0.0.1:19190",
+    "NORNICDB_VECTOR_ANN_QUALITY": "balanced",
+    "NORNICDB_GPU_BACKEND": "metal",
+    "NORNICDB_VECTOR_GPU_BRUTE_MAX_N": "0"
+  },
+  "provenance": {
+    "binaries_sha256": {
+      "nornicdb": "3d198bcff4b42c17ec27d37504d6929e9f973d0237f66ea12f5256db39d95861",
+      "qdrant": "ee6f221283784b4c63fddfdb7ba02fb713211c86761f2b8e02f2605ca81bf90c"
+    },
+    "corpus_sha256": {
+      "vectors.npy": "ba1c6bb0c1907cdb3bc8e9b14d40109d68cd5ec0a01c667ef2a33a6b78da9729",
+      "queries.npy": "d295c6d9ce66c58869690c5bb202aa0a32fa1f812d8e72dff4ec55b3a880e2bb",
+      "truth.npy": "aafe231d65dbe0519fd3bdcbae21c5db1dfa09112907b5cde3b886056592e690",
+      "meta.json": "085567a1c6e9017f10867ae6a66956776ae8e9b06610baee20c0d09f885cc5e9"
+    },
+    "construction_input": "vectors only (legacy corpus has no payloads)",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]",
+    "dependencies": [
+      "annotated-types==0.8.0",
+      "anyio==4.15.1",
+      "boto3==1.43.114",
+      "botocore==1.43.114",
+      "certifi==2026.7.22",
+      "charset-normalizer==3.5.2",
+      "grpcio==1.84.0",
+      "h11==0.16.0",
+      "h2==4.4.1",
+      "hpack==4.2.0",
+      "httpcore==1.0.9",
+      "httpx==0.28.1",
+      "hyperframe==6.1.0",
+      "idna==3.20",
+      "jmespath==1.1.0",
+      "numpy==2.5.4",
+      "portalocker==3.2.0",
+      "protobuf==7.36.2",
+      "psutil==7.2.2",
+      "pydantic==2.14.1",
+      "pydantic_core==2.50.1",
+      "python-dateutil==2.9.0.post0",
+      "qdrant-client==1.19.1",
+      "requests==2.34.2",
+      "s3transfer==0.19.2",
+      "six==1.17.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "urllib3==2.8.0"
+    ],
+    "nornic_build_settings": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "-tags": "noui,nolocalllm",
+      "CGO_ENABLED": "1",
+      "CGO_CFLAGS": "",
+      "CGO_CPPFLAGS": "",
+      "CGO_CXXFLAGS": "",
+      "CGO_LDFLAGS": "",
+      "GOARCH": "arm64",
+      "GOOS": "darwin",
+      "GOARM64": "v8.0",
+      "vcs": "git",
+      "vcs.revision": "ce38410589d30884699cf0a61b871f51dfe3f493",
+      "vcs.time": "2026-10-17T03:08:27Z",
+      "vcs.modified": "false"
+    },
+    "harness_commit": "4857dda33",
+    "checkout_dirty": false
+  },
+  "vectors": 88155,
+  "loaded_points": 88155,
+  "dimensions": 1024,
+  "k": 10,
+  "load_s": 12.654658079147339,
+  "load_vectors_per_s": 6966.209552928499,
+  "index_ready_s": 47.61465501785278,
+  "rss_bytes_after_load": 4391092224,
+  "disk_bytes": 1238601728,
+  "runs": [
+    {
+      "recall@1": 0.998,
+      "recall@10": 0.9992,
+      "mean_ms": 1.3421804048120975,
+      "p50_ms": 1.2916876003146172,
+      "p95_ms": 1.6092624748125672,
+      "p99_ms": 4.240362192504108,
+      "qps": 3911.831866302635,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": null,
+      "search_params": {}
+    },
+    {
+      "recall@1": 0.987,
+      "recall@10": 0.9721,
+      "mean_ms": 0.5295259673148394,
+      "p50_ms": 0.5030827596783638,
+      "p95_ms": 0.5980061599984765,
+      "p99_ms": 0.6924473913386463,
+      "qps": 7650.280177302319,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 16,
+      "search_params": {
+        "hnsw_ef": "16"
+      }
+    },
+    {
+      "recall@1": 0.997,
+      "recall@10": 0.9932,
+      "mean_ms": 0.6860597543418407,
+      "p50_ms": 0.660791527479887,
+      "p95_ms": 0.7767118280753493,
+      "p99_ms": 0.9030487248674034,
+      "qps": 7191.957203995584,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 32,
+      "search_params": {
+        "hnsw_ef": "32"
+      }
+    },
+    {
+      "recall@1": 0.998,
+      "recall@10": 0.9988,
+      "mean_ms": 1.1126397540792823,
+      "p50_ms": 1.0156664066016674,
+      "p95_ms": 1.663256436586375,
+      "p99_ms": 4.030987131409347,
+      "qps": 5203.458479146678,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 64,
+      "search_params": {
+        "hnsw_ef": "64"
+      }
+    },
+    {
+      "recall@1": 0.999,
+      "recall@10": 0.9996,
+      "mean_ms": 1.5464865523390472,
+      "p50_ms": 1.50335393846035,
+      "p95_ms": 1.811549928970635,
+      "p99_ms": 4.5751272048801175,
+      "qps": 3433.5996866576193,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 128,
+      "search_params": {
+        "hnsw_ef": "128"
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.9999,
+      "mean_ms": 2.4793529310263693,
+      "p50_ms": 2.4331032764166594,
+      "p95_ms": 2.963355090469122,
+      "p99_ms": 5.391977778635919,
+      "qps": 1955.2019248911497,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 256,
+      "search_params": {
+        "hnsw_ef": "256"
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.9999,
+      "mean_ms": 4.179445886518806,
+      "p50_ms": 4.143604543060064,
+      "p95_ms": 5.189168779179453,
+      "p99_ms": 6.906104711815712,
+      "qps": 1187.7213376701065,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 512,
+      "search_params": {
+        "hnsw_ef": "512"
+      }
+    }
+  ],
+  "rss_bytes_after_queries": 3761569792,
+  "footprint_phase": "snapshot after all queries and a final index-readiness check",
+  "footprint_unix_s": 1792208134.207111,
+  "build_backend": "Metal",
+  "collection_settings": null,
+  "wall_s": 79.72817397117615
+}
