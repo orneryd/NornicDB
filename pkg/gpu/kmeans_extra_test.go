@@ -82,61 +82,36 @@ func TestClusterIndexRestoreClusteringState(t *testing.T) {
 	})
 }
 
-func TestClusterIndexAssignmentAndCentroidHelpers(t *testing.T) {
-	ci := NewClusterIndex(nil, embConfig(2), nil)
-	ci.nodeIDs = []string{"a", "b", "c"}
-	ci.cpuVectors = []float32{1, 0, 0.8, 0, 0, 1}
-	ci.centroids = [][]float32{{1, 0}, {0, 1}}
-	ci.assignments = []int{1, 1, 0}
-
-	if changed := ci.assignToCentroids(); changed != 3 {
-		t.Fatalf("assignToCentroids changed %d assignments, want 3", changed)
+// Membership is keyed by node ID: moves and swap-removals keep every
+// member's position index consistent.
+func TestClusterMembershipByID(t *testing.T) {
+	m := newClusterMembership(0)
+	for i, id := range []string{"a", "b", "c", "d"} {
+		if _, was := m.set(id, i%2); was {
+			t.Fatalf("set(%s) reported a previous cluster", id)
+		}
 	}
-	if !reflect.DeepEqual(ci.assignments, []int{0, 0, 1}) {
-		t.Fatalf("assignments = %v, want [0 0 1]", ci.assignments)
+	if prev, was := m.set("a", 1); !was || prev != 0 {
+		t.Fatalf("moving a = %d, %t; want 0, true", prev, was)
 	}
-
-	ci.updateCentroids()
-	assertFloat32Near(t, ci.centroids[0][0], 0.9)
-	assertFloat32Near(t, ci.centroids[0][1], 0)
-	assertFloat32Near(t, ci.centroids[1][0], 0)
-	assertFloat32Near(t, ci.centroids[1][1], 1)
-
-	ci.buildClusterMap()
-	if !reflect.DeepEqual(ci.clusterMap, map[int][]int{0: {0, 1}, 1: {2}}) {
-		t.Fatalf("clusterMap = %v", ci.clusterMap)
+	if got := sortedIDs(m.ids(1)); !reflect.DeepEqual(got, []string{"a", "b", "d"}) {
+		t.Fatalf("cluster 1 = %v", got)
 	}
-
-	ci.removeFromClusterMap(0, 1)
-	if !reflect.DeepEqual(ci.clusterMap[0], []int{0}) {
-		t.Fatalf("cluster 0 after removal = %v, want [0]", ci.clusterMap[0])
+	if cluster, ok := m.remove("b"); !ok || cluster != 1 {
+		t.Fatalf("remove(b) = %d, %t", cluster, ok)
 	}
-	ci.removeFromClusterMap(0, 99)
-	if !reflect.DeepEqual(ci.clusterMap[0], []int{0}) {
-		t.Fatalf("missing removal changed cluster 0: %v", ci.clusterMap[0])
+	if _, ok := m.remove("b"); ok {
+		t.Fatalf("removing an absent id is a no-op")
 	}
-	ci.addToClusterMap(1, 1)
-	if !reflect.DeepEqual(ci.clusterMap[1], []int{2, 1}) {
-		t.Fatalf("cluster 1 after add = %v, want [2 1]", ci.clusterMap[1])
+	for cluster, members := range m.members {
+		for i, id := range members {
+			if m.pos[id] != i || m.idToCluster[id] != cluster {
+				t.Fatalf("%s: pos %d cluster %d, want %d %d", id, m.pos[id], m.idToCluster[id], i, cluster)
+			}
+		}
 	}
-}
-
-func TestClusterIndexUpdateCentroidsWithBufferKeepsEmptyClusters(t *testing.T) {
-	ci := NewClusterIndex(nil, embConfig(2), nil)
-	ci.nodeIDs = []string{"a", "b"}
-	ci.cpuVectors = []float32{1, 3, 5, 7}
-	ci.assignments = []int{0, 1}
-	ci.centroids = [][]float32{{0, 0}, {0, 0}, {9, 9}}
-
-	sums := [][]float64{{100, 100}, {100, 100}, {100, 100}}
-	counts := []int{8, 8, 8}
-	ci.updateCentroidsWithBuffer(sums, counts)
-
-	if !reflect.DeepEqual(counts, []int{1, 1, 0}) {
-		t.Fatalf("counts = %v, want [1 1 0]", counts)
-	}
-	if !reflect.DeepEqual(ci.centroids, [][]float32{{1, 3}, {5, 7}, {9, 9}}) {
-		t.Fatalf("centroids = %v", ci.centroids)
+	if _, ok := m.clusterOf("b"); ok {
+		t.Fatalf("a removed id has no cluster")
 	}
 }
 
@@ -302,15 +277,15 @@ func TestClusteringReconcilesMembershipByID(t *testing.T) {
 		t.Fatalf("clusters a=%d b=%d, want two distinct topics", aCluster, bCluster)
 	}
 
-	if _, ok := ci.AssignToClustering(clustering, "unknown"); ok {
+	if _, _, _, ok := ci.AssignToClustering(clustering, "unknown"); ok {
 		t.Fatalf("an id without an embedding cannot be assigned")
 	}
 	requireNoError(t, ci.Add("a3", []float32{0.95, 0.05}))
-	if cid, ok := ci.AssignToClustering(clustering, "a3"); !ok || cid != aCluster {
+	if _, was, cid, ok := ci.AssignToClustering(clustering, "a3"); !ok || was || cid != aCluster {
 		t.Fatalf("AssignToClustering(a3) = %d, %t; want %d", cid, ok, aCluster)
 	}
 	requireNoError(t, ci.Add("a2", []float32{0.05, 0.95})) // a2 moved next to b
-	if cid, ok := ci.AssignToClustering(clustering, "a2"); !ok || cid != bCluster || clusterOf("a2") != bCluster {
+	if prev, was, cid, ok := ci.AssignToClustering(clustering, "a2"); !ok || !was || prev != aCluster || cid != bCluster || clusterOf("a2") != bCluster {
 		t.Fatalf("a moved embedding is reassigned once: cluster %d, ok %t", cid, ok)
 	}
 	if cid, ok := clustering.Remove("b2"); !ok || cid != bCluster {
@@ -334,4 +309,51 @@ func sortedIDs(ids []string) []string {
 	out := append([]string(nil), ids...)
 	sort.Strings(out)
 	return out
+}
+
+// A published clustering admits, moves and removes members live, by ID.
+func TestClusterIndexLiveMembership(t *testing.T) {
+	ci := NewClusterIndex(nil, embConfig(2), &KMeansConfig{NumClusters: 2, MaxIterations: 10, InitMethod: "kmeans++"})
+	requireNoError(t, ci.Add("a1", []float32{1, 0}))
+	if _, _, _, ok := ci.AssignLive("a1"); ok {
+		t.Fatalf("an unclustered index assigns nothing")
+	}
+	requireNoError(t, ci.AddBatch([]string{"a2", "b1", "b2"}, [][]float32{{0.9, 0.1}, {0, 1}, {0.1, 0.9}}))
+	requireNoError(t, ci.Cluster())
+	aCluster, _ := ci.ClusterOf("a1")
+	bCluster, _ := ci.ClusterOf("b1")
+	if aCluster == bCluster {
+		t.Fatalf("two topics in one cluster")
+	}
+
+	requireNoError(t, ci.Add("a3", []float32{0.95, 0.05}))
+	if prev, was, cid, ok := ci.AssignLive("a3"); !ok || was || cid != aCluster {
+		t.Fatalf("AssignLive(a3) = %d %t %d %t", prev, was, cid, ok)
+	}
+	requireNoError(t, ci.Add("a3", []float32{0.05, 0.95})) // moves next to b
+	if prev, was, cid, ok := ci.AssignLive("a3"); !ok || !was || prev != aCluster || cid != bCluster {
+		t.Fatalf("moving a3 = %d %t %d %t", prev, was, cid, ok)
+	}
+	if _, _, _, ok := ci.AssignLive("unknown"); ok {
+		t.Fatalf("an id without an embedding cannot be assigned")
+	}
+	if cid, ok := ci.Unassign("a3"); !ok || cid != bCluster {
+		t.Fatalf("Unassign(a3) = %d %t", cid, ok)
+	}
+	if _, ok := ci.ClusterOf("a3"); ok {
+		t.Fatalf("an unassigned id has no cluster")
+	}
+	if !ci.Remove("a1") {
+		t.Fatalf("Remove(a1) found no embedding")
+	}
+	if _, ok := ci.ClusterOf("a1"); ok {
+		t.Fatalf("a removed embedding leaves the membership")
+	}
+	if got := ci.GetClusterMembers([]int{aCluster}); len(got) != 1 {
+		t.Fatalf("cluster a member indices = %v, want one (a2)", got)
+	}
+	stats := ci.ClusterStats()
+	if stats.MinClusterSize != 1 || stats.MaxClusterSize != 2 {
+		t.Fatalf("stats = %+v", stats)
+	}
 }

@@ -8,8 +8,7 @@
 //	ClusterIndex
 //	    ├── EmbeddingIndex (inherited)      <- GPU vector search
 //	    ├── centroids [][]float32           <- cluster centers
-//	    ├── assignments []int               <- embedding→cluster mapping
-//	    └── clusterMap map[int][]int        <- cluster→embeddings lookup
+//	    └── membership                      <- cluster membership by node ID
 //
 // Performance (M1/M2/M3 GPU):
 //   - 10K embeddings, 100 clusters: ~50-100ms
@@ -121,8 +120,7 @@ type ClusterStats struct {
 //	├─────────────────────────────────────────────────────┤
 //	│  Clustering State                                    │
 //	│    ├── centroids [][]float32  <- K cluster centers  │
-//	│    ├── assignments []int      <- embedding→cluster  │
-//	│    └── clusterMap map[int][]int <- cluster→indices  │
+//	│    └── membership             <- by node ID         │
 //	└─────────────────────────────────────────────────────┘
 //
 // Usage:
@@ -149,9 +147,8 @@ type ClusterIndex struct {
 	config *KMeansConfig
 
 	// Cluster state
-	centroids   [][]float32   // [K][dimensions] centroid vectors
-	assignments []int         // [N] cluster assignment per embedding
-	clusterMap  map[int][]int // cluster_id -> embedding indices
+	centroids  [][]float32       // [K][dimensions] centroid vectors
+	membership clusterMembership // cluster membership by node ID
 
 	// Real-time update tracking (Tier 1/2)
 	pendingUpdates      []nodeUpdate
@@ -177,7 +174,7 @@ type ClusterIndex struct {
 
 // nodeUpdate tracks pending node reassignments for Tier 2 updates.
 type nodeUpdate struct {
-	idx        int
+	id         string
 	oldCluster int
 	newCluster int
 }
@@ -212,7 +209,7 @@ func NewClusterIndex(manager *Manager, embConfig *EmbeddingIndexConfig, kmeansCo
 	return &ClusterIndex{
 		EmbeddingIndex: NewEmbeddingIndex(manager, embConfig),
 		config:         kmeansConfig,
-		clusterMap:     make(map[int][]int),
+		membership:     newClusterMembership(0),
 		pendingUpdates: make([]nodeUpdate, 0, 1000),
 	}
 }
@@ -262,79 +259,6 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	}
 	ci.PublishClustering(clustering)
 	return nil
-}
-
-// Clustering is a computed cluster generation that is not yet published.
-// Callers that derive state from its membership (for example per-cluster
-// graphs) build that state first, then publish both together with
-// PublishClustering, so readers never see routing without its derived state.
-//
-// Membership is kept by node ID, so a caller can reconcile embeddings added
-// or removed after the snapshot (AssignToClustering, Remove) into the
-// generation and the state it derives before publishing.
-type Clustering struct {
-	centroids   [][]float32
-	idToCluster map[string]int
-	members     map[int][]string
-	computed    bool // k-means ran; restored state keeps the previous run's stats
-	iterations  int
-	start       time.Time
-}
-
-func newClustering(centroids [][]float32, nodeIDs []string, assignments []int) *Clustering {
-	c := &Clustering{centroids: centroids, idToCluster: make(map[string]int, len(nodeIDs)), members: make(map[int][]string)}
-	for i, id := range nodeIDs {
-		c.idToCluster[id] = assignments[i]
-		c.members[assignments[i]] = append(c.members[assignments[i]], id)
-	}
-	return c
-}
-
-// NumClusters returns the number of clusters (centroids) in the generation.
-func (c *Clustering) NumClusters() int {
-	return len(c.centroids)
-}
-
-// MemberIDs returns the node IDs assigned to clusterID in this generation.
-func (c *Clustering) MemberIDs(clusterID int) []string {
-	return append([]string(nil), c.members[clusterID]...)
-}
-
-// Remove drops id from the generation and returns the cluster it was in.
-func (c *Clustering) Remove(id string) (int, bool) {
-	cluster, ok := c.idToCluster[id]
-	if !ok {
-		return 0, false
-	}
-	delete(c.idToCluster, id)
-	members := c.members[cluster]
-	for i, member := range members {
-		if member == id {
-			members[i] = members[len(members)-1]
-			c.members[cluster] = members[:len(members)-1]
-			break
-		}
-	}
-	return cluster, true
-}
-
-// AssignToClustering places id in the unpublished generation at the centroid
-// nearest its current embedding in the index, moving it if it was already a
-// member. It returns the cluster, and false when the index has no embedding
-// for id.
-func (ci *ClusterIndex) AssignToClustering(c *Clustering, id string) (int, bool) {
-	ci.mu.RLock()
-	idx, ok := ci.idToIndex[id]
-	if !ok || (idx+1)*ci.dimensions > len(ci.cpuVectors) {
-		ci.mu.RUnlock()
-		return 0, false
-	}
-	cluster := nearestCentroidFromList(ci.cpuVectors[idx*ci.dimensions:(idx+1)*ci.dimensions], c.centroids)
-	ci.mu.RUnlock()
-	c.Remove(id)
-	c.idToCluster[id] = cluster
-	c.members[cluster] = append(c.members[cluster], id)
-	return cluster, true
 }
 
 // ComputeClustering runs k-means on a copy of the current embeddings without
@@ -451,25 +375,19 @@ func (ci *ClusterIndex) PublishClustering(clustering *Clustering) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	defer ci.clusterMu.Unlock()
-	dims := ci.dimensions
 	centroids := clustering.centroids
-	assignments := make([]int, len(ci.nodeIDs))
-	clusterMap := make(map[int][]int)
-	for i, id := range ci.nodeIDs {
-		cid, ok := clustering.idToCluster[id]
+	membership := newClusterMembership(len(ci.nodeIDs))
+	for _, id := range ci.nodeIDs {
+		cid, ok := clustering.membership.clusterOf(id)
 		if !ok {
-			embStart := i * dims
-			if embStart+dims > len(ci.cpuVectors) {
+			if cid, ok = ci.nearestCentroidForIDLocked(id, centroids); !ok {
 				continue
 			}
-			cid = nearestCentroidFromList(ci.cpuVectors[embStart:embStart+dims], centroids)
 		}
-		assignments[i] = cid
-		clusterMap[cid] = append(clusterMap[cid], i)
+		membership.set(id, cid)
 	}
 	ci.centroids = centroids
-	ci.assignments = assignments
-	ci.clusterMap = clusterMap
+	ci.membership = membership
 	ci.clustered = true
 	ci.updatesSinceCluster = 0
 	if !clustering.computed {
@@ -678,15 +596,6 @@ func updateCentroidsFromVectors(vectors []float32, assignments []int, centroids 
 	}
 }
 
-// buildClusterMapFromAssignments builds cluster ID -> embedding indices from assignments.
-func buildClusterMapFromAssignments(assignments []int) map[int][]int {
-	out := make(map[int][]int)
-	for i, cluster := range assignments {
-		out[cluster] = append(out[cluster], i)
-	}
-	return out
-}
-
 // nearestCentroidFromList returns the index of the centroid nearest to the embedding.
 func nearestCentroidFromList(embedding []float32, centroids [][]float32) int {
 	if len(centroids) == 0 {
@@ -826,119 +735,6 @@ func squaredEuclidean(a []float32, b []float32) float64 {
 	return sum0 + sum1 + sum2 + sum3
 }
 
-// assignToCentroids assigns each embedding to its nearest centroid.
-// Returns number of assignments that changed.
-func (ci *ClusterIndex) assignToCentroids() int {
-	n := len(ci.nodeIDs)
-	dims := ci.dimensions
-	k := len(ci.centroids)
-	changed := 0
-	for i := 0; i < n; i++ {
-		embStart := i * dims
-		emb := ci.cpuVectors[embStart : embStart+dims]
-
-		// Find nearest centroid
-		minDist := math.MaxFloat64
-		nearest := 0
-
-		for c := 0; c < k; c++ {
-			dist := squaredEuclidean(emb, ci.centroids[c])
-			if dist < minDist {
-				minDist = dist
-				nearest = c
-			}
-		}
-
-		if ci.assignments[i] != nearest {
-			ci.assignments[i] = nearest
-			changed++
-		}
-	}
-
-	return changed
-}
-
-// updateCentroids recomputes centroids as mean of assigned embeddings.
-func (ci *ClusterIndex) updateCentroids() {
-	dims := ci.dimensions
-	k := len(ci.centroids)
-	n := len(ci.nodeIDs)
-
-	// Accumulate sums and counts
-	sums := make([][]float64, k)
-	counts := make([]int, k)
-
-	for c := 0; c < k; c++ {
-		sums[c] = make([]float64, dims)
-	}
-
-	for i := 0; i < n; i++ {
-		cluster := ci.assignments[i]
-		embStart := i * dims
-		counts[cluster]++
-
-		for d := 0; d < dims; d++ {
-			sums[cluster][d] += float64(ci.cpuVectors[embStart+d])
-		}
-	}
-
-	// Compute new centroids (average)
-	for c := 0; c < k; c++ {
-		if counts[c] > 0 {
-			for d := 0; d < dims; d++ {
-				ci.centroids[c][d] = float32(sums[c][d] / float64(counts[c]))
-			}
-		}
-		// Empty clusters keep their previous position
-	}
-}
-
-// updateCentroidsWithBuffer recomputes centroids using pre-allocated buffers.
-// This avoids allocations in the hot clustering loop.
-func (ci *ClusterIndex) updateCentroidsWithBuffer(sums [][]float64, counts []int) {
-	dims := ci.dimensions
-	k := len(ci.centroids)
-	n := len(ci.nodeIDs)
-
-	// Zero out the buffers
-	for c := 0; c < k; c++ {
-		counts[c] = 0
-		for d := 0; d < dims; d++ {
-			sums[c][d] = 0
-		}
-	}
-
-	// Accumulate sums and counts
-	for i := 0; i < n; i++ {
-		cluster := ci.assignments[i]
-		embStart := i * dims
-		counts[cluster]++
-
-		for d := 0; d < dims; d++ {
-			sums[cluster][d] += float64(ci.cpuVectors[embStart+d])
-		}
-	}
-
-	// Compute new centroids (average)
-	for c := 0; c < k; c++ {
-		if counts[c] > 0 {
-			for d := 0; d < dims; d++ {
-				ci.centroids[c][d] = float32(sums[c][d] / float64(counts[c]))
-			}
-		}
-		// Empty clusters keep their previous position
-	}
-}
-
-// buildClusterMap creates the cluster → embedding indices mapping.
-func (ci *ClusterIndex) buildClusterMap() {
-	ci.clusterMap = make(map[int][]int)
-
-	for i, cluster := range ci.assignments {
-		ci.clusterMap[cluster] = append(ci.clusterMap[cluster], i)
-	}
-}
-
 // Clear removes all embeddings and cluster state from the index.
 // This overrides EmbeddingIndex.Clear() to also reset clustering state.
 func (ci *ClusterIndex) Clear() {
@@ -950,8 +746,7 @@ func (ci *ClusterIndex) Clear() {
 
 	// Reset cluster state
 	ci.centroids = nil
-	ci.assignments = nil
-	ci.clusterMap = make(map[int][]int)
+	ci.membership = newClusterMembership(0)
 	ci.pendingUpdates = ci.pendingUpdates[:0]
 	ci.updatesSinceCluster = 0
 	ci.clustered = false
@@ -1052,13 +847,22 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 		Clustered:       ci.clustered,
 	}
 
-	if len(ci.clusterMap) > 0 {
+	populated := 0
+	for _, members := range ci.membership.members {
+		if len(members) > 0 {
+			populated++
+		}
+	}
+	if populated > 0 {
 		totalSize := 0
 		stats.MinClusterSize = math.MaxInt32
 		stats.MaxClusterSize = 0
 
-		for _, members := range ci.clusterMap {
+		for _, members := range ci.membership.members {
 			size := len(members)
+			if size == 0 {
+				continue
+			}
 			totalSize += size
 			if size < stats.MinClusterSize {
 				stats.MinClusterSize = size
@@ -1068,7 +872,7 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 			}
 		}
 
-		stats.AvgClusterSize = float64(totalSize) / float64(len(ci.clusterMap))
+		stats.AvgClusterSize = float64(totalSize) / float64(populated)
 	}
 
 	return stats
@@ -1119,9 +923,9 @@ func (ci *ClusterIndex) FindNearestClusters(embedding []float32, k int) []int {
 		idx  int
 	}
 
-	distances := make([]distIdx, 0, len(ci.clusterMap))
+	distances := make([]distIdx, 0, len(ci.centroids))
 	for c, centroid := range ci.centroids {
-		if len(ci.clusterMap[c]) == 0 {
+		if len(ci.membership.members[c]) == 0 {
 			continue
 		}
 		distances = append(distances, distIdx{
@@ -1164,10 +968,14 @@ func (ci *ClusterIndex) GetClusterMembers(clusterIDs []int) []int {
 		return nil
 	}
 
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
 	var members []int
 	for _, cid := range clusterIDs {
-		if m, ok := ci.clusterMap[cid]; ok {
-			members = append(members, m...)
+		for _, id := range ci.membership.members[cid] {
+			if idx, ok := ci.idToIndex[id]; ok {
+				members = append(members, idx)
+			}
 		}
 	}
 
@@ -1187,20 +995,9 @@ func (ci *ClusterIndex) GetClusterMemberIDs(clusterIDs []int) []string {
 		return nil
 	}
 
-	ci.mu.RLock()
-	defer ci.mu.RUnlock()
-
 	var out []string
 	for _, cid := range clusterIDs {
-		members, ok := ci.clusterMap[cid]
-		if !ok {
-			continue
-		}
-		for _, idx := range members {
-			if idx >= 0 && idx < len(ci.nodeIDs) {
-				out = append(out, ci.nodeIDs[idx])
-			}
-		}
+		out = append(out, ci.membership.members[cid]...)
 	}
 	return out
 }
@@ -1328,67 +1125,32 @@ func (ci *ClusterIndex) OnNodeUpdate(nodeID string, embedding []float32) error {
 		return err
 	}
 
-	if !ci.IsClustered() {
-		return nil
-	}
-
 	ci.clusterMu.Lock()
 	defer ci.clusterMu.Unlock()
-
-	ci.mu.RLock()
-	idx, exists := ci.idToIndex[nodeID]
-	ci.mu.RUnlock()
-
-	if !exists {
+	if !ci.clustered {
 		return nil
 	}
 
-	// Find nearest centroid (use locked version since we hold clusterMu)
-	newCluster := ci.findNearestCentroidLocked(embedding)
+	ci.mu.RLock()
+	newCluster, ok := ci.nearestCentroidForIDLocked(nodeID, ci.centroids)
+	ci.mu.RUnlock()
+	if !ok {
+		return nil
+	}
 
-	// Track if assignment changed
-	if idx < len(ci.assignments) {
-		oldCluster := ci.assignments[idx]
-		if newCluster != oldCluster {
-			// Update cluster membership
-			ci.removeFromClusterMap(oldCluster, idx)
-			ci.addToClusterMap(newCluster, idx)
-			ci.assignments[idx] = newCluster
-
-			// Track for batch centroid update
-			ci.pendingUpdates = append(ci.pendingUpdates, nodeUpdate{
-				idx:        idx,
-				oldCluster: oldCluster,
-				newCluster: newCluster,
-			})
-		}
-	} else {
-		// New embedding, assign to cluster
-		ci.assignments = append(ci.assignments, newCluster)
-		ci.addToClusterMap(newCluster, idx)
+	// Track a changed assignment for the batch centroid update.
+	oldCluster, wasMember := ci.membership.set(nodeID, newCluster)
+	if wasMember && oldCluster != newCluster {
+		ci.pendingUpdates = append(ci.pendingUpdates, nodeUpdate{
+			id:         nodeID,
+			oldCluster: oldCluster,
+			newCluster: newCluster,
+		})
 	}
 
 	atomic.AddInt64(&ci.updatesSinceCluster, 1)
 
 	return nil
-}
-
-// removeFromClusterMap removes an embedding index from a cluster's member list.
-func (ci *ClusterIndex) removeFromClusterMap(cluster, embIdx int) {
-	members := ci.clusterMap[cluster]
-	for i, idx := range members {
-		if idx == embIdx {
-			// Remove by swapping with last element
-			members[i] = members[len(members)-1]
-			ci.clusterMap[cluster] = members[:len(members)-1]
-			return
-		}
-	}
-}
-
-// addToClusterMap adds an embedding index to a cluster's member list.
-func (ci *ClusterIndex) addToClusterMap(cluster, embIdx int) {
-	ci.clusterMap[cluster] = append(ci.clusterMap[cluster], embIdx)
 }
 
 // ShouldRecluster checks if re-clustering is needed based on thresholds.
@@ -1446,14 +1208,18 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 	// Recompute centroids for affected clusters
 	dims := ci.dimensions
 	for cluster := range affectedClusters {
-		members, ok := ci.clusterMap[cluster]
-		if !ok || len(members) == 0 {
+		members := ci.membership.members[cluster]
+		if len(members) == 0 {
 			continue
 		}
 
 		// Compute new centroid as mean
 		newCentroid := make([]float64, dims)
-		for _, idx := range members {
+		for _, id := range members {
+			idx, ok := ci.idToIndex[id]
+			if !ok {
+				continue
+			}
 			start := idx * dims
 			for d := 0; d < dims; d++ {
 				newCentroid[d] += float64(ci.cpuVectors[start+d])

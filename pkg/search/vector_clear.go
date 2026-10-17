@@ -52,9 +52,7 @@ func (s *Service) clearIndexes(all bool) error {
 	if s.gpuEmbeddingIndex != nil {
 		s.gpuEmbeddingIndex.Clear()
 	}
-	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
-	}
+	s.retireClusterGeneration(nil, true)
 	clear(s.nodeLabels)
 	clear(s.nodeTypes)
 	clear(s.nodeNamedVector)
@@ -84,8 +82,6 @@ func (s *Service) clearIndexes(all bool) error {
 		s.resultCache.Invalidate()
 	}
 	s.mu.Unlock()
-	s.clusterHNSW = nil
-	s.clearClusterLexicalProfiles()
 	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
 

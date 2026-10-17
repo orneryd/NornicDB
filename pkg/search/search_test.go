@@ -421,14 +421,17 @@ func TestServicePersistenceAndTimingHelpers(t *testing.T) {
 	_, err = os.Stat(hnswPath)
 	require.NoError(t, err)
 
-	// persistIVFHNSWBackground writes per-cluster files when cluster map exists.
+	// persistIVFHNSWBackground writes the published generation's graphs.
 	clusterIdx := NewHNSWIndex(3, HNSWConfigFromEnv())
 	require.NoError(t, clusterIdx.Add("c-1", []float32{1, 0, 0}))
 	svc.clusterStateMu.Lock()
-	svc.clusterHNSW = map[int]*HNSWIndex{0: clusterIdx}
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: clusterIdx}}
 	svc.clusterStateMu.Unlock()
 	svc.persistIVFHNSWBackground(context.Background(), hnswPath)
-	_, err = os.Stat(filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf", "0"))
+	manifest, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	_, err = os.Stat(manifest.clusterPath(0))
 	require.NoError(t, err)
 
 	// runPersist + PersistIndexesToDisk execute without panic on configured paths.
@@ -1346,14 +1349,15 @@ func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T
 	svc2.SetHNSWIndexPath(hnswPath)
 
 	// Pre-populate fields that forced rebuild paths should clear.
-	svc2.clusterLexicalProfiles = map[int]map[string]float64{
+	svc2.clusterGen = &clusterGeneration{profiles: map[int]map[string]float64{
 		1: {"alpha": 1},
-	}
+	}}
 	svc2.ivfpqMu.Lock()
 	svc2.ivfpqIndex = &IVFPQIndex{}
 	svc2.ivfpqMu.Unlock()
 
 	require.NoError(t, svc2.BuildIndexes(context.Background()))
+	require.Nil(t, svc2.clusterGen, "a routing rebuild retires the cluster generation")
 	require.True(t, svc2.IsReady())
 	require.GreaterOrEqual(t, svc2.fulltext().Count(), 1)
 	require.GreaterOrEqual(t, svc2.EmbeddingCount(), 1)
