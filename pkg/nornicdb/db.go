@@ -1537,10 +1537,16 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 		return nil, localizedError(localization.NornicDBCoreReplicationReplicatorCreateFailed(err), err)
 	}
 
-	transport := replication.NewDefaultTransport(&replication.ClusterTransportConfig{
-		NodeID:   replCfg.NodeID,
-		BindAddr: replCfg.BindAddr,
-	})
+	// The transport is built from the whole loaded config, so the
+	// replication secret and TLS settings apply. If they can't be applied
+	// (an unreadable certificate, say), replication doesn't start rather
+	// than run plaintext or unsigned.
+	transport, err := replication.NewDefaultTransportFromConfig(replCfg)
+	if err != nil {
+		_ = replicator.Shutdown()
+		_ = adapter.Close()
+		return nil, localizedError(localization.NornicDBCoreReplicationStartFailed(err), err)
+	}
 
 	// Wire transport into modes that support it.
 	if r, ok := replicator.(interface{ SetTransport(replication.Transport) }); ok {
