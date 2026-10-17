@@ -272,6 +272,8 @@
   other: "Entrada no válida para 'vector.similarity.{{.Function}}()': los vectores proporcionados no tienen el mismo número de dimensiones."
 - id: cyphercore.function_list_argument_empty
   other: "El argumento `{{.Argument}}` de la función `{{.Function}}()` no debe estar vacío."
+- id: cyphercore.function_argument_null
+  other: "No se pudo invocar la función `{{.Function}}`: Causa: el argumento `{{.Argument}}` es nulo."
 - id: cyphercore.temporal_call_signature
   other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"
 - id: cyphercore.temporal_procedure_call_signature
