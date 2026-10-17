@@ -23,16 +23,11 @@ func buildClusteredServiceForRouting(t *testing.T) *Service {
 }
 
 func TestHybridRouting_RebuildProfilesGuardBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	svc.clusterLexicalProfiles = map[int]map[string]float64{1: {"x": 1}}
-	svc.rebuildClusterLexicalProfiles()
-	require.Empty(t, svc.clusterLexicalProfiles)
-
-	svc = buildClusteredServiceForRouting(t)
+	svc := buildClusteredServiceForRouting(t)
+	clustering, err := svc.clusterIndex.ComputeClustering(context.Background())
+	require.NoError(t, err)
 	svc.setFulltext(nil)
-	svc.clusterLexicalProfiles = map[int]map[string]float64{1: {"x": 1}}
-	svc.rebuildClusterLexicalProfiles()
-	require.Empty(t, svc.clusterLexicalProfiles)
+	require.Empty(t, svc.clusterLexicalProfilesFor(clustering))
 }
 
 func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
