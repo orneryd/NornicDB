@@ -949,7 +949,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	if isFunctionCall(expr, "apoc.coll.toset") {
 		inner := extractFuncArgs(expr, "apoc.coll.toset")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return toSet(listVal)
+		return apocCollToSet(listVal)
 	}
 
 	// apoc.coll.sum(list) - Sum numeric values in list
