@@ -1592,9 +1592,7 @@ func (s *Service) resetANNForBuild() {
 	// it (re)loads: the build's own admissions and the warmup's backfill.
 	s.clusterStateMu.Lock()
 	s.mu.Lock()
-	if s.clusterIndex != nil {
-		s.retireClusterGeneration(s.clusterIndex.Empty())
-	}
+	s.retireClusterGeneration(emptyClusterIndex)
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
 	s.publishClusterServing()
@@ -1671,8 +1669,12 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// A closed service installs no cluster index again.
+	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
+		return false
+	}
 	// If clustering is already enabled, only rebuild when switching CPU<->GPU.
-	if s.clusterEnabled && s.clusterIndex != nil {
+	if s.clusterEnabled && s.currentClusterIndex() != nil {
 		requestGPU := gpuManager != nil && gpuManager.IsEnabled()
 		if s.clusterUsesGPU == requestGPU {
 			return false
@@ -1714,7 +1716,9 @@ func (s *Service) replaceClusterIndex(gpuManager *gpu.Manager, numClusters int) 
 	embConfig := gpu.DefaultEmbeddingIndexConfig(dimensions)
 
 	// The replaced index's generation retires with it.
-	s.retireClusterGeneration(gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig))
+	s.retireClusterGeneration(func(*gpu.ClusterIndex) *gpu.ClusterIndex {
+		return gpu.NewClusterIndex(gpuManager, embConfig, kmeansConfig)
+	})
 	s.clusterEnabled = true
 	s.clusterUsesGPU = gpuManager != nil && gpuManager.IsEnabled()
 
@@ -1778,7 +1782,7 @@ const clusterBackfillChunk = 5000
 // Callers hold neither indexMu nor s.mu.
 func (s *Service) reconcileClusterPopulation(targetCount int) {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.currentClusterIndex()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
@@ -1855,7 +1859,7 @@ func (s *Service) triggerClustering(ctx context.Context, lexicalReady func() err
 	defer s.kmeansInProgress.Store(false)
 
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.currentClusterIndex()
 	threshold := s.minEmbeddingsForClustering
 	s.mu.RUnlock()
 
@@ -2019,7 +2023,9 @@ func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.C
 		var idx *HNSWIndex
 		if persisted != nil && len(memberIDs) > 0 && s.persistEnabled.Load() && vectorLookup != nil {
 			loaded, _ := persisted.loadCluster(cid, vectorLookup)
-			if loaded != nil && loaded.GetDimensions() == dims {
+			// A graph saved without coordinate fingerprints cannot tell which
+			// members moved since; it is rebuilt rather than trusted.
+			if loaded != nil && loaded.GetDimensions() == dims && loaded.fingerprints != nil {
 				alignClusterGraph(loaded, memberIDs, vectorLookup)
 				if err := loaded.SetQuantization(ctx, config.Quantization); err != nil {
 					return nil, err
@@ -2030,6 +2036,7 @@ func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.C
 		if idx == nil {
 			idx = NewHNSWIndex(dims, config)
 			idx.SetVectorLookup(vectorLookup)
+			idx.trackFingerprints()
 			for _, id := range memberIDs {
 				vec, ok := vectorLookup(id)
 				if !ok || len(vec) == 0 {
@@ -2084,7 +2091,7 @@ func (s *Service) ClusteringInProgress() bool {
 func (s *Service) IsClusteringEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.clusterEnabled && s.clusterIndex != nil
+	return s.clusterEnabled && s.currentClusterIndex() != nil
 }
 
 // SetMinEmbeddingsForClustering sets the minimum number of embeddings required
@@ -2234,8 +2241,18 @@ func (s *Service) Close() error {
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
 	}
+	// The cluster generation and index retire through the owner, leaving no
+	// index: a clustering finishing later is superseded, admissions find no
+	// index, and the index's native GPU buffers are released once the last
+	// query holding it finishes.
+	s.clusterStateMu.Lock()
+	s.mu.Lock()
+	s.retireClusterGeneration(nil)
+	s.mu.Unlock()
+	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
 	s.persistRunMu.Unlock()
+	s.publishClusterServing()
 	return nil
 }
 
@@ -2582,10 +2599,10 @@ func (s *Service) resolveMinSimilarity(opts *SearchOptions) *float64 {
 func (s *Service) ClusterStats() *gpu.ClusterStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.clusterIndex == nil {
+	if s.currentClusterIndex() == nil {
 		return nil
 	}
-	stats := s.clusterIndex.ClusterStats()
+	stats := s.currentClusterIndex().ClusterStats()
 	return &stats
 }
 
@@ -2782,9 +2799,12 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		s.gpuEmbeddingIndex.Clear()
 		s.gpuEmbeddingIndex = nil
 	}
-	if s.clusterIndex != nil {
-		s.retireClusterGeneration(s.clusterIndex.EmptyWithDimensions(dimensions))
-	}
+	s.retireClusterGeneration(func(old *gpu.ClusterIndex) *gpu.ClusterIndex {
+		if old == nil {
+			return nil
+		}
+		return old.EmptyWithDimensions(dimensions)
+	})
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
 	// A pipeline built between the reset above and the retirement is dropped.
@@ -4472,7 +4492,7 @@ func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int, 
 		return nil
 	}
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.currentClusterIndex()
 	hnswPath := s.hnswIndexPath
 	s.mu.RUnlock()
 	// Reconcile the cluster index with the vector store so restore and
@@ -4532,6 +4552,9 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 	if err != nil {
 		return false
 	}
+	// Retained members whose vectors changed since the save are refreshed by
+	// the publication's replay.
+	s.stageStaleClusterMembers(gen)
 	if err := s.publishClusterGeneration(ctx, clusterPublication{generation: gen}); err != nil {
 		return false
 	}
@@ -6099,7 +6122,7 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seed
 		}, nil
 	}
 	s.clusterStateMu.RLock()
-	clustered := s.clusterGen != nil
+	clustered := s.clusterGenerationPublishedLocked()
 	s.clusterStateMu.RUnlock()
 	if clustered {
 		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
@@ -6140,7 +6163,7 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) && !gpuEnabled {
 		s.clusterStateMu.RLock()
-		hasClusterHNSW := s.clusterGen != nil && len(s.clusterGen.graphs) > 0
+		hasClusterHNSW := s.clusterGenerationHasGraphsLocked()
 		s.clusterStateMu.RUnlock()
 		if hasClusterHNSW {
 			// The generator routes and takes graphs from the query's generation;
@@ -7292,7 +7315,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	}
 
 	s.mu.RLock()
-	clusterEnabled := s.clusterEnabled && s.clusterIndex != nil
+	clusterEnabled := s.clusterEnabled && s.currentClusterIndex() != nil
 	s.mu.RUnlock()
 	if clusterEnabled {
 		s.logPrintf("[K-MEANS] 🔍 SEARCH | mode=%s candidates=%d duration=%v",

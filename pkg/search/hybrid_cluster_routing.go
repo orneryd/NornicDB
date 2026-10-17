@@ -185,7 +185,7 @@ func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float3
 
 func (s *Service) applyBM25SeedHints() {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.currentClusterIndex()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	if clusterIndex == nil || fulltext == nil {
