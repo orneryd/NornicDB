@@ -56,6 +56,7 @@ const (
 	clauseAnalysisSubqueryQueryCount
 	clauseAnalysisSubqueryQueryCollect
 	clauseAnalysisBoundChain
+	clauseAnalysisBoundNode
 	clauseAnalysisCount
 )
 
