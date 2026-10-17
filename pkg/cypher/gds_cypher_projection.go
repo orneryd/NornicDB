@@ -39,8 +39,8 @@ func statementTextFromContext(ctx context.Context) string {
 // addGDSProjectionRow evaluates one row's gds.graph.project(graphName,
 // sourceNode, targetNode = null, dataConfig = null, configuration = null)
 // arguments into the aggregate's state (#1194).
-func (e *StorageExecutor) addGDSProjectionRow(ctx context.Context, state *pipelineAggregateState, row pipelineRow) bool {
-	arguments := e.splitFunctionArgs(state.expression)
+func (e *StorageExecutor) addGDSProjectionRow(ctx context.Context, state *pipelineAggregateState, scope *rowEvaluationScope) bool {
+	arguments := state.argumentTexts(e)
 	if len(arguments) < 2 || len(arguments) > 6 {
 		recordExpressionFailure(ctx, &cypherfn.ParameterCountError{Function: gdsProjectAggregate, TooMany: len(arguments) > 6})
 		return false
@@ -49,9 +49,9 @@ func (e *StorageExecutor) addGDSProjectionRow(ctx context.Context, state *pipeli
 		recordExpressionFailure(ctx, localizedError(localization.CypherGraphProceduresConfigParametersMerged(), nil))
 		return false
 	}
-	values := make([]interface{}, 5)
+	var values [5]interface{}
 	for i, argument := range arguments {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(argument), row)
+		value, ok := scope.evaluate(ctx, e, argument)
 		if !ok {
 			return false
 		}

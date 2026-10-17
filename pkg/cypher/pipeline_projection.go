@@ -731,8 +731,10 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
 	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
+	scope := newRowEvaluationScope(ctx)
 	for _, row := range rows {
-		if !state.add(ctx, e, row) {
+		scope.reset(row)
+		if !state.addInScope(ctx, e, scope) {
 			return nil, false
 		}
 	}

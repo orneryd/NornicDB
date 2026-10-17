@@ -95,7 +95,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			if !ok {
 				return nil, false
 			}
-			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}})
+			state := pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}}
+			// Every group's state shares the template's argument texts.
+			state.argumentTexts(e)
+			templates[index].states = append(templates[index].states, state)
 			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc" || name == gdsProjectAggregate
 			rewritten.WriteString(projection.expr[last:span.start])
 			rewritten.WriteString(traversalAggPlaceholder(offset))
@@ -126,6 +129,9 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	values := make([]interface{}, 0, groupingCount)
 	// One row validated at a time, through one reused slice.
 	validated := make([]pipelineRow, 1)
+	// The row's grouping keys and aggregate arguments are evaluated in one
+	// scope built once per row.
+	scope := newRowEvaluationScope(ctx)
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
@@ -141,12 +147,13 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			}
 		}
 		values = values[:0]
+		scope.reset(row)
 		if !allAggregates {
 			for _, projection := range projections {
 				if projection.isAggr {
 					continue
 				}
-				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+				value, ok := scope.evaluate(ctx, e, projection.expr)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					run.valid = false
@@ -167,7 +174,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		group := ordered[position]
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
-				if !group.projections[index].states[offset].add(ctx, e, row) {
+				if !group.projections[index].states[offset].addInScope(ctx, e, scope) {
 					run.valid = false
 					return false
 				}
@@ -460,6 +467,9 @@ type pipelineAggregateState struct {
 	// first came.
 	gdsRows    []gdsProjectionRow
 	gdsStarted time.Time
+	// arguments are the argument texts of an aggregate taking several
+	// (argumentTexts).
+	arguments []string
 	// duration is the running sum of sum() / avg() over durations; numbers
 	// and durations can't be mixed (aggregateMixesNumberAndDuration).
 	duration *CypherDuration
@@ -468,16 +478,40 @@ type pipelineAggregateState struct {
 	memory memoryAccount
 }
 
+// argumentTexts are the aggregate's argument texts when it takes several
+// (gds.graph.project, percentileCont / percentileDisc), split from its
+// expression the first time they are needed instead of on every row.
+func (state *pipelineAggregateState) argumentTexts(executor *StorageExecutor) []string {
+	if state.name != gdsProjectAggregate && state.name != "percentilecont" && state.name != "percentiledisc" {
+		return nil
+	}
+	if state.arguments == nil {
+		state.arguments = executor.splitFunctionArgs(state.expression)
+		if state.arguments == nil {
+			state.arguments = []string{}
+		}
+	}
+	return state.arguments
+}
+
 func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
+	scope := newRowEvaluationScope(ctx)
+	scope.reset(row)
+	return state.addInScope(ctx, executor, scope)
+}
+
+// addInScope adds the scope's row, its arguments evaluated in the scope.
+func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *StorageExecutor, scope *rowEvaluationScope) bool {
+	row := scope.row
 	if state.name == "count" && state.expression == "*" {
 		state.count++
 		return true
 	}
 	if state.name == gdsProjectAggregate {
-		return executor.addGDSProjectionRow(ctx, state, row)
+		return executor.addGDSProjectionRow(ctx, state, scope)
 	}
 	if state.name == "percentilecont" || state.name == "percentiledisc" {
-		arguments := executor.splitFunctionArgs(state.expression)
+		arguments := state.argumentTexts(executor)
 		if len(arguments) != 2 {
 			return false
 		}
@@ -491,8 +525,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 			arguments = arguments[:1]
 		}
 		for _, argument := range arguments {
-			argument = strings.TrimSpace(argument)
-			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row)
+			value, ok := scope.evaluate(ctx, executor, argument)
 			if !ok {
 				return false
 			}
@@ -503,7 +536,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	}
 	value, ok := row[state.expression]
 	if !ok || isLiteralKeyword(state.expression) {
-		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
+		value, ok = scope.evaluate(ctx, executor, state.expression)
 	}
 	if !ok {
 		return false
