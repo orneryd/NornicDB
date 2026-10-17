@@ -62,6 +62,12 @@ The script runs three Python programs, which you can also run directly. For exam
 ```sh
 PY=bench-data/vector_ann/venv/bin/python   # created by the script on its first run
 
+# Prepare binaries for direct runs (the shell driver's private binaries are cleaned on exit).
+go build -tags "noui nolocalllm" -o bench-data/vector_ann/nornicdb ./cmd/nornicdb
+$PY testing/benchmarks/vector_ann/fetch_qdrant.py --cache bench-data/vector_ann/downloads \
+  --destination bench-data/vector_ann/qdrant-v1.19.2/qdrant --asset qdrant-aarch64-apple-darwin.tar.gz
+# Choose the matching asset from fetch_qdrant.py on another OS/architecture.
+
 # Build (or extend) the corpus.
 $PY testing/benchmarks/vector_ann/corpus.py --roots "$VECTOR_CORPUS_ROOTS" --out bench-data/vector_ann/corpus
 
@@ -89,13 +95,13 @@ $PY testing/benchmarks/vector_ann/report.py --results testing/benchmarks/vector_
 | `pq-x16` | N/A | HNSW + product quantization x16, rescored |
 | `bq` | N/A | HNSW + binary quantization, rescored, 2× oversampling |
 
-The HNSW modes also sweep `hnsw_ef` (16, 32, 64, 128, 256, 512), the same Search parameter on both engines. Without `hnsw_ef`, each engine uses its own default: NornicDB uses the preset's `efSearch`.
+The HNSW modes also sweep `hnsw_ef` (16, 32, 64, 128, 256, 512), the same Search parameter on both engines. The baseline uses the named preset's `efSearch` on both engines (explicitly sent to Qdrant); sweep values are also explicit on both.
 
 ## What is measured, and how
 
 - **Recall@1 and recall@10:** each Search's results compared with the exact top-K by cosine.
 - **Latency:** one client, 1,000 queries after 100 warm-up queries; mean, p50, p95 and p99.
-- **Throughput:** queries per second with 8 concurrent clients.
+- **Throughput:** queries per second with 8 concurrent RPCs on one shared channel.
 - **Load:** time to upsert the corpus in batches of 500 over gRPC.
 - **Index ready:**
   - NornicDB: until its search index reports ready and the first Search has answered.
@@ -137,3 +143,66 @@ Ports are fixed and away from NornicDB's and Qdrant's defaults: NornicDB uses HT
 | `../../../scripts/benchmark_vector_vs_qdrant.sh` | builds, fetches, runs and reports |
 
 `bench-data/` is git-ignored: it holds the corpus, the embedding cache, the binaries and the per-run data directories.
+
+## Review and GPU handoff
+
+The runner rejects occupied ports and proves its launched child owns both API
+listeners. It removes inherited `NORNICDB_*` and `QDRANT__*` settings; use
+`--nornic-env KEY=VALUE` for an explicit, recorded variant. It validates the
+observed NornicDB pipeline against the requested mode. Qdrant collection settings
+and request parameters are checked; Qdrant's internal per-query planner is not
+exposed by this API. Its minimum full-scan threshold is 10 KB.
+
+Each invocation uses private data and report directories. The shell driver
+serializes shared preparation through `VECTOR_WORK_DIR/.benchmark.lock` (a
+second invocation fails without touching the first). A direct Python runner
+locks its output directory. Archives have platform-specific pinned digests and
+are verified even when cached; binaries are extracted anew into the private
+work directory. Other Qdrant versions require `QDRANT_SHA256`.
+
+Every result records effective settings, actual construction backend, binary and
+corpus hashes, Go build settings (including source revision and dirty status),
+and resolved Python dependencies. CPU mode selects `NORNICDB_GPU_BACKEND=cpu`,
+so GPU clustering is disabled too. Latency is sequential client latency;
+throughput is concurrent RPCs over one channel. RSS and allocated disk are
+snapshots after all queries and a final readiness check, not peaks. Tagged
+variants appear in both comparison and engine reports. Different K values need
+separate report directories.
+
+New corpora include row-aligned `payloads.jsonl` and held-out
+`query_chunks.jsonl`. The same text payloads go to both engines; NornicDB can use
+them for existing BM25 construction hints. Old cached corpora remain usable
+without AWS access. Their reports explicitly record vectors-only construction;
+do not describe those results as lexical-hint benchmarks.
+
+On the CUDA machine, build with the native CUDA toolkit and the `cuda` tag:
+
+```sh
+go test -tags cuda ./pkg/search -run 'TestCUDAResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+VECTOR_GO_TAGS='noui nolocalllm cuda' VECTOR_GPU_BACKEND=cuda NORNIC_GPU=1 \
+  VECTOR_MODES=hnsw-balanced VECTOR_ENGINES=nornicdb \
+  ./scripts/benchmark_vector_vs_qdrant.sh
+```
+
+On the Vulkan machine:
+
+```sh
+go test ./pkg/search -run 'TestVulkanResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+VECTOR_GPU_BACKEND=vulkan NORNIC_GPU=1 VECTOR_MODES=hnsw-balanced \
+  VECTOR_ENGINES=nornicdb ./scripts/benchmark_vector_vs_qdrant.sh
+```
+
+A hardware test that skips is **unverified**, not a pass. Confirm the JSON
+`build_backend` is `Cuda` or `Vulkan`, and no construction fallback occurred.
+The runner fails a GPU HNSW run if it observes only a CPU builder. Run CPU and
+GPU comparisons on the same corpus, machine, queries and beams, with no other
+benchmark or verification workload running. Include recall, construction time,
+latency, throughput, disk and RSS together; compare repeated runs before making
+performance claims. GC-limit and Badger-cache defaults are unchanged by this
+work.
+
+Harness contract checks (no server or AWS required):
+
+```sh
+python -m unittest discover -s testing/benchmarks/vector_ann -p test_benchmark.py -v
+```

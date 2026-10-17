@@ -57,10 +57,10 @@ WORK_DIR="${VECTOR_WORK_DIR:-bench-data/vector_ann}"
 VECTOR_CORPUS_DIR="${VECTOR_CORPUS_DIR:-${WORK_DIR}/corpus}"
 VECTOR_CORPUS_ROOTS="${VECTOR_CORPUS_ROOTS:-${REPO_ROOT}}"
 QDRANT_VERSION="${QDRANT_VERSION:-v1.19.2}"
-QDRANT_SHA256="${QDRANT_SHA256:-d24dfd25f4584684b337dd30ee016472cd25f53fc2501f1cd058ab3d7ee0b019}"
+QDRANT_SHA256="${QDRANT_SHA256:-}"
 REPORT_DIR="${REPORT_DIR:-${BENCH_DIR}/reports}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
-OUT="${REPORT_DIR}/${STAMP}"
+
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -72,22 +72,33 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 
-mkdir -p "${WORK_DIR}" "${OUT}"
+mkdir -p "${WORK_DIR}" "${REPORT_DIR}"
+# Serialize shared corpus/cache/venv preparation. Data directories and report
+# directories are private even when separate work directories are used.
+LOCK_DIR="${WORK_DIR}/.benchmark.lock"
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  echo "another invocation owns ${LOCK_DIR}; wait for it to finish" >&2
+  exit 1
+fi
+RUN_WORK=""
+cleanup() {
+  [[ -z "${RUN_WORK}" ]] || rm -rf "${RUN_WORK}"
+  rmdir "${LOCK_DIR}"
+}
+trap cleanup EXIT
+OUT="$(mktemp -d "${REPORT_DIR}/${STAMP}-XXXXXX")"
+RUN_WORK="$(mktemp -d "${WORK_DIR}/run-XXXXXX")"
 
 log "building NornicDB (noui, nolocalllm)"
-NORNIC_BIN="${WORK_DIR}/nornicdb"
-go build -tags "noui nolocalllm" -o "${NORNIC_BIN}" ./cmd/nornicdb
+NORNIC_BIN="${RUN_WORK}/nornicdb"
+go build -tags "${VECTOR_GO_TAGS:-noui nolocalllm}" -o "${NORNIC_BIN}" ./cmd/nornicdb
 
-QDRANT_DIR="${WORK_DIR}/qdrant-${QDRANT_VERSION}"
-QDRANT_BIN="${QDRANT_DIR}/qdrant"
-if [[ ! -x "${QDRANT_BIN}" ]]; then
-  log "fetching Qdrant ${QDRANT_VERSION} (${QDRANT_ASSET})"
-  mkdir -p "${QDRANT_DIR}"
-  curl -fsSL -o "${QDRANT_DIR}/qdrant.tar.gz" \
-    "https://github.com/qdrant/qdrant/releases/download/${QDRANT_VERSION}/${QDRANT_ASSET}"
-  echo "${QDRANT_SHA256}  ${QDRANT_DIR}/qdrant.tar.gz" | shasum -a 256 -c - >/dev/null
-  tar -xzf "${QDRANT_DIR}/qdrant.tar.gz" -C "${QDRANT_DIR}"
-fi
+QDRANT_BIN="${RUN_WORK}/qdrant"
+log "verifying Qdrant ${QDRANT_VERSION} (${QDRANT_ASSET})"
+FETCH_ARGS=(--cache "${WORK_DIR}/downloads" --destination "${QDRANT_BIN}"
+            --version "${QDRANT_VERSION}" --asset "${QDRANT_ASSET}")
+[[ -z "${QDRANT_SHA256}" ]] || FETCH_ARGS+=(--sha256 "${QDRANT_SHA256}")
+python3 "${BENCH_DIR}/fetch_qdrant.py" "${FETCH_ARGS[@]}"
 
 VENV="${WORK_DIR}/venv"
 if [[ ! -x "${VENV}/bin/python" ]]; then
@@ -105,13 +116,15 @@ else
   log "reusing the corpus in ${VECTOR_CORPUS_DIR}"
 fi
 
-RUN_ARGS=(--corpus "${VECTOR_CORPUS_DIR}" --out "${OUT}" --data-root "${WORK_DIR}/data"
+RUN_ARGS=(--corpus "${VECTOR_CORPUS_DIR}" --out "${OUT}" --data-root "${RUN_WORK}/data"
           --nornic-bin "${NORNIC_BIN}" --qdrant-bin "${QDRANT_BIN}"
           --queries "${VECTOR_QUERIES:-1000}" --k "${VECTOR_K:-10}" --warmup "${VECTOR_WARMUP:-100}"
           --concurrency "${VECTOR_CONCURRENCY:-8}" --ef-sweep "${VECTOR_EF_SWEEP:-16,32,64,128,256,512}"
           --engines "${VECTOR_ENGINES:-nornicdb,qdrant}")
 [[ -n "${VECTOR_MODES:-}" ]] && RUN_ARGS+=(--modes "${VECTOR_MODES}")
-[[ "${NORNIC_GPU:-0}" == "1" ]] && RUN_ARGS+=(--nornic-gpu)
+if [[ "${NORNIC_GPU:-0}" == "1" ]]; then
+  RUN_ARGS+=(--nornic-gpu --nornic-env "NORNICDB_GPU_BACKEND=${VECTOR_GPU_BACKEND:-auto}")
+fi
 
 log "running the benchmark into ${OUT}"
 "${PY}" -u "${BENCH_DIR}/run.py" "${RUN_ARGS[@]}" 2>&1 | tee "${OUT}/run.log"
