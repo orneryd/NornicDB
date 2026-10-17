@@ -117,3 +117,26 @@ func TestInlinePropertyMapSubscriptAndArithmeticValues(t *testing.T) {
 		}
 	}
 }
+
+// TestRelationshipRangeReadersSkipPropertyMaps pins the pattern readers on
+// their own: a '[', '*' or '..' in a node or relationship property map is no
+// relationship range, and an unclosed relationship bracket stays invalid.
+func TestRelationshipRangeReadersSkipPropertyMaps(t *testing.T) {
+	for pattern, invalid := range map[string]bool{
+		"(n {id: $ids[i * 20 + 1]})-[r]->()":   false,
+		"(n)-[r:T {w: $ws[0..2][i]}]->()":      false,
+		"(n)-[r:T*1..2 {w: $ws[i * 2]}]->()":   false,
+		"(n)-[r:T {w: 'a*b'}]->()":             false,
+		"(n)-[:T..]->()":                       true,
+		"(n)-[:T*x]->()":                       true,
+		"(n)-[r:T*1..2->()":                    true,
+		"(n {k: ['a', 'b'][i]})-[r:T*2]->(m)": false,
+	} {
+		assert.Equal(t, invalid, invalidRelationshipPattern(pattern), pattern)
+	}
+	assert.Equal(t,
+		map[string]struct{}{"s": {}},
+		variableLengthRelationshipVariableSet("(n {k: [x * 2]})-[r:T {w: $ws[i * 2]}]->()-[s*2]->()"))
+	open, end := nextRelationshipBracket("(a)-[r->(b)", 0)
+	assert.Equal(t, []int{-1, -1}, []int{open, end})
+}
