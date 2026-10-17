@@ -802,27 +802,51 @@ type hnswIndexSnapshot struct {
 // Original vectors remain in their canonical vector store and are resolved on load.
 // Dir is created if needed. Copies index data under a short read lock so I/O does not block Search/Add/Remove.
 func (h *HNSWIndex) Save(path string) error {
+	return saveHNSWSnapshot(path, h.snapshot())
+}
+
+// snapshot copies the graph's persisted form under a short read lock.
+func (h *HNSWIndex) snapshot() *hnswIndexSnapshot {
 	h.mu.RLock()
-	config := h.config
-	quantization := h.quantized.snapshot()
-	dimensions := h.dimensions
-	nodeLevel := append([]uint16(nil), h.nodeLevel...)
-	neighborsArena := append([]uint32(nil), h.neighborsArena...)
-	neighborsOff := append([]int32(nil), h.neighborsOff...)
-	neighborCountsArena := append([]uint16(nil), h.neighborCountsArena...)
-	neighborCountsOff := append([]int32(nil), h.neighborCountsOff...)
+	defer h.mu.RUnlock()
 	idToInternal := make(map[string]uint32, len(h.idToInternal))
 	for k, v := range h.idToInternal {
 		idToInternal[k] = v
 	}
-	internalToID := append([]string(nil), h.internalToID...)
-	deleted := append([]bool(nil), h.deleted...)
-	liveCount := h.liveCount
-	entryPoint := h.entryPoint
-	hasEntryPoint := h.hasEntryPoint
-	maxLevel := h.maxLevel
-	h.mu.RUnlock()
+	return &hnswIndexSnapshot{
+		Quantization:      h.quantized.snapshot(),
+		Version:           hnswIndexFormatVersionGraphOnly,
+		Config:            h.config,
+		Dimensions:        h.dimensions,
+		NodeLevel:         append([]uint16(nil), h.nodeLevel...),
+		NeighborsArena:    append([]uint32(nil), h.neighborsArena...),
+		NeighborsOff:      append([]int32(nil), h.neighborsOff...),
+		NeighborCountsAr:  append([]uint16(nil), h.neighborCountsArena...),
+		NeighborCountsOff: append([]int32(nil), h.neighborCountsOff...),
+		IDToInternal:      idToInternal,
+		InternalToID:      append([]string(nil), h.internalToID...),
+		Deleted:           append([]bool(nil), h.deleted...),
+		LiveCount:         h.liveCount,
+		EntryPoint:        h.entryPoint,
+		HasEntryPoint:     h.hasEntryPoint,
+		MaxLevel:          h.maxLevel,
+	}
+}
 
+// liveIDs are the IDs of the snapshot's live (not deleted) entries.
+func (snap *hnswIndexSnapshot) liveIDs() []string {
+	ids := make([]string, 0, snap.LiveCount)
+	for internal, id := range snap.InternalToID {
+		if internal < len(snap.Deleted) && snap.Deleted[internal] {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// saveHNSWSnapshot writes snap to path (msgpack) atomically.
+func saveHNSWSnapshot(path string, snap *hnswIndexSnapshot) error {
 	if err := security.EnsureRootedParent(path, 0o755); err != nil {
 		return err
 	}
@@ -838,27 +862,7 @@ func (h *HNSWIndex) Save(path string) error {
 		_ = security.RemoveRootedPath(tmpPath)
 	}()
 
-	snap := hnswIndexSnapshot{
-		Quantization:      quantization,
-		Version:           hnswIndexFormatVersionGraphOnly,
-		Config:            config,
-		Dimensions:        dimensions,
-		NodeLevel:         nodeLevel,
-		VecOff:            nil,
-		NeighborsArena:    neighborsArena,
-		NeighborsOff:      neighborsOff,
-		NeighborCountsAr:  neighborCountsArena,
-		NeighborCountsOff: neighborCountsOff,
-		IDToInternal:      idToInternal,
-		InternalToID:      internalToID,
-		Deleted:           deleted,
-		LiveCount:         liveCount,
-		Vectors:           nil,
-		EntryPoint:        entryPoint,
-		HasEntryPoint:     hasEntryPoint,
-		MaxLevel:          maxLevel,
-	}
-	if err := encodeMsgpackBuffered(tmpFile, &snap); err != nil {
+	if err := encodeMsgpackBuffered(tmpFile, snap); err != nil {
 		return err
 	}
 	if err := tmpFile.Sync(); err != nil {
@@ -958,7 +962,10 @@ type ivfHNSWManifest struct {
 	Seq        uint64   `json:"seq"`
 	Dimensions int      `json:"dimensions"`
 	Files      []string `json:"files"` // Files[cid] is cluster cid's graph file; "" when not saved
-	dir        string
+	// Settings are the build settings the generation was built with
+	// (ivfHNSWGenerationSettings); restore requires the current ones.
+	Settings string `json:"settings"`
+	dir      string
 }
 
 func ivfHNSWDir(hnswPath string) string {
@@ -1015,7 +1022,24 @@ func SaveIVFHNSW(hnswPath string, graphs map[int]*HNSWIndex) error {
 	return SaveIVFHNSWWithContext(context.Background(), hnswPath, graphs)
 }
 
+// SaveIVFHNSWWithContext captures every graph before writing any file, so
+// the generation saved is the graphs as they were at the call; callers that
+// change the graphs concurrently capture them under their own exclusion
+// (Service persistence: snapshotClusterGenerationLocked).
 func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int]*HNSWIndex) error {
+	snaps := make(map[int]*hnswIndexSnapshot, len(graphs))
+	for cid, graph := range graphs {
+		if graph != nil {
+			snaps[cid] = graph.snapshot()
+		}
+	}
+	return saveIVFHNSWSnapshots(ctx, hnswPath, snaps)
+}
+
+// saveIVFHNSWSnapshots writes captured cluster graphs as one generation:
+// cluster files under names unique to the generation, then the manifest
+// (with the current build settings), then the prune.
+func saveIVFHNSWSnapshots(ctx context.Context, hnswPath string, graphs map[int]*hnswIndexSnapshot) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1029,7 +1053,7 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int
 	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ivfHNSWManifestName), 0o755); err != nil {
 		return err
 	}
-	m := ivfHNSWManifest{Seq: 1, dir: ivfDir}
+	m := ivfHNSWManifest{Seq: 1, Settings: ivfHNSWGenerationSettings(), dir: ivfDir}
 	if prev, _ := readIVFHNSWManifest(ivfDir); prev != nil {
 		m.Seq = prev.Seq + 1
 	}
@@ -1044,17 +1068,17 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		idx := graphs[cid]
-		if idx == nil {
+		snap := graphs[cid]
+		if snap == nil {
 			continue
 		}
 		name := fmt.Sprintf("g%d-%d", m.Seq, cid)
-		if err := idx.Save(filepath.Join(ivfDir, name)); err != nil {
+		if err := saveHNSWSnapshot(filepath.Join(ivfDir, name), snap); err != nil {
 			return fmt.Errorf("cluster %d: %w", cid, err)
 		}
 		m.Files[cid] = name
 		if m.Dimensions == 0 {
-			m.Dimensions = idx.GetDimensions()
+			m.Dimensions = snap.Dimensions
 		}
 	}
 	if m.Dimensions == 0 {
@@ -1128,7 +1152,8 @@ func LoadIVFHNSWCluster(hnswPath string, clusterID int, vectorLookup VectorLooku
 	return m.loadCluster(clusterID, vectorLookup)
 }
 
-// loadIVFClusterMemberIDs decodes a cluster file and returns the member IDs (InternalToID) without loading vectors.
+// loadIVFClusterMemberIDs decodes a cluster file and returns its live member
+// IDs (deleted slots excluded) without loading vectors.
 func loadIVFClusterMemberIDs(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
@@ -1145,7 +1170,7 @@ func loadIVFClusterMemberIDs(path string) ([]string, error) {
 	if snap.InternalToID == nil {
 		return nil, nil
 	}
-	return snap.InternalToID, nil
+	return snap.liveIDs(), nil
 }
 
 // DeriveIVFCentroidsFromClusters builds centroids and idToCluster from the
@@ -1166,7 +1191,10 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 }
 
 // deriveIVFCentroidsFromManifest derives the centroids (indexed by cluster ID,
-// one per manifest entry) and membership of one persisted generation.
+// one per manifest entry) and membership of one persisted generation, from
+// its graphs' live members. A generation whose named files cannot be read,
+// or that holds a live member in more than one cluster, is not one
+// population and is rejected.
 func deriveIVFCentroidsFromManifest(m *ivfHNSWManifest, vectorLookup VectorLookup) (centroids [][]float32, idToCluster map[string]int, err error) {
 	numClusters := len(m.Files)
 	if numClusters == 0 {
@@ -1183,10 +1211,13 @@ func deriveIVFCentroidsFromManifest(m *ivfHNSWManifest, vectorLookup VectorLooku
 			continue
 		}
 		memberIDs, err := loadIVFClusterMemberIDs(path)
-		if err != nil || len(memberIDs) == 0 {
-			continue
+		if err != nil {
+			return nil, nil, fmt.Errorf("IVF-HNSW generation %d: cluster %d: %w", m.Seq, cid, err)
 		}
 		for _, id := range memberIDs {
+			if prev, dup := idToCluster[id]; dup {
+				return nil, nil, fmt.Errorf("IVF-HNSW generation %d: %q is a live member of clusters %d and %d", m.Seq, id, prev, cid)
+			}
 			idToCluster[id] = cid
 		}
 		vecs := make([][]float32, 0, len(memberIDs))

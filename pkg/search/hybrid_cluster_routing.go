@@ -52,11 +52,10 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 }
 
 // selectHybridClustersLocked is selectHybridClusters for callers holding
-// clusterStateMu (the IVF-HNSW generator routes and reads graphs under it).
+// clusterStateMu (the clustered generators route under it). It routes on the
+// published generation's index with that generation's profiles.
 func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float32, defaultN int) []int {
-	s.mu.RLock()
-	clusterIndex := s.clusterIndex
-	s.mu.RUnlock()
+	clusterIndex, _ := s.clusterServingLocked()
 	if clusterIndex == nil || !clusterIndex.IsClustered() {
 		return nil
 	}

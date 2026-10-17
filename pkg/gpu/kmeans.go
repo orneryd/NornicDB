@@ -757,9 +757,23 @@ func (ci *ClusterIndex) Clear() {
 
 // RestoreClusteringState sets clustering state from persisted centroids and id->cluster map
 // so that k-means can be skipped on load. Call after AddBatch has populated the index.
-// Any node ID not in idToCluster is assigned to cluster 0.
+// A node ID not in idToCluster (or mapped to no centroid) joins its nearest centroid.
 func (ci *ClusterIndex) RestoreClusteringState(centroids [][]float32, idToCluster map[string]int) error {
-	clustering, err := ci.RestoredClustering(centroids, idToCluster)
+	if idToCluster == nil {
+		return errors.New("centroids and idToCluster required")
+	}
+	ci.mu.RLock()
+	err := ci.checkCentroidsLocked(centroids)
+	var clustering *Clustering
+	if err == nil {
+		clustering = &Clustering{centroids: centroids, membership: newClusterMembership(len(idToCluster))}
+		for _, id := range ci.nodeIDs {
+			if cid, ok := idToCluster[id]; ok && cid >= 0 && cid < len(centroids) {
+				clustering.membership.set(id, cid)
+			}
+		}
+	}
+	ci.mu.RUnlock()
 	if err != nil {
 		return err
 	}
@@ -767,36 +781,46 @@ func (ci *ClusterIndex) RestoreClusteringState(centroids [][]float32, idToCluste
 	return nil
 }
 
-// RestoredClustering builds the clustering RestoreClusteringState publishes,
-// without publishing it, so derived state can be built first.
-func (ci *ClusterIndex) RestoredClustering(centroids [][]float32, idToCluster map[string]int) (*Clustering, error) {
-	if len(centroids) == 0 || idToCluster == nil {
-		return nil, errors.New("centroids and idToCluster required")
+// AssignedClustering places every embedding in the index at the centroid
+// nearest its current coordinates, as an unpublished generation (for example
+// one restored from persisted centroids). Like ComputeClustering it copies
+// the embeddings and assigns them without holding the index's locks.
+func (ci *ClusterIndex) AssignedClustering(ctx context.Context, centroids [][]float32) (*Clustering, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	ci.mu.RLock()
-	defer ci.mu.RUnlock()
-
-	n := len(ci.nodeIDs)
-	if n == 0 {
-		return nil, errors.New("index has no embeddings; call AddBatch before RestoreClusteringState")
+	if err := ci.checkCentroidsLocked(centroids); err != nil {
+		ci.mu.RUnlock()
+		return nil, err
 	}
-	dims := ci.dimensions
-	for _, c := range centroids {
-		if len(c) != dims {
-			return nil, fmt.Errorf("centroid dimensions %d != index dimensions %d", len(c), dims)
-		}
+	n, dims := len(ci.nodeIDs), ci.dimensions
+	vectors := append([]float32(nil), ci.cpuVectors[:n*dims]...)
+	nodeIDs := append([]string(nil), ci.nodeIDs...)
+	ci.mu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
 	assignments := make([]int, n)
-	for i, id := range ci.nodeIDs {
-		if cid, ok := idToCluster[id]; ok && cid >= 0 && cid < len(centroids) {
-			assignments[i] = cid
-		} else {
-			assignments[i] = 0
+	assignToCentroidsFromVectors(vectors, centroids, assignments, n, dims, len(centroids))
+	return newClustering(centroids, nodeIDs, assignments), nil
+}
+
+// checkCentroidsLocked validates restored centroids against the index;
+// callers hold ci.mu.
+func (ci *ClusterIndex) checkCentroidsLocked(centroids [][]float32) error {
+	if len(centroids) == 0 {
+		return errors.New("centroids and idToCluster required")
+	}
+	if len(ci.nodeIDs) == 0 {
+		return errors.New("index has no embeddings; call AddBatch before RestoreClusteringState")
+	}
+	for _, c := range centroids {
+		if len(c) != ci.dimensions {
+			return fmt.Errorf("centroid dimensions %d != index dimensions %d", len(c), ci.dimensions)
 		}
 	}
-
-	return newClustering(centroids, ci.nodeIDs, assignments), nil
+	return nil
 }
 
 // IsClustered returns true if clustering has been performed.
