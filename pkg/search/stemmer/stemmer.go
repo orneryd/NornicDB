@@ -361,6 +361,52 @@ func CheckManifest(manifestPath string, timeout time.Duration) (Registration, er
 	}
 }
 
+// CheckResultPrefix starts the line `nornicdb stemmer check` prints once
+// loading has finished. A zero exit status alone does not prove that: a
+// plugin init function that calls os.Exit(0) ends the check inside
+// plugin.Open, before the interface check and registration. Programs that run
+// the check (nornicdb-snowball) therefore require this line as well.
+const CheckResultPrefix = "nornicdb-stemmer-check: "
+
+// CheckResult is the machine-readable result of a finished check: the
+// plugin that loaded and registered.
+type CheckResult struct {
+	ID         string `json:"id"`
+	Version    string `json:"version"`
+	APIVersion int    `json:"api_version"`
+	SHA256     string `json:"sha256"`
+}
+
+// CheckResultLine formats the result line for a registration returned by
+// CheckManifest.
+func CheckResultLine(registration Registration) string {
+	raw, _ := json.Marshal(CheckResult{
+		ID:         registration.ID,
+		Version:    registration.Version,
+		APIVersion: registration.APIVersion,
+		SHA256:     registration.Digest,
+	})
+	return CheckResultPrefix + string(raw)
+}
+
+// ParseCheckResult returns the last result line in a check's output, and
+// false if there is none.
+func ParseCheckResult(output string) (CheckResult, bool) {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		raw, ok := strings.CutPrefix(strings.TrimSpace(lines[i]), CheckResultPrefix)
+		if !ok {
+			continue
+		}
+		var result CheckResult
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			return CheckResult{}, false
+		}
+		return result, true
+	}
+	return CheckResult{}, false
+}
+
 type batchPlugin interface {
 	StemTokens(tokens []string) []string
 }

@@ -65,14 +65,19 @@ Pass the exact `nornicdb` binary that will load the plugin with `--target`:
 2. It then runs `<binary> stemmer check <manifest>`, which loads the plugin
    exactly as server startup does, without opening a database or the network.
    The plugin and its manifest are kept only if the server binary accepts the
-   plugin. If the server binary refuses it, the check times out or crashes, or
+   plugin and the check prints its result line, a `nornicdb-stemmer-check:`
+   line naming the plugin and its library digest. Exit status 0 alone is not
+   enough: a plugin `init` function can end the process before loading
+   finishes. If the server binary refuses it, the check times out or crashes, or
    the binary is too old to have `stemmer check`, both files are removed and
    packaging fails. On a refusal the error lists the recorded differences
    between the two builds, such as a shared module at another version. These
    explain the refusal; only the server binary decides.
 
 The examples below use `./bin/nornicdb`; replace it with your server binary's
-path, for example `"$(command -v nornicdb)"` for a Homebrew install.
+path, for example `"$(command -v nornicdb)"` for a Homebrew install. A relative
+path is taken from the current directory, and a bare name such as `nornicdb`
+is looked up in `PATH`.
 
 Without `--target` the plugin is built with your toolchain's defaults and
 nothing checks it: the command prints `packaged <id> (unverified: ...)`. Check

@@ -51,5 +51,8 @@ func runStemmerCheck(cmd *cobra.Command, args []string) error {
 		return newCommandError(cmd, localization.NornicDBCLIStemmerCheckFailed(manifestPath, err), err)
 	}
 	commandPrintln(cmd, localization.NornicDBCLIStemmerCheckOK(registration.ID, registration.Version, registration.Path))
+	// The result line is a protocol for nornicdb-snowball, not prose, so it is
+	// not localized.
+	cmd.Println(stemmer.CheckResultLine(registration))
 	return nil
 }

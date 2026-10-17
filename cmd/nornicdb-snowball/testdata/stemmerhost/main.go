@@ -5,7 +5,7 @@
 // build it with different build settings to see which plugins it accepts.
 //
 // STEMMERHOST_MODE simulates other targets: "old" (a nornicdb without the
-// stemmer command), "crash" and "hang".
+// stemmer command), "crash", "hang" and "silent" (exits 0 without checking).
 package main
 
 import (
@@ -27,6 +27,8 @@ func main() {
 		panic("stemmerhost: simulated crash")
 	case "hang":
 		time.Sleep(time.Hour)
+	case "silent":
+		os.Exit(0)
 	}
 	if len(os.Args) < 3 || os.Args[1] != "stemmer" || os.Args[2] != "check" {
 		fmt.Fprintln(os.Stderr, "usage: stemmerhost stemmer check [--timeout D] <manifest>")
@@ -41,4 +43,5 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Stemmer plugin %s %s loads: %s\n", registration.ID, registration.Version, registration.Path)
+	fmt.Println(stemmer.CheckResultLine(registration))
 }

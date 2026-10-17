@@ -91,6 +91,43 @@ func TestPackageWithTargetKeepsOnlyPluginsTheTargetLoads(t *testing.T) {
 		})
 	}
 
+	// The check runs from a temporary directory, so a relative target, as the
+	// docs write it (./bin/nornicdb), and a bare name found in PATH must
+	// still name the binary the caller meant.
+	t.Run("loads/relative target path and bare name in PATH", func(t *testing.T) {
+		host := buildStemmerHost(t, nil)
+		t.Chdir(filepath.Dir(filepath.Dir(host)))
+		output, err := packageForTarget(t, moduleDir, "./"+filepath.Join(filepath.Base(filepath.Dir(host)), "stemmerhost"), 0)
+		require.NoError(t, err)
+		require.FileExists(t, output)
+		require.FileExists(t, manifestPath(output))
+
+		t.Setenv("PATH", filepath.Dir(host)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		output, err = packageForTarget(t, moduleDir, "stemmerhost", 0)
+		require.NoError(t, err)
+		require.FileExists(t, output)
+		require.FileExists(t, manifestPath(output))
+	})
+
+	// Exit status 0 is not proof that the check finished: the packager also
+	// requires the check's result line for this plugin.
+	t.Run("refused/target exits 0 without checking", func(t *testing.T) {
+		host := buildStemmerHost(t, nil)
+		t.Setenv("STEMMERHOST_MODE", "silent")
+		output, err := packageForTarget(t, moduleDir, host, 0)
+		require.ErrorContains(t, err, "exited without confirming that it loaded the plugin")
+		requireRemoved(t, output)
+	})
+
+	t.Run("refused/plugin init exits 0 inside plugin.Open", func(t *testing.T) {
+		host := buildStemmerHost(t, nil)
+		exiting := writeSnowballFixtureModule(t)
+		require.NoError(t, os.WriteFile(filepath.Join(exiting, "exit.go"), []byte("package main\n\nimport \"os\"\n\nfunc init() { os.Exit(0) }\n"), 0o644))
+		output, err := packageForTarget(t, exiting, host, 0)
+		require.ErrorContains(t, err, "exited without confirming that it loaded the plugin")
+		requireRemoved(t, output)
+	})
+
 	t.Run("refused/several gcflags, only the last is recorded", func(t *testing.T) {
 		host := buildStemmerHost(t, nil, "-gcflags=all=-l", "-gcflags=fmt=-N")
 		output, err := packageForTarget(t, moduleDir, host, 0)

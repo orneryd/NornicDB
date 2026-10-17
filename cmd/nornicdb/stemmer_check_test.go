@@ -58,6 +58,9 @@ func TestStemmerCheckLoadsPluginWithoutTouchingDataDirectory(t *testing.T) {
 	registration, ok := stemmer.Lookup("cli.suffix")
 	require.True(t, ok)
 	require.Equal(t, "token-stem", registration.Stem("token"))
+	result, ok := stemmer.ParseCheckResult(output)
+	require.True(t, ok, "the check must print its result line: %s", output)
+	require.Equal(t, stemmer.CheckResult{ID: "cli.suffix", Version: "1.0.0", APIVersion: stemmer.APIVersion, SHA256: registration.Digest}, result)
 }
 
 func TestStemmerCheckReportsARefusedPlugin(t *testing.T) {

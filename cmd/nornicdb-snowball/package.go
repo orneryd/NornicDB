@@ -130,6 +130,12 @@ func packageSnowball(opts packageOptions) error {
 	}
 	var target *pluginbuild.Config
 	if opts.Target != "" {
+		// The check runs from a temporary directory, so the target is
+		// resolved once, here, and that one file is both read and run.
+		opts.Target, err = resolveTarget(opts.Target)
+		if err != nil {
+			return fmt.Errorf("--target: %w", err)
+		}
 		cfg, err := pluginbuild.FromBinary(opts.Target)
 		if err != nil {
 			return fmt.Errorf("--target: %w", err)
@@ -208,7 +214,7 @@ func packageSnowball(opts packageOptions) error {
 		return err
 	}
 	if target != nil {
-		if err := verifyWithTarget(opts.Target, outputPath, tmpRoot, opts.CheckTimeout); err != nil {
+		if err := verifyWithTarget(opts.Target, outputPath, manifest, tmpRoot, opts.CheckTimeout); err != nil {
 			return err
 		}
 	}
@@ -223,11 +229,26 @@ const (
 	checkGrace          = 30 * time.Second
 )
 
+// resolveTarget returns the absolute path of the --target binary. A name
+// without a path separator is looked up in PATH, as a shell would run it.
+func resolveTarget(target string) (string, error) {
+	if !strings.ContainsRune(target, '/') && !strings.ContainsRune(target, filepath.Separator) {
+		found, err := exec.LookPath(target)
+		if err != nil {
+			return "", err
+		}
+		target = found
+	}
+	return filepath.Abs(target)
+}
+
 // verifyWithTarget runs `<target> stemmer check` on the packaged plugin, from
-// workDir, and fails unless the target's loader accepts it within timeout. On
-// a refusal it adds the recorded build differences between the target and the
-// plugin, which explain the refusal but never decide it.
-func verifyWithTarget(targetPath, outputPath, workDir string, timeout time.Duration) error {
+// workDir, and fails unless the target's loader accepts it within timeout:
+// the check must exit 0 and print a result line for this manifest's plugin
+// and library digest. On a refusal it adds the recorded build differences
+// between the target and the plugin, which explain the refusal but never
+// decide it.
+func verifyWithTarget(targetPath, outputPath string, manifest stemmer.Manifest, workDir string, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = defaultCheckTimeout
 	}
@@ -240,6 +261,10 @@ func verifyWithTarget(targetPath, outputPath, workDir string, timeout time.Durat
 	output := strings.TrimSpace(string(out))
 	switch {
 	case err == nil:
+		want := stemmer.CheckResult{ID: manifest.ID, Version: manifest.Version, APIVersion: manifest.APIVersion, SHA256: manifest.SHA256}
+		if got, ok := stemmer.ParseCheckResult(output); !ok || got != want {
+			return fmt.Errorf("--target %s exited without confirming that it loaded the plugin, which was removed (a plugin init function may have ended the process): %s", targetPath, output)
+		}
 		return nil
 	case ctx.Err() != nil:
 		return fmt.Errorf("--target %s did not finish checking the plugin within %s; the plugin was removed", targetPath, timeout+checkGrace)
