@@ -213,6 +213,42 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 	}
 }
 
+// TestServingPublicationReplayAdvancesRevisionOnlyWhenItChangesTheGraph: the
+// initial build's race replay runs after BuildIndexes may have returned. With
+// nothing raced it changes nothing a search returns and must not advance
+// IndexRevision, or it retires answers cached right after the build. A replay
+// that applies entries advances it, also when it fails part-way.
+func TestServingPublicationReplayAdvancesRevisionOnlyWhenItChangesTheGraph(t *testing.T) {
+	servingTestEnv(t)
+	awaitReplays := awaitServingReplays(t)
+	ctx := context.Background()
+	engine := newNamespacedEngine(t)
+	svc := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { _ = svc.Close() })
+	for i, v := range [][]float32{{1, 0.1}, {-1, -0.1}, {0.1, 1}} {
+		addServingNode(t, engine, svc, fmt.Sprintf("n%d", i), v)
+	}
+	require.NoError(t, svc.BuildIndexes(ctx))
+	_, err := svc.getOrCreateHNSWIndex(ctx, 2, nil)
+	require.NoError(t, err)
+	awaitReplays(svc)
+	built := servingGraph(svc)
+	require.NotNil(t, built)
+
+	svc.hnswRebuildOverlay.Reset()
+	revision := svc.IndexRevision()
+	svc.replayHNSWBuildRaces(built)
+	require.Equal(t, revision, svc.IndexRevision(), "an empty replay published")
+
+	// The removal applies; the vector of the wrong dimension then fails.
+	size := built.Size()
+	svc.hnswRebuildOverlay.Remove("n0")
+	svc.hnswRebuildOverlay.Add("wrong-dimension", []float32{1, 0, 0})
+	svc.replayHNSWBuildRaces(built)
+	require.Equal(t, size-1, built.Size(), "precondition: the replay applied the removal before failing")
+	require.Greater(t, svc.IndexRevision(), revision, "a replay that changed the graph did not publish")
+}
+
 // vectorServingFields are the structures whose change alters what vector
 // search serves outside the cluster generation, which has its own owner and
 // guard (cluster_generation_owner_test.go).
