@@ -60,7 +60,7 @@ VECTOR_CORPUS_MAX_CHUNKS=20000 VECTOR_CORPUS_DIR=bench-data/vector_ann/corpus-20
 The script runs three Python programs, which you can also run directly. For example, to try a NornicDB setting on one mode without a full sweep:
 
 ```sh
-PY=bench-data/vector_ann/venv/bin/python   # created by the script on its first run
+PY=bench-data/vector_ann/.venv/bin/python   # created by the script on its first run
 
 # Prepare binaries for direct runs (the shell driver's private binaries are cleaned on exit).
 go build -tags "noui nolocalllm" -o bench-data/vector_ann/nornicdb ./cmd/nornicdb
@@ -139,7 +139,7 @@ Ports are fixed and away from NornicDB's and Qdrant's defaults: NornicDB uses HT
 | `corpus.py` | chunks the repositories, embeds them (cached by chunk content in `embeddings-<model>.sqlite`), holds out queries and computes the exact top-100 |
 | `run.py` | starts each engine and mode in turn, loads the corpus and measures it; `MODES` defines the modes |
 | `report.py` | renders the reports from a results directory |
-| `requirements.txt` | Python dependencies, installed into `bench-data/vector_ann/venv` by the script |
+| `requirements.txt` | Python dependencies, installed into `bench-data/vector_ann/.venv` by the script |
 | `../../../scripts/benchmark_vector_vs_qdrant.sh` | builds, fetches, runs and reports |
 
 `bench-data/` is git-ignored: it holds the corpus, the embedding cache, the binaries and the per-run data directories.
