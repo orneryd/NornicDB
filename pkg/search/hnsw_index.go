@@ -222,8 +222,8 @@ func newHNSWIndex(dimensions int, config HNSWConfig, lookup VectorLookup) *HNSWI
 }
 
 // SetVectorLookup sets an optional lookup so vectors are resolved by ID at search time
-// instead of from the in-memory slice. When set, Add does not store vectors (vecOff = -1);
-// Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
+// instead of from the in-memory slice. When set, Add does not store vectors the lookup
+// resolves (vecOff = -1); Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
 func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -346,8 +346,19 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 		return nil
 	}
 
+	// Lookup-mode nodes resolve their vector by ID. A vector the source no
+	// longer holds (removed after a build snapshot read it) cannot resolve, so
+	// the node keeps its own copy: an unresolvable node can't seed a layer
+	// search, and as the entry point it would leave every later insertion
+	// without neighbours. The replayed removal then tombstones it.
 	var normalized []float32
+	var resolved []float32
+	resolvedOK := false
 	if h.vectorLookup != nil {
+		resolved, resolvedOK = h.vectorLookup(id)
+		resolvedOK = resolvedOK && len(resolved) == h.dimensions
+	}
+	if resolvedOK {
 		if cap(h.addQueryScratch) < h.dimensions {
 			h.addQueryScratch = make([]float32, h.dimensions)
 		}
@@ -394,8 +405,10 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.neighborCountsOff = append(h.neighborCountsOff, countsOff32)
 	h.internalToID = append(h.internalToID, id)
 	if h.buildVectors != nil && len(h.buildVectors) < h.buildVectorLimit {
-		vec, _ := h.vectorLookup(id)
-		h.buildVectors = append(h.buildVectors, vec)
+		if !resolvedOK {
+			resolved = normalized
+		}
+		h.buildVectors = append(h.buildVectors, resolved)
 	}
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)

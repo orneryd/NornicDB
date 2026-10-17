@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -279,6 +281,59 @@ func testContinuationDefaultHNSWPopulation(t *testing.T, deleted bool) {
 	}
 	require.Len(t, ids, want)
 	require.Equal(t, 1, embedCalls)
+}
+
+// A vector removed after the background HNSW build took its snapshot, and
+// before the build inserted it, used to cost the graph every edge when it
+// was the first insertion (the entry point): continuation then stopped at
+// one row with candidate_pool_exhausted. Removing the first vector in the
+// build's own order makes that ordering deterministic.
+func TestContinuationHNSWBuildRacingRemovalFinishesLivePopulation(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	service := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for i := 0; i < 6; i++ {
+		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i) / 10}}}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	removed := ""
+	hnswAfterBuildSnapshotHook = func(ids []string) {
+		removed = ids[0]
+		require.NoError(t, engine.DeleteNode(storage.NodeID(removed)))
+		require.NoError(t, service.RemoveNode(storage.NodeID(removed)))
+	}
+	t.Cleanup(func() { hnswAfterBuildSnapshotHook = nil })
+	_, err := service.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	hnswAfterBuildSnapshotHook = nil
+	require.NotEmpty(t, removed)
+	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
+
+	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
+	request := SearchContinuationRequest{Owner: "alice", N: 2}
+	page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 2}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+	require.NoError(t, err)
+	ids := map[string]bool{}
+	for {
+		require.True(t, strings.HasPrefix(page.SearchMethod, "vector_hnsw"), "search method %q", page.SearchMethod)
+		for _, result := range page.Results {
+			id := searchResultID(result)
+			require.False(t, ids[id], "duplicate %s", id)
+			ids[id] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		request.QID = page.QID
+		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+		require.NoError(t, err)
+	}
+	require.Len(t, ids, 5)
+	require.False(t, ids[removed])
+	require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
 }
 
 type unavailableContinuationCandidates struct{}
