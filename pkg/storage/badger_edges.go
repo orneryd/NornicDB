@@ -171,8 +171,8 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, func() { b.cacheOnEdgeCreated(edge) }, func() []publicationKey {
-		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, nil, edge)
+	}, func() { b.cacheOnEdgeCreated(edge) }, func(buf []publicationKey) []publicationKey {
+		return appendEdgePublicationKeys(buf, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, nil, edge)
 	}, notification)
 
 	if err == nil {
@@ -460,8 +460,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, func() { b.cacheOnEdgeUpdated(oldType, edge) }, func() []publicationKey {
-		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, oldEdge, edge)
+	}, func() { b.cacheOnEdgeUpdated(oldType, edge) }, func(buf []publicationKey) []publicationKey {
+		return appendEdgePublicationKeys(buf, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, oldEdge, edge)
 	}, notification)
 
 	// Notify listeners on successful update
@@ -555,8 +555,8 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
-	}, publish, func() []publicationKey {
-		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(id)), id, edge, nil)
+	}, publish, func(buf []publicationKey) []publicationKey {
+		return appendEdgePublicationKeys(buf, b.GetSchemaForNamespace(namespaceForEdgeID(id)), id, edge, nil)
 	}, notification)
 
 	if err == nil {

@@ -149,7 +149,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 			b.publishUniqueValues(schema, node.ID, nil, node)
 			b.cacheOnNodeCreated(node)
 		}
-		cw.publishKeys = appendNodePublicationKeys(nil, schema, node.ID, nil, node)
+		cw.publishKeys = appendNodePublicationKeys(cw.publishKeys[:0], schema, node.ID, nil, node)
 		return nil
 	}, notification)
 	releaseUniqueLocks()
@@ -634,7 +634,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			b.publishUniqueValues(schema, node.ID, existingNode, node)
 			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 		}
-		cw.publishKeys = appendNodePublicationKeys(nil, schema, node.ID, existingNode, node)
+		cw.publishKeys = appendNodePublicationKeys(cw.publishKeys[:0], schema, node.ID, existingNode, node)
 		return nil
 	}, notification)
 
@@ -711,8 +711,8 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		b.publishUniqueValues(uniqueSchema, deletedNode.ID, deletedNode, nil)
 		b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
 	}
-	keys := func() []publicationKey {
-		keys := appendNodePublicationKeys(nil, uniqueSchema, id, deletedNode, nil)
+	keys := func(buf []publicationKey) []publicationKey {
+		keys := appendNodePublicationKeys(buf, uniqueSchema, id, deletedNode, nil)
 		for _, edgeID := range deletedEdgeIDs {
 			keys = append(keys, publicationKey{edge: edgeID})
 		}

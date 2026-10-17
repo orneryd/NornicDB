@@ -91,16 +91,16 @@ func (b *BadgerEngine) withNotifyingUpdate(fn func(txn *badger.Txn) error, notif
 // withPublishingUpdate is withNotifyingUpdate with the commit's derived-state
 // publication (nil for none), which the ordered stage runs once the commit
 // is visible and before this returns (badger_publication_stage.go). publish
-// and keys may read what fn recorded: they run after fn. keys returns the
-// entities and unique values the publication touches.
-func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []publicationKey, notification ...*commitNotification) error {
+// and keys may read what fn recorded: they run after fn. keys appends to buf
+// the entities and unique values the publication touches.
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func(buf []publicationKey) []publicationKey, notification ...*commitNotification) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(fn); err != nil {
 			return err
 		}
 		cw.publish = publish
 		if keys != nil {
-			cw.publishKeys = keys()
+			cw.publishKeys = keys(cw.publishKeys[:0])
 		}
 		return nil
 	}, notification...)

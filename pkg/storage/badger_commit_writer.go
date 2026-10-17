@@ -39,6 +39,10 @@ type commitWriter struct {
 	// key (badger_publication_stage.go).
 	publish     func()
 	publishKeys []publicationKey
+	// pub and keyBuf hold the publication and the keys of a small write in
+	// the writer itself, which lives until the publication has run.
+	pub    commitPublication
+	keyBuf [2]publicationKey
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -52,6 +56,7 @@ type commitWriter struct {
 func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
 	cw := &commitWriter{engine: b, db: db}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
+	cw.publishKeys = cw.keyBuf[:0]
 	return cw
 }
 
@@ -137,7 +142,8 @@ func (cw *commitWriter) publication() *commitPublication {
 	if len(ids) == 0 && publish == nil {
 		return nil
 	}
-	return &commitPublication{keys: cw.publishKeys, publish: publish, pendingEmbeddingIDs: ids, engine: cw.engine}
+	cw.pub = commitPublication{keys: cw.publishKeys, publish: publish, pendingEmbeddingIDs: ids, engine: cw.engine}
+	return &cw.pub
 }
 
 func (cw *commitWriter) reserveNotification() {
