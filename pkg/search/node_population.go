@@ -179,6 +179,13 @@ func (s *Service) removeVectorArtifactsLocked() error {
 			return err
 		}
 	}
+	// The per-cluster graphs index the retired vectors too; a restart would
+	// otherwise derive centroids and routing from them.
+	if s.hnswIndexPath != "" {
+		if err := security.RemoveAllRootedPath(ivfHNSWDir(s.hnswIndexPath)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return s.removeSavedGlobalGraphLocked()
 }
 

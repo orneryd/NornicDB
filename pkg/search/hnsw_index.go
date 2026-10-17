@@ -916,11 +916,19 @@ func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, clusterHNSW ma
 	if hnswPath == "" || len(clusterHNSW) == 0 {
 		return nil
 	}
+	return saveIVFHNSWDir(ctx, ivfHNSWDir(hnswPath), clusterHNSW)
+}
+
+// ivfHNSWDir is the directory of the per-cluster graphs saved beside hnswPath.
+func ivfHNSWDir(hnswPath string) string {
+	return filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf")
+}
+
+// saveIVFHNSWDir writes one graph-only file per cluster into ivfDir.
+func saveIVFHNSWDir(ctx context.Context, ivfDir string, clusterHNSW map[int]*HNSWIndex) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	baseDir := filepath.Dir(hnswPath)
-	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
 	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ".cluster"), 0o755); err != nil {
 		return err
 	}

@@ -2423,8 +2423,18 @@ func (s *Service) persistBM25Background(fulltextPath string) {
 		return
 	}
 	s.logPrintf("📇 Persist: saving BM25 to %s...", fulltextPath)
-	if err := s.fulltext().Save(fulltextPath); err != nil {
+	// Published only while this index is still live and no population owns the
+	// text source: a population clears and restores it in place.
+	fulltext := s.fulltext()
+	published, err := s.publishStagedArtifact(fulltextPath, fulltext.Save, func() bool {
+		return s.fulltext() == fulltext && !s.buildInProgress.Load()
+	})
+	if err != nil {
 		s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", fulltextPath, err)
+		return
+	}
+	if !published {
+		s.logPrintf("📇 Background persist: BM25 index changed owner while it was saved; not published")
 		return
 	}
 	s.logPrintf("📇 Background persist: BM25 index saved to %s", fulltextPath)
@@ -2474,8 +2484,19 @@ func (s *Service) persistHNSWBackground(hnswPath string) {
 		s.logPrintf("📇 Background persist: HNSW skip (index not built yet; will be built during warmup or when k-means completes)")
 		return
 	}
-	if _, err := s.publishStagedArtifact(hnswPath, idx.Save, func() bool { return true }); err != nil {
+	// Published only while idx is still the live graph: Clear, resets and
+	// strategy changes retire it under indexMu (sol r2 finding 1).
+	published, err := s.publishStagedArtifact(hnswPath, idx.Save, func() bool {
+		s.hnswMu.RLock()
+		defer s.hnswMu.RUnlock()
+		return s.hnswIndex == idx
+	})
+	if err != nil {
 		s.logPrintf("⚠️ Background persist: failed to save HNSW index to %s: %v", hnswPath, err)
+		return
+	}
+	if !published {
+		s.logPrintf("📇 Background persist: HNSW graph was retired while it was saved; not published")
 		return
 	}
 	s.logPrintf("📇 Background persist: HNSW index saved to %s", hnswPath)
@@ -2504,14 +2525,29 @@ func (s *Service) persistIVFHNSWBackground(ctx context.Context, hnswPath string)
 	if err := ctx.Err(); err != nil {
 		return
 	}
+	_, generation := s.clusterState()
 	s.clusterHNSWMu.RLock()
 	clusterHNSW := s.clusterHNSW
 	s.clusterHNSWMu.RUnlock()
 	if len(clusterHNSW) == 0 {
 		return
 	}
-	if err := SaveIVFHNSWWithContext(ctx, hnswPath, clusterHNSW); err != nil {
+	// The cluster graphs are saved into a staging directory and swapped in
+	// only while they are still the published graphs of the same cluster
+	// generation (sol r2 finding 1, per-cluster sibling).
+	published, err := s.publishStagedArtifact(ivfHNSWDir(hnswPath), func(staged string) error {
+		return saveIVFHNSWDir(ctx, staged, clusterHNSW)
+	}, func() bool {
+		s.clusterHNSWMu.RLock()
+		defer s.clusterHNSWMu.RUnlock()
+		return s.clusterGeneration.Load() == generation && reflect.ValueOf(s.clusterHNSW).UnsafePointer() == reflect.ValueOf(clusterHNSW).UnsafePointer()
+	})
+	if err != nil {
 		s.logPrintf("⚠️ Background persist: failed to save IVF-HNSW clusters to %s: %v", hnswPath, err)
+		return
+	}
+	if !published {
+		s.logPrintf("📇 Background persist: IVF-HNSW clusters were retired while they were saved; not published")
 		return
 	}
 	s.logPrintf("📇 Background persist: IVF-HNSW clusters saved to %s (%d clusters)", hnswPath, len(clusterHNSW))
@@ -3085,10 +3121,22 @@ func (s *Service) admitStagedVectorFileStore(storageEmpty bool, staged *stagedPe
 			return memoryCurrent
 		}
 		if savedVectorFilePresent(s.vectorIndexPath) {
-			if staged != nil && !staged.lockedLoadAllowed {
+			// A saved vector file is opened only by a population's staging,
+			// never here under indexMu (sol r2 finding 3): a population
+			// restages outside the lock, and gives up after repeated attempts
+			// (memory fallback, rebuild from storage). Every other caller, such
+			// as a write replayed after a failed staging, keeps the in-memory
+			// index.
+			if staged != nil && !staged.restageExhausted {
 				staged.restage = true
 				return memoryCurrent
 			}
+			s.logPrintf("📇 Vector source: %s.vec is opened only by its population's staging; using the in-memory index", s.vectorIndexPath)
+			return memoryCurrent
+		}
+		// Only an absent or empty file is opened here (it reads nothing); the
+		// hook is a tripwire for tests should a saved file ever reach it.
+		if savedVectorFilePresent(s.vectorIndexPath) {
 			runPopulationHook(&vectorStoreLockedLoadHook, s)
 		}
 		var err error
@@ -4414,8 +4462,7 @@ func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 	if reloadErr != nil {
 		return reloadErr
 	}
-	s.finishBuildWithFinalPersist(ctx)
-	return nil
+	return s.finishBuildWithFinalPersist(ctx)
 }
 
 func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) error {
@@ -4432,14 +4479,23 @@ func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) erro
 	return nil
 }
 
-func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
+// finishBuildWithFinalPersist persists the completed build and publishes
+// readiness. A request cancelled before readiness is published gets its
+// cancellation back and leaves the service not ready (sol r2 finding 2):
+// persistence may have stopped early, and the next build completes it. The
+// service-owned ANN job is not the request's and keeps running.
+func (s *Service) finishBuildWithFinalPersist(ctx context.Context) error {
 	s.setBuildPhase("persisting_final_indexes")
 	s.buildInProgress.Store(false)
 	s.indexChanged()
 	runPopulationHook(&finalPersistHook, s)
 	s.runPersistWithContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.setLifecycleState(lifecycleReady)
 	s.setBuildPhase("ready")
+	return nil
 }
 
 // warmupVectorPipeline creates the vector search pipeline (and builds HNSW or IVF-HNSW if needed) so that

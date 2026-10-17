@@ -133,6 +133,7 @@ func (s *Service) setVectorFileStoreLocked(vfs *VectorFileStore) {
 // retired artifact. It reports whether the artifact was published.
 func (s *Service) publishStagedArtifact(final string, save func(staged string) error, current func() bool) (bool, error) {
 	staged := final + ".staged"
+	_ = security.RemoveAllRootedPath(staged) // a leftover from an interrupted save
 	if err := save(staged); err != nil {
 		_ = security.RemoveAllRootedPath(staged)
 		return false, err
@@ -143,6 +144,13 @@ func (s *Service) publishStagedArtifact(final string, save func(staged string) e
 	if !current() {
 		_ = security.RemoveAllRootedPath(staged)
 		return false, nil
+	}
+	// A directory artifact replaces the previous directory as a whole.
+	if info, err := security.RootedStat(final); err == nil && info.IsDir() {
+		if err := security.RemoveAllRootedPath(final); err != nil {
+			_ = security.RemoveAllRootedPath(staged)
+			return false, err
+		}
 	}
 	if err := security.RenameRootedFile(staged, final); err != nil {
 		_ = security.RemoveAllRootedPath(staged)

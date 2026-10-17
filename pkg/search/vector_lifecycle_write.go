@@ -395,10 +395,11 @@ type stagedPersistedSources struct {
 
 	// restage asks the population to read the image again outside indexMu:
 	// admission found an existing saved file with no matching staged
-	// candidate (sol-r1 finding 3). lockedLoadAllowed lets a final attempt
-	// load it under indexMu instead of retrying forever.
-	restage           bool
-	lockedLoadAllowed bool
+	// candidate (sol-r1 finding 3). restageExhausted ends the retries: the
+	// step falls back to memory instead; a saved file is never loaded under
+	// indexMu.
+	restage          bool
+	restageExhausted bool
 }
 
 // stagePersistedSources reads the saved image for a population that may
@@ -499,11 +500,11 @@ func (st *stagedPersistedSources) close() {
 //
 // It reports whether a live vector source was selected, and restage when
 // admission found an existing saved vector file with no matching staged
-// candidate; the caller then repeats the step. lockedLoadAllowed lets a final
-// attempt load that file under indexMu instead.
-func (s *Service) restorePersistedSourcesStep(ctx context.Context, fulltextPath string, storageEmpty, lockedLoadAllowed bool) (liveSelected, restage bool, err error) {
+// candidate; the caller then repeats the step. restageExhausted marks the last
+// attempt, which falls back to memory rather than loading under indexMu.
+func (s *Service) restorePersistedSourcesStep(ctx context.Context, fulltextPath string, storageEmpty, restageExhausted bool) (liveSelected, restage bool, err error) {
 	staged := s.stagePersistedSources(fulltextPath)
-	staged.lockedLoadAllowed = lockedLoadAllowed
+	staged.restageExhausted = restageExhausted
 	defer staged.close()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
