@@ -58,15 +58,11 @@ func TestClusterTransportListen_TLSReturnsWhenCancelled(t *testing.T) {
 	defer transport.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	accepted := make(chan struct{}, 16)
 	done := make(chan error, 1)
-	go func() {
-		done <- transport.Listen(ctx, cfg.BindAddr, func(PeerConnection) { accepted <- struct{}{} })
-	}()
+	go func() { done <- transport.Listen(ctx, cfg.BindAddr, nil) }()
 	waitTCPListening(t, cfg.BindAddr)
-	// Every probe connection has been accepted and Listen is blocked in
-	// Accept again, so only the cancellation can end it.
-	<-accepted
+	// Let the listener take the probe connection and block in Accept again,
+	// so only the cancellation can end it.
 	time.Sleep(200 * time.Millisecond)
 
 	cancel()
