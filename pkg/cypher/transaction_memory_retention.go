@@ -106,7 +106,14 @@ func (r *memoryRetention) reserveCollected(value interface{}) error {
 		return nil
 	}
 	switch value.(type) {
-	case []interface{}, []string, []int64, []float64, []float32, map[string]interface{}:
+	case []interface{}, map[string]interface{}:
+		// At any depth: collect({xs: $big}) counts $big once.
+		rows := r.estimator()
+		if rows.shared == nil {
+			rows.shared = make(map[sizedValueKey]struct{})
+		}
+		return r.account.grow(estimateHeldBytes(value, rows.shared))
+	case []string, []int64, []float64, []float32:
 		return r.account.grow(r.estimator().columnBytes(memoryCollectColumn, value))
 	}
 	return r.account.growValue(value)
@@ -323,6 +330,35 @@ func (r *memoryRetention) reserveTraversalRow(row traversalOptRow) error {
 	return r.account.grow(size)
 }
 
+// reserveCandidates reserves the n candidate nodes of a MATCH an operator
+// holds while it matches them: an index seek's, a label scan's, or seed
+// nodes from anywhere else. Rows built from them count the nodes they bind;
+// the candidates count while the operator holds them, also when the rows it
+// builds from them don't stay (RETURN count(*)).
+// collectPipelineInitialNodeCandidates reserves what it returns into the
+// owner its caller passes, which gives it back (release) once it drops them.
+func (r *memoryRetention) reserveCandidates(n int) error {
+	if r == nil || r.account.scope == nil || n <= 0 {
+		return nil
+	}
+	return r.account.grow(sliceHeaderBytes + saturatingProduct(int64(n), entityReferenceBytes))
+}
+
+// failed reports whether the owner's statement failed over a memory limit:
+// an operator that would otherwise fall back to another plan stops instead.
+func (r *memoryRetention) failed() bool {
+	return r != nil && r.account.scope != nil && r.account.scope.tracker.err() != nil
+}
+
+// reserveCacheKey reserves the entry of a cache the operator keeps a value
+// under, keyed by key: its slot and the key's text.
+func (r *memoryRetention) reserveCacheKey(key string) error {
+	if r == nil || r.account.scope == nil {
+		return nil
+	}
+	return r.account.grow(mapEntryBytes + stringHeaderBytes + int64(len(key)))
+}
+
 // reservePath reserves a matched path of nodes and relationships.
 func (r *memoryRetention) reservePath(nodes, relationships int) error {
 	if r == nil || r.account.scope == nil {
@@ -522,8 +558,11 @@ const transientCheckBytes = 64 << 10
 type expressionBudget struct {
 	scope *memoryScope
 	held  int64
-	// built is what a list being built takes so far (beginList).
-	built int64
+	// built is what a list being built takes so far (beginList), checked
+	// what it took when last checked (checkList), and seen the lists and
+	// maps it counted (addElement).
+	built, checked int64
+	seen           map[sizedValueKey]struct{}
 	// counted and elementBytes size a list accumulator by its new elements
 	// (holdAccumulator).
 	counted      int
@@ -577,12 +616,23 @@ func (b *expressionBudget) holdSlots(n, slotBytes int64) error {
 }
 
 // holdList holds an evaluated list while its elements stream: its slots,
-// whose values count where they are kept.
+// whose values count where they are kept (a row's list, a parameter).
 func (b *expressionBudget) holdList(items []interface{}) error {
 	if !b.active() {
 		return nil
 	}
 	return b.holdBytes(shallowValueBytes(items))
+}
+
+// holdBuiltList holds a list the expression just built while its elements
+// stream, with what its elements hold: its builders gave their reservation
+// back, and nothing else holds it (UNWIND [x IN … | {xs: range(…)}]). A
+// list or map its elements share counts once.
+func (b *expressionBudget) holdBuiltList(items []interface{}) error {
+	if !b.active() {
+		return nil
+	}
+	return b.holdBytes(estimateHeldBytes(items, make(map[sizedValueKey]struct{})))
 }
 
 // beginList holds a list built from n items: its capacity, before it is
@@ -592,14 +642,37 @@ func (b *expressionBudget) beginList(n int) error {
 		return nil
 	}
 	b.built = sliceHeaderBytes + int64(n)*valueSlotBytes
+	b.checked = b.built
+	b.seen = nil
 	return b.holdBytes(b.built)
 }
 
-// addElement adds a value the list being built got (beginList).
-func (b *expressionBudget) addElement(value interface{}) {
-	if b.active() {
-		b.built += shallowValueBytes(value)
+// addElement adds the value the list being built got for item (beginList),
+// with what it holds: the builder owns what the element built (a map's
+// list, a list's maps), whose own builders gave back what they held. A list
+// or map that is item, or that an earlier element holds, counts as its slot:
+// the input holds item, and the builder counted the other already.
+func (b *expressionBudget) addElement(item, value interface{}) {
+	if !b.active() {
+		return
 	}
+	if sameBindingValue(item, value) {
+		b.built += shallowValueBytes(value)
+		return
+	}
+	if b.seen == nil {
+		b.seen = make(map[sizedValueKey]struct{})
+	}
+	if key, shared := sharedValueKey(item); shared {
+		b.seen[key] = struct{}{}
+	}
+	b.built += estimateHeldBytes(value, b.seen)
+}
+
+// checkDue reports whether the list being built grew by transientCheckBytes
+// since it was last checked (checkList): an element can hold a large value.
+func (b *expressionBudget) checkDue() bool {
+	return b.active() && b.built-b.checked >= transientCheckBytes
 }
 
 // checkList holds what the list being built took so far (beginList).
@@ -607,26 +680,44 @@ func (b *expressionBudget) checkList() error {
 	if !b.active() {
 		return nil
 	}
+	b.checked = b.built
 	return b.holdBytes(b.built)
 }
 
 // holdAccumulator holds a reduce accumulator after a step. A list
 // accumulator grows by its new elements (acc + [x]): those are sized as
-// they come, so a step costs what it added, not the whole list.
+// they come, so a step costs what it added, not the whole list. A map
+// accumulator (apoc.map.setKey(m, k, v)) counts the lists and maps its
+// entries hold once each, by identity, as they first appear: the step that
+// built the map walked its entries already.
 func (b *expressionBudget) holdAccumulator(accumulator interface{}) error {
 	if !b.active() {
 		return nil
 	}
 	size := shallowValueBytes(accumulator)
-	if list, isList := accumulator.([]interface{}); isList {
-		if len(list) < b.counted {
+	switch v := accumulator.(type) {
+	case []interface{}:
+		if len(v) < b.counted {
 			b.counted, b.elementBytes = 0, 0
 		}
-		for _, element := range list[b.counted:] {
+		for _, element := range v[b.counted:] {
 			b.elementBytes += estimateValueBytes(element)
 		}
-		b.counted = len(list)
-		size = valueSlotBytes + sliceHeaderBytes + int64(cap(list)-len(list))*valueSlotBytes + b.elementBytes
+		b.counted = len(v)
+		size = valueSlotBytes + sliceHeaderBytes + int64(cap(v)-len(v))*valueSlotBytes + b.elementBytes
+	case map[string]interface{}:
+		if b.seen == nil {
+			b.seen = make(map[sizedValueKey]struct{})
+		}
+		for _, element := range v {
+			if key, shared := sharedValueKey(element); shared {
+				if _, counted := b.seen[key]; !counted {
+					// The entry's slot is in the map's shallow size.
+					b.elementBytes += estimateHeldBytes(element, b.seen) - valueSlotBytes
+				}
+			}
+		}
+		size += b.elementBytes
 	}
 	return b.holdBytes(size)
 }

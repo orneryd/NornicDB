@@ -505,15 +505,15 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 		properties[key] = normalizePropValue(value)
 	}
 	pattern := nodePatternInfo{variable: shape.variable, labels: shape.labels, properties: properties}
-	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
-	if err != nil {
-		return 0, false
-	}
 	// The candidates and the set that drops duplicates count while the
 	// semi-join runs (#1343).
 	memory := trackedRetention(ctx)
 	defer memory.release()
-	if memory.reserveSlots(len(nodes), entityReferenceBytes+mapEntryBytes+stringHeaderBytes) != nil {
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, memory, pattern, "", pipelineMatchPhysicalHint{})
+	if err != nil {
+		return 0, memory.failed()
+	}
+	if memory.reserveSlots(len(nodes), mapEntryBytes+stringHeaderBytes) != nil {
 		return 0, true
 	}
 	hideSystemNodes := shouldHideSystemNodes(e.storage)
