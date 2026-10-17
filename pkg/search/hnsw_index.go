@@ -22,6 +22,7 @@ package search
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -30,8 +31,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strconv"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -946,62 +945,194 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	return h, nil
 }
 
-// SaveIVFHNSW persists per-cluster HNSW indexes to disk under hnsw_ivf/ alongside hnsw.
-// hnswPath is the full path to the single HNSW file (e.g. data/search/dbname/hnsw); per-cluster
-// files are written to hnsw_ivf/0, 1, 2, ... (no extension). Each cluster is saved as graph-only.
-func SaveIVFHNSW(hnswPath string, clusterHNSW map[int]*HNSWIndex) error {
-	return SaveIVFHNSWWithContext(context.Background(), hnswPath, clusterHNSW)
+// ivfHNSWManifestName names the file that makes a saved IVF-HNSW generation
+// current. Cluster files are written first under names unique to the
+// generation (g<seq>-<cid>); the manifest is written last (temp file,
+// rename), so a restore reads either the previous complete generation or the
+// new one, never a mix. Files the manifest does not name are deleted after it
+// is written (older generations, clusters beyond K, legacy numeric files).
+const ivfHNSWManifestName = "MANIFEST"
+
+// ivfHNSWManifest describes one persisted IVF-HNSW generation.
+type ivfHNSWManifest struct {
+	Seq        uint64   `json:"seq"`
+	Dimensions int      `json:"dimensions"`
+	Files      []string `json:"files"` // Files[cid] is cluster cid's graph file; "" when not saved
+	dir        string
 }
 
-func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, clusterHNSW map[int]*HNSWIndex) error {
+func ivfHNSWDir(hnswPath string) string {
+	return filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf")
+}
+
+// readIVFHNSWManifest reads the current generation's manifest; (nil, nil)
+// when none was written.
+func readIVFHNSWManifest(ivfDir string) (*ivfHNSWManifest, error) {
+	file, err := security.OpenRootedFile(filepath.Join(ivfDir, ivfHNSWManifestName), os.O_RDONLY, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+	var m ivfHNSWManifest
+	if err := json.NewDecoder(file.File).Decode(&m); err != nil {
+		return nil, fmt.Errorf("IVF-HNSW manifest: %w", err)
+	}
+	for _, name := range m.Files {
+		if name != "" && (filepath.Base(name) != name || name == ivfHNSWManifestName) {
+			return nil, fmt.Errorf("IVF-HNSW manifest: invalid cluster file %q", name)
+		}
+	}
+	m.dir = ivfDir
+	return &m, nil
+}
+
+// clusterPath returns the file holding cluster cid's graph, or "".
+func (m *ivfHNSWManifest) clusterPath(cid int) string {
+	if m == nil || cid < 0 || cid >= len(m.Files) || m.Files[cid] == "" {
+		return ""
+	}
+	return filepath.Join(m.dir, m.Files[cid])
+}
+
+// loadCluster loads cluster cid's graph of this generation in lookup mode;
+// (nil, nil) when the generation has no file for it.
+func (m *ivfHNSWManifest) loadCluster(cid int, vectorLookup VectorLookup) (*HNSWIndex, error) {
+	path := m.clusterPath(cid)
+	if path == "" || vectorLookup == nil {
+		return nil, nil
+	}
+	return LoadHNSWIndex(path, vectorLookup)
+}
+
+// SaveIVFHNSW persists one generation of per-cluster HNSW indexes to disk
+// under hnsw_ivf/ alongside hnsw, graph-only, described by a manifest written
+// last. hnswPath is the full path to the single HNSW file (e.g.
+// data/search/dbname/hnsw).
+func SaveIVFHNSW(hnswPath string, graphs map[int]*HNSWIndex) error {
+	return SaveIVFHNSWWithContext(context.Background(), hnswPath, graphs)
+}
+
+func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int]*HNSWIndex) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if hnswPath == "" || len(clusterHNSW) == 0 {
+	if hnswPath == "" || len(graphs) == 0 {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	baseDir := filepath.Dir(hnswPath)
-	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ".cluster"), 0o755); err != nil {
+	ivfDir := ivfHNSWDir(hnswPath)
+	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ivfHNSWManifestName), 0o755); err != nil {
 		return err
 	}
-	for cid, idx := range clusterHNSW {
+	m := ivfHNSWManifest{Seq: 1, dir: ivfDir}
+	if prev, _ := readIVFHNSWManifest(ivfDir); prev != nil {
+		m.Seq = prev.Seq + 1
+	}
+	numClusters := 0
+	for cid := range graphs {
+		if cid >= numClusters {
+			numClusters = cid + 1
+		}
+	}
+	m.Files = make([]string, numClusters)
+	for cid := 0; cid < numClusters; cid++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		idx := graphs[cid]
 		if idx == nil {
 			continue
 		}
-		path := filepath.Join(ivfDir, fmt.Sprintf("%d", cid))
-		if err := idx.Save(path); err != nil {
+		name := fmt.Sprintf("g%d-%d", m.Seq, cid)
+		if err := idx.Save(filepath.Join(ivfDir, name)); err != nil {
 			return fmt.Errorf("cluster %d: %w", cid, err)
 		}
+		m.Files[cid] = name
+		if m.Dimensions == 0 {
+			m.Dimensions = idx.GetDimensions()
+		}
 	}
+	if m.Dimensions == 0 {
+		return nil
+	}
+	if err := writeIVFHNSWManifest(&m); err != nil {
+		return err
+	}
+	pruneIVFHNSWFiles(&m)
 	return nil
 }
 
-// LoadIVFHNSWCluster loads one cluster's HNSW index from hnsw_ivf/cid in lookup mode
-// (no vector copy in HNSW RAM). Returns (nil, nil) if the file is missing or invalid (caller can build).
-// hnswPath is the full path to the single HNSW file (e.g. data/search/dbname/hnsw).
+func writeIVFHNSWManifest(m *ivfHNSWManifest) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(m.dir, ivfHNSWManifestName)
+	tmpPath := path + ".tmp"
+	tmpFile, err := security.CreateRootedFile(tmpPath, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tmpFile.Close()
+		_ = security.RemoveRootedPath(tmpPath)
+	}()
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	return security.RenameRootedFile(tmpPath, path)
+}
+
+// pruneIVFHNSWFiles deletes every file in the generation's directory that
+// its manifest does not name.
+func pruneIVFHNSWFiles(m *ivfHNSWManifest) {
+	keep := map[string]bool{ivfHNSWManifestName: true}
+	for _, name := range m.Files {
+		keep[name] = true
+	}
+	entries, err := security.ReadRootedDir(m.dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || keep[e.Name()] {
+			continue
+		}
+		_ = security.RemoveRootedPath(filepath.Join(m.dir, e.Name()))
+	}
+}
+
+// LoadIVFHNSWCluster loads one cluster's HNSW index of the persisted
+// generation in lookup mode (no vector copy in HNSW RAM). Returns (nil, nil)
+// if there is no generation, no file for the cluster, or it is invalid
+// (caller can build). hnswPath is the full path to the single HNSW file.
 func LoadIVFHNSWCluster(hnswPath string, clusterID int, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	if hnswPath == "" || vectorLookup == nil {
 		return nil, nil
 	}
-	baseDir := filepath.Dir(hnswPath)
-	path := filepath.Join(baseDir, "hnsw_ivf", fmt.Sprintf("%d", clusterID))
-	return LoadHNSWIndex(path, vectorLookup)
-}
-
-// loadIVFClusterMemberIDs decodes a cluster's msgpack file and returns the member IDs (InternalToID) without loading vectors.
-// ivfDir is the hnsw_ivf directory (prefer absolute path so cwd does not affect resolution).
-func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
-	if ivfDir == "" {
+	m, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	if err != nil || m == nil {
 		return nil, nil
 	}
-	path := filepath.Join(ivfDir, fmt.Sprintf("%d", clusterID))
+	return m.loadCluster(clusterID, vectorLookup)
+}
+
+// loadIVFClusterMemberIDs decodes a cluster file and returns the member IDs (InternalToID) without loading vectors.
+func loadIVFClusterMemberIDs(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
@@ -1017,47 +1148,41 @@ func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
 	return snap.InternalToID, nil
 }
 
-// DeriveIVFCentroidsFromClusters builds centroids and idToCluster from existing hnsw_ivf/ cluster files
-// (numeric names 0, 1, 2, ...) and vectors from the vector index. No separate centroid file.
-// Returns (nil, nil, nil) if no cluster files exist or derivation fails.
+// DeriveIVFCentroidsFromClusters builds centroids and idToCluster from the
+// persisted generation's cluster files and vectors from the vector index. No
+// separate centroid file. Returns (nil, nil, nil) if no generation was
+// persisted or derivation fails.
 func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) (centroids [][]float32, idToCluster map[string]int, err error) {
 	if hnswPath == "" || vectorLookup == nil {
 		return nil, nil, nil
 	}
-	baseDir := filepath.Dir(hnswPath)
-	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	entries, err := security.ReadRootedDir(ivfDir)
-	if err != nil {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDir, err)
+	ivfDir := ivfHNSWDir(hnswPath)
+	m, mErr := readIVFHNSWManifest(ivfDir)
+	if mErr != nil || m == nil {
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no persisted generation in %q (%v); k-means will run", ivfDir, mErr)
 		return nil, nil, nil
 	}
-	var clusterIDs []int
-	var seenNames []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		seenNames = append(seenNames, name)
-		// Cluster files are numeric names (0, 1, 2, ...); skip e.g. centroids.gob
-		if cid, sErr := strconv.Atoi(name); sErr == nil && cid >= 0 {
-			clusterIDs = append(clusterIDs, cid)
-		}
-	}
-	if len(clusterIDs) == 0 {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDir, len(seenNames), seenNames)
-		return nil, nil, nil
-	}
-	sort.Ints(clusterIDs)
-	maxCID := clusterIDs[len(clusterIDs)-1]
+	return deriveIVFCentroidsFromManifest(m, vectorLookup)
+}
 
+// deriveIVFCentroidsFromManifest derives the centroids (indexed by cluster ID,
+// one per manifest entry) and membership of one persisted generation.
+func deriveIVFCentroidsFromManifest(m *ivfHNSWManifest, vectorLookup VectorLookup) (centroids [][]float32, idToCluster map[string]int, err error) {
+	numClusters := len(m.Files)
+	if numClusters == 0 {
+		return nil, nil, nil
+	}
 	idToCluster = make(map[string]int)
 	dims := 0
-	centroidSums := make([][]float64, maxCID+1)
-	centroidCounts := make([]int, maxCID+1)
+	centroidSums := make([][]float64, numClusters)
+	centroidCounts := make([]int, numClusters)
 
-	for _, cid := range clusterIDs {
-		memberIDs, err := loadIVFClusterMemberIDs(ivfDir, cid)
+	for cid := 0; cid < numClusters; cid++ {
+		path := m.clusterPath(cid)
+		if path == "" {
+			continue
+		}
+		memberIDs, err := loadIVFClusterMemberIDs(path)
 		if err != nil || len(memberIDs) == 0 {
 			continue
 		}
@@ -1081,9 +1206,6 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 		if len(vecs) == 0 {
 			continue
 		}
-		if dims == 0 {
-			dims = len(vecs[0])
-		}
 		centroidSums[cid] = make([]float64, dims)
 		for _, v := range vecs {
 			for d := 0; d < dims; d++ {
@@ -1094,12 +1216,12 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	}
 
 	if dims == 0 {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDir)
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", m.dir)
 		return nil, nil, nil
 	}
 	// Dense slice so centroid index matches cluster IDs (0, 1, 2, ...); RestoreClusteringState expects cid < len(centroids).
-	centroids = make([][]float32, maxCID+1)
-	for cid := 0; cid <= maxCID; cid++ {
+	centroids = make([][]float32, numClusters)
+	for cid := 0; cid < numClusters; cid++ {
 		centroids[cid] = make([]float32, dims)
 		if centroidCounts[cid] > 0 {
 			for d := 0; d < dims; d++ {
