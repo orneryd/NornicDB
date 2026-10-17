@@ -1880,6 +1880,10 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 	// Graphs built from persisted files belong to the generation those files
 	// describe; a new k-means generation builds its own.
 	if err := s.installClusterGeneration(ctx, clusterIndex, clustering, false); err != nil {
+		if errors.Is(err, errClusterGenerationSuperseded) {
+			s.logPrintf("[K-MEANS] ⏭️  DISCARDED | embeddings=%d reason=cluster_index_replaced", totalCount)
+			return nil
+		}
 		return err
 	}
 	stats := clusterIndex.ClusterStats()
@@ -1888,6 +1892,10 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 
 	return nil
 }
+
+// errClusterGenerationSuperseded reports a generation computed for a cluster
+// index that was replaced before it could be published; it is discarded.
+var errClusterGenerationSuperseded = errors.New("cluster generation superseded")
 
 // installClusterGeneration builds everything derived from clustering, then
 // publishes routing, membership, lexical profiles and IVF-HNSW graphs as one
@@ -1915,6 +1923,16 @@ func (s *Service) installClusterGeneration(ctx context.Context, clusterIndex *gp
 	}
 
 	s.clusterHNSWMu.Lock()
+	s.mu.RLock()
+	current := s.clusterIndex
+	s.mu.RUnlock()
+	if current != clusterIndex {
+		// A dimension change replaced the cluster index while this generation
+		// was built (maybeAutoSetVectorDimensions runs beside clustering under
+		// the shared buildMu); the generation describes the retired population.
+		s.clusterHNSWMu.Unlock()
+		return errClusterGenerationSuperseded
+	}
 	clusterIndex.PublishClustering(clustering)
 	s.clusterLexicalMu.Lock()
 	s.clusterLexicalProfiles = profiles
