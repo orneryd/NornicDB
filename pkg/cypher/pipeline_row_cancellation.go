@@ -48,16 +48,17 @@ func recoverWorkerPanic(ctx context.Context) {
 		// No statement owner to fail: the panic stays a panic.
 		panic(recovered)
 	}
-	root := probe.parent
-	for root.parent != nil {
-		root = root.parent
-	}
 	var err error
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
 	} else {
 		err = newSemanticError("Neo.DatabaseError.General.UnknownError", "UnknownError", fmt.Sprintf("internal error in a statement worker: %v", recovered))
 	}
-	root.failure.CompareAndSwap(nil, &err)
-	root.observed.Store(true)
+	// Every probe above the worker learns of it: the statement reads the
+	// probe it was admitted with, which need not be the root (a preparation
+	// probe sits above the admitted one).
+	for owner := probe.parent; owner != nil; owner = owner.parent {
+		owner.failure.CompareAndSwap(nil, &err)
+		owner.observed.Store(true)
+	}
 }

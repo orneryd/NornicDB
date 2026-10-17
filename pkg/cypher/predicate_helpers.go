@@ -57,6 +57,11 @@ func buildComparableMembershipIndexWithCancellation(items []interface{}, probe *
 			continue
 		}
 		if isComparableValue(item) {
+			// A string's native hash scans all of it: its length is charged
+			// to the probe (chargeText).
+			if text, ok := item.(string); ok && probe != nil && !probe.chargeText(len(text)) {
+				return nil, nil
+			}
 			comparableSet[membershipKey(item)] = struct{}{}
 			continue
 		}
@@ -128,11 +133,6 @@ func isComparableValue(v interface{}) bool {
 	case string, bool:
 		return true
 	case *storage.Node, *storage.Edge:
-		return false
-	}
-	// Large strings use structural comparison so a native map hash/equality
-	// cannot hide an unbounded byte scan between cancellation samples.
-	if text, ok := v.(string); ok && len(text) > 4096 {
 		return false
 	}
 	return reflect.TypeOf(v).Comparable()

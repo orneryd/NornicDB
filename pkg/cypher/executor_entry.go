@@ -172,8 +172,18 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// partial value on, so the deadline wins: an error the statement returns
 	// after its context ended is that context's error, and a result built
 	// after a reader saw the cancellation is not returned.
+	// The outcome is settled once, before admission's cleanup cancels the
+	// admitted context: that cancellation is the statement ending, not its
+	// deadline.
 	statementCtx := ctx
-	defer func() { result, retErr = statementDeadlineOutcome(statementCtx, result, retErr) }()
+	settled := false
+	settleOutcome := func() {
+		if !settled {
+			settled = true
+			result, retErr = statementDeadlineOutcome(statementCtx, result, retErr)
+		}
+	}
+	defer settleOutcome()
 	preparationProbe := parameterCancellationForContext(ctx)
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
@@ -426,9 +436,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
 		defer func() {
+			// A committed statement's result stands: its names are restored
+			// in full, without the deadline introducing an error.
+			restoreProbe := preparationProbe
+			if statementCommitted(statementCtx) {
+				restoreProbe = nil
+			}
 			result, retErr = names.restoreWithCancellation(result, retErr, func(text string) []returnItem {
 				return e.parseReturnItems(text)
-			}, preparationProbe)
+			}, restoreProbe)
 		}()
 	}
 	if preparationProbe != nil && preparationProbe.err != nil {
@@ -781,6 +797,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				return nil, err
 			}
 			defer func() {
+				settleOutcome()
 				if queryLimitCancel != nil {
 					queryLimitCancel()
 				}

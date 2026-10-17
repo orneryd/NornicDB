@@ -27,7 +27,14 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 // keys stop when probe is cancelled; the result is then unused.
 func cypherComparableKeyWithCancellation(value interface{}, probe *pipelineCancellation) (interface{}, bool) {
 	switch value := value.(type) {
-	case nil, string, bool, int64:
+	case nil, bool, int64:
+		return value, true
+	case string:
+		// The key's native hash and equality scan the whole string: its
+		// length is charged to the probe, and the caller stops on probe.err.
+		if probe != nil {
+			probe.chargeText(len(value))
+		}
 		return value, true
 	case *storage.Node:
 		if value == nil {
