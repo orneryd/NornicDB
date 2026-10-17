@@ -43,40 +43,40 @@ Idle exit:                  untracked
 ReadOnly portion of Libraries: Total=926.8M resident=221.8M(24%) swapped_out_or_unallocated=705.0M(76%)
 Writable regions: Total=3.1G written=2.1G(70%) resident=2.4G(80%) swapped_out=1072K(0%) unallocated=630.3M(20%)
 
-                                VIRTUAL RESIDENT    DIRTY  SWAPPED VOLATILE   NONVOL    EMPTY   REGION 
-REGION TYPE                        SIZE     SIZE     SIZE     SIZE     SIZE     SIZE     SIZE    COUNT (non-coalesced) 
-===========                     ======= ========    =====  ======= ========   ======    =====  ======= 
-Activity Tracing                   256K      16K       0K      16K       0K      16K       0K        1 
-Dispatch continuations            96.0M       0K       0K      64K       0K       0K       0K        1 
-Kernel Alloc Once                   32K       0K       0K      16K       0K       0K       0K        1 
-MALLOC guard page                 3696K       0K       0K       0K       0K       0K       0K        4 
-MALLOC metadata                    800K      64K      64K     192K       0K       0K       0K        4 
+                                VIRTUAL RESIDENT    DIRTY  SWAPPED VOLATILE   NONVOL    EMPTY   REGION
+REGION TYPE                        SIZE     SIZE     SIZE     SIZE     SIZE     SIZE     SIZE    COUNT (non-coalesced)
+===========                     ======= ========    =====  ======= ========   ======    =====  =======
+Activity Tracing                   256K      16K       0K      16K       0K      16K       0K        1
+Dispatch continuations            96.0M       0K       0K      64K       0K       0K       0K        1
+Kernel Alloc Once                   32K       0K       0K      16K       0K       0K       0K        1
+MALLOC guard page                 3696K       0K       0K       0K       0K       0K       0K        4
+MALLOC metadata                    800K      64K      64K     192K       0K       0K       0K        4
 MALLOC_SMALL                      8192K      16K      16K     384K       0K       0K       0K        2         see MALLOC ZONE table below
 MALLOC_TINY                       4096K      32K      32K      80K       0K       0K       0K        1         see MALLOC ZONE table below
-Memory Tag 22                     64.0M      16K      16K       0K       0K       0K       0K        1 
-STACK GUARD                       56.3M       0K       0K       0K       0K       0K       0K       21 
-Stack                            161.3M     336K     336K      64K       0K       0K       0K       21 
-VM_ALLOCATE                        3.7G     2.4G     1.6G     240K       0K       0K       0K      554 
+Memory Tag 22                     64.0M      16K      16K       0K       0K       0K       0K        1
+STACK GUARD                       56.3M       0K       0K       0K       0K       0K       0K       21
+Stack                            161.3M     336K     336K      64K       0K       0K       0K       21
+VM_ALLOCATE                        3.7G     2.4G     1.6G     240K       0K       0K       0K      554
 VM_ALLOCATE (reserved)           128.0M       0K       0K       0K       0K       0K       0K        1         reserved VM address space (unallocated)
-__AUTH                            1321K     771K       0K       0K       0K       0K       0K      148 
-__AUTH_CONST                      17.7M     9.8M       0K       0K       0K       0K       0K      340 
-__CTF                               824      824       0K       0K       0K       0K       0K        1 
-__DATA                            37.8M    3420K     699K      96K       0K       0K       0K      297 
-__DATA_CONST                      25.1M    16.4M       0K       0K       0K       0K       0K      339 
-__DATA_DIRTY                      1320K     642K      89K     278K       0K       0K       0K      284 
-__FONT_DATA                        2352     2352       0K       0K       0K       0K       0K        1 
-__LINKEDIT                       586.4M    39.0M       0K       0K       0K       0K       0K        2 
-__OBJC_RO                         79.1M    53.5M       0K       0K       0K       0K       0K        1 
-__OBJC_RW                         2599K    2144K       0K      39K       0K       0K       0K        1 
-__TEXT                           340.4M   182.8M       0K       0K       0K       0K       0K      348 
-__TPRO_CONST                       128K      32K      32K      16K       0K       0K       0K        2 
-mapped file                        1.5G   671.9M       0K       0K       0K       0K       0K       11 
-page table in kernel              2243K    2243K    2243K       0K       0K       0K       0K        1 
-shared memory                       80K      80K      80K       0K       0K       0K       0K        4 
-unused but dirty shlib __DATA       79K      28K      28K      51K       0K       0K       0K       39 
-===========                     ======= ========    =====  ======= ========   ======    =====  ======= 
-TOTAL                              6.8G     3.4G     1.6G    1536K       0K      16K       0K     2431 
-TOTAL, minus reserved VM space     6.7G     3.4G     1.6G    1536K       0K      16K       0K     2431 
+__AUTH                            1321K     771K       0K       0K       0K       0K       0K      148
+__AUTH_CONST                      17.7M     9.8M       0K       0K       0K       0K       0K      340
+__CTF                               824      824       0K       0K       0K       0K       0K        1
+__DATA                            37.8M    3420K     699K      96K       0K       0K       0K      297
+__DATA_CONST                      25.1M    16.4M       0K       0K       0K       0K       0K      339
+__DATA_DIRTY                      1320K     642K      89K     278K       0K       0K       0K      284
+__FONT_DATA                        2352     2352       0K       0K       0K       0K       0K        1
+__LINKEDIT                       586.4M    39.0M       0K       0K       0K       0K       0K        2
+__OBJC_RO                         79.1M    53.5M       0K       0K       0K       0K       0K        1
+__OBJC_RW                         2599K    2144K       0K      39K       0K       0K       0K        1
+__TEXT                           340.4M   182.8M       0K       0K       0K       0K       0K      348
+__TPRO_CONST                       128K      32K      32K      16K       0K       0K       0K        2
+mapped file                        1.5G   671.9M       0K       0K       0K       0K       0K       11
+page table in kernel              2243K    2243K    2243K       0K       0K       0K       0K        1
+shared memory                       80K      80K      80K       0K       0K       0K       0K        4
+unused but dirty shlib __DATA       79K      28K      28K      51K       0K       0K       0K       39
+===========                     ======= ========    =====  ======= ========   ======    =====  =======
+TOTAL                              6.8G     3.4G     1.6G    1536K       0K      16K       0K     2431
+TOTAL, minus reserved VM space     6.7G     3.4G     1.6G    1536K       0K      16K       0K     2431
 
                                  VIRTUAL   RESIDENT      DIRTY    SWAPPED ALLOCATION      BYTES DIRTY+SWAP          REGION
 MALLOC ZONE                         SIZE       SIZE       SIZE       SIZE      COUNT  ALLOCATED  FRAG SIZE  % FRAG   COUNT
