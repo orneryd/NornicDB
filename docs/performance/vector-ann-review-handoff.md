@@ -8,7 +8,7 @@ and the comparison harness in [#1375](https://github.com/orneryd/NornicDB/pull/1
 
 | Contract | Original failing evidence | Integrated correction |
 |---|---|---|
-| Lazy first reads and incomplete builds | All three metrics returned no hits without warming; partial builds answered successfully | Vector queries use the service warming/readiness boundary |
+| Lazy first reads and incomplete builds | All three metrics returned no hits without warming; partial builds answered successfully | Optioned/Qdrant reads use the service warming/readiness boundary; existing Cypher scalar reads retain their live-index contract |
 | Population versus live updates/deletes | The paused population replaced a completed update (score 0 instead of 1) and restored a deleted point | The existing base-operation mutex orders live node mutations and derived work against population and source clearing |
 | Fixed dimensions | A 2-d explicit embedding on a fixed 4-d index returned success and discarded its previous indexed vector | Validate explicit vectors before replacing index entries; propagate indexing/provider failures to gRPC callers |
 | File-backed Dot/Euclid | Dot score for `[3,4,0,0]` against itself was 5 instead of 25 | Resolve original durable vectors for magnitude-sensitive scoring; cosine coordinates remain normalized and single-copy |
