@@ -80,7 +80,8 @@ parameters; its original-vector storage uses its default configuration.
 ## Rescoring depth and original-vector storage
 
 All rows below use an explicit 8× rescoring pool and the preset request beam.
-On the public NornicDB path, top-10 requests first apply the default 1.5×
+In this benchmark’s public NornicDB vector-query path, top-10 requests first
+apply the default 1.5×
 initial overfetch, giving 15 candidates before quantization oversampling. Thus
 1×/2×/8× settings score up to 15/30/120 candidates, and 8× raises a narrower
 traversal beam to at least 120. The same request parameters go to both engines;
