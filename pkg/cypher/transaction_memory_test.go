@@ -50,6 +50,24 @@ func resetTransactionMemory(t testing.TB) {
 	})
 }
 
+// newTestMemoryTracker is a pooled tracker for database, reset as
+// beginTransactionMemory resets one for a statement: the limits configured
+// now, and no failure. A tracker from the pool keeps the limits and failure
+// of the statement it last served, which a test sizing through it directly
+// would otherwise inherit.
+func newTestMemoryTracker(database string) *transactionMemoryTracker {
+	tracker := transactionMemoryTrackers.Get().(*transactionMemoryTracker)
+	memory := transactionMemory.database(database)
+	tracker.mu.Lock()
+	tracker.database = memory
+	tracker.limit = memory.transactionMax.Load()
+	tracker.databaseLimit = memory.pool.limit.Load()
+	tracker.globalLimit = transactionMemory.global.limit.Load()
+	tracker.mu.Unlock()
+	tracker.failure.Store(nil)
+	return tracker
+}
+
 // newTransactionMemoryEngine is a store namespaced as the default database,
 // as the server runs it.
 func newTransactionMemoryEngine(t testing.TB) storage.Engine {
@@ -155,7 +173,7 @@ func TestTransactionMemoryPoolFailsWhileSmallStatementsSucceed(t *testing.T) {
 	executor := newTransactionMemoryExecutor(t)
 	ConfigureTransactionMemory(16<<20, TransactionMemoryLimits{})
 	// Other transactions hold all but 2 MiB of the global pool.
-	ok, _, _ := transactionMemory.global.reserve(14 << 20)
+	ok, _ := transactionMemory.global.reserve(14<<20, 16<<20)
 	require.True(t, ok)
 	_, err := executor.Execute(context.Background(), heavyCollectQuery, nil)
 	requireMemoryError(t, err, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", "dbms.memory.transaction.total.max")
@@ -340,10 +358,19 @@ func TestShowTransactionsEstimatedUsedHeapMemory(t *testing.T) {
 	resetTransactionMemory(t)
 	ConfigureTransactionMemory(1<<40, TransactionMemoryLimits{})
 	executor := newTransactionMemoryExecutor(t)
-	result, err := executor.Execute(context.Background(), "SHOW TRANSACTIONS YIELD estimatedUsedHeapMemory RETURN estimatedUsedHeapMemory AS m", nil)
+	// The registry is shared: other tests' open transactions are listed too,
+	// so the statement finds its own row by its text.
+	const query = "SHOW TRANSACTIONS YIELD currentQuery, estimatedUsedHeapMemory RETURN currentQuery AS q, estimatedUsedHeapMemory AS ownHeapMemory"
+	result, err := executor.Execute(context.Background(), query, nil)
 	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.IsType(t, int64(0), result.Rows[0][0])
+	var own [][]interface{}
+	for _, row := range result.Rows {
+		if text, ok := row[0].(string); ok && strings.Contains(text, "ownHeapMemory") {
+			own = append(own, row)
+		}
+	}
+	require.Len(t, own, 1, "rows: %v", result.Rows)
+	require.IsType(t, int64(0), own[0][1])
 }
 
 func TestEstimateValueBytes(t *testing.T) {
@@ -447,22 +474,22 @@ func TestMemoryAccountKeepsTheTransactionLimitExact(t *testing.T) {
 func TestRowEstimatorCountsEveryRow(t *testing.T) {
 	var estimate rowEstimator
 	small := pipelineRow{"i": int64(1), "s": "x"}
-	smallBytes := estimate.bytes(small)
+	smallBytes := estimate.rowBytes(small)
 	big := strings.Repeat("y", 100000)
-	require.Equal(t, smallBytes+int64(len(big))-1, estimate.bytes(pipelineRow{"i": int64(2), "s": big}),
+	require.Equal(t, smallBytes+int64(len(big))-1, estimate.rowBytes(pipelineRow{"i": int64(2), "s": big}),
 		"a long string late in the stream counts in full")
 
 	shared := make([]interface{}, 1000)
 	for i := range shared {
 		shared[i] = int64(i)
 	}
-	first := estimate.bytes(pipelineRow{"l": shared})
-	again := estimate.bytes(pipelineRow{"l": shared})
+	first := estimate.rowBytes(pipelineRow{"l": shared})
+	again := estimate.rowBytes(pipelineRow{"l": shared})
 	require.Greater(t, first, int64(1000*valueSlotBytes))
 	require.Less(t, again, int64(200), "a shared list counts once")
 	fresh := make([]interface{}, len(shared))
 	copy(fresh, shared)
-	require.Equal(t, first, estimate.bytes(pipelineRow{"l": fresh}), "a list built per row counts in full")
+	require.Equal(t, first, estimate.rowBytes(pipelineRow{"l": fresh}), "a list built per row counts in full")
 }
 
 // TestTransactionMemoryLimitCatchesRowsThatGrowLate: a stream of small
@@ -528,10 +555,9 @@ func TestTransactionMemoryCreditReturnedOnFailure(t *testing.T) {
 // any other way are walked in full.
 func TestKnownListsSizeCollectedListsOnce(t *testing.T) {
 	resetTransactionMemory(t)
-	tracker := transactionMemoryTrackers.Get().(*transactionMemoryTracker)
-	tracker.database = transactionMemory.database("known")
+	tracker := newTestMemoryTracker("known")
 	t.Cleanup(tracker.end)
-	state := pipelineAggregateState{name: "collect", expression: "x", memory: memoryAccount{scope: &tracker.root}}
+	state := pipelineAggregateState{name: "collect", expression: "x", memory: retentionIn(&tracker.root)}
 	for i := 0; i < 100; i++ {
 		require.True(t, state.add(context.Background(), nil, pipelineRow{"x": strings.Repeat("z", 50)}))
 	}

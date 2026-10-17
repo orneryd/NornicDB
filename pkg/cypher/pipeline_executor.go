@@ -669,11 +669,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	var source pipelineRowSource
 	var terminalCallColumns []string
-	// The rows a MATCH, OPTIONAL MATCH or WITH builds count against the
-	// statement's memory limit (#1343).
-	memory := memoryScopeFromContext(ctx)
+	// The rows each clause builds count against the statement's memory
+	// limit, and the estimate follows the rows the pipeline holds now, not
+	// the sum of every clause's output (rowGenerations, #1343). A MATCH's
+	// rows are charged here; the other clauses' operators reserve theirs as
+	// they build them.
+	generations := newRowGenerations(memoryScopeFromContext(ctx), rows)
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
@@ -742,7 +746,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if err := memory.growRows(newRows); err != nil {
+			if err := generations.charge(newRows); err != nil {
 				return nil, true, err
 			}
 			rows = newRows
@@ -750,9 +754,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		case pipelineClauseOptionalMatch:
 			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
 			if err != nil {
-				return nil, true, err
-			}
-			if err := memory.growRows(newRows); err != nil {
 				return nil, true, err
 			}
 			rows = newRows
@@ -879,9 +880,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
-			}
-			if err := memory.growRows(newRows); err != nil {
-				return nil, true, err
 			}
 			rows = newRows
 			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
@@ -1501,10 +1499,18 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		traversalRows = append(traversalRows, traversalRow)
 	}
 
+	// The expansion's candidates count while they are built
+	// (applyGeneralOptionalClause); once joined below they are garbage, and
+	// what they took goes back. The joined rows count before they are kept
+	// (#1343).
+	expansion := beginMemorySpan(ctx)
 	expanded, err := e.applyTraversalOptionalClause(ctx, traversalRows, optionalClause[0])
 	if err != nil {
 		return nil, err
 	}
+	expansion.end()
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	out := make([]pipelineRow, 0, len(expanded))
 	for _, expandedRow := range expanded {
 		joined := make(pipelineRow, len(expandedRow.nodes)+len(expandedRow.rels)+len(expandedRow.values))
@@ -1525,9 +1531,13 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		for name, value := range expandedRow.values {
 			joined[name] = value
 		}
+		if err := retention.reserveRow(joined); err != nil {
+			return nil, err
+		}
 		out = append(out, joined)
 	}
-	return out, nil
+	expansion.giveBack()
+	return retention.owned(out), nil
 }
 
 // pipelineApplyMatch runs MATCH for each current binding row and expands rows

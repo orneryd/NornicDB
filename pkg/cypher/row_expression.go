@@ -318,7 +318,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				}
 				arguments[index] = value
 			}
-			result, err := evaluateCypherRange(arguments)
+			budget := rowExpressionBudget(values)
+			result, err := evaluateCypherRange(&budget, arguments)
 			if err != nil {
 				return nil, false, err
 			}
@@ -1107,7 +1108,8 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if projection != "" {
 		project = func() (interface{}, bool, error) { return e.evaluateRowValue(projection, scope) }
 	}
-	value, resolved, err := rowComprehensionLoop(coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, holds, project)
+	budget := rowExpressionBudget(scope)
+	value, resolved, err := rowComprehensionLoop(&budget, coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, holds, project)
 	return value, true, resolved, err
 }
 
@@ -1537,7 +1539,13 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 // projection: every clock call of one statement then reads one instant
 // (#872). values itself is not modified.
 func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
-	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContext(expression) {
+	if _, bound := values[rowStatementContextKey]; bound {
+		return values
+	}
+	// A predicate that builds values (range(), reduce, a comprehension)
+	// carries the context too while a memory limit is configured: its
+	// builds count against the limit (#1343).
+	if !rowPredicateNeedsStatementContext(expression) && !(transactionMemoryTracking() && rowContextShapeOf(expression).buildsValues) {
 		return values
 	}
 	return rowValuesBindingStatementContext(ctx, values)

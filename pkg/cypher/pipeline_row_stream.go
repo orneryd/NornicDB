@@ -156,6 +156,15 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 		return nil, false
 	}
 	return func(yield func(interface{}) bool) {
+		// The evaluated list stays counted against the statement's memory
+		// limit while its rows stream (#1343).
+		budget := expressionBudgetOf(ctx)
+		if budget.active() {
+			if budget.holdList(items) != nil {
+				return
+			}
+			defer budget.release()
+		}
 		for _, value := range items {
 			if !yield(value) {
 				return
@@ -204,39 +213,29 @@ func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projecti
 // collection, and the statement fails with the limit's error (#1343).
 func materializePipelineSource(ctx context.Context, source pipelineRowSource) ([]pipelineRow, bool) {
 	// One variable for what the callback updates: the rows, and the memory
-	// they take (sampled sizes from one account, #1343).
+	// they take (#1343).
 	collected := struct {
-		out      []pipelineRow
-		memory   memoryAccount
-		estimate rowEstimator
-	}{out: make([]pipelineRow, 0)}
-	collected.memory.scope = memoryScopeFromContext(ctx)
-	collected.estimate.known = collected.memory.scope.knownLists()
+		out    []pipelineRow
+		memory memoryRetention
+	}{out: make([]pipelineRow, 0), memory: newMemoryRetention(ctx)}
 	ok := source(func(row pipelineRow) bool {
 		retained := make(pipelineRow, len(row))
-		if collected.memory.scope == nil {
-			for name, value := range row {
-				retained[name] = value
-			}
-		} else {
-			// The copy's walk sizes the row too.
-			size := int64(pipelineRowExtraBytes + mapHeaderBytes)
-			for name, value := range row {
-				retained[name] = value
-				size += collected.estimate.entry(name, value)
-			}
-			if collected.memory.grow(size) != nil {
-				return false
-			}
+		for name, value := range row {
+			retained[name] = value
+		}
+		if collected.memory.reserveRow(retained) != nil {
+			return false
 		}
 		collected.out = append(collected.out, retained)
 		return true
 	})
 	collected.memory.close()
-	if collected.memory.scope != nil && collected.memory.scope.tracker.err() != nil {
+	if memoryFailureFromContext(ctx) != nil {
 		return nil, false
 	}
-	return collected.out, ok
+	// Every row is charged in full: the rows they replace give theirs back
+	// (rowGenerations).
+	return collected.memory.owned(collected.out), ok
 }
 
 func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {

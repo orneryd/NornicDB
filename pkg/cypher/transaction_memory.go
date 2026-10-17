@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+	"weak"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -57,17 +58,16 @@ type memoryPool struct {
 	used    atomic.Int64
 }
 
-// reserve takes n bytes, or reports the pool's limit and use when n bytes
-// would go over its limit.
-func (p *memoryPool) reserve(n int64) (ok bool, limit, used int64) {
+// reserve takes n bytes, or reports the pool's use when n bytes would go
+// over limit, the limit the reserving statement started with.
+func (p *memoryPool) reserve(n, limit int64) (ok bool, used int64) {
 	for {
 		used = p.used.Load()
-		limit = p.limit.Load()
 		if limit > 0 && used+n > limit {
-			return false, limit, used
+			return false, used
 		}
 		if p.used.CompareAndSwap(used, used+n) {
-			return true, limit, used
+			return true, used
 		}
 	}
 }
@@ -100,8 +100,20 @@ var transactionMemory = &transactionMemoryRegistry{
 }
 
 // transactionMemoryActive is set while any limit is configured; without one
-// statements track nothing.
+// statements start tracking nothing.
 var transactionMemoryActive atomic.Bool
+
+// trackedStatements counts the running statements that started while a
+// limit was configured: they stay counted to their end under the limits
+// they started with, whatever the configuration becomes meanwhile.
+var trackedStatements atomic.Int64
+
+// transactionMemoryTracking reports whether any statement may be tracked:
+// a limit is configured, or a statement that started under one still runs.
+// While it is false nothing sizes or charges anything.
+func transactionMemoryTracking() bool {
+	return transactionMemoryActive.Load() || trackedStatements.Load() > 0
+}
 
 // ConfigureTransactionMemory sets dbms.memory.transaction.total.max (global)
 // and the limits of every database that has none of its own.
@@ -203,6 +215,11 @@ type transactionMemoryTracker struct {
 	reserved atomic.Int64
 	limit    int64
 	database *databaseMemory
+	// databaseLimit and globalLimit are the pool limits the statement
+	// started with; counted is set while it is in trackedStatements.
+	databaseLimit int64
+	globalLimit   int64
+	counted       bool
 	// statement is cancelled with the failure, so the statement stops.
 	statement *statementContext
 	root      memoryScope
@@ -216,15 +233,26 @@ type transactionMemoryTracker struct {
 	knownMu   sync.Mutex
 	known     [knownLists]knownList
 	knownNext int
+	// sizes caches the estimated size of the large lists the statement's
+	// rows hold: a list every row of an operator, or of every per-row CALL
+	// run, carries is walked once (guarded by knownMu; sizedValue). Like
+	// known, it holds no reference to a list (heldListKey).
+	sizes map[heldListKey]heldListSize
+
+	// ownedRows and ownedCount identify the last rows an operator charged in
+	// full (memoryScope.ownRows): the clause pipeline gives back the charge
+	// of the rows they replace (rowGenerations).
+	ownedRows  atomic.Uintptr
+	ownedCount atomic.Int64
 }
 
-// knownList is a list collect() counted: its backing array, length and
-// size. Only lists of knownListMin values or more are recorded; shorter
-// ones are cheap to walk.
+// knownList is a list collect() counted: its key, the list itself (held
+// without keeping it alive, heldList) and its size. Only lists of
+// knownListMin values or more are recorded; shorter ones are cheap to walk.
 type knownList struct {
-	data   unsafe.Pointer
-	length int
-	bytes  int64
+	key   heldListKey
+	list  heldList
+	bytes int64
 }
 
 const (
@@ -234,8 +262,10 @@ const (
 
 // noteList records a list collect() built, of bytes estimated bytes.
 func (t *transactionMemoryTracker) noteList(values []interface{}, bytes int64) {
+	key, _ := heldListKeyOf(values)
+	list := heldListOf(unsafe.Pointer(unsafe.SliceData(values)))
 	t.knownMu.Lock()
-	t.known[t.knownNext] = knownList{data: unsafe.Pointer(unsafe.SliceData(values)), length: len(values), bytes: bytes}
+	t.known[t.knownNext] = knownList{key: key, list: list, bytes: bytes}
 	t.knownNext = (t.knownNext + 1) % knownLists
 	t.knownMu.Unlock()
 }
@@ -245,11 +275,12 @@ func (t *transactionMemoryTracker) knownListBytes(values []interface{}) (int64, 
 	if t == nil || len(values) < knownListMin {
 		return 0, false
 	}
+	key, _ := heldListKeyOf(values)
 	data := unsafe.Pointer(unsafe.SliceData(values))
 	t.knownMu.Lock()
 	defer t.knownMu.Unlock()
 	for _, known := range t.known {
-		if known.data == data && known.length == len(values) {
+		if known.key == key && known.list.holds(data) {
 			return known.bytes, true
 		}
 	}
@@ -294,8 +325,16 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 	database := transactionMemory.database(tx.database)
 	tracker.mu.Lock()
 	tracker.database = database
+	// The statement keeps the limits it starts with (dynamic settings apply
+	// to the statements that start after a change).
 	tracker.limit = database.transactionMax.Load()
+	tracker.databaseLimit = database.pool.limit.Load()
+	tracker.globalLimit = transactionMemory.global.limit.Load()
 	tracker.statement = statement
+	if !tracker.counted {
+		tracker.counted = true
+		trackedStatements.Add(1)
+	}
 	tracker.mu.Unlock()
 	tracker.failure.Store(nil)
 	tx.memory.Store(tracker)
@@ -321,10 +360,17 @@ func (t *transactionMemoryTracker) end() {
 	reserved := t.reserved.Swap(0)
 	t.used.Store(0)
 	t.statement = nil
+	if t.counted {
+		t.counted = false
+		trackedStatements.Add(-1)
+	}
 	t.mu.Unlock()
+	t.ownedRows.Store(0)
+	t.ownedCount.Store(0)
 	t.knownMu.Lock()
 	t.known = [knownLists]knownList{}
 	t.knownNext = 0
+	t.sizes = nil
 	t.knownMu.Unlock()
 	if reserved != 0 {
 		t.database.pool.release(reserved)
@@ -383,12 +429,12 @@ func (t *transactionMemoryTracker) reserve(allocation int64) error {
 }
 
 func (t *transactionMemoryTracker) reservePools(n int64) (failed *memoryPool, ok bool, limit, used int64) {
-	if ok, limit, used = t.database.pool.reserve(n); !ok {
-		return &t.database.pool, false, limit, used
+	if ok, used = t.database.pool.reserve(n, t.databaseLimit); !ok {
+		return &t.database.pool, false, t.databaseLimit, used
 	}
-	if ok, limit, used = transactionMemory.global.reserve(n); !ok {
+	if ok, used = transactionMemory.global.reserve(n, t.globalLimit); !ok {
 		t.database.pool.release(n)
-		return &transactionMemory.global, false, limit, used
+		return &transactionMemory.global, false, t.globalLimit, used
 	}
 	return nil, true, 0, 0
 }
@@ -434,7 +480,7 @@ type memoryScopeKey struct{}
 // memoryScopeFromContext is the scope a statement's memory grows in, nil
 // when nothing is tracked.
 func memoryScopeFromContext(ctx context.Context) *memoryScope {
-	if !transactionMemoryActive.Load() || ctx == nil {
+	if !transactionMemoryTracking() || ctx == nil {
 		return nil
 	}
 	scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope)
@@ -456,12 +502,12 @@ func (s *memoryScope) grow(n int64) error {
 	if s == nil || n <= 0 {
 		return nil
 	}
-	return s.add(n, n)
+	return s.addCharge(n, n)
 }
 
-// add takes n bytes for an allocation of allocation bytes (n includes the
+// addCharge takes n bytes for an allocation of allocation bytes (n includes the
 // credit an account takes ahead): a limit's error names the allocation.
-func (s *memoryScope) add(n, allocation int64) error {
+func (s *memoryScope) addCharge(n, allocation int64) error {
 	t := s.tracker
 	if err := t.err(); err != nil {
 		return err
@@ -489,9 +535,23 @@ func (s *memoryScope) growRows(rows []pipelineRow) error {
 	estimate := rowEstimator{known: s.tracker}
 	var total int64
 	for _, row := range rows {
-		total += estimate.bytes(row)
+		total += estimate.rowBytes(row)
 	}
 	return s.grow(total)
+}
+
+// ownRows records rows as charged in full by the operator that built them
+// (memoryRetention.owned, rowGenerations.charge).
+func (s *memoryScope) ownRows(rows []pipelineRow) {
+	s.tracker.ownedRows.Store(uintptr(unsafe.Pointer(unsafe.SliceData(rows))))
+	s.tracker.ownedCount.Store(int64(len(rows)))
+}
+
+// ownsRows reports whether rows are the last rows an operator charged in
+// full.
+func (s *memoryScope) ownsRows(rows []pipelineRow) bool {
+	return s.tracker.ownedRows.Load() == uintptr(unsafe.Pointer(unsafe.SliceData(rows))) &&
+		s.tracker.ownedCount.Load() == int64(len(rows))
 }
 
 // memoryAccountChunk is the most credit an account takes ahead at once.
@@ -551,7 +611,7 @@ func (a *memoryAccount) refill(n int64) error {
 			ahead = max(room, 0)
 		}
 	}
-	if err := a.scope.add(need+ahead, n); err != nil {
+	if err := a.scope.addCharge(need+ahead, n); err != nil {
 		return err
 	}
 	a.credit += ahead + need - n
@@ -613,4 +673,101 @@ func formatMemoryBytes(n int64) string {
 		index++
 	}
 	return strconv.FormatFloat(value, 'f', 1, 64) + " " + units[index]
+}
+
+// sizedValueKey identifies a list or map by its backing storage and length,
+// for an operator that counts what its rows share once (rowEstimator): it
+// keeps the value alive while the operator runs, as the operator's rows do.
+type sizedValueKey struct {
+	data   unsafe.Pointer
+	length int
+}
+
+const (
+	// sizedValueMin is the shortest list whose size is cached: a
+	// shorter one costs less to walk than to look up.
+	sizedValueMin = 32
+	// sizedValuesMax bounds the cache; values past it are walked each time.
+	sizedValuesMax = 4096
+)
+
+// sizedValue is estimateValueBytes of value, a list or map with identity
+// data and length elements: from collect()'s count or the statement's size
+// cache when known, walked (and cached, a list of values or strings)
+// otherwise.
+func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, value interface{}) int64 {
+	if t == nil || length < sizedValueMin {
+		return t.valueBytes(value)
+	}
+	if list, ok := value.([]interface{}); ok {
+		if bytes, known := t.knownListBytes(list); known {
+			return bytes
+		}
+	}
+	key, cacheable := heldListKeyOf(value)
+	if !cacheable {
+		return estimateValueBytes(value)
+	}
+	t.knownMu.Lock()
+	cached, found := t.sizes[key]
+	t.knownMu.Unlock()
+	if found && cached.list.holds(data) {
+		return cached.bytes
+	}
+	bytes := estimateValueBytes(value)
+	t.knownMu.Lock()
+	if t.sizes == nil {
+		t.sizes = make(map[heldListKey]heldListSize)
+	}
+	if found || len(t.sizes) < sizedValuesMax {
+		t.sizes[key] = heldListSize{bytes: bytes, list: heldListOf(data)}
+	}
+	t.knownMu.Unlock()
+	return bytes
+}
+
+// heldListKey finds a list's cached size by the address of its backing
+// array, its length and its capacity, without keeping it alive: a list the
+// statement dropped is collected while the statement runs, whatever its
+// caches recorded about it. The address can be reused once it is; the entry's
+// heldList tells the list recorded there from a new one.
+type heldListKey struct {
+	address          uintptr
+	length, capacity int
+}
+
+// heldListKeyOf is the key of a list of values or strings, the lists whose
+// size takes a walk: a list of numbers is sized from its capacity, and may
+// live outside the Go heap (a memory-mapped vector), where a heldList can't
+// refer to it.
+func heldListKeyOf(value interface{}) (heldListKey, bool) {
+	switch v := value.(type) {
+	case []interface{}:
+		return heldListKey{address: uintptr(unsafe.Pointer(unsafe.SliceData(v))), length: len(v), capacity: cap(v)}, len(v) > 0
+	case []string:
+		return heldListKey{address: uintptr(unsafe.Pointer(unsafe.SliceData(v))), length: len(v), capacity: cap(v)}, len(v) > 0
+	default:
+		return heldListKey{}, false
+	}
+}
+
+// heldList refers to the backing array of a list a cache recorded without
+// keeping it alive. It holds that array while the array lives; once it is
+// collected the reference is cleared, so a new list allocated at its address
+// is not taken for it.
+type heldList struct{ array weak.Pointer[byte] }
+
+func heldListOf(data unsafe.Pointer) heldList {
+	return heldList{array: weak.Make((*byte)(data))}
+}
+
+// holds reports whether data is the backing array the reference was made to.
+func (h heldList) holds(data unsafe.Pointer) bool {
+	return h.array.Value() == (*byte)(data)
+}
+
+// heldListSize is a cached list size and the list it was taken from.
+type heldListSize struct {
+	bytes int64
+	list  heldList
 }

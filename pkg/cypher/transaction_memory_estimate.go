@@ -29,6 +29,10 @@ const (
 
 // estimateValueBytes is the estimated size of a value a statement keeps.
 func estimateValueBytes(value interface{}) int64 {
+	observeSizing()
+	if estimateObserver != nil {
+		estimateObserver()
+	}
 	return estimateValueBytesAt(value, 0)
 }
 
@@ -82,15 +86,18 @@ func estimateValueBytesAt(value interface{}, depth int) int64 {
 
 // rowEstimator sizes the binding rows one operator keeps, every row in
 // full: a sampled estimate would undercount rows that grow late (long
-// strings, lists built per row). A list or map that the rows of a column
-// share counts once, the first time the operator sees it in that column:
+// strings, lists built per row). A list or map the operator's rows share
+// counts once, the first time the operator sees it, in whichever column:
 // UNWIND documents AS d gives every row the same documents, and WITH and a
-// CALL subquery's imports pass it on without copying it. A list or map
-// built per row (range(), a list comprehension, a map projection) is a
-// different one in every row and counts in full in each. Columns past the
-// first rowEstimatorColumns count every list and map in full (an
-// overcount, never an undercount).
+// CALL subquery's imports pass it on without copying it, however many
+// other bindings the rows carry. A list or map built per row (range(), a
+// list comprehension, a map projection) is a different one in every row
+// and counts in full in each. Past rowEstimatorShared distinct lists and
+// maps, a value repeated in the same column still counts once; any other
+// counts in full (an overcount, never an undercount).
 type rowEstimator struct {
+	// shared are the lists and maps the operator counted.
+	shared  map[sizedValueKey]struct{}
 	columns [rowEstimatorColumns]struct {
 		name     string
 		identity unsafe.Pointer
@@ -100,39 +107,44 @@ type rowEstimator struct {
 	known *transactionMemoryTracker
 }
 
-const rowEstimatorColumns = 8
+const (
+	rowEstimatorColumns = 8
+	rowEstimatorShared  = 1 << 14
+)
 
-// bytes is the estimated size of row.
-func (r *rowEstimator) bytes(row pipelineRow) int64 {
+// rowBytes is the estimated size of row.
+func (r *rowEstimator) rowBytes(row pipelineRow) int64 {
+	observeSizing()
 	total := int64(pipelineRowExtraBytes + mapHeaderBytes)
 	for name, value := range row {
-		total += r.entry(name, value)
+		total += r.bindingBytes(name, value)
 	}
 	return total
 }
 
-// entry is the estimated size of one binding of a row.
-func (r *rowEstimator) entry(name string, value interface{}) int64 {
-	return mapEntryBytes + stringHeaderBytes + int64(len(name)) + r.value(name, value)
+// bindingBytes is the estimated size of one binding of a row.
+func (r *rowEstimator) bindingBytes(name string, value interface{}) int64 {
+	return mapEntryBytes + stringHeaderBytes + int64(len(name)) + r.columnBytes(name, value)
 }
 
-// value is the estimated size of a value in a row's column.
-func (r *rowEstimator) value(column string, value interface{}) int64 {
+// columnBytes is the estimated size of a value in a row's column.
+func (r *rowEstimator) columnBytes(column string, value interface{}) int64 {
 	var identity unsafe.Pointer
+	var length int
 	switch v := value.(type) {
 	case []interface{}:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []string:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []int64:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []float64:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []float32:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case map[string]interface{}:
 		if len(v) > 0 {
-			identity = reflect.ValueOf(v).UnsafePointer()
+			identity, length = reflect.ValueOf(v).UnsafePointer(), len(v)
 		}
 	default:
 		return estimateValueBytes(value)
@@ -140,25 +152,37 @@ func (r *rowEstimator) value(column string, value interface{}) int64 {
 	if identity == nil {
 		return estimateValueBytes(value)
 	}
+	key := sizedValueKey{data: identity, length: length}
+	if _, counted := r.shared[key]; counted {
+		return valueSlotBytes + sliceHeaderBytes
+	}
+	if len(r.shared) < rowEstimatorShared {
+		if r.shared == nil {
+			r.shared = make(map[sizedValueKey]struct{})
+		}
+		r.shared[key] = struct{}{}
+		return r.known.sizedValue(identity, length, value)
+	}
 	for index := 0; index < r.count; index++ {
 		if r.columns[index].name == column {
 			if r.columns[index].identity == identity {
 				return valueSlotBytes + sliceHeaderBytes
 			}
 			r.columns[index].identity = identity
-			return r.known.valueBytes(value)
+			return r.known.sizedValue(identity, length, value)
 		}
 	}
 	if r.count < rowEstimatorColumns {
 		r.columns[r.count].name, r.columns[r.count].identity = column, identity
 		r.count++
 	}
-	return r.known.valueBytes(value)
+	return r.known.sizedValue(identity, length, value)
 }
 
 // estimateResultRowBytes is the estimated size of a result row; lists
 // known's collect() counted are sized from what it counted.
 func estimateResultRowBytes(row []interface{}, known *transactionMemoryTracker) int64 {
+	observeSizing()
 	total := int64(pipelineRowExtraBytes + sliceHeaderBytes)
 	for _, value := range row {
 		total += known.valueBytes(value)
@@ -168,9 +192,24 @@ func estimateResultRowBytes(row []interface{}, known *transactionMemoryTracker) 
 
 // estimatePathResultBytes is the estimated size of a matched path.
 func estimatePathResultBytes(nodes, relationships int) int64 {
+	observeSizing()
 	return pathReferenceBytes + 2*sliceHeaderBytes + int64(nodes+relationships)*8
 }
 
 // aggregateStateBytes is the estimated size of one aggregation's running
 // state in a group.
 const aggregateStateBytes = 160
+
+// estimateObserver, when set (tests), is called on every estimateValueBytes:
+// a value walked.
+var estimateObserver func()
+
+// sizingObserver, when set (tests), is called on every sizing of a value or
+// row (observeSizing): with no limit configured, nothing may size one.
+var sizingObserver func()
+
+func observeSizing() {
+	if sizingObserver != nil {
+		sizingObserver()
+	}
+}

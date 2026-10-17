@@ -33,6 +33,14 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		numeric  float64
 		original interface{}
 	}
+	// The sort buffer and the DISTINCT index count against the statement's
+	// memory limit before they grow, and go back when the percentile is
+	// computed (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.release()
+	if err := retention.reserveSlots(len(rows), 8+valueSlotBytes); err != nil {
+		return nil, false
+	}
 	values := make([]percentileValue, 0, len(rows))
 	var seen cypherValueIndex
 	for _, row := range rows {
@@ -53,6 +61,9 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		if distinct {
 			if _, exists := seen.add(value); exists {
 				continue
+			}
+			if retention.reserveValue(value) != nil {
+				return nil, false
 			}
 		}
 		values = append(values, percentileValue{numeric: numeric, original: value})

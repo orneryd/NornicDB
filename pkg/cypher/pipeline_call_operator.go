@@ -142,9 +142,8 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		// What each outer row's run of the body takes goes back when the run
 		// ends; the rows kept from it count below (#1343).
 		memory := memoryScopeFromContext(runCtx)
-		kept := memoryAccount{scope: memory}
-		keptRows := rowEstimator{known: memory.knownLists()}
-		defer kept.close()
+		retention := newMemoryRetention(runCtx)
+		defer retention.close()
 		for _, outer := range outerRows {
 			rowMark := memory.mark()
 			input := pipelineRow{}
@@ -204,16 +203,21 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			var inner *ExecuteResult
 			var execErr error
 			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
+				inner, execErr = runExec.executeUnionBranches(runCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
 			}
 			memory.releaseSince(rowMark)
-			if memory != nil && execErr == nil && hasReturn && inner != nil {
-				outerBytes := keptRows.bytes(outer)
-				for _, values := range inner.Rows {
-					if execErr = kept.grow(estimateResultRowBytes(values, keptRows.known) + outerBytes); execErr != nil {
-						break
+			// The rows kept from the run count before they are built: the
+			// outer row's values once, each returned row's in full (#1343).
+			if retention.tracking() && execErr == nil {
+				if !hasReturn {
+					execErr = retention.reserveExtendedRow(outer, nil, nil)
+				} else if inner != nil {
+					for _, values := range inner.Rows {
+						if execErr = retention.reserveExtendedRow(outer, inner.Columns, values); execErr != nil {
+							break
+						}
 					}
 				}
 			}
@@ -246,7 +250,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				out = append(out, retained)
 			}
 		}
-		return out, stats, true, nil
+		// Every row kept is charged in full: the rows they replace give
+		// theirs back (rowGenerations).
+		return retention.owned(out), stats, true, nil
 	}
 
 	if !inTransactions {
@@ -255,13 +261,23 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			if err != nil || !ok {
 				return innerRows, stats, ok, err
 			}
+			// The product counts against the statement's memory limit
+			// before it is built: its slots, then each merged row (#1343).
+			retention := newMemoryRetention(ctx)
+			defer retention.close()
+			if err := retention.reserveSlots(len(rows)*len(innerRows), valueSlotBytes); err != nil {
+				return nil, stats, true, err
+			}
 			joined := make([]pipelineRow, 0, len(rows)*len(innerRows))
 			for _, outer := range rows {
 				for _, inner := range innerRows {
+					if err := retention.reserveMergedRow(outer, inner); err != nil {
+						return nil, stats, true, err
+					}
 					joined = append(joined, mergeCallPipelineRows(outer, inner))
 				}
 			}
-			return joined, stats, true, nil
+			return retention.owned(joined), stats, true, nil
 		}
 		return run(targetExec, ctx, rows)
 	}

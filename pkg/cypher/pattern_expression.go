@@ -324,6 +324,10 @@ type rowContextShape struct {
 	// subquery, identity or comprehension form anywhere in it
 	// (rowEvaluationScope).
 	rowOnly bool
+	// buildsValues: the expression may build a large value (range(), reduce,
+	// a comprehension); while a memory limit is configured its row carries
+	// the statement context, for the build's budget (#1343).
+	buildsValues bool
 }
 
 var rowContextShapes = newBoundedCache[string, *rowContextShape](8192, boundedCacheStringShardIndex)
@@ -335,6 +339,7 @@ func rowContextShapeOf(expr string) *rowContextShape {
 	shape := &rowContextShape{
 		pattern:          containsRelationshipPattern(expr),
 		statementContext: needsRowStatementContext(expr),
+		buildsValues:     expressionBuildsValues(expr),
 		trimmed:          strings.TrimSpace(expr),
 		brace:            strings.Contains(expr, "{"),
 	}
@@ -388,7 +393,7 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 			bind(name, value)
 		}
 	}
-	if shape.statementContext {
+	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
 		bind(rowStatementContextKey, ctx)
 	}
 	if extended != nil {

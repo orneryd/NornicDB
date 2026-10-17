@@ -29,6 +29,10 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 }
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+	// Each row it keeps counts against the statement's memory limit before
+	// it is kept (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
@@ -38,10 +42,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				return nil, false
 			}
 			if accepted {
+				if retention.reserveRow(projected) != nil {
+					return nil, false
+				}
 				out = append(out, projected)
 			}
 		}
-		return out, true
+		return retention.owned(out), true
 	}
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
@@ -89,8 +96,12 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			for name, value := range row {
 				projected[name] = value
 			}
+			if retention.reserveRow(projected) != nil {
+				return nil, false
+			}
 			out = append(out, projected)
 		}
+		reserved := len(out)
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
@@ -100,7 +111,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
 		}
-		return e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), true
+		return retention.keep(e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), reserved)
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
@@ -157,10 +168,17 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		for index, projection := range projections {
 			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
 		}
+		// The groups (their first rows, keys, states and collected values)
+		// count while they are built. Their values then move to the output
+		// rows, which count them as they are built: what the groups took goes
+		// back first, so a collected list counts once, not twice (#1343).
+		aggregation := beginMemorySpan(ctx)
 		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
 		if !ok {
 			return nil, false
 		}
+		aggregation.end()
+		aggregation.giveBack()
 		if len(orderTerms) > 0 {
 			expressions := make([]string, len(projections))
 			for index, projection := range projections {
@@ -199,6 +217,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			}
 			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
+				if retention.reserveRow(newRow) != nil {
+					return nil, false
+				}
 				out = append(out, newRow)
 				continue
 			}
@@ -215,16 +236,23 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
 				continue
 			}
+			if retention.reserveRow(newRow) != nil {
+				return nil, false
+			}
 			out = append(out, newRow)
+			if retention.reserveRow(orderScope) != nil {
+				return nil, false
+			}
 			orderScopes = append(orderScopes, orderScope)
 		}
+		reserved := len(out) + len(orderScopes)
 		if withDistinct {
 			out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 		}
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
-		return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
+		return retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
 	}
 
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projections), func(index int) (string, string) {
@@ -252,6 +280,9 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !accepted {
 			continue
 		}
+		if retention.reserveRow(newRow) != nil {
+			return nil, false
+		}
 		out = append(out, newRow)
 		if needsOrderScopes {
 			// ORDER BY may name a projected expression by its text; its value
@@ -262,16 +293,20 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					scope[ordered.expression] = newRow[ordered.alias]
 				}
 			}
+			if retention.reserveRow(scope) != nil {
+				return nil, false
+			}
 			orderScopes = append(orderScopes, scope)
 		}
 	}
+	reserved := len(out) + len(orderScopes)
 	if withDistinct {
 		out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
-	return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
+	return retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
 }
 
 // filterPipelineWindow applies SKIP / LIMIT to rows, then keeps the rows of
@@ -500,8 +535,11 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		row    pipelineRow
 	}
 	ordered := make([]orderValue, 0, len(rows))
-	// The sort keys count against the statement's memory limit (#1343).
-	if memoryScopeFromContext(ctx).grow(int64(len(rows))*(sliceHeaderBytes+int64(len(terms))*valueSlotBytes)) != nil {
+	// The sort keys count against the statement's memory limit while the
+	// rows are sorted (#1343).
+	keys := newMemoryRetention(ctx)
+	defer keys.release()
+	if keys.reserveSlots(len(rows), sliceHeaderBytes+int64(len(terms))*valueSlotBytes) != nil {
 		return false
 	}
 	for index, row := range rows {
@@ -510,7 +548,7 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
 			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
-			if !ok {
+			if !ok || keys.reserveSortKey(value, scopes[index]) != nil {
 				return false
 			}
 			values[termIndex] = value
@@ -589,8 +627,9 @@ func deduplicatePipelineRows(memory *memoryScope, rows []pipelineRow, columns []
 // over stops the deduplication (the statement fails with the limit's
 // error, #1343).
 func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
-	keys := memoryAccount{scope: memory}
-	defer keys.close()
+	// The index of keys is dropped once the rows are deduplicated.
+	keys := retentionIn(memory)
+	defer keys.release()
 	var seen cypherValueIndex
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
@@ -602,7 +641,7 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 		if _, exists := seen.addTuple(values); exists {
 			continue
 		}
-		if keys.scope != nil && keys.grow(estimateValueBytes(values)+mapEntryBytes) != nil {
+		if keys.reserveKey(values) != nil {
 			break
 		}
 		unique = append(unique, row)
@@ -730,7 +769,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
-	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
+	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: newMemoryRetention(ctx)}
 	scope := newRowEvaluationScope(ctx)
 	defer scope.release()
 	for _, row := range rows {
@@ -1157,6 +1196,10 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	// The result rows it keeps count against the statement's memory limit
+	// before they are kept (#1343); emitted rows go to the client's stream.
+	retention := trackedRetention(ctx)
+	defer retention.close()
 	if rows == nil && source != nil {
 		// A local the closure captures, so the rows path below doesn't pay
 		// for a captured result variable.
@@ -1170,6 +1213,10 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			if emit != nil {
 				return emit(values)
 			}
+			if retention.reserveResultRow(values) != nil {
+				sourceProjected = false
+				return false
+			}
 			*out = append(*out, values)
 			return true
 		})
@@ -1181,6 +1228,9 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			return false, true
 		}
 		if emit == nil {
+			if retention.reserveResultRow(values) != nil {
+				return false, true
+			}
 			*out = append(*out, values)
 		} else if !emit(values) {
 			break

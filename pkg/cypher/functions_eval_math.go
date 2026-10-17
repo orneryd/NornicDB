@@ -1230,7 +1230,8 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 			return value, true, getExpressionFailure(itemCtx)
 		}
 	}
-	result, _, err := rowComprehensionLoop(items, func(item interface{}) {
+	budget := expressionBudgetOf(ctx)
+	result, _, err := rowComprehensionLoop(&budget, items, func(item interface{}) {
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
 	}, holds, project)
 	if err != nil {
@@ -1275,7 +1276,8 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
 		}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	budget := expressionBudgetOf(ctx)
+	result, err := runReduceForm(&budget, form, acc, items, evaluate(form.step), evaluate(form.predicate))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

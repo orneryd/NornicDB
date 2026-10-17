@@ -69,8 +69,7 @@ type pipelineAggregateGroup struct {
 // pipelineAggregateRun is what pipelineAggregateGroups' row callback updates.
 type pipelineAggregateRun struct {
 	valid  bool
-	memory memoryAccount
-	rows   rowEstimator
+	memory memoryRetention
 }
 
 // pipelineAggregateGroups aggregates the rows of source into groups. Rows are
@@ -95,7 +94,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			if !ok {
 				return nil, false
 			}
-			state := pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}}
+			state := pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: retentionIn(memory)}
 			// Every group's state shares the template's argument texts.
 			state.argumentTexts(e)
 			templates[index].states = append(templates[index].states, state)
@@ -124,7 +123,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	ordered := make([]*pipelineAggregateGroup, 0)
 	// run is the aggregation's state the row callback updates: whether every
 	// row was valid, and the memory its new groups take (#1343).
-	run := pipelineAggregateRun{valid: true, memory: memoryAccount{scope: memory}, rows: rowEstimator{known: memory.knownLists()}}
+	run := pipelineAggregateRun{valid: true, memory: retentionIn(memory)}
 	defer run.memory.close()
 	values := make([]interface{}, 0, groupingCount)
 	// One row validated at a time, through one reused slice.
@@ -166,7 +165,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		position, exists := grouping.addTuple(values)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
-			if run.memory.grow(run.rows.bytes(row)+estimateValueBytes(values)+int64(len(templates))*aggregateStateBytes) != nil {
+			if run.memory.reserveGroup(row, values, len(templates)) != nil {
 				run.valid = false
 				return false
 			}
@@ -476,7 +475,7 @@ type pipelineAggregateState struct {
 	duration *CypherDuration
 	// memory is the state's account in the statement's memory scope:
 	// collected values and DISTINCT keys count against its limit (#1343).
-	memory memoryAccount
+	memory memoryRetention
 }
 
 // argumentTexts are the aggregate's argument texts when it takes several
@@ -533,6 +532,11 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 			}
 			stored[argument] = value
 		}
+		// A percentile keeps every input; each counts against the statement's
+		// memory limit before it is kept (#1343).
+		if state.memory.reserveStoredRow(stored) != nil {
+			return false
+		}
 		state.percentileRows = append(state.percentileRows, stored)
 		return true
 	}
@@ -553,7 +557,9 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		if _, exists := state.seen.add(value); exists {
 			return true
 		}
-		if state.memory.growValue(value) != nil {
+		// The value counts once: collect's list keeps the same value and
+		// counts it below.
+		if state.name != "collect" && state.memory.reserveValue(value) != nil {
 			return false
 		}
 	}
@@ -561,7 +567,7 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 	case "count":
 		state.count++
 	case "collect":
-		if state.memory.growValue(value) != nil {
+		if state.memory.reserveCollected(value) != nil {
 			return false
 		}
 		state.values = append(state.values, value)
@@ -696,7 +702,7 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 		}
 		// The rows that keep the list size it from what collect counted,
 		// not by walking it again (#1343).
-		state.memory.noteList(state.values)
+		state.memory.noteCollected(state.values)
 		return state.values, true
 	case "stdev", "stdevp":
 		if state.count == 0 {
