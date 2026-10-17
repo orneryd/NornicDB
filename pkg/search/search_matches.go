@@ -131,7 +131,7 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 // query vector, in one exact-scorer call, and puts each hit's best chunks
 // first in its Matches.
 func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult, nodes []*storage.Node, hits []int, embedding []float32, minSimilarity float64) {
-	hitByNode := make(map[string]int, len(hits))
+	hitByKey := make(map[string]int, len(hits)) // vector-entry key -> hit
 	var candidates []Candidate
 	spansByHit := make(map[int][]embeddingutil.ChunkSpan, len(hits))
 	// Lock order indexMu -> mu, as index writes take them.
@@ -139,8 +139,8 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	s.mu.RLock()
 	for _, index := range hits {
 		nodeID := string(nodes[index].ID)
-		hitByNode[nodeID] = index
 		for _, vectorID := range s.nodeChunkVectors[nodeID] {
+			hitByKey[vectorID] = index
 			candidates = append(candidates, Candidate{ID: vectorID})
 		}
 		if spans, known := s.nodeChunkSpans[nodeID]; known {
@@ -159,11 +159,11 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	}
 	chunkScores := make(map[int][]ScoredCandidate, len(hits))
 	for _, candidate := range scored { // best first
-		index, ok := hitByNode[normalizeVectorResultIDToNodeID(candidate.ID)]
+		index, ok := hitByKey[candidate.ID]
 		if !ok {
 			continue
 		}
-		chunk, ok := matchingChunkIndex(string(nodes[index].ID), candidate.ID)
+		chunk, ok := vectorEntryChunkIndex(string(nodes[index].ID), candidate.ID)
 		if !ok {
 			continue
 		}
@@ -180,7 +180,7 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 		}
 		matches := make([]SearchMatch, 0, len(kept)+len(results[index].Matches))
 		for _, candidate := range kept {
-			chunk, _ := matchingChunkIndex(string(nodes[index].ID), candidate.ID)
+			chunk, _ := vectorEntryChunkIndex(string(nodes[index].ID), candidate.ID)
 			placed := false
 			for _, span := range spans {
 				if span.Chunk == chunk {
@@ -197,10 +197,10 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 }
 
 // keptChunk reports whether chunk is already among kept: chunk 0 is
-// indexed under the node's own ID.
+// indexed under the node's main key.
 func keptChunk(kept []ScoredCandidate, node *storage.Node, chunk int) bool {
 	for _, candidate := range kept {
-		if index, _ := matchingChunkIndex(string(node.ID), candidate.ID); index == chunk {
+		if index, _ := vectorEntryChunkIndex(string(node.ID), candidate.ID); index == chunk {
 			return true
 		}
 	}
