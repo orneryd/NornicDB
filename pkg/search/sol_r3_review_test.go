@@ -2,75 +2,82 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// sol r3 finding 1: the base BM25 checkpoint is encoded from a snapshot the
-// encoder owns, so a write admitted during the encode cannot race it (run
-// with -race) or tear it, and the write does not wait for the disk I/O.
+// sol r3 finding 1: a BM25 checkpoint is encoded from a snapshot the encoder
+// owns. Live writes are admitted while it is written, so encoding the live V2
+// maps raced them (a data race under -race; a concurrent-map crash or a torn
+// snapshot in production). Both the base checkpoint and the background
+// persist run here while a writer indexes and removes documents.
 func TestBaseBM25CheckpointEncodesOwnedSnapshot(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
-	require.NoError(t, err)
-	svc := configureNodeAdmissionService(t, engine, t.TempDir(), "v2", nil)
-	require.NoError(t, svc.BuildIndexes(context.Background()))
-	b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
-	_, err = engine.CreateNode(b)
-	require.NoError(t, err)
-	require.NoError(t, svc.IndexNode(b)) // dirty: the base persist encodes BM25
+	for _, backend := range []string{"v1", "v2"} {
+		t.Run(backend, func(t *testing.T) {
+			engine := storage.NewMemoryEngine()
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			svc := configureNodeAdmissionService(t, engine, t.TempDir(), backend, nil)
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+			// Enough documents that encoding a checkpoint takes measurable time.
+			const seeds = 3000
+			for i := range seeds {
+				n := admissionNode(fmt.Sprintf("nornic:seed%d", i), fmt.Sprintf("seedterm%d common", i), []float32{1, float32(i % 7), 0}, "named")
+				_, err := engine.CreateNode(n)
+				require.NoError(t, err)
+				require.NoError(t, svc.IndexNode(n))
+			}
 
-	entered, release := make(chan struct{}), make(chan struct{})
-	holdEncode := func() {
-		select {
-		case <-entered:
-		default:
-			close(entered)
-			<-release
-		}
+			stop := make(chan struct{})
+			var writes atomic.Int64
+			writerDone := make(chan error, 1)
+			go func() {
+				for i := 0; ; i++ {
+					select {
+					case <-stop:
+						writerDone <- nil
+						return
+					default:
+					}
+					id := fmt.Sprintf("nornic:live%d", i%50)
+					n := admissionNode(id, fmt.Sprintf("liveterm%d", i), []float32{0, 1, float32(i % 5)}, "named")
+					_, _ = engine.CreateNode(n)
+					if err := svc.IndexNode(n); err != nil {
+						writerDone <- err
+						return
+					}
+					if i%3 == 0 {
+						if err := svc.RemoveNode(storage.NodeID(id)); err != nil {
+							writerDone <- err
+							return
+						}
+					}
+					writes.Add(1)
+				}
+			}()
+			for range 3 {
+				require.NoError(t, svc.persistBaseIndexes())
+				svc.persistBM25Background(svc.fulltextIndexPath)
+			}
+			close(stop)
+			require.NoError(t, <-writerDone)
+			require.Positive(t, writes.Load(), "no write ran during the checkpoints")
+
+			// The saved checkpoint decodes to a consistent index holding every
+			// seed document.
+			probe, _ := newBM25Index(backend)
+			require.NoError(t, probe.Load(svc.fulltextIndexPath))
+			require.GreaterOrEqual(t, probe.Count(), seeds)
+			hits := probe.Search("seedterm42", 10)
+			require.NotEmpty(t, hits)
+			require.Equal(t, "nornic:seed42", hits[0].ID)
+		})
 	}
-	bm25SnapshotEncodeHook.Store(&holdEncode)
-	t.Cleanup(func() { bm25SnapshotEncodeHook.Store(nil) })
-	persisted := make(chan error, 1)
-	go func() { persisted <- svc.persistBaseIndexes() }()
-	select {
-	case <-entered:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the base persist did not reach the BM25 encode")
-	}
-	// Writes admitted while the snapshot is being encoded.
-	c := admissionNode("nornic:c", "cterm", []float32{0, 0, 1}, "named")
-	_, err = engine.CreateNode(c)
-	require.NoError(t, err)
-	wrote := make(chan error, 1)
-	go func() {
-		if err := svc.IndexNode(c); err != nil {
-			wrote <- err
-			return
-		}
-		wrote <- svc.RemoveNode("nornic:a")
-	}()
-	select {
-	case err := <-wrote:
-		require.NoError(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("a live write waited for the BM25 checkpoint encode")
-	}
-	close(release)
-	select {
-	case err := <-persisted:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("the base persist did not finish")
-	}
-	require.Equal(t, []string{"nornic:c"}, searchIDs(t, svc, "cterm"))
-	require.Empty(t, searchIDs(t, svc, "aterm"))
 }
 
 // sol r3 finding 2: writes accepted after the base BM25 save of an explicit
@@ -83,7 +90,8 @@ func TestWritesAfterBaseBM25SaveSurviveWarmup(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			_, err := engine.CreateNode(admissionNode("nornic:a", "oldterm", []float32{1, 0, 0}, "named"))
 			require.NoError(t, err)
-			svc := configureNodeAdmissionService(t, engine, t.TempDir(), backend, nil)
+			dir := t.TempDir()
+			svc := configureNodeAdmissionService(t, engine, dir, backend, nil)
 			var hookErrs []error
 			writeAfterSave := func(s *Service) {
 				if s != svc {
@@ -106,6 +114,20 @@ func TestWritesAfterBaseBM25SaveSurviveWarmup(t *testing.T) {
 			require.Equal(t, []string{"nornic:a"}, searchIDs(t, svc, "newterm"), "an update after the base save was lost")
 			require.Empty(t, searchIDs(t, svc, "oldterm"), "the older checkpoint came back")
 			require.Equal(t, []string{"nornic:b"}, searchIDs(t, svc, "bterm"), "an insert after the base save was lost")
+
+			// The final persist saved those writes: the checkpoint a restart
+			// restores holds them, and the restarted service serves them.
+			saved, _ := newBM25Index(backend)
+			require.NoError(t, saved.Load(filepath.Join(dir, "bm25")))
+			require.Len(t, saved.Search("newterm", 10), 1, "the saved checkpoint lacks the update")
+			require.Empty(t, saved.Search("oldterm", 10), "the saved checkpoint kept the replaced text")
+			require.Len(t, saved.Search("bterm", 10), 1, "the saved checkpoint lacks the insert")
+			restarted := configureNodeAdmissionService(t, engine, dir, backend, nil)
+			require.NoError(t, restarted.BuildIndexes(context.Background()))
+			require.True(t, restarted.IsReady())
+			require.Equal(t, []string{"nornic:a"}, searchIDs(t, restarted, "newterm"))
+			require.Empty(t, searchIDs(t, restarted, "oldterm"))
+			require.Equal(t, []string{"nornic:b"}, searchIDs(t, restarted, "bterm"))
 		})
 	}
 }
