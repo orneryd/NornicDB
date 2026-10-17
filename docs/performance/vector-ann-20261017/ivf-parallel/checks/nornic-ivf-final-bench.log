@@ -1,0 +1,33 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 06:15:05 🔬 K-means iteration 1 complete (reassignments: 0)
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 06:15:05 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:05 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:07 🔬 K-means iteration 1 complete (reassignments: 0)
+   16837	    143781 ns/op	   31366 B/op	      60 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 06:15:10 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:10 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:10 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:12 🔬 K-means iteration 1 complete (reassignments: 0)
+   16924	    142310 ns/op	   31343 B/op	      60 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 06:15:14 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:15 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:15 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:17 🔬 K-means iteration 1 complete (reassignments: 0)
+   16561	    148087 ns/op	   31356 B/op	      60 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 06:15:19 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:20 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:20 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:21 🔬 K-means iteration 1 complete (reassignments: 0)
+   16790	    141941 ns/op	   31327 B/op	      60 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 06:15:24 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:24 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:25 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 06:15:26 🔬 K-means iteration 1 complete (reassignments: 0)
+   16916	    142508 ns/op	   31349 B/op	      60 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	24.552s
