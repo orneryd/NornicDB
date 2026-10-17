@@ -1962,6 +1962,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.remote.uri_scheme_unsupported", Constructor: "StorageRemoteURISchemeUnsupported", Fields: []string{"URI"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.adjacent_edge_changed", Constructor: "StorageTransactionAdjacentEdgeChanged", Fields: []string{"EdgeID", "NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.commit_conflict", Constructor: "StorageTransactionCommitConflict", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "storage.transaction.commit_hook_reentry", Constructor: "StorageTransactionCommitHookReentry", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.commit_namespace_missing", Constructor: "StorageTransactionCommitNamespaceMissing", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.concurrent_modification", Constructor: "StorageTransactionConcurrentModification", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.constraint_violation", Constructor: "StorageTransactionConstraintViolation", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

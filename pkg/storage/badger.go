@@ -181,6 +181,10 @@ type BadgerEngine struct {
 	pendingCandidatesGeneration atomic.Uint64
 	// changes is the change data capture state (change_capture.go, #937).
 	changes changeCapture
+	// commitHooks are the databases' commit hooks (commit_hooks.go): nil
+	// while no database has one; commitHooksMu serializes their updates.
+	commitHooks   atomic.Pointer[map[string]CommitHook]
+	commitHooksMu sync.Mutex
 	// notifyWG tracks notifications registered before publication releases
 	// writeBarrier. Close marks the engine closed, then drains them without
 	// that barrier, so callbacks may re-enter storage without an upgrade.

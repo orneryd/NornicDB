@@ -2,14 +2,15 @@ package storage
 
 import "errors"
 
-// inCaptureTransaction runs a direct (non-transactional) write as a
-// transaction when the database it writes captures changes, so that its
-// changes are recorded by the one capture point, BadgerTransaction.Commit
-// (#937); handled is false for a database that doesn't capture, which keeps
-// the direct write. id is any of the write's prefixed entity IDs.
-func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTransaction) error) (handled bool, err error) {
+// inCommitTransaction runs a direct (non-transactional) write as a
+// transaction when the database it writes captures changes or has a commit
+// hook, so that its changes reach the one commit point,
+// BadgerTransaction.Commit: change capture records them (#937), the hook
+// sees them (commit_hooks.go). handled is false for any other database,
+// which keeps the direct write. id is any of the write's prefixed entity IDs.
+func (b *BadgerEngine) inCommitTransaction(id string, write func(tx *BadgerTransaction) error) (handled bool, err error) {
 	namespace, _, ok := ParseDatabasePrefix(id)
-	if !ok || b.ChangeCapture(namespace) == ChangeCaptureOff {
+	if !ok || !b.needsCommitTransaction(namespace) {
 		return false, nil
 	}
 	tx, err := b.BeginTransaction()

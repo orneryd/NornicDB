@@ -74,6 +74,7 @@ const (
 	MessageStorageTransactionEdgeChanged                    MessageID = "storage.transaction.edge_changed"
 	MessageStorageTransactionNodeChanged                    MessageID = "storage.transaction.node_changed"
 	MessageStorageTransactionDeadlockDetected               MessageID = "storage.transaction.deadlock_detected"
+	MessageStorageTransactionCommitHookReentry              MessageID = "storage.transaction.commit_hook_reentry"
 	MessageStorageTransactionNodeChangedDetailed            MessageID = "storage.transaction.node_changed_detailed"
 	MessageStorageTransactionConcurrentModification         MessageID = "storage.transaction.concurrent_modification"
 	MessageStorageTransactionEndpointDeleted                MessageID = "storage.transaction.endpoint_deleted"
@@ -324,6 +325,11 @@ func StorageTransactionEdgeChanged(edgeID string) Message {
 // key that the lock's holder is, through its own waits, waiting for.
 func StorageTransactionDeadlockDetected(label, property string) Message {
 	return storageValidationMessage(MessageStorageTransactionDeadlockDetected, fmt.Sprintf("deadlock detected: waiting for the lock on a %s.%s key would wait for this transaction itself", label, property), map[string]any{"Label": label, "Property": property})
+}
+// StorageTransactionCommitHookReentry is a commit hook's Commit or Rollback
+// of the transaction it runs for.
+func StorageTransactionCommitHookReentry() Message {
+	return storageValidationMessage(MessageStorageTransactionCommitHookReentry, "a commit hook cannot commit or roll back the transaction it runs for", map[string]any{})
 }
 func StorageTransactionNodeChanged(nodeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionNodeChanged, fmt.Sprintf("conflict detected: node %s changed after transaction start", nodeID), map[string]any{"NodeID": nodeID})

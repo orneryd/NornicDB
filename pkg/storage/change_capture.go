@@ -20,7 +20,7 @@ import (
 // written in the same Badger commit as the change, by BadgerTransaction.Commit
 // alone: the commit's states (newCommitStates) give each entity's state
 // before and after. A write that would bypass a transaction runs in one for
-// such a database (BadgerEngine.inCaptureTransaction). Events are keyed in
+// such a database (BadgerEngine.inCommitTransaction). Events are keyed in
 // the database's commit order: commits of one capturing database take its
 // change log in turn, from before their writes until they end.
 

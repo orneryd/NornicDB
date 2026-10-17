@@ -48,6 +48,14 @@ type BadgerTransaction struct {
 	// commit runs (change_capture.go, #937).
 	changeCapture *txChangeCapture
 
+	// The database's commit hook for this transaction's commit
+	// (commit_hooks.go): its progress, the hook and its phases, and the
+	// final change set kept for AfterCommit / AfterRollback.
+	hookState   txHookState
+	hook        CommitHook
+	hookPhases  CommitHookPhases
+	hookChanges *ChangeSet
+
 	// Transaction identity
 	ID        string
 	StartTime time.Time
@@ -2807,6 +2815,10 @@ func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
 		}
 	}
 	tx.mu.Lock()
+	if tx.hookState&txHookBeforeRunning != 0 {
+		tx.mu.Unlock()
+		return commitHookReentryError()
+	}
 	tx.commitCtx = ctx
 	tx.mu.Unlock()
 	defer func() {
@@ -2830,6 +2842,21 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 const commitCancelPollEvery = 256
 
 func (tx *BadgerTransaction) Commit() error {
+	// The database's commit hook runs first, before the commit takes tx.mu
+	// or any of its locks, so what it writes through the transaction is part
+	// of this commit (commit_hooks.go). Its error rolls the transaction back.
+	if err := tx.runBeforeCommitHook(); err != nil {
+		if errors.Is(err, ErrCommitHookReentry) {
+			return err
+		}
+		tx.mu.Lock()
+		if tx.Status == TxStatusActive {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+		}
+		tx.mu.Unlock()
+		tx.finishCommitHook()
+		return err
+	}
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
@@ -2839,6 +2866,7 @@ func (tx *BadgerTransaction) Commit() error {
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
 		}
+		tx.finishCommitHook()
 	}()
 	defer tx.releaseWriteBarrierLocked()
 
@@ -3224,13 +3252,23 @@ func commitConflictError(err error) error {
 // Rollback discards all changes.
 func (tx *BadgerTransaction) Rollback() error {
 	tx.mu.Lock()
-	defer tx.mu.Unlock()
-
+	if tx.hookState&txHookBeforeRunning != 0 {
+		tx.mu.Unlock()
+		return commitHookReentryError()
+	}
 	if tx.Status != TxStatusActive {
+		tx.mu.Unlock()
 		return ErrTransactionClosed
 	}
-
+	hook, operations, metadata := tx.rollbackHookLocked()
 	tx.closeLocked(TxStatusRolledBack, true, nil)
+	namespace := tx.namespace
+	tx.mu.Unlock()
+	// The database's commit hook hears of it once the transaction is closed
+	// and unlocked (commit_hooks.go).
+	if hook != nil {
+		hook.AfterRollback(tx.engine.changeSet(namespace, operations, metadata))
+	}
 	return nil
 }
 
