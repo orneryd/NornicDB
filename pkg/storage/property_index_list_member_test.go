@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func sortedNodeIDs(ids []NodeID) []string {
+func distinctSortedIDs(ids []NodeID) []string {
 	seen := make(map[NodeID]struct{}, len(ids))
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -44,7 +44,7 @@ func TestPropertyIndexListMemberLookup(t *testing.T) {
 	}
 
 	member := func(value interface{}) []string {
-		return sortedNodeIDs(sm.PropertyIndexMemberLookup("Identity", "alias_keys", value))
+		return distinctSortedIDs(sm.PropertyIndexMemberLookup("Identity", "alias_keys", value))
 	}
 	require.Equal(t, []string{"i1", "i2", "scalar"}, member("acme"))
 	require.Equal(t, []string{"i1"}, member("acme corp"))
@@ -57,10 +57,10 @@ func TestPropertyIndexListMemberLookup(t *testing.T) {
 	require.Nil(t, sm.PropertyIndexMemberLookup("Identity", "other", "acme"), "no index")
 
 	// Equality still reads whole values: a list equals a list, not its element.
-	require.Equal(t, []string{"i2"}, sortedNodeIDs(sm.PropertyIndexLookup("Identity", "alias_keys", []interface{}{"globex", "acme"})))
-	require.Equal(t, []string{"scalar"}, sortedNodeIDs(sm.PropertyIndexLookup("Identity", "alias_keys", "acme")))
+	require.Equal(t, []string{"i2"}, distinctSortedIDs(sm.PropertyIndexLookup("Identity", "alias_keys", []interface{}{"globex", "acme"})))
+	require.Equal(t, []string{"scalar"}, distinctSortedIDs(sm.PropertyIndexLookup("Identity", "alias_keys", "acme")))
 	// Ordered scans list scalar values only, once per node.
-	require.Equal(t, []string{"scalar"}, sortedNodeIDs(sm.PropertyIndexAllNonNil("Identity", "alias_keys", false)))
+	require.Equal(t, []string{"scalar"}, distinctSortedIDs(sm.PropertyIndexAllNonNil("Identity", "alias_keys", false)))
 
 	// Statistics count whole values only.
 	for _, stats := range sm.GetIndexStats() {
@@ -86,7 +86,7 @@ func TestPropertyIndexListMemberMaintainedOnWrite(t *testing.T) {
 	require.NoError(t, schema.AddPropertyIndex("alias_keys", "Identity", []string{"alias_keys"}))
 	schema.MarkPropertyIndexesFilled()
 	member := func(value interface{}) []string {
-		return sortedNodeIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", value))
+		return distinctSortedIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", value))
 	}
 
 	_, err = engine.CreateNode(&Node{ID: "db:a", Labels: []string{"Identity"}, Properties: map[string]interface{}{"alias_keys": []interface{}{"x", "y"}}})
@@ -110,7 +110,7 @@ func TestPropertyIndexListMemberMaintainedOnWrite(t *testing.T) {
 	// Backfill of an index created over existing nodes files elements too.
 	require.NoError(t, schema.AddPropertyIndex("tags", "Doc", []string{"tags"}))
 	require.NoError(t, schema.BackfillPropertyIndex("Doc", "tags", map[NodeID]interface{}{"db:d": []interface{}{"t1", "t2"}}))
-	require.Equal(t, []string{"db:d"}, sortedNodeIDs(schema.PropertyIndexMemberLookup("Doc", "tags", "t2")))
+	require.Equal(t, []string{"db:d"}, distinctSortedIDs(schema.PropertyIndexMemberLookup("Doc", "tags", "t2")))
 }
 
 // A transaction's membership lookups see its own writes: created and
@@ -146,14 +146,14 @@ func TestMergePendingPropertyMemberMatches(t *testing.T) {
 			require.NoError(t, tx.DeleteNode("db:gone"))
 
 			lookup := func(ids []NodeID, value interface{}) []string {
-				return sortedNodeIDs(tx.MergePendingPropertyMemberMatches(ids, "P", "k", value))
+				return distinctSortedIDs(tx.MergePendingPropertyMemberMatches(ids, "P", "k", value))
 			}
 			require.Equal(t, []string{"db:kept", "db:new", "db:scalar"}, lookup(committed(), "a"))
 			require.Equal(t, []string{"db:moved"}, lookup(nil, "b"))
 			require.Equal(t, []string{"db:new"}, lookup(nil, "c"))
 			require.Empty(t, lookup(nil, "missing"))
 			// Equality lookups are unchanged: a list's element is not its value.
-			require.Equal(t, []string{"db:scalar"}, sortedNodeIDs(tx.MergePendingPropertyMatches(nil, "P", "k", "a")))
+			require.Equal(t, []string{"db:scalar"}, distinctSortedIDs(tx.MergePendingPropertyMatches(nil, "P", "k", "a")))
 		})
 	}
 }
@@ -167,12 +167,12 @@ func TestWriteBehind_PropertyIndexMemberSeesBufferedNodes(t *testing.T) {
 	schema.MarkPropertyIndexesFilled()
 
 	bufferedCreate(t, engine, &Node{ID: "test:i1", Labels: []string{"Identity"}, Properties: map[string]any{"alias_keys": []interface{}{"acme", "globex"}}})
-	require.Equal(t, []string{"test:i1"}, sortedNodeIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex")),
+	require.Equal(t, []string{"test:i1"}, distinctSortedIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex")),
 		"membership lookup must see buffered nodes before the flush")
 	require.Empty(t, schema.PropertyIndexMemberLookup("Identity", "alias_keys", "initech"))
 
 	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, []string{"test:i1"}, sortedNodeIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex")))
+	require.Equal(t, []string{"test:i1"}, distinctSortedIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex")))
 
 	// A buffered rewrite supersedes the committed entries.
 	tx, err := engine.BeginTransaction()
@@ -182,8 +182,8 @@ func TestWriteBehind_PropertyIndexMemberSeesBufferedNodes(t *testing.T) {
 	require.NoError(t, tx.UpdateNode(&Node{ID: "test:i1", Labels: []string{"Identity"}, Properties: map[string]any{"alias_keys": []interface{}{"initech"}}}))
 	require.NoError(t, tx.Commit())
 	require.Empty(t, schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex"))
-	require.Equal(t, []string{"test:i1"}, sortedNodeIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "initech")))
+	require.Equal(t, []string{"test:i1"}, distinctSortedIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "initech")))
 	require.NoError(t, engine.FlushWriteBehind())
 	require.Empty(t, schema.PropertyIndexMemberLookup("Identity", "alias_keys", "globex"))
-	require.Equal(t, []string{"test:i1"}, sortedNodeIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "initech")))
+	require.Equal(t, []string{"test:i1"}, distinctSortedIDs(schema.PropertyIndexMemberLookup("Identity", "alias_keys", "initech")))
 }
