@@ -1,38 +1,40 @@
 #!/usr/bin/env python3
-"""Load a Graphify code graph into a local NornicDB: the importer behind /graphify.
+"""Ingest a repository's Graphify code graph into NornicDB.
 
-This is the same importer the Soraban/code-intelligence GitHub Action runs on every
-push (scripts/graphify_ingest.py there), with this repository's defaults. Keep the two
-in step: a fix to one belongs in the other.
+Adapted from NornicDB's ``scripts/graphify_local.py`` (MIT, NornicDB
+Contributors) for CI use where many repositories share one database:
 
-Graphify's ``graph.json`` records only the start line of each symbol, so the importer
-re-reads the real source files and writes the FULL, untruncated symbol ``body``
-(its source without comment-only lines and docstrings) and a separate ``comments``
-property (the comment block above the symbol, its docstring and the comments inside it)
-on every node. Graphify's communities become ``Community`` nodes joined to their members
-by ``IN_COMMUNITY`` edges. NornicDB's managed embedding worker includes every string
-property in the embedding text, so ingested nodes become searchable through the vector
-search APIs without any extra configuration.
+* Local ingestion defaults to the existing ``nornicdbcode`` database;
+  ``NORNICDB_DATABASE`` selects another database. Every node also
+  carries a ``repo`` property (e.g. ``Soraban/soraban-api``) and nodes are keyed
+  by ``(id, repo)``, so repositories pointed at one shared database never
+  collide either.
+* The incremental sync (stale node/edge deletion) is scoped to the repo being
+  ingested and to nodes this importer wrote, so a run never deletes another
+  repository's graph or data from another pipeline. It refuses to delete more
+  than ``--max-delete-fraction`` of a repo's graph in one run, which guards
+  against a truncated extraction.
+* A ``(:CodeRepository {name})`` node records the last ingested commit;
+  ``--check`` compares against it so callers can skip unchanged commits.
 
-* Every node carries a ``repo`` property and nodes are keyed by ``(id, repo)``.
-* ``symbol_kind`` (function / class / file / external / other) tells a function defined
-  in the code from a class, a file container or a referenced-only external symbol.
-* The repository's main entry point (default ``cmd/nornicdb/main.go:main``) gets an
-  extra ``:Main`` label; the /graphify page starts from it. Name another with --main
-  (a node id, path/to/file:symbol, or a unique symbol name; ``none`` for no main).
-* Re-runs are incremental: nodes are rewritten only when their content hash changes
-  (so unchanged code is never re-embedded) and stale nodes and edges are removed, but
-  only nodes this importer wrote, and never more than --max-delete-fraction of them.
-* ``(:CodeRepository {name})`` records the last ingested commit; --check reports whether
-  the ingest is needed.
+Like the upstream importer, it re-reads the real source files and writes the
+FULL, untruncated symbol ``body`` (its source without comment-only lines and docstrings)
+and a separate ``comments`` property (the comment block above the symbol, its docstring and
+the comments inside it) on every node. Graphify's communities become ``Community`` nodes
+joined to their members by ``IN_COMMUNITY`` edges. NornicDB's managed embedding worker
+embeds every string property, so nodes become vector-searchable automatically.
+Node writes are guarded by a content hash (``props_hash``), so repeat runs only
+rewrite — and only re-embed — symbols whose content actually changed.
 
-Defaults target a local NornicDB: the HTTP API at http://localhost:7474 (use a
-bolt:// URI for the Bolt port) with admin / password, database ``nornicdbcode``.
-Override with --uri/--user/--password/--database or NORNICDB_URI / NORNICDB_USER /
-NORNICDB_PASSWORD / NORNICDB_DATABASE.
+The transport follows the URI scheme: ``https://`` / ``http://`` use NornicDB's
+Neo4j-compatible HTTP API (``POST /db/{name}/tx/commit``), which is what CI uses
+through the load balancer; ``bolt://`` / ``neo4j://`` (and ``+s`` variants) use
+the Neo4j driver. Over HTTP, batches are split to stay under the server's 10 MB
+request limit.
 
-    graphify extract . --code-only --no-cluster
-    python scripts/graphify_local.py --graph graphify-out/graph.json
+Connection settings come from the environment so secrets never appear in
+process listings: NORNICDB_URI, NORNICDB_USER, NORNICDB_PASSWORD,
+NORNICDB_DATABASE (CLI flags override).
 """
 
 import argparse
@@ -57,9 +59,67 @@ MASS_DELETE_MIN_EXISTING = 200
 
 # NornicDB rejects HTTP request bodies over 10 MB; stay well under it.
 HTTP_MAX_REQUEST_BYTES = 8 * 1024 * 1024
-# A single body larger than this cannot be sent over HTTP even alone in a
-# batch, so it is dropped (the node itself is still ingested).
+# Body plus comments larger than this, measured as they are serialized into the request (JSON-escaped,
+# UTF-8), cannot be sent over HTTP even alone in a batch, so they are cut to fit (see fit_http_body).
+# The rest of a one-row request (query, the node's other scalar properties, repo) is a few KB, so it
+# always fits in the headroom left under HTTP_MAX_REQUEST_BYTES.
 HTTP_MAX_BODY_BYTES = 6 * 1024 * 1024
+
+# Text a node may carry for embedding (body plus comments), in characters; 0 = no cap (the default).
+# NornicDB splits a node's text into chunks of NORNICDB_EMBED_CHUNK_SIZE before embedding it, so long
+# bodies are embedded whole. Before v1.4.3 it did not split text for an OpenAI-compatible provider
+# (orneryd/NornicDB#1236), and a node over the model's input limit (Titan Text Embeddings V2: 8,192
+# tokens and 50,000 characters) was rejected and never got a vector. Against such a server, set a cap
+# (20000 kept typical code under both): text is cut and a marker shows where. The model counts tokens,
+# so dense text can still be over; a node that fails is listed by /nornicdb/embed/failures.
+DEFAULT_MAX_EMBED_CHARS = 0
+# Smallest cap accepted, so each field's share still holds the truncation marker and some text.
+MIN_EMBED_CHARS = 1000
+TRUNCATION_MARKER = "\n... [truncated to fit the embedding model's input limit]"
+
+
+def cap_embedding_text(body, comments, limit):
+    """Cut body and comments so together they fit ``limit`` characters.
+
+    Comments get at most a fifth of the budget and the body the rest, so a long docstring can't
+    crowd out the code; the two never total more than ``limit``. 0 (or None) means no cap.
+    Returns (body, comments, truncated)."""
+    if not limit:
+        return body, comments, False
+    if limit < MIN_EMBED_CHARS:
+        raise ValueError(f"embedding text cap must be 0 or at least {MIN_EMBED_CHARS} characters, not {limit}")
+    body = body or ""
+    comments = comments or ""
+    if len(body) + len(comments) <= limit:
+        return body or None, comments or None, False
+    comment_budget = min(len(comments), limit // 5)
+    if len(comments) > comment_budget:
+        comments = comments[:max(0, comment_budget - len(TRUNCATION_MARKER))] + TRUNCATION_MARKER
+    body_budget = limit - len(comments)
+    if len(body) > body_budget:
+        body = body[:max(0, body_budget - len(TRUNCATION_MARKER))] + TRUNCATION_MARKER
+    return body or None, comments or None, True
+
+
+def fit_http_body(body, comments, max_bytes):
+    """Cut body and comments (as cap_embedding_text does) so their serialized size fits ``max_bytes``.
+
+    Size is what the text takes in the HTTP request: JSON-escaped (a control character becomes six
+    bytes, a quote or backslash two) and UTF-8 encoded, as HttpSession.run sends it. Returns (body,
+    comments, cut). The character budget shrinks in proportion to the overshoot until the text fits,
+    so text that escapes or encodes to more bytes is cut further."""
+    def size(b, c):
+        return sum(len(json.dumps(text, ensure_ascii=False).encode("utf-8")) for text in (b, c) if text)
+    current = size(body, comments)
+    if not max_bytes or current <= max_bytes:
+        return body, comments, False
+    limit = len(body or "") + len(comments or "")
+    cut_body, cut_comments = body, comments
+    while current > max_bytes:
+        limit = max(MIN_EMBED_CHARS, int(limit * max_bytes / current * 0.98))
+        cut_body, cut_comments, _ = cap_embedding_text(body, comments, limit)
+        current = size(cut_body, cut_comments)
+    return cut_body, cut_comments, True
 
 
 class RetryableError(Exception):
@@ -130,11 +190,20 @@ class HttpSession:
         return HttpResult([dict(zip(columns, row["row"])) for row in result.get("data", [])])
 
 
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+
 class HttpDriver:
-    def __init__(self, uri, user, password):
+    def __init__(self, uri, user, password, token=None):
         self.base_url = uri.rstrip("/")
-        token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
-        self.auth_header = f"Basic {token}"
+        if token:
+            host = urllib.parse.urlparse(self.base_url).hostname or ""
+            if self.base_url.startswith("http://") and host not in LOOPBACK_HOSTS:
+                raise SystemExit(f"error: refusing to send a bearer token over plain http to {host}; use https://")
+            self.auth_header = f"Bearer {token}"
+        else:
+            basic = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+            self.auth_header = f"Basic {basic}"
 
     def __enter__(self):
         return self
@@ -151,9 +220,11 @@ def is_http(uri):
     return uri.startswith(("http://", "https://"))
 
 
-def connect(uri, user, password):
+def connect(uri, user, password, token=None):
     if is_http(uri):
-        return HttpDriver(uri, user, password)
+        return HttpDriver(uri, user, password, token)
+    if token:
+        raise SystemExit("error: a bearer token works over the HTTP API only; use an https:// URI")
     from neo4j import GraphDatabase
     return GraphDatabase.driver(uri, auth=(user, password))
 
@@ -829,20 +900,20 @@ def friendly_error(error, uri):
     text = str(error)
     if "Unauthorized" in text or "HTTP 401" in text or "HTTP 403" in text or "AuthError" in type(error).__name__:
         return (f"error: NornicDB at {uri} rejected the credentials. Check the username and password "
-                f"(the nornicdb-user / nornicdb-password inputs).")
+                f"(the nornicdb-user / nornicdb-password inputs) or the bearer token (nornicdb-token).")
     if isinstance(error, (RetryableError, OSError)) or "ServiceUnavailable" in type(error).__name__:
         return f"error: cannot reach NornicDB at {uri}: {text}"
     return f"error: NornicDB at {uri} returned an error: {text}"
 
 
-def last_ingested_state(uri, user, password, database, repo):
-    """{'commit', 'main_spec'} recorded by the previous successful run, or None."""
+def last_ingested_state(uri, user, password, database, repo, token=None):
+    """{'commit', 'main_spec', 'max_embed_chars'} recorded by the previous successful run, or None."""
     try:
-        with connect(uri, user, password) as driver:
+        with connect(uri, user, password, token) as driver:
             with driver.session(database=database) as session:
                 record = session.run(
                     "MATCH (r:CodeRepository {name: $repo}) "
-                    "RETURN r.last_commit AS commit, r.main_spec AS main_spec",
+                    "RETURN r.last_commit AS commit, r.main_spec AS main_spec, r.max_embed_chars AS max_embed_chars",
                     repo=repo,
                 ).single()
                 return dict(record) if record else None
@@ -858,12 +929,15 @@ def last_ingested_state(uri, user, password, database, repo):
 
 
 def import_graph(graph_path, uri, user, password, batch_size, repo_root, database, repo,
-                 commit=None, branch=None, sync=True, max_delete_fraction=0.5, main=None, main_spec="", skip_unchanged=True):
+                 commit=None, branch=None, sync=True, max_delete_fraction=0.5, main=None, main_spec="", skip_unchanged=True,
+                 token=None, max_embed_chars=DEFAULT_MAX_EMBED_CHARS):
     labels = {}
     node_batches = defaultdict(list)
     edge_batches = defaultdict(list)
     indexed_labels = set()
     node_count = edge_count = bodied_count = skipped_count = 0
+    truncated_count = 0
+    http_cut_count = 0
     updated_nodes = 0
     unchanged_nodes = unchanged_edges = 0  # already in the database with the same content hash
     symbols = collect_symbol_lines(graph_path)
@@ -880,7 +954,7 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
     max_body_bytes = HTTP_MAX_BODY_BYTES if is_http(uri) else None
     retry_on = retryable_errors()
 
-    with connect(uri, user, password) as driver:
+    with connect(uri, user, password, token) as driver:
         ensure_database(driver, database)
         with driver.session(database=database) as session:
             def run_retry(query, **params):
@@ -905,17 +979,24 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
             def ensure_index(label):
                 if label in indexed_labels:
                     return
-                # Nodes are keyed by (id, repo): id alone is not unique across
-                # repos in the shared database. Index the composite key so the
-                # {id, repo} MERGE/MATCH patterns in write_nodes and write_edges
-                # resolve through the composite equality path as an exact
-                # LookupFull instead of an id lookup plus a residual repo
-                # filter. A bare repo index is never created: it has the same
-                # value for every node in a repo, so it would materialise the
-                # whole label on every batch.
-                run_retry(
-                    f"CREATE INDEX graphify_{label.lower()}_id_repo IF NOT EXISTS FOR (n:{label}) ON (n.id, n.repo)"
-                ).consume()
+                # Indexes are created before the first write so MERGE lookups
+                # never fall back to full-label scans. A least-privilege writer (an editor) may not
+                # change the schema: then the indexes must already exist from an earlier ingest by an
+                # admin, so carry on and write instead of failing every run.
+                try:
+                    run_retry(
+                        f"CREATE INDEX graphify_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) ON (n.id)"
+                    ).consume()
+                    run_retry(
+                        f"CREATE INDEX graphify_{label.lower()}_repo IF NOT EXISTS FOR (n:{label}) ON (n.repo)"
+                    ).consume()
+                except Exception as error:
+                    if "Forbidden" not in str(error) and "schema permission" not in str(error).lower():
+                        raise
+                    if not indexed_labels:
+                        print("Note: this user may not create indexes, so none were created. If the database "
+                              "has none yet, writes are slow until an admin ingests once or creates them.",
+                              file=sys.stderr, flush=True)
                 indexed_labels.add(label)
 
             def write_nodes(label, rows):
@@ -996,15 +1077,22 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                 # and re-embed every member node.
                 communities.add(node_id, label, props.pop("community", None), props.pop("community_name", None))
                 body = body_for_node(repo_root, data, symbols, line_cache, state_cache, docstring_lines)
-                if body and max_body_bytes and len(body.encode("utf-8")) > max_body_bytes:
-                    print(f"Skipping body of {node_id} ({data.get('source_file')}): "
-                          f"larger than the HTTP request limit", file=sys.stderr)
-                    body = None
+                comments, truncated = None, False
                 if body:
+                    comments = comments_for_node(repo_root, data, symbols, docstring_lines, line_cache, state_cache)
+                    body, comments, truncated = cap_embedding_text(body, comments, max_embed_chars)
+                    # Text too big for one HTTP request is cut to fit rather than dropped.
+                    body, comments, http_cut = fit_http_body(body, comments, max_body_bytes)
+                    if http_cut:
+                        http_cut_count += 1
+                        print(f"Cut body of {node_id} ({data.get('source_file')}) to "
+                              f"{len(body) + len(comments or '')} characters: "
+                              f"larger than the HTTP request limit", file=sys.stderr)
+                if body:
+                    truncated_count += truncated
                     props["body"] = body
                     props["body_start_line"] = parse_location(data.get("source_location")) or 0
                     bodied_count += 1
-                    comments = comments_for_node(repo_root, data, symbols, docstring_lines, line_cache, state_cache)
                     if comments:
                         props["comments"] = comments
                 else:
@@ -1061,7 +1149,10 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                     write_nodes("Community", community_rows)
 
             print(f"Imported {node_count} nodes "
-                  f"({bodied_count} with full source bodies, {skipped_count} without)", flush=True)
+                  f"({bodied_count} with full source bodies, {skipped_count} without"
+                  + (f", {truncated_count} cut to {max_embed_chars} characters for the embedding model" if truncated_count else "")
+                  + (f", {http_cut_count} cut to fit the HTTP request limit" if http_cut_count else "")
+                  + ")", flush=True)
 
             # The main entry point carries a second label, :Main, so a database
             # (one per repository by default) can fetch it directly with
@@ -1212,11 +1303,12 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                 "SET r.last_commit = $commit, r.branch = $branch, "
                 "r.last_ingested_at = $now, r.node_count = $nodes, r.edge_count = $edges, "
                 "r.main_id = $main_id, r.main_label = $main_label, "
-                "r.main_source_file = $main_file, r.main_spec = $main_spec",
+                "r.main_source_file = $main_file, r.main_spec = $main_spec, r.max_embed_chars = $max_embed_chars",
                 repo=repo, commit=commit, branch=branch, now=time.time(),
                 nodes=node_count, edges=len(incoming_edges),
                 main_id=main["id"] if main else "", main_label=main["label"] if main else "",
                 main_file=main["source_file"] if main else "", main_spec=main_spec or "",
+                max_embed_chars=max_embed_chars or 0,
             ).consume()
 
             print(
@@ -1228,6 +1320,13 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
                       f"with identical content", flush=True)
 
     print(f"Imported {node_count} nodes and {edge_count} edges for {repo} into {database}")
+
+
+def write_github_output(name, value):
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write(f"{name}={value}\n")
 
 
 DEFAULT_DATABASE = "nornicdbcode"
@@ -1242,12 +1341,10 @@ def git_output(repo_root, *args):
     except (OSError, subprocess.CalledProcessError):
         return ""
 
-
 def repo_from_git(repo_root):
     """owner/name from the origin remote, or the project default."""
     match = re.search(r"([^/:]+/[^/]+?)(?:\.git)?$", git_output(repo_root, "remote", "get-url", "origin"))
     return match.group(1) if match else DEFAULT_REPO
-
 
 def emit_enriched_graph(graph_path, out_path, repo_root):
     """Write graph.json with full `body` properties embedded on every node.
@@ -1282,47 +1379,46 @@ def emit_enriched_graph(graph_path, out_path, repo_root):
     )
 
 
-def write_github_output(name, value):
-    output = os.environ.get("GITHUB_OUTPUT")
-    if output:
-        with open(output, "a", encoding="utf-8") as handle:
-            handle.write(f"{name}={value}\n")
-
-
 def main():
     env = os.environ.get
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--graph", type=Path, default=Path("graphify-out/graph.json"))
-    parser.add_argument("--uri", default=env("NORNICDB_URI", "http://localhost:7474"),
+    parser.add_argument("--uri", default=env("NORNICDB_URI"),
                         help="https://host (HTTP API) or bolt://host:7687 "
-                             "(env NORNICDB_URI; default http://localhost:7474)")
-    parser.add_argument("--user", default=env("NORNICDB_USER", "admin"),
-                        help="user (env NORNICDB_USER; default admin)")
-    parser.add_argument("--password", default=env("NORNICDB_PASSWORD") or env("NEO4J_PASSWORD") or "password",
-                        help="password (env NORNICDB_PASSWORD or NEO4J_PASSWORD; default 'password')")
+                             "(env NORNICDB_URI)")
+    parser.add_argument("--user", default=env("NORNICDB_USER"),
+                        help="user (env NORNICDB_USER)")
+    parser.add_argument("--password", default=env("NORNICDB_PASSWORD"),
+                        help="password (env NORNICDB_PASSWORD)")
+    parser.add_argument("--token", default=env("NORNICDB_TOKEN"),
+                        help="bearer token for the HTTP API (env NORNICDB_TOKEN); used instead of user/password. "
+                             "Set NORNICDB_URI explicitly for local HTTP; an HTTP CLI endpoint override does "
+                             "not inherit a token configured for another endpoint")
     parser.add_argument("--database", default=env("NORNICDB_DATABASE") or DEFAULT_DATABASE,
-                        help=f"target database, created if missing (env NORNICDB_DATABASE; default {DEFAULT_DATABASE})")
+                        help="target database, reused when present (env NORNICDB_DATABASE; default: nornicdbcode)")
     parser.add_argument("--repo", default=env("CODE_INTEL_REPO") or env("GITHUB_REPOSITORY"),
-                        help="repository name stamped on every node (default: from the git origin remote)")
+                        help="repository name stamped on every node (default: $GITHUB_REPOSITORY)")
     parser.add_argument("--commit", default=env("GITHUB_SHA"),
-                        help="commit being ingested (default: HEAD of --repo-root)")
+                        help="commit being ingested (default: $GITHUB_SHA)")
     parser.add_argument("--branch", default=env("GITHUB_REF_NAME"),
-                        help="branch being ingested (default: the branch checked out in --repo-root)")
+                        help="branch being ingested (default: $GITHUB_REF_NAME)")
     parser.add_argument("--repo-root", default=".",
                         help="root for resolving graph source_file paths (default: .)")
     parser.add_argument("--batch-size", type=int, default=2000)
+    parser.add_argument("--max-embed-chars", type=int,
+                        default=int((env("CODE_INTEL_MAX_EMBED_CHARS") or "").strip() or DEFAULT_MAX_EMBED_CHARS),
+                        help="cut a node's body + comments to this many characters so it fits the embedding "
+                             f"model's input (env CODE_INTEL_MAX_EMBED_CHARS; default %(default)s; 0 = no cap, "
+                             f"otherwise at least {MIN_EMBED_CHARS})")
     parser.add_argument("--max-delete-fraction", type=float, default=0.5,
                         help="refuse to sync if more than this fraction of the repo's existing nodes (or edges) "
                              "would be deleted, which usually means a truncated extraction (default 0.5; 1 disables)")
-    parser.add_argument("--main", default=env("CODE_INTEL_MAIN") or DEFAULT_MAIN, metavar="SYMBOL",
+    parser.add_argument("--main", default=env("CODE_INTEL_MAIN", DEFAULT_MAIN), metavar="SYMBOL",
                         help="the repository's main entry point, tagged :Main in the database. Identify it as "
                              "Graphify does: a node id, path/to/file:symbol, or a unique symbol name "
-                             "(main, main(), .run()). An empty value picks the non-test function defined in "
-                             f"the code with the most connected nodes; 'none' ingests without one "
-                             f"(env CODE_INTEL_MAIN; default {DEFAULT_MAIN})")
-    parser.add_argument("--out-graph", type=Path, default=None,
-                        help="write an enriched graph.json (bodies embedded) to this path and skip ingestion")
+                             "(main, main(), .run()). Default: the non-test function defined in the code "
+                             "with the most connected nodes. 'none' ingests without one. (env CODE_INTEL_MAIN)")
     parser.add_argument("--rewrite-all", action="store_true",
                         help="send every node and edge even when the database already has it with the same "
                              "content hash (default: skip those, which also resumes an interrupted run)")
@@ -1333,52 +1429,71 @@ def main():
                              "prints and writes needed=true|false to $GITHUB_OUTPUT")
     parser.add_argument("--force", action="store_true",
                         help="with --check, always report needed=true")
+    parser.add_argument("--out-graph", type=Path, help="write an enriched graph and skip ingestion")
     args = parser.parse_args()
+    if args.out_graph is not None:
+        emit_enriched_graph(args.graph, args.out_graph, args.repo_root)
+        return
+    if not args.uri:
+        parser.error("Set NORNICDB_URI to your NornicDB endpoint; see docs/user-guides/graphify-local.md")
+    # A CLI endpoint override must not inherit an environment token bound to another HTTP endpoint.
+    configured_uri = env("NORNICDB_URI", "").rstrip("/")
+    if args.token and args.token == env("NORNICDB_TOKEN") and args.uri.startswith("http://") and args.uri.rstrip("/") != configured_uri:
+        args.token = None
+    if not (args.token or (args.user and args.password)):
+        parser.error("Set NORNICDB_TOKEN or both NORNICDB_USER and NORNICDB_PASSWORD; see docs/user-guides/graphify-local.md")
     if not args.repo:
         args.repo = repo_from_git(args.repo_root)
     if not args.commit:
         args.commit = git_output(args.repo_root, "rev-parse", "HEAD") or None
     if not args.branch:
         args.branch = git_output(args.repo_root, "rev-parse", "--abbrev-ref", "HEAD") or None
+    if not args.database:
+        args.database = args.repo.rsplit("/", 1)[-1]
     if ":" in args.database or args.database.startswith("_") or not args.database.strip():
         parser.error(f"invalid database name {args.database!r}: it cannot be empty, contain ':' or start with '_'")
     if not 0 <= args.max_delete_fraction <= 1:
         parser.error("--max-delete-fraction must be between 0 and 1")
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
+    if args.max_embed_chars and args.max_embed_chars < MIN_EMBED_CHARS:
+        parser.error(f"--max-embed-chars must be 0 (no cap) or at least {MIN_EMBED_CHARS}")
+
+    if args.token and not is_http(args.uri):
+        parser.error("--token needs an HTTP(S) URI (bearer auth is HTTP only)")
 
     if args.check:
         state = None if args.force else last_ingested_state(
-            args.uri, args.user, args.password, args.database, args.repo)
+            args.uri, args.user, args.password, args.database, args.repo, args.token)
         previous = state.get("commit") if state else None
         # Changing which function is main re-runs the ingest even on the same commit.
         def normalized(spec):
             spec = (spec or "").strip()
             return NO_MAIN if spec.lower() == NO_MAIN else spec
         main_changed = bool(state) and normalized(state.get("main_spec")) != normalized(args.main)
-        needed = args.force or not args.commit or previous != args.commit or main_changed
+        # So does changing the embedding text cap (a run before the cap existed recorded none: no cap).
+        cap_changed = bool(state) and int(state.get("max_embed_chars") or 0) != args.max_embed_chars
+        needed = args.force or not args.commit or previous != args.commit or main_changed or cap_changed
         print(f"{args.repo}: last ingested {previous or 'never'}, current {args.commit or 'unknown'}"
-              f"{', main changed' if main_changed and previous == args.commit else ''} "
+              f"{', main changed' if main_changed and previous == args.commit else ''}"
+              f"{', embedding cap changed' if cap_changed and previous == args.commit else ''} "
               f"-> needed={str(needed).lower()}")
         write_github_output("needed", str(needed).lower())
         return
 
     if not args.graph.is_file():
         parser.error(f"graph not found: {args.graph}")
-    if args.out_graph is not None:
-        emit_enriched_graph(args.graph, args.out_graph, args.repo_root)
-        return
     main = None
     if args.main.strip().lower() != NO_MAIN:
         try:
             main = choose_main(args.graph, args.main)
         except MainSelectionError as error:
-            parser.exit(2, f"graphify_local.py: error: {error}\n")
+            parser.exit(2, f"graphify_ingest.py: error: {error}\n")
         print(f"Main entry point ({main['how']}): {main['label']}  {main['source_file']}:{main['source_location']}"
               f"  [{main['kind']}, {main['connected']} connected nodes]  id={main['id']}", flush=True)
         if main["how"] == "default":
-            print("  No main was specified, so this is the best-connected function in the code. Set "
-                  "--main to pick the real entry point. Next best:", flush=True)
+            print("  No main was specified, so this is the best-connected function in the code. Set the "
+                  "`main` input / --main to pick the real entry point. Next best:", flush=True)
             for line in main["runner_ups"]:
                 print("    " + line, flush=True)
     try:
@@ -1387,7 +1502,8 @@ def main():
                      commit=args.commit, branch=args.branch, sync=not args.no_sync,
                      max_delete_fraction=args.max_delete_fraction, main=main,
                      main_spec=args.main.strip() if main else NO_MAIN,
-                     skip_unchanged=not args.rewrite_all)
+                     skip_unchanged=not args.rewrite_all, token=args.token,
+                     max_embed_chars=args.max_embed_chars)
     except (RuntimeError, RetryableError, OSError) as error:
         raise SystemExit(friendly_error(error, args.uri)) from error
 

@@ -4,12 +4,25 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+run_code_intelligence() {
+    if [ "$(git config --bool --get codeIntelligence.enabled || true)" = "true" ]; then
+        runner="$repo_root/scripts/code-intelligence-hook.sh"
+        if [ ! -x "$runner" ]; then runner="$(git config --get codeIntelligence.hookRunner || true)"; fi
+        if [ ! -x "$runner" ]; then
+            echo "code-intelligence: runner missing; rerun scripts/install-git-hooks.sh from the tooling checkout." >&2
+            return 1
+        fi
+        "$runner" check-staged
+    fi
+}
+
 staged_go_files=()
 while IFS= read -r -d '' file; do
     staged_go_files+=("$file")
 done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.go')
 
 if [ "${#staged_go_files[@]}" -eq 0 ]; then
+    run_code_intelligence
     exit 0
 fi
 
@@ -33,3 +46,5 @@ fi
 
 gofmt -w -s "${staged_go_files[@]}"
 git add -- "${staged_go_files[@]}"
+
+run_code_intelligence
