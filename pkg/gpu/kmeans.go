@@ -256,6 +256,48 @@ func (ci *ClusterIndex) Cluster() error {
 // It copies embedding data out, runs the iteration without holding clusterMu, then applies the result.
 // This allows search to continue using the previous clustering state while k-means runs in the background.
 func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
+	clustering, err := ci.ComputeClustering(ctx)
+	if err != nil || clustering == nil {
+		return err
+	}
+	ci.PublishClustering(clustering)
+	return nil
+}
+
+// Clustering is a computed cluster generation that is not yet published.
+// Callers that derive state from its membership (for example per-cluster
+// graphs) build that state first, then publish both together with
+// PublishClustering, so readers never see routing without its derived state.
+type Clustering struct {
+	nodeIDs     []string // embedding order the assignments refer to
+	centroids   [][]float32
+	assignments []int
+	clusterMap  map[int][]int
+	computed    bool // k-means ran; restored state keeps the previous run's stats
+	iterations  int
+	start       time.Time
+}
+
+// NumClusters returns the number of clusters (centroids) in the generation.
+func (c *Clustering) NumClusters() int {
+	return len(c.centroids)
+}
+
+// MemberIDs returns the node IDs assigned to clusterID in this generation.
+func (c *Clustering) MemberIDs(clusterID int) []string {
+	members := c.clusterMap[clusterID]
+	out := make([]string, 0, len(members))
+	for _, idx := range members {
+		if idx >= 0 && idx < len(c.nodeIDs) {
+			out = append(out, c.nodeIDs[idx])
+		}
+	}
+	return out
+}
+
+// ComputeClustering runs k-means on a copy of the current embeddings without
+// changing the published clustering. It returns nil when the index is empty.
+func (ci *ClusterIndex) ComputeClustering(ctx context.Context) (*Clustering, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -268,13 +310,13 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	if n == 0 {
 		ci.mu.Unlock()
 		ci.clusterMu.Unlock()
-		return nil
+		return nil, nil
 	}
 
 	if err := ctx.Err(); err != nil {
 		ci.mu.Unlock()
 		ci.clusterMu.Unlock()
-		return err
+		return nil, err
 	}
 
 	// Determine K
@@ -288,12 +330,12 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	if k < 1 {
 		ci.mu.Unlock()
 		ci.clusterMu.Unlock()
-		return ErrInvalidK
+		return nil, ErrInvalidK
 	}
 	if n < k {
 		ci.mu.Unlock()
 		ci.clusterMu.Unlock()
-		return ErrTooFewEmbeddings
+		return nil, ErrTooFewEmbeddings
 	}
 
 	dims := ci.dimensions
@@ -301,6 +343,7 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	// Search needs ci.mu.RLock() in GetClusterMemberIDs, so we must not hold ci.mu.
 	vectorsCopy := make([]float32, len(ci.cpuVectors))
 	copy(vectorsCopy, ci.cpuVectors)
+	nodeIDs := append([]string(nil), ci.nodeIDs...)
 	initMethod := ci.config.InitMethod
 	maxIter := ci.config.MaxIterations
 	preferredSeeds := append([]int(nil), ci.preferredSeedIndices...)
@@ -320,11 +363,11 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 		centroids, err = initCentroidsRandomFromVectors(vectorsCopy, n, dims, k)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
 	assignments := make([]int, n)
@@ -337,7 +380,7 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	iterations := 0
 	for iter := 0; iter < maxIter; iter++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		changed := assignToCentroidsFromVectors(vectorsCopy, centroids, assignments, n, dims, k)
 		updateCentroidsFromVectors(vectorsCopy, assignments, centroids, centroidSums, centroidCounts, n, dims, k)
@@ -348,14 +391,32 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 		}
 	}
 
-	clusterMap := buildClusterMapFromAssignments(assignments)
+	return &Clustering{
+		nodeIDs:     nodeIDs,
+		centroids:   centroids,
+		assignments: assignments,
+		clusterMap:  buildClusterMapFromAssignments(assignments),
+		computed:    true,
+		iterations:  iterations,
+		start:       start,
+	}, nil
+}
 
+// PublishClustering makes clustering the index's routing and membership.
+// Embeddings added since it was built are assigned to their nearest centroid.
+// The index takes ownership of clustering; callers must not use it afterwards.
+func (ci *ClusterIndex) PublishClustering(clustering *Clustering) {
 	// Brief lock to publish new cluster state (order: clusterMu then mu).
 	// If the index grew during clustering, extend assignments and clusterMap for new embeddings.
 	ci.clusterMu.Lock()
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	defer ci.clusterMu.Unlock()
+	n := len(clustering.assignments)
+	dims := ci.dimensions
+	centroids := clustering.centroids
+	assignments := clustering.assignments
+	clusterMap := clustering.clusterMap
 	nowN := len(ci.nodeIDs)
 	if nowN > n {
 		// Extend assignments for new indices and add them to clusterMap
@@ -375,14 +436,15 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	ci.assignments = assignments
 	ci.clusterMap = clusterMap
 	ci.clustered = true
-	ci.iterations = iterations
-	ci.lastClusterTime = time.Now()
-	ci.lastClusterDuration = time.Since(start)
 	ci.updatesSinceCluster = 0
+	if !clustering.computed {
+		return
+	}
+	ci.iterations = clustering.iterations
+	ci.lastClusterTime = time.Now()
+	ci.lastClusterDuration = time.Since(clustering.start)
 
-	atomic.AddInt64(&ci.clusterIterations, int64(iterations))
-
-	return nil
+	atomic.AddInt64(&ci.clusterIterations, int64(clustering.iterations))
 }
 
 // optimalK calculates optimal cluster count using sqrt(n/2) heuristic so that
@@ -867,22 +929,31 @@ func (ci *ClusterIndex) Clear() {
 // so that k-means can be skipped on load. Call after AddBatch has populated the index.
 // Any node ID not in idToCluster is assigned to cluster 0.
 func (ci *ClusterIndex) RestoreClusteringState(centroids [][]float32, idToCluster map[string]int) error {
-	if len(centroids) == 0 || idToCluster == nil {
-		return errors.New("centroids and idToCluster required")
+	clustering, err := ci.RestoredClustering(centroids, idToCluster)
+	if err != nil {
+		return err
 	}
-	ci.clusterMu.Lock()
-	ci.mu.Lock()
-	defer ci.mu.Unlock()
-	defer ci.clusterMu.Unlock()
+	ci.PublishClustering(clustering)
+	return nil
+}
+
+// RestoredClustering builds the clustering RestoreClusteringState publishes,
+// without publishing it, so derived state can be built first.
+func (ci *ClusterIndex) RestoredClustering(centroids [][]float32, idToCluster map[string]int) (*Clustering, error) {
+	if len(centroids) == 0 || idToCluster == nil {
+		return nil, errors.New("centroids and idToCluster required")
+	}
+	ci.mu.RLock()
+	defer ci.mu.RUnlock()
 
 	n := len(ci.nodeIDs)
 	if n == 0 {
-		return errors.New("index has no embeddings; call AddBatch before RestoreClusteringState")
+		return nil, errors.New("index has no embeddings; call AddBatch before RestoreClusteringState")
 	}
 	dims := ci.dimensions
 	for _, c := range centroids {
 		if len(c) != dims {
-			return fmt.Errorf("centroid dimensions %d != index dimensions %d", len(c), dims)
+			return nil, fmt.Errorf("centroid dimensions %d != index dimensions %d", len(c), dims)
 		}
 	}
 
@@ -895,12 +966,12 @@ func (ci *ClusterIndex) RestoreClusteringState(centroids [][]float32, idToCluste
 		}
 	}
 
-	ci.centroids = centroids
-	ci.assignments = assignments
-	ci.clusterMap = buildClusterMapFromAssignments(assignments)
-	ci.clustered = true
-	ci.updatesSinceCluster = 0
-	return nil
+	return &Clustering{
+		nodeIDs:     append([]string(nil), ci.nodeIDs...),
+		centroids:   centroids,
+		assignments: assignments,
+		clusterMap:  buildClusterMapFromAssignments(assignments),
+	}, nil
 }
 
 // IsClustered returns true if clustering has been performed.

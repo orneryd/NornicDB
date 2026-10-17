@@ -1863,7 +1863,8 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 	s.logPrintf("[K-MEANS] 🔄 STARTING | embeddings=%d", totalCount)
 	startTime := time.Now()
 
-	if err := clusterIndex.ClusterWithContext(ctx); err != nil {
+	clustering, err := clusterIndex.ComputeClustering(ctx)
+	if err != nil {
 		if ctx.Err() != nil {
 			s.logPrintf("[K-MEANS] ⏹️  CANCELLED | embeddings=%d (shutdown)", totalCount)
 			return err
@@ -1871,59 +1872,91 @@ func (s *Service) triggerClustering(ctx context.Context) error {
 		s.logPrintf("[K-MEANS] ❌ FAILED | embeddings=%d error=%v", totalCount, err)
 		return localizedError(localization.SearchClusteringFailed(err), err)
 	}
+	if clustering == nil {
+		return nil
+	}
 
 	elapsed := time.Since(startTime)
+	// Graphs built from persisted files belong to the generation those files
+	// describe; a new k-means generation builds its own.
+	if err := s.installClusterGeneration(ctx, clusterIndex, clustering, false); err != nil {
+		return err
+	}
 	stats := clusterIndex.ClusterStats()
 	s.logPrintf("[K-MEANS] ✅ COMPLETE | clusters=%d embeddings=%d iterations=%d duration=%v avg_cluster_size=%.1f",
 		stats.NumClusters, stats.EmbeddingCount, stats.Iterations, elapsed, stats.AvgClusterSize)
-	s.rebuildClusterLexicalProfiles()
 
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	return nil
+}
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+// installClusterGeneration builds everything derived from clustering, then
+// publishes routing, membership, lexical profiles and IVF-HNSW graphs as one
+// generation. Until then queries keep the previous complete generation; an
+// IVF-HNSW query routes and takes its graphs under clusterHNSWMu, so it never
+// pairs one generation's routing with another's graphs.
+func (s *Service) installClusterGeneration(ctx context.Context, clusterIndex *gpu.ClusterIndex, clustering *gpu.Clustering, loadPersistedGraphs bool) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	profiles := s.clusterLexicalProfilesFor(clustering)
+	var graphs map[int]*HNSWIndex
 	if envutil.GetBoolStrict("NORNICDB_VECTOR_IVF_HNSW_ENABLED", false) {
-		if err := s.rebuildClusterHNSWIndexes(ctx, clusterIndex); err != nil {
+		built, err := s.buildClusterHNSWIndexes(ctx, clustering, loadPersistedGraphs)
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			s.logPrintf("[IVF-HNSW] ⚠️  build skipped: %v", err)
 		}
+		graphs = built
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
+	s.clusterHNSWMu.Lock()
+	clusterIndex.PublishClustering(clustering)
+	s.clusterLexicalMu.Lock()
+	s.clusterLexicalProfiles = profiles
+	s.clusterLexicalMu.Unlock()
+	s.clusterHNSW = graphs
+	s.clusterHNSWMu.Unlock()
+	logSearchPrintf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
+
+	s.pipelineMu.Lock()
+	s.vectorPipeline = nil
+	s.pipelineMu.Unlock()
 	return nil
 }
 
-func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *gpu.ClusterIndex) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if clusterIndex == nil || !clusterIndex.IsClustered() {
-		return localizedError(localization.SearchClusterIndexNotClustered(), nil)
-	}
+// ivfHNSWBuildHook, set by tests only, runs when the graphs of a replacement
+// cluster generation start building.
+var ivfHNSWBuildHook func()
+
+// buildClusterHNSWIndexes builds one graph per cluster of clustering, empty
+// clusters included, so every cluster the generation can route to has a graph.
+func (s *Service) buildClusterHNSWIndexes(ctx context.Context, clustering *gpu.Clustering, loadPersisted bool) (map[int]*HNSWIndex, error) {
 	s.mu.RLock()
 	clusterUsesGPU := s.clusterUsesGPU
+	hnswPath := s.hnswIndexPath
 	s.mu.RUnlock()
 	if clusterUsesGPU {
 		s.logPrintf("[IVF-HNSW] ⏭️  SKIPPED | reason=gpu_cluster_routing_enabled")
-		return nil
+		return nil, nil
+	}
+	if ivfHNSWBuildHook != nil {
+		ivfHNSWBuildHook()
 	}
 
-	s.mu.RLock()
-	hnswPath := s.hnswIndexPath
-	s.mu.RUnlock()
 	dims := s.VectorIndexDimensions()
 	if dims <= 0 {
-		return localizedError(localization.SearchVectorIndexUnavailable(), nil)
+		return nil, localizedError(localization.SearchVectorIndexUnavailable(), nil)
 	}
 	vectorLookup := s.getVectorLookup()
 
-	numClusters := clusterIndex.NumClusters()
+	numClusters := clustering.NumClusters()
 	if numClusters <= 0 {
-		return localizedError(localization.SearchNoClusters(), nil)
+		return nil, localizedError(localization.SearchNoClusters(), nil)
 	}
 
 	config := s.hnswConfig()
@@ -1933,16 +1966,13 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 	var builtCount int
 	for cid := 0; cid < numClusters; cid++ {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		memberIDs := clusterIndex.GetClusterMemberIDsForCluster(cid)
-		if len(memberIDs) == 0 {
-			continue
-		}
+		memberIDs := clustering.MemberIDs(cid)
 		// Try loading persisted IVF-HNSW cluster first only when persistence is enabled
 		// (same path convention as SaveIVFHNSW).
 		var idx *HNSWIndex
-		if s.persistEnabled.Load() && hnswPath != "" && vectorLookup != nil {
+		if loadPersisted && len(memberIDs) > 0 && s.persistEnabled.Load() && hnswPath != "" && vectorLookup != nil {
 			loaded, _ := LoadIVFHNSWCluster(hnswPath, cid, vectorLookup)
 			if loaded != nil && loaded.GetDimensions() == dims {
 				idx = loaded
@@ -1966,15 +1996,7 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		rebuilt[cid] = idx
 	}
 	s.logPrintf("[IVF-HNSW] 🔨 Built %d cluster HNSW indexes", len(rebuilt))
-
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = rebuilt
-	s.clusterHNSWMu.Unlock()
-
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-	return nil
+	return rebuilt, nil
 }
 
 // ClusteringInProgress returns true if k-means is currently running for this service.
@@ -4395,13 +4417,13 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 			hnswPath, deriveErr, len(centroids), len(idToCluster))
 		return false
 	}
-	if err := clusterIndex.RestoreClusteringState(centroids, idToCluster); err != nil {
+	clustering, err := clusterIndex.RestoredClustering(centroids, idToCluster)
+	if err != nil {
 		return false
 	}
-	if err := s.rebuildClusterHNSWIndexes(ctx, clusterIndex); err != nil {
+	if err := s.installClusterGeneration(ctx, clusterIndex, clustering, true); err != nil {
 		return false
 	}
-	s.rebuildClusterLexicalProfiles()
 	s.logPrintf("🔍 IVF-HNSW restored from disk (%d clusters); skipping k-means", len(centroids))
 	return true
 }
@@ -6033,12 +6055,13 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 		hasClusterHNSW := len(s.clusterHNSW) > 0
 		s.clusterHNSWMu.RUnlock()
 		if hasClusterHNSW {
+			// The generator holds clusterHNSWMu while it routes and reads graphs,
+			// so the lookup itself does not lock.
 			gen := NewIVFHNSWCandidateGen(s.clusterIndex, func(clusterID int) *HNSWIndex {
-				s.clusterHNSWMu.RLock()
-				defer s.clusterHNSWMu.RUnlock()
 				return s.clusterHNSW[clusterID]
 			}, numClustersToSearch).
-				SetClusterSelector(s.selectHybridClusters)
+				SetClusterSelector(s.selectHybridClusters).
+				SetGenerationLock(s.clusterHNSWMu.RLocker())
 			return &vectorStrategyDescriptor{
 				name:         "IVF-HNSW (per-cluster HNSW)",
 				candidateGen: gen,

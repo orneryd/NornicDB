@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/gpu"
 )
 
 type queryTextContextKey struct{}
@@ -31,21 +32,17 @@ func (s *Service) clearClusterLexicalProfiles() {
 	s.clusterLexicalMu.Unlock()
 }
 
-func (s *Service) rebuildClusterLexicalProfiles() {
+// clusterLexicalProfilesFor builds the hybrid-routing lexical profile of each
+// cluster in clustering. installClusterGeneration publishes them with it.
+func (s *Service) clusterLexicalProfilesFor(clustering *gpu.Clustering) map[int]map[string]float64 {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
 	fulltext := s.fulltext()
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	s.mu.RUnlock()
-	if clusterIndex == nil || !clusterIndex.IsClustered() || fulltext == nil {
-		s.clearClusterLexicalProfiles()
-		return
-	}
-
-	numClusters := clusterIndex.NumClusters()
-	if numClusters <= 0 {
-		s.clearClusterLexicalProfiles()
-		return
+	numClusters := clustering.NumClusters()
+	profiles := make(map[int]map[string]float64, numClusters)
+	if fulltext == nil {
+		return profiles
 	}
 
 	topTerms := envutil.GetInt("NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS", 64)
@@ -53,9 +50,8 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 		topTerms = 8
 	}
 
-	profiles := make(map[int]map[string]float64, numClusters)
 	for cid := 0; cid < numClusters; cid++ {
-		memberIDs := clusterIndex.GetClusterMemberIDsForCluster(cid)
+		memberIDs := clustering.MemberIDs(cid)
 		if len(memberIDs) == 0 {
 			continue
 		}
@@ -82,11 +78,7 @@ func (s *Service) rebuildClusterLexicalProfiles() {
 		}
 		profiles[cid] = topNTokenWeights(tf, topTerms)
 	}
-
-	s.clusterLexicalMu.Lock()
-	s.clusterLexicalProfiles = profiles
-	s.clusterLexicalMu.Unlock()
-	logSearchPrintf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
+	return profiles
 }
 
 func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
