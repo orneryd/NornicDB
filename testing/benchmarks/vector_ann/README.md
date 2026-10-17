@@ -176,10 +176,16 @@ them for existing BM25 construction hints. Old cached corpora remain usable
 without AWS access. Their reports explicitly record vectors-only construction;
 do not describe those results as lexical-hint benchmarks.
 
+Public-path regressions for shared index lifecycle and lexical construction:
+
+```sh
+go test ./pkg/search ./pkg/qdrantgrpc -run 'Test(HNSWLexicalSeedsFollowVectorIdentity|ANNPublicBuildUsesNamedVectorLexicalSeeds|IVFHNSWPublic|ModelSpaceExclusion|PersistedExactQueriesRespect|SharedIndexDropRecreate|SharedIndexDeleteOrdersStorage)' -count=1
+```
+
 On the CUDA machine, build with the native CUDA toolkit and the `cuda` tag:
 
 ```sh
-go test -tags 'noui nolocalllm cuda' ./pkg/search -run 'TestCUDAResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+go test -tags 'noui nolocalllm cuda' ./pkg/search -run 'TestCUDAResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth|TestGPUFirstPipelineUploadOwnsMutationAdmission' -count=1 -v
 VECTOR_GO_TAGS='noui nolocalllm cuda' VECTOR_GPU_BACKEND=cuda NORNIC_GPU=1 \
   VECTOR_MODES=hnsw-balanced VECTOR_ENGINES=nornicdb \
   ./scripts/benchmark_vector_vs_qdrant.sh
@@ -188,7 +194,7 @@ VECTOR_GO_TAGS='noui nolocalllm cuda' VECTOR_GPU_BACKEND=cuda NORNIC_GPU=1 \
 On the Vulkan machine:
 
 ```sh
-go test -tags 'noui nolocalllm' ./pkg/search -run 'TestVulkanResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth' -count=1 -v
+go test -tags 'noui nolocalllm' ./pkg/search -run 'TestVulkanResidentCandidateSearchIsExact|TestResidentBuildVectors|TestHNSW.*RecallMatchesCPU|TestCandidateSearchGraphKernel|TestGPUBuildCandidateDepth|TestGPUFirstPipelineUploadOwnsMutationAdmission' -count=1 -v
 VECTOR_GPU_BACKEND=vulkan NORNIC_GPU=1 VECTOR_MODES=hnsw-balanced \
   VECTOR_ENGINES=nornicdb ./scripts/benchmark_vector_vs_qdrant.sh
 ```
