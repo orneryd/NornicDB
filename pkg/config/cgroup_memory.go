@@ -65,34 +65,43 @@ func (fs cgroupFS) memoryLimit() (int64, bool) {
 		if limit, ok := fs.tightestLimit("sys/fs/cgroup", unified, "memory.max"); ok {
 			return limit, true
 		}
-		return fs.tightestV1Limit(cgroupMount{root: "/", point: "/sys/fs/cgroup/memory"}, v1)
+		return fs.tightestV1Limit(cgroupMount{root: "/", point: "/sys/fs/cgroup/memory"}, path.Clean("/"+v1))
 	}
-	// cgroup v2: the unified hierarchy, wherever it is mounted.
+	// Every mount that contains the process's cgroup, in whatever order
+	// mountinfo lists them: the unified hierarchy (v2) and the memory
+	// controller's (v1, possibly mounted with other controllers). A mount of
+	// another part of the hierarchy holds another cgroup's limit.
+	var tightest int64
+	found := false
 	for _, mount := range mounts {
+		cgroup := v1
 		if mount.unified {
-			if limit, ok := fs.tightestLimit(mount.point, mount.relative(unified), "memory.max"); ok {
-				return limit, true
-			}
+			cgroup = unified
+		}
+		relative, contains := mount.relative(cgroup)
+		if !contains {
+			continue
+		}
+		var limit int64
+		var ok bool
+		if mount.unified {
+			limit, ok = fs.tightestLimit(mount.point, relative, "memory.max")
+		} else {
+			limit, ok = fs.tightestV1Limit(mount, relative)
+		}
+		if ok && (!found || limit < tightest) {
+			tightest, found = limit, true
 		}
 	}
-	// cgroup v1: the memory controller's hierarchy, possibly mounted with
-	// other controllers.
-	for _, mount := range mounts {
-		if mount.memory {
-			if limit, ok := fs.tightestV1Limit(mount, v1); ok {
-				return limit, true
-			}
-		}
-	}
-	return 0, false
+	return tightest, found
 }
 
-// tightestV1Limit is the v1 memory controller's limit for cgroup under
-// mount: the tightest of the visible memory.limit_in_bytes files and the
-// effective hierarchical limit memory.stat reports, which includes the
-// ancestors above the mount (a container sees only its own subtree).
-func (fs cgroupFS) tightestV1Limit(mount cgroupMount, cgroup string) (int64, bool) {
-	relative := mount.relative(cgroup)
+// tightestV1Limit is the v1 memory controller's limit for the cgroup at
+// relative under mount: the tightest of the visible memory.limit_in_bytes
+// files and the effective hierarchical limit memory.stat reports, which
+// includes the ancestors above the mount (a container sees only its own
+// subtree).
+func (fs cgroupFS) tightestV1Limit(mount cgroupMount, relative string) (int64, bool) {
 	limit, found := fs.tightestLimit(mount.point, relative, "memory.limit_in_bytes")
 	if hierarchical, ok := readHierarchicalLimit(fs.path(path.Join(mount.point, relative, "memory.stat"))); ok && (!found || hierarchical < limit) {
 		limit, found = hierarchical, true
@@ -108,22 +117,38 @@ type cgroupMount struct {
 	memory      bool // cgroup v1 with the memory controller
 }
 
-// relative is cgroup's path below the mount's point: the process's cgroup
-// path (from /proc/self/cgroup, relative to the hierarchy's root) with the
-// mount's root removed. A path outside the mounted root (only part of the
-// hierarchy is mounted) reads the mount's own root.
-func (mount cgroupMount) relative(cgroup string) string {
+// relative is cgroup's path below the mount's point, and whether the mount
+// contains it: the process's cgroup path (from /proc/self/cgroup) with the
+// mount's root removed. Both paths are relative to the process's cgroup
+// namespace; a path outside it ("/../sibling") names no mounted cgroup,
+// and a mount of another part of the hierarchy doesn't contain the
+// process's.
+func (mount cgroupMount) relative(cgroup string) (string, bool) {
+	if outsideCgroupNamespace(cgroup) || outsideCgroupNamespace(mount.root) {
+		return "", false
+	}
 	cgroup, root := path.Clean("/"+cgroup), path.Clean("/"+mount.root)
-	if root == "/" {
-		return cgroup
+	switch {
+	case root == "/":
+		return cgroup, true
+	case cgroup == root:
+		return "/", true
+	case strings.HasPrefix(cgroup, root+"/"):
+		return cgroup[len(root):], true
+	default:
+		return "", false
 	}
-	if cgroup == root {
-		return "/"
+}
+
+// outsideCgroupNamespace reports whether a cgroup path climbs above the
+// namespace's root, as the kernel shows a cgroup outside it.
+func outsideCgroupNamespace(cgroup string) bool {
+	for _, element := range strings.Split(cgroup, "/") {
+		if element == ".." {
+			return true
+		}
 	}
-	if strings.HasPrefix(cgroup, root+"/") {
-		return cgroup[len(root):]
-	}
-	return "/"
+	return false
 }
 
 // cgroupMounts reads the process's cgroup mounts from /proc/self/mountinfo
