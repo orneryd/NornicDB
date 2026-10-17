@@ -34,29 +34,25 @@ func fnTextKey(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return textKey(text), nil
 }
 
-// textKey is text's key, these steps in order:
+// textKey is text's key, these steps in order, each as the Cypher function
+// named computes it, so the key is the one the same steps written in Cypher
+// give:
 //
-//  1. NFKC;
-//  2. full lower case, Python's str.lower() (toLower's: Unicode's
-//     SpecialCasing without a language, so İ is i followed by U+0307);
-//  3. ß as ss and ς (final sigma) as σ;
-//  4. NFKC again (lowering can leave a decomposed letter: Ϊ with a
-//     combining acute, U+03AA U+0301, lowers to U+03CA U+0301, which
+//  1. normalize(text, NFKC);
+//  2. toLower (cypherfn.LowerCaseText: x/text's full lower case without a
+//     language, so İ is i followed by U+0307, as Python's str.lower() has
+//     it; Go's strings.ToLower maps one rune to one and gives a plain i);
+//  3. replace ß with ss and ς (final sigma) with σ;
+//  4. normalize(…, NFKC) again (lowering can leave a decomposed letter: Ϊ
+//     with a combining acute, U+03AA U+0301, lowers to U+03CA U+0301, which
 //     composes to ΐ, U+0390);
 //  5. every decimal digit (category Nd) as its ASCII digit, its value as
 //     Python's unicodedata.decimal gives it (٢٠٢٦ is 2026);
-//  6. every run of whitespace as one space, whitespace being what Python's
-//     \s matches in a str pattern (str.isspace): keySpace;
-//  7. without leading and trailing spaces.
-//
-// Go's strings.ToLower and unicode.ToLower are Unicode's simple mappings, one
-// rune for one rune, which differ from str.lower() only at U+0130 (İ, which
-// they lower to a plain i) and at a word-final Σ (σ for them, ς for Python);
-// unicode.SpecialCase holds only language tailorings (Turkish, Azeri), which
-// str.lower() doesn't apply. lowerKey takes the simple mapping with U+0130's
-// full one, and step 3 makes every sigma σ, so it equals str.lower()
-// followed by step 3; TestTextKeyLowerMatchesFullLowerCase checks this
-// against toLower's full mapping for every code point.
+//  6. every run of whitespace as one space, as string.regexReplace reads
+//     the class [\s\x{0b}\x{1c}-\x{1f}\x{85}\p{Z}] (keySpace), which is the
+//     set Python's \s matches in a str pattern;
+//  7. trim: unicode.IsSpace holds nothing outside that class, so only a
+//     leading or trailing space is left to trim.
 //
 // The Unicode tables are Go's and x/text's for the toolchain the binary is
 // built with (Unicode 15.0.0 for Go 1.26). A text that is ASCII is its key
@@ -65,7 +61,9 @@ func fnTextKey(ctx cypherfn.Context, args []string) (interface{}, error) {
 func textKey(text string) string {
 	for index := 0; index < len(text); index++ {
 		if text[index] >= utf8.RuneSelf {
-			return spaceDigitKey(norm.NFKC.String(lowerKey(norm.NFKC.String(text))))
+			lowered := cypherfn.LowerCaseText(norm.NFKC.String(text))
+			lowered = strings.ReplaceAll(strings.ReplaceAll(lowered, "ß", "ss"), "ς", "σ")
+			return spaceDigitKey(norm.NFKC.String(lowered))
 		}
 	}
 	return asciiTextKey(text)
@@ -77,9 +75,10 @@ func textKey(text string) string {
 var asciiKeySpace = [utf8.RuneSelf]bool{'\t': true, '\n': true, '\v': true, '\f': true, '\r': true,
 	0x1c: true, 0x1d: true, 0x1e: true, 0x1f: true, ' ': true}
 
-// keySpace reports whether r is whitespace as Python's \s matches it in a
-// str pattern: the ASCII ones (asciiKeySpace), U+0085 and the separators
-// (category Z: Zs, Zl and Zp).
+// keySpace reports whether r is in the regular expression class
+// [\s\x{0b}\x{1c}-\x{1f}\x{85}\p{Z}] (Go's \s is ASCII's tab, line feed, form
+// feed, carriage return and space): the ASCII ones (asciiKeySpace), U+0085
+// and the separators (category Z: Zs, Zl and Zp).
 func keySpace(r rune) bool {
 	if r < utf8.RuneSelf {
 		return asciiKeySpace[r]
@@ -87,9 +86,9 @@ func keySpace(r rune) bool {
 	return r == 0x85 || unicode.Is(unicode.Z, r)
 }
 
-// asciiTextKey is textKey of an ASCII text: NFKC leaves it as it is and it
-// has neither ß, ς nor another script's digit, so its key is it lowered with
-// its whitespace folded.
+// asciiTextKey is textKey of an ASCII text: NFKC leaves it as it is, toLower
+// lowers only its capital letters, and it has neither ß, ς nor another
+// script's digit, so its key is it lowered with its whitespace folded.
 func asciiTextKey(text string) string {
 	if asciiIsKey(text) {
 		return text
@@ -128,55 +127,6 @@ func asciiIsKey(text string) bool {
 		}
 	}
 	return true
-}
-
-// lowerKey is steps 2 and 3 of textKey: text lowered (lowerKeyRune), the
-// text itself when lowering changes nothing. A byte that isn't valid UTF-8
-// stays as it is.
-func lowerKey(text string) string {
-	for index := 0; index < len(text); {
-		r, size := utf8.DecodeRuneInString(text[index:])
-		if lowerKeyRune(r) == "" && lowerSigma(unicode.ToLower(r)) == r {
-			index += size
-			continue
-		}
-		var out strings.Builder
-		out.Grow(len(text) + 4)
-		out.WriteString(text[:index])
-		for index < len(text) {
-			r, size = utf8.DecodeRuneInString(text[index:])
-			if lowered := lowerKeyRune(r); lowered != "" {
-				out.WriteString(lowered)
-			} else if r == utf8.RuneError && size == 1 {
-				out.WriteByte(text[index])
-			} else {
-				out.WriteRune(lowerSigma(unicode.ToLower(r)))
-			}
-			index += size
-		}
-		return out.String()
-	}
-	return text
-}
-
-// lowerKeyRune is the lowered text of the runes whose key isn't one rune: İ
-// (its full lower case, i and U+0307) and ß or ẞ (ss); "" for any other.
-func lowerKeyRune(r rune) string {
-	switch r {
-	case 0x130:
-		return "i\u0307"
-	case 'ß', 'ẞ':
-		return "ss"
-	}
-	return ""
-}
-
-// lowerSigma is a lowered rune with a final sigma as σ.
-func lowerSigma(r rune) rune {
-	if r == 'ς' {
-		return 'σ'
-	}
-	return r
 }
 
 // keyDigitZeros are the zeros of the decimal digits outside ASCII, in order.

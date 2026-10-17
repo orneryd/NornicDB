@@ -207,11 +207,11 @@ To place many quotes in one long text passed as a parameter, bind it once (`WITH
 `nornicdb.text.key(text)` returns the text's comparison key, so names written with other compatibility forms, case, digits or spacing compare equal. The steps, in order:
 
 1. NFKC (full-width `ＡＣＭＥ` is `ACME`, `ﬁ` is `fi`, `①` is `1`);
-2. full lower case, as Python's `str.lower()` and `toLower` lower it (`İ` is `i` followed by U+0307, not a plain `i`);
+2. lower case, as `toLower` lowers (full Unicode lower case, as Python's `str.lower()` too: `İ` is `i` followed by U+0307, not a plain `i`);
 3. `ß` as `ss` and a final `ς` as `σ` (`Straße` is `strasse`, `ΟΔΟΣ` and `οδος` are both `οδοσ`);
 4. NFKC again (lowering can leave a decomposed letter: `Ϊ́` is `ΐ`);
 5. every decimal digit (category Nd) of any script as its ASCII digit (`٢٠٢٦` and `२०२६` are `2026`);
-6. every run of whitespace as one space: what Python's `\s` matches in a str pattern (ASCII tab, line feed, vertical tab, form feed, carriage return, U+001C–U+001F and space, U+0085, and every separator, category Z: no-break, ideographic, line and paragraph separators included; not U+200B or U+180E);
+6. every run of whitespace as one space: the regular expression class `[\s\x{0b}\x{1c}-\x{1f}\x{85}\p{Z}]` as `string.regexReplace` reads it, the set Python's `\s` matches in a str pattern (ASCII tab, line feed, vertical tab, form feed, carriage return, U+001C–U+001F and space, U+0085, and every separator, category Z: no-break, ideographic, line and paragraph separators included; not U+200B or U+180E);
 7. trimmed.
 
 Null is null; a value that isn't a string is a type error, as in `toLower`. An ASCII text costs one pass and nothing is allocated when it is its own key already.

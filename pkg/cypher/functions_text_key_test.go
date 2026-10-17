@@ -1,9 +1,13 @@
 package cypher
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -12,11 +16,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -144,47 +148,27 @@ func TestTextKeyCases(t *testing.T) {
 	}
 }
 
-// fullLowerKey is steps 2 and 3 as toLower lowers (x/text's full Unicode
-// lower case, SpecialCasing without a language), then ß as ss and ς as σ.
-func fullLowerKey(lower cases.Caser, text string) string {
-	return strings.NewReplacer("ß", "ss", "ς", "σ").Replace(lower.String(text))
-}
+// keySpaceRun is a run of the whitespace class as string.regexReplace reads
+// it (GetCachedRegex: Go's regexp, whose \s is ASCII's tab, line feed, form
+// feed, carriage return and space).
+const keySpaceRun = `[\s\x{0b}\x{1c}-\x{1f}\x{85}\p{Z}]+`
 
-// lowerKey's simple mapping with U+0130's full one is the full lower case
-// followed by step 3 for every code point, alone and in a word (where a
-// final sigma is ς before step 3).
-func TestTextKeyLowerMatchesFullLowerCase(t *testing.T) {
-	lower := cases.Lower(language.Und)
+// keySpace is that class for every code point, and trim's whitespace
+// (unicode.IsSpace) is inside it, so once its runs are one space each only
+// a leading or trailing space is left to trim.
+func TestTextKeySpaceClass(t *testing.T) {
+	class, err := GetCachedRegex("^" + keySpaceRun + "$")
+	require.NoError(t, err)
 	for r := rune(0); r <= unicode.MaxRune; r++ {
 		if !utf8.ValidRune(r) {
 			continue
 		}
-		for _, text := range []string{string(r), "A" + string(r) + "Σ", "Σ" + string(r)} {
-			if got, want := lowerKey(text), fullLowerKey(lower, text); got != want {
-				t.Fatalf("lowerKey(%+q) = %+q, full lower case %+q", text, got, want)
-			}
+		inClass := class.MatchString(string(r))
+		if keySpace(r) != inClass {
+			t.Fatalf("keySpace(U+%04X) = %v, the class says %v", r, keySpace(r), inClass)
 		}
-	}
-	require.Equal(t, "plain", lowerKey("plain"))
-	require.Equal(t, "a\xffb", lowerKey("A\xffB"), "a byte that isn't UTF-8 stays")
-}
-
-// pythonSpace is Python's str.isspace() (the \s of a str pattern): the code
-// points of bidirectional class WS, B or S or category Zs, as Python 3.13
-// (Unicode 15.1.0) lists them.
-func pythonSpace(r rune) bool {
-	switch {
-	case 0x09 <= r && r <= 0x0d, 0x1c <= r && r <= 0x20, r == 0x85, r == 0xa0, r == 0x1680,
-		0x2000 <= r && r <= 0x200a, r == 0x2028, r == 0x2029, r == 0x202f, r == 0x205f, r == 0x3000:
-		return true
-	}
-	return false
-}
-
-func TestTextKeySpaceIsPythonSpace(t *testing.T) {
-	for r := rune(0); r <= unicode.MaxRune; r++ {
-		if pythonSpace(r) != keySpace(r) {
-			t.Fatalf("keySpace(U+%04X) = %v", r, keySpace(r))
+		if unicode.IsSpace(r) && !inClass {
+			t.Fatalf("trim trims U+%04X, which isn't in the class", r)
 		}
 	}
 }
@@ -237,32 +221,34 @@ func TestTextKeyDecimalDigits(t *testing.T) {
 	}
 }
 
-// textKeyReference is textKey as its steps' library calls compute them,
-// slowly: NFKC, toLower's full lower case, ß and ς replaced, NFKC, digits
-// from referenceDigits, Python's whitespace (pythonSpace) folded and
-// trimmed.
-func textKeyReference(lower cases.Caser, digits map[rune]byte, text string) string {
-	text = norm.NFKC.String(fullLowerKey(lower, norm.NFKC.String(text)))
-	var out strings.Builder
-	for _, r := range text {
+// textKeyReference is textKey as the Cypher functions of its steps compute
+// it, slowly: normalize's NFKC, toLower, replace, normalize again, split(…,
+// '') into code points with each decimal digit mapped (referenceDigits) and
+// joined, string.regexReplace of the whitespace runs, and trim.
+func textKeyReference(t *testing.T, digits map[rune]byte, text string) string {
+	lowered := cypherfn.LowerCaseText(norm.NFKC.String(text))
+	folded := norm.NFKC.String(strings.Replace(strings.Replace(lowered, "ß", "ss", -1), "ς", "σ", -1))
+	var joined strings.Builder
+	for _, character := range strings.Split(folded, "") {
+		r, _ := utf8.DecodeRuneInString(character)
 		if digit, isDigit := digits[r]; isDigit {
-			out.WriteByte(digit)
-		} else if pythonSpace(r) {
-			out.WriteByte(' ')
+			joined.WriteByte(digit)
 		} else {
-			out.WriteRune(r)
+			joined.WriteString(character)
 		}
 	}
-	return strings.Join(strings.FieldsFunc(out.String(), func(r rune) bool { return r == ' ' }), " ")
+	spaces, err := GetCachedRegex(keySpaceRun)
+	require.NoError(t, err)
+	return trimCharacters(spaces.ReplaceAllString(joined.String(), " "), "", true, true)
 }
 
 // textKey equals its reference for every code point, alone and between
 // letters and spaces, and for random texts of the characters each step
 // changes.
 func TestTextKeyMatchesReference(t *testing.T) {
-	lower, digits := cases.Lower(language.Und), referenceDigits()
+	digits := referenceDigits()
 	check := func(text string) {
-		if got, want := textKey(text), textKeyReference(lower, digits, text); got != want {
+		if got, want := textKey(text), textKeyReference(t, digits, text); got != want {
 			t.Fatalf("textKey(%+q) = %+q, reference %+q", text, got, want)
 		}
 	}
@@ -283,11 +269,11 @@ func TestTextKeyMatchesReference(t *testing.T) {
 	}
 }
 
-// An ASCII text that is already a key, or a text beyond ASCII that is, is
-// returned without allocating; an ASCII text that isn't allocates once.
+// An ASCII text that is already a key is returned without allocating; one
+// that isn't allocates once.
 func TestTextKeyAllocations(t *testing.T) {
 	var sink string
-	for _, text := range []string{"", "acme corp 42", "a.b-c/d", "αθήνα 2026", "müller strasse 1"} {
+	for _, text := range []string{"", "acme corp 42", "a.b-c/d"} {
 		require.Zero(t, testing.AllocsPerRun(100, func() { sink = textKey(text) }), "%+q", text)
 	}
 	for _, text := range []string{"ACME  Corp", " acme", "acme\t42"} {
@@ -296,38 +282,155 @@ func TestTextKeyAllocations(t *testing.T) {
 	_ = sink
 }
 
-// textKeyOracleFile holds vectors the key's reference implementation
-// produced: {"unidata_version": "15.1.0", "vectors": [{"input": "...",
-// "key": "..."}, ...]}, inputs being valid Unicode (no lone surrogates).
-var textKeyOracleFile = filepath.Join("testdata", "text_key_oracle.json")
+// textKeyOracleDir holds the oracle's files: text-key-curated.json and
+// text-key-codepoints.json.gz, vectors {"in": …, "out": …} (each a string or
+// null) as one JSON array or one after another, and versions.json, the
+// versions they were produced with. NORNICDB_TEXT_KEY_ORACLE_DIR names
+// another directory.
+func textKeyOracleDir() string {
+	if dir := os.Getenv("NORNICDB_TEXT_KEY_ORACLE_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join("testdata", "text_key_oracle")
+}
 
-// TestTextKeyOracleVectors checks textKey against the oracle file's vectors,
-// when the file is there.
-func TestTextKeyOracleVectors(t *testing.T) {
-	data, err := os.ReadFile(textKeyOracleFile)
+var textKeyOracleFiles = []string{"text-key-curated.json", "text-key-codepoints.json.gz"}
+
+type textKeyVector struct {
+	In  *string `json:"in"`
+	Out *string `json:"out"`
+}
+
+// readTextKeyVectors reads a vector file, gzip-compressed when its name ends
+// in .gz; false when it isn't there.
+func readTextKeyVectors(t *testing.T, path string) ([]textKeyVector, bool) {
+	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		t.Skipf("no oracle vectors: pkg/cypher/%s is absent; it holds {\"unidata_version\": ..., \"vectors\": [{\"input\": ..., \"key\": ...}]}",
-			filepath.ToSlash(textKeyOracleFile))
+		return nil, false
 	}
 	require.NoError(t, err)
-	var oracle struct {
-		UnidataVersion string `json:"unidata_version"`
-		Vectors        []struct {
-			Input string `json:"input"`
-			Key   string `json:"key"`
-		} `json:"vectors"`
+	defer file.Close()
+	var reader io.Reader = file
+	if strings.HasSuffix(path, ".gz") {
+		unzipped, err := gzip.NewReader(file)
+		require.NoError(t, err)
+		defer unzipped.Close()
+		reader = unzipped
 	}
-	require.NoError(t, json.Unmarshal(data, &oracle))
-	require.NotEmpty(t, oracle.Vectors)
-	t.Logf("%d vectors from Unicode %s; NornicDB's tables: unicode %s, x/text norm %s", len(oracle.Vectors), oracle.UnidataVersion, unicode.Version, norm.Version)
-	mismatches := 0
-	for _, vector := range oracle.Vectors {
-		if got := textKey(vector.Input); got != vector.Key {
-			mismatches++
-			if mismatches <= 50 {
-				t.Errorf("textKey(%+q) = %+q, oracle %+q", vector.Input, got, vector.Key)
-			}
+	buffered := bufio.NewReaderSize(reader, 1<<20)
+	first := byte(0)
+	for {
+		c, err := buffered.ReadByte()
+		require.NoError(t, err, "%s is empty", path)
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			first = c
+			require.NoError(t, buffered.UnreadByte())
+			break
 		}
 	}
-	require.Zero(t, mismatches, "of %d vectors", len(oracle.Vectors))
+	decoder := json.NewDecoder(buffered)
+	var vectors []textKeyVector
+	if first == '[' {
+		_, err := decoder.Token()
+		require.NoError(t, err)
+		for decoder.More() {
+			var vector textKeyVector
+			require.NoError(t, decoder.Decode(&vector))
+			vectors = append(vectors, vector)
+		}
+		return vectors, true
+	}
+	for {
+		var vector textKeyVector
+		err := decoder.Decode(&vector)
+		if errors.Is(err, io.EOF) {
+			return vectors, true
+		}
+		require.NoError(t, err)
+		vectors = append(vectors, vector)
+	}
+}
+
+// TestTextKeyOracleVectors checks textKey against the oracle's vectors, when
+// they are there (textKeyOracleDir).
+func TestTextKeyOracleVectors(t *testing.T) {
+	dir := textKeyOracleDir()
+	if versions, err := os.ReadFile(filepath.Join(dir, "versions.json")); err == nil {
+		t.Logf("oracle versions.json: %s", strings.TrimSpace(string(versions)))
+	}
+	t.Logf("NornicDB's tables: unicode %s (%d decimal digits beyond ASCII), x/text norm %s, x/text cases %s",
+		unicode.Version, len(referenceDigits()), norm.Version, cases.UnicodeVersion)
+	found := false
+	for _, name := range textKeyOracleFiles {
+		vectors, ok := readTextKeyVectors(t, filepath.Join(dir, name))
+		if !ok {
+			t.Logf("%s: absent", name)
+			continue
+		}
+		found = true
+		t.Run(name, func(t *testing.T) { checkTextKeyVectors(t, vectors) })
+	}
+	if !found {
+		t.Skipf("no oracle vectors: none of %s is in %s (NORNICDB_TEXT_KEY_ORACLE_DIR names another directory)",
+			strings.Join(textKeyOracleFiles, ", "), filepath.ToSlash(dir))
+	}
+}
+
+// checkTextKeyVectors checks that each vector's out is its in's key, a null
+// in through a statement. A mismatch only in digits, where the oracle's
+// digit table and Go's unicode.Nd read a code point differently, is counted
+// apart too.
+func checkTextKeyVectors(t *testing.T, vectors []textKeyVector) {
+	require.NotEmpty(t, vectors)
+	mismatches, digitMismatches := 0, 0
+	for _, vector := range vectors {
+		if vector.In == nil {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "textkeyoracle"))
+			result, err := exec.Execute(context.Background(), "RETURN nornicdb.text.key($text) AS key", map[string]interface{}{"text": nil})
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{nil}}, result.Rows)
+			require.Nil(t, vector.Out, "the oracle's key of null")
+			continue
+		}
+		got := textKey(*vector.In)
+		if vector.Out != nil && got == *vector.Out {
+			continue
+		}
+		mismatches++
+		if vector.Out != nil && onlyDigitsDiffer(got, *vector.Out) {
+			digitMismatches++
+		}
+		if mismatches <= 50 {
+			want := "null"
+			if vector.Out != nil {
+				want = fmt.Sprintf("%+q", *vector.Out)
+			}
+			t.Errorf("textKey(%+q) (%s) = %+q, oracle %s", *vector.In, textKeyCodePoints(*vector.In), got, want)
+		}
+	}
+	t.Logf("%d vectors: %d mismatches, %d of them only in digits", len(vectors), mismatches, digitMismatches)
+	require.Zero(t, mismatches)
+}
+
+// onlyDigitsDiffer reports whether two keys differ only at code points where
+// one has an ASCII digit.
+func onlyDigitsDiffer(got, want string) bool {
+	a, b := []rune(got), []rune(want)
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] && !('0' <= a[index] && a[index] <= '9') && !('0' <= b[index] && b[index] <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func textKeyCodePoints(text string) string {
+	points := make([]string, 0, len(text))
+	for _, r := range text {
+		points = append(points, fmt.Sprintf("U+%04X", r))
+	}
+	return strings.Join(points, " ")
 }
