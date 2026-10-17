@@ -82,5 +82,10 @@ func TestEmittedInternalFunctionsAreClassified(t *testing.T) {
 		class, found := functionPrivilegeClass(name)
 		require.True(t, found, "%s is emitted by a rewrite but unclassified", name)
 		require.True(t, class.Valid(), "%s: invalid privilege class %v", name, class)
+		// And a client may not call it (#1105): the guard knows every one.
+		for _, spelling := range []string{name, strings.ToUpper(name), "`" + name + "`"} {
+			require.ErrorContains(t, internalFunctionCallError("RETURN "+spelling+"(1) AS v"), "unknown function: ", spelling)
+		}
 	}
+	require.Contains(t, names, "__nornic_labelpredicate", "registry-only internal functions are found too")
 }
