@@ -185,3 +185,60 @@ func TestCollectionQuantizationProtocolPrecisionAndOverrides(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestQuantizedDropRecreateUsesDefaultAndPreservesOtherCollection(t *testing.T) {
+	for _, global := range []string{"none", "scalar"} {
+		t.Run(global, func(t *testing.T) {
+			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", global)
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			dbm, err := multidb.NewDatabaseManager(base, nil)
+			require.NoError(t, err)
+			provider := sharedSearchProvider()
+			srv := startSharedIndexServer(t, dbm, base, provider)
+			for _, name := range []string{"replace", "keep"} {
+				_, err := srv.collections.Create(ctx, &qpb.CreateCollection{CollectionName: name,
+					QuantizationConfig: &qpb.QuantizationConfig{Quantization: &qpb.QuantizationConfig_Binary{Binary: &qpb.BinaryQuantization{}}},
+					VectorsConfig:      &qpb.VectorsConfig{Config: &qpb.VectorsConfig_Params{Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine}}}})
+				require.NoError(t, err)
+			}
+			upsertPoint(t, ctx, srv.points, "replace", 1, []float32{1, 0, 0, 0}, nil)
+			upsertPoint(t, ctx, srv.points, "keep", 2, []float32{1, 0, 0, 0}, nil)
+			no := false
+			score := func(name string, id uint64, want float64) {
+				response, err := srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: name, Vector: []float32{1, 1, 0, 0}, Limit: 1,
+					Params: &qpb.SearchParams{Quantization: &qpb.QuantizationSearchParams{Rescore: &no}}})
+				require.NoError(t, err)
+				require.Len(t, response.Result, 1)
+				require.Equal(t, id, response.Result[0].Id.GetNum())
+				require.InDelta(t, want, response.Result[0].Score, 1e-6)
+			}
+			score("replace", 1, .5)
+			score("keep", 2, .5)
+			store, err := dbm.GetStorage("replace")
+			require.NoError(t, err)
+			before, err := provider("replace", store)
+			require.NoError(t, err)
+			_, err = srv.collections.Delete(ctx, &qpb.DeleteCollection{CollectionName: "replace"})
+			require.NoError(t, err)
+			createCosineCollection(t, ctx, srv.collections, "replace", 4)
+			upsertPoint(t, ctx, srv.points, "replace", 3, []float32{1, 0, 0, 0}, nil)
+			store, err = dbm.GetStorage("replace")
+			require.NoError(t, err)
+			after, err := provider("replace", store)
+			require.NoError(t, err)
+			require.Same(t, before, after, "exercise provider reuse rather than production eviction")
+			info, err := srv.collections.Get(ctx, &qpb.GetCollectionInfoRequest{CollectionName: "replace"})
+			require.NoError(t, err)
+			require.Nil(t, info.Result.Config.QuantizationConfig)
+			score("replace", 3, 1/math.Sqrt(2))
+			score("keep", 2, .5)
+			keep, err := srv.collections.Get(ctx, &qpb.GetCollectionInfoRequest{CollectionName: "keep"})
+			require.NoError(t, err)
+			require.NotNil(t, keep.Result.Config.QuantizationConfig.GetBinary())
+		})
+	}
+}
