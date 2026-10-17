@@ -1794,13 +1794,13 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
+	return e.executeUnionBranches(ctx, cypher, unionAll, func(query string) (*ExecuteResult, error) {
 		return e.executeInternal(ctx, query, nil)
 	})
 }
 
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
+func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesFor(ctx, cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
