@@ -631,89 +631,6 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 	prepared.scale = spec.ScoreScale
 
-	// scoreAll scores every node under the metadata read locks; the Where
-	// filter below reads storage, so it runs after they are released.
-	scoreAll := func() ([]vectorQueryScoredNode, error) {
-		scored := make([]vectorQueryScoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
-
-		// The node and relationship metadata is written under indexMu (index
-		// writes): lock order indexMu -> mu.
-		s.indexMu.RLock()
-		defer s.indexMu.RUnlock()
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-
-		for nodeID, labels := range s.nodeLabels {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-
-			if spec.Label != "" {
-				has := false
-				for _, l := range labels {
-					if l == spec.Label {
-						has = true
-						break
-					}
-				}
-				if !has {
-					continue
-				}
-			}
-
-			bestScore := math.Inf(-1)
-
-			// Apply Cypher precedence for selecting which vector represents this node.
-			if named := s.nodeNamedVector[nodeID]; named != nil {
-				if vecID, ok := named[vectorName]; ok {
-					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = prepared.score(v)
-					}
-				}
-				// If there is no explicit Cypher property/index mapping (property key is empty),
-				// fall through to managed named embeddings (any key) before chunk fallback.
-				if math.IsInf(bestScore, -1) && spec.Property == "" {
-					for _, vecID := range named {
-						if v, ok := s.getVectorForCypher(vecID); ok {
-							score := prepared.score(v)
-							if score > bestScore {
-								bestScore = score
-							}
-						}
-					}
-				}
-			}
-
-			if math.IsInf(bestScore, -1) && spec.Property != "" {
-				if props := s.nodePropVector[nodeID]; props != nil {
-					if vecID, ok := props[spec.Property]; ok {
-						if v, ok := s.getVectorForCypher(vecID); ok {
-							bestScore = prepared.score(v)
-						}
-					}
-				}
-			}
-
-			if math.IsInf(bestScore, -1) {
-				for _, vecID := range s.nodeChunkVectors[nodeID] {
-					if v, ok := s.getVectorForCypher(vecID); ok {
-						score := prepared.score(v)
-						if score > bestScore {
-							bestScore = score
-						}
-					}
-				}
-			}
-
-			if !math.IsInf(bestScore, -1) {
-				scored = append(scored, vectorQueryScoredNode{id: nodeID, score: bestScore})
-			}
-		}
-
-		return scored, nil
-	}
 	s.mu.RLock()
 	fileBacked := s.vectorFileStore != nil
 	s.mu.RUnlock()
@@ -722,7 +639,11 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	if fileBacked {
 		scored, err = s.exactStoredNodeScores(ctx, prepared, spec, vectorName)
 	} else {
-		scored, err = scoreAll()
+		// The Where filter below reads storage, so it runs after the metadata
+		// read locks are released; lock order indexMu -> mu.
+		s.indexMu.RLock()
+		scored, err = s.scoreVectorQueryNodesLocked(ctx, prepared, spec, vectorName)
+		s.indexMu.RUnlock()
 	}
 	if err != nil {
 		return nil, err
@@ -974,4 +895,83 @@ func toFloat32SliceAny(v any) []float32 {
 	default:
 		return nil
 	}
+}
+
+// scoreVectorQueryNodesLocked scores every node by its Cypher-selected vector.
+// Caller holds indexMu, under which index writes change the node metadata.
+func (s *Service) scoreVectorQueryNodesLocked(ctx context.Context, prepared cypherVectorQuery, spec VectorQuerySpec, vectorName string) ([]vectorQueryScoredNode, error) {
+	scored := make([]vectorQueryScoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for nodeID, labels := range s.nodeLabels {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		if spec.Label != "" {
+			has := false
+			for _, l := range labels {
+				if l == spec.Label {
+					has = true
+					break
+				}
+			}
+			if !has {
+				continue
+			}
+		}
+
+		bestScore := math.Inf(-1)
+
+		// Apply Cypher precedence for selecting which vector represents this node.
+		if named := s.nodeNamedVector[nodeID]; named != nil {
+			if vecID, ok := named[vectorName]; ok {
+				if v, ok := s.getVectorForCypher(vecID); ok {
+					bestScore = prepared.score(v)
+				}
+			}
+			// If there is no explicit Cypher property/index mapping (property key is empty),
+			// fall through to managed named embeddings (any key) before chunk fallback.
+			if math.IsInf(bestScore, -1) && spec.Property == "" {
+				for _, vecID := range named {
+					if v, ok := s.getVectorForCypher(vecID); ok {
+						score := prepared.score(v)
+						if score > bestScore {
+							bestScore = score
+						}
+					}
+				}
+			}
+		}
+
+		if math.IsInf(bestScore, -1) && spec.Property != "" {
+			if props := s.nodePropVector[nodeID]; props != nil {
+				if vecID, ok := props[spec.Property]; ok {
+					if v, ok := s.getVectorForCypher(vecID); ok {
+						bestScore = prepared.score(v)
+					}
+				}
+			}
+		}
+
+		if math.IsInf(bestScore, -1) {
+			for _, vecID := range s.nodeChunkVectors[nodeID] {
+				if v, ok := s.getVectorForCypher(vecID); ok {
+					score := prepared.score(v)
+					if score > bestScore {
+						bestScore = score
+					}
+				}
+			}
+		}
+
+		if !math.IsInf(bestScore, -1) {
+			scored = append(scored, vectorQueryScoredNode{id: nodeID, score: bestScore})
+		}
+	}
+
+	return scored, nil
 }
