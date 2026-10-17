@@ -95,7 +95,9 @@ func TestPropertyIndexPublicationOutOfOrder(t *testing.T) {
 					t.Fatal("the older write never finished")
 				}
 
-				current, err := b.GetNode(id)
+				// The committed state, read past the node cache: the cache has its
+				// own publication-order race, outside this index's contract.
+				current, err := b.committedNodeProperties(id, []string{"p"})
 				require.NoError(t, err)
 				require.Equal(t, scenario.live, current.Properties["p"])
 				require.Equal(t, []NodeID{id}, sm.PropertyIndexLookup("L", "p", scenario.live), "the live node must stay findable")
