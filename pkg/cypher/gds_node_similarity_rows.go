@@ -26,6 +26,7 @@ var similarityRowsConfigKeys = []string{"sourceNode", "similarityMetric", "simil
 // similarityRowsConfig is nornicdb.similarity.stream's configuration.
 type similarityRowsConfig struct {
 	sources     []string // the source's ids: one node, or the nodes of a list, scored as one
+	named       []bool   // sources[i] was an id string, which may also name a remote node by its elementId
 	group       bool     // sourceNode was a list: node1 is its ids
 	metric      string   // JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION
 	cutoff      float64
@@ -80,6 +81,8 @@ func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsCon
 				return config, c.typeError("sourceNode", "Node")
 			}
 			config.sources = append(config.sources, string(source))
+			_, named := item.(string)
+			config.named = append(config.named, named)
 		}
 	} else if value != nil {
 		source, ok := similarityNodeID(value)
@@ -87,6 +90,8 @@ func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsCon
 			return config, c.typeError("sourceNode", "Node")
 		}
 		config.sources = []string{string(source)}
+		_, named := value.(string)
+		config.named = []bool{named}
 	}
 	if len(config.sources) == 0 {
 		return config, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
@@ -316,11 +321,11 @@ func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
 func similarityRowsScores(incidence *similarityIncidence, config similarityRowsConfig) [][]interface{} {
 	excluded := make(map[int]bool, len(config.sources))
 	var members []int
-	for _, id := range config.sources {
+	for i, id := range config.sources {
 		index := sort.SearchStrings(incidence.sources, id)
-		if index == len(incidence.sources) || incidence.sources[index] != id {
-			// An id as given may name a remote node of the rows by its
-			// elementId.
+		if config.named[i] && (index == len(incidence.sources) || incidence.sources[index] != id) {
+			// An id string may name a remote node of the rows by its
+			// elementId; a node keeps its own identity.
 			id = similarityRemoteKey + id
 			index = sort.SearchStrings(incidence.sources, id)
 		}
