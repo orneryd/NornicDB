@@ -533,3 +533,34 @@ func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), count, "disabled engine commits synchronously")
 }
+
+// A buffered delete and a buffered re-create of the same ID with the same
+// indexed value, in one generation or across a flush, leave the node filed
+// under the value: the delete's replay must not remove the re-created node.
+func TestWriteBehind_PropertyIndexDeleteRecreateSameValue(t *testing.T) {
+	for _, flushBetween := range []bool{false, true} {
+		t.Run(fmt.Sprintf("flushBetween=%v", flushBetween), func(t *testing.T) {
+			engine := newWriteBehindTestEngine(t, time.Hour)
+			schema := engine.GetSchemaForNamespace("test")
+			require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
+			user := func() *Node {
+				return &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1)}}
+			}
+			bufferedCreate(t, engine, user())
+			require.NoError(t, engine.FlushWriteBehind())
+
+			tx, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			require.NoError(t, tx.SetImplicit(true))
+			require.NoError(t, tx.SetNamespace("test"))
+			require.NoError(t, tx.DeleteNode("test:u1"))
+			require.NoError(t, tx.Commit())
+			if flushBetween {
+				require.NoError(t, engine.FlushWriteBehind())
+			}
+			bufferedCreate(t, engine, user())
+			require.NoError(t, engine.FlushWriteBehind())
+			require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
+		})
+	}
+}
