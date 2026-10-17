@@ -536,6 +536,11 @@ def main():
     # Absolute paths: each server runs in its own data directory.
     args.corpus, args.out, args.data_root = args.corpus.resolve(), args.out.resolve(), args.data_root.resolve()
     args.nornic_bin, args.qdrant_bin = str(Path(args.nornic_bin).resolve()), str(Path(args.qdrant_bin).resolve())
+    nornic_build_settings = go_build_settings(args.nornic_bin)
+    if "nornicdb" in args.engines.split(","):
+        build = nornic_build_settings
+        if not build.get("vcs.revision") or build.get("vcs.modified") not in ("true", "false"):
+            raise RuntimeError("NornicDB benchmark binary lacks embedded VCS revision/status; rebuild with go build -buildvcs=true in a Git checkout. If a worktree omits VCS information, build from a regular clone.")
     args.out.mkdir(parents=True, exist_ok=True)
     args.data_root.mkdir(parents=True, exist_ok=True)
     output_lock = open(args.out / ".runner.lock", "w")
@@ -568,14 +573,10 @@ def main():
         "construction_input": "vectors and lexical payloads" if args.payloads is not None else "vectors only (legacy corpus has no payloads)",
         "python": sys.version,
         "dependencies": subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True, check=True).stdout.splitlines(),
-        "nornic_build_settings": go_build_settings(args.nornic_bin),
+        "nornic_build_settings": nornic_build_settings,
         "harness_commit": commit,
         "checkout_dirty": bool(subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout),
     }
-    if "nornicdb" in args.engines.split(","):
-        build = args.provenance["nornic_build_settings"]
-        if not build.get("vcs.revision") or build.get("vcs.modified") not in ("true", "false"):
-            raise RuntimeError("NornicDB benchmark binary lacks embedded VCS revision/status; rebuild with go build -buildvcs=true in a Git checkout. If a worktree omits VCS information, build from a regular clone.")
     import report
     (args.out / "environment.json").write_text(json.dumps({
         "nornic_version": version([args.nornic_bin, "version"]), "nornic_commit": args.provenance["nornic_build_settings"].get("vcs.revision", "unknown"),
