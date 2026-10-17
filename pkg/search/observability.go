@@ -188,13 +188,13 @@ func (s *Service) IndexSizeBytes(kind string) uint64 {
 	case "hnsw":
 		s.hnswMu.RLock()
 		defer s.hnswMu.RUnlock()
-		if s.hnswIndex == nil {
+		if s.servingHNSW() == nil {
 			return 0
 		}
 		// 4 bytes per float32; assume DefaultVectorDimensions when the
 		// index has not yet pinned a dimension.
 		dims := DefaultVectorDimensions
-		return uint64(s.hnswIndex.Size()) * uint64(dims) * 4
+		return uint64(s.servingHNSW().Size()) * uint64(dims) * 4
 	case "bm25":
 		return 0 // BM25 index size accessor TBD; deferred future work.
 	default:

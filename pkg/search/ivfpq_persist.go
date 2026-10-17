@@ -144,7 +144,7 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	}
 	s.indexMu.Lock()
 	s.ivfpqMu.RLock()
-	idx := s.ivfpqIndex
+	idx := s.servingIVFPQ()
 	mutations := s.ivfpqOverlay.snapshot()
 	s.ivfpqMu.RUnlock()
 	s.mu.RLock()
@@ -169,8 +169,8 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		ctx = context.Background()
 	}
 	s.ivfpqMu.RLock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
-		idx := s.ivfpqIndex
+	if s.servingIVFPQ() != nil && s.servingIVFPQ().compatibleProfile(profile) {
+		idx := s.servingIVFPQ()
 		s.ivfpqMu.RUnlock()
 		return idx, nil
 	}
@@ -178,8 +178,8 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
-		return s.ivfpqIndex, nil
+	if s.servingIVFPQ() != nil && s.servingIVFPQ().compatibleProfile(profile) {
+		return s.servingIVFPQ(), nil
 	}
 
 	s.mu.RLock()
@@ -193,9 +193,13 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		// Query-only knobs do not require rebuilding the compressed codes.
 		loaded.profile.NProbe = profile.NProbe
 		loaded.profile.RerankTopK = profile.RerankTopK
-		s.ivfpqOverlay.restore(mutations)
-		s.ivfpqIndex = loaded
-		return s.ivfpqIndex, nil
+		// The caller is creating the pipeline under pipelineMu: publish
+		// without retiring it.
+		s.publishVectorServing(func() {
+			s.ivfpqOverlay.restore(mutations)
+			s.ivfpqIndex = loaded
+		}, false)
+		return s.servingIVFPQ(), nil
 	}
 
 	if vfs == nil {
@@ -207,7 +211,9 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	}
 	logSearchPrintf("[IVFPQ] ✅ built | vectors=%d sample=%d lists=%d avg_list=%.1f max_list=%d bytes_per_vector=%.2f duration=%v",
 		stats.VectorCount, stats.TrainingSampleCount, stats.ListCount, stats.AvgListSize, stats.MaxListSize, stats.BytesPerVector, stats.BuildDuration)
-	s.ivfpqIndex = built
-	s.ivfpqOverlay.Reset()
-	return s.ivfpqIndex, nil
+	s.publishVectorServing(func() {
+		s.ivfpqIndex = built
+		s.ivfpqOverlay.Reset()
+	}, false)
+	return s.servingIVFPQ(), nil
 }
