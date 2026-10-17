@@ -813,7 +813,7 @@ func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matche
 	}
 	var pushed map[string]interface{}
 	for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
-		shape := parseSimpleIndexedEqualityShape(conjunct, rel.Variable)
+		shape := parseSimpleIndexedEqualityShape(rel.Variable, conjunct)
 		if !shape.ok || !isPlainSymbolicName(shape.property) || !isLiteralOrParameter(shape.constant) {
 			continue
 		}
