@@ -23,9 +23,13 @@ type HAStandbyReplicator struct {
 	mu sync.RWMutex
 
 	// Role state
-	role       string // "primary" or "standby"
+	role       string // "primary", "standby" or "fenced" (protected by mu)
 	isPrimary  atomic.Bool
 	isPromoted atomic.Bool
+
+	// promoting is the in-flight Promote, if any (protected by promoteMu).
+	promoteMu sync.Mutex
+	promoting *promotion
 
 	// Primary-side state
 	walStreamer *WALStreamer
@@ -210,6 +214,14 @@ func (r *HAStandbyReplicator) SetTransport(t Transport) {
 	r.mu.Unlock()
 }
 
+// currentRole returns the role under r.mu: HandleFence and Promote change it
+// while the heartbeat loop and RPC handlers read it.
+func (r *HAStandbyReplicator) currentRole() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.role
+}
+
 // SetReplicatorMetrics implements MetricsAware — Plan-04-06 D-15a
 // observation seam. Idempotent. Calling with nil disables observation.
 func (r *HAStandbyReplicator) SetReplicatorMetrics(bag *observability.ReplicationMetrics, tracker *PeerTracker) {
@@ -256,13 +268,14 @@ func (r *HAStandbyReplicator) Start(ctx context.Context) error {
 		}
 	}
 
-	r.config.logPrintf(ctx, slog.LevelInfo, "[HA] Started as %s, peer: %s", r.role, r.config.HAStandby.PeerAddr)
+	role := r.currentRole()
+	r.config.logPrintf(ctx, slog.LevelInfo, "[HA] Started as %s, peer: %s", role, r.config.HAStandby.PeerAddr)
 
 	// Plan 04-06-03 D-15a: emit initial role gauge at the same lifecycle
 	// log site that announces start-up. HA primary maps to "leader",
 	// standby maps to "standby".
 	roleStr := "standby"
-	if r.role == "primary" {
+	if role == "primary" {
 		roleStr = "leader"
 	}
 	r.metrics.get().observeRoleTransition(roleStr, 0, 0, 0)
@@ -315,7 +328,10 @@ func (r *HAStandbyReplicator) connectToStandbyLoop(ctx context.Context) {
 		default:
 		}
 
-		if r.standbyConn != nil && r.standbyConn.IsConnected() {
+		r.mu.RLock()
+		current := r.standbyConn
+		r.mu.RUnlock()
+		if current != nil && current.IsConnected() {
 			time.Sleep(r.config.HAStandby.HeartbeatInterval)
 			continue
 		}
@@ -418,7 +434,7 @@ func (r *HAStandbyReplicator) sendHeartbeat(ctx context.Context) {
 
 	req := &HeartbeatRequest{
 		NodeID:      r.config.NodeID,
-		Role:        r.role,
+		Role:        r.currentRole(),
 		WALPosition: walPos,
 		Timestamp:   time.Now().UnixNano(),
 	}
@@ -540,16 +556,49 @@ func (r *HAStandbyReplicator) fenceOldPrimary(ctx context.Context) {
 	}
 }
 
+// promotion is an in-flight Promote. Callers that arrive while it runs wait
+// for done and return its err.
+type promotion struct {
+	done chan struct{}
+	err  error
+}
+
 // Promote promotes this standby to primary.
+//
+// A manual Promote and the auto-failover goroutine can both get here; only
+// one may promote, or the primary loops start twice. The others wait for it
+// and return its result, so none reports success before the WAL is flushed
+// and primary status is published. After a failure the next call retries.
 func (r *HAStandbyReplicator) Promote(ctx context.Context) error {
 	if r.isPrimary.Load() {
 		return nil
 	}
 
+	r.promoteMu.Lock()
+	if p := r.promoting; p != nil {
+		r.promoteMu.Unlock()
+		<-p.done
+		return p.err
+	}
 	if r.isPromoted.Load() {
+		r.promoteMu.Unlock()
 		return nil
 	}
+	p := &promotion{done: make(chan struct{})}
+	r.promoting = p
+	r.promoteMu.Unlock()
 
+	p.err = r.promote(ctx)
+
+	r.promoteMu.Lock()
+	r.promoting = nil
+	r.promoteMu.Unlock()
+	close(p.done)
+	return p.err
+}
+
+// promote runs one promotion; Promote ensures only one runs at a time.
+func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 	// Flush any pending WAL
 	if err := r.walApplier.Flush(); err != nil {
 		return localizedError(localization.ReplicationHAFlushWALFailed(err), err)
@@ -743,11 +792,10 @@ func (r *HAStandbyReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the replicator.
 func (r *HAStandbyReplicator) Shutdown() error {
-	if r.closed.Load() {
+	if !r.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
-	r.closed.Store(true)
 	close(r.stopCh)
 
 	r.wg.Wait()
@@ -759,10 +807,11 @@ func (r *HAStandbyReplicator) Shutdown() error {
 	if r.primaryConn != nil {
 		r.primaryConn.Close()
 	}
+	transport := r.transport
 	r.mu.Unlock()
 
-	if r.transport != nil {
-		r.transport.Close()
+	if transport != nil {
+		transport.Close()
 	}
 
 	return nil
@@ -815,7 +864,7 @@ func (r *HAStandbyReplicator) HandleHeartbeat(req *HeartbeatRequest) (*Heartbeat
 
 	return &HeartbeatResponse{
 		NodeID:      r.config.NodeID,
-		Role:        r.role,
+		Role:        r.currentRole(),
 		WALPosition: walPos,
 		Lag:         lag,
 	}, nil
@@ -827,7 +876,9 @@ func (r *HAStandbyReplicator) HandleFence(req *FenceRequest) (*FenceResponse, er
 
 	// Stop accepting writes
 	r.isPrimary.Store(false)
+	r.mu.Lock()
 	r.role = "fenced"
+	r.mu.Unlock()
 
 	return &FenceResponse{Fenced: true}, nil
 }
