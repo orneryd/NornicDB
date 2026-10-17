@@ -2415,16 +2415,7 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 	if err != nil {
 		return nil, err
 	}
-	// Share the database executor's statistics and statement caches when it
-	// already exists. BEGIN creates none: a statement the transaction
-	// admits does (getExecutorForDatabase).
-	s.server.executorsMu.RLock()
-	cached := s.server.executors[dbName]
-	s.server.executorsMu.RUnlock()
-	if adapter, ok := cached.(*boltQueryExecutorAdapter); ok && adapter.executor != nil {
-		executor.ShareQueryStatisticsFrom(adapter.executor)
-		executor.ShareStatementCachesFrom(adapter.executor)
-	}
+	s.shareCachedExecutorState(executor, dbName)
 	return &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
 	}, nil
@@ -2448,36 +2439,10 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 	if s.server.config != nil {
 		executor.SetLocalizationRenderer(s.server.config.Localizer)
 	}
-	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
-		executor.ShareEmbedderFrom(baseAdapter.executor)
-		executor.ShareMutationCallbackFrom(baseAdapter.executor)
-		executor.ShareQueryStatisticsFrom(baseAdapter.executor)
-		executor.SetLogger(baseAdapter.executor.Logger())
-		executor.SetSlowQueryThreshold(baseAdapter.executor.SlowQueryThreshold())
-	}
-	composite := false
-	if scoped, ok := storageEngine.(interface{ IsComposite() bool }); ok {
-		composite = scoped.IsComposite()
-	}
-	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil && !composite && !cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName) {
-		executor.SetFirstAdmission(func() { cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine) })
-	}
-	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
-		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
-			executor.ShareEmbedderFrom(baseExec)
-			executor.ShareMutationCallbackFrom(baseExec)
-			executor.SetInferenceManager(baseExec.GetInferenceManager())
-			executor.ShareQueryStatisticsFrom(baseExec)
-			executor.SetLogger(baseExec.Logger())
-			executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-		}
-	}
 	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
 		executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
 	}
-	if cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName) {
-		executor.SetOwnedStorageCleanup(storageEngine.Close)
-	}
+	s.configureScopedExecutor(executor, dbName, storageEngine)
 	return executor, nil
 }
 

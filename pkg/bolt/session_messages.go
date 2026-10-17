@@ -1968,6 +1968,56 @@ func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataD
 	return cypher.GraphAccess(s.cypherDatabaseManager(), graph, canAccess)
 }
 
+// configureScopedExecutor gives a database-scoped executor what the base
+// executor shares (embedder, mutation sink, inference, statistics, logging)
+// and, for a local, non-composite database, its database services once it
+// admits its first statement (SetFirstAdmission); a remote graph's storage is
+// owned by the executor and closed with it.
+func (s *Session) configureScopedExecutor(executor *cypher.StorageExecutor, dbName string, storageEngine storage.Engine) {
+	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
+		executor.ShareEmbedderFrom(baseAdapter.executor)
+		executor.ShareMutationCallbackFrom(baseAdapter.executor)
+		executor.ShareQueryStatisticsFrom(baseAdapter.executor)
+		executor.SetLogger(baseAdapter.executor.Logger())
+		executor.SetSlowQueryThreshold(baseAdapter.executor.SlowQueryThreshold())
+	}
+	composite := false
+	if scoped, ok := storageEngine.(interface{ IsComposite() bool }); ok {
+		composite = scoped.IsComposite()
+	}
+	remote := cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName)
+	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil && !composite && !remote {
+		executor.SetFirstAdmission(func() { cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine) })
+	}
+	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
+		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
+			executor.ShareEmbedderFrom(baseExec)
+			executor.ShareMutationCallbackFrom(baseExec)
+			executor.SetInferenceManager(baseExec.GetInferenceManager())
+			executor.ShareQueryStatisticsFrom(baseExec)
+			executor.SetLogger(baseExec.Logger())
+			executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
+		}
+	}
+	if remote {
+		executor.SetOwnedStorageCleanup(storageEngine.Close)
+	}
+}
+
+// shareCachedExecutorState shares the database executor's statistics and
+// statement caches with a transaction's executor when it already exists.
+// BEGIN creates none: a statement the transaction admits does
+// (getExecutorForDatabase).
+func (s *Session) shareCachedExecutorState(executor *cypher.StorageExecutor, dbName string) {
+	s.server.executorsMu.RLock()
+	cached := s.server.executors[dbName]
+	s.server.executorsMu.RUnlock()
+	if adapter, ok := cached.(*boltQueryExecutorAdapter); ok && adapter.executor != nil {
+		executor.ShareQueryStatisticsFrom(adapter.executor)
+		executor.ShareStatementCachesFrom(adapter.executor)
+	}
+}
+
 // cypherDatabaseManager is the server's database manager as the executor
 // sees it, for deciding a graph the way the executor does, or nil.
 func (s *Session) cypherDatabaseManager() cypher.DatabaseManagerInterface {
