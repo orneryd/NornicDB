@@ -35,14 +35,18 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	n := &Node{ID: NodeID(prefixTestID("ncache-1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "a"}}
 
+	// Publication drops a written node's cached copy instead of storing it.
+	b.cacheStoreNode(n)
 	b.cacheOnNodeCreated(n)
 	assert.EqualValues(t, 1, b.nodeCount.Load())
 	_, ok := b.nodeCache[n.ID]
-	assert.True(t, ok)
+	assert.False(t, ok)
 
 	n2 := &Node{ID: n.ID, Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "b"}}
+	b.cacheStoreNode(n)
 	b.cacheOnNodeUpdated(n2)
-	assert.Equal(t, "b", b.nodeCache[n.ID].Properties["name"])
+	_, ok = b.nodeCache[n.ID]
+	assert.False(t, ok)
 
 	old := &Node{ID: n.ID, Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{}}
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Legacy", n.ID)
@@ -103,7 +107,8 @@ func TestBadgerCache_BulkCacheHooks_Extra(t *testing.T) {
 	b.cacheOnEdgesDeleted([]EdgeID{EdgeID(prefixTestID("be-1")), EdgeID(prefixTestID("be-2"))})
 	assert.EqualValues(t, 1, b.edgeCount.Load())
 
-	b.cacheOnNodesDeleted([]NodeID{NodeID(prefixTestID("bn-1")), NodeID(prefixTestID("bn-2"))}, 2, 1)
+	b.cacheOnNodeDeleted(NodeID(prefixTestID("bn-1")), 1)
+	b.cacheOnNodeDeleted(NodeID(prefixTestID("bn-2")), 0)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())
 }
@@ -121,7 +126,6 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	b.cacheOnEdgeCreated(nil)
 	b.cacheOnEdgeUpdated("", nil)
 	b.cacheOnEdgesDeleted(nil)
-	b.cacheOnNodesDeleted(nil, 0, 0)
 
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	assert.EqualValues(t, 0, b.edgeCount.Load())

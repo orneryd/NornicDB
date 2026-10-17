@@ -1042,19 +1042,19 @@ func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interf
 }
 
 // RefileNode replaces the entries old filed for nodeID with those of the
-// node's current state, which current reads inside the index's critical
-// section (false when the node is gone or out of the index's label). A
-// write's index publication runs after its commit, so a later write of the
-// same node may publish first; reading the current state under the lock its
-// publication also takes keeps an older write from removing entries the
-// newer state holds, in either order.
-func (idx *CompositeIndex) RefileNode(nodeID NodeID, old map[string]interface{}, current func() (map[string]interface{}, bool)) {
+// property maps current returns, which it reads inside the index's critical
+// section: the node's current state, or none when the node is gone or out of
+// the index's label. A write's index publication runs after its commit, so a
+// later write of the same node may publish first; reading the current state
+// under the lock its publication also takes keeps an older write from
+// removing entries the newer state holds, in either order.
+func (idx *CompositeIndex) RefileNode(nodeID NodeID, old map[string]interface{}, current func() []map[string]interface{}) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	if old != nil {
 		idx.removeNodeLocked(nodeID, old)
 	}
-	if properties, ok := current(); ok {
+	for _, properties := range current() {
 		idx.indexNodeLocked(nodeID, properties)
 	}
 }

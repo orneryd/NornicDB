@@ -32,9 +32,10 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// maintainPropertyIndexesOnNodeCreated inserts the freshly-created node into
-// every equality index that covers one of its labels. Arity-1 indexes file
-// the node under its single-property key; arity-N indexes under full/prefix.
+// maintainPropertyIndexesOnNodeCreated files the created node in every
+// equality index that covers one of its labels, from its latest committed
+// state (refileFromCommitted). Arity-1 indexes file the node under its
+// single-property key; arity-N indexes under full/prefix.
 func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 	if node == nil {
 		return
@@ -46,20 +47,16 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 	b.maintainCompositeIndexesOnNodeCreated(node, sm)
 }
 
-// maintainCompositeIndexesOnNodeCreated indexes the node under every equality
-// index that covers one of its labels.
+// maintainCompositeIndexesOnNodeCreated files the node in every equality
+// index that covers one of its labels. A later write of the node may have
+// published first, so the committed state, not the created payload, is filed.
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *SchemaManager) {
 	for _, label := range node.Labels {
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 			if idx == nil {
 				continue
 			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("index", idx.Name))
-			}
+			b.refileFromCommitted(idx, node.ID, nil, node.Properties)
 		}
 	}
 }
@@ -98,29 +95,20 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 					if wasIn && isIn && idx.filesSameEntries(oldNode.Properties, node.Properties) {
 						continue
 					}
-					var old map[string]interface{}
+					var old, written map[string]interface{}
 					if wasIn {
 						old = oldNode.Properties
 					}
-					b.refileFromCommitted(idx, node.ID, old)
+					if isIn {
+						written = node.Properties
+					}
+					b.refileFromCommitted(idx, node.ID, old, written)
 				}
 			}
 		}
 		return
 	}
-	for _, label := range node.Labels {
-		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
-			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert (new) failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("index", idx.Name))
-			}
-		}
-	}
+	b.maintainCompositeIndexesOnNodeCreated(node, sm)
 }
 
 // maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
@@ -148,7 +136,7 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Nod
 			if idx == nil {
 				continue
 			}
-			b.refileFromCommitted(idx, id, old.Properties)
+			b.refileFromCommitted(idx, id, old.Properties, nil)
 		}
 	}
 }
@@ -159,23 +147,105 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Nod
 // ID) can publish before an earlier one; filing from the committed state,
 // read under the index lock that publication also takes, converges on it
 // in any order instead of removing the newer state's entries. If the read
-// fails, old's entries are kept: a stale entry is re-checked by every read,
-// a missing one hides the node.
-func (b *BadgerEngine) refileFromCommitted(idx *CompositeIndex, id NodeID, old map[string]interface{}) {
-	idx.RefileNode(id, old, func() (map[string]interface{}, bool) {
+// fails, the entries of both old and written (the operation's own result,
+// nil when it leaves the index) are kept: a stale entry is re-checked by
+// every read, a missing one hides the node.
+func (b *BadgerEngine) refileFromCommitted(idx *CompositeIndex, id NodeID, old, written map[string]interface{}) {
+	idx.RefileNode(id, old, func() []map[string]interface{} {
 		current, err := b.committedNodeProperties(id, idx.Properties)
 		if err != nil {
 			b.log.Warn("composite index refile read failed",
 				slog.String("component", "storage"),
 				slog.String("index", idx.Name),
 				slog.String("error", err.Error()))
-			return old, old != nil
+			var keep []map[string]interface{}
+			for _, properties := range []map[string]interface{}{old, written} {
+				if properties != nil {
+					keep = append(keep, properties)
+				}
+			}
+			return keep
 		}
 		if current == nil || !hasLabel(current.Labels, idx.Label) {
-			return nil, false
+			return nil
 		}
-		return current.Properties, true
+		return []map[string]interface{}{current.Properties}
 	})
+}
+
+// publishUniqueValues is the one post-commit maintenance of the unique-value
+// registry, for direct writes, transaction commits and write-behind replay:
+// it refiles id under every unique constraint of a label old or written
+// carries (old is the pre-write node, nil for a create; written the result,
+// nil for a delete) from the node's latest committed state.
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	seen := make(map[[2]string]bool)
+	for _, node := range []*Node{old, written} {
+		if node == nil {
+			continue
+		}
+		for _, label := range node.Labels {
+			for property := range node.Properties {
+				pair := [2]string{label, property}
+				if seen[pair] {
+					continue
+				}
+				seen[pair] = true
+				var oldValue interface{}
+				hadOld := false
+				if old != nil && hasLabel(old.Labels, label) {
+					oldValue, hadOld = old.Properties[property]
+				}
+				schema.RefileUniqueValue(label, property, id, oldValue, hadOld, func() (interface{}, bool) {
+					current, err := b.committedNodeProperties(id, []string{property})
+					if err != nil {
+						b.log.Warn("unique value refile read failed",
+							slog.String("component", "storage"),
+							slog.String("label", label),
+							slog.String("property", property),
+							slog.String("error", err.Error()))
+						if written != nil && hasLabel(written.Labels, label) {
+							value, ok := written.Properties[property]
+							return value, ok
+						}
+						return oldValue, hadOld
+					}
+					if current == nil || !hasLabel(current.Labels, label) {
+						return nil, false
+					}
+					value, ok := current.Properties[property]
+					return value, ok
+				})
+			}
+		}
+	}
+}
+
+// publishUniqueValuesForOps applies publishUniqueValues to a commit's node
+// operations, in order.
+func (b *BadgerEngine) publishUniqueValuesForOps(schema *SchemaManager, ops []Operation) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, nil, op.Node)
+			}
+		case OpUpdateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, op.OldNode, op.Node)
+			}
+		case OpDeleteNode:
+			if op.OldNode != nil {
+				b.publishUniqueValues(schema, op.NodeID, op.OldNode, nil)
+			}
+		}
+	}
 }
 
 // committedNodeProperties reads the node's latest committed body, decoding

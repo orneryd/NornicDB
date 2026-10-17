@@ -39,9 +39,10 @@ func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 	}
 }
 
-// A node written without the embedding it waits for isn't cached as written;
-// a node that has its embedding, or needs none, is.
-func TestWrittenNodeCachedUnlessAwaitingEmbedding(t *testing.T) {
+// A written node is never cached as written, whether it waits for its
+// embedding or not: publication drops its cached copy, and the next read
+// loads it from storage (F-PUBLISH).
+func TestWrittenNodeDroppedFromCache(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)
 	cached := func(id NodeID) bool {
@@ -51,14 +52,14 @@ func TestWrittenNodeCachedUnlessAwaitingEmbedding(t *testing.T) {
 		return ok
 	}
 	awaiting := &Node{ID: "test:awaiting", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}}
-	b.cacheStoreWrittenNode(awaiting)
-	require.False(t, cached(awaiting.ID))
-
 	embedded := &Node{ID: "test:embedded", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	b.cacheStoreWrittenNode(embedded)
-	require.True(t, cached(embedded.ID))
-
-	b.SetEmbeddingsEnabled(false)
-	b.cacheStoreWrittenNode(awaiting)
-	require.True(t, cached(awaiting.ID))
+	for _, enabled := range []bool{true, false} {
+		b.SetEmbeddingsEnabled(enabled)
+		for _, node := range []*Node{awaiting, embedded} {
+			b.cacheStoreNode(node)
+			require.True(t, cached(node.ID))
+			b.cacheDropWrittenNode(node)
+			require.False(t, cached(node.ID))
+		}
+	}
 }

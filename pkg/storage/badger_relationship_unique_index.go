@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // Relationship constraint indexes are derived equality indexes, maintained
@@ -131,26 +134,48 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 	return idx.index.LookupFull(values...), true, nil
 }
 func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
-	set := &b.relationshipUniqueIndexes
-	if edge == nil || !set.active.Load() {
-		return
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	for _, idx := range set.entries {
-		idx.put(edge)
+	if edge != nil {
+		b.refileRelationshipUniqueIndexes(edge.ID)
 	}
 }
 func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
+	b.refileRelationshipUniqueIndexes(ids...)
+}
+
+// refileRelationshipUniqueIndexes files each edge under its latest committed
+// body, read under the set lock that every publication takes after its
+// commit, so a write's tail that runs after a newer write of the same edge
+// keeps the newer state (F-PUBLISH). A gone edge leaves every index. If the
+// read fails the entry is dropped and the index rebuilt on its next use.
+func (b *BadgerEngine) refileRelationshipUniqueIndexes(ids ...EdgeID) {
 	set := &b.relationshipUniqueIndexes
 	if len(ids) == 0 || !set.active.Load() {
 		return
 	}
 	set.mu.Lock()
 	defer set.mu.Unlock()
-	for _, idx := range set.entries {
-		for _, id := range ids {
+	for _, id := range ids {
+		var committed *Edge
+		err := b.withView(func(txn *badger.Txn) error {
+			edge, ok, err := b.readEdgeBodyInTxn(txn, id)
+			if ok {
+				committed = edge
+			}
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			return err
+		})
+		if err != nil {
+			set.entries = nil
+			set.active.Store(false)
+			return
+		}
+		for _, idx := range set.entries {
 			idx.remove(id)
+			if committed != nil {
+				idx.put(committed)
+			}
 		}
 	}
 }

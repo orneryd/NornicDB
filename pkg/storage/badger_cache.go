@@ -494,19 +494,17 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
 	b.cacheDeleteNodeBody(id)
 }
 
-// cacheStoreWrittenNode caches node as a write just committed it, except a
-// node still waiting for its managed embedding: the embed worker may store
-// the embedding before this runs (a large transaction's commit fires its
-// cache updates one by one after it is visible), and caching the written copy
-// over it would hide the embedding from every read until the entry is
-// evicted. Such a node's entry is dropped instead, and the next read loads
-// it from storage.
-func (b *BadgerEngine) cacheStoreWrittenNode(node *Node) {
-	if node != nil && b.shouldIndexPendingEmbed(node) {
+// cacheDropWrittenNode publishes a written node to the node caches by
+// dropping its entries; the next read loads it from storage and refills them
+// under cacheGeneration's rule. Commit tails run in any order, so caching the
+// written copy would let an older write's tail, run last, overwrite a newer
+// committed version, and every read would return it (F-PUBLISH). It also
+// keeps a node whose managed embedding the embed worker stored meanwhile
+// from being cached without it.
+func (b *BadgerEngine) cacheDropWrittenNode(node *Node) {
+	if node != nil {
 		b.cacheDeleteNode(node.ID)
-		return
 	}
-	b.cacheStoreNode(node)
 }
 
 func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
@@ -514,7 +512,7 @@ func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
 }
 
 func (b *BadgerEngine) cacheOnNodeCreatedWithCounts(node *Node, publishCounts bool) {
-	b.cacheStoreWrittenNode(node)
+	b.cacheDropWrittenNode(node)
 	if publishCounts {
 		b.nodeCount.Add(1)
 		b.addNamespaceNodeCount(node.ID, 1)
@@ -523,7 +521,7 @@ func (b *BadgerEngine) cacheOnNodeCreatedWithCounts(node *Node, publishCounts bo
 }
 
 func (b *BadgerEngine) cacheOnNodeUpdated(node *Node) {
-	b.cacheStoreWrittenNode(node)
+	b.cacheDropWrittenNode(node)
 	// Updates are handled by cacheOnNodeUpdatedWithOldNode which has the
 	// old-property context needed to remove stale index entries. The
 	// `oldNode == nil` path is legitimately "we don't know the diff" —
@@ -533,7 +531,7 @@ func (b *BadgerEngine) cacheOnNodeUpdated(node *Node) {
 }
 
 func (b *BadgerEngine) cacheOnNodeUpdatedWithOldNode(node *Node, oldNode *Node) {
-	b.cacheStoreWrittenNode(node)
+	b.cacheDropWrittenNode(node)
 	if oldNode != nil {
 		b.labelCacheInvalidateForRemovedLabels(oldNode.Labels, node.Labels, node.ID)
 	}
@@ -611,7 +609,7 @@ func (b *BadgerEngine) cacheOnEdgeCreatedWithCounts(edge *Edge, publishCounts bo
 	}
 	b.updateRelationshipUniqueIndexes(edge)
 	b.InvalidateEdgeTypeCacheForType(edge.Type)
-	b.cacheStoreEdge(edge)
+	b.cacheDeleteEdge(edge.ID) // drop, not store: see cacheDropWrittenNode
 	b.adjCacheInvalidateForEdge(edge)
 	if publishCounts {
 		b.edgeCount.Add(1)
@@ -630,7 +628,7 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 		b.InvalidateEdgeTypeCacheForType(oldType)
 	}
 	b.InvalidateEdgeTypeCacheForType(newEdge.Type)
-	b.cacheStoreEdge(newEdge)
+	b.cacheDeleteEdge(newEdge.ID) // drop, not store: see cacheDropWrittenNode
 	// Endpoints can change on update; the safe move is to drop the
 	// adjacency entries for the new endpoints. (Old endpoints, if any
 	// changed, are handled by the writer that supplied oldNode/oldEdge —
@@ -690,51 +688,6 @@ func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 		b.namespaceEdgeCounts[prefix] += delta
 	}
 	b.namespaceCountsMu.Unlock()
-}
-
-func (b *BadgerEngine) cacheOnNodesDeleted(deletedNodeIDs []NodeID, deletedNodeCount, totalEdgesDeleted int64) {
-	if deletedNodeCount <= 0 {
-		return
-	}
-
-	for _, nodeID := range deletedNodeIDs {
-		b.cacheDeleteNode(nodeID)
-	}
-	b.nodeCount.Add(-deletedNodeCount)
-
-	// Update per-namespace node counts.
-	namespaces := make(map[string]int64)
-	for _, nodeID := range deletedNodeIDs {
-		prefix, ok := namespacePrefixFromID(string(nodeID))
-		if !ok {
-			continue
-		}
-		namespaces[prefix]--
-	}
-	if len(namespaces) > 0 {
-		b.namespaceCountsMu.Lock()
-		for prefix, delta := range namespaces {
-			b.namespaceNodeCounts[prefix] += delta
-		}
-		b.namespaceCountsMu.Unlock()
-	}
-
-	if totalEdgesDeleted > 0 {
-		b.edgeCount.Add(-totalEdgesDeleted)
-
-		// We only have an aggregate edge delete count. If the deleted nodes span
-		// multiple namespaces, we can't attribute edges precisely.
-		if len(namespaces) == 1 {
-			for prefix := range namespaces {
-				b.namespaceCountsMu.Lock()
-				b.namespaceEdgeCounts[prefix] -= totalEdgesDeleted
-				b.namespaceCountsMu.Unlock()
-				break
-			}
-		}
-
-		b.InvalidateEdgeTypeCache()
-	}
 }
 
 func (b *BadgerEngine) addNamespaceNodeCount(id NodeID, delta int64) {

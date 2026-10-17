@@ -503,6 +503,34 @@ func (sm *SchemaManager) HasUniqueValueTracking() bool {
 	return len(sm.uniqueConstraints) > 0
 }
 
+// RefileUniqueValue moves nodeID's registration under the label/property
+// unique constraint from old (when hadOld) to the value current reads inside
+// the constraint's critical section: the node's latest committed value, or
+// false when it has none. old is removed only while nodeID still holds it, so
+// a write's tail that runs after a newer write, of this node or of another
+// node that took the value, cannot drop the live holder or file a replaced
+// value (F-PUBLISH). current is called only when the constraint exists.
+func (sm *SchemaManager) RefileUniqueValue(label, property string, nodeID NodeID, old interface{}, hadOld bool, current func() (interface{}, bool)) {
+	sm.mu.RLock()
+	constraint, exists := sm.uniqueConstraints[fmt.Sprintf("%s:%s", label, property)]
+	sm.mu.RUnlock()
+	if !exists {
+		return
+	}
+	constraint.mu.Lock()
+	defer constraint.mu.Unlock()
+	if hadOld {
+		if key, ok := uniqueConstraintValueKey(old); ok && constraint.values[key] == nodeID {
+			delete(constraint.values, key)
+		}
+	}
+	if value, ok := current(); ok {
+		if key, keyed := uniqueConstraintValueKey(value); keyed {
+			constraint.values[key] = nodeID
+		}
+	}
+}
+
 // RegisterUniqueValue registers a value for a unique constraint.
 func (sm *SchemaManager) RegisterUniqueValue(label, property string, value interface{}, nodeID NodeID) {
 	sm.mu.RLock()

@@ -3146,46 +3146,7 @@ func (tx *BadgerTransaction) Commit() error {
 	//
 	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
 	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
+		tx.engine.publishUniqueValuesForOps(tx.engine.GetSchemaForNamespace(tx.namespace), tx.operations)
 	}
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.

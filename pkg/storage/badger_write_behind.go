@@ -537,44 +537,8 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		}
 	}
 
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
+	if namespace != "" {
+		b.publishUniqueValuesForOps(schema, ops)
 	}
 }
 

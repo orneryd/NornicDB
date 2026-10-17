@@ -147,11 +147,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 
 	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-		}
-	}
+	b.publishUniqueValues(schema, node.ID, nil, node)
 	releaseUniqueLocks()
 
 	node.embeddingKeysPresent = persistSeparateEmbeddings
@@ -632,28 +628,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		}
 		if wasInsert {
 			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
+			b.publishUniqueValues(schema, node.ID, nil, node)
 
 			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
 			notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
+			b.publishUniqueValues(schema, node.ID, existingNode, node)
 
 			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 			// Notify listeners to re-index the updated node
@@ -791,12 +772,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		if deletedNode != nil {
 			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
 			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
+				b.publishUniqueValues(b.GetSchemaForNamespace(dbName), deletedNode.ID, deletedNode, nil)
 			}
 		}
 
