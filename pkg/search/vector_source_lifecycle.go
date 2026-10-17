@@ -80,16 +80,15 @@ func (s *Service) retireVectorSourceLocked(keepGraph bool) {
 		// and publication check this epoch instead.
 		s.vectorSourceEpoch.Add(1)
 	}
-	s.hnswMu.Lock()
-	if keepGraph {
-		s.retireVectorSnapshotLocked()
-	} else {
-		s.invalidateHNSWLocked()
-	}
-	s.hnswMu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.publishVectorServing(func() {
+		s.hnswMu.Lock()
+		if keepGraph {
+			s.retireVectorSnapshotLocked()
+		} else {
+			s.invalidateHNSWLocked()
+		}
+		s.hnswMu.Unlock()
+	}, true)
 }
 
 // vectorMemoryFromFileStore transfers canonical normalized coordinates in

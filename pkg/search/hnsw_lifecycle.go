@@ -309,11 +309,12 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		quality, config.M, config.EfConstruction, config.EfSearch, built.Size(), built.TombstoneRatio(),
 		buildStats.Strategy, buildStats.Backend, buildStats.Batches, buildStats.KernelErrors, buildStats.Fallback, buildStats.Duration)
 
-	s.hnswIndex = built
-	s.hnswMu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.publishVectorServing(func() {
+		// hnswMu is held from the install check above; it is released before
+		// the owner retires the pipeline, which is never taken under hnswMu.
+		s.hnswIndex = built
+		s.hnswMu.Unlock()
+	}, true)
 
 	s.ensureHNSWMaintenance()
 	s.schedulePersist()
@@ -465,23 +466,19 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 
 	// IMPORTANT: do NOT take pipelineMu while holding hnswMu.
 	// Search pipeline creation uses lock order pipelineMu -> hnswMu, so taking
-	// hnswMu -> pipelineMu here can deadlock.
-	swapped := false
+	// hnswMu -> pipelineMu here can deadlock. The owner retires the pipeline
+	// after the install has released hnswMu.
 	s.hnswMu.Lock()
 	if s.hnswIndex == old && ctx.Err() == nil {
-		s.hnswIndex = rebuilt
-		s.hnswLastRebuildUnix.Store(time.Now().Unix())
-		swapped = true
+		s.publishVectorServing(func() {
+			s.hnswIndex = rebuilt
+			s.hnswLastRebuildUnix.Store(time.Now().Unix())
+			s.hnswMu.Unlock()
+		}, true)
+	} else {
+		s.hnswMu.Unlock()
 	}
-	s.hnswMu.Unlock()
 	s.indexMu.Unlock()
-
-	if swapped {
-		// Invalidate pipeline after releasing hnswMu so lock order remains consistent.
-		s.pipelineMu.Lock()
-		s.vectorPipeline = nil
-		s.pipelineMu.Unlock()
-	}
 
 	return nil
 }

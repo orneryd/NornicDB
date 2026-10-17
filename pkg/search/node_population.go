@@ -408,6 +408,18 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if explicit {
+		// The explicit build applies stored edges from a snapshot stream. It
+		// runs before admission closes, so a live edge write or removal is
+		// admitted only after it and is never overtaken by an older snapshot.
+		s.setBuildPhase("iterating_relationship_vectors")
+		if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
+			// The node population is complete; a relationship failure does
+			// not undo it, so a retry keeps skipping the node iteration.
+			s.finishNodeAdmission(job, nil)
+			return err
+		}
+	}
 	s.finishNodeAdmission(job, nil)
 	if !explicit {
 		return nil

@@ -1595,13 +1595,15 @@ func (s *Service) resetANNForBuild() {
 
 	// Retire cluster-derived publication before clearing it.
 	s.clusterGeneration.Add(1)
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
+	s.publishVectorServing(func() {
+		s.clusterHNSWMu.Lock()
+		s.clusterHNSW = nil
+		s.clusterHNSWMu.Unlock()
+		s.ivfpqMu.Lock()
+		s.ivfpqIndex = nil
+		s.ivfpqOverlay.Reset()
+		s.ivfpqMu.Unlock()
+	}, false)
 
 	// Retire every backend before releasing the cache publication boundary.
 	s.retireVectorSourceLocked(false)
@@ -1638,16 +1640,21 @@ func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
 	if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
 		return
 	}
-	if !s.installClusterIndex(gpuManager, numClusters) {
-		return
+	installed := false
+	s.publishVectorServing(func() {
+		if installed = s.installClusterIndex(gpuManager, numClusters); !installed {
+			return
+		}
+		// Work and derived state belong to the retired object.
+		s.cancelClusterRuns()
+		s.clusterHNSWMu.Lock()
+		s.clusterHNSW = nil
+		s.clusterHNSWMu.Unlock()
+		s.clearClusterLexicalProfiles()
+	}, false)
+	if installed {
+		s.retireVectorSourceLocked(true)
 	}
-	// Work and derived state belong to the retired object.
-	s.cancelClusterRuns()
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.clearClusterLexicalProfiles()
-	s.retireVectorSourceLocked(true)
 }
 
 // installClusterIndex publishes a new cluster object under mu and reports
@@ -1903,11 +1910,9 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 		// owns routing state and derived graphs.
 		return nil
 	}
-	s.rebuildClusterLexicalProfiles()
-
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	// ClusterWithContext published the routing; the profiles derived from it
+	// complete the change.
+	s.publishVectorServing(s.rebuildClusterLexicalProfiles, true)
 
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -2013,12 +2018,10 @@ func (s *Service) rebuildClusterHNSWIndexes(ctx context.Context, clusterIndex *g
 		s.logPrintf("[IVF-HNSW] ⏭️  DISCARDED | reason=cluster_state_retired")
 		return nil
 	}
-	s.clusterHNSW = rebuilt
-	s.clusterHNSWMu.Unlock()
-
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.publishVectorServing(func() {
+		s.clusterHNSW = rebuilt
+		s.clusterHNSWMu.Unlock()
+	}, true)
 	return nil
 }
 
@@ -2754,50 +2757,57 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // replaceEmptyVectorDimensionsLocked is shared by initial batching and the
 // public mutation boundary. Caller owns indexMu and has paused ANN construction.
 func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
-	s.mu.Lock()
-	// Another first vector may have won while this caller waited for mutation
-	// ownership. A no-op must not retire the winner's sources or backends.
-	if s.vectorDimensionsFixed.Load() || s.embeddingCountLocked() > 0 || s.vectorIndexDimensionsLocked() == dimensions {
+	replaced := false
+	s.publishVectorServing(func() {
+		s.mu.Lock()
+		// Another first vector may have won while this caller waited for mutation
+		// ownership. A no-op must not retire the winner's sources or backends.
+		if s.vectorDimensionsFixed.Load() || s.embeddingCountLocked() > 0 || s.vectorIndexDimensionsLocked() == dimensions {
+			s.mu.Unlock()
+			return
+		}
+		replaced = true
+		s.vectorIndex = NewVectorIndex(dimensions)
+		// An empty file still has an immutable dimension and remains the writer
+		// until explicitly retired. Its old artifacts must not be reloaded by
+		// live ingestion after the first vector selects a different dimension.
+		if s.vectorFileStore != nil {
+			_ = s.vectorFileStore.Close()
+			s.vectorFileStore = nil
+		}
+		s.changeNodeSourcesLocked(nodeVectorCleared)
+		s.reconcileVectorSourceCapacityLocked(nil)
+
+		// Dimension changes invalidate all vector backends.
+		if s.gpuEmbeddingIndex != nil {
+			s.gpuEmbeddingIndex.Clear()
+			s.gpuEmbeddingIndex = nil
+		}
+		if s.clusterIndex != nil {
+			s.clusterIndex.Clear()
+		}
 		s.mu.Unlock()
+
+		// Retire cluster-derived publication before clearing it.
+		s.clusterGeneration.Add(1)
+		s.clusterHNSWMu.Lock()
+		s.clusterHNSW = nil
+		s.clusterHNSWMu.Unlock()
+		s.ivfpqMu.Lock()
+		s.ivfpqIndex = nil
+		s.ivfpqOverlay.Reset()
+		s.ivfpqMu.Unlock()
+		s.clearClusterLexicalProfiles()
+
+		s.hnswMu.Lock()
+		if s.hnswIndex != nil {
+			s.hnswIndex.Clear()
+		}
+		s.hnswMu.Unlock()
+	}, false)
+	if !replaced {
 		return
 	}
-	s.vectorIndex = NewVectorIndex(dimensions)
-	// An empty file still has an immutable dimension and remains the writer
-	// until explicitly retired. Its old artifacts must not be reloaded by
-	// live ingestion after the first vector selects a different dimension.
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
-	s.changeNodeSourcesLocked(nodeVectorCleared)
-	s.reconcileVectorSourceCapacityLocked(nil)
-
-	// Dimension changes invalidate all vector backends.
-	if s.gpuEmbeddingIndex != nil {
-		s.gpuEmbeddingIndex.Clear()
-		s.gpuEmbeddingIndex = nil
-	}
-	if s.clusterIndex != nil {
-		s.clusterIndex.Clear()
-	}
-	s.mu.Unlock()
-
-	// Retire cluster-derived publication before clearing it.
-	s.clusterGeneration.Add(1)
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
-
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-	}
-	s.hnswMu.Unlock()
 	// Release all source/backend locks before the cache publication boundary.
 	// A factory that finished before retirement is removed here; a later one
 	// captures only the replacement sources and retired ANN state.
@@ -2846,24 +2856,26 @@ func (s *Service) ClearVectorIndex() {
 		s.logPrintf("⚠️ Vector artifact retirement failed: %v", err)
 	}
 
-	// Retire cluster-derived publication before clearing it.
-	s.clusterGeneration.Add(1)
-	s.clusterHNSWMu.Lock()
-	s.clusterHNSW = nil
-	s.clusterHNSWMu.Unlock()
-	s.ivfpqMu.Lock()
-	s.ivfpqIndex = nil
-	s.ivfpqOverlay.Reset()
-	s.ivfpqMu.Unlock()
-	s.clearClusterLexicalProfiles()
+	s.publishVectorServing(func() {
+		// Retire cluster-derived publication before clearing it.
+		s.clusterGeneration.Add(1)
+		s.clusterHNSWMu.Lock()
+		s.clusterHNSW = nil
+		s.clusterHNSWMu.Unlock()
+		s.ivfpqMu.Lock()
+		s.ivfpqIndex = nil
+		s.ivfpqOverlay.Reset()
+		s.ivfpqMu.Unlock()
+		s.clearClusterLexicalProfiles()
 
-	// Also clear HNSW index if it exists (frees memory from tombstones).
-	// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-	}
-	s.hnswMu.Unlock()
+		// Also clear HNSW index if it exists (frees memory from tombstones).
+		// HNSW uses tombstones for deletes which never free memory, so explicit Clear() is required.
+		s.hnswMu.Lock()
+		if s.hnswIndex != nil {
+			s.hnswIndex.Clear()
+		}
+		s.hnswMu.Unlock()
+	}, false)
 	s.retireVectorSourceLocked(false) // Recreate lazily from replacement vectors.
 }
 
@@ -4067,7 +4079,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	}
 	if forceRoutingRebuild {
 		forceHNSWRebuild = true
-		s.clearClusterLexicalProfiles()
+		s.publishVectorServing(s.clearClusterLexicalProfiles, false)
 	}
 	// Compatible admitted sources can skip the full node iteration.
 	vectorCount := s.EmbeddingCount()
@@ -4097,12 +4109,14 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		if err := s.resetBaseVectorSource(); err != nil {
 			return err
 		}
-		s.hnswMu.Lock()
-		if s.hnswIndex != nil {
-			s.hnswIndex.Clear()
-			s.invalidateHNSWLocked()
-		}
-		s.hnswMu.Unlock()
+		s.publishVectorServing(func() {
+			s.hnswMu.Lock()
+			if s.hnswIndex != nil {
+				s.hnswIndex.Clear()
+				s.invalidateHNSWLocked()
+			}
+			s.hnswMu.Unlock()
+		}, true)
 	}
 	s.indexMu.RLock()
 	nodePopulationComplete := s.nodeSourcesCompleteLocked()
@@ -4323,11 +4337,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 // artifacts do not contain relationship property vectors, so both routes must
 // load those through the canonical mutation owner before publishing readiness.
 func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
-	s.setBuildPhase("iterating_relationship_vectors")
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
 		return err
 	}
 
@@ -4471,7 +4481,7 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 	if s.clusterGeneration.Load() != generation {
 		return false
 	}
-	s.rebuildClusterLexicalProfiles()
+	s.publishVectorServing(s.rebuildClusterLexicalProfiles, false)
 	s.logPrintf("🔍 IVF-HNSW restored from disk (%d clusters); skipping k-means", len(centroids))
 	return true
 }
@@ -5459,7 +5469,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 	pipeline = NewVectorSearchPipeline(strategy.candidateGen, exactScorer)
 	if !strategy.pendingHNSW && s.vectorSnapshotCurrent(snapshot) {
-		s.vectorPipeline = pipeline
+		s.cacheDerivedVectorPipelineLocked(pipeline)
 	}
 	return pipeline, nil
 }
@@ -5612,55 +5622,59 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	s.logPrintf("🔍 Runtime strategy switch complete: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
 }
 
+// applyTransitionSwapLocked publishes a runtime strategy transition: the graph
+// is installed or retired and the target pipeline published as one change.
 func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNSWIndex, vi *VectorIndex, vfs *VectorFileStore) {
-	var hnswForPipeline *HNSWIndex
-	if target == strategyModeHNSW {
-		s.hnswMu.Lock()
-		old := s.hnswIndex
-		s.hnswIndex = targetHNSW
-		s.hnswMu.Unlock()
-		hnswForPipeline = targetHNSW
-		if old != nil && old != targetHNSW {
-			old.Clear()
-		}
-	} else {
-		s.hnswMu.Lock()
-		old := s.hnswIndex
-		s.invalidateHNSWLocked()
-		s.hnswMu.Unlock()
-		if old != nil {
-			old.Clear()
-		}
-	}
-	// The active construction job owns its overlay across snapshot and install.
-	// Adopting the ready graph must not discard another builder's mutations.
-	if target == strategyModeBruteGPU {
-		_ = s.ensureGPUIndexSynced(vi, vfs)
-	}
-
-	var p *VectorSearchPipeline
-	switch target {
-	case strategyModeBruteGPU:
-		_, gpuIndex := s.gpuVectorState()
-		p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
-	case strategyModeBruteCPU:
-		if vfs != nil {
-			p = NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
+	s.publishVectorServing(func() {
+		var hnswForPipeline *HNSWIndex
+		if target == strategyModeHNSW {
+			s.hnswMu.Lock()
+			old := s.hnswIndex
+			s.hnswIndex = targetHNSW
+			s.hnswMu.Unlock()
+			hnswForPipeline = targetHNSW
+			if old != nil && old != targetHNSW {
+				old.Clear()
+			}
 		} else {
-			p = NewVectorSearchPipeline(NewBruteForceCandidateGen(vi), NewCPUExactScorer(vi))
-		}
-	case strategyModeHNSW:
-		if hnswForPipeline != nil {
-			if vfs != nil {
-				p = NewVectorSearchPipeline(NewHNSWCandidateGen(hnswForPipeline), NewCPUExactScorer(vfs))
-			} else {
-				p = NewVectorSearchPipeline(NewHNSWCandidateGen(hnswForPipeline), NewCPUExactScorer(vi))
+			s.hnswMu.Lock()
+			old := s.hnswIndex
+			s.invalidateHNSWLocked()
+			s.hnswMu.Unlock()
+			if old != nil {
+				old.Clear()
 			}
 		}
-	}
-	s.pipelineMu.Lock()
-	s.vectorPipeline = p
-	s.pipelineMu.Unlock()
+		// The active construction job owns its overlay across snapshot and install.
+		// Adopting the ready graph must not discard another builder's mutations.
+		if target == strategyModeBruteGPU {
+			_ = s.ensureGPUIndexSynced(vi, vfs)
+		}
+
+		var p *VectorSearchPipeline
+		switch target {
+		case strategyModeBruteGPU:
+			_, gpuIndex := s.gpuVectorState()
+			p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
+		case strategyModeBruteCPU:
+			if vfs != nil {
+				p = NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
+			} else {
+				p = NewVectorSearchPipeline(NewBruteForceCandidateGen(vi), NewCPUExactScorer(vi))
+			}
+		case strategyModeHNSW:
+			if hnswForPipeline != nil {
+				if vfs != nil {
+					p = NewVectorSearchPipeline(NewHNSWCandidateGen(hnswForPipeline), NewCPUExactScorer(vfs))
+				} else {
+					p = NewVectorSearchPipeline(NewHNSWCandidateGen(hnswForPipeline), NewCPUExactScorer(vi))
+				}
+			}
+		}
+		s.pipelineMu.Lock()
+		s.vectorPipeline = p
+		s.pipelineMu.Unlock()
+	}, false)
 }
 
 func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *VectorFileStore) *VectorSearchPipeline {
@@ -5705,16 +5719,18 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 			return false
 		}
 	}
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		s.hnswIndex.Clear()
-	}
-	s.invalidateHNSWLocked()
-	s.hnswMu.Unlock()
-	p := s.buildPipelineForMode(target, vi, vfs)
-	s.pipelineMu.Lock()
-	s.vectorPipeline = p
-	s.pipelineMu.Unlock()
+	s.publishVectorServing(func() {
+		s.hnswMu.Lock()
+		if s.hnswIndex != nil {
+			s.hnswIndex.Clear()
+		}
+		s.invalidateHNSWLocked()
+		s.hnswMu.Unlock()
+		p := s.buildPipelineForMode(target, vi, vfs)
+		s.pipelineMu.Lock()
+		s.vectorPipeline = p
+		s.pipelineMu.Unlock()
+	}, false)
 	s.logPrintf("🔍 Runtime brute strategy switch: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
 	return true
 }

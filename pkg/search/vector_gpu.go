@@ -15,12 +15,17 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 		return
 	}
 
-	s.mu.Lock()
-	retired := s.gpuEmbeddingIndex
-	s.gpuManager = manager
-	s.gpuEmbeddingIndex = nil
-	vi, vfs := s.vectorIndex, s.vectorFileStore
-	s.mu.Unlock()
+	var retired *gpu.EmbeddingIndex
+	var vi *VectorIndex
+	var vfs *VectorFileStore
+	s.publishVectorServing(func() {
+		s.mu.Lock()
+		retired = s.gpuEmbeddingIndex
+		s.gpuManager = manager
+		s.gpuEmbeddingIndex = nil
+		vi, vfs = s.vectorIndex, s.vectorFileStore
+		s.mu.Unlock()
+	}, false)
 
 	// The same barrier orders live mutations, completed transitions and a
 	// factory already holding pipelineMu. Never take pipelineMu under mu.
@@ -97,9 +102,11 @@ func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) er
 	if err := index.SyncToGPU(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.gpuEmbeddingIndex = index
-	s.mu.Unlock()
+	s.publishVectorServing(func() {
+		s.mu.Lock()
+		s.gpuEmbeddingIndex = index
+		s.mu.Unlock()
+	}, false)
 	published = true
 	return nil
 }

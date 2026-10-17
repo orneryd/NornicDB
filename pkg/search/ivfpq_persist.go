@@ -205,9 +205,13 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		if !current() {
 			return loaded, nil
 		}
-		s.ivfpqOverlay.restore(mutations)
-		s.ivfpqIndex = loaded
-		s.ivfpqEpoch = sourceEpoch
+		// The caller is creating the pipeline under pipelineMu: publish
+		// without retiring it.
+		s.publishVectorServing(func() {
+			s.ivfpqOverlay.restore(mutations)
+			s.ivfpqIndex = loaded
+			s.ivfpqEpoch = sourceEpoch
+		}, false)
 		return s.ivfpqIndex, nil
 	}
 
@@ -224,8 +228,10 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if !current() {
 		return built, nil
 	}
-	s.ivfpqIndex = built
-	s.ivfpqEpoch = sourceEpoch
-	s.ivfpqOverlay.Reset()
+	s.publishVectorServing(func() {
+		s.ivfpqIndex = built
+		s.ivfpqEpoch = sourceEpoch
+		s.ivfpqOverlay.Reset()
+	}, false)
 	return s.ivfpqIndex, nil
 }
