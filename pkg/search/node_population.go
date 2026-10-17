@@ -206,6 +206,7 @@ func (s *Service) clearNodeVectorMetadataLocked() {
 func (s *Service) resetBaseVectorSource() error {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	defer s.beginSourceStepLocked()()
 	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()

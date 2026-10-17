@@ -502,6 +502,7 @@ func (s *Service) restorePersistedSourcesStep(ctx context.Context, fulltextPath 
 	defer staged.close()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	defer s.beginSourceStepLocked()()
 	s.withdrawPopulationWritesLocked()
 	runPopulationHook(&populationRestoreHook, s)
 	textComplete := s.nodeSources.textComplete

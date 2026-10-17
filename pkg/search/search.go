@@ -4090,9 +4090,11 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 
 	if forceFulltextRebuild {
 		s.indexMu.Lock()
+		endStep := s.beginSourceStepLocked()
 		s.fulltext().Clear()
 		s.changeNodeSourcesLocked(nodeFulltextReset)
 		replayErr := s.replayPopulationWritesLocked(ctx)
+		endStep()
 		s.indexMu.Unlock()
 		if replayErr != nil {
 			return replayErr
@@ -4126,9 +4128,11 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	if shouldClearStaleDisk {
 		s.logPrintf("📇 BuildIndexes: storage is empty and newer than disk indexes; clearing stale search artifacts")
 		s.indexMu.Lock()
+		endStep := s.beginSourceStepLocked()
 		s.changeNodeSourcesLocked(nodePopulationFailed)
 		s.fulltext().Clear()
 		replayErr := s.replayPopulationWritesLocked(ctx)
+		endStep()
 		s.indexMu.Unlock()
 		if replayErr != nil {
 			return replayErr
@@ -4585,6 +4589,11 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	if s != nil && !inSourceStepRead(ctx) {
+		return readAcrossSourceSteps(s, ctx, func(ctx context.Context) (*SearchResponse, error) {
+			return s.Search(ctx, query, embedding, opts)
+		})
+	}
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,
@@ -4964,6 +4973,11 @@ type SearchCandidate struct {
 // with automatic strategy selection. HNSW is the default; CPU brute-force is
 // only selected automatically when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero.
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	if s != nil && !inSourceStepRead(ctx) {
+		return readAcrossSourceSteps(s, ctx, func(ctx context.Context) ([]SearchCandidate, error) {
+			return s.VectorSearchCandidates(ctx, embedding, opts)
+		})
+	}
 	if err := s.EnsureWarm(ctx); err != nil {
 		return nil, err
 	}

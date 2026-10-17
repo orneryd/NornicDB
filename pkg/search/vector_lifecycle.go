@@ -26,6 +26,14 @@ import (
 type vectorLifecycle struct {
 	state atomic.Int32
 
+	// stepSeq is odd while a source-replacement step runs: the recorded live
+	// writes are withdrawn, or a source cleared, until the replay puts them
+	// back. Searches do not take indexMu; they wait for an even value and
+	// repeat when it changed, so none observes a step half-done. stepDone is
+	// closed when the running step ends.
+	stepSeq  atomic.Uint64
+	stepDone atomic.Pointer[chan struct{}]
+
 	workersMu sync.Mutex
 	workers   map[workerKind]*workerSet
 	closed    bool
@@ -271,4 +279,69 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
 	s.nodeSources.fulltextCheckpoint = path
 	s.nodeSources.fulltextCheckpointCount = count
+}
+
+// beginSourceStepLocked marks a source-replacement step as running. Caller
+// holds indexMu (steps never overlap) and calls the returned end once the
+// recorded writes are re-applied.
+func (s *Service) beginSourceStepLocked() (end func()) {
+	done := make(chan struct{})
+	s.life.stepDone.Store(&done)
+	s.life.stepSeq.Add(1)
+	return func() {
+		s.life.stepSeq.Add(1)
+		close(done)
+	}
+}
+
+// waitSourceStepIdle returns the step sequence once no step is running.
+func (s *Service) waitSourceStepIdle(ctx context.Context) (uint64, error) {
+	for {
+		seq := s.life.stepSeq.Load()
+		if seq%2 == 0 {
+			return seq, nil
+		}
+		done := s.life.stepDone.Load()
+		if done == nil {
+			continue
+		}
+		select {
+		case <-*done:
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+}
+
+type sourceStepReadKey struct{}
+
+// readAcrossSourceSteps runs read so that it observes no source-replacement
+// step half-done: it waits for any running step, and repeats read when a step
+// ran meanwhile. Steps are short (the saved image is staged without indexMu)
+// and rare. Nested reads in the same request run once, inside the outer one.
+func readAcrossSourceSteps[T any](s *Service, ctx context.Context, read func(context.Context) (T, error)) (T, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Value(sourceStepReadKey{}) != nil {
+		return read(ctx)
+	}
+	inner := context.WithValue(ctx, sourceStepReadKey{}, true)
+	for {
+		seq, err := s.waitSourceStepIdle(ctx)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		result, err := read(inner)
+		if s.life.stepSeq.Load() == seq {
+			return result, err
+		}
+	}
+}
+
+// inSourceStepRead reports whether ctx already belongs to a read wrapped by
+// readAcrossSourceSteps.
+func inSourceStepRead(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(sourceStepReadKey{}) != nil
 }
