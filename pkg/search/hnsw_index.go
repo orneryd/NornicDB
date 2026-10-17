@@ -1238,10 +1238,10 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // closest-first; the returned slice belongs to its pool until the caller
 // releases it).
 //
-// Entry seeding validates validity, deletion, prior visits and vector
-// dimensions. The build path always passes a live entry point, so those
-// probes never fire there; on the query path they guard the caller-supplied
-// entry IDs.
+// Entry seeding validates validity, prior visits and vector dimensions. The
+// build path always passes a live entry point, so those probes never fire
+// there; on the query path they guard the caller-supplied entry IDs.
+// Tombstones, entries included, are routed through and never returned.
 func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
 	var mode M
 	visited := h.visitedPool.Get().(*visitedGenState)
@@ -1272,9 +1272,22 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	results.Reset(true, ef*2)
 	defer h.heapPool.Put(results)
 
-	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID)
+	// Tombstoned entries (an upper-layer descent may end on one) are routed
+	// through like any other tombstone; see relaxLayerNeighbors.
+	var bridgeBuf [8]uint32
+	bridges := bridgeBuf[:0]
+	if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID) {
+		bridges = append(bridges, entryID)
+	}
 	for _, id := range extraEntries {
-		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id)
+		if h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id) {
+			bridges = append(bridges, id)
+		}
+	}
+	if len(bridges) > 0 {
+		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, bridges, ef, level, candidates, results, visited, curGen); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	for candidates.Len() > 0 {
@@ -1294,37 +1307,8 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 		if !validHNSWIndex(nodeID, len(h.nodeLevel)) || h.deleted[nodeID] {
 			continue
 		}
-		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
-		if !ok {
-			continue
-		}
-
-		// Reverse iteration: order doesn't matter when checking all neighbors
-		for i := len(neighbors) - 1; i >= 0; i-- {
-			if i&31 == 0 {
-				if err := mode.neighborProbe(ctx); err != nil {
-					return nil, nil, err
-				}
-			}
-			neighborID := neighbors[i]
-			if !validHNSWIndex(neighborID, len(h.nodeLevel)) || h.deleted[neighborID] {
-				continue
-			}
-			if visited.gen[neighborID] == curGen {
-				continue
-			}
-			visited.gen[neighborID] = curGen
-
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
-
-			if results.Len() < ef || dist < results.Peek().dist {
-				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				results.Push(hnswDistItem{id: neighborID, dist: dist})
-
-				if results.Len() > ef {
-					_ = results.Pop()
-				}
-			}
+		if bridges, err = relaxLayerNeighbors[M](h, ctx, query, append(bridges[:0], nodeID), ef, level, candidates, results, visited, curGen); err != nil {
+			return nil, nil, err
 		}
 	}
 
@@ -1357,16 +1341,73 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	return nil, buf, nil
 }
 
+// relaxLayerNeighbors pushes the unvisited live neighbours of the nodes on
+// stack that improve the result set. A tombstone keeps its edges until a
+// rebuild, and live nodes may be connected only through it, so a tombstoned
+// neighbour is never scored or returned (its vector may no longer resolve)
+// but routed through: its own neighbours are relaxed as the current node's.
+// Otherwise a delete silently cuts those live nodes off. The stack is
+// returned for reuse.
+func relaxLayerNeighbors[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, stack []uint32, ef int, level int, candidates, results *distHeap, visited *visitedGenState, curGen uint16) ([]uint32, error) {
+	var mode M
+	for len(stack) > 0 {
+		nodeID := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		neighbors, ok := h.neighborsAtLevelLocked(nodeID, level)
+		if !ok {
+			continue
+		}
+
+		// Reverse iteration: order doesn't matter when checking all neighbors
+		for i := len(neighbors) - 1; i >= 0; i-- {
+			if i&31 == 0 {
+				if err := mode.neighborProbe(ctx); err != nil {
+					return stack, err
+				}
+			}
+			neighborID := neighbors[i]
+			if !validHNSWIndex(neighborID, len(h.nodeLevel)) {
+				continue
+			}
+			if visited.gen[neighborID] == curGen {
+				continue
+			}
+			visited.gen[neighborID] = curGen
+			if h.deleted[neighborID] {
+				stack = append(stack, neighborID)
+				continue
+			}
+
+			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+
+			if results.Len() < ef || dist < results.Peek().dist {
+				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
+				results.Push(hnswDistItem{id: neighborID, dist: dist})
+
+				if results.Len() > ef {
+					_ = results.Pop()
+				}
+			}
+		}
+	}
+	return stack, nil
+}
+
 // seedLayerEntry validates and seeds one entry point into the candidate and
 // result heaps. It is a small helper (one call per entry point, not per
-// neighbor) shared by the single- and multi-entry instantiations.
-func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) {
-	if !validHNSWIndex(entryID, len(h.nodeLevel)) || h.deleted[entryID] || visited.gen[entryID] == curGen {
-		return
+// neighbor) shared by the single- and multi-entry instantiations. It reports
+// a tombstoned entry, which the caller routes through instead of seeding.
+func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) bool {
+	if !validHNSWIndex(entryID, len(h.nodeLevel)) || visited.gen[entryID] == curGen {
+		return false
+	}
+	if h.deleted[entryID] {
+		visited.gen[entryID] = curGen
+		return true
 	}
 	entryVector := h.vectorAtLocked(entryID)
 	if len(entryVector) != h.dimensions {
-		return
+		return false
 	}
 	visited.gen[entryID] = curGen
 	entryDist := float32(1.0) - vector.DotProductSIMD(query, entryVector)
@@ -1376,6 +1417,7 @@ func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visit
 	if results.Len() > ef {
 		_ = results.Pop()
 	}
+	return false
 }
 
 func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m int, out []uint32) []uint32 {
