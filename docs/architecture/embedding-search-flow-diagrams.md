@@ -158,10 +158,10 @@ flowchart TD
     IndexNode --> Chunks["Index ChunkEmbeddings"]
     IndexNode --> Props["Index vector-shaped Properties (Cypher)"]
 
-    Named --> NamedIDs["Add vectors under IDs:<br/>nodeID-named-{name}"]
+    Named --> NamedIDs["Add one entry per name:<br/>key(node, named, name)"]
     Chunks --> Main["Add main under ID:<br/>nodeID (ChunkEmbeddings[0])"]
-    Chunks --> ChunkIDs["Add chunks under IDs:<br/>nodeID-chunk-{i}"]
-    Props --> PropIDs["Add vectors under IDs:<br/>nodeID-prop-{key}"]
+    Chunks --> ChunkIDs["Add one entry per later chunk:<br/>key(node, chunk, i)"]
+    Props --> PropIDs["Add one entry per property:<br/>key(node, property, key)"]
 
     NamedIDs --> VectorIndex["Vector Index"]
     Main --> VectorIndex
