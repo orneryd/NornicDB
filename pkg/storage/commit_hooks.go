@@ -74,9 +74,14 @@ type CommitHookEngine interface {
 }
 
 // CommitHookEngineOf returns the hook-running engine under engine's wrappers
-// (namespace, async, WAL, replication, tracing), if it has one.
+// (namespace, async, WAL, replication, tracing), if it has one: the
+// BadgerEngine itself, also for a MemoryEngine, so every wrapper chain over
+// one engine gives the same value.
 func CommitHookEngineOf(engine Engine) (CommitHookEngine, bool) {
 	for engine != nil {
+		if memory, ok := engine.(*MemoryEngine); ok && memory.BadgerEngine != nil {
+			return memory.BadgerEngine, true
+		}
 		if hooks, ok := engine.(CommitHookEngine); ok {
 			return hooks, true
 		}

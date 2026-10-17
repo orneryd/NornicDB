@@ -674,7 +674,19 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	result, err := exec.executeInternal(ctx, query, params)
+	var result *ExecuteResult
+	var err error
+	if c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && ctx.Value(ctxKeyTxStorage) == nil &&
+		statementNeedsTransaction(exec.analyzer.Analyze(query), query) {
+		// An auto-commit write fragment commits on its constituent as an
+		// auto-commit statement does: in one transaction, which runs the
+		// constituent's triggers and change capture.
+		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+			return txExec.executeInternal(txCtx, query, params)
+		})
+	} else {
+		result, err = exec.executeInternal(ctx, query, params)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

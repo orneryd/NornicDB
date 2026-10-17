@@ -47,7 +47,7 @@ NORNICDB_APOC_CREATE_ENABLED=false       # Disable write operations
 | `apoc.spatial.*` | 25+ | Geographic functions |
 | `apoc.stats.*` | 30+ | Statistics |
 | `apoc.temporal.*` | 40+ | Date/time operations |
-| `apoc.trigger.*` | 20+ | Trigger management |
+| `apoc.trigger.*` | 9 | Triggers: native procedures (docs/features/apoc-triggers.md) |
 | `apoc.warmup.*` | 15+ | Database warmup |
 | `apoc.xml.*` | 25+ | XML processing |
 | ...and 15+ more categories | | See full docs |

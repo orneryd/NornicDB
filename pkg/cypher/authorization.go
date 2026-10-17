@@ -129,6 +129,20 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 	return procedures
 }
 
+// callsDataWriteProcedure reports whether query calls a procedure that
+// writes data (mode WRITE, registeredProceduresForCalls): such a statement
+// writes in a transaction, as one with a write clause does, whatever its
+// text (CALL apoc.import.json(...), CALL apoc.periodic.iterate($a, $b)), so
+// its writes are atomic and reach the commit (change capture, triggers).
+func callsDataWriteProcedure(query string) bool {
+	for _, procedure := range registeredProceduresForCalls(query) {
+		if procedure.Mode == ProcedureModeWrite {
+			return true
+		}
+	}
+	return false
+}
+
 // procedureNameAt parses the dotted procedure name after a CALL keyword
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.

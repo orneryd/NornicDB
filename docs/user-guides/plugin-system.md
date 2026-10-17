@@ -103,7 +103,6 @@ The APOC plugin includes **964 functions** across these categories:
 | `apoc.spatial` | 19 | Spatial operations (distance, bearing, geohash, etc.) |
 | `apoc.stats` | 23 | Statistics (mean, median, correlation, etc.) |
 | `apoc.temporal` | 26 | Temporal operations (format, parse, duration, etc.) |
-| `apoc.trigger` | 24 | Trigger management (add, remove, enable, etc.) |
 | `apoc.warmup` | 15 | Cache warmup (run, nodes, relationships, etc.) |
 | `apoc.xml` | 23 | XML operations (parse, query, transform, etc.) |
 | `apoc.label` | 27 | Label operations (add, remove, exists, etc.) |
