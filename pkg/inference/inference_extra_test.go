@@ -130,7 +130,7 @@ func TestEngine_ExtensionGettersSettersAndCleanup(t *testing.T) {
 func TestEngine_ValidateSuggestionsWithHeimdall_Branches(t *testing.T) {
 	t.Run("empty suggestions and nil QC short-circuit", func(t *testing.T) {
 		engine := New(nil)
-		got := engine.validateSuggestionsWithHeimdall(context.Background(), "src", []float32{1}, nil)
+		got := engine.validateSuggestionsWithHeimdall(context.Background(), engine.components(), "src", []float32{1}, nil)
 		require.Nil(t, got)
 	})
 
@@ -141,7 +141,7 @@ func TestEngine_ValidateSuggestionsWithHeimdall_Branches(t *testing.T) {
 		}, nil))
 
 		in := []EdgeSuggestion{{SourceID: "src", TargetID: "dst", Type: "RELATES_TO", Confidence: 0.8}}
-		got := engine.validateSuggestionsWithHeimdall(context.Background(), "src", []float32{1}, in)
+		got := engine.validateSuggestionsWithHeimdall(context.Background(), engine.components(), "src", []float32{1}, in)
 		require.Equal(t, in, got)
 	})
 
@@ -167,7 +167,7 @@ func TestEngine_ValidateSuggestionsWithHeimdall_Branches(t *testing.T) {
 		}, nil))
 
 		in := []EdgeSuggestion{{SourceID: "src", TargetID: "t1", Type: "RELATES_TO", Confidence: 0.9}}
-		got := engine.validateSuggestionsWithHeimdall(context.Background(), "src", []float32{1, 2, 3}, in)
+		got := engine.validateSuggestionsWithHeimdall(context.Background(), engine.components(), "src", []float32{1, 2, 3}, in)
 		require.Len(t, got, 2)
 		require.Equal(t, "t1", got[0].TargetID)
 		require.Equal(t, "aug-1", got[1].TargetID)

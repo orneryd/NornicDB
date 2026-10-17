@@ -96,10 +96,12 @@ type EdgeDecay struct {
 	// Track reinforced edges (edge ID -> last reinforced time)
 	reinforced map[storage.EdgeID]time.Time
 
-	// Background worker control
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	// Background worker lifecycle, owned by lifecycle: cancel and done are
+	// set while a worker runs. Start and Stop hold lifecycle throughout, so
+	// at most one worker runs; the worker never takes lifecycle.
+	lifecycle sync.Mutex
+	cancel    context.CancelFunc
+	done      chan struct{}
 
 	// Stats
 	stats EdgeDecayStats
@@ -130,18 +132,23 @@ func NewEdgeDecay(config *EdgeDecayConfig, store storage.Engine) *EdgeDecay {
 }
 
 // Start begins the background decay worker.
+// Starting a decay that is already running does nothing.
 func (ed *EdgeDecay) Start(ctx context.Context) {
-	ed.mu.Lock()
-	defer ed.mu.Unlock()
-
 	if !ed.config.Enabled {
 		ed.logPrintf(ctx, slog.LevelInfo, "[EDGE-DECAY] Disabled, not starting")
 		return
 	}
 
-	ed.ctx, ed.cancel = context.WithCancel(ctx)
-	ed.wg.Add(1)
-	go ed.worker()
+	ed.lifecycle.Lock()
+	if ed.cancel != nil {
+		ed.lifecycle.Unlock()
+		return
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	ed.cancel, ed.done = cancel, done
+	go ed.worker(workerCtx, done)
+	ed.lifecycle.Unlock()
 
 	ed.logEvent(ctx, slog.LevelInfo, localization.InferenceEdgeDecayStartedEvent(
 		ed.config.DecayRate, ed.config.MinConfidence, ed.config.ScanInterval, ed.config.GracePeriod))
@@ -149,12 +156,15 @@ func (ed *EdgeDecay) Start(ctx context.Context) {
 
 // Stop halts the background worker.
 func (ed *EdgeDecay) Stop() {
-	ed.mu.Lock()
+	ed.lifecycle.Lock()
 	if ed.cancel != nil {
 		ed.cancel()
+		// Wait under lifecycle: a concurrent Start cannot begin a second
+		// worker until this one has exited.
+		<-ed.done
+		ed.cancel, ed.done = nil, nil
 	}
-	ed.mu.Unlock()
-	ed.wg.Wait()
+	ed.lifecycle.Unlock()
 	ed.logPrintf(context.Background(), slog.LevelInfo, "[EDGE-DECAY] Stopped")
 }
 
@@ -185,9 +195,9 @@ func (ed *EdgeDecay) TriggerScan(ctx context.Context) (scanned, decayed, deleted
 	return ed.scanAndDecay(ctx)
 }
 
-// worker runs the periodic decay scan.
-func (ed *EdgeDecay) worker() {
-	defer ed.wg.Done()
+// worker runs the periodic decay scan until ctx is cancelled, then closes done.
+func (ed *EdgeDecay) worker(ctx context.Context, done chan struct{}) {
+	defer close(done)
 
 	ticker := time.NewTicker(ed.config.ScanInterval)
 	defer ticker.Stop()
@@ -195,21 +205,21 @@ func (ed *EdgeDecay) worker() {
 	// Initial delay to let system stabilize
 	select {
 	case <-time.After(30 * time.Second):
-	case <-ed.ctx.Done():
+	case <-ctx.Done():
 		return
 	}
 
 	for {
 		select {
 		case <-ticker.C:
-			scanned, decayed, deleted, err := ed.scanAndDecay(ed.ctx)
+			scanned, decayed, deleted, err := ed.scanAndDecay(ctx)
 			if err != nil {
-				ed.logPrintf(ed.ctx, slog.LevelError, "[EDGE-DECAY] ❌ Scan error: %v", err)
+				ed.logPrintf(ctx, slog.LevelError, "[EDGE-DECAY] ❌ Scan error: %v", err)
 			} else if deleted > 0 || decayed > 0 {
-				ed.logPrintf(ed.ctx, slog.LevelInfo, "[EDGE-DECAY] ✅ Scan complete | scanned=%d decayed=%d deleted=%d",
+				ed.logPrintf(ctx, slog.LevelInfo, "[EDGE-DECAY] ✅ Scan complete | scanned=%d decayed=%d deleted=%d",
 					scanned, decayed, deleted)
 			}
-		case <-ed.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
