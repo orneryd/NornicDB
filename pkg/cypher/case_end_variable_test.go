@@ -29,7 +29,7 @@ func TestCaseReadsVariableNamedEnd(t *testing.T) {
 		"MATCH (n:N) RETURN CASE WHEN n.id = 1 THEN n.end ELSE {end: 2}.end END AS r":                                              {{nil}},
 		// A map value after its key's colon is an operand (#1136 follow-up).
 		"WITH [1] AS l, 30 AS end RETURN l + CASE WHEN 1 < end THEN [{s: 1, end: end}] ELSE [] END AS r": {{[]interface{}{int64(1), map[string]interface{}{"s": int64(1), "end": int64(30)}}}},
-		"WITH 2 AS end RETURN CASE WHEN true THEN {a: end} END.a AS r":                                     {{int64(2)}},
+		"WITH 2 AS end RETURN CASE WHEN true THEN {a: end} END.a AS r":                                   {{int64(2)}},
 	} {
 		result, err := exec.Execute(ctx, statement, nil)
 		require.NoError(t, err, statement)
@@ -40,18 +40,18 @@ func TestCaseReadsVariableNamedEnd(t *testing.T) {
 // caseKeywordAt reads END as the keyword only after a complete operand.
 func TestCaseKeywordAtReadsEndAfterAnOperand(t *testing.T) {
 	for text, keyword := range map[string]bool{
-		"CASE WHEN x THEN 1 END":       true,
-		"CASE WHEN x THEN n END":       true,
-		"CASE WHEN x THEN f(n) END":    true,
-		"CASE WHEN x THEN 'a' END":     true,
-		"CASE WHEN x THEN n.else END":  true,
-		"CASE WHEN x THEN end END":     false,
-		"CASE WHEN end.id THEN 1 END":  false,
-		"CASE WHEN x THEN end.id END":  false,
-		"CASE WHEN x ELSE end END":     false,
-		"CASE WHEN x AND end END":      false,
-		"CASE WHEN x THEN [end] END":   false,
-		"CASE WHEN x THEN 1 + end END": false,
+		"CASE WHEN x THEN 1 END":        true,
+		"CASE WHEN x THEN n END":        true,
+		"CASE WHEN x THEN f(n) END":     true,
+		"CASE WHEN x THEN 'a' END":      true,
+		"CASE WHEN x THEN n.else END":   true,
+		"CASE WHEN x THEN end END":      false,
+		"CASE WHEN end.id THEN 1 END":   false,
+		"CASE WHEN x THEN end.id END":   false,
+		"CASE WHEN x ELSE end END":      false,
+		"CASE WHEN x AND end END":       false,
+		"CASE WHEN x THEN [end] END":    false,
+		"CASE WHEN x THEN 1 + end END":  false,
 		"CASE WHEN x THEN {a: end} END": false,
 	} {
 		// The END under test is the first after CASE's own words.
