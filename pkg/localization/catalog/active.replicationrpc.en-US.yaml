@@ -28,6 +28,15 @@
 - id: replication.rpc.invalid_signature
   description: Invalid replication RPC message signature.
   other: invalid signature
+- id: replication.rpc.replayed_message
+  description: A signed replication message arrived again with a nonce already received.
+  other: message already received (replayed nonce)
+- id: replication.rpc.replay_cache_full
+  description: The replication replay cache is full. Limit is untranslated numeric data.
+  other: "replay cache full ({{.Limit}} messages); message refused"
+- id: replication.rpc.replay_protection_required
+  description: A signed replication message without a replay-protection nonce was refused.
+  other: message has no replay-protection nonce; upgrade the sending node
 - id: replication.rpc.read_failed
   description: Replication RPC wire read failure. Cause is untranslated diagnostic text.
   other: "{{.Cause}}"
