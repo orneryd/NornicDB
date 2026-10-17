@@ -254,7 +254,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		var argumentErr error
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
-			temporalContext = context.Background()
+			temporalContext = probeStatementContext(probe)
 		}
 		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
 			value, evaluated, err := e.evaluateRowValueWithCancellation(inner, values, probe)
@@ -310,7 +310,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			}
 			search, _ := values[rowStatementContextKey].(context.Context)
 			if search == nil {
-				search = context.Background()
+				search = probeStatementContext(probe)
 			}
 			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
 			return value, handled, err

@@ -9,11 +9,17 @@ import (
 // correctly exposes a self-relationship as both incoming and outgoing, but an
 // undirected Cypher expansion has only one orientation for that relationship.
 func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	outgoing, incoming, err := incidentEdgeLists(store, nodeID)
+	return undirectedIncidentEdgesContext(context.Background(), store, nodeID)
+}
+
+// undirectedIncidentEdgesContext is undirectedIncidentEdges under the
+// statement's deadline.
+func undirectedIncidentEdgesContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, store, nodeID, "both")
 	if err != nil {
 		return nil, err
 	}
-	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+	return combineIncidentEdges(ctx, nodeID, outgoing, incoming)
 }
 
 func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {

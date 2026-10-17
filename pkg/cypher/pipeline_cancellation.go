@@ -284,3 +284,22 @@ func statementCancellationErr(ctx context.Context) error {
 	}
 	return nil
 }
+
+// withStatementProbe gives a fresh context (one that keeps a reader's errors
+// local) the statement's probe, so the reader still stops at the deadline.
+func withStatementProbe(fresh, statement context.Context) context.Context {
+	if probe := contextPipelineProbe(statement); probe != nil {
+		return context.WithValue(fresh, pipelineCancellationKey{}, probe)
+	}
+	return fresh
+}
+
+// probeStatementContext is a context for a reader that takes one, carrying
+// probe's deadline and probe itself; without a probe there is no statement
+// deadline to keep.
+func probeStatementContext(probe *pipelineCancellation) context.Context {
+	if probe == nil {
+		return context.Background()
+	}
+	return context.WithValue(probe.ctx, pipelineCancellationKey{}, probe)
+}

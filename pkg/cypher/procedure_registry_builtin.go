@@ -94,7 +94,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryRelationships(args)
+				return e.callDbIndexFulltextQueryRelationships(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

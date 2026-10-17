@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -65,7 +66,7 @@ func TestGDSRelationshipDefaultImportErrors(t *testing.T) {
 		gdsFollowUpCatalog(t)
 		e, _ := newGDSEngineGraph(t, "defaultimport", gdsNode("0", "N", nil), gdsNode("1", "N", nil))
 		require.NoError(t, e.storage.CreateEdge(&storage.Edge{ID: "r", StartNode: "0", EndNode: "1", Type: "R"}))
-		_, err := e.buildGraphProjection("defaults", []gdsElementSpec{{name: "N", element: "N"}}, []gdsElementSpec{{name: "R", element: "R", properties: []gdsPropertySpec{{key: "w", property: "w", defaultValue: value}}}}, false)
+		_, err := e.buildGraphProjection(context.Background(), "defaults", []gdsElementSpec{{name: "N", element: "N"}}, []gdsElementSpec{{name: "R", element: "R", properties: []gdsPropertySpec{{key: "w", property: "w", defaultValue: value}}}}, false)
 		require.Error(t, err)
 	}
 }

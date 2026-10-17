@@ -101,7 +101,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
-			incident, err := undirectedIncidentEdges(store, nodeID)
+			incident, err := undirectedIncidentEdgesContext(ctx, store, nodeID)
 			if err != nil {
 				return nil, true, err
 			}

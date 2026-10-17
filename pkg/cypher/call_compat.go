@@ -201,7 +201,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -245,7 +245,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 			return result, nil
 		}
 		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+		err := storage.StreamEdgesWithFallback(statementCtx, e.storage, 1024, func(edge *storage.Edge) error {
 			if !matchesRelationshipTypes(edge, targetTypes) {
 				return nil
 			}

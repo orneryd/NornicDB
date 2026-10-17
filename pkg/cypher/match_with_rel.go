@@ -146,7 +146,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 		return nil
 	}
 	if isCaseExpression(expr) {
-		return e.evaluateCaseExpressionFromValues(expr, values)
+		return e.evaluateCaseExpression(withValueBindings(withStatementProbe(context.Background(), ctx), values), expr, nil, nil, nil, nil, nil, 0)
 	}
 
 	// Direct lookup: callers store pre-computed values under the expression

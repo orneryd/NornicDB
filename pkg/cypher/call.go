@@ -350,7 +350,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
 		return projected, err
 	}
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
@@ -539,7 +539,7 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 	return columns, len(columns) > 0
 }
 
-func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
 		return nil, false, nil
@@ -567,7 +567,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 	if modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
+	result, err := e.applyResultModifiers(ctx, result, modifiers)
 	return result, true, err
 }
 

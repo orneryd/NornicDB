@@ -432,7 +432,11 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO") {
 						counts["A"]++
-						findings = append(findings, cancellationFinding{rule: "A", key: key + " context." + sel.Sel.Name, where: where})
+						label := key + " context." + sel.Sel.Name
+						if self, ok := wrappers[selfKey]; ok && self.context {
+							label += " (context-free wrapper of " + self.target + ")"
+						}
+						findings = append(findings, cancellationFinding{rule: "A", key: label, where: where})
 					}
 				}
 				if !scoped || !callIsLocal(call, imports) {
