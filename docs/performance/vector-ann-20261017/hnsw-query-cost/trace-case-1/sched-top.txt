@@ -1,0 +1,23 @@
+Type: delay
+Showing nodes accounting for 92.31ms, 95.92% of 96.23ms total
+Dropped 38 nodes (cum <= 0.48ms)
+      flat  flat%   sum%        cum   cum%
+   90.42ms 93.96% 93.96%    90.42ms 93.96%  runtime.selectnbsend
+    1.89ms  1.96% 95.92%     1.89ms  1.96%  runtime.Gosched
+         0     0% 95.92%    77.48ms 80.51%  google.golang.org/grpc.(*Server).handleRawConn.func1
+         0     0% 95.92%    13.12ms 13.63%  google.golang.org/grpc.(*Server).handleStream
+         0     0% 95.92%    13.12ms 13.63%  google.golang.org/grpc.(*Server).processUnaryRPC
+         0     0% 95.92%    12.94ms 13.45%  google.golang.org/grpc.(*Server).sendResponse
+         0     0% 95.92%    77.48ms 80.51%  google.golang.org/grpc.(*Server).serveStreams
+         0     0% 95.92%    13.12ms 13.63%  google.golang.org/grpc.(*Server).serveStreams.func2.1
+         0     0% 95.92%    12.94ms 13.45%  google.golang.org/grpc/internal/transport.(*ServerStream).Write
+         0     0% 95.92%    90.42ms 93.96%  google.golang.org/grpc/internal/transport.(*controlBuffer).executeAndPut
+         0     0% 95.92%    77.48ms 80.51%  google.golang.org/grpc/internal/transport.(*controlBuffer).put
+         0     0% 95.92%    77.48ms 80.51%  google.golang.org/grpc/internal/transport.(*http2Server).HandleStreams
+         0     0% 95.92%     1.19ms  1.23%  google.golang.org/grpc/internal/transport.(*http2Server).handleWindowUpdate
+         0     0% 95.92%    76.20ms 79.18%  google.golang.org/grpc/internal/transport.(*http2Server).operateHeaders
+         0     0% 95.92%    12.94ms 13.45%  google.golang.org/grpc/internal/transport.(*http2Server).write
+         0     0% 95.92%    12.94ms 13.45%  google.golang.org/grpc/internal/transport.(*http2Server).writeHeader
+         0     0% 95.92%    12.94ms 13.45%  google.golang.org/grpc/internal/transport.(*http2Server).writeHeaderLocked
+         0     0% 95.92%     1.89ms  1.96%  google.golang.org/grpc/internal/transport.(*loopyWriter).run
+         0     0% 95.92%     1.89ms  1.96%  google.golang.org/grpc/internal/transport.NewServerTransport.func3

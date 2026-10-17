@@ -1,0 +1,94 @@
+File: nornicdb-hnsw-profile
+Type: cpu
+Time: 2026-10-17 06:58:04 MST
+Duration: 30.12s, Total samples = 26.62s (88.39%)
+-----------+-------------------------------------------------------
+    12.64s   syscall.rawsyscalln
+             syscall.syscalln
+             syscall.syscall6
+             syscall.pread
+             syscall.Pread (inline)
+             internal/poll.(*FD).Pread.func1 (inline)
+             internal/poll.ignoringEINTR2[go.shape.int] (inline)
+             internal/poll.(*FD).Pread
+             os.(*File).pread (inline)
+             os.(*File).ReadAt
+             github.com/orneryd/nornicdb/pkg/search.(*VectorFileStore).scoreCandidatesDot
+             github.com/orneryd/nornicdb/pkg/search.(*CPUExactScorer).ScoreCandidates
+             github.com/orneryd/nornicdb/pkg/search.(*VectorSearchPipeline).searchWithExhaustionFromEntries
+             github.com/orneryd/nornicdb/pkg/search.(*Service).adaptiveVectorSearch
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexed
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodes
+             github.com/orneryd/nornicdb/pkg/search.(*Service).VectorQueryNodesWithOptions (inline)
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.searchCollection
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*PointsService).Search
+             github.com/qdrant/go-client/qdrant._Points_Search_Handler.func1
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*Server).unaryLoggingInterceptor
+             github.com/qdrant/go-client/qdrant._Points_Search_Handler
+             google.golang.org/grpc.(*Server).processUnaryRPC
+             google.golang.org/grpc.(*Server).handleStream
+             google.golang.org/grpc.(*Server).serveStreams.func2.1
+-----------+-------------------------------------------------------
+     670ms   syscall.rawsyscalln
+             syscall.syscalln
+             syscall.syscall
+             syscall.read
+             syscall.Read (inline)
+             internal/poll.ignoringEINTRIO (inline)
+             internal/poll.(*FD).Read
+             net.(*netFD).Read
+             net.(*conn).Read
+             bufio.(*Reader).Read
+             io.ReadAtLeast
+             io.ReadFull (inline)
+             golang.org/x/net/http2.readFrameHeader
+             golang.org/x/net/http2.(*Framer).ReadFrameHeader
+             google.golang.org/grpc/internal/transport.(*framer).readFrame
+             google.golang.org/grpc/internal/transport.(*http2Server).HandleStreams
+             google.golang.org/grpc.(*Server).serveStreams
+             google.golang.org/grpc.(*Server).handleRawConn.func1
+-----------+-------------------------------------------------------
+     2.75s   syscall.rawsyscalln
+             syscall.syscalln
+             syscall.syscall6
+             syscall.pread
+             syscall.Pread (inline)
+             internal/poll.(*FD).Pread.func1 (inline)
+             internal/poll.ignoringEINTR2[go.shape.int] (inline)
+             internal/poll.(*FD).Pread
+             os.(*File).pread (inline)
+             os.(*File).ReadAt
+             github.com/orneryd/nornicdb/pkg/search.(*VectorFileStore).GetVector
+             github.com/orneryd/nornicdb/pkg/search.(*Service).scoreVectorIDDot
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryScoreReader.func1
+             github.com/orneryd/nornicdb/pkg/search.(*Service).scoreVectorQueryCandidates
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions.func1
+             github.com/orneryd/nornicdb/pkg/search.(*Service).adaptiveVectorSearch
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexed
+             github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodes
+             github.com/orneryd/nornicdb/pkg/search.(*Service).VectorQueryNodesWithOptions (inline)
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.searchCollection
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*PointsService).Search
+             github.com/qdrant/go-client/qdrant._Points_Search_Handler.func1
+             github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*Server).unaryLoggingInterceptor
+             github.com/qdrant/go-client/qdrant._Points_Search_Handler
+             google.golang.org/grpc.(*Server).processUnaryRPC
+             google.golang.org/grpc.(*Server).handleStream
+             google.golang.org/grpc.(*Server).serveStreams.func2.1
+-----------+-------------------------------------------------------
+     990ms   syscall.rawsyscalln
+             syscall.syscalln
+             syscall.syscall
+             syscall.write
+             syscall.Write (inline)
+             internal/poll.ignoringEINTRIO (inline)
+             internal/poll.(*FD).Write
+             net.(*netFD).Write
+             net.(*conn).Write
+             google.golang.org/grpc/internal/transport.(*bufWriter).flushKeepBuffer
+             google.golang.org/grpc/internal/transport.(*bufWriter).Flush
+             google.golang.org/grpc/internal/transport.(*loopyWriter).run
+             google.golang.org/grpc/internal/transport.NewServerTransport.func3
+-----------+-------------------------------------------------------
