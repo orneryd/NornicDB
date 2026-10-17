@@ -553,15 +553,22 @@ func (c *rowValueCompiler) compileReduce(expr string, form reduceForm) (rowValue
 			node.predicate = rowUnresolvedNode{}
 		}
 	}
+	if plan := form.appendPlan(); plan != nil {
+		for _, term := range plan.terms {
+			node.terms = append(node.terms, c.compileLoopBody(loop, term))
+		}
+	}
 	return bound(expr, node, impureRowValue())
 }
 
 // rowReduceNode is reduce / allReduce(accumulator = initial, variable IN
-// list | step[, predicate]), folded by runReduceForm.
+// list | step[, predicate]), folded by runReduceForm; terms are the step's
+// operands when it has an append plan.
 type rowReduceNode struct {
 	form            reduceForm
 	initial, list   rowValueNode
 	step, predicate rowValueNode
+	terms           []rowValueNode
 	loop            *rowValueLoop
 }
 
@@ -578,9 +585,13 @@ func (n *rowReduceNode) eval(e *StorageExecutor, values map[string]interface{}, 
 		return nil, true, nil
 	}
 	scope, inner := rowLoopScope(values, frames, n.loop)
+	var term func(index int) (interface{}, bool, error)
+	if len(n.terms) > 0 {
+		term = func(index int) (interface{}, bool, error) { return n.terms[index].eval(e, scope, inner) }
+	}
 	return rowReduceLoop(n.form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return n.step.eval(e, scope, inner) },
-		func() (interface{}, bool, error) { return n.predicate.eval(e, scope, inner) })
+		func() (interface{}, bool, error) { return n.predicate.eval(e, scope, inner) }, term)
 }
 
 // compileCase compiles a CASE expression as evaluateRowCaseExpression
