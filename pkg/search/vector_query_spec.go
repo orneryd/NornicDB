@@ -104,21 +104,25 @@ type RelationshipVectorQueryHit struct {
 //  3. Fallback to ChunkEmbeddings[0..N] (best score across chunks)
 //
 // For performance, cosine-similarity queries are executed against the in-memory
-// vector index (unified pipeline) rather than scanning storage.
+// vector index (unified pipeline) rather than scanning storage. This legacy
+// entry point preserves live-indexed Cypher reads before full warmup; use
+// VectorQueryNodesWithOptions for reads requiring warming/readiness.
 //
 // Scores are on spec.ScoreScale; the zero value is Neo4j's scale for its vector
 // indexes (#907): cosine max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both
 // in [0, 1] (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity);
 // dot, a NornicDB similarity, is the dot product.
 func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec) ([]VectorQueryHit, error) {
-	return s.VectorQueryNodesWithOptions(ctx, queryEmbedding, spec, nil)
+	return s.vectorQueryNodes(ctx, queryEmbedding, spec, nil, false)
 }
 
 // VectorQueryNodesWithOptions is VectorQueryNodes for a caller with its own
 // search options. Of opts it reads HNSWEf, the query's own HNSW beam width, and
 // Where, which admits candidate nodes before the top-K cut, as a Cypher WHERE
-// on the node does; nil opts is VectorQueryNodes. It is the vector query the
+// on the node does; nil opts uses default options. It is the vector query the
 // Qdrant API's Search runs, on the same index and strategy as Cypher's.
+// Unlike the legacy scalar-vector API, this optioned entry point warms a lazy
+// service and rejects an incomplete build before returning any results.
 //
 // Example:
 //
@@ -127,6 +131,13 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 //		Limit: 10, ScoreScale: search.VectorScoreSimilarity,
 //	}, &search.SearchOptions{HNSWEf: 128, Where: func(n *storage.Node) bool { return n.Properties["tag"] == "a" }})
 func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions) ([]VectorQueryHit, error) {
+	return s.vectorQueryNodes(ctx, queryEmbedding, spec, opts, true)
+}
+
+// vectorQueryNodes shares vector semantics across the two public contracts.
+// Cypher's established scalar fast path can use live indexed vectors during
+// warming; optioned reads (Qdrant) require the configured population to finish.
+func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions, requireReady bool) ([]VectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
@@ -136,11 +147,10 @@ func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbeddin
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := s.EnsureWarm(ctx); err != nil {
-		return nil, err
-	}
-	if s.buildAttempted.Load() && !s.IsReady() {
-		return nil, localizedError(localization.SearchIndexBuilding(), ErrSearchIndexBuilding)
+	if requireReady {
+		if err := s.prepareSearchRead(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if spec.Limit <= 0 {
 		spec.Limit = 10
