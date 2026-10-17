@@ -1,0 +1,5 @@
+# Match the extraction version in Soraban/code-intelligence/action.yml.
+graphifyy[sql]==0.9.72
+ijson>=3.2,<4
+# Only required for users choosing a Bolt endpoint.
+neo4j>=5,<7
