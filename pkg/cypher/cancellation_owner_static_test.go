@@ -752,6 +752,16 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 			}
 		}
 	}
+	// A probe form whose plain form returns nothing reports its own success:
+	// its bool is an ok flag, so it is not sentinel-shaped.
+	for _, f := range files {
+		for _, decl := range f.file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && (fn.Type.Results == nil || len(fn.Type.Results.List) == 0) {
+				delete(sentinel, fn.Name.Name+"WithCancellation")
+				delete(sentinel, fn.Name.Name+"Probed")
+			}
+		}
+	}
 	plainOf := map[string]string{}
 	wrapperOf := map[string]cancellationWrapper{}
 	for name, wrapper := range wrappers {
@@ -788,6 +798,7 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 			}
 			key := funcKey(fn)
 			delegates := probeForm(fn.Name.Name)
+			var emitted []ast.Node
 			var visit func(list []ast.Stmt)
 			visit = func(list []ast.Stmt) {
 				for index, stmt := range list {
@@ -805,7 +816,7 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 							return false
 						case *ast.CallExpr:
 							name := callName(node)
-							if !sentinel[name] || name == fn.Name.Name || isReturn && delegates {
+							if !sentinel[name] || name == fn.Name.Name || name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed" || isReturn && delegates {
 								return true
 							}
 							if cancellationCheck(stmt) || index+1 < len(list) && cancellationCheck(list[index+1]) {
@@ -816,9 +827,16 @@ func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wr
 							if cancellationDataSentinels[name] != "" {
 								finding.key += " (data helper: check the probe after it)"
 							} else if plain := plainOf[name]; plain != "" && cancellationTextSentinels[name] != "" {
-								if text, ok := unrewriteCall(fset, f.src, node, plain, wrapperOf[name]); ok {
+								nested := false
+								for _, outer := range emitted {
+									if node.Pos() < outer.End() && outer.Pos() < node.End() {
+										nested = true
+									}
+								}
+								if text, ok := unrewriteCall(fset, f.src, node, plain, wrapperOf[name]); ok && !nested {
 									start, end := fset.Position(node.Pos()), fset.Position(node.End())
 									finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, start.Line, start.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
+									emitted = append(emitted, node)
 								}
 							}
 							findings = append(findings, finding)

@@ -85,7 +85,6 @@ var cancellationOwnerAllowlist = map[string]string{
 var cancellationTextSentinels = map[string]string{
 	"StatementColumnsWithCancellation": "bounded by statement text",
 	"StripCommentsWithCancellation": "bounded by statement text",
-	"addProjectionWithCancellation": "bounded by statement text",
 	"aggregateCallKeyWithCancellation": "bounded by statement text",
 	"aggregateCallLookupWithCancellation": "bounded by statement text",
 	"alignOrderTermsWithCancellation": "bounded by statement text",
@@ -149,7 +148,6 @@ var cancellationTextSentinels = map[string]string{
 	"floatLiteralInRangeWithCancellation": "bounded by statement text",
 	"followedByTimeZoneWithCancellation": "bounded by statement text",
 	"forIterationClauseAtWithCancellation": "bounded by statement text",
-	"formatOperatorWithCancellation": "bounded by statement text",
 	"formatPlanWithCancellation": "bounded by statement text",
 	"hasAdjacentOperandsWithCancellation": "bounded by statement text",
 	"hasAdjacentStringLiteralsWithCancellation": "bounded by statement text",
