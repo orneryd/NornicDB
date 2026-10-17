@@ -472,6 +472,10 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 		weight float64
 	}
 	var shared []sharedNeighbor
+	// Only an explanation or the ordered resource-allocation sum needs the
+	// shared neighbours themselves; the other metrics only count them.
+	resourceAllocation := metric == "RESOURCE_ALLOCATION"
+	keepShared := explain || resourceAllocation
 	for _, edge := range a {
 		weight := weightOf(edge)
 		normA += weight * weight
@@ -497,7 +501,9 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 			intersection += math.Min(wa, wb)
 			union += math.Max(wa, wb)
 			dot += wa * wb
-			shared = append(shared, sharedNeighbor{a[i].target, math.Min(wa, wb)})
+			if keepShared {
+				shared = append(shared, sharedNeighbor{a[i].target, math.Min(wa, wb)})
+			}
 			i++
 			j++
 		}
@@ -514,7 +520,6 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 	default:
 		similarity = intersection / union
 	}
-	resourceAllocation := metric == "RESOURCE_ALLOCATION"
 	if !explain && !resourceAllocation {
 		return similarity, nil
 	}
