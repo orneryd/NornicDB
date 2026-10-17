@@ -592,6 +592,9 @@ func (b *PooledStringBuilder) WriteString(s string) {
 // Parameters:
 //   - c: Byte to append
 //
+// Returns:
+//   - Always nil; the signature is io.ByteWriter's, as for strings.Builder
+//
 // Example:
 //
 //	builder := pool.GetStringBuilder()
@@ -599,8 +602,9 @@ func (b *PooledStringBuilder) WriteString(s string) {
 //	builder.WriteString("items")
 //	builder.WriteByte(']')
 //	fmt.Println(builder.String()) // "[items]"
-func (b *PooledStringBuilder) WriteByte(c byte) {
+func (b *PooledStringBuilder) WriteByte(c byte) error {
 	b.buf = append(b.buf, c)
+	return nil
 }
 
 // String returns the built string.
