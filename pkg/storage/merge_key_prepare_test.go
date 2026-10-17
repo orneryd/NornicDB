@@ -174,6 +174,38 @@ func TestPrepareMergeKeyAfterWrites(t *testing.T) {
 	schema.uniqueConstraintCommitLocksMu.Unlock()
 }
 
+// TestReleaseMergeKeysLetsWaitersProceed: a transaction whose MERGE keys are
+// released (a statement failed in it) no longer keeps another transaction's
+// MERGE of the key waiting, though it is still open.
+func TestReleaseMergeKeysLetsWaitersProceed(t *testing.T) {
+	engine, schema := newMergeKeyTestEngine(t)
+	ctx := context.Background()
+	failed := beginMergeKeyTx(t, engine)
+	_, _ = failed.GetNodesByLabel("U") // observed: the lock applies after reads too
+	require.NoError(t, failed.PrepareMergeKey(ctx, "U", "k", int64(40)))
+	waiter := beginMergeKeyTx(t, engine)
+	done := make(chan error, 1)
+	go func() { done <- waiter.PrepareMergeKey(ctx, "U", "k", int64(40)) }()
+	select {
+	case err := <-done:
+		t.Fatalf("waiter didn't wait for the key's holder: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	failed.ReleaseMergeKeys()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiter still waits after the holder released its MERGE keys")
+	}
+	failed.ReleaseMergeKeys() // idempotent
+	require.NoError(t, failed.Rollback())
+	require.NoError(t, waiter.Rollback())
+	schema.uniqueConstraintCommitLocksMu.Lock()
+	require.Empty(t, schema.uniqueConstraintCommitLocks)
+	schema.uniqueConstraintCommitLocksMu.Unlock()
+}
+
 // TestPrepareMergeKeyDeadlockAtCommit: two transactions holding each other's
 // MERGE key and creating the other's key wait for each other at commit; one
 // fails with ErrDeadlock, the other commits.

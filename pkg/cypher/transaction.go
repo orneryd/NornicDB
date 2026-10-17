@@ -86,6 +86,12 @@ type TransactionContext struct {
 func (e *StorageExecutor) failTransaction(err error) error {
 	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
 		tx.failed = err
+		// The transaction can no longer commit: its MERGE key locks must not
+		// keep other transactions' MERGEs of those keys waiting until the
+		// client rolls it back.
+		if releaser, ok := tx.tx.(interface{ ReleaseMergeKeys() }); ok {
+			releaser.ReleaseMergeKeys()
+		}
 	}
 	return err
 }
