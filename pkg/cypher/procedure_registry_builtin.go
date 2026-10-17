@@ -496,6 +496,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return callNornicSimilarityStream(args)
 			})
+		// The exact page of unordered source pairs over the statement's
+		// incidence rows, with the count of every eligible pair (N1). A
+		// NornicDB extension sharing nornicdb.similarity.stream's kernel.
+		registerBuiltInProcedure("nornicdb.similarity.pairs", "nornicdb.similarity.pairs(rows :: LIST<MAP>, configuration = {} :: MAP) :: (pairs :: LIST<MAP>, reached :: INTEGER, capped :: BOOLEAN, work :: MAP)", localization.CypherProcedureMetadata("nornicdb.similarity.pairs"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return callNornicSimilarityPairs(ctx, args)
+			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphExists(args)

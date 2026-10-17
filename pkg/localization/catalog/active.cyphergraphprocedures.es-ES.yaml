@@ -219,10 +219,16 @@
   other: 'La fila {{.Position}} de las filas de similitud debe ser un mapa con source y thing, pero se encontró: {{.Type}}'
 - id: cyphergraphprocedures.similarity_row_key
   description: Mensaje de nornicdb.similarity.stream (similarity row key).
-  other: 'La fila {{.Position}} de las filas de similitud tiene la clave inesperada `{{.Key}}`; las filas admiten source, thing y weight'
+  other: 'La fila {{.Position}} de las filas de similitud tiene la clave inesperada `{{.Key}}`; las filas admiten source, thing, weight y having'
 - id: cyphergraphprocedures.similarity_row_node
   description: Mensaje de nornicdb.similarity.stream (similarity row node).
   other: 'La fila {{.Position}} de las filas de similitud necesita un nodo o un id de nodo para `{{.Key}}`, pero se encontró: {{.Type}}'
 - id: cyphergraphprocedures.similarity_row_weight
   description: Mensaje de nornicdb.similarity.stream (similarity row weight).
   other: 'La fila {{.Position}} de las filas de similitud tiene el peso {{.Weight}}; un peso debe ser un número finito mayor o igual que 0'
+- id: cyphergraphprocedures.similarity_duplicate_source
+  description: Mensaje de nornicdb.similarity.pairs (similarity duplicate source).
+  other: 'La fuente {{.Position}} de las fuentes de similitud repite la fuente {{.Source}}; cada fuente se indica una sola vez'
+- id: cyphergraphprocedures.similarity_pairs_metric
+  description: Mensaje de nornicdb.similarity.pairs (similarity pairs metric).
+  other: '{{.Metric}} no es una métrica válida para nornicdb.similarity.pairs, que puntúa RESOURCE_ALLOCATION'

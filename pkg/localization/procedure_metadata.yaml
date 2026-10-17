@@ -435,6 +435,11 @@
     es: "Alias obsoleto de kp.resolve: resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
   }
 - {
+    name: nornicdb.similarity.pairs,
+    en: "Returns the exact best page of unordered source pairs by resource allocation over incidence rows the statement supplies, with pair rules (partition keys, classes, documents, identifiers, excluded pairs) and the exact count of every eligible pair. A NornicDB extension.",
+    es: "Devuelve la página exacta de los mejores pares no ordenados de fuentes por asignación de recursos sobre las filas de incidencia que aporta la sentencia, con reglas de pares (claves de partición, clases, documentos, identificadores, pares excluidos) y el recuento exacto de todos los pares elegibles. Extensión de NornicDB.",
+  }
+- {
     name: nornicdb.similarity.stream,
     en: "Scores node similarity for one source node over incidence rows the statement supplies (source, thing, optional weight), by JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION, with no graph projection. A NornicDB extension.",
     es: "Calcula la similitud de nodos para un nodo de origen a partir de las filas de incidencia que aporta la sentencia (source, thing, weight opcional), por JACCARD, OVERLAP, COSINE o RESOURCE_ALLOCATION, sin proyección del grafo. Extensión de NornicDB.",

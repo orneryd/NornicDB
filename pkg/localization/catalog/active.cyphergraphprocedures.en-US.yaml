@@ -218,11 +218,17 @@
   description: nornicdb.similarity.stream's message for an input row that is not a map. Position, Type untranslated.
   other: 'Row {{.Position}} of the similarity rows must be a map with source and thing, but found: {{.Type}}'
 - id: cyphergraphprocedures.similarity_row_key
-  description: nornicdb.similarity.stream's message for a row key other than source, thing and weight. Position, Key untranslated.
-  other: 'Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing and weight'
+  description: nornicdb.similarity.stream's message for a row key other than source, thing, weight and having. Position, Key untranslated.
+  other: 'Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing, weight and having'
 - id: cyphergraphprocedures.similarity_row_node
   description: nornicdb.similarity.stream's message for a row's source or thing that is not a node or node id. Position, Key, Type untranslated.
   other: 'Row {{.Position}} of the similarity rows needs a node or node id for `{{.Key}}`, but found: {{.Type}}'
 - id: cyphergraphprocedures.similarity_row_weight
   description: nornicdb.similarity.stream's message for a row weight that is not a finite number of at least 0. Position, Weight untranslated.
   other: 'Row {{.Position}} of the similarity rows has the weight {{.Weight}}; a weight must be a finite number of at least 0'
+- id: cyphergraphprocedures.similarity_duplicate_source
+  description: nornicdb.similarity.pairs's message for a source listed twice in its sources. Position, Source untranslated.
+  other: 'Source {{.Position}} of the similarity sources repeats the source {{.Source}}; each source is listed once'
+- id: cyphergraphprocedures.similarity_pairs_metric
+  description: nornicdb.similarity.pairs's message for a similarity metric other than RESOURCE_ALLOCATION. Metric untranslated.
+  other: '{{.Metric}} is not a valid metric for nornicdb.similarity.pairs, which scores RESOURCE_ALLOCATION'
