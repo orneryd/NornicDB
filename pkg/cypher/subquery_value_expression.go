@@ -509,6 +509,13 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 	if err != nil {
 		return 0, false
 	}
+	// The candidates and the set that drops duplicates count while the
+	// semi-join runs (#1343).
+	memory := trackedRetention(ctx)
+	defer memory.release()
+	if memory.reserveSlots(len(nodes), entityReferenceBytes+mapEntryBytes+stringHeaderBytes) != nil {
+		return 0, true
+	}
 	hideSystemNodes := shouldHideSystemNodes(e.storage)
 	seen := make(map[storage.NodeID]struct{}, len(nodes))
 	var row map[string]interface{}
@@ -725,6 +732,12 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			recordExpressionFailure(ctx, err)
 			return 0, true
 		}
+	}
+	// The relationships it reads count while the semi-join runs (#1343).
+	memory := trackedRetention(ctx)
+	defer memory.release()
+	if memory.reserveSlots(len(edges), entityReferenceBytes) != nil {
+		return 0, true
 	}
 	var row map[string]interface{}
 	for index, edge := range edges {
