@@ -242,6 +242,7 @@ class QuantizationEvidenceContracts(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "embedded VCS"):
                     run.main()
                 start.assert_not_called()
+                self.assertFalse((root/"out"/".runner.lock").exists())
 
     def test_runner_caption_uses_explicit_rescoring_factor(self):
         import numpy as np
