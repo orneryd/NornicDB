@@ -2869,7 +2869,7 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstVectorDimensions(node))
+	release, err := s.lockNodeMutation(firstVectorDimensions(node), true)
 	if err != nil {
 		return err
 	}
@@ -3599,7 +3599,7 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// can be acknowledged; their snapshots may contain older node state.
 	s.buildMu.RLock()
 	defer s.buildMu.RUnlock()
-	release, err := s.lockNodeMutation(0)
+	release, err := s.lockNodeMutation(0, true)
 	if err != nil {
 		return err
 	}
@@ -3629,7 +3629,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		s.IndexRelationship(edge)
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge))
+	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge), false)
 	if err != nil {
 		return err
 	}
@@ -3720,7 +3720,7 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	release, err := s.lockNodeMutation(0)
+	release, err := s.lockNodeMutation(0, false)
 	if err != nil {
 		return err
 	}
@@ -4036,10 +4036,15 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 
 	// Live writes may be newer than the saved image after persistence was off.
 	// Only the source record establishes initial population completeness.
+	// Node writes applied before any population retired the saved node images
+	// (nodeWriteUnpopulated): the BM25 checkpoint is not loaded over them and
+	// the graph is rebuilt; vector admission follows the same record.
 	s.indexMu.RLock()
 	textComplete := s.nodeSources.textComplete
+	unpopulatedWrites := s.nodeSources.unpopulatedLiveWrites
 	s.indexMu.RUnlock()
-	if fulltextPath != "" && !textComplete && !s.fulltext().IsDirty() {
+	forceHNSWRebuild = forceHNSWRebuild || unpopulatedWrites
+	if fulltextPath != "" && !textComplete && !unpopulatedWrites && !s.fulltext().IsDirty() {
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
 		if loadErr == nil && accepted {
 			s.indexMu.Lock()

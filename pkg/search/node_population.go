@@ -16,8 +16,9 @@ type nodeSourceRecord struct {
 	memoryAuthoritative     bool
 	fulltextCheckpoint      string
 	fulltextCheckpointCount int
-	// unpopulatedLiveWrites: live writes applied while the sources were
-	// incomplete and no population ran. Persistence then populates first.
+	// unpopulatedLiveWrites: node writes applied while the sources were
+	// incomplete and no population ran (nodeWriteUnpopulated). Persistence then
+	// populates first, and the population never loads the BM25 checkpoint.
 	unpopulatedLiveWrites bool
 }
 
@@ -34,6 +35,13 @@ const (
 	nodeVectorFileMoved
 	nodeFulltextReset
 	nodeSourcesCleared
+	// nodeWriteUnpopulated: a node write applied while the sources are
+	// incomplete. Unless a saved vector image is already open (the write then
+	// applied to it), the saved node images are retired now: the resident
+	// indexes become the authority, so no later admission, live or population,
+	// restores an image over this write, and the population completes them
+	// from storage.
+	nodeWriteUnpopulated
 )
 
 // changeNodeSourcesLocked is the sole completion/authority writer. The
@@ -64,9 +72,16 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 	case nodeFulltextReset:
 		s.nodeSources.textComplete = false
 	case nodeSourcesCleared:
-		// A dropped database: both sources are empty, complete and in memory.
+		// A dropped database: both sources are empty, complete and in memory,
+		// so no earlier write is left unpopulated.
 		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
 		s.nodeSources.memoryAuthoritative = true
+		s.nodeSources.unpopulatedLiveWrites = false
+	case nodeWriteUnpopulated:
+		s.nodeSources.unpopulatedLiveWrites = true
+		if s.vectorFileStore == nil {
+			s.nodeSources.memoryAuthoritative = true
+		}
 	}
 }
 
@@ -140,8 +155,10 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 // any population (the build that follows rebuilds or restores around it). A
 // write never starts or runs a population. On success the caller owns indexMu
 // and must call the returned release.
-// Private node/edge batch writers never enter this public boundary.
-func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
+// Private node/edge batch writers never enter this public boundary. nodeWrite
+// marks a node write: only those change the node sources, so only they make
+// the saved node images stale before a population.
+func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), error) {
 	for {
 		s.indexMu.Lock()
 		if s.lifecycleCtx != nil {
@@ -162,8 +179,8 @@ func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 		}
 		s.baseBuildControlMu.Unlock()
 		if !pending {
-			if !s.nodeSourcesCompleteLocked() {
-				s.nodeSources.unpopulatedLiveWrites = true
+			if nodeWrite && !s.nodeSourcesCompleteLocked() {
+				s.changeNodeSourcesLocked(nodeWriteUnpopulated)
 			}
 			if err := s.materializeNodeFulltextLocked(); err != nil {
 				s.indexMu.Unlock()
