@@ -288,6 +288,7 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		if err := s.persistBaseIndexes(); err != nil {
 			return err
 		}
+		runPopulationHook(&basePersistedHook, s)
 		if plan.fulltextPath != "" {
 			s.indexMu.Lock()
 			s.setNodeFulltextCheckpointLocked(plan.fulltextPath, s.fulltext().Count())

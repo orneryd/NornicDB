@@ -104,6 +104,9 @@ func (f *FulltextIndexV2) SaveNoCopy(path string) error {
 }
 
 func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) error {
+	if fn := bm25SnapshotEncodeHook.Load(); fn != nil {
+		(*fn)()
+	}
 	if err := writeMsgpackSnapshot(path, &snap); err != nil {
 		return err
 	}

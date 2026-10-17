@@ -368,6 +368,12 @@ var annWarmupStartedHook atomic.Pointer[func(*Service)]
 // waited for any running source step and before it reads. Nil outside tests.
 var finalPersistHook, searchReadHook atomic.Pointer[func(*Service)]
 
+// basePersistedHook runs in an explicit rebuild right after its base indexes
+// are saved. bm25SnapshotEncodeHook runs after a BM25 V2 snapshot is captured
+// and before it is encoded. Nil outside tests.
+var basePersistedHook atomic.Pointer[func(*Service)]
+var bm25SnapshotEncodeHook atomic.Pointer[func()]
+
 func runPopulationHook(hook *atomic.Pointer[func(*Service)], s *Service) {
 	if fn := hook.Load(); fn != nil {
 		(*fn)(s)
