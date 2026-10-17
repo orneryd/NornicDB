@@ -104,7 +104,9 @@ commits need no database connection.
 The detector uses the reference action's analysis, not just an embedding threshold:
 
 1. Select changed functions/methods with at least four code lines, 40 tokens and
-   at least 50% added body lines. Generated paths are excluded.
+   at least one changed code line. Generated paths are excluded. The local
+   guard deliberately checks small edits too; the reference action defaults to
+   requiring 50% added body lines.
 2. Query NornicDB hybrid search for up to 25 matches in the same repository.
    Compare code tokens, normalized structure and receiver-normalized code; a
    similarity of at least 0.8 is a code match.
@@ -129,7 +131,7 @@ Run the same public check manually with:
 ```
 
 This is a heuristic against the stored graph, not proof that a change has no
-duplicates. Small helpers and small edits below the candidate thresholds are not
+duplicates. Small helpers below the size thresholds and comment-only changes are not
 checked. Two new functions absent from the stored graph are not compared directly
 to each other. A stale or different-branch baseline limits results; refresh the
 intended baseline explicitly. Review is still needed for ownership and design.
