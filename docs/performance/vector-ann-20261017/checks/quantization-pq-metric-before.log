@@ -1,0 +1,11 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+--- FAIL: TestProductCodebookRetainsSubvectorMagnitude (0.00s)
+    pq_codebook_metric_test.go:22: 
+        	Error Trace:	/Users/timothysweet/src/NornicDB/pkg/search/pq_codebook_metric_test.go:22
+        	Error:      	"19.802498" is not less than "0.02"
+        	Test:       	TestProductCodebookRetainsSubvectorMagnitude
+        	Messages:   	PQ encoding uses squared distance, so codebook training must retain subvector magnitude
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/search	0.479s
+FAIL

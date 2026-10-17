@@ -1,0 +1,52 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+=== RUN   TestCandidateSearchGraphKernel_Orchestration
+--- PASS: TestCandidateSearchGraphKernel_Orchestration (0.00s)
+=== RUN   TestCandidateSearchGraphKernel_QuerySeedsStartTheBeam
+--- PASS: TestCandidateSearchGraphKernel_QuerySeedsStartTheBeam (0.00s)
+=== RUN   TestCandidateSearchGraphKernel_Cancellation
+--- PASS: TestCandidateSearchGraphKernel_Cancellation (0.00s)
+=== RUN   TestCandidateSearchGraphKernelFinishesLongDescent
+--- PASS: TestCandidateSearchGraphKernelFinishesLongDescent (0.00s)
+=== RUN   TestHNSWResidentAcceleratedBuildRecallMatchesCPU
+2026/10/17 00:10:39 INFO [HNSW] build batch=1 vectors=2048 indexed=2048 duration=478.769625ms search=435.364375ms link=43.40525ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=2048 arg_2=2048 arg_3=478.769625ms arg_4=435.364375ms arg_5=43.40525ms
+2026/10/17 00:10:40 INFO [HNSW] build batch=2 vectors=2048 indexed=4096 duration=963.842042ms search=871.520042ms link=92.322ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=2 arg_1=2048 arg_2=4096 arg_3=963.842042ms arg_4=871.520042ms arg_5=92.322ms
+2026/10/17 00:10:42 INFO [HNSW] build batch=3 vectors=2048 indexed=6144 duration=1.456539875s search=1.359814083s link=96.725792ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=3 arg_1=2048 arg_2=6144 arg_3=1.456539875s arg_4=1.359814083s arg_5=96.725792ms
+2026/10/17 00:10:44 INFO [HNSW] build batch=4 vectors=2048 indexed=8192 duration=1.972920458s search=1.871130375s link=101.790083ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=4 arg_1=2048 arg_2=8192 arg_3=1.972920458s arg_4=1.871130375s arg_5=101.790083ms
+2026/10/17 00:10:46 INFO [HNSW] build batch=5 vectors=2048 indexed=10240 duration=2.502040667s search=2.397948584s link=104.092083ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=5 arg_1=2048 arg_2=10240 arg_3=2.502040667s arg_4=2.397948584s arg_5=104.092083ms
+2026/10/17 00:10:49 INFO [HNSW] build batch=6 vectors=2048 indexed=12288 duration=3.035666334s search=2.9270995s link=108.566834ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=6 arg_1=2048 arg_2=12288 arg_3=3.035666334s arg_4=2.9270995s arg_5=108.566834ms
+2026/10/17 00:10:53 INFO [HNSW] build batch=7 vectors=2048 indexed=14336 duration=3.58135925s search=3.46966775s link=111.6915ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=7 arg_1=2048 arg_2=14336 arg_3=3.58135925s arg_4=3.46966775s arg_5=111.6915ms
+2026/10/17 00:10:57 INFO [HNSW] build batch=8 vectors=2048 indexed=16384 duration=4.376104459s search=4.045260084s link=330.844375ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=8 arg_1=2048 arg_2=16384 arg_3=4.376104459s arg_4=4.045260084s arg_5=330.844375ms
+2026/10/17 00:11:02 INFO [HNSW] build batch=9 vectors=2048 indexed=18432 duration=4.861893042s search=4.740076084s link=121.816958ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=9 arg_1=2048 arg_2=18432 arg_3=4.861893042s arg_4=4.740076084s arg_5=121.816958ms
+2026/10/17 00:11:06 INFO [HNSW] 🔨 Progress: 20000 / 20000 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=20000 arg_1=20000
+2026/10/17 00:11:06 INFO [HNSW] build batch=10 vectors=1568 indexed=20000 duration=3.996801209s search=3.908696625s link=88.104584ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=10 arg_1=1568 arg_2=20000 arg_3=3.996801209s arg_4=3.908696625s arg_5=88.104584ms
+    hnsw_build_gpu_recall_test.go:221: recall@10 at ef=64: one-at-a-time 0.894, resident exact candidates 0.894
+--- PASS: TestHNSWResidentAcceleratedBuildRecallMatchesCPU (31.33s)
+=== RUN   TestHNSWGraphAcceleratedBuildWithLexicalHintsRecallMatchesCPU
+2026/10/17 00:11:11 INFO [HNSW] build batch=1 vectors=2048 indexed=2048 duration=490.996209ms search=445.29175ms link=45.704459ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=1 arg_1=2048 arg_2=2048 arg_3=490.996209ms arg_4=445.29175ms arg_5=45.704459ms
+2026/10/17 00:11:13 INFO [HNSW] build batch=2 vectors=2048 indexed=4096 duration=1.739936042s search=1.644900042s link=95.036ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=2 arg_1=2048 arg_2=4096 arg_3=1.739936042s arg_4=1.644900042s arg_5=95.036ms
+2026/10/17 00:11:16 INFO [HNSW] build batch=3 vectors=2048 indexed=6144 duration=3.053207084s search=2.951154125s link=102.052959ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=3 arg_1=2048 arg_2=6144 arg_3=3.053207084s arg_4=2.951154125s arg_5=102.052959ms
+2026/10/17 00:11:20 INFO [HNSW] build batch=4 vectors=2048 indexed=8192 duration=4.557084792s search=4.448695625s link=108.389167ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=4 arg_1=2048 arg_2=8192 arg_3=4.557084792s arg_4=4.448695625s arg_5=108.389167ms
+2026/10/17 00:11:26 INFO [HNSW] build batch=5 vectors=2048 indexed=10240 duration=5.947400125s search=5.838236125s link=109.164ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=5 arg_1=2048 arg_2=10240 arg_3=5.947400125s arg_4=5.838236125s arg_5=109.164ms
+2026/10/17 00:11:33 INFO [HNSW] build batch=6 vectors=2048 indexed=12288 duration=7.135132709s search=7.020106875s link=115.025834ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=6 arg_1=2048 arg_2=12288 arg_3=7.135132709s arg_4=7.020106875s arg_5=115.025834ms
+2026/10/17 00:11:42 INFO [HNSW] build batch=7 vectors=2048 indexed=14336 duration=8.277828167s search=8.161237875s link=116.590292ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=7 arg_1=2048 arg_2=14336 arg_3=8.277828167s arg_4=8.161237875s arg_5=116.590292ms
+2026/10/17 00:11:51 INFO [HNSW] build batch=8 vectors=2048 indexed=16384 duration=9.356447875s search=9.230834s link=125.613875ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=8 arg_1=2048 arg_2=16384 arg_3=9.356447875s arg_4=9.230834s arg_5=125.613875ms
+2026/10/17 00:12:01 INFO [HNSW] build batch=9 vectors=2048 indexed=18432 duration=10.518684959s search=10.400644917s link=118.040042ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=9 arg_1=2048 arg_2=18432 arg_3=10.518684959s arg_4=10.400644917s arg_5=118.040042ms
+2026/10/17 00:12:10 INFO [HNSW] 🔨 Progress: 20000 / 20000 vectors event_id=search.operator.af73d7a98ff4ec74 component=search message_template="[HNSW] 🔨 Progress: %d / %d vectors" arg_0=20000 arg_1=20000
+2026/10/17 00:12:10 INFO [HNSW] build batch=10 vectors=1568 indexed=20000 duration=8.701089166s search=8.610011916s link=91.07725ms event_id=search.operator.67b528ca39a0c429 component=search message_template="[HNSW] build batch=%d vectors=%d indexed=%d duration=%s search=%s link=%s" arg_0=10 arg_1=1568 arg_2=20000 arg_3=8.701089166s arg_4=8.610011916s arg_5=91.07725ms
+    hnsw_build_gpu_recall_test.go:259: with lexical hints, recall@10 at ef=64: CPU build 0.866, graph-accelerated build 0.867
+--- PASS: TestHNSWGraphAcceleratedBuildWithLexicalHintsRecallMatchesCPU (63.76s)
+=== RUN   TestMetalResidentCandidateSearchIsExact
+--- PASS: TestMetalResidentCandidateSearchIsExact (0.06s)
+=== RUN   TestCUDAResidentCandidateSearchIsExact
+    hnsw_build_gpu_recall_test.go:341: CUDA unavailable: cuda: CUDA HNSW build acceleration not available (build without cuda tag or unsupported platform)
+--- SKIP: TestCUDAResidentCandidateSearchIsExact (0.00s)
+=== RUN   TestVulkanResidentCandidateSearchIsExact
+    hnsw_build_gpu_recall_test.go:349: Vulkan unavailable: vulkan: Vulkan is not available on this system
+--- SKIP: TestVulkanResidentCandidateSearchIsExact (0.00s)
+=== RUN   TestResidentBuildVectorsUploadOnceAndMergeGlobalIDs
+--- PASS: TestResidentBuildVectorsUploadOnceAndMergeGlobalIDs (0.00s)
+=== RUN   TestResidentBuildVectorsPropagatesDeviceErrors
+--- PASS: TestResidentBuildVectorsPropagatesDeviceErrors (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	95.630s

@@ -1,0 +1,9 @@
+== nornicdb / hnsw-fast+original-file: HNSW fast (M=16, efConstruction=100, efSearch=50) [original-file]
+   preset beam      recall@10 0.9959  p50   2.774 ms  p95   3.572 ms    1008.5 qps
+   hnsw_ef=16       recall@10 0.9724  p50   1.440 ms  p95   1.911 ms    2047.2 qps
+   hnsw_ef=32       recall@10 0.9930  p50   2.063 ms  p95   2.720 ms    1219.1 qps
+   hnsw_ef=64       recall@10 0.9972  p50   3.302 ms  p95   4.385 ms     846.4 qps
+   hnsw_ef=128      recall@10 0.9992  p50   5.451 ms  p95   7.204 ms     493.7 qps
+   hnsw_ef=256      recall@10 0.9998  p50   9.465 ms  p95  12.570 ms     283.0 qps
+   hnsw_ef=512      recall@10 1.0000  p50  16.532 ms  p95  22.060 ms     160.2 qps
+   load 13.0s (6763/s), index ready 35.3s, disk 1631 MB, RSS 3180 MB, strategy: HNSW

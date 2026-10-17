@@ -1,0 +1,2 @@
+# Selected unmodified construction/strategy records; full server logs retained locally.
+2026/10/17 00:27:38 INFO 🔍 Vector search strategy: CPU brute-force (N=88155 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="CPU brute-force" arg_1=88155

@@ -1,0 +1,240 @@
+{
+  "engine": "nornicdb",
+  "mode": "bq-asym4",
+  "title": "HNSW + binary storage, int4 query (rescore, 2x oversampling)",
+  "strategy": "HNSW binary query int4 (11283840 encoded bytes)",
+  "base_mode": "bq-asym4",
+  "tag": "",
+  "gpu_requested": false,
+  "settings": {
+    "NORNICDB_CONFIG": "/Users/timothysweet/src/NornicDB/bench-data/vector_ann/profiling/quantization-final/data/nornicdb-bq-asym4-1gwyy8ka.empty-config.yaml",
+    "NORNICDB_EMBEDDING_ENABLED": "false",
+    "NORNICDB_MCP_ENABLED": "false",
+    "NORNICDB_HEIMDALL_ENABLED": "false",
+    "NORNICDB_QDRANT_GRPC_ENABLED": "true",
+    "NORNICDB_QDRANT_GRPC_LISTEN_ADDR": "127.0.0.1:16334",
+    "NORNICDB_QDRANT_GRPC_MAX_TOP_K": "10000",
+    "NORNICDB_VECTOR_CPU_BRUTE_MAX_N": "0",
+    "NORNICDB_KMEANS_CLUSTERING_ENABLED": "false",
+    "NORNICDB_TELEMETRY_LISTEN": "127.0.0.1:19190",
+    "NORNICDB_GPU_BACKEND": "cpu",
+    "NORNICDB_VECTOR_GPU_BRUTE_MAX_N": "0",
+    "NORNICDB_HNSW_BUILD_GPU_ENABLED": "false",
+    "NORNICDB_VECTOR_ANN_QUALITY": "fast",
+    "NORNICDB_PERSIST_SEARCH_INDEXES": "true"
+  },
+  "provenance": {
+    "binaries_sha256": {
+      "nornicdb": "4a2a3ce57ee1f2af7f138d39651d45598d268f55f56c27fa2320ebc6d44f4492",
+      "qdrant": "ee6f221283784b4c63fddfdb7ba02fb713211c86761f2b8e02f2605ca81bf90c"
+    },
+    "corpus_sha256": {
+      "vectors.npy": "ba1c6bb0c1907cdb3bc8e9b14d40109d68cd5ec0a01c667ef2a33a6b78da9729",
+      "queries.npy": "d295c6d9ce66c58869690c5bb202aa0a32fa1f812d8e72dff4ec55b3a880e2bb",
+      "truth.npy": "aafe231d65dbe0519fd3bdcbae21c5db1dfa09112907b5cde3b886056592e690",
+      "meta.json": "085567a1c6e9017f10867ae6a66956776ae8e9b06610baee20c0d09f885cc5e9"
+    },
+    "construction_input": "vectors only (legacy corpus has no payloads)",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 21.0.0 (clang-2100.1.1.101)]",
+    "dependencies": [
+      "annotated-types==0.8.0",
+      "anyio==4.15.1",
+      "boto3==1.43.114",
+      "botocore==1.43.114",
+      "certifi==2026.7.22",
+      "charset-normalizer==3.5.2",
+      "grpcio==1.84.0",
+      "h11==0.16.0",
+      "h2==4.4.1",
+      "hpack==4.2.0",
+      "httpcore==1.0.9",
+      "httpx==0.28.1",
+      "hyperframe==6.1.0",
+      "idna==3.20",
+      "jmespath==1.1.0",
+      "numpy==2.5.4",
+      "portalocker==3.2.0",
+      "protobuf==7.36.2",
+      "psutil==7.2.2",
+      "pydantic==2.14.1",
+      "pydantic_core==2.50.1",
+      "python-dateutil==2.9.0.post0",
+      "qdrant-client==1.19.1",
+      "requests==2.34.2",
+      "s3transfer==0.19.2",
+      "six==1.17.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "urllib3==2.8.0"
+    ],
+    "nornic_build_settings": {
+      "-buildmode": "exe",
+      "-compiler": "gc",
+      "-tags": "noui,nolocalllm",
+      "CGO_ENABLED": "1",
+      "CGO_CFLAGS": "",
+      "CGO_CPPFLAGS": "",
+      "CGO_CXXFLAGS": "",
+      "CGO_LDFLAGS": "",
+      "GOARCH": "arm64",
+      "GOOS": "darwin",
+      "GOARM64": "v8.0",
+      "vcs": "git",
+      "vcs.revision": "7c201376d1203a651fc625869fb98df7be746ac4",
+      "vcs.time": "2026-10-17T07:12:13Z",
+      "vcs.modified": "false"
+    },
+    "harness_commit": "7c201376d",
+    "checkout_dirty": false
+  },
+  "vectors": 88155,
+  "loaded_points": 88155,
+  "dimensions": 1024,
+  "k": 10,
+  "load_s": 13.072325944900513,
+  "load_vectors_per_s": 6743.635399818736,
+  "index_ready_s": 35.85233998298645,
+  "rss_bytes_after_load": 3179397120,
+  "disk_bytes": 1628712960,
+  "runs": [
+    {
+      "recall@1": 0.996,
+      "recall@10": 0.9925,
+      "mean_ms": 0.657602007035166,
+      "p50_ms": 0.6437913980334997,
+      "p95_ms": 0.8052624063566327,
+      "p99_ms": 0.9048198955133557,
+      "qps": 5423.694494103513,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": null,
+      "search_params": {
+        "hnsw_ef": "50",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 0.993,
+      "recall@10": 0.9884,
+      "mean_ms": 0.5733157712966204,
+      "p50_ms": 0.5626876372843981,
+      "p95_ms": 0.7040874566882848,
+      "p99_ms": 0.7908312091603875,
+      "qps": 8569.013995574867,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 16,
+      "search_params": {
+        "hnsw_ef": "16",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 0.994,
+      "recall@10": 0.9886,
+      "mean_ms": 0.5992288319393992,
+      "p50_ms": 0.579166691750288,
+      "p95_ms": 0.737962289713323,
+      "p99_ms": 0.8064638031646609,
+      "qps": 8199.07914343295,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 32,
+      "search_params": {
+        "hnsw_ef": "32",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 0.996,
+      "recall@10": 0.9937,
+      "mean_ms": 0.6580143803730607,
+      "p50_ms": 0.645708292722702,
+      "p95_ms": 0.8064920548349619,
+      "p99_ms": 0.9537980239838361,
+      "qps": 7846.365596068362,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 64,
+      "search_params": {
+        "hnsw_ef": "64",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 0.999,
+      "recall@10": 0.9952,
+      "mean_ms": 0.7437144964933395,
+      "p50_ms": 0.7370624225586653,
+      "p95_ms": 0.9020102908834815,
+      "p99_ms": 0.9954221127554774,
+      "qps": 6901.4719941131325,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 128,
+      "search_params": {
+        "hnsw_ef": "128",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.9955,
+      "mean_ms": 0.9027253733947873,
+      "p50_ms": 0.8912915363907814,
+      "p95_ms": 1.1038110591471195,
+      "p99_ms": 1.2253459636121988,
+      "qps": 5961.2385410000325,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 256,
+      "search_params": {
+        "hnsw_ef": "256",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    },
+    {
+      "recall@1": 1.0,
+      "recall@10": 0.9959,
+      "mean_ms": 1.2399354460649192,
+      "p50_ms": 1.2349796015769243,
+      "p95_ms": 1.478167134337127,
+      "p99_ms": 1.6043249052017925,
+      "qps": 4885.639388040285,
+      "concurrency": 8,
+      "queries": 1000,
+      "hnsw_ef": 512,
+      "search_params": {
+        "hnsw_ef": "512",
+        "quantization": {
+          "rescore": true,
+          "oversampling": 2.0
+        }
+      }
+    }
+  ],
+  "rss_bytes_after_queries": 3179528192,
+  "footprint_phase": "snapshot after all queries and a final index-readiness check",
+  "footprint_unix_s": 1792223089.113397,
+  "build_backend": "CPU",
+  "collection_settings": null,
+  "wall_s": 60.19184112548828
+}
