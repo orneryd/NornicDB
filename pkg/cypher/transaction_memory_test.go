@@ -45,6 +45,7 @@ func resetTransactionMemory(t testing.TB) {
 		r := transactionMemory
 		r.mu.Lock()
 		r.databases = make(map[string]*databaseMemory)
+		r.globalSet = false
 		r.mu.Unlock()
 		ConfigureTransactionMemory(0, TransactionMemoryLimits{})
 	})

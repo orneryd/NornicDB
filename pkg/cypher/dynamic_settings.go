@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -15,29 +14,41 @@ import (
 // process restarts, as in Neo4j. A database's own settings change through
 // the per-database config API instead.
 
-// processSettingAppliers apply a dynamic process setting's new value.
-var processSettingAppliers = map[string]func(value string) (string, error){
-	globalTransactionMemorySetting: func(value string) (string, error) {
-		limit, err := dbconfig.ParseByteSize(value)
-		if err != nil {
-			return "", err
-		}
-		SetGlobalTransactionMemoryLimit(limit)
-		return strconv.FormatInt(limit, 10), nil
+// processSetting is a dynamic process setting: apply gives it a new value,
+// in force once apply returns; live is the value in force once
+// dbms.setConfigValue set it, read from where it is enforced, so SHOW
+// SETTINGS and dbms.listConfig report what is enforced, whichever change
+// came last.
+type processSetting struct {
+	apply func(value string) error
+	live  func() (string, bool)
+}
+
+var processSettings = map[string]processSetting{
+	globalTransactionMemorySetting: {
+		apply: func(value string) error {
+			limit, err := dbconfig.ParseByteSize(value)
+			if err != nil {
+				return err
+			}
+			SetGlobalTransactionMemoryLimit(limit)
+			return nil
+		},
+		live: func() (string, bool) {
+			limit, set := liveGlobalTransactionMemoryLimit()
+			return strconv.FormatInt(limit, 10), set
+		},
 	},
 }
 
-// processSettingValues are the values dbms.setConfigValue set, which SHOW
-// SETTINGS and dbms.listConfig report.
-var processSettingValues sync.Map // setting name -> normalized value
-
-// liveProcessSetting is the value dbms.setConfigValue set for name, if any.
+// liveProcessSetting is the value of name in force once dbms.setConfigValue
+// set it, if it did.
 func liveProcessSetting(name string) (string, bool) {
-	value, ok := processSettingValues.Load(name)
+	setting, ok := processSettings[name]
 	if !ok {
 		return "", false
 	}
-	return value.(string), true
+	return setting.live()
 }
 
 func dbmsSetConfigValueProcedureSpec() ProcedureSpec {
@@ -84,14 +95,12 @@ func (e *StorageExecutor) callDbmsSetConfigValue(_ context.Context, arguments []
 	if definition.Scope == dbconfig.ScopeDatabase {
 		return nil, failed(localization.CypherSettingsDatabaseSetting(definition.Name))
 	}
-	apply, applicable := processSettingAppliers[definition.Name]
+	setting, applicable := processSettings[definition.Name]
 	if !definition.Dynamic || !applicable {
 		return nil, failed(localization.CypherSettingsSettingNotDynamic(definition.Name))
 	}
-	normalized, err := apply(strings.TrimSpace(value))
-	if err != nil {
+	if err := setting.apply(strings.TrimSpace(value)); err != nil {
 		return nil, failed(localization.CypherSettingsInvalidSettingValue(definition.Name, value, err))
 	}
-	processSettingValues.Store(definition.Name, normalized)
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

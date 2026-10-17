@@ -92,6 +92,8 @@ type transactionMemoryRegistry struct {
 	mu        sync.RWMutex
 	defaults  TransactionMemoryLimits
 	databases map[string]*databaseMemory
+	// globalSet is set once dbms.setConfigValue set the global limit.
+	globalSet bool
 }
 
 var transactionMemory = &transactionMemoryRegistry{
@@ -775,10 +777,23 @@ type heldListSize struct {
 // SetGlobalTransactionMemoryLimit changes dbms.memory.transaction.total.max
 // while the process runs (dbms.setConfigValue): a running statement keeps
 // the limit it started with, and statements started later meet the new one.
+// A statement that started with no limit at all stays untracked to its end,
+// at no cost (transactionMemoryActive), and the pool does not count it.
 func SetGlobalTransactionMemoryLimit(limit int64) {
 	r := transactionMemory
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.global.limit.Store(nonNegativeBytes(limit))
+	r.globalSet = true
 	r.updateActiveLocked()
+}
+
+// liveGlobalTransactionMemoryLimit is the global limit in force once
+// dbms.setConfigValue set it: read from the pool, so what SHOW SETTINGS
+// reports is what the pool enforces, whichever change came last.
+func liveGlobalTransactionMemoryLimit() (int64, bool) {
+	r := transactionMemory
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.global.limit.Load(), r.globalSet
 }
