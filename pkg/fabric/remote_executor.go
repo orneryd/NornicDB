@@ -35,8 +35,10 @@ type remoteParticipant struct {
 // end commits or rolls back the sub-transaction, the first time it is
 // called; a later call returns that outcome (once it is known) and never
 // commits a rolled-back sub-transaction. The network call holds no lock. A
-// call that ctx's deadline stopped records that: the remote server then ends
-// the sub-transaction itself, the driver having closed its connection.
+// Bolt call that ctx's deadline stopped records that: the remote server then
+// ends the sub-transaction itself, the driver having closed its connection.
+// A sub-transaction the connection doesn't end is rolled back detached from
+// ctx (rollbackDetached).
 func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	p.mu.Lock()
 	if p.ended {
@@ -50,6 +52,9 @@ func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	}
 	p.ended, p.committed, p.done = true, commit, make(chan struct{})
 	p.mu.Unlock()
+	if independent, ok := p.tx.(interface{ OutlivesConnection() bool }); ok && !commit && independent.OutlivesConnection() {
+		return p.rollbackDetached(ctx)
+	}
 	var err error
 	if commit {
 		err = p.tx.Commit(ctx)
@@ -62,6 +67,26 @@ func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	p.err = err
 	close(p.done)
 	return err
+}
+
+// rollbackDetached rolls back a sub-transaction that outlives its connection
+// (the HTTP transaction API's), whose rollback must reach the server: it runs
+// detached from ctx, bounded by storage.RemoteRequestTimeout. end returns by
+// ctx's deadline even while it runs; its outcome is recorded when it ends,
+// and every later end of the participant (Close included) waits for it.
+func (p *remoteParticipant) rollbackDetached(ctx context.Context) error {
+	go func() {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storage.RemoteRequestTimeout)
+		defer cancel()
+		p.err = p.tx.Rollback(rollbackCtx)
+		close(p.done)
+	}()
+	select {
+	case <-p.done:
+		return p.err
+	case <-ctx.Done():
+		return fmt.Errorf("remote sub-transaction did not end before its deadline: %w; its rollback continues", ctx.Err())
+	}
 }
 
 // NewRemoteFragmentExecutor creates a remote executor.
