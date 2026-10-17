@@ -648,6 +648,28 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	return columns, rows, true, err
 }
 
+// executeLocalFragment runs a fragment on a local constituent. An
+// auto-commit write fragment commits there as an auto-commit statement does:
+// in one transaction (statementNeedsTransaction), which runs the
+// constituent's triggers and change capture.
+func (c *cypherFabricExecutor) executeLocalFragment(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	if !c.autoCommit || (exec.txContext != nil && exec.txContext.active) || ctx.Value(ctxKeyTxStorage) != nil ||
+		!statementNeedsTransaction(exec.analyzer.Analyze(query), query) {
+		return c.executeFragmentQuery(ctx, exec, query, params)
+	}
+	var columns []string
+	var rows [][]interface{}
+	_, err := exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		var fragmentErr error
+		columns, rows, fragmentErr = c.executeFragmentQuery(txCtx, txExec, query, params)
+		return &ExecuteResult{Columns: columns, Rows: rows}, fragmentErr
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return columns, rows, nil
+}
+
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
@@ -670,23 +692,11 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	}
 
 	ctx = withExecutionDatabase(ctx, dbName)
-	return c.executeFragmentQuery(ctx, exec, query, params)
+	return c.executeLocalFragment(ctx, exec, query, params)
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	var result *ExecuteResult
-	var err error
-	if c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && ctx.Value(ctxKeyTxStorage) == nil &&
-		statementNeedsTransaction(exec.analyzer.Analyze(query), query) {
-		// An auto-commit write fragment commits on its constituent as an
-		// auto-commit statement does: in one transaction, which runs the
-		// constituent's triggers and change capture.
-		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
-			return txExec.executeInternal(txCtx, query, params)
-		})
-	} else {
-		result, err = exec.executeInternal(ctx, query, params)
-	}
+	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err
 	}

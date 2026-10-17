@@ -750,6 +750,10 @@ type Server struct {
 	executorsMu sync.RWMutex
 	executors   map[string]*cypher.StorageExecutor
 
+	// triggerRuntime runs the databases' APOC triggers; nil when the
+	// system database is unavailable.
+	triggerRuntime *cypher.TriggerRuntime
+
 	// Explicit transaction sessions shared across transports.
 	txSessions *txsession.Manager
 
@@ -760,10 +764,7 @@ type Server struct {
 	roleStore          *auth.RoleStore       // user-defined roles when auth enabled
 	privilegesStore    *auth.PrivilegesStore // per-DB read/write (Phase 4) when auth enabled
 	// procedurePrivileges holds EXECUTE [BOOSTED] PROCEDURE grants.
-	procedurePrivileges *auth.ProcedurePrivilegeStore
-	// triggerRuntime runs the databases' APOC triggers; nil when the
-	// system database is unavailable.
-	triggerRuntime        *cypher.TriggerRuntime
+	procedurePrivileges   *auth.ProcedurePrivilegeStore
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
@@ -1700,6 +1701,24 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		} else {
 			s.roleStore = roleStore
 		}
+		// APOC triggers (apoc.trigger.*): kept in the system database, they
+		// run at the commits of the database they're installed on.
+		triggerRuntime, triggerErr := cypher.NewTriggerRuntime(ctx, cypher.TriggerRuntimeConfig{
+			Engine:      systemStorage,
+			System:      systemStorage,
+			ExecutorFor: s.getExecutorForDatabase,
+			DatabaseExists: func(name string) bool {
+				return dbManager.Exists(name) && !dbManager.IsCompositeDatabase(name)
+			},
+			SystemDatabase: "system",
+			Enabled:        apoc.LoadFromEnv().Trigger.Enabled,
+			Logger:         slog.Default(),
+		})
+		if triggerErr != nil {
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerAPOCTriggersLoadFailedEvent(triggerErr))
+		} else {
+			s.triggerRuntime = triggerRuntime
+		}
 		allowlistStore := auth.NewAllowlistStore(systemStorage)
 		if loadErr := allowlistStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACAllowlistLoadFailedEvent(loadErr))
@@ -1722,24 +1741,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		// Read on every check (ProcedureGrantChecker): a grant counts once
 		// committed, and a failed read denies.
 		s.procedurePrivileges = auth.NewProcedurePrivilegeStore(systemStorage)
-		// APOC triggers (apoc.trigger.*): kept in the system database, they
-		// run at the commits of the database they're installed on.
-		triggerRuntime, triggerErr := cypher.NewTriggerRuntime(ctx, cypher.TriggerRuntimeConfig{
-			Engine:      systemStorage,
-			System:      systemStorage,
-			ExecutorFor: s.getExecutorForDatabase,
-			DatabaseExists: func(name string) bool {
-				return dbManager.Exists(name) && !dbManager.IsCompositeDatabase(name)
-			},
-			SystemDatabase: "system",
-			Enabled:        apoc.LoadFromEnv().Trigger.Enabled,
-			Logger:         slog.Default(),
-		})
-		if triggerErr != nil {
-			s.logEvent(ctx, slog.LevelWarn, localization.ServerAPOCTriggersLoadFailedEvent(triggerErr))
-		} else {
-			s.triggerRuntime = triggerRuntime
-		}
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))
