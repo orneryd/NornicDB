@@ -132,6 +132,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	// The row's grouping keys and aggregate arguments are evaluated in one
 	// scope built once per row.
 	scope := newRowEvaluationScope(ctx)
+	defer scope.release()
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
@@ -496,6 +497,7 @@ func (state *pipelineAggregateState) argumentTexts(executor *StorageExecutor) []
 
 func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
 	scope := newRowEvaluationScope(ctx)
+	defer scope.release()
 	scope.reset(row)
 	return state.addInScope(ctx, executor, scope)
 }
