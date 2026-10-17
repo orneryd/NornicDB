@@ -227,6 +227,10 @@ type Server struct {
 	executorsMu sync.RWMutex
 	executors   map[string]QueryExecutor
 
+	// statementCaches holds, per database name, the statement caches every
+	// executor of that database uses (statementCachesFor).
+	statementCaches sync.Map
+
 	// Query executor (injected dependency) - used if dbManager is nil
 	executor QueryExecutor
 
@@ -2412,11 +2416,22 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 	}
 	if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
 		executor.ShareQueryStatisticsFrom(adapter.executor)
-		executor.ShareStatementCachesFrom(adapter.executor)
 	}
 	return &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
 	}, nil
+}
+
+// statementCachesFor returns the statement caches every Bolt executor of
+// dbName uses: the cached auto-commit executor, each explicit transaction's
+// and each bearer-authenticated session's (which bypass the executor cache),
+// so a statement is validated once per database.
+func (s *Server) statementCachesFor(dbName string) *cypher.StatementCaches {
+	if caches, ok := s.statementCaches.Load(dbName); ok {
+		return caches.(*cypher.StatementCaches)
+	}
+	caches, _ := s.statementCaches.LoadOrStore(dbName, cypher.NewStatementCaches())
+	return caches.(*cypher.StatementCaches)
 }
 
 func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedResolver bool) (*cypher.StorageExecutor, error) {
@@ -2434,6 +2449,7 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 	}
 
 	executor := cypher.NewStorageExecutor(storageEngine)
+	executor.UseStatementCaches(s.server.statementCachesFor(dbName))
 	if s.server.config != nil {
 		executor.SetLocalizationRenderer(s.server.config.Localizer)
 	}

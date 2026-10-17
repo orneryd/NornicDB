@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// A protocol transaction's fresh executor reuses the database executor's
-// syntax verdicts (and the database executor sees the transaction's), so a
-// statement is validated once, not once per explicit transaction.
-func TestShareStatementCachesFromReusesSyntaxVerdicts(t *testing.T) {
+// Executors given the same StatementCaches share syntax verdicts both ways,
+// so a statement is validated once per database, not once per executor.
+func TestUseStatementCachesSharesSyntaxVerdicts(t *testing.T) {
 	store := newTestMemoryEngine(t)
 	base := NewStorageExecutor(store)
 	const first = "MATCH (n:ShareCacheA) RETURN count(n) AS c"
@@ -17,7 +16,10 @@ func TestShareStatementCachesFromReusesSyntaxVerdicts(t *testing.T) {
 	}
 
 	tx := NewStorageExecutor(store)
-	tx.ShareStatementCachesFrom(base)
+	tx.UseStatementCaches(base.StatementCaches())
+	if tx.StatementCaches() != base.StatementCaches() {
+		t.Fatalf("the transaction executor does not use the database executor's caches")
+	}
 	validator := activeSyntaxValidator()
 	if !tx.hasCachedValidSyntax(first, validator) {
 		t.Fatalf("transaction executor does not see the database executor's verdict")
@@ -33,11 +35,16 @@ func TestShareStatementCachesFromReusesSyntaxVerdicts(t *testing.T) {
 		t.Fatalf("upper-cased text cache is not shared")
 	}
 
-	// Sharing with itself or with nothing keeps the executor's own caches.
-	own := tx.ensureSyntaxValidationCache()
-	tx.ShareStatementCachesFrom(nil)
-	tx.ShareStatementCachesFrom(tx)
-	if tx.ensureSyntaxValidationCache() != own {
-		t.Fatalf("ShareStatementCachesFrom(nil/self) replaced the cache")
+	// Caches made up front are used as given; nil keeps the executor's own.
+	caches := NewStatementCaches()
+	fresh := NewStorageExecutor(store)
+	fresh.UseStatementCaches(caches)
+	if fresh.StatementCaches() != caches {
+		t.Fatalf("UseStatementCaches did not install the given caches")
+	}
+	own := tx.StatementCaches()
+	tx.UseStatementCaches(nil)
+	if tx.StatementCaches() != own {
+		t.Fatalf("UseStatementCaches(nil) replaced the caches")
 	}
 }
