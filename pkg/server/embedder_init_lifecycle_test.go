@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,4 +149,90 @@ func TestDBCloseJoinsEmbedderInit(t *testing.T) {
 	require.True(t, built.closed.Load(), "the embedder built during shutdown wasn't closed")
 	require.Nil(t, s.db.GetCypherExecutor().GetEmbedder())
 	require.NoError(t, s.Stop(context.Background()))
+}
+
+// pauseOnEventHandler discards log records, except that the goroutine logging
+// eventID signals paused (the first time) and blocks until resume is closed.
+type pauseOnEventHandler struct {
+	eventID string
+	once    sync.Once
+	paused  chan struct{}
+	resume  chan struct{}
+}
+
+func (h *pauseOnEventHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *pauseOnEventHandler) Handle(_ context.Context, r slog.Record) error {
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		match = a.Key == "event_id" && a.Value.String() == h.eventID
+		return !match
+	})
+	if match {
+		h.once.Do(func() { close(h.paused) })
+		<-h.resume
+	}
+	return nil
+}
+
+func (h *pauseOnEventHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *pauseOnEventHandler) WithGroup(string) slog.Handler      { return h }
+
+// DB.Close can begin after initialisation's last cancellation check and before
+// the database accepts the embedder. The refused embedder is still
+// initialisation's to release, so it is closed, with or without the cache
+// wrapper, and nothing is installed.
+func TestEmbedderRefusedByClosingDBIsClosed(t *testing.T) {
+	for _, cacheSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("cache=%d", cacheSize), func(t *testing.T) {
+			// The ready event is logged between that check and the install.
+			pause := &pauseOnEventHandler{
+				eventID: string(localization.EventServerEmbeddingsReady),
+				paused:  make(chan struct{}),
+				resume:  make(chan struct{}),
+			}
+			s, _ := setupTestServerWithConfig(t, func(config *Config) { config.Logger = slog.New(pause) })
+			resume := sync.OnceFunc(func() { close(pause.resume) })
+			// Runs before setupTestServer's db.Close, so a failure can't hang it.
+			t.Cleanup(resume)
+			s.embedderRetryInitialBackoff = time.Hour
+			s.embedderRetryMaxBackoff = time.Hour
+			built := &closeTrackingEmbedder{countingEmbedder: countingEmbedder{dims: 4}}
+			s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
+				return built, nil
+			}
+
+			s.startEmbedderInit(&embed.Config{Provider: "openai", APIURL: "http://127.0.0.1:1", Model: "m", Dimensions: 4}, cacheSize, nil, s.db)
+			select {
+			case <-pause.paused:
+			case <-time.After(10 * time.Second):
+				t.Fatal("embedder initialisation didn't reach the install")
+			}
+
+			closeDone := make(chan error, 1)
+			go func() { closeDone <- s.db.Close() }()
+			// Close sets closed before it ends the lifetime context.
+			select {
+			case <-s.db.LifetimeContext().Done():
+			case <-time.After(10 * time.Second):
+				t.Fatal("DB.Close didn't begin")
+			}
+			resume()
+
+			select {
+			case err := <-closeDone:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("DB.Close didn't return after initialisation resumed")
+			}
+			select {
+			case <-s.embedderInitDone:
+			default:
+				t.Fatal("embedder initialisation still running after DB.Close returned")
+			}
+			require.True(t, built.closed.Load(), "the embedder the closing database refused wasn't closed")
+			require.Nil(t, s.db.GetCypherExecutor().GetEmbedder())
+			require.NoError(t, s.Stop(context.Background()))
+		})
+	}
 }
