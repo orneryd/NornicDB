@@ -67,7 +67,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	// exact cluster search (which still benefits from centroid routing).
 	for _, cid := range clusterIDs {
 		if g.getClusterHNSW(cid) == nil {
-			results, err := g.clusterIndex.SearchWithClusters(query, boundCandidateLimit(k), len(clusterIDs))
+			// Keep the chosen (possibly lexical) route when a small list has no graph.
+			ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
+			results, err := g.clusterIndex.ScoreSubset(query, ids)
 			if err != nil {
 				return nil, err
 			}
@@ -78,13 +80,15 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 					continue
 				}
 				out = append(out, Candidate{ID: r.ID, Score: score})
+				if len(out) == boundCandidateLimit(k) {
+					break
+				}
 			}
 			return out, nil
 		}
 	}
 
 	totalLimit := boundCandidateLimit(k)
-	perCluster := (totalLimit + len(clusterIDs) - 1) / len(clusterIDs)
 
 	best := make(map[string]float64, totalLimit)
 	for _, cid := range clusterIDs {
@@ -95,9 +99,11 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		if idx == nil {
 			continue
 		}
+		// Any list may contain the entire global top-K. Splitting the quota
+		// between lists silently discards closer neighbours before the merge.
 		// SearchWithEf with ef 0 uses the cluster graph's configured EfSearch; a
 		// request's own ef (SearchOptions.HNSWEf) replaces it.
-		results, err := idx.SearchWithEf(ctx, query, perCluster, minSimilarity, hnswEfFromContext(ctx))
+		results, err := idx.SearchWithEf(ctx, query, totalLimit, minSimilarity, hnswEfFromContext(ctx))
 		if err != nil {
 			return nil, err
 		}
