@@ -40,3 +40,6 @@
 - id: server.method_put_required
   description: HTTP response for an endpoint that only accepts PUT requests.
   other: PUT required
+- id: auth.operation_contract_required
+  description: Refusal of a procedure, function or operation that declares no valid privilege contract; it cannot be dispatched.
+  other: Operation requires a valid privilege contract

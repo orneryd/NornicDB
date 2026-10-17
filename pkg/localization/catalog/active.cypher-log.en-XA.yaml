@@ -22,3 +22,6 @@
 - id: cypher.log.decay_subsystem_disabled
   description: Expanded pseudo-locale decay-disabled warning.
   other: "[!! decay function called but decay subsystem is disabled; returning neutral scores !!]"
+- id: cypher.log.storage_cleanup_failed
+  description: Expanded pseudo-locale storage cleanup failure.
+  other: "[!! Request-scoped database storage cleanup failed !!]"
