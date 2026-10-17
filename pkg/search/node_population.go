@@ -32,8 +32,9 @@ type nodeSourceRecord struct {
 	memoryAuthoritative     bool
 	fulltextCheckpoint      string
 	fulltextCheckpointCount int
-	// unpopulatedLiveWrites: live writes applied while the sources were
-	// incomplete and no population ran. Persistence then populates first.
+	// unpopulatedLiveWrites: node writes applied while the sources were
+	// incomplete and no population ran. Persistence then populates first, and
+	// that population never restores the saved node images over them.
 	unpopulatedLiveWrites bool
 }
 
@@ -151,8 +152,10 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 // any population (the build that follows rebuilds or restores around it). A
 // write never starts or runs a population. On success the caller owns indexMu
 // and must call the returned release.
-// Private node/edge batch writers never enter this public boundary.
-func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
+// Private node/edge batch writers never enter this public boundary. nodeWrite
+// marks a node write: only those change the node sources, so only they make
+// the saved node images stale before a population.
+func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), error) {
 	for {
 		s.indexMu.Lock()
 		if s.lifecycleCtx != nil {
@@ -173,7 +176,7 @@ func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
 		}
 		s.baseBuildControlMu.Unlock()
 		if !pending {
-			if !s.nodeSourcesCompleteLocked() {
+			if nodeWrite && !s.nodeSourcesCompleteLocked() {
 				s.nodeSources.unpopulatedLiveWrites = true
 			}
 			if err := s.materializeNodeFulltextLocked(); err != nil {
