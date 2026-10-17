@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 
 	"github.com/dgraph-io/badger/v4"
@@ -281,19 +280,10 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(key, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
+		for it.Next() {
+			nodeID := it.NodeID()
 			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
@@ -314,7 +304,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 				}
 			}
 		}
-		return nil
+		return it.Err()
 	})
 }
 
@@ -394,32 +384,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			return emit(node)
 		}
 
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
 		defer it.Close()
-		if afterNodeID == "" {
-			it.Rewind()
-		} else {
-			nodeNum, ok := b.idDict.lookupNodeNumID(afterNodeID)
-			if !ok {
-				return ErrNotFound
-			}
-			cursor := labelIndexKey(label, nodeNum)
-			it.Seek(cursor)
-			if it.ValidForPrefix(prefix) && bytes.Equal(it.Item().Key(), cursor) {
-				it.Next()
-			}
-		}
 		var pending []NodeID
 		lookups := 0
-		for ; it.ValidForPrefix(prefix); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().Key()
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			nodeID := it.NodeID()
+			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
@@ -443,6 +415,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			if err := readPoint(nodeID); err != nil {
 				return err
 			}
+		}
+		if err := it.Err(); err != nil {
+			return err
 		}
 		if len(pending) == 0 {
 			return nil
