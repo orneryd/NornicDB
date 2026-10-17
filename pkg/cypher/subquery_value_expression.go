@@ -629,11 +629,12 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 		if where != "" {
 			// The WHERE sees the row's values with the relationship's bindings.
 			if row == nil {
-				row = make(map[string]interface{}, len(values)+3)
+				row = make(map[string]interface{}, len(values)+4)
 				for name, value := range values {
 					row[name] = value
 				}
 				row[matches.StartNode.variable] = seed
+				row[rowEndpointMemoKey] = make(map[rowEndpointMemoEntry]interface{})
 			}
 			if name := matches.EndNode.variable; name != "" {
 				row[name] = endNode
