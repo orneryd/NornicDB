@@ -583,8 +583,8 @@ func (s *Service) scoreVectorIDDot(normalizedQuery []float32, vecID string) (flo
 
 	var vec []float32
 	if vfs != nil {
-		if stored, ok := vfs.GetVector(vecID); ok {
-			vec = stored
+		if score, ok := vfs.scoreVectorDot(normalizedQuery, vecID); ok {
+			return clampCosine(score), true
 		}
 	}
 	if len(vec) == 0 && vi != nil {
