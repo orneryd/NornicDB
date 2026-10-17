@@ -152,7 +152,17 @@ func (s *Service) hnswLexicalSeedHints(ft bm25Index, graphM int) map[string]Lexi
 // hnswBuildLexicalSeedHints binds ranked documents to every indexed embedding.
 // Metadata owns this mapping: parsing an encoded ID cannot disambiguate node
 // names that themselves contain a named/property/chunk suffix.
+// Background construction runs beside live writes, which change the metadata
+// under indexMu.
 func (s *Service) hnswBuildLexicalSeedHints(ft bm25Index, graphM int) map[string]LexicalSeedHint {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	return s.hnswBuildLexicalSeedHintsLocked(ft, graphM)
+}
+
+// hnswBuildLexicalSeedHintsLocked is hnswBuildLexicalSeedHints for a caller
+// that holds indexMu.
+func (s *Service) hnswBuildLexicalSeedHintsLocked(ft bm25Index, graphM int) map[string]LexicalSeedHint {
 	docs := s.hnswLexicalSeedHints(ft, graphM)
 	out := make(map[string]LexicalSeedHint, len(docs))
 	s.mu.RLock()

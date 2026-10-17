@@ -27,11 +27,12 @@ func (s *Service) ClearIndexes() error {
 
 func (s *Service) clearIndexes(all bool) error {
 	// Clustering copies the population and publishes into it later; join it
-	// whatever context its caller supplied. Then cancel and join base loading
-	// (which owns buildMu) and ANN construction before retiring their sources.
+	// whatever context its caller supplied. Then wait for base loading (it owns
+	// buildMu: live mutations and derived builds finish first) and join ANN
+	// construction before retiring their sources.
 	resumeClusters := s.pauseClusterRuns()
 	defer resumeClusters()
-	resumeBase := s.pauseBaseBuild(true)
+	resumeBase := s.pauseBaseBuild(false)
 	defer resumeBase()
 	resume := s.pauseHNSWBuild()
 	defer resume()
@@ -67,10 +68,9 @@ func (s *Service) clearIndexes(all bool) error {
 		if ft := s.fulltext(); ft != nil {
 			ft.Clear()
 		}
-		// The dropped population's parked text checkpoint is removed below;
-		// the next writer repopulates text from the replacement storage.
+		// The dropped population's parked text checkpoint is removed below.
 		s.setNodeFulltextCheckpointLocked("", 0)
-		s.changeNodeSourcesLocked(nodeFulltextReset)
+		s.changeNodeSourcesLocked(nodeSourcesCleared)
 		clear(s.indexCapacityByNode)
 		s.bm25ResidentBytes = 0
 		s.bm25MetadataBytes = 0

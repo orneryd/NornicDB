@@ -5457,12 +5457,32 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		if uploadErr != nil {
 			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", uploadErr)
 		}
-		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, uploadErr == nil)
+		strategy, err = s.resolveStandardVectorStrategyWithGPU(ctx, vectorCount, dimensions, vfs, uploadErr == nil, vi)
 		if err != nil {
 			return nil, err
 		}
 		if ANNQualityFromEnv() == ANNQualityCompressed {
 			strategy.name = "compressed-fallback -> " + strategy.name
+		}
+	}
+	if strategy.pendingHNSW {
+		// The graph is published before an ANN read answers, so the read gets
+		// the configured graph scoring (approximate scores when rescoring is
+		// off). Wait for the shared construction job outside pipelineMu:
+		// installation takes it. A construction paused by a clear or close
+		// keeps the unpublished exact fallback.
+		s.pipelineMu.Unlock()
+		_, waitErr := s.getOrCreateHNSWIndex(ctx, dimensions)
+		s.pipelineMu.Lock()
+		if s.vectorPipeline != nil {
+			return s.vectorPipeline, nil
+		}
+		if waitErr != nil && !errors.Is(waitErr, ErrSearchIndexBuilding) {
+			return nil, waitErr
+		}
+		strategy, err = s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, vectorCount, dimensions, vfs, vi)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -5882,7 +5902,7 @@ type vectorStrategyDescriptor struct {
 	name         string
 	candidateGen CandidateGenerator
 	scorerPolicy exactScorerPolicy
-	pendingHNSW  bool // Exact fallback is temporary, including during index reset.
+	pendingHNSW  bool // Exact fallback while construction is paused (clear, close); never published.
 	// needsGPUUpload is resolved outside pipelineMu, under mutation admission.
 	needsGPUUpload bool
 }

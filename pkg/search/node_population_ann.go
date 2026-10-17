@@ -40,7 +40,7 @@ func (s *Service) restoreNodePopulationANN(ctx context.Context, plan nodePopulat
 				// Beam factor is query-only tuning and does not affect the persisted
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
+				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHintsLocked(s.fulltext(), want.M)))
 				if ctx.Err() != nil {
 					return
 				}

@@ -46,6 +46,7 @@ const (
 	nodeVectorReset
 	nodeVectorFileMoved
 	nodeFulltextReset
+	nodeSourcesCleared
 )
 
 // changeNodeSourcesLocked is the sole completion/authority writer. The
@@ -74,6 +75,10 @@ func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
 		s.nodeSources.memoryAuthoritative = false
 	case nodeFulltextReset:
 		s.nodeSources.textComplete = false
+	case nodeSourcesCleared:
+		// A dropped database: both sources are empty, complete and in memory.
+		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
+		s.nodeSources.memoryAuthoritative = true
 	}
 }
 
