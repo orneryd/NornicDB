@@ -66,6 +66,7 @@ const (
 	clauseAnalysisReturnSourceColumns
 	clauseAnalysisLimitModifier
 	clauseAnalysisSkipModifier
+	clauseAnalysisBoundNode
 	clauseAnalysisCount
 )
 

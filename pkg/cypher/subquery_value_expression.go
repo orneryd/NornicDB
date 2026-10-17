@@ -320,6 +320,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
+		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
+			return rowCountValue(kind, count), true, nil
+		}
 		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
 			// A pattern the kernel can't match goes to the pipeline below:
 			// its failure isn't a count of 0.
@@ -467,6 +470,142 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		return count, true
 	}
 	return e.boundTraversalCount(ctx, matches, seed, where, values, first), true
+}
+
+// boundNodeLookupCount counts the rows of a body that is one labelled node
+// pattern with a property map, MATCH (v:L {k: <expression>}) [WHERE …],
+// whose variable the row doesn't bind, as Neo4j plans [NOT] EXISTS over it:
+// SemiApply over a node index seek. The map's values are evaluated against
+// the row, the candidates are the pipeline's own (its index seek, or its
+// label scan), each is checked as the pipeline's node match checks it, and
+// the WHERE runs on the row with the node, through the predicate plan
+// already built for its text. EXISTS stops at the first match. It replaces
+// a correlated pipeline run per row, which plans the WHERE's text again for
+// every row; ok is false for any other body, a value of the map the row
+// can't resolve, and under a temporal viewport.
+func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, parseBoundNodeShape)
+	if !shape.ok {
+		return 0, false
+	}
+	if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
+		return 0, false
+	}
+	if shape.variable != "" {
+		if _, bound := values[shape.variable]; bound {
+			return 0, false
+		}
+	}
+	properties := make(map[string]interface{}, len(shape.keys))
+	for index, key := range shape.keys {
+		value, resolved, err := e.evaluateRowValue(shape.values[index], values)
+		if err != nil || !resolved {
+			return 0, false
+		}
+		properties[key] = normalizePropValue(value)
+	}
+	pattern := nodePatternInfo{variable: shape.variable, labels: shape.labels, properties: properties}
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
+	if err != nil {
+		return 0, false
+	}
+	hideSystemNodes := shouldHideSystemNodes(e.storage)
+	seen := make(map[storage.NodeID]struct{}, len(nodes))
+	var row map[string]interface{}
+	var count int64
+	for _, node := range nodes {
+		if node == nil || (hideSystemNodes && isSystemNode(node)) {
+			continue
+		}
+		if _, duplicate := seen[node.ID]; duplicate {
+			continue
+		}
+		seen[node.ID] = struct{}{}
+		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
+			continue
+		}
+		if shape.where != "" {
+			if row == nil {
+				row = make(map[string]interface{}, len(values)+1)
+				for name, value := range values {
+					row[name] = value
+				}
+			}
+			if shape.variable != "" {
+				row[shape.variable] = node
+			}
+			if !e.evaluateRowPredicate(ctx, shape.where, row) {
+				continue
+			}
+		}
+		count++
+		if first {
+			return count, true
+		}
+	}
+	return count, true
+}
+
+// boundNodeShape is the text part of boundNodeLookupCount: the node
+// pattern's variable, labels and map (keys and value expressions), and the
+// body's WHERE.
+type boundNodeShape struct {
+	variable string
+	labels   []string
+	keys     []string
+	values   []string
+	where    string
+	ok       bool
+}
+
+func parseBoundNodeShape(body string) boundNodeShape {
+	pattern := strings.TrimSpace(body)
+	if hasPrefixFold(pattern, "MATCH ") {
+		pattern = strings.TrimSpace(pattern[len("MATCH"):])
+	}
+	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+		return boundNodeShape{}
+	}
+	where := ""
+	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+		where = strings.TrimSpace(pattern[index+len("WHERE"):])
+		pattern = strings.TrimSpace(pattern[:index])
+	}
+	if !strings.HasPrefix(pattern, "(") || findMatchingParen(pattern, 0) != len(pattern)-1 || containsRelationshipPattern(pattern) ||
+		extractPathAssignmentVariable(pattern) != "" || indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		return boundNodeShape{}
+	}
+	head, props := splitNodePatternProperties(pattern)
+	// Plain labels only: a label expression, a dynamic label or an inline
+	// WHERE is the pipeline's.
+	if props == "" || strings.ContainsAny(head, "|&!%$()") || indexASCIIFold(head, "WHERE") >= 0 || indexASCIIFold(head, " IS ") >= 0 {
+		return boundNodeShape{}
+	}
+	variable, labels, labelErr := parseNodeHead(head)
+	if labelErr != nil || len(labels) == 0 {
+		return boundNodeShape{}
+	}
+	inner, enclosed := stripEnclosingRowDelimiter(strings.TrimSpace(props), '{', '}')
+	if !enclosed || strings.TrimSpace(inner) == "" {
+		return boundNodeShape{}
+	}
+	shape := boundNodeShape{variable: variable, labels: labels, where: where, ok: true}
+	seen := map[string]bool{}
+	for _, pair := range splitTopLevelComma(inner) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			return boundNodeShape{}
+		}
+		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		value := strings.TrimSpace(pair[separator+1:])
+		if key == "" || value == "" || seen[key] {
+			return boundNodeShape{}
+		}
+		seen[key] = true
+		shape.keys = append(shape.keys, key)
+		shape.values = append(shape.values, value)
+	}
+	return shape
 }
 
 // boundTraversalCount is boundChainCount for any chain: the paths the
