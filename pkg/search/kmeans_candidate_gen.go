@@ -93,6 +93,7 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 	// generation's population.
 	ctx, view, unlock, done := k.serving.open(ctx, ownClusterView(k.clusterIndex, k.numClustersToSearch, nil))
 	defer done()
+	defer unlock()
 	// Check if clustering is available and clustered
 	if view.routing == nil {
 		unlock()
