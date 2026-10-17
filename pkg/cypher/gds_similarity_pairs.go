@@ -429,8 +429,10 @@ type similarityTop struct {
 	limit   int
 }
 
-func (t *similarityTop) Len() int           { return len(t.records) }
-func (t *similarityTop) Less(i, j int) bool { return similarityRecordBefore(t.records[j], t.records[i]) }
+func (t *similarityTop) Len() int { return len(t.records) }
+func (t *similarityTop) Less(i, j int) bool {
+	return similarityRecordBefore(t.records[j], t.records[i])
+}
 func (t *similarityTop) Swap(i, j int)      { t.records[i], t.records[j] = t.records[j], t.records[i] }
 func (t *similarityTop) Push(x interface{}) { t.records = append(t.records, x.(similarityRecord)) }
 func (t *similarityTop) Pop() interface{} {
