@@ -226,7 +226,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			rows[i][1] = int64(community)
 		}
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows, gdsProjection: projection}, nil
 }
 
 // javaPlainDouble is a Double as GDS's range messages print it: its

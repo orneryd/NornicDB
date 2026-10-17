@@ -1,9 +1,6 @@
 package cypher
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 // gdsStreamNodeIDColumns are the columns of every GDS algorithm stream that
 // hold projected node ids; "shared" is node similarity's list of {nodeId,
@@ -37,33 +34,15 @@ func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandl
 		if err != nil || result == nil {
 			return result, err
 		}
-		if projection := e.gdsStreamProjection(procedure, args); projection != nil {
+		// The projection the stream computed from, not a catalog lookup now:
+		// the name may have been dropped or replaced meanwhile. Nil when the
+		// stream read the stored graph.
+		if projection := result.gdsProjection; projection != nil {
+			result.gdsProjection = nil
 			projection.renderNodeIDs(result, columns)
 		}
 		return result, nil
 	}
-}
-
-// gdsStreamProjection is the projection a stream read: its graphName
-// argument, or for link prediction its configuration's graph; nil when it
-// read the stored graph.
-func (e *StorageExecutor) gdsStreamProjection(procedure string, args []interface{}) *GraphProjection {
-	name, _ := procedureArgument(args, 0).(string)
-	if strings.HasPrefix(procedure, "gds.linkPrediction.") {
-		config, err := linkPredictionConfigFromArguments(args)
-		if err != nil {
-			return nil
-		}
-		name = config.GraphName
-	}
-	if name == "" {
-		return nil
-	}
-	projection, err := e.graphProjection(name)
-	if err != nil {
-		return nil
-	}
-	return projection
 }
 
 // renderNodeIDs renders the result's node-id columns, and the nodeId of the

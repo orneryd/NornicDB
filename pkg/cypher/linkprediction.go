@@ -278,7 +278,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 		return nil, err
 	}
 
-	graph, degree, err := e.linkPredictionGraph(ctx, config)
+	graph, degree, projection, err := e.linkPredictionGraph(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +317,9 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
-	return e.formatHybridPredictionResults(predictions, config.SourceNode), nil
+	result := e.formatHybridPredictionResults(predictions, config.SourceNode)
+	result.gdsProjection = projection
+	return result, nil
 }
 
 // callGdsLinkPredictionTopology runs a topology link prediction algorithm
@@ -330,14 +332,16 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 	if err != nil {
 		return nil, err
 	}
-	graph, degree, err := e.linkPredictionGraph(ctx, config)
+	graph, degree, projection, err := e.linkPredictionGraph(ctx, config)
 	if err != nil {
 		return nil, err
 	}
 	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
 	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	result := e.formatLinkPredictionResults(predictions, config.SourceNode)
+	result.gdsProjection = projection
+	return result, nil
 }
 
 // linkPredictionGraph is the graph a link prediction reads (#1192): the
@@ -346,13 +350,15 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 // relationshipTypes (every one without); undirected. The degree function
 // counts a node's relationships in that graph, a self-loop once. The
 // sourceNode must be in the graph.
-func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, error) {
+func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, *GraphProjection, error) {
 	var graph linkpredict.Graph
 	var degree linkpredict.DegreeFunc
+	var read *GraphProjection
 	if config.GraphName != "" {
 		projection, err := e.graphProjection(config.GraphName)
+		read = projection
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		graph = make(linkpredict.Graph, len(projection.NodeIDs))
 		relationships := make(map[storage.NodeID]map[string]struct{})
@@ -388,7 +394,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 			emptyTypesNone: config.RelationshipTypes != nil,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, id := range selected.nodes {
 			node := storage.NodeID(id)
@@ -402,7 +408,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		build.RelationshipTypes = config.RelationshipTypes
 		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, e.storage, build)
 		if err != nil {
-			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
+			return nil, nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 		}
 		graph = built
 		degrees := make(map[storage.NodeID]int)
@@ -421,9 +427,9 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 	}
 	if _, ok := graph[config.SourceNode]; !ok {
-		return nil, nil, localizedError(localization.CypherGraphProceduresSourceNodeNotFound(string(config.SourceNode)), nil)
+		return nil, nil, nil, localizedError(localization.CypherGraphProceduresSourceNodeNotFound(string(config.SourceNode)), nil)
 	}
-	return graph, degree, nil
+	return graph, degree, read, nil
 }
 
 // candidateLimit is how many predictions the algorithm returns: topK, or

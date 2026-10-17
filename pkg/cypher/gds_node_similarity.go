@@ -96,7 +96,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows}, nil
+	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows, gdsProjection: projection}, nil
 }
 
 func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
