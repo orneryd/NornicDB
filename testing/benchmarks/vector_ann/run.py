@@ -421,7 +421,7 @@ def run_one(engine, mode, args, vectors, queries, truth):
             from google.protobuf.json_format import MessageToDict
             stats["search_params"] = MessageToDict(params, preserving_proto_field_name=True) if params else {}
             result["runs"].append(stats)
-            label = "server default" if ef is None else f"hnsw_ef={ef}"
+            label = ("preset beam" if mode.get("sweep") else "configured mode") if ef is None else f"hnsw_ef={ef}"
             print(f"   {label:16} recall@{args.k} {stats[f'recall@{args.k}']:.4f}  p50 {stats['p50_ms']:7.3f} ms  "
                   f"p95 {stats['p95_ms']:7.3f} ms  {stats['qps']:8.1f} qps", flush=True)
         engine.wait_ready(points, queries[0].tolist())
