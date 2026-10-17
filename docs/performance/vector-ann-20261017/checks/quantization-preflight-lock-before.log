@@ -1,0 +1,17 @@
+/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14/traceback.py:270: ResourceWarning: unclosed file <_io.TextIOWrapper name='/private/var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp0d5docnf/out/.runner.lock' mode='w' encoding='UTF-8'>
+  tb.tb_frame.clear()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+F
+======================================================================
+FAIL: test_unstamped_binary_cannot_start_a_nornic_benchmark (test_benchmark.QuantizationEvidenceContracts.test_unstamped_binary_cannot_start_a_nornic_benchmark)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py", line 245, in test_unstamped_binary_cannot_start_a_nornic_benchmark
+    self.assertFalse((root/"out"/".runner.lock").exists())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (failures=1)

@@ -1,0 +1,15 @@
+{
+  "cases": 41,
+  "query_curves": 263,
+  "vectors_per_case": 88155,
+  "dimensions": 1024,
+  "queries_per_curve": 1000,
+  "timed_source": "7c201376d1203a651fc625869fb98df7be746ac4",
+  "baseline_source": "239b057e7c8797597b757d8a4b948c1af6034572",
+  "corpus_sha256": {
+    "vectors.npy": "ba1c6bb0c1907cdb3bc8e9b14d40109d68cd5ec0a01c667ef2a33a6b78da9729",
+    "queries.npy": "d295c6d9ce66c58869690c5bb202aa0a32fa1f812d8e72dff4ec55b3a880e2bb",
+    "truth.npy": "aafe231d65dbe0519fd3bdcbae21c5db1dfa09112907b5cde3b886056592e690",
+    "meta.json": "085567a1c6e9017f10867ae6a66956776ae8e9b06610baee20c0d09f885cc5e9"
+  }
+}

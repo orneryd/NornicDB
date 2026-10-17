@@ -1,0 +1,9 @@
+....== nornicdb / exact: Exact (brute force)
+== nornicdb / exact: Exact (brute force)
+.......== nornicdb / bq+rescore8: HNSW + binary quantization (rescore, 8x oversampling) [rescore8]
+......
+----------------------------------------------------------------------
+Ran 17 tests in 0.048s
+
+OK
+wrote /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmpgr9v0_z_/comparison.md
