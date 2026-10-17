@@ -244,6 +244,63 @@ func TestParkedBM25RebuiltWhenTheCheckpointCannotBeReloaded(t *testing.T) {
 	}
 }
 
+// E4, reached by a live write: when a live mutation is the first to find the
+// checkpoint unreloadable, the build still rebuilds BM25 from storage before it
+// reports ready. The write does not end the recovery: search reports building
+// until the rebuild completes, and afterwards every document is found.
+func TestParkedBM25RebuiltWhenALiveWriteFindsTheCheckpointUnreloadable(t *testing.T) {
+	parkedLifetimeBackends(t, func(t *testing.T, backend string) {
+		engine := parkedLifetimeEngine(t)
+		dir := t.TempDir()
+		gamma := admissionNode("nornic:c", "gamma", []float32{0, 0, 1}, "named")
+		var writeOnce sync.Once
+		var mu sync.Mutex
+		rebuilding := false
+		var windowErrs []error
+		search := func(svc *Service) {
+			_, err := svc.Search(context.Background(), "alpha", nil, &SearchOptions{Limit: 10})
+			mu.Lock()
+			windowErrs = append(windowErrs, err)
+			mu.Unlock()
+		}
+		svc, logs := hookedService(t, engine, dir, backend, func(svc *Service, message string) {
+			switch {
+			case strings.Contains(message, warmupStartMessage):
+				writeOnce.Do(func() {
+					require.NoError(t, os.WriteFile(filepath.Join(dir, "bm25"), []byte("not a BM25 snapshot"), 0o644))
+					_, err := engine.CreateNode(gamma)
+					require.NoError(t, err)
+					require.NoError(t, svc.IndexNode(gamma), "the live write succeeds")
+					require.False(t, svc.IsReady())
+					search(svc)
+				})
+			case strings.Contains(message, bm25RebuildMessage):
+				mu.Lock()
+				rebuilding = true
+				mu.Unlock()
+				search(svc)
+			case strings.Contains(message, iterationDoneMessage):
+				mu.Lock()
+				inWindow := rebuilding
+				mu.Unlock()
+				if inWindow {
+					search(svc)
+				}
+			}
+		})
+		require.NoError(t, svc.BuildIndexes(context.Background()))
+		require.True(t, logs.saw(bm25RebuildMessage), "the build rebuilt BM25 after the live write retired the checkpoint")
+		mu.Lock()
+		require.Len(t, windowErrs, 3, "searched after the write, at the rebuild and after its iteration")
+		for _, err := range windowErrs {
+			require.ErrorIs(t, err, ErrSearchIndexBuilding, "search reports building until the rebuild completes")
+		}
+		mu.Unlock()
+		requireFulltextFinds(t, svc, map[string]string{"alpha": "nornic:a", "beta": "nornic:b", "gamma": "nornic:c"})
+		require.Equal(t, 3, checkpointDocs(t, engine, dir, backend))
+	})
+}
+
 // E6: Close during the warmup leaves BM25 parked with the service gone. The
 // checkpoint on disk is used by the restart only when it matches storage;
 // otherwise the restart rebuilds BM25 from storage.
