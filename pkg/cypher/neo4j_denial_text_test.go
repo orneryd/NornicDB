@@ -19,16 +19,16 @@ func TestNeo4jDenialTexts(t *testing.T) {
 		return permission == "access"
 	})
 	for query, message := range map[string]string{
-		"CREATE INDEX person_name FOR (n:Person) ON (n.name)":                                   "Schema operation 'create_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"DROP INDEX person_name":                                                                "Schema operation 'drop_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"CREATE CONSTRAINT person_id FOR (n:Person) REQUIRE n.id IS UNIQUE":                     "Schema operation 'create_constraint' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"DROP CONSTRAINT person_id":                                                             "Schema operation 'drop_constraint' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"CALL db.index.fulltext.createNodeIndex('docs', ['Doc'], ['text'])":                     "Schema operation 'create_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"CALL db.index.fulltext.drop('docs')":                                                   "Schema operation 'drop_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
-		"CALL dbms.listConfig()":                                                                "Executing admin procedure 'dbms.listConfig' permission has not been granted for user 'alice' with roles [auditor, reader].",
-		"SHOW USERS":                                                                            "Permission denied.",
-		"CREATE (:Person {name: 'x'})":                                                          "Write operations are not allowed for user 'alice' with roles [auditor, reader].",
-		"MATCH (n) RETURN n":                                                                    "Read operations require read permission",
+		"CREATE INDEX person_name FOR (n:Person) ON (n.name)":               "Schema operation 'create_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"DROP INDEX person_name":                                            "Schema operation 'drop_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"CREATE CONSTRAINT person_id FOR (n:Person) REQUIRE n.id IS UNIQUE": "Schema operation 'create_constraint' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"DROP CONSTRAINT person_id":                                         "Schema operation 'drop_constraint' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"CALL db.index.fulltext.createNodeIndex('docs', ['Doc'], ['text'])": "Schema operation 'create_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"CALL db.index.fulltext.drop('docs')":                               "Schema operation 'drop_index' on database 'tenant' is not allowed for user 'alice' with roles [auditor, reader].",
+		"CALL dbms.listConfig()":                                            "Executing admin procedure 'dbms.listConfig' permission has not been granted for user 'alice' with roles [auditor, reader].",
+		"SHOW USERS":                                                        "Permission denied.",
+		"CREATE (:Person {name: 'x'})":                                      "Write operations are not allowed for user 'alice' with roles [auditor, reader].",
+		"MATCH (n) RETURN n":                                                "Read operations require read permission",
 	} {
 		err := AuthorizeQuery(ctx, query)
 		var denied *PermissionDeniedError
