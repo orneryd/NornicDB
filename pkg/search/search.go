@@ -5449,6 +5449,9 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if err := s.prepareGPUIndexForCurrentStrategy(); err != nil {
 		s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
 	}
+	// Compressed-build seeds read the node metadata under indexMu, which
+	// source retirement holds while it takes pipelineMu.
+	seedIDs := s.compressedBuildSeedIDs()
 
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
@@ -5466,7 +5469,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	vi := s.vectorIndex
 	s.mu.RUnlock()
 
-	strategy, err := s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, vectorCount, dimensions, vfs, vi)
+	strategy, err := s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, seedIDs, vectorCount, dimensions, vfs, vi)
 	if err != nil {
 		return nil, err
 	}
@@ -5505,7 +5508,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		if waitErr != nil && !errors.Is(waitErr, ErrSearchIndexBuilding) {
 			return nil, waitErr
 		}
-		strategy, err = s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, vectorCount, dimensions, vfs, vi)
+		strategy, err = s.resolveVectorStrategy(ctx, snapshot.sourceEpoch, seedIDs, vectorCount, dimensions, vfs, vi)
 		if err != nil {
 			return nil, err
 		}
@@ -5934,15 +5937,15 @@ type vectorStrategyDescriptor struct {
 	needsGPUUpload bool
 }
 
-func (s *Service) resolveVectorStrategy(ctx context.Context, sourceEpoch uint64, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveVectorStrategy(ctx context.Context, sourceEpoch uint64, seedIDs []string, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
 	vi := s.vectorMemorySnapshot(source)
 	if ANNQualityFromEnv() == ANNQualityCompressed {
-		return s.resolveCompressedVectorStrategy(ctx, sourceEpoch, vectorCount, dimensions, vfs, vi)
+		return s.resolveCompressedVectorStrategy(ctx, sourceEpoch, seedIDs, vectorCount, dimensions, vfs, vi)
 	}
 	return s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 }
 
-func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, sourceEpoch uint64, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, sourceEpoch uint64, seedIDs []string, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
 	vi := s.vectorMemorySnapshot(source)
 	profile := ResolveCompressedANNProfile(vectorCount, dimensions, vfs != nil && vfs.Count() > 0)
 	if !profile.Active {
@@ -5957,7 +5960,7 @@ func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, sourceEpo
 		return strategy, nil
 	}
 
-	idx, err := s.getOrBuildIVFPQIndex(ctx, ivfpqProfileFromCompressed(profile), vfs, sourceEpoch)
+	idx, err := s.getOrBuildIVFPQIndex(ctx, ivfpqProfileFromCompressed(profile), vfs, sourceEpoch, seedIDs)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr

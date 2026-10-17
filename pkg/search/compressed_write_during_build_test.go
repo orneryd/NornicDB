@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -180,8 +181,11 @@ func TestQuantizationThresholdCrossedWhileWritesArrive(t *testing.T) {
 			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "fast")
-			if mode != "" {
-				t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
+			// The default case runs unset, whatever quantization the
+			// surrounding environment selects.
+			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
+			if mode == "" {
+				require.NoError(t, os.Unsetenv("NORNICDB_VECTOR_HNSW_QUANTIZATION"))
 			}
 			const start, added = 250, 24
 			vec := func(i int) []float32 {

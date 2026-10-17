@@ -70,7 +70,7 @@ func TestSearchIndexBuildLocalizationDirectValidation(t *testing.T) {
 	err = (&Service{}).ensureGPUIndexSynced(nil, nil)
 	assertLocalizedSearchIndexBuildError(t, err, localization.MessageSearchGPUNotEnabled, "gpu not enabled")
 
-	_, err = (&Service{}).getOrBuildIVFPQIndex(context.Background(), IVFPQProfile{}, nil, 0)
+	_, err = (&Service{}).getOrBuildIVFPQIndex(context.Background(), IVFPQProfile{}, nil, 0, nil)
 	assertLocalizedSearchIndexBuildError(t, err, localization.MessageSearchIVFPQVectorStoreUnavailable, "vector file store unavailable for IVFPQ build")
 }
 

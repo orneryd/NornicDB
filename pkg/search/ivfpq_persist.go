@@ -171,7 +171,9 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 // the vectorSourceEpoch the caller observed before reading vfs: an index is
 // reused only within its own epoch, and one loaded or built for a source that
 // has since been retired is returned to this caller but never published.
-func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, sourceEpoch uint64) (*IVFPQIndex, error) {
+// seedIDs (compressedBuildSeedIDs) are resolved by the caller before
+// pipelineMu, since they read the node metadata under indexMu.
+func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, sourceEpoch uint64, seedIDs []string) (*IVFPQIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -182,13 +184,6 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		return idx, nil
 	}
 	s.ivfpqMu.RUnlock()
-
-	// The BM25 seeds read the node metadata under indexMu, which ranks before
-	// ivfpqMu (persistIVFPQBackground), so they are resolved first.
-	s.mu.RLock()
-	fulltext := s.fulltext()
-	s.mu.RUnlock()
-	seedIDs := s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
 
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()

@@ -23,7 +23,7 @@ func TestCompressedIndexIsRetiredWithItsVectorSource(t *testing.T) {
 	stale := tinyIVFPQIndexForTest(profile)
 	require.NoError(t, SaveIVFPQBundle(base, stale))
 	epochA := svc.vectorSourceEpoch.Load()
-	loaded, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochA)
+	loaded, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochA, nil)
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
 	svc.ivfpqMu.RLock()
@@ -38,7 +38,7 @@ func TestCompressedIndexIsRetiredWithItsVectorSource(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "the saved compressed bundle for A survived source replacement: %v", statErr)
 
 	// Profile compatibility alone must not reuse A's index for B.
-	reused, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochB)
+	reused, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochB, nil)
 	require.Error(t, err, "no source to build B from, and A's index must not be reused")
 	require.Nil(t, reused)
 
@@ -48,7 +48,7 @@ func TestCompressedIndexIsRetiredWithItsVectorSource(t *testing.T) {
 	svc.ivfpqMu.Lock()
 	svc.ivfpqIndex = nil
 	svc.ivfpqMu.Unlock()
-	late, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochA)
+	late, err := svc.getOrBuildIVFPQIndex(ctx, profile, nil, epochA, nil)
 	require.NoError(t, err)
 	require.NotNil(t, late)
 	svc.ivfpqMu.RLock()

@@ -94,7 +94,7 @@ func TestIVFPQPersist_ServiceBranches(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
 
 	// vfs nil branch when no compatible in-memory/persisted index exists.
-	_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load())
+	_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "vector file store unavailable")
 
@@ -205,13 +205,13 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	svc.ivfpqIndex = idx
 	var nilCtx context.Context
-	cached, err := svc.getOrBuildIVFPQIndex(nilCtx, profile, nil, svc.vectorSourceEpoch.Load())
+	cached, err := svc.getOrBuildIVFPQIndex(nilCtx, profile, nil, svc.vectorSourceEpoch.Load(), nil)
 	require.NoError(t, err)
 	require.Same(t, idx, cached)
 
 	svc = NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	svc.hnswIndexPath = base
-	loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load())
+	loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, loadedFromDisk)
 	require.Equal(t, 1, loadedFromDisk.Count())

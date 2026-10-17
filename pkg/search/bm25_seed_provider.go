@@ -110,8 +110,8 @@ func bm25SeedDocIDs(fulltext lexicalSeedProvider) []string {
 // index metadata. Cluster/PQ builders own embedding IDs, including named,
 // property and chunk embeddings, rather than full-text document IDs.
 // Clustering and compressed builds run beside live writes, which change the
-// metadata under indexMu; indexMu ranks before ivfpqMu, so no caller may hold
-// ivfpqMu.
+// metadata under indexMu; indexMu ranks before pipelineMu and ivfpqMu, so no
+// caller may hold either.
 func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 	s.indexMu.RLock()
 	defer s.indexMu.RUnlock()
@@ -140,4 +140,17 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 		slices.Sort(ids[start:])
 	}
 	return ids
+}
+
+// compressedBuildSeedIDs resolves the BM25 seeds of a compressed (IVF-PQ)
+// build. Pipeline creation calls it before pipelineMu, which source
+// retirement takes under indexMu; nil when compressed quality is off.
+func (s *Service) compressedBuildSeedIDs() []string {
+	if ANNQualityFromEnv() != ANNQualityCompressed {
+		return nil
+	}
+	s.mu.RLock()
+	fulltext := s.fulltext()
+	s.mu.RUnlock()
+	return s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
 }
