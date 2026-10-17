@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -13,7 +15,6 @@ import (
 // while the process runs, keeping the reservations in use (#1343).
 func TestGlobalTransactionPoolIsDynamic(t *testing.T) {
 	resetTransactionMemory(t)
-	t.Cleanup(func() { processSettingValues.Delete(globalTransactionMemorySetting) })
 	ctx := context.Background()
 	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
 
@@ -25,18 +26,18 @@ func TestGlobalTransactionPoolIsDynamic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{true}}, listed.Rows)
 
-	_, err = executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '4m')", nil)
+	_, err = executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '2m')", nil)
 	require.NoError(t, err)
 	settings, err = executor.Execute(ctx, "SHOW SETTINGS YIELD name, value, isExplicitlySet WHERE name = 'dbms.memory.transaction.total.max' RETURN value, isExplicitlySet", nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"4194304", true}}, settings.Rows)
+	require.Equal(t, [][]interface{}{{"2097152", true}}, settings.Rows)
 	_, err = executor.Execute(ctx, heavyCollectQuery, nil)
 	requireMemoryError(t, err, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", "dbms.memory.transaction.total.max")
 	requirePoolsEmpty(t, "nornic")
 
-	// A change keeps what transactions hold: others' reservations stay, and
-	// the new limit applies to the next reservation.
-	ok, _, _ := transactionMemory.global.reserve(3 << 20)
+	// A change keeps what transactions hold: their reservations stay, and the
+	// new limit applies to the statements that start after it.
+	ok, _ := transactionMemory.global.reserve(3<<20, 0)
 	require.True(t, ok)
 	_, err = executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '2m')", nil)
 	require.NoError(t, err)
@@ -48,7 +49,7 @@ func TestGlobalTransactionPoolIsDynamic(t *testing.T) {
 	require.NoError(t, err)
 	result, err := executor.Execute(ctx, heavyCollectQuery, nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1000000), result.Rows[0][0])
+	require.Equal(t, int64(200000), result.Rows[0][0])
 }
 
 func TestSetConfigValueRefusals(t *testing.T) {
@@ -56,10 +57,10 @@ func TestSetConfigValueRefusals(t *testing.T) {
 	ctx := context.Background()
 	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
 	for statement, message := range map[string]string{
-		"CALL dbms.setConfigValue('no.such.setting', '1')":                         "Unknown setting: no.such.setting",
-		"CALL dbms.setConfigValue('db.nornic.memory.storage.mode', 'low')":         "Setting 'db.nornic.memory.storage.mode' is not dynamic and can not be changed at runtime",
-		"CALL dbms.setConfigValue('db.memory.transaction.max', '1m')":              "Setting 'db.memory.transaction.max' is a database setting",
-		"CALL dbms.setConfigValue('dbms.memory.transaction.total.max', 'lots')":    "'lots' is not a valid value for setting 'dbms.memory.transaction.total.max'",
+		"CALL dbms.setConfigValue('no.such.setting', '1')":                      "Unknown setting: no.such.setting",
+		"CALL dbms.setConfigValue('db.nornic.memory.storage.mode', 'low')":      "Setting 'db.nornic.memory.storage.mode' is not dynamic and can not be changed at runtime",
+		"CALL dbms.setConfigValue('db.memory.transaction.max', '1m')":           "Setting 'db.memory.transaction.max' is a database setting",
+		"CALL dbms.setConfigValue('dbms.memory.transaction.total.max', 'lots')": "'lots' is not a valid value for setting 'dbms.memory.transaction.total.max'",
 	} {
 		_, err := executor.Execute(ctx, statement, nil)
 		require.Error(t, err, statement)
@@ -69,4 +70,48 @@ func TestSetConfigValueRefusals(t *testing.T) {
 	}
 	_, live := liveProcessSetting(globalTransactionMemorySetting)
 	require.False(t, live, "a refused value is not set")
+}
+
+// SHOW SETTINGS and dbms.listConfig report the global limit the pool
+// enforces, whichever change came last: a configuration applied after
+// dbms.setConfigValue, or concurrent dbms.setConfigValue calls (#1343).
+func TestDynamicGlobalPoolReportsTheEnforcedLimit(t *testing.T) {
+	resetTransactionMemory(t)
+	ctx := context.Background()
+	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+	reported := func() string {
+		settings, err := executor.Execute(ctx, "SHOW SETTINGS YIELD name, value WHERE name = 'dbms.memory.transaction.total.max' RETURN value", nil)
+		require.NoError(t, err)
+		listed, err := executor.Execute(ctx, "CALL dbms.listConfig('dbms.memory.transaction.total.max') YIELD value RETURN value", nil)
+		require.NoError(t, err)
+		require.Equal(t, settings.Rows, listed.Rows)
+		return settings.Rows[0][0].(string)
+	}
+
+	_, err := executor.Execute(ctx, "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '4m')", nil)
+	require.NoError(t, err)
+	ConfigureTransactionMemory(8<<20, TransactionMemoryLimits{})
+	require.Equal(t, "8388608", reported())
+
+	var workers sync.WaitGroup
+	failures := make(chan error, 8)
+	for worker := 0; worker < 8; worker++ {
+		statement := "CALL dbms.setConfigValue('dbms.memory.transaction.total.max', '" + []string{"2m", "4m"}[worker%2] + "')"
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for i := 0; i < 200; i++ {
+				if _, err := executor.Execute(ctx, statement, nil); err != nil {
+					failures <- err
+					return
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	require.Equal(t, strconv.FormatInt(transactionMemory.global.limit.Load(), 10), reported())
 }
