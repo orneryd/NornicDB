@@ -1,0 +1,18 @@
+....== nornicdb / exact: Exact (brute force)
+== nornicdb / exact: Exact (brute force)
+.......== nornicdb / bq+rescore8: HNSW + binary quantization (rescore, 8x oversampling) [rescore8]
+....E.
+======================================================================
+ERROR: test_inherited_engine_settings_do_not_change_mode (test_benchmark.RunnerContracts.test_inherited_engine_settings_do_not_change_mode)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/timothysweet/src/NornicDB/testing/benchmarks/vector_ann/test_benchmark.py", line 65, in test_inherited_engine_settings_do_not_change_mode
+    self.assertEqual("none", captured["NORNICDB_VECTOR_HNSW_QUANTIZATION"])
+                             ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'NORNICDB_VECTOR_HNSW_QUANTIZATION'
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.083s
+
+FAILED (errors=1)
+wrote /var/folders/72/0lxlwnts2_x8f823b1lbz9800000gn/T/tmp_7gooer9/comparison.md
