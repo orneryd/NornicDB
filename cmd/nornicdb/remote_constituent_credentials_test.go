@@ -1,7 +1,7 @@
 package main
 
-// Investigation overlay only. No product files are changed. All processes run
-// inside the TrueNAS test job, with an allowlisted synthetic environment.
+// Exercise public protocols against separate real servers. Child processes use
+// an allowlisted synthetic environment and are stopped by test cleanup.
 import (
 	"bytes"
 	"context"
@@ -29,6 +29,11 @@ import (
 const investigationPass = "synthetic-userpass-investigation-48263917"
 const investigationMarker = "real-remote-marker-67193824"
 const investigationRead = "MATCH (n:AuthInvestigation) RETURN n.marker AS marker"
+
+func investigationDiagnostic(message string) string {
+	message = strings.ReplaceAll(message, investigationPass, "<synthetic-password>")
+	return strings.ReplaceAll(message, base64.StdEncoding.EncodeToString([]byte("admin:"+investigationPass)), "<synthetic-basic-auth>")
+}
 
 func investigationPort(t *testing.T) string {
 	t.Helper()
@@ -71,6 +76,11 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool) {
 		for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
 			if bytes.Contains(data, []byte(secret)) {
 				t.Error("process logs disclosed synthetic remote credentials")
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.Contains(line, secret) {
+						t.Log(investigationDiagnostic(line))
+					}
+				}
 			}
 		}
 	})
@@ -478,7 +488,7 @@ func investigationHTTPTransaction(t *testing.T, base, db, graph, ending string) 
 		data, _ := io.ReadAll(response.Body)
 		var decoded investigationResponse
 		if json.Unmarshal(data, &decoded) != nil || response.StatusCode >= 400 || len(decoded.Errors) > 0 {
-			t.Fatalf("explicit HTTP workflow failed: status=%d errors=%d", response.StatusCode, len(decoded.Errors))
+			t.Fatalf("explicit HTTP workflow failed: method=%s status=%d errors=%s", method, response.StatusCode, investigationDiagnostic(fmt.Sprint(decoded.Errors)))
 		}
 		return data
 	}
@@ -539,6 +549,6 @@ func investigationBoltTransaction(t *testing.T, uri, db, graph, ending string) {
 		err = tx.Rollback(ctx)
 	}
 	if err != nil {
-		t.Fatal("Bolt " + ending + " failed")
+		t.Fatal("Bolt " + ending + " failed: " + investigationDiagnostic(err.Error()))
 	}
 }
