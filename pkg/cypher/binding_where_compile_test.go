@@ -339,11 +339,10 @@ func TestGh728BindingFilterAdmissionAndParameterOwnership(t *testing.T) {
 	row := binding{"a": created.Rows[0][0].(*storage.Node), "b": created.Rows[0][1].(*storage.Node)}
 	for _, clause := range []string{"a.age = 30", "(a)-[:LINK]->(b)"} {
 		predicate := exec.newBindingFilterPredicate(ctx, clause, nil)
-		if clause == "a.age = 30" {
-			require.NotNil(t, predicate.plan)
-		} else {
-			require.Nil(t, predicate.plan)
-		}
+		// Pattern predicates now compile to their shared owner, just as a
+		// comparison compiles to its operand plan. Neither needs row scratch.
+		require.NotNil(t, predicate.plan)
+		require.Nil(t, predicate.values)
 		require.True(t, predicate.matches(row, nil))
 	}
 	params := map[string]interface{}{"offset": int64(1), "expected": int64(31)}
