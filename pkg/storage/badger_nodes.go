@@ -315,13 +315,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 	}
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		var node *Node
-		err := item.Value(func(value []byte) error {
-			var err error
-			node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
-			return err
-		})
-		return node, err
+		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
 	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, false)
 }
 
