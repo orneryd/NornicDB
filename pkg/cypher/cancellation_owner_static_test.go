@@ -1,57 +1,672 @@
 package cypher
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"go/ast"
+	"go/build"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 )
 
-// The statement's deadline has one owner, the statement context's probe
-// (contextPipelineProbe; a goroutine forks it with pipelineWorkerContext, and
-// statementCancellationErr makes the deadline win at commit and at Execute's
-// return). This test enumerates, over every non-test file of the package,
-// every way an evaluator or stage can lose that deadline, so a new entry
-// cannot drop it unnoticed:
+// The statement's end (its deadline, a client cancel, TERMINATE) has one
+// owner: the statement probe (contextPipelineProbe; carried in the
+// registered statement context; a goroutine forks it with
+// pipelineWorkerContext; statementDeadlineOutcome settles the result).
 //
-//	A. context.Background() / context.TODO(): a fresh context has no deadline.
-//	B. a call to a no-probe wrapper (X forwarding to XWithCancellation or
-//	   XProbed with a nil probe) from a function that has a context or probe.
-//	C. a literal nil probe passed to a *WithCancellation / *Probed function
-//	   from a function that has a context or probe.
-//	D. a compiled node's eval that receives the probe and never reads it.
-//	E. a goroutine that uses the statement context without its own fork
-//	   (pipelineWorkerContext).
+// The contract this test enforces, over a type-checked inventory of the
+// package: every loop a statement can reach whose trip count grows with
+// data (rows, result rows, values, lists, maps, nodes, relationships,
+// vectors, iterators) observes the probe on every iteration, and so does
+// every bulk native operation over data. Work bounded by the statement's own
+// text (its characters, clauses, a row's variables) takes no probe: that
+// work goes to the native, cached readers, and preparation checks the probe
+// between its steps.
 //
-// Each finding is converted or listed in cancellationOwnerAllowlist with a
-// one-line reason; a stale allowlist entry fails as well.
-
-type cancellationFinding struct {
-	rule, key, where string
-	rewrite          string
+// Reachable: from StorageExecutor.Execute, from every function or method of
+// the package another package of the server uses (Bolt, HTTP, transactions,
+// the database, MCP, the command), from init and from package-level tables
+// (procedures and functions register there), with a call through an
+// interface reaching every method of that name.
+//
+// Rules (a finding is fixed or listed in cancellationContractAllowlist with a
+// one-line reason; a stale entry fails too):
+//
+//	R1 a reachable data loop or bulk data operation that doesn't observe
+//	   the probe.
+//	R2 a probe-taking twin (XWithCancellation / XProbed beside X) that does
+//	   no data work: statement-text work takes no probe.
+//	R3 context.Background() / context.TODO() in a reachable function: a fresh
+//	   context has no deadline.
+//	R4 a reachable function that holds a context or a probe calling a form
+//	   that drops it (a wrapper that forwards a nil probe or a background
+//	   context).
+//	R5 a goroutine started by a reachable function without forking the probe
+//	   (pipelineWorkerContext) and recovering into it (recoverWorkerPanic).
+func TestCancellationOwnerStaticInventory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("type-checks the package and its clients from source")
+	}
+	findings := collectCancellationContractFindings(t)
+	seen := map[string]bool{}
+	var open []string
+	counts := map[string]int{}
+	for _, finding := range findings {
+		counts[finding.rule]++
+		seen[finding.key] = true
+		if _, ok := cancellationContractAllowlist[finding.key]; !ok {
+			open = append(open, finding.key+"  @ "+finding.where)
+		}
+	}
+	var stale []string
+	for key := range cancellationContractAllowlist {
+		if !seen[key] {
+			stale = append(stale, key)
+		}
+	}
+	sort.Strings(open)
+	sort.Strings(stale)
+	t.Logf("findings by rule %v; allowlisted %d", counts, len(cancellationContractAllowlist))
+	if os.Getenv("CANCELLATION_INVENTORY") != "" {
+		for _, line := range open {
+			t.Logf("OPEN %s", line)
+		}
+	}
+	if len(open) > 0 || len(stale) > 0 {
+		t.Fatalf("%d findings (CANCELLATION_INVENTORY=1 lists them); %d stale allowlist entries: %v", len(open), len(stale), stale)
+	}
 }
 
-type cancellationSource struct {
-	name string
-	src  []byte
-	file *ast.File
+type contractFinding struct{ rule, key, where string }
+
+// The packages whose use of this one makes a function reachable.
+var cancellationContractClients = []string{"../bolt", "../server", "../txsession", "../nornicdb", "../fabric", "../mcp", "../../cmd/nornicdb"}
+
+type contractFunc struct {
+	decl       *ast.FuncDecl
+	obj        *types.Func
+	file       string
+	direct     bool
+	checks     bool
+	data       bool // has a data loop or a bulk data operation
+	refs       []*types.Func
+	calls      []*types.Func
+	ifaceCalls []string
+	reach      bool
 }
 
-type cancellationWrapper struct {
-	params   []string // the wrapper's parameter names, in order
-	variadic bool     // its last parameter is variadic
-	target   string   // the probe form it forwards to
-	args     []ast.Expr
-	method   bool
-	context  bool // forwards context.Background() rather than a nil probe
+type contractAnalysis struct {
+	fset *token.FileSet
+	info *types.Info
+	fns  map[*types.Func]*contractFunc
 }
 
+func collectCancellationContractFindings(t *testing.T) []contractFinding {
+	ctxt := build.Default
+	ctxt.BuildTags = []string{"noui", "nolocalllm"}
+	build.Default = ctxt
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "source", nil)
+	const module = "github.com/orneryd/nornicdb/pkg/cypher"
+
+	clientUses := map[string]bool{}
+	for _, dir := range cancellationContractClients {
+		files := parsePackageFiles(t, fset, dir, false)
+		if files == nil {
+			continue
+		}
+		info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
+		conf := types.Config{Importer: imp, Error: func(error) {}}
+		_, _ = conf.Check("client/"+filepath.Base(dir), fset, files, info)
+		for _, obj := range info.Uses {
+			if fn, ok := obj.(*types.Func); ok && fn.Pkg() != nil && fn.Pkg().Path() == module {
+				clientUses[fn.Origin().FullName()] = true
+			}
+		}
+	}
+	if len(clientUses) == 0 {
+		t.Fatal("no client package uses this package: the clients did not type-check")
+	}
+
+	files := parsePackageFiles(t, fset, ".", true)
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
+	var typeErrors []error
+	conf := types.Config{Importer: imp, Error: func(err error) { typeErrors = append(typeErrors, err) }}
+	_, _ = conf.Check(module, fset, files, info)
+	if len(typeErrors) > 0 {
+		t.Fatalf("the package does not type-check: %v", typeErrors[0])
+	}
+	a := &contractAnalysis{fset: fset, info: info, fns: map[*types.Func]*contractFunc{}}
+	var initRefs []*types.Func
+	for _, f := range files {
+		name := fset.Position(f.Pos()).Filename
+		for _, d := range f.Decls {
+			switch decl := d.(type) {
+			case *ast.FuncDecl:
+				if decl.Body == nil {
+					continue
+				}
+				obj, _ := info.Defs[decl.Name].(*types.Func)
+				if obj == nil {
+					continue
+				}
+				fn := &contractFunc{decl: decl, obj: obj, file: name}
+				a.fns[obj] = fn
+				ast.Inspect(decl.Body, func(n ast.Node) bool {
+					switch x := n.(type) {
+					case *ast.CallExpr:
+						if a.isDirectCheck(x) {
+							fn.direct = true
+						}
+						if callee := a.callee(x); callee != nil {
+							fn.calls = append(fn.calls, callee)
+						}
+					case *ast.SelectStmt:
+						if selectsDone(x) {
+							fn.direct = true
+						}
+					case *ast.Ident:
+						if ref, ok := info.Uses[x].(*types.Func); ok {
+							fn.refs = append(fn.refs, ref.Origin())
+						}
+					case *ast.SelectorExpr:
+						if s := info.Selections[x]; s != nil && types.IsInterface(s.Recv()) {
+							fn.ifaceCalls = append(fn.ifaceCalls, x.Sel.Name)
+						}
+					}
+					return true
+				})
+			case *ast.GenDecl:
+				if decl.Tok == token.VAR {
+					ast.Inspect(decl, func(n ast.Node) bool {
+						if id, ok := n.(*ast.Ident); ok {
+							if ref, ok := info.Uses[id].(*types.Func); ok {
+								initRefs = append(initRefs, ref.Origin())
+							}
+						}
+						return true
+					})
+				}
+			}
+		}
+	}
+	methodsByName := map[string][]*contractFunc{}
+	for _, fn := range a.fns {
+		if fn.decl.Recv != nil {
+			methodsByName[fn.decl.Name.Name] = append(methodsByName[fn.decl.Name.Name], fn)
+		}
+	}
+	for _, fn := range a.fns {
+		for _, name := range fn.ifaceCalls {
+			for _, m := range methodsByName[name] {
+				fn.refs = append(fn.refs, m.obj)
+			}
+		}
+	}
+	// checks: observes the probe itself or through a function it calls.
+	for _, fn := range a.fns {
+		fn.checks = fn.direct
+	}
+	fixedPoint(a.fns, func(fn *contractFunc) bool {
+		for _, c := range fn.calls {
+			if g := a.fns[c]; g != nil && g.checks {
+				fn.checks = true
+				return true
+			}
+		}
+		return false
+	}, func(fn *contractFunc) bool { return fn.checks })
+	// Reachability.
+	var stack []*contractFunc
+	for _, fn := range a.fns {
+		if contractFuncName(fn.decl) == "StorageExecutor.Execute" || clientUses[fn.obj.FullName()] || (fn.decl.Recv == nil && fn.decl.Name.Name == "init") {
+			stack = append(stack, fn)
+		}
+	}
+	for _, ref := range initRefs {
+		if fn := a.fns[ref]; fn != nil {
+			stack = append(stack, fn)
+		}
+	}
+	for len(stack) > 0 {
+		fn := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if fn.reach {
+			continue
+		}
+		fn.reach = true
+		for _, ref := range fn.refs {
+			if g := a.fns[ref]; g != nil && !g.reach {
+				stack = append(stack, g)
+			}
+		}
+	}
+
+	var findings []contractFinding
+	forwarders := a.forwarders()
+	for _, fn := range a.fns {
+		name := contractFuncName(fn.decl)
+		// R1: loops and bulk operations.
+		ordinal := 0
+		a.walkLoops(fn.decl.Body, func(n ast.Node, body *ast.BlockStmt, domain, typ string) {
+			ordinal++
+			if domain != "DATA" {
+				return
+			}
+			fn.data = true
+			if !fn.reach {
+				return
+			}
+			if body != nil && a.bodyObserves(body) {
+				return
+			}
+			kind := "loop"
+			if body == nil {
+				kind = "bulk"
+			}
+			findings = append(findings, contractFinding{"R1", fmt.Sprintf("R1 %s %s#%d %s", name, kind, ordinal, typ), a.where(n.Pos())})
+		})
+		if !fn.reach {
+			continue
+		}
+		ctxName, probeName := cancellationScope(fn.decl)
+		holdsOwner := ctxName != "" || probeName != "" || fn.decl.Body != nil && localProbe(fn.decl, fn.decl.Body.End()) != ""
+		ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				// R3.
+				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO") {
+						findings = append(findings, contractFinding{"R3", fmt.Sprintf("R3 %s %s", name, sel.Sel.Name), a.where(x.Pos())})
+					}
+				}
+				// R4.
+				if holdsOwner {
+					if callee := a.callee(x); callee != nil && forwarders[callee] != "" {
+						findings = append(findings, contractFinding{"R4", fmt.Sprintf("R4 %s -> %s", name, contractFuncName(a.fns[callee].decl)), a.where(x.Pos())})
+					}
+				}
+			case *ast.GoStmt:
+				// R5.
+				forks, recovers := false, false
+				ast.Inspect(fn.decl.Body, func(m ast.Node) bool {
+					if call, ok := m.(*ast.CallExpr); ok {
+						switch callName(call) {
+						case "pipelineWorkerContext":
+							forks = true
+						case "recoverWorkerPanic":
+							recovers = true
+						}
+					}
+					return true
+				})
+				if !forks || !recovers {
+					findings = append(findings, contractFinding{"R5", fmt.Sprintf("R5 %s go", name), a.where(x.Pos())})
+				}
+			}
+			return true
+		})
+	}
+	// data: the function, or one it calls, does data work.
+	fixedPoint(a.fns, func(fn *contractFunc) bool {
+		for _, c := range fn.calls {
+			if g := a.fns[c]; g != nil && g.data {
+				fn.data = true
+				return true
+			}
+		}
+		return false
+	}, func(fn *contractFunc) bool { return fn.data })
+	// R2: statement-text twins.
+	byName := map[string]*contractFunc{}
+	for _, fn := range a.fns {
+		byName[contractFuncName(fn.decl)] = fn
+	}
+	for key, fn := range byName {
+		for _, suffix := range []string{"WithCancellation", "Probed"} {
+			if strings.HasSuffix(key, suffix) && byName[strings.TrimSuffix(key, suffix)] != nil && !fn.data {
+				findings = append(findings, contractFinding{"R2", "R2 " + key, a.where(fn.decl.Pos())})
+			}
+		}
+	}
+	return findings
+}
+
+func fixedPoint(fns map[*types.Func]*contractFunc, step func(*contractFunc) bool, done func(*contractFunc) bool) {
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range fns {
+			if !done(fn) && step(fn) {
+				changed = true
+			}
+		}
+	}
+}
+
+func parsePackageFiles(t *testing.T, fset *token.FileSet, dir string, required bool) []*ast.File {
+	pkg, err := build.ImportDir(dir, 0)
+	if err != nil {
+		if required {
+			t.Fatal(err)
+		}
+		return nil
+	}
+	var files []*ast.File
+	for _, name := range pkg.GoFiles {
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
+	}
+	return files
+}
+
+func contractFuncName(fd *ast.FuncDecl) string {
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		t := fd.Recv.List[0].Type
+		if s, ok := t.(*ast.StarExpr); ok {
+			t = s.X
+		}
+		if ix, ok := t.(*ast.IndexExpr); ok {
+			t = ix.X
+		}
+		if ix, ok := t.(*ast.IndexListExpr); ok {
+			t = ix.X
+		}
+		if id, ok := t.(*ast.Ident); ok {
+			return id.Name + "." + fd.Name.Name
+		}
+	}
+	return fd.Name.Name
+}
+
+func callName(call *ast.CallExpr) string {
+	switch f := call.Fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	case *ast.IndexExpr:
+		if id, ok := f.X.(*ast.Ident); ok {
+			return id.Name
+		}
+	}
+	return ""
+}
+
+func (a *contractAnalysis) where(p token.Pos) string {
+	position := a.fset.Position(p)
+	return fmt.Sprintf("%s:%d", filepath.Base(position.Filename), position.Line)
+}
+
+func (a *contractAnalysis) callee(call *ast.CallExpr) *types.Func {
+	switch f := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		if fn, ok := a.info.Uses[f].(*types.Func); ok {
+			return fn.Origin()
+		}
+	case *ast.SelectorExpr:
+		if fn, ok := a.info.Uses[f.Sel].(*types.Func); ok {
+			return fn.Origin()
+		}
+	case *ast.IndexExpr:
+		if id, ok := f.X.(*ast.Ident); ok {
+			if fn, ok := a.info.Uses[id].(*types.Func); ok {
+				return fn.Origin()
+			}
+		}
+	}
+	return nil
+}
+
+func isProbeType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	s := t.String()
+	return strings.HasSuffix(s, ".pipelineCancellation") || strings.HasSuffix(s, "fn.Cancellation") || strings.HasSuffix(s, "text.Work")
+}
+
+func isContextType(t types.Type) bool {
+	return t != nil && t.String() == "context.Context"
+}
+
+func (a *contractAnalysis) isDirectCheck(call *ast.CallExpr) bool {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	recv := a.info.TypeOf(sel.X)
+	switch sel.Sel.Name {
+	case "check", "poll", "stopped", "chargeText", "Continue", "sort":
+		return isProbeType(recv)
+	case "Err":
+		return isContextType(recv)
+	case "traversalCancelled":
+		return true
+	}
+	return false
+}
+
+func selectsDone(sel *ast.SelectStmt) bool {
+	found := false
+	ast.Inspect(sel, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if s, ok := c.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "Done" {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// bodyObserves: the body checks the probe, passes it on, or calls a
+// function that checks it.
+func (a *contractAnalysis) bodyObserves(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if a.isDirectCheck(x) {
+				found = true
+			}
+			for _, arg := range x.Args {
+				if id, ok := ast.Unparen(arg).(*ast.Ident); ok && id.Name == "nil" {
+					continue
+				}
+				if t := a.info.TypeOf(arg); isProbeType(t) || isContextType(t) {
+					found = true
+				}
+			}
+			if c := a.callee(x); c != nil {
+				if g := a.fns[c]; g != nil && g.checks {
+					found = true
+				}
+			}
+		case *ast.SelectStmt:
+			if selectsDone(x) {
+				found = true
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// forwarders are the functions whose whole body hands a nil probe or a
+// background context to another function: the forms that drop the owner.
+func (a *contractAnalysis) forwarders() map[*types.Func]string {
+	out := map[*types.Func]string{}
+	for obj, fn := range a.fns {
+		if len(fn.decl.Body.List) != 1 {
+			continue
+		}
+		var call *ast.CallExpr
+		switch s := fn.decl.Body.List[0].(type) {
+		case *ast.ReturnStmt:
+			if len(s.Results) == 1 {
+				call, _ = s.Results[0].(*ast.CallExpr)
+			}
+		case *ast.ExprStmt:
+			call, _ = s.X.(*ast.CallExpr)
+		}
+		if call == nil {
+			continue
+		}
+		sig, _ := a.info.TypeOf(call.Fun).(*types.Signature)
+		for i, arg := range call.Args {
+			if sig == nil || i >= sig.Params().Len() {
+				break
+			}
+			param := sig.Params().At(i).Type()
+			if id, ok := ast.Unparen(arg).(*ast.Ident); ok && id.Name == "nil" && isProbeType(param) {
+				out[obj] = "nil probe"
+			}
+			if c, ok := ast.Unparen(arg).(*ast.CallExpr); ok && isContextType(param) {
+				if sel, ok := c.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO") {
+					out[obj] = "background context"
+				}
+			}
+		}
+	}
+	return out
+}
+
+// walkLoops reports every loop (with its body) and every bulk native
+// operation (body nil) of n, with the domain of what it iterates.
+func (a *contractAnalysis) walkLoops(n ast.Node, visit func(n ast.Node, body *ast.BlockStmt, domain, typ string)) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		switch s := m.(type) {
+		case *ast.RangeStmt:
+			domain, typ := a.rangeDomain(s.X)
+			visit(s, s.Body, domain, typ)
+		case *ast.ForStmt:
+			domain, typ := a.condDomain(s)
+			visit(s, s.Body, domain, typ)
+		case *ast.CallExpr:
+			if kind, typ, ok := a.bulk(s); ok {
+				visit(s, nil, "DATA", kind+" "+typ)
+			}
+		}
+		return true
+	})
+}
+
+func contractShort(t types.Type) string {
+	if t == nil {
+		return "?"
+	}
+	return strings.ReplaceAll(t.String(), "github.com/orneryd/nornicdb/pkg/", "")
+}
+
+// contractClassify is the domain of what a value of type t holds:
+// STMT (the statement's own text and structures, a row's variables), DATA
+// (rows, values, lists, maps, graph entities, iterators) or OTHER.
+func contractClassify(t types.Type) string {
+	if t == nil {
+		return "OTHER"
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		if u.Info()&types.IsString != 0 {
+			return "STMT"
+		}
+		return "OTHER"
+	case *types.Chan, *types.Signature:
+		return "DATA"
+	}
+	s := t.String()
+	switch {
+	case strings.HasSuffix(s, ".pipelineRow"), strings.HasPrefix(s, "map[string]*github.com/orneryd/nornicdb/pkg/storage."):
+		return "STMT" // a row's (or a binding scope's) variables
+	case strings.Contains(s, "pipelineRow"), strings.Contains(s, "storage.Node"), strings.Contains(s, "storage.Edge"),
+		strings.Contains(s, "storage.NodeID"), strings.Contains(s, "storage.EdgeID"), strings.Contains(s, "PathResult"),
+		s == "[]interface{}", s == "[]any", s == "[][]interface{}", s == "[][]any", s == "map[string]interface{}", s == "map[string]any",
+		strings.HasPrefix(s, "[]map[string]"), strings.HasPrefix(s, "map[interface{}]"), strings.HasPrefix(s, "[]float"),
+		strings.HasPrefix(s, "[]int64"), strings.HasPrefix(s, "[]time."):
+		return "DATA"
+	}
+	return "OTHER"
+}
+
+func (a *contractAnalysis) rangeDomain(x ast.Expr) (string, string) {
+	t := a.info.TypeOf(x)
+	if t == nil {
+		return "OTHER", "?"
+	}
+	if b, ok := t.Underlying().(*types.Basic); ok && b.Info()&types.IsInteger != 0 {
+		if call, ok := ast.Unparen(x).(*ast.CallExpr); ok && len(call.Args) == 1 && callName(call) == "len" {
+			at := a.info.TypeOf(call.Args[0])
+			return contractClassify(at), "len(" + contractShort(at) + ")"
+		}
+		return "OTHER", contractShort(t)
+	}
+	return contractClassify(t), contractShort(t)
+}
+
+func (a *contractAnalysis) condDomain(s *ast.ForStmt) (string, string) {
+	if s.Cond == nil {
+		return "OTHER", "for{}"
+	}
+	domain, typ := "OTHER", "cond"
+	ast.Inspect(s.Cond, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok && len(call.Args) == 1 && (callName(call) == "len" || callName(call) == "cap") {
+			t := a.info.TypeOf(call.Args[0])
+			domain, typ = contractClassify(t), "len("+contractShort(t)+")"
+			return false
+		}
+		return true
+	})
+	return domain, typ
+}
+
+// bulk: a native operation whose cost is the size of a data value.
+func (a *contractAnalysis) bulk(call *ast.CallExpr) (string, string, bool) {
+	name := ""
+	switch f := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		name = f.Name
+	case *ast.SelectorExpr:
+		if id, ok := f.X.(*ast.Ident); ok {
+			name = id.Name + "." + f.Sel.Name
+		}
+	}
+	switch name {
+	case "sort.Slice", "sort.SliceStable", "sort.Sort", "sort.Stable", "slices.Sort", "slices.SortFunc", "slices.SortStableFunc",
+		"copy", "slices.Clone", "maps.Copy", "maps.Clone", "strings.Join", "reflect.DeepEqual":
+	case "append":
+		if !call.Ellipsis.IsValid() {
+			return "", "", false
+		}
+	default:
+		return "", "", false
+	}
+	if len(call.Args) == 0 {
+		return "", "", false
+	}
+	arg := call.Args[0]
+	if name == "append" || name == "copy" {
+		arg = call.Args[len(call.Args)-1]
+	}
+	t := a.info.TypeOf(arg)
+	if contractClassify(t) != "DATA" {
+		return "", "", false
+	}
+	return name, contractShort(t), true
+}
+
+// cancellationScope names fn's context and probe parameters.
 func cancellationScope(fn *ast.FuncDecl) (ctxName, probeName string) {
 	if fn.Type.Params == nil {
 		return "", ""
@@ -73,780 +688,24 @@ func cancellationScope(fn *ast.FuncDecl) (ctxName, probeName string) {
 	return ctxName, probeName
 }
 
-// localProbe is a probe variable declared in fn before pos from one of the
-// owner's accessors.
+// localProbe is a probe variable fn declares from one of the owner's
+// accessors before pos.
 func localProbe(fn *ast.FuncDecl, pos token.Pos) string {
 	found := ""
-	var blocks []*ast.BlockStmt
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		if block, ok := node.(*ast.BlockStmt); ok {
-			blocks = append(blocks, block)
-		}
-		return true
-	})
-	// innermost is the smallest block holding node: a variable declared in
-	// it is in scope at pos only if that block holds pos too.
-	innermost := func(node ast.Node) *ast.BlockStmt {
-		var best *ast.BlockStmt
-		for _, block := range blocks {
-			if block.Pos() <= node.Pos() && node.End() <= block.End() && (best == nil || block.End()-block.Pos() < best.End()-best.Pos()) {
-				best = block
-			}
-		}
-		return best
-	}
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		assign, ok := node.(*ast.AssignStmt)
 		if !ok || assign.Pos() >= pos || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			return true
 		}
-		if block := innermost(assign); block == nil || pos < block.Pos() || pos >= block.End() {
-			return true
-		}
-		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		switch callName(call) {
-		case "pipelineCancellationForContext", "contextPipelineProbe", "parameterCancellationForContext", "rowPipelineCancellation":
-			if id, ok := assign.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
-				found = id.Name
-			}
-		}
-		return true
-	})
-	return found
-}
-
-func funcKey(fn *ast.FuncDecl) string {
-	if fn.Recv != nil && len(fn.Recv.List) == 1 {
-		typ := fn.Recv.List[0].Type
-		if star, ok := typ.(*ast.StarExpr); ok {
-			typ = star.X
-		}
-		if index, ok := typ.(*ast.IndexExpr); ok {
-			typ = index.X
-		}
-		if index, ok := typ.(*ast.IndexListExpr); ok {
-			typ = index.X
-		}
-		if id, ok := typ.(*ast.Ident); ok {
-			return id.Name + "." + fn.Name.Name
-		}
-	}
-	return fn.Name.Name
-}
-
-func callName(call *ast.CallExpr) string {
-	switch fun := call.Fun.(type) {
-	case *ast.Ident:
-		return fun.Name
-	case *ast.SelectorExpr:
-		return fun.Sel.Name
-	case *ast.IndexExpr:
-		switch x := fun.X.(type) {
-		case *ast.Ident:
-			return x.Name
-		case *ast.SelectorExpr:
-			return x.Sel.Name
-		}
-	}
-	return ""
-}
-
-// callIsLocal: a call of a package-level function or of a method (not a
-// qualified call into another package).
-func callIsLocal(call *ast.CallExpr, imports map[string]bool) bool {
-	fun := call.Fun
-	if index, ok := fun.(*ast.IndexExpr); ok {
-		fun = index.X
-	}
-	if sel, ok := fun.(*ast.SelectorExpr); ok {
-		if pkg, ok := sel.X.(*ast.Ident); ok && imports[pkg.Name] && pkg.Obj == nil {
-			return false
-		}
-	}
-	return true
-}
-
-func probeForm(name string) bool {
-	return strings.HasSuffix(name, "WithCancellation") || strings.HasSuffix(name, "Probed")
-}
-
-// backgroundArg is a context.Background() or context.TODO() argument.
-func backgroundArg(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO")
-}
-
-func nilArg(expr ast.Expr) bool {
-	id, ok := expr.(*ast.Ident)
-	return ok && id.Name == "nil"
-}
-
-func hasNilArg(call *ast.CallExpr) bool {
-	for _, arg := range call.Args {
-		if nilArg(arg) {
-			return true
-		}
-	}
-	return false
-}
-
-func fileImports(file *ast.File) map[string]bool {
-	out := map[string]bool{}
-	for _, spec := range file.Imports {
-		path := strings.Trim(spec.Path.Value, `"`)
-		name := path[strings.LastIndex(path, "/")+1:]
-		if spec.Name != nil {
-			name = spec.Name.Name
-		}
-		out[name] = true
-	}
-	return out
-}
-
-func loadCancellationSources(t *testing.T) (*token.FileSet, []cancellationSource) {
-	t.Helper()
-	fset := token.NewFileSet()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var files []cancellationSource
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := parser.ParseFile(fset, name, src, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, cancellationSource{name, src, file})
-	}
-	return fset, files
-}
-
-// wrapperTemplate is how a wrapper forwards: its parameters, in order, plus a
-// nil probe at one position. Wrappers that forward anything else are not
-// rewritten automatically.
-func rewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, wrapper cancellationWrapper, probe, ctxName string) (string, bool) {
-	text := func(node ast.Node) string {
-		return string(src[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset])
-	}
-	var args []string
-	for index, arg := range wrapper.args {
-		switch {
-		case wrapper.context && backgroundArg(arg):
-			if ctxName == "" {
-				return "", false
-			}
-			args = append(args, ctxName)
-		case !wrapper.context && nilArg(arg):
-			args = append(args, probe)
-		default:
-			id, isIdent := arg.(*ast.Ident)
-			last := index == len(wrapper.args)-1
-			if !isIdent {
-				return "", false
-			}
-			position := -1
-			for p, name := range wrapper.params {
-				if name == id.Name {
-					position = p
-				}
-			}
-			if position < 0 {
-				return "", false
-			}
-			if wrapper.variadic && position == len(wrapper.params)-1 {
-				// The variadic parameter: forwards the caller's remaining arguments.
-				if !last {
-					return "", false
-				}
-				rest := call.Args[min(position, len(call.Args)):]
-				for _, r := range rest {
-					args = append(args, text(r))
-				}
-				if call.Ellipsis.IsValid() && len(args) > 0 {
-					args[len(args)-1] += "..."
-				}
-				continue
-			}
-			if position >= len(call.Args) {
-				return "", false
-			}
-			args = append(args, text(call.Args[position]))
-		}
-	}
-	fun := text(call.Fun)
-	name := callName(call)
-	target := wrapper.target
-	index := strings.LastIndex(fun, name)
-	if index < 0 {
-		return "", false
-	}
-	fun = fun[:index] + target + fun[index+len(name):]
-	return fun + "(" + strings.Join(args, ", ") + ")", true
-}
-
-func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[string]int) {
-	t.Helper()
-	fset, files := loadCancellationSources(t)
-	// Pass 1: the wrappers, and how many methods share each method name.
-	wrappers := map[string]cancellationWrapper{}       // function name, or "." + method name
-	methodWrappers := map[string]cancellationWrapper{} // "Type.method"
-	probeIndex := map[string]int{}                     // probe form name -> index of its probe parameter
-	methodNames := map[string]int{}
-	for _, f := range files {
-		for _, decl := range f.file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			if fn.Recv != nil {
-				methodNames[fn.Name.Name]++
-			}
-			if probeForm(fn.Name.Name) && fn.Type.Params != nil {
-				index := 0
-				for _, field := range fn.Type.Params.List {
-					names := len(field.Names)
-					if names == 0 {
-						names = 1
-					}
-					if star, ok := field.Type.(*ast.StarExpr); ok {
-						if id, ok := star.X.(*ast.Ident); ok && id.Name == "pipelineCancellation" {
-							probeIndex[fn.Name.Name] = index
-						}
-					}
-					index += names
-				}
-			}
-			if fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				name := callName(call)
-				background := false
-				if len(fn.Body.List) == 1 && name != "" && name != fn.Name.Name {
-					for _, arg := range call.Args {
-						background = background || backgroundArg(arg)
-					}
-				}
-				if (name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") && hasNilArg(call) || background && node == cancellationForwardingCall(fn) {
-					wrapper := cancellationWrapper{target: name, args: call.Args, method: fn.Recv != nil, context: background}
-					for _, field := range fn.Type.Params.List {
-						if _, ok := field.Type.(*ast.Ellipsis); ok {
-							wrapper.variadic = true
-						}
-						for _, n := range field.Names {
-							wrapper.params = append(wrapper.params, n.Name)
-						}
-					}
-					key := fn.Name.Name
-					if fn.Recv != nil {
-						key = "." + key
-					}
-					wrappers[key] = wrapper
-					if fn.Recv != nil {
-						methodWrappers[funcKey(fn)] = wrapper
-					}
-				}
-				return true
-			})
-		}
-	}
-	counts := map[string]int{"wrappers": len(wrappers)}
-	var findings []cancellationFinding
-	for _, f := range files {
-		imports := fileImports(f.file)
-		for _, decl := range f.file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			key := funcKey(fn)
-			ctxName, probeName := cancellationScope(fn)
-			scoped := ctxName != "" || probeName != ""
-			varTypes := cancellationVarTypes(fn)
-			selfKey := fn.Name.Name
-			if fn.Recv != nil {
-				selfKey = "." + selfKey
-			}
-			// Outermost rewritable calls first; nested ones are found on the next run.
-			var emitted []ast.Node
-			inside := func(node ast.Node) bool {
-				for _, outer := range emitted {
-					if node.Pos() >= outer.Pos() && node.End() <= outer.End() {
-						return true
-					}
-				}
-				return false
-			}
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				if g, ok := node.(*ast.GoStmt); ok {
-					lit, ok := g.Call.Fun.(*ast.FuncLit)
-					usesCtx, forks, recovers := false, false, false
-					var body ast.Node = g.Call
-					if ok {
-						body = lit.Body
-					}
-					ast.Inspect(body, func(n ast.Node) bool {
-						if id, ok := n.(*ast.Ident); ok && ctxName != "" && id.Name == ctxName {
-							usesCtx = true
-						}
-						if call, ok := n.(*ast.CallExpr); ok && callName(call) == "pipelineWorkerContext" {
-							forks = true
-						}
-						if d, ok := n.(*ast.DeferStmt); ok && callName(d.Call) == "recoverWorkerPanic" {
-							recovers = true
-						}
-						return true
-					})
-					if usesCtx && !forks {
-						counts["E"]++
-						findings = append(findings, cancellationFinding{rule: "E", key: key + " go", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
-					}
-					if forks && !recovers {
-						counts["E"]++
-						findings = append(findings, cancellationFinding{rule: "E", key: key + " go without recoverWorkerPanic", where: fmt.Sprintf("%s:%d", f.name, fset.Position(g.Pos()).Line)})
-					}
-				}
-				call, ok := node.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				name := callName(call)
-				position := fset.Position(call.Pos())
-				where := fmt.Sprintf("%s:%d", f.name, position.Line)
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO") {
-						counts["A"]++
-						label := key + " context." + sel.Sel.Name
-						if self, ok := wrappers[selfKey]; ok && self.context {
-							label += " (context-free wrapper of " + self.target + ")"
-						}
-						findings = append(findings, cancellationFinding{rule: "A", key: label, where: where})
-					}
-				}
-				if !scoped || !callIsLocal(call, imports) {
-					return true
-				}
-				if index, known := probeIndex[name]; known && index < len(call.Args) && nilArg(call.Args[index]) && !(name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") {
-					counts["C"]++
-					findings = append(findings, cancellationFinding{rule: "C", key: key + " -> " + name + "(…, nil)", where: where})
-				}
-				wrapperKey := name
-				if _, isSel := call.Fun.(*ast.SelectorExpr); isSel {
-					wrapperKey = "." + name
-				}
-				wrapper, isWrapper := wrappers[wrapperKey]
-				resolved := false
-				if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && isWrapper {
-					if recv, ok := sel.X.(*ast.Ident); ok && varTypes[recv.Name] != "" {
-						resolved = true
-						wrapper, isWrapper = methodWrappers[varTypes[recv.Name]+"."+name]
-					}
-				}
-				if !isWrapper || wrapperKey == selfKey && !resolved || resolved && varTypes[call.Fun.(*ast.SelectorExpr).X.(*ast.Ident).Name]+"."+name == key {
-					return true
-				}
-				if cancellationTextSentinels[name+"WithCancellation"] != "" || cancellationTextSentinels[name+"Probed"] != "" {
-					counts["Bexact"]++
-					return true
-				}
-				counts["B"]++
-				finding := cancellationFinding{rule: "B", key: key + " -> " + name, where: where}
-				if wrapper.method && methodNames[name] > 1 && !resolved {
-					finding.key += " (ambiguous method)"
-				} else if !inside(call) {
-					probe := probeName
-					if local := localProbe(fn, call.Pos()); local != "" {
-						probe = local
-					}
-					if probe == "" {
-						probe = "contextPipelineProbe(" + ctxName + ")"
-					}
-					if text, ok := rewriteCall(fset, f.src, call, wrapper, probe, ctxName); ok {
-						end := fset.Position(call.End())
-						finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, position.Line, position.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
-						emitted = append(emitted, call)
-					}
-				}
-				findings = append(findings, finding)
-				return true
-			})
-			// D: a compiled node eval that takes the probe and never reads it.
-			if fn.Name.Name == "eval" && fn.Recv != nil && fn.Type.Params != nil {
-				for _, field := range fn.Type.Params.List {
-					star, ok := field.Type.(*ast.StarExpr)
-					if !ok {
-						continue
-					}
-					if id, ok := star.X.(*ast.Ident); !ok || id.Name != "pipelineCancellation" {
-						continue
-					}
-					used := false
-					for _, param := range field.Names {
-						ast.Inspect(fn.Body, func(node ast.Node) bool {
-							if id, ok := node.(*ast.Ident); ok && id.Name == param.Name {
-								used = true
-							}
-							return !used
-						})
-					}
-					if !used {
-						counts["D"]++
-						findings = append(findings, cancellationFinding{rule: "D", key: key, where: f.name})
-					}
-				}
-			}
-		}
-	}
-	findings = append(findings, collectSentinelFindings(fset, files, wrappers, counts)...)
-	return findings, counts
-}
-
-func TestCancellationOwnerStaticInventory(t *testing.T) {
-	findings, counts := collectCancellationFindings(t)
-	t.Logf("no-probe wrappers %d, sentinel-shaped probe forms %d, exact-helper calls %d; findings A=%d B=%d C=%d D=%d E=%d F=%d",
-		counts["wrappers"], counts["sentinelHelpers"], counts["Bexact"], counts["A"], counts["B"], counts["C"], counts["D"], counts["E"], counts["F"])
-	seen := map[string]bool{}
-	var open []string
-	var rewrites bytes.Buffer
-	for _, finding := range findings {
-		id := finding.rule + " " + finding.key
-		seen[id] = true
-		if _, ok := cancellationOwnerAllowlist[id]; ok {
-			continue
-		}
-		open = append(open, id+"  @ "+finding.where)
-		if finding.rewrite != "" {
-			rewrites.WriteString(finding.rewrite + "\n")
-		}
-	}
-	var stale []string
-	for id := range cancellationOwnerAllowlist {
-		if !seen[id] {
-			stale = append(stale, id)
-		}
-	}
-	sort.Strings(open)
-	sort.Strings(stale)
-	if os.Getenv("CANCELLATION_INVENTORY") != "" {
-		for _, line := range open {
-			t.Logf("OPEN %s", line)
-		}
-		for _, line := range strings.Split(strings.TrimSpace(rewrites.String()), "\n") {
-			if line != "" {
-				t.Logf("%s", line)
-			}
-		}
-	}
-	if len(open) > 0 || len(stale) > 0 {
-		t.Fatalf("%d findings drop the statement deadline (convert them or allowlist with a reason; CANCELLATION_INVENTORY=1 lists them); %d stale allowlist entries: %v", len(open), len(stale), stale)
-	}
-}
-
-// cancellationVarTypes names the package type of the variables in fn whose
-// type is plain to read: its receiver, its parameters, `var x T` and
-// `x := T{…}` / `x := &T{…}`. A method call on one of them resolves to that
-// type's method; a call on anything else stays ambiguous.
-func cancellationVarTypes(fn *ast.FuncDecl) map[string]string {
-	types := map[string]string{}
-	typeName := func(expr ast.Expr) string {
-		if star, ok := expr.(*ast.StarExpr); ok {
-			expr = star.X
-		}
-		if index, ok := expr.(*ast.IndexExpr); ok {
-			expr = index.X
-		}
-		if id, ok := expr.(*ast.Ident); ok {
-			return id.Name
-		}
-		return ""
-	}
-	fields := func(list *ast.FieldList) {
-		if list == nil {
-			return
-		}
-		for _, field := range list.List {
-			for _, name := range field.Names {
-				if typ := typeName(field.Type); typ != "" {
-					types[name.Name] = typ
-				}
-			}
-		}
-	}
-	fields(fn.Recv)
-	fields(fn.Type.Params)
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		switch node := node.(type) {
-		case *ast.ValueSpec:
-			if typ := typeName(node.Type); typ != "" {
-				for _, name := range node.Names {
-					types[name.Name] = typ
-				}
-			}
-		case *ast.AssignStmt:
-			if len(node.Lhs) == 1 && len(node.Rhs) == 1 {
-				rhs := node.Rhs[0]
-				if unary, ok := rhs.(*ast.UnaryExpr); ok && unary.Op == token.AND {
-					rhs = unary.X
-				}
-				if lit, ok := rhs.(*ast.CompositeLit); ok {
-					if id, ok := node.Lhs[0].(*ast.Ident); ok {
-						if typ := typeName(lit.Type); typ != "" {
-							types[id.Name] = typ
-						}
-					}
+		if call, ok := assign.Rhs[0].(*ast.CallExpr); ok {
+			switch callName(call) {
+			case "pipelineCancellationForContext", "contextPipelineProbe", "parameterCancellationForContext", "rowPipelineCancellation":
+				if id, ok := assign.Lhs[0].(*ast.Ident); ok && id.Name != "_" {
+					found = id.Name
 				}
 			}
 		}
 		return true
 	})
-	return types
-}
-
-// cancellationForwardingCall is the call a one-statement function forwards
-// to (`return f(…)` or `f(…)`), or nil.
-func cancellationForwardingCall(fn *ast.FuncDecl) ast.Node {
-	if fn.Body == nil || len(fn.Body.List) != 1 {
-		return nil
-	}
-	switch stmt := fn.Body.List[0].(type) {
-	case *ast.ReturnStmt:
-		if len(stmt.Results) == 1 {
-			if call, ok := stmt.Results[0].(*ast.CallExpr); ok {
-				return call
-			}
-		}
-	case *ast.ExprStmt:
-		if call, ok := stmt.X.(*ast.CallExpr); ok {
-			return call
-		}
-	}
-	return nil
-}
-
-// sentinelShaped: a probe form whose cancelled return cannot be told apart
-// from a result (no error, and no ok flag beside its value). A caller must
-// check the probe right after calling one, or use the exact plain form.
-func sentinelShaped(fn *ast.FuncDecl) bool {
-	if !probeForm(fn.Name.Name) || fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
-		return false
-	}
-	count, hasBool := 0, false
-	for _, field := range fn.Type.Results.List {
-		names := max(1, len(field.Names))
-		count += names
-		if id, ok := field.Type.(*ast.Ident); ok {
-			if id.Name == "error" {
-				return false
-			}
-			if id.Name == "bool" {
-				hasBool = true
-			}
-		}
-	}
-	return !(hasBool && count > 1)
-}
-
-// cancellationCheck reports whether node checks the probe or the context.
-func cancellationCheck(node ast.Node) bool {
-	found := false
-	ast.Inspect(node, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.SelectorExpr:
-			if n.Sel.Name == "err" {
-				found = true
-			}
-		case *ast.CallExpr:
-			switch callName(n) {
-			case "check", "poll", "Err", "statementCancellationErr":
-				found = true
-			}
-		}
-		return !found
-	})
 	return found
-}
-
-// unrewriteCall rebuilds a call of a probe form as its plain wrapper's call.
-func unrewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, plain string, wrapper cancellationWrapper) (string, bool) {
-	if wrapper.variadic || wrapper.context || len(call.Args) != len(wrapper.args) {
-		return "", false
-	}
-	text := func(node ast.Node) string {
-		return string(src[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset])
-	}
-	args := make([]string, len(wrapper.params))
-	for index, arg := range wrapper.args {
-		if nilArg(arg) {
-			continue
-		}
-		id, ok := arg.(*ast.Ident)
-		if !ok {
-			return "", false
-		}
-		position := -1
-		for p, name := range wrapper.params {
-			if name == id.Name {
-				position = p
-			}
-		}
-		if position < 0 {
-			return "", false
-		}
-		args[position] = text(call.Args[index])
-	}
-	for _, arg := range args {
-		if arg == "" {
-			return "", false
-		}
-	}
-	fun := text(call.Fun)
-	name := callName(call)
-	index := strings.LastIndex(fun, name)
-	if index < 0 {
-		return "", false
-	}
-	return fun[:index] + plain + fun[index+len(name):] + "(" + strings.Join(args, ", ") + ")", true
-}
-
-// collectSentinelFindings is rule F: every call of a sentinel-shaped probe
-// form is followed at once by a probe or context check, or is the plain
-// exact form of a statement-text helper (cancellationTextSentinels); a data
-// helper (cancellationDataSentinels) is always checked. Every sentinel-shaped
-// helper is classified in exactly one list.
-func collectSentinelFindings(fset *token.FileSet, files []cancellationSource, wrappers map[string]cancellationWrapper, counts map[string]int) []cancellationFinding {
-	sentinel := map[string]bool{}
-	for _, f := range files {
-		for _, decl := range f.file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && sentinelShaped(fn) {
-				sentinel[fn.Name.Name] = true
-				if os.Getenv("CANCELLATION_INVENTORY") != "" {
-					var results []string
-					for _, field := range fn.Type.Results.List {
-						results = append(results, string(f.src[fset.Position(field.Type.Pos()).Offset:fset.Position(field.Type.End()).Offset]))
-					}
-					fmt.Printf("SENTINEL %s %s (%s)\n", fn.Name.Name, f.name, strings.Join(results, ", "))
-				}
-			}
-		}
-	}
-	// A probe form whose plain form returns nothing reports its own success:
-	// its bool is an ok flag, so it is not sentinel-shaped.
-	for _, f := range files {
-		for _, decl := range f.file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && (fn.Type.Results == nil || len(fn.Type.Results.List) == 0) {
-				delete(sentinel, fn.Name.Name+"WithCancellation")
-				delete(sentinel, fn.Name.Name+"Probed")
-			}
-		}
-	}
-	plainOf := map[string]string{}
-	wrapperOf := map[string]cancellationWrapper{}
-	for name, wrapper := range wrappers {
-		if wrapper.context {
-			continue
-		}
-		plain := strings.TrimPrefix(name, ".")
-		plainOf[wrapper.target] = plain
-		wrapperOf[wrapper.target] = wrapper
-	}
-	counts["sentinelHelpers"] = len(sentinel)
-	var findings []cancellationFinding
-	for name := range sentinel {
-		text, data := cancellationTextSentinels[name] != "", cancellationDataSentinels[name] != ""
-		switch {
-		case !text && !data:
-			findings = append(findings, cancellationFinding{rule: "F", key: "unclassified sentinel-shaped helper " + name})
-		case text && data:
-			findings = append(findings, cancellationFinding{rule: "F", key: "sentinel-shaped helper classified twice " + name})
-		}
-	}
-	for _, list := range []map[string]string{cancellationTextSentinels, cancellationDataSentinels} {
-		for name := range list {
-			if !sentinel[name] {
-				findings = append(findings, cancellationFinding{rule: "F", key: "stale sentinel classification " + name})
-			}
-		}
-	}
-	for _, f := range files {
-		for _, decl := range f.file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			key := funcKey(fn)
-			delegates := probeForm(fn.Name.Name)
-			var emitted []ast.Node
-			var visit func(list []ast.Stmt)
-			visit = func(list []ast.Stmt) {
-				for index, stmt := range list {
-					_, isReturn := stmt.(*ast.ReturnStmt)
-					ast.Inspect(stmt, func(node ast.Node) bool {
-						switch node := node.(type) {
-						case *ast.BlockStmt:
-							visit(node.List)
-							return false
-						case *ast.CaseClause:
-							visit(node.Body)
-							return false
-						case *ast.CommClause:
-							visit(node.Body)
-							return false
-						case *ast.CallExpr:
-							name := callName(node)
-							if !sentinel[name] || name == fn.Name.Name || name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed" || isReturn && delegates {
-								return true
-							}
-							if cancellationCheck(stmt) || index+1 < len(list) && cancellationCheck(list[index+1]) {
-								return true
-							}
-							counts["F"]++
-							finding := cancellationFinding{rule: "F", key: key + " -> " + name, where: fmt.Sprintf("%s:%d", f.name, fset.Position(node.Pos()).Line)}
-							if cancellationDataSentinels[name] != "" {
-								finding.key += " (data helper: check the probe after it)"
-							} else if plain := plainOf[name]; plain != "" && cancellationTextSentinels[name] != "" {
-								nested := false
-								for _, outer := range emitted {
-									if node.Pos() < outer.End() && outer.Pos() < node.End() {
-										nested = true
-									}
-								}
-								if text, ok := unrewriteCall(fset, f.src, node, plain, wrapperOf[name]); ok && !nested {
-									start, end := fset.Position(node.Pos()), fset.Position(node.End())
-									finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, start.Line, start.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
-									emitted = append(emitted, node)
-								}
-							}
-							findings = append(findings, finding)
-						}
-						return true
-					})
-				}
-			}
-			visit(fn.Body.List)
-		}
-	}
-	return findings
 }

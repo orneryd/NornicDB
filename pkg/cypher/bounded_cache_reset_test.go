@@ -15,7 +15,7 @@ func (c *boundedCache[K, V]) clear() {
 // uncached evaluation did.
 func clearExpressionCaches() {
 	returnProjectionPlans.Lock()
-	returnProjectionPlans.plans.Clear()
+	returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
 	returnProjectionPlans.Unlock()
 	rowValuePrograms.clear()
 	rowPredicatePrograms.clear()
@@ -25,10 +25,5 @@ func clearExpressionCaches() {
 	pipelineRowWithPlans.clear()
 	// The rewrite-free texts are global: a suite that filled them would make
 	// a cold run evict an entry that its replays, now cached, never evict.
-	for i := range rewriteFreeTexts {
-		shard := &rewriteFreeTexts[i]
-		shard.mu.Lock()
-		shard.texts = pipelineStringMap[uint8]{}
-		shard.mu.Unlock()
-	}
+	rewriteFreeTexts.clear()
 }

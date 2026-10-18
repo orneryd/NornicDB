@@ -156,53 +156,6 @@ func TestPipelineStringMapCancelEveryPreparationPoint(t *testing.T) {
 	}
 }
 
-func TestPipelineStringMapSharedOperationsAndDeletion(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	probe := &pipelineCancellation{ctx: ctx}
-	index := pipelineStringMap[int]{}
-	_, found := index.FirstKey()
-	require.False(t, found)
-	require.False(t, index.DeleteWithCancellation("missing", probe))
-	for i := 0; i < 1000; i++ {
-		require.True(t, index.SetWithCancellation(fmt.Sprint(i), i, probe))
-	}
-	require.Nil(t, index.probe, "persistent cache must not retain query work")
-	require.Equal(t, 1000, index.Len())
-	first, found := index.FirstKey()
-	require.True(t, found)
-	_, found = index.Get(first)
-	require.True(t, found)
-	require.False(t, index.DeleteWithCancellation("missing", probe))
-	for i := 0; i < 1000; i++ {
-		value, ok := index.Get(fmt.Sprint(i))
-		require.True(t, ok)
-		require.Equal(t, i, value)
-		require.True(t, index.DeleteWithCancellation(fmt.Sprint(i), probe))
-	}
-	require.Zero(t, index.Len())
-	require.Nil(t, index.root)
-	require.True(t, index.SetWithCancellation("same", 1, probe))
-	require.True(t, index.SetWithCancellation("same", 2, probe))
-	require.Equal(t, 1, index.Len())
-	cancel()
-	probe.remaining = 1
-	require.False(t, index.SetWithCancellation("cancelled", 3, probe))
-	_, found = index.Get("same")
-	require.False(t, found)
-	_, found = index.FirstKey()
-	require.False(t, found)
-	require.False(t, index.DeleteWithCancellation("same", probe))
-	require.Equal(t, 1, index.Len())
-	index.Clear()
-	require.Zero(t, index.Len())
-	require.Nil(t, index.root)
-	longKey := strings.Repeat("x", 65536)
-	require.True(t, index.Set(longKey, 1))
-	stopped := &pipelineCountingContext{Context: context.Background(), stop: 1}
-	require.False(t, index.DeleteWithCancellation(longKey, &pipelineCancellation{ctx: stopped, remaining: 2}))
-	require.Equal(t, 1, index.Len())
-}
 
 func TestPipelineStringMapCollisionDeletionIsAtomic(t *testing.T) {
 	key := strings.Repeat("x", 128)

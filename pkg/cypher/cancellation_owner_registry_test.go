@@ -3,6 +3,9 @@ package cypher
 import (
 	"context"
 	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,7 +172,22 @@ func TestCancellationOwnerRegistry(t *testing.T) {
 // compiled row-expression node with an eval method is covered by a case or
 // exempt with a reason, and nothing is listed that no longer exists.
 func TestCancellationOwnerRegistryCoversEveryEntry(t *testing.T) {
-	_, files := loadCancellationSources(t)
+	fset := token.NewFileSet()
+	type sourceFile struct {
+		name string
+		file *ast.File
+	}
+	var files []sourceFile
+	matches, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	for _, path := range matches {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		require.NoError(t, err)
+		files = append(files, sourceFile{path, file})
+	}
 	entries := map[string]bool{}
 	for _, f := range files {
 		for _, decl := range f.file.Decls {
@@ -177,7 +195,7 @@ func TestCancellationOwnerRegistryCoversEveryEntry(t *testing.T) {
 			if !ok {
 				continue
 			}
-			key := funcKey(fn)
+			key := contractFuncName(fn)
 			if strings.HasPrefix(fn.Name.Name, "pipelineApply") && fn.Recv != nil && strings.HasPrefix(key, "StorageExecutor.") {
 				if ctxName, _ := cancellationScope(fn); ctxName != "" {
 					entries[fn.Name.Name] = true

@@ -127,7 +127,7 @@ func parserOp(parser, mode string) func(q string) error {
 			c := e.ensureSyntaxValidationCache()
 			for i := range c.shards {
 				c.shards[i].mu.Lock()
-				c.shards[i].cache.Clear()
+				clear(c.shards[i].cache)
 				c.shards[i].mu.Unlock()
 			}
 			return e.validateSyntaxNornic(q)
