@@ -231,7 +231,9 @@ func (s *Session) handleRun(data []byte) error {
 	delivery := s.lastDelivery
 	published := false
 	defer func() {
-		if !published { delivery.Fail() }
+		if !published {
+			delivery.Fail()
+		}
 	}()
 	ctx = cypher.WithClientStatement(ctx)
 	if mode != nil || s.authResult != nil {
@@ -821,7 +823,9 @@ func (s *Session) handlePull(data []byte) error {
 	}
 
 	if lazyFailure != nil {
-		if stream.delivery != nil { stream.delivery.Fail() }
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
 		s.updateResultStream(statementID, stream, false)
 		return s.sendLazyFailure(lazyFailure)
 	}
@@ -969,7 +973,7 @@ func (s *Session) handleDiscard(data []byte) error {
 			discardCount = options.limit - discarded
 		}
 		if stream.delivery != nil {
-			stream.delivery.DiscardValues(stream.result.Rows[stream.index:stream.index+discardCount])
+			stream.delivery.DiscardValues(stream.result.Rows[stream.index : stream.index+discardCount])
 		}
 		stream.index += discardCount
 		discarded += discardCount
@@ -982,7 +986,9 @@ func (s *Session) handleDiscard(data []byte) error {
 		}
 	}
 	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
-	if !hasMore && stream.delivery != nil { stream.delivery.Fail() }
+	if !hasMore && stream.delivery != nil {
+		stream.delivery.Fail()
+	}
 	s.updateResultStream(statementID, stream, hasMore)
 	if hasMore {
 		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {
@@ -1720,7 +1726,11 @@ func (s *Session) flushDelivery() error {
 // Bolt messages are chunked with 2-byte big-endian sizes and a 0-sized terminator.
 // A single message may span multiple chunks (max chunk size is 65535 bytes).
 func (s *Session) writeMessageNoFlush(data []byte) (retErr error) {
-	defer func() { if retErr != nil { s.continuationDelivery.Fail() } }()
+	defer func() {
+		if retErr != nil {
+			s.continuationDelivery.Fail()
+		}
+	}()
 	const maxChunkSize = 0xFFFF
 
 	// Preserve existing behavior: even for empty messages, write an explicit
