@@ -224,10 +224,9 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 // sequence (queueBuildWrite).
 func (s *Service) IndexRelationship(edge *storage.Edge) {
 	if rs := s.relationshipSearch(); rs != nil && edge != nil && edge.ID != "" {
-		write := deferredIndexWrite{edge: edge, relationship: true}
-		if queued, _, _ := s.queueBuildWrite(write); !queued {
+		s.orderRelationshipUpdate(deferredIndexWrite{edge: edge, relationship: true}, func() {
 			s.indexRelationship(rs, edge, nil, false)
-		}
+		})
 	}
 }
 
@@ -300,9 +299,9 @@ func (s *Service) RemoveRelationship(id storage.EdgeID) {
 	if rs == nil {
 		return
 	}
-	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{edgeID: string(id), relationship: true}); !queued {
+	s.orderRelationshipUpdate(deferredIndexWrite{edgeID: string(id), relationship: true}, func() {
 		s.removeRelationship(rs, id)
-	}
+	})
 }
 
 func (s *Service) removeRelationship(rs *relationshipSearch, id storage.EdgeID) {
