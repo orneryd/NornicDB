@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -218,3 +219,10 @@ func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, ed
 	// Best-effort counts are not returned by the replication protocol today.
 	return 0, 0, nil
 }
+
+// OpenReadSnapshot forwards to the local engine reads are served from.
+func (r *ReplicatedEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	return storage.OpenReadSnapshot(ctx, r.Engine)
+}
+
+var _ storage.ReadSnapshotter = (*ReplicatedEngine)(nil)
