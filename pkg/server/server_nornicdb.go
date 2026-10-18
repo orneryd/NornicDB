@@ -572,6 +572,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
+	if req.Discard && req.QID != "" {
+		if err := s.db.DiscardSearchContinuation(owner, req.QID, dbName); err != nil {
+			s.writeSearchContinuationError(w, r, err)
+			return
+		}
+		s.writeSearchContinuationPage(w, r, owner, dbName, &search.SearchContinuationPage{Released: true})
+		return
+	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
 		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
 			fmt.Sprintf("Search on composite database '%s' is not supported; target a constituent database explicitly.", dbName))
@@ -679,7 +687,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			s.writeSearchContinuationError(w, r, continuationErr)
 			return
 		}
-		s.writeSearchContinuationPage(w, page)
+		s.writeSearchContinuationPage(w, r, owner, dbName, page)
 		return
 	}
 
@@ -821,28 +829,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// Canonical mapping keeps DB and server adapters consistent.
 	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
-		setSearchFallbackReasonHeader(w, continuationPage.FallbackReason)
-		body := map[string]any{
-			"results":               results,
-			"qid":                   continuationPage.QID,
-			"has_more":              continuationPage.HasMore,
-			"position":              continuationPage.Position,
-			"returned":              continuationPage.Returned,
-			"discovered":            continuationPage.Discovered,
-			"total":                 continuationPage.Total,
-			"expires_at":            continuationPage.ExpiresAt,
-			"search_method":         continuationPage.SearchMethod,
-			"fallback_triggered":    continuationPage.FallbackTriggered,
-			"fallback_reason":       continuationPage.FallbackReason,
-			"mode":                  continuationPage.Mode,
-			"ranked_count":          continuationPage.RankedCount,
-			"eligible_count":        continuationPage.EligibleCount,
-			"ranked_pool_exhausted": continuationPage.RankedPoolExhausted,
-			"collection_exhausted":  continuationPage.CollectionExhausted,
-			"completion":            continuationPage.Completion,
-		}
-		addQueryChunkCounts(body, continuationPage.QueryChunksSearched, continuationPage.QueryChunksTotal)
-		s.writeJSON(w, http.StatusOK, body)
+		s.writeSearchContinuationPage(w, r, owner, dbName, continuationPage)
 		return
 	}
 	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
@@ -893,7 +880,7 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 	})
 }
 
-func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search.SearchContinuationPage) {
+func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
 	response := page.SearchResponse()
 	setSearchFallbackReasonHeader(w, page.FallbackReason)
 	if provider, ok := any(response).(interface{ ResponseHeaders() map[string]string }); ok {
@@ -926,7 +913,17 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 			body[key] = value
 		}
 	}
-	s.writeJSON(w, http.StatusOK, body)
+	addQueryChunkCounts(body, page.QueryChunksSearched, page.QueryChunksTotal)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err := json.NewEncoder(w).Encode(body)
+	if err == nil {
+		err = r.Context().Err()
+	}
+	if err != nil && page.QID != "" {
+		_ = s.db.DiscardSearchContinuation(owner, page.QID, database)
+		s.logEvent(r.Context(), slog.LevelWarn, localization.ServerSearchStorageLookupFailedEvent(database, err))
+	}
 }
 
 // addQueryChunkCounts adds how many chunks of a long query were searched,

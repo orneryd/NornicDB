@@ -466,6 +466,16 @@ func (db *DB) ResolveSearchContinuationDatabase(owner, qid, requested string) (s
 	return registry.ResolveDatabase(owner, qid, requested)
 }
 
+// DiscardSearchContinuation releases a signed cursor, including after its
+// database has been dropped or its final page consumed.
+func (db *DB) DiscardSearchContinuation(owner, qid, database string) error {
+	registry, err := db.getOrCreateSearchContinuationRegistry()
+	if err != nil {
+		return err
+	}
+	return registry.Discard(resultstream.Scope{Owner: owner, Database: database}, qid)
+}
+
 // SetSearchResultCachePolicy applies a dynamic cache policy to an existing database service.
 func (db *DB) SetSearchResultCachePolicy(dbName string, maxEntries int, ttl time.Duration) {
 	db.searchServicesMu.RLock()
@@ -544,6 +554,12 @@ func (db *DB) resetSearchService(dbName string) {
 		entry.svc.SetPersistenceEnabled(false)
 	}
 	delete(db.searchServices, dbName)
+	db.searchContinuationMu.Lock()
+	registry := db.searchContinuation
+	db.searchContinuationMu.Unlock()
+	if registry != nil {
+		registry.DiscardDatabase(dbName)
+	}
 }
 
 // DropSearchServiceState removes cached search service state and best-effort purges

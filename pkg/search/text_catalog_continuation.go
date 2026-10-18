@@ -494,6 +494,22 @@ func searchResultFromContinuationNode(node *storage.Node, projection resultPrope
 	return result
 }
 
+// CheckValid is shared by pulls and registry cleanup of abandoned cursors.
+func (s *catalogContinuationStream) CheckValid() error {
+	provider, ok := s.engine.(graphMutationVersionProvider)
+	if !ok {
+		return resultstream.ErrInvalidated
+	}
+	version, supported := provider.GraphMutationVersion()
+	if !supported || version != s.version {
+		return resultstream.ErrInvalidated
+	}
+	if s.policy == nil || s.policy.Load() != s.policyID {
+		return resultstream.ErrInvalidated
+	}
+	return nil
+}
+
 func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n int) (*resultstream.Page, error) {
 	if n <= 0 {
 		return nil, resultstream.ErrInvalidPageSize
@@ -501,16 +517,8 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	provider, ok := s.engine.(graphMutationVersionProvider)
-	if !ok {
-		return nil, resultstream.ErrInvalidated
-	}
-	version, supported := provider.GraphMutationVersion()
-	if !supported || version != s.version {
-		return nil, resultstream.ErrInvalidated
-	}
-	if s.policy == nil || s.policy.Load() != s.policyID {
-		return nil, resultstream.ErrInvalidated
+	if err := s.CheckValid(); err != nil {
+		return nil, err
 	}
 	s.mu.RLock()
 	if s.closed {

@@ -141,6 +141,7 @@ func (s *Server) startQdrantGRPC() error {
 				return grpcServer.AllowDatabaseAccess(ctx, database, false)
 			},
 			ResolveContinuationDatabase: s.db.ResolveSearchContinuationDatabase,
+			DiscardContinuation:         s.db.DiscardSearchContinuation,
 			PrepareQueryEmbedding: func(_ context.Context, database string) (nornicgrpc.EmbedQueryFunc, nornicgrpc.ChunkQueryFunc) {
 				queryEmbedding := s.db.QueryEmbeddingForDB(database)
 				return queryEmbedding.EmbedQuery, queryEmbedding.ChunkQuery
