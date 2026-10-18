@@ -224,15 +224,34 @@ func bareEndpointVariable(content string) (string, bool) {
 }
 
 // plan evaluates the template for one row and appends its nodes and edges to
-// plan, binding variables in nodes/edges. ok=false sends the row to the
-// general route (an endpoint not bound, or an expression the row evaluator
-// can't resolve — including the string-fallthrough case the general route
-// reports as an error). Planning is atomic: on any failure the nodes and
-// edges already staged by this call are rolled back, so the general route
-// replans the whole clause instead of duplicating the template's prefix.
+// plan, binding variables in nodes/edges. Unsupported syntax or endpoint scope
+// declines before evaluation. Once selected, evaluation errors are terminal.
+// Planning is atomic: any error rolls back this call's staged nodes and edges.
 func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
 	if !t.usable {
 		return nil, false, nil
+	}
+	// Select the template before evaluating any property. An endpoint comes
+	// from the input or from a node this template will create.
+	available := func(name string) bool {
+		if nodes[name] != nil {
+			return true
+		}
+		for _, node := range t.nodes {
+			if node.variable == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, edge := range t.edges {
+		if !available(edge.sourceVar) || !available(edge.targetVar) {
+			return nil, false, nil
+		}
+	}
+	scope := make(pipelineRow, len(row)+len(t.nodes)+len(t.edges))
+	for name, value := range row {
+		scope[name] = value
 	}
 	nodeStart, edgeStart := len(plan.nodes), len(plan.edges)
 	type nodeUndo struct {
@@ -266,15 +285,15 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 	for _, nodeTemplate := range t.nodes {
 		if nodeTemplate.labelErr != nil {
 			rollback()
-			return nil, false, nodeTemplate.labelErr
+			return nil, true, nodeTemplate.labelErr
 		}
 		var props map[string]interface{}
 		if len(nodeTemplate.properties) > 0 {
-			var ok bool
-			props, ok = e.evaluatePipelineProperties(ctx, nodeTemplate.properties, row)
-			if !ok {
+			var err error
+			props, err = e.evaluatePipelineProperties(ctx, nodeTemplate.properties, scope)
+			if err != nil {
 				rollback()
-				return nil, false, nil
+				return nil, true, err
 			}
 			// CREATE drops null properties, exactly as prepareCreateNodePattern
 			// deletes them from the parsed map.
@@ -283,18 +302,15 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 					delete(props, key)
 				}
 			}
-			if !createTemplatePropsRowOK(nodeTemplate.properties, props) {
-				rollback()
-				return nil, false, nil
-			}
+
 			if err := validatePropertyValues(props); err != nil {
 				rollback()
-				return nil, false, err
+				return nil, true, err
 			}
 			for key, value := range props {
 				if _, bad := value.(invalidPropertyValue); bad {
 					rollback()
-					return nil, false, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
+					return nil, true, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 				}
 			}
 		}
@@ -306,25 +322,18 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		plan.nodes = append(plan.nodes, node)
 		nodesAdded = append(nodesAdded, nodeUndo{name: nodeTemplate.variable, prev: nodes[nodeTemplate.variable]})
 		nodes[nodeTemplate.variable] = node
+		scope[nodeTemplate.variable] = node
 	}
 	for _, edgeTemplate := range t.edges {
 		source := nodes[edgeTemplate.sourceVar]
-		if source == nil {
-			rollback()
-			return nil, false, nil
-		}
 		target := nodes[edgeTemplate.targetVar]
-		if target == nil {
-			rollback()
-			return nil, false, nil
-		}
 		var props map[string]interface{}
 		if len(edgeTemplate.properties) > 0 {
-			var ok bool
-			props, ok = e.evaluatePipelineProperties(ctx, edgeTemplate.properties, row)
-			if !ok {
+			var err error
+			props, err = e.evaluatePipelineProperties(ctx, edgeTemplate.properties, scope)
+			if err != nil {
 				rollback()
-				return nil, false, nil
+				return nil, true, err
 			}
 			// CREATE drops null properties on relationships too.
 			for key, value := range props {
@@ -332,13 +341,10 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 					delete(props, key)
 				}
 			}
-			if !createTemplatePropsRowOK(edgeTemplate.properties, props) {
-				rollback()
-				return nil, false, nil
-			}
+
 			if err := validatePropertyValues(props); err != nil {
 				rollback()
-				return nil, false, err
+				return nil, true, err
 			}
 		}
 		startNode, endNode := source, target
@@ -356,29 +362,8 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		if edgeTemplate.relVar != "" {
 			edgesAdded = append(edgesAdded, edgeUndo{name: edgeTemplate.relVar, prev: edges[edgeTemplate.relVar]})
 			edges[edgeTemplate.relVar] = edge
+			scope[edgeTemplate.relVar] = edge
 		}
 	}
 	return nil, true, nil
-}
-
-// createTemplatePropsRowOK mirrors validateNoTextFallthrough for one row: a
-// string value equal to its own raw expression text is the text-embedding
-// fallthrough the general route resolves (or rejects) against its own value
-// set — the template defers that row to it.
-func createTemplatePropsRowOK(expressions []pipelinePropertyExpression, props map[string]interface{}) bool {
-	for _, expression := range expressions {
-		value, ok := props[expression.key]
-		if !ok {
-			continue
-		}
-		text, isString := value.(string)
-		if !isString || text != strings.TrimSpace(expression.expr) {
-			continue
-		}
-		if isWholeCypherQuotedString(expression.expr) {
-			continue
-		}
-		return false
-	}
-	return true
 }

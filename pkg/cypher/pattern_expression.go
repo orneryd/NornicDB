@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -20,22 +21,13 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 	}
 
 	parenDepth, bracketDepth, braceDepth := 0, 1, 0
-	var quote byte
 	for i := 1; i < len(expr)-1; i++ {
-		char := expr[i]
-		if quote != 0 {
-			if char == '\\' {
-				i++
-				continue
-			}
-			if char == quote {
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		char := expr[i]
 		switch char {
-		case '\'', '"':
-			quote = char
 		case '(':
 			parenDepth++
 		case ')':
@@ -288,12 +280,12 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // an execution context use this as the converged expression entry point.
 func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
-		return value, true
+		return cypherfn.RuntimeValue(value), true
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
 			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
-				return value, true
+				return cypherfn.RuntimeValue(value), true
 			}
 		}
 	}
@@ -345,9 +337,15 @@ func rowContextShapeOf(expr string) *rowContextShape {
 
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-		return value, true
+		return cypherfn.RuntimeValue(value), true
 	}
 	shape := rowContextShapeOf(expr)
+	// A legacy fallback can reenter through an ordinary literal reader too.
+	// Its dispatch/depth context must survive independently of the expression's
+	// compile-time need for a clock, plugin or graph context.
+	if _, fallback := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState); fallback {
+		values = rowValuesInExpressionContext(ctx, values)
+	}
 	if shape.pattern {
 		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
 			return value, ok
@@ -381,7 +379,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// resolves without the graph-expression checks below, which can't
 		// match it.
 		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
-			return value, true
+			return cypherfn.RuntimeValue(value), true
 		}
 	}
 	if shape.isSubquery {
@@ -393,7 +391,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	// losing a composite subquery's constituent identity (#745 §3).
 	if shape.identity {
 		if value, resolved := e.evaluateRowEntityIdentity(ctx, shape.function, shape.argument, values); resolved {
-			return value, true
+			return cypherfn.RuntimeValue(value), true
 		}
 	}
 	if shape.comprehension {
@@ -434,9 +432,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		nodes, rels := entityScopesFromValues(values)
 		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
 		if getExpressionFailure(ctx) != nil {
-			return nil, false
-		}
-		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedString(trimmed) {
 			return nil, false
 		}
 	}

@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -144,88 +143,8 @@ func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClaus
 }
 
 // parseValue extracts the actual value from a Cypher literal
-func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} {
-	s = strings.TrimSpace(s)
-
-	if v, ok := resolveParamPathRef(ctx, s); ok {
-		return normalizePropValue(v)
-	}
-
-	// Handle arrays: [0.1, 0.2, 0.3]. An expression over a list literal
-	// ([1, 0] + [0], [[1], [0]][1], [1, 0, 0][0..2]) is evaluated: split as
-	// one literal, it lost or garbled elements.
-	if isListLiteral(s) {
-		return e.parseArrayValue(ctx, s)
-	}
-	if strings.HasPrefix(s, "[") {
-		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
-			return normalizePropValue(evaluated)
-		}
-	}
-	// Handle map literals: {key: value}
-	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
-		return e.parseProperties(ctx, s)
-	}
-
-	// Handle quoted strings with escape sequence support
-	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
-		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		if decoded, ok := decodeCypherQuotedString(s); ok {
-			return decoded
-		}
-	}
-
-	// Handle booleans
-	upper := upperASCII(s)
-	if upper == "TRUE" {
-		return true
-	}
-	if upper == "FALSE" {
-		return false
-	}
-	if upper == "NULL" {
-		return nil
-	}
-
-	// Handle numbers - preserve int64 for integers, use float64 only for decimals
-	// The comparison functions use toFloat64() which handles both types
-	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return i // Keep as int64 for Neo4j compatibility
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f
-	}
-
-	if e.hasArithmeticOperator(s) {
-		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
-			return normalizePropValue(evaluated)
-		}
-	}
-
-	// Fabric correlated bindings: resolve bare identifier values from outer record context.
-	if len(e.fabricRecordBindings) > 0 {
-		isIdent := true
-		for i, ch := range s {
-			if i == 0 {
-				if !isIdentStartRune(ch) {
-					isIdent = false
-					break
-				}
-			} else {
-				if !isIdentRune(ch) {
-					isIdent = false
-					break
-				}
-			}
-		}
-		if isIdent {
-			if v, ok := e.fabricRecordBindings[s]; ok {
-				return v
-			}
-		}
-	}
-
-	return s
+func (e *StorageExecutor) parseValue(ctx context.Context, s string) (interface{}, error) {
+	return e.checkedPropertyExpression(ctx, s, e.fabricRecordBindings)
 }
 
 func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {

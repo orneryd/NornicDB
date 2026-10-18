@@ -66,7 +66,7 @@ func mayUseQueryStructure(query string) bool {
 	if strings.Contains(query, "{") {
 		opener := &labelExpressionRewriter{query: query}
 		for index := 0; index < len(query); index++ {
-			if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
+			if isCypherQuoteByte(query[index]) {
 				index = skipCypherQuotedText(query, index, query[index]) - 1
 				continue
 			}
@@ -105,7 +105,7 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 	for i := start; i < end; i++ {
 		c := q[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q[:end], i, c) - 1
 		case c == '/':
 			if commentEnd := queryCommentEnd(q[:end], i); commentEnd >= 0 {
@@ -270,8 +270,8 @@ func (r *structureRewriter) hasDistinctUnion(start, end int) bool {
 func (r *structureRewriter) subqueries(start, end int) error {
 	opener := &labelExpressionRewriter{query: r.query}
 	for i := start; i < end; i++ {
-		switch c := r.query[i]; c {
-		case '\'', '"', '`':
+		switch c := r.query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(r.query[:end], i, c) - 1
 		case '{':
 			if !opener.opensSubquery(i) {

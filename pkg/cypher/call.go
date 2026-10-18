@@ -1049,11 +1049,12 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 	if !ok {
 		return "", "", "", false
 	}
-	commaIdx := findTopLevelByte(inside, ',')
-	if commaIdx >= 0 {
+	parts := splitTopLevelComma(inside)
+	if len(parts) != 1 {
 		return "", "", "", false
 	}
-	colonIdx := findTopLevelByte(inside, ':')
+	inside = parts[0]
+	colonIdx := findTopLevelMapKeyValueSeparator(inside)
 	if colonIdx <= 0 {
 		return "", "", "", false
 	}
@@ -1063,46 +1064,6 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 		return "", "", "", false
 	}
 	return key, expr, rest, true
-}
-
-func findTopLevelByte(input string, target byte) int {
-	inSingle := false
-	inDouble := false
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-	for i := 0; i < len(input); i++ {
-		ch := input[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-		case ch == '\'':
-			inSingle = true
-		case ch == '"':
-			inDouble = true
-		case ch == '(':
-			parenDepth++
-		case ch == ')':
-			parenDepth--
-		case ch == '[':
-			bracketDepth++
-		case ch == ']':
-			bracketDepth--
-		case ch == '{':
-			braceDepth++
-		case ch == '}':
-			braceDepth--
-		case ch == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0:
-			return i
-		}
-	}
-	return -1
 }
 
 func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
@@ -1317,42 +1278,15 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 }
 
 func callTailHasRelationshipTypeConstraint(tail string) bool {
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(tail); i++ {
-		ch := tail[i]
-		if inSingle {
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		}
-		if inDouble {
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch != '[' {
-			continue
-		}
-		end := strings.IndexByte(tail[i+1:], ']')
-		if end < 0 {
+	for from := 0; from < len(tail); {
+		open, close := nextRelationshipBracket(tail, from)
+		if open < 0 {
 			return false
 		}
-		segment := tail[i+1 : i+1+end]
-		if strings.Contains(segment, ":") {
+		if findTopLevelOperator(tail[open+1:close], ":", false, true) >= 0 {
 			return true
 		}
-		i += end
+		from = close + 1
 	}
 	return false
 }

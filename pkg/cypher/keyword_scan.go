@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -1280,23 +1282,7 @@ func queryWhitespaceAt(query string, index int) int {
 // query[index], or -1 when none starts there. A line comment ends before
 // its line break.
 func queryCommentEnd(query string, index int) int {
-	if index+1 >= len(query) || query[index] != '/' {
-		return -1
-	}
-	switch query[index+1] {
-	case '/':
-		end := index + 2
-		for end < len(query) && query[end] != '\n' && query[end] != '\r' {
-			end++
-		}
-		return end
-	case '*':
-		if close := strings.Index(query[index+2:], "*/"); close >= 0 {
-			return index + 2 + close + 2
-		}
-		return len(query)
-	}
-	return -1
+	return cyphertext.CommentEnd(query, index)
 }
 
 // queryGapEnd returns the end of the run of whitespace and comments that
@@ -2016,21 +2002,39 @@ func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
 	if start < 0 || start >= len(query) || query[start] != quote {
 		return start, false
 	}
-	for index := start + 1; index < len(query); index++ {
-		if query[index] == '\\' && quote != '`' && index+1 < len(query) {
-			index++
-			continue
-		}
-		if query[index] != quote {
-			continue
-		}
-		if index+1 < len(query) && query[index+1] == quote {
-			index++
-			continue
-		}
-		return index + 1, true
+	return cyphertext.ScanQuotedText(query, start)
+}
+
+func skipCypherLexicalToken(text string, index int) (int, bool) {
+	return cyphertext.SkipToken(text, index)
+}
+
+func isCypherQuoteByte(character byte) bool       { return cyphertext.IsQuote(character) }
+func isCypherStringQuoteByte(character byte) bool { return cyphertext.IsStringQuote(character) }
+func isCypherSingleQuoteByte(character byte) bool { return cyphertext.IsSingleQuote(character) }
+func isCypherDoubleQuoteByte(character byte) bool { return cyphertext.IsDoubleQuote(character) }
+func isCypherBacktickByte(character byte) bool    { return cyphertext.IsBacktick(character) }
+
+const (
+	cypherQuoteClass       = -1
+	cypherStringQuoteClass = -2
+)
+
+// cypherLexicalByte lets grammar-specific switch statements classify every
+// quote kind through the canonical owner while retaining their local handling
+// of parentheses, brackets and operators.
+func cypherLexicalByte(character byte) int {
+	if isCypherQuoteByte(character) {
+		return cypherQuoteClass
 	}
-	return len(query), false
+	return int(character)
+}
+
+func cypherStringLexicalByte(character byte) int {
+	if isCypherStringQuoteByte(character) {
+		return cypherStringQuoteClass
+	}
+	return int(character)
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {
@@ -2066,35 +2070,7 @@ func parseIdentifierToken(text string) (string, string, bool) {
 // findMatchingDelimiter skips Cypher quoted text and comments while matching
 // nested delimiters, returning -1 for invalid offsets or unclosed sections.
 func findMatchingDelimiter(text string, start int, opener, closer rune) int {
-	if start < 0 || start >= len(text) || rune(text[start]) != opener {
-		return -1
-	}
-	// The delimiters are ASCII, never a quote or '/': each byte is compared
-	// with them first, and quoted text and comments are skipped whole.
-	open, close := byte(opener), byte(closer)
-	depth := 0
-	for index := start; index < len(text); index++ {
-		switch character := text[index]; {
-		case character == open:
-			depth++
-		case character == close:
-			depth--
-			if depth == 0 {
-				return index
-			}
-		case character == '\'' || character == '"' || character == '`':
-			end, closed := scanCypherQuotedText(text, index, character)
-			if !closed {
-				return -1
-			}
-			index = end - 1
-		case character == '/' && index+1 < len(text) && (text[index+1] == '/' || text[index+1] == '*'):
-			if end := queryCommentEnd(text, index); end >= 0 {
-				index = end - 1
-			}
-		}
-	}
-	return -1
+	return cyphertext.FindMatchingDelimiter(text, start, opener, closer)
 }
 
 func extractDelimitedSection(text string, opener, closer rune) (string, string, bool) {

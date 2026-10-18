@@ -169,11 +169,31 @@ func functionEvaluationError(err error) error {
 // evaluator can't resolve; the call is then unresolved, not an error.
 var errRowArgumentUnresolved = errors.New("row argument unresolved")
 
+// rowFunctionArgumentFailure aborts only the registry call whose Eval callback
+// could not produce a value. Some handlers discard callback errors; an abort
+// keeps that failure from becoming a successful result without a captured,
+// heap-allocated status cell on every successful function evaluation.
+type rowFunctionArgumentFailure struct{ err error }
+
 // evaluateRowGraphFunction evaluates graph.names() / graph.propertiesByName()
 // and GDS's functions (isGDSFunctionName) in the row evaluator with their one
 // implementation, the function registry (pkg/cypher/fn), and its errors as
-// the other evaluator reports them.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+// the other evaluator reports them. The flags are (handled, resolved): a
+// registry miss never evaluates arguments; an unresolved registered call must
+// never be retried as another function implementation.
+func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
+	defer func() {
+		if aborted := recover(); aborted != nil {
+			failure, ok := aborted.(rowFunctionArgumentFailure)
+			if !ok {
+				panic(aborted)
+			}
+			value, handled, resolved, err = nil, true, false, nil
+			if !errors.Is(failure.err, errRowArgumentUnresolved) {
+				err = functionEvaluationError(failure.err)
+			}
+		}
+	}()
 	var args []string
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
@@ -184,22 +204,25 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		Eval: func(expression string) (interface{}, error) {
 			value, resolved, err := e.evaluateRowValue(expression, values)
 			if err != nil {
-				return nil, err
+				panic(rowFunctionArgumentFailure{err})
 			}
 			if !resolved {
-				return nil, errRowArgumentUnresolved
+				panic(rowFunctionArgumentFailure{errRowArgumentUnresolved})
 			}
 			return value, nil
 		},
 		Graphs: e,
 	})
-	if !found || errors.Is(err, errRowArgumentUnresolved) {
-		return nil, false, nil
+	if !found {
+		return nil, false, false, nil
+	}
+	if errors.Is(err, errRowArgumentUnresolved) {
+		return nil, true, false, nil
 	}
 	if err != nil {
-		return nil, false, functionEvaluationError(err)
+		return nil, true, false, functionEvaluationError(err)
 	}
-	return value, true, nil
+	return value, true, true, nil
 }
 
 // graphFunctionUnknownError is Neo4j's SyntaxError for a composite graph

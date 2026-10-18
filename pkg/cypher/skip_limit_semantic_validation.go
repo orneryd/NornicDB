@@ -50,8 +50,8 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 	// Check original subquery bodies before imported variables are replaced
 	// with their row values. A substituted integer is still a row dependency.
 	for index := 0; index < len(cypher); index++ {
-		switch cypher[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(cypher[index]) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(cypher, index, cypher[index]) - 1
 			continue
 		case '/':

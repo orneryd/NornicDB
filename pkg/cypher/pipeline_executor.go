@@ -450,8 +450,8 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	first := asciiUpper(keyword[0])
 	for i := 0; i < len(query); i++ {
 		character := query[i]
-		switch character {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, character) - 1
 			continue
 		case '/':
@@ -1240,6 +1240,11 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
 		return nil, false, nil
 	}
+	// This counter plan owns a relationship pattern, never a path assignment
+	// or shortestPath call. Decline their syntax before reading any values.
+	if !strings.HasPrefix(matchBody, "(") || !containsRelationshipPattern(matchBody) {
+		return nil, false, nil
+	}
 	if len(splitTopLevelComma(matchBody)) != 1 {
 		return nil, false, nil
 	}
@@ -1285,7 +1290,10 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	if !e.isSingleNodePattern(matchBody) || extractPathAssignmentVariable(matchBody) != "" {
 		return nil, false, nil
 	}
-	nodePattern := e.parseNodePattern(ctx, matchBody)
+	nodePattern, parseErr := e.parseNodePattern(ctx, matchBody)
+	if parseErr != nil {
+		return nil, true, parseErr
+	}
 	if nodePattern.variable == "" {
 		return nil, false, nil
 	}
@@ -1549,7 +1557,7 @@ func normalizePipelineWhitespace(query string) string {
 	spacePending := false
 	for index := 0; index < len(query); index++ {
 		character := query[index]
-		if character == '\'' || character == '"' || character == '`' {
+		if isCypherQuoteByte(character) {
 			if spacePending && normalized.Len() > 0 {
 				normalized.WriteByte(' ')
 			}
@@ -1731,7 +1739,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		return expanded, true, nil
 	}
 	if len(parts) > 1 || len(parts) == 1 && strings.HasPrefix(strings.TrimSpace(parts[0]), "(") &&
-		!containsRelationshipPattern(parts[0]) && e.parseNodePattern(ctx, parts[0]).variable == "" {
+		!containsRelationshipPattern(parts[0]) && nodePatternStructure(parts[0]).variable == "" {
 		where := ""
 		if patternEnd < len(body) {
 			where = strings.TrimSpace(body[patternEnd+len("WHERE"):])
@@ -1787,7 +1795,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		// node.
 		_, pattern, _ = splitPathAssignment(pattern)
 	}
-	basePattern := e.parseNodePattern(ctx, pattern)
+	basePattern := nodePatternStructure(pattern)
 	if basePattern.variable == "" {
 		return nil, false, nil
 	}
@@ -1802,7 +1810,10 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		materializedWhere := whereClause
 		// The pattern parsed once and its properties evaluated for the row;
 		// the text route for a row the template can't evaluate.
-		nodePattern, templated := template.node(ctx, e, row)
+		nodePattern, templated, parseErr := template.node(ctx, e, row)
+		if parseErr != nil {
+			return nil, true, parseErr
+		}
 		var cacheKey string
 		if templated {
 			if propsKey, keyed := pipelinePropertiesKey(nodePattern.properties); keyed {
@@ -1811,7 +1822,10 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		} else {
 			rowCtx := withValueBindings(ctx, row)
 			materializedPattern := pattern
-			nodePattern = e.parseNodePattern(rowCtx, materializedPattern)
+			nodePattern, parseErr = e.parseNodePattern(rowCtx, materializedPattern)
+			if parseErr != nil {
+				return nil, true, parseErr
+			}
 			cacheKey = ""
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
@@ -1935,28 +1949,13 @@ func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement 
 	}
 	var output strings.Builder
 	output.Grow(len(input) + len(replacement))
-	quote := byte(0)
 	for index := 0; index < len(input); {
+		if end, quoted := skipCypherLexicalToken(input, index); quoted {
+			output.WriteString(input[index:end])
+			index = end
+			continue
+		}
 		character := input[index]
-		if quote != 0 {
-			output.WriteByte(character)
-			index++
-			if character == '\\' && quote != '`' && index < len(input) {
-				output.WriteByte(input[index])
-				index++
-				continue
-			}
-			if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote = character
-			output.WriteByte(character)
-			index++
-			continue
-		}
 		end := index + len(reference)
 		if end <= len(input) && input[index:end] == reference &&
 			(index == 0 || (!isIdentByte(input[index-1]) && input[index-1] != '.')) &&
@@ -2155,12 +2154,21 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 
 func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	match := e.parseTraversalPattern(ctx, pattern)
-	if match == nil || match.IsChained || !match.Relationship.VariableLength || match.Relationship.Variable == "" {
+	// Decide applicability from syntax and bindings before any property is
+	// evaluated. WHERE and quantified/chained paths belong to the general route.
+	if topLevelKeywordIndex(pattern, "WHERE") >= 0 || hasQuantifiedGroup(pattern) || e.isChainedPattern(normalizeAnonymousTraversalRelationships(pattern)) {
+		return nil, false, nil
+	}
+	open, close := firstRelationshipBracket(pattern)
+	if open < 0 || close < 0 {
+		return nil, false, nil
+	}
+	declaration := relationshipDeclarationOf(pattern[open+1 : close])
+	if !declaration.hasLength || declaration.variable == "" {
 		return nil, false, nil
 	}
 	for _, row := range rows {
-		if _, exists := row[match.Relationship.Variable]; !exists {
+		if _, exists := row[declaration.variable]; !exists {
 			return nil, false, nil
 		}
 	}
@@ -2168,6 +2176,10 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		match := e.parseTraversalPattern(withValueBindings(ctx, row), pattern)
+		if match == nil {
+			return nil, true, getExpressionFailure(ctx)
+		}
 		relationships, ok := pipelineRelationshipList(row[match.Relationship.Variable])
 		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
 			continue

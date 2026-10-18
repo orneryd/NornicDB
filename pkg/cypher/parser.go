@@ -331,27 +331,22 @@ func tokenize(cypher string) ([]string, error) {
 	// Simple tokenizer - will need improvement
 	tokens := make([]string, 0)
 	current := strings.Builder{}
-	inString := false
-	stringChar := byte(0)
 
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
-
-		if inString {
-			current.WriteByte(c)
-			if c == stringChar {
-				inString = false
-				tokens = append(tokens, current.String())
-				current.Reset()
+		if isCypherStringQuoteByte(c) {
+			end, closed := scanCypherQuotedText(cypher, i, c)
+			if !closed {
+				return nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
 			}
+			current.WriteString(cypher[i:end])
+			tokens = append(tokens, current.String())
+			current.Reset()
+			i = end - 1
 			continue
 		}
 
 		switch c {
-		case '"', '\'':
-			inString = true
-			stringChar = c
-			current.WriteByte(c)
 		case ' ', '\t', '\n', '\r':
 			if current.Len() > 0 {
 				tokens = append(tokens, current.String())
@@ -366,10 +361,6 @@ func tokenize(cypher string) ([]string, error) {
 		default:
 			current.WriteByte(c)
 		}
-	}
-
-	if inString {
-		return nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
 	}
 
 	if current.Len() > 0 {

@@ -19,8 +19,8 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 	var result []string
 	start := 0
 	for position := 0; position < len(s); position++ {
-		switch s[position] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(s[position]) {
+		case cypherQuoteClass:
 			position = skipCypherQuotedText(s, position, s[position]) - 1
 		case '/':
 			if position+1 < len(s) && (s[position+1] == '/' || s[position+1] == '*') {

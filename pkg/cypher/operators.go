@@ -157,7 +157,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 			}
 		}
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(expr, i, c) - 1
 		case c == '(':
 			parenDepth++
@@ -250,8 +250,8 @@ func insideCaseBlock(s string, at int) bool {
 func bracketDepthAt(s string, at int) int {
 	depth := 0
 	for i := 0; i < at && i < len(s); i++ {
-		switch c := s[i]; c {
-		case '\'', '"', '`':
+		switch c := s[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(s, i, c) - 1
 		case '(', '[', '{':
 			depth++
@@ -268,21 +268,16 @@ func bracketDepthAt(s string, at int) int {
 // property access (n.case); an unterminated CASE extends to the end of expr.
 func enclosingCaseBlockEnd(expr string, at int) int {
 	depth, nest := 0, 0
-	var quote byte
 	for i := 0; i < len(expr); i++ {
 		if i >= at && depth == 0 {
 			return -1
 		}
-		c := expr[i]
-		if quote != 0 {
-			if c == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		c := expr[i]
 		switch c {
-		case '\'', '"', '`':
-			quote = c
 		case '(', '[', '{':
 			nest++
 		case ')', ']', '}':

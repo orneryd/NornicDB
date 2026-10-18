@@ -198,7 +198,7 @@ func parseProcedureArgNames(raw string) ([]string, error) {
 	if raw == "" {
 		return []string{}, nil
 	}
-	parts := splitProcedureTopLevelComma(raw)
+	parts := splitTopLevelComma(raw)
 	args := make([]string, 0, len(parts))
 	seen := map[string]struct{}{}
 	for _, p := range parts {
