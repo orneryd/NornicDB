@@ -33,11 +33,17 @@ func (w searchDeliveryWriter) Flush() {
 func continuationDeliveryMiddleware(next http.Handler) http.Handler {
  return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
   delivery:=&resultstream.Delivery{}
-  stop:=context.AfterFunc(r.Context(),delivery.Fail)
-  defer stop()
-  defer delivery.Fail()
+  failed:=make(chan struct{})
+  stop:=context.AfterFunc(r.Context(),func(){ defer close(failed);delivery.Fail() })
+  stopped:=false
+  defer func(){
+   if !stopped&&!stop() { <-failed }
+   delivery.Fail()
+  }()
   r=r.WithContext(resultstream.WithDelivery(r.Context(),delivery))
   next.ServeHTTP(searchDeliveryWriter{w,delivery},r)
+  stopped=stop()
+  if !stopped { <-failed;return }
   if r.Context().Err()==nil { delivery.Delivered() }
  })
 }
