@@ -174,7 +174,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		return nil, fabricGraphReferenceError(err)
 	}
-	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows)
+	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
 	if autoCommit {
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
