@@ -827,11 +827,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Canonical mapping keeps DB and server adapters consistent.
-	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
 		s.writeSearchContinuationPage(w, r, owner, dbName, continuationPage)
 		return
 	}
+	results := nornicdb.MapSearchResponse(searchResponse)
 	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
 	if searchDiagEnabled {
 		s.logEvent(ctx, slog.LevelInfo, localization.ServerSearchTimingEvent(localization.ServerSearchTimingFields{
