@@ -32,11 +32,10 @@ func (s *Session) flushResultDelivery(stream resultStream, rows [][]any, complet
 		}
 		return err
 	}
-	if stream.delivery != nil {
-		if complete {
-			stream.delivery.Delivered()
-		} else {
-			stream.delivery.DeliveredValues(rows)
+	if stream.delivery != nil && stream.delivery.Pending() {
+		stream.delivery.DeliveredValues(rows)
+		if complete && stream.delivery.Pending() {
+			stream.delivery.Fail()
 		}
 	}
 	return nil
