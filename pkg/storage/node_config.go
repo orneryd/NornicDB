@@ -84,6 +84,7 @@ package storage
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -227,7 +228,7 @@ func (c *NodeConfig) AddToPin(targetID string) {
 func (c *NodeConfig) RemoveFromPin(targetID string) bool {
 	for i, id := range c.PinList {
 		if id == targetID {
-			c.PinList = append(c.PinList[:i], c.PinList[i+1:]...)
+			c.PinList = slices.Delete(c.PinList, i, i+1)
 			c.UpdatedAt = time.Now()
 			return true
 		}
@@ -247,7 +248,7 @@ func (c *NodeConfig) AddToDeny(targetID string) {
 func (c *NodeConfig) RemoveFromDeny(targetID string) bool {
 	for i, id := range c.DenyList {
 		if id == targetID {
-			c.DenyList = append(c.DenyList[:i], c.DenyList[i+1:]...)
+			c.DenyList = slices.Delete(c.DenyList, i, i+1)
 			c.UpdatedAt = time.Now()
 			return true
 		}

@@ -1460,6 +1460,7 @@ func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 	}
 
 	// Truncate
+	ei.nodeIDs[lastIdx] = ""
 	ei.nodeIDs = ei.nodeIDs[:lastIdx]
 	ei.cpuVectors = ei.cpuVectors[:lastIdx*ei.dimensions]
 	delete(ei.idToIndex, nodeID)
@@ -2325,6 +2326,7 @@ func (ei *EmbeddingIndex) Clear() {
 	ei.mu.Lock()
 	defer ei.mu.Unlock()
 
+	clear(ei.nodeIDs)
 	ei.nodeIDs = ei.nodeIDs[:0]
 	ei.idToIndex = make(map[string]int)
 	ei.cpuVectors = ei.cpuVectors[:0]
