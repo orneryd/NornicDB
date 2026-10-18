@@ -148,6 +148,11 @@ func TestRetentionExpressionLists(t *testing.T) {
 			"RETURN size(reduce(acc=[], i IN range(1,200000) | acc + [{i: i, text: 'abcdefghijklmnopqrstuvwxyz'}])) AS n",
 			"RETURN size(reduce(acc=[], i IN range(1,300) | acc + [{i: i, text: 'abcdefghijklmnopqrstuvwxyz'}])) AS n",
 		},
+		// Folds the append plan takes: several operands, a value operand.
+		"reduce list accumulator appending operands": {
+			"RETURN size(reduce(acc=[], i IN range(1,200000) | acc + {i: i, text: 'abcdefghijklmnopqrstuvwxyz'} + [i])) AS n",
+			"RETURN size(reduce(acc=[], i IN range(1,300) | acc + {i: i, text: 'abcdefghijklmnopqrstuvwxyz'} + [i])) AS n",
+		},
 		"comprehension": {
 			"WITH range(1,40000) AS l RETURN size([x IN l | toString(x) + 'abcdefghijklmnopqrstuvwxyz0123456789']) AS n",
 			"WITH range(1,400) AS l RETURN size([x IN l | toString(x) + 'abcdefghijklmnopqrstuvwxyz0123456789']) AS n",
