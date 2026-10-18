@@ -12,7 +12,7 @@ type deliveryCursor struct {
 	qid     string
 	discard func()
 	written bool
-	suffix []byte
+	suffix  []byte
 }
 
 // Delivery owns pages that have not reached their transport. Fork separates
