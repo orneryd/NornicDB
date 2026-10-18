@@ -1005,6 +1005,63 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	}
 }
 
+// publishEmbeddedNode indexes a node the embed worker has just persisted into
+// its database's search service at once, when that service is ready and not
+// building, and reports whether it did. Otherwise (no service yet, a build
+// running or not yet run, or indexing failed) the caller queues the node like
+// any write event, and the build or the deferred flush publishes it.
+//
+// A queued mutation of the same node is honoured: a pending removal wins and
+// nothing is indexed, and a pending index takes this copy, as queueing this
+// node used to. While a flush runs, the copy is queued too, so an older copy
+// it already drained can't be indexed over this one.
+func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
+	if db == nil || node == nil {
+		return false
+	}
+	dbName, local, ok := splitQualifiedID(string(node.ID))
+	if !ok || strings.HasPrefix(local, "qdrant:") {
+		return false
+	}
+	db.searchServicesMu.RLock()
+	entry := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if entry == nil || entry.svc == nil {
+		return false
+	}
+	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
+		return false
+	}
+	userNode := storage.CopyNode(node)
+	userNode.ID = storage.NodeID(local)
+
+	entry.pendingMu.Lock()
+	queued, hasQueued := entry.pendingOps[local]
+	if hasQueued && !queued.remove {
+		entry.pendingOps[local] = pendingSearchMutation{node: storage.CopyNode(userNode)}
+	}
+	entry.pendingMu.Unlock()
+	if hasQueued && queued.remove {
+		return true
+	}
+	entry.pendingFlushMu.Lock()
+	flushing := entry.pendingFlushRunning
+	entry.pendingFlushMu.Unlock()
+	if flushing {
+		entry.queueIndex(userNode)
+		db.ensurePendingFlush(entry)
+	}
+
+	if err := entry.svc.IndexNode(userNode); err != nil {
+		if db.shouldIgnoreSearchIndexingError(err) {
+			return true
+		}
+		log.Printf("⚠️ Failed to index embedded node %s in db %s: %v", local, dbName, err)
+		return false
+	}
+	return true
+}
+
 func (db *DB) removeNodeFromEvent(nodeID storage.NodeID) {
 	dbName, local, ok := splitQualifiedID(string(nodeID))
 	if !ok {
