@@ -152,7 +152,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		if !hit {
 			continue
 		}
-		n, err := getQueryNode(store, id)
+		n, err := e.getQueryNode(store, id)
 		if err != nil || n == nil {
 			continue
 		}

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,14 +14,31 @@ import (
 // managed embedding, written as the embed worker writes it: in the embedding
 // sidecar, outside the node body.
 type largeEmbeddingGraph struct {
-	engine *storage.MemoryEngine
+	engine *storage.BadgerEngine
 	store  storage.Engine
 	exec   *StorageExecutor
 }
 
 func newLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
 	tb.Helper()
-	engine := newTestMemoryEngine(tb)
+	return newLargeEmbeddingGraphOn(tb, docs, newTestMemoryEngine(tb).BadgerEngine)
+}
+
+// newColdLargeEmbeddingGraph is newLargeEmbeddingGraph on an engine whose node
+// cache holds almost nothing, as for a graph larger than the cache: reads go
+// to the stored body and chunks.
+func newColdLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
+	tb.Helper()
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, NodeCacheMaxEntries: 1})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = engine.Close() })
+	return newLargeEmbeddingGraphOn(tb, docs, engine)
+}
+
+func newLargeEmbeddingGraphOn(tb testing.TB, docs int, engine *storage.BadgerEngine) *largeEmbeddingGraph {
+	tb.Helper()
 	// "seen" doesn't feed the embedding text, so setting it keeps the
 	// embedding (#963).
 	engine.SetEmbeddingTextPolicy(storage.EmbeddingTextPolicy{Exclude: []string{"seen"}, IncludeLabels: true})
@@ -143,16 +161,79 @@ func TestQueryNodeWritesKeepStoredEmbeddings(t *testing.T) {
 	}
 }
 
-// TestGetQueryNodeOutsideTransactionReadsFullNode pins why only the
-// transaction wrapper reads row nodes without vectors: an engine's UpdateNode
-// takes the body as written, so a store outside a transaction gives rows the
-// full node.
+// TestGetQueryNodeOutsideTransactionReadsFullNode pins why a store outside a
+// transaction gives rows the full node unless the statement cannot write: an
+// engine's UpdateNode takes the body as written.
 func TestGetQueryNodeOutsideTransactionReadsFullNode(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 1)
-	node, err := getQueryNode(g.store, "doc-0")
+	node, err := (*StorageExecutor)(nil).getQueryNode(g.store, "doc-0")
 	require.NoError(t, err)
 	require.Len(t, node.ChunkEmbeddings, 1)
 	require.Len(t, node.ChunkEmbeddings[0], 2048)
+	node, err = g.exec.getQueryNode(g.store, "doc-0")
+	require.NoError(t, err)
+	require.Len(t, node.ChunkEmbeddings, 1, "an executor that may write reads the full node")
+}
+
+// queryNodeReadSpy counts a store's full node reads and query-node reads.
+type queryNodeReadSpy struct {
+	storage.Engine
+	full, query atomic.Int64
+}
+
+func (s *queryNodeReadSpy) GetNode(id storage.NodeID) (*storage.Node, error) {
+	s.full.Add(1)
+	return s.Engine.GetNode(id)
+}
+
+func (s *queryNodeReadSpy) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+	s.query.Add(1)
+	return s.Engine.(storage.QueryNodeReader).GetQueryNode(id)
+}
+
+// TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage: an auto-commit
+// statement that cannot write reads the nodes it binds (id seek, traversal,
+// relationship endpoint) without their stored vectors, as a transaction does,
+// and answers the same rows; n.has_embedding answers from the metadata. A
+// statement with a procedure call, which may write outside a transaction,
+// reads full nodes.
+func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
+	g := newLargeEmbeddingGraph(t, 4)
+	spy := &queryNodeReadSpy{Engine: g.store}
+	exec := NewStorageExecutorWithQueryCachePolicy(spy, 0, 0)
+	run := func(t *testing.T, query string) *ExecuteResult {
+		t.Helper()
+		result, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+		return result
+	}
+	reads := []string{
+		"MATCH (n) WHERE id(n) = 'doc-3' RETURN n.title, n.has_embedding",
+		"MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) RETURN n.title, n.has_embedding",
+		"MATCH (:Hub)-[r:HAS]->(:Doc {k: 3}) RETURN endNode(r).title, endNode(r).has_embedding",
+	}
+	for _, query := range reads {
+		t.Run(query, func(t *testing.T) {
+			spy.full.Store(0)
+			spy.query.Store(0)
+			require.Equal(t, [][]interface{}{{"doc 3", true}}, run(t, query).Rows)
+			require.Positive(t, spy.query.Load(), "row nodes are read without vectors")
+			require.Zero(t, spy.full.Load(), "no row node is read with its vectors")
+
+			g.run(t, "BEGIN", nil)
+			inTx := g.run(t, query, nil)
+			g.run(t, "ROLLBACK", nil)
+			require.Equal(t, inTx.Rows, run(t, query).Rows, "auto-commit answers as a transaction does")
+		})
+	}
+	t.Run("procedure call reads full nodes", func(t *testing.T) {
+		spy.full.Store(0)
+		spy.query.Store(0)
+		result := run(t, "MATCH (:Hub)-[:HAS]->(n:Doc {k: 3}) CALL db.labels() YIELD label RETURN n.title, n.has_embedding LIMIT 1")
+		require.Equal(t, [][]interface{}{{"doc 3", true}}, result.Rows)
+		require.Zero(t, spy.query.Load())
+		require.Positive(t, spy.full.Load())
+	})
 }
 
 // TestQueryEmbeddingConsumersReadStoredVectors: statements that read the
@@ -188,12 +269,17 @@ func TestQueryEmbeddingConsumersReadStoredVectors(t *testing.T) {
 // BenchmarkQueryNodeReadsWithLargeEmbeddings: statements that bind nodes
 // carrying a 2048-dimension managed embedding and read or write only their
 // properties, by index seek, IN-list seek, traversal and relationship
-// endpoint. The reads run in an explicit transaction (BEGIN, statement,
-// ROLLBACK per iteration); the SET is auto-commit, which reads in its
-// implicit transaction. Compare B/op and allocs/op: no row reads the vectors.
+// endpoint. Each read runs in an explicit transaction (tx-: BEGIN,
+// statement, ROLLBACK per iteration) and auto-commit (autocommit-, no
+// transaction); the SET is auto-commit, which reads in its implicit
+// transaction. Compare B/op and allocs/op: no row reads the vectors.
 func BenchmarkQueryNodeReadsWithLargeEmbeddings(b *testing.B) {
+	b.Run("warm", func(b *testing.B) { benchmarkQueryNodeReads(b, newLargeEmbeddingGraph(b, 100)) })
+	b.Run("cold", func(b *testing.B) { benchmarkQueryNodeReads(b, newColdLargeEmbeddingGraph(b, 100)) })
+}
+
+func benchmarkQueryNodeReads(b *testing.B, g *largeEmbeddingGraph) {
 	const docs = 100
-	g := newLargeEmbeddingGraph(b, docs)
 	ctx := context.Background()
 	keys := make([]interface{}, docs)
 	for i := range keys {
@@ -209,17 +295,23 @@ func BenchmarkQueryNodeReadsWithLargeEmbeddings(b *testing.B) {
 		cypher string
 		params map[string]interface{}
 	}{
-		{"tx-point-seek", "MATCH (n:Doc {k: $k}) RETURN n.title", map[string]interface{}{"k": int64(42)}},
-		{"tx-in-list-seek-100", "MATCH (n:Doc) WHERE n.k IN $ks RETURN n.k, n.title", map[string]interface{}{"ks": keys}},
-		{"tx-traverse-100", "MATCH (:Hub {k: 0})-[:HAS]->(d:Doc) RETURN d.title", nil},
-		{"tx-rel-endpoint-100", "MATCH (:Hub)-[r:HAS]->() RETURN endNode(r).title", nil},
+		{"point-seek", "MATCH (n:Doc {k: $k}) RETURN n.title", map[string]interface{}{"k": int64(42)}},
+		{"in-list-seek-100", "MATCH (n:Doc) WHERE n.k IN $ks RETURN n.k, n.title", map[string]interface{}{"ks": keys}},
+		{"traverse-100", "MATCH (:Hub {k: 0})-[:HAS]->(d:Doc) RETURN d.title", nil},
+		{"rel-endpoint-100", "MATCH (:Hub)-[r:HAS]->() RETURN endNode(r).title", nil},
 	} {
-		b.Run(query.name, func(b *testing.B) {
+		b.Run("tx-"+query.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				execute(b, "BEGIN", nil)
 				execute(b, query.cypher, query.params)
 				execute(b, "ROLLBACK", nil)
+			}
+		})
+		b.Run("autocommit-"+query.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				execute(b, query.cypher, query.params)
 			}
 		})
 	}
