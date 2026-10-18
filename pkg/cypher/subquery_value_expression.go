@@ -886,33 +886,41 @@ func patternMapsAreConstant(pattern string) bool {
 var patternMapsConstant = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
 
 func patternMapsAreConstantText(pattern string) bool {
-	depth := 0
-	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '(', '[':
-			depth++
-		case ')', ']':
-			depth--
-		case '{':
-			if depth <= 0 {
-				continue
-			}
-			close := findMatchingDelimiter(pattern, index, '{', '}')
-			if close < 0 {
-				return false
-			}
-			for _, pair := range splitTopLevelComma(pattern[index+1 : close]) {
-				separator := findTopLevelMapKeyValueSeparator(pair)
-				if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
-					return false
-				}
-			}
-			index = close
+	constant := true
+	eachPatternElement(pattern, func(opener byte, element string) {
+		if !constant {
+			return
 		}
-	}
-	return true
+		var properties string
+		if opener == '(' {
+			_, properties = splitNodePatternProperties(element)
+		} else {
+			// A relationship's map is its declaration's; its own WHERE is
+			// read per relationship, so the pattern isn't constant.
+			declaration := relationshipDeclarationHead(element[1 : len(element)-1])
+			if declaration.predicate != "" {
+				constant = false
+				return
+			}
+			properties = declaration.properties
+		}
+		if properties == "" || properties[0] != '{' {
+			return
+		}
+		close := findMatchingDelimiter(properties, 0, '{', '}')
+		if close < 0 {
+			constant = false
+			return
+		}
+		for _, pair := range splitTopLevelComma(properties[1:close]) {
+			separator := findTopLevelMapKeyValueSeparator(pair)
+			if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
+				constant = false
+				return
+			}
+		}
+	})
+	return constant
 }
 
 // isConstantMapValue reports a property map value that is a literal or a

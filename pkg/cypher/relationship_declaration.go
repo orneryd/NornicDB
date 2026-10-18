@@ -2,8 +2,10 @@ package cypher
 
 import "strings"
 
-// A relationship pattern's inside ([r:A|B *1..2 {k: v}]) is read by one
-// scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf, and
+// A relationship pattern's inside ([r:A|B *1..2 {k: v}], [r:A WHERE p]) is
+// read by one scanner wherever a statement uses it: CREATE, MERGE, MATCH,
+// the clause rewrites, the fast-path plans, the write-stretch analysis and
+// schema statements (relationshipDeclarationOf, and
 // relationshipDeclarationHead for readers that need no type list): a
 // backtick-quoted type may hold any character, ':', '|', '*', '{' and
 // spaces included, and a doubled backtick inside it is one backtick, as
@@ -40,6 +42,9 @@ type relationshipDeclaration struct {
 	// properties is the property map, from its { to the end, trimmed, or a
 	// trailing parameter ($props); "" when there is none.
 	properties string
+	// predicate is the element's own WHERE predicate ([r:T WHERE r.k = 1]),
+	// the text after WHERE, trimmed; "" when there is none.
+	predicate string
 }
 
 // relationshipDeclarationOf reads a relationship pattern's inside (the text
@@ -86,6 +91,14 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 func relationshipDeclarationHead(inner string) relationshipDeclaration {
 	var declaration relationshipDeclaration
 	head := strings.TrimSpace(inner)
+	// The WHERE predicate ends the inside; it is an expression, so nothing in
+	// it is the type, the length or the property map.
+	if strings.IndexAny(head, "Ww") >= 0 {
+		if where := elementWhereIndex(head, -1, len(head)); where >= 0 {
+			declaration.predicate = strings.TrimSpace(head[where+len("WHERE"):])
+			head = strings.TrimSpace(head[:where])
+		}
+	}
 	masked := blankRelationshipExpressions(head)
 	if brace := strings.IndexByte(masked, '{'); brace >= 0 {
 		declaration.properties = strings.TrimSpace(head[brace:])
@@ -196,4 +209,60 @@ func (declaration relationshipDeclaration) singleType() string {
 		return declaration.types[0]
 	}
 	return declaration.typeText
+}
+
+// boundOutgoingRelationship reads (a)-[inside]->(b), the shape the UNWIND
+// batch plans take, into its two node variables (simple identifiers) and its
+// relationship's declaration; ok is false for any other shape.
+func boundOutgoingRelationship(body string) (start string, declaration relationshipDeclaration, end string, ok bool) {
+	body = strings.TrimSpace(body)
+	if !strings.HasPrefix(body, "(") {
+		return "", declaration, "", false
+	}
+	startEnd := findMatchingParen(body, 0)
+	if startEnd < 0 {
+		return "", declaration, "", false
+	}
+	rest := strings.TrimSpace(body[startEnd+1:])
+	if !strings.HasPrefix(rest, "-[") {
+		return "", declaration, "", false
+	}
+	close := findMatchingBracket(rest, 1)
+	if close < 0 {
+		return "", declaration, "", false
+	}
+	after := strings.TrimSpace(rest[close+1:])
+	if !strings.HasPrefix(after, "->") {
+		return "", declaration, "", false
+	}
+	target := strings.TrimSpace(after[2:])
+	if !strings.HasPrefix(target, "(") || findMatchingParen(target, 0) != len(target)-1 {
+		return "", declaration, "", false
+	}
+	start, end = strings.TrimSpace(body[1:startEnd]), strings.TrimSpace(target[1:len(target)-1])
+	if !isSimpleIdentifier(start) || !isSimpleIdentifier(end) {
+		return "", declaration, "", false
+	}
+	return start, relationshipDeclarationOf(rest[2:close]), end, true
+}
+
+// singleStaticType is the declaration's one type when it names exactly one
+// type by a plain name, with no length and no predicate: what the fast-path
+// plans accept. ok is false for anything else.
+func (declaration relationshipDeclaration) singleStaticType() (string, bool) {
+	if len(declaration.types) != 1 || declaration.invalidType != "" || declaration.hasLength || declaration.lengthInvalid ||
+		declaration.predicate != "" || !isSimpleIdentifier(declaration.types[0]) {
+		return "", false
+	}
+	return declaration.types[0], true
+}
+
+// propertyMapBody is the text inside the declaration's property map ({…}),
+// trimmed; ok is false when it has none or a parameter map.
+func (declaration relationshipDeclaration) propertyMapBody() (string, bool) {
+	properties := declaration.properties
+	if len(properties) < 2 || properties[0] != '{' || findMatchingDelimiter(properties, 0, '{', '}') != len(properties)-1 {
+		return "", false
+	}
+	return strings.TrimSpace(properties[1 : len(properties)-1]), true
 }

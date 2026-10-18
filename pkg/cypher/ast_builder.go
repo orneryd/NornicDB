@@ -21,7 +21,6 @@ import (
 type ASTBuilder struct {
 	// Precompiled patterns for performance
 	nodePattern     *regexp.Regexp
-	relationPattern *regexp.Regexp
 	propertyPattern *regexp.Regexp
 }
 
@@ -29,7 +28,6 @@ type ASTBuilder struct {
 func NewASTBuilder() *ASTBuilder {
 	return &ASTBuilder{
 		nodePattern:     regexp.MustCompile(`\((\w*)?(?::(\w+(?::\w+)*))?(?:\s*\{([^}]*)\})?\)`),
-		relationPattern: regexp.MustCompile(`-\[(\w*)?(?::(\w+))?\]->`),
 		propertyPattern: regexp.MustCompile(`(\w+)\s*:\s*([^,}]+)`),
 	}
 }
@@ -874,16 +872,16 @@ func (b *ASTBuilder) parsePatterns(text string) []ASTPattern {
 			pattern.Nodes = append(pattern.Nodes, node)
 		}
 
-		// Find relationships
-		for _, match := range b.relationPattern.FindAllStringSubmatch(part, -1) {
-			rel := ASTRelationship{
-				Direction: EdgeOutgoing, // Default for ->
+		// Find the outgoing relationships (-[r:T]->), read by the
+		// relationship declaration owner.
+		for open, close := nextRelationshipBracket(part, 0); open >= 0; open, close = nextRelationshipBracket(part, close+1) {
+			if !strings.HasPrefix(part[close+1:], "->") {
+				continue
 			}
-			if len(match) > 1 {
-				rel.Variable = match[1]
-			}
-			if len(match) > 2 {
-				rel.Type = match[2]
+			declaration := relationshipDeclarationOf(part[open+1 : close])
+			rel := ASTRelationship{Direction: EdgeOutgoing, Variable: declaration.variable}
+			if len(declaration.types) > 0 {
+				rel.Type = declaration.types[0]
 			}
 			pattern.Relationships = append(pattern.Relationships, rel)
 		}

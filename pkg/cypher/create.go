@@ -785,6 +785,13 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 				continue
 			}
 		}
+		if c == '[' && depth == 0 {
+			// A relationship's inside ([:R {k: f(x)}]) holds no node.
+			if end := findMatchingBracket(pattern, i); end > i {
+				i = end
+				continue
+			}
+		}
 		switch c {
 		case '{':
 			if depth > 0 {

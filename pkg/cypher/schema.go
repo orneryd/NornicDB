@@ -850,11 +850,11 @@ func parseCreateIndexForPattern(forClause string) (label string, relationshipTyp
 			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
 
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
+		declaration := relationshipDeclarationHead(inside)
+		if !declaration.hasColon {
 			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
-		relRaw := strings.TrimSpace(inside[colon+1:])
+		relRaw := declaration.typeText
 		if relRaw == "" {
 			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
 		}
@@ -1729,11 +1729,11 @@ func parseRelationshipForDirection(forClause string) (relType string, direction 
 	prefix := strings.TrimSpace(forClause[:bracketStart])
 	suffix := strings.TrimSpace(rest)
 
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
+	declaration := relationshipDeclarationHead(inside)
+	if !declaration.hasColon {
 		return "", "", false
 	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+	relType = normalizeIdentifierToken(declaration.typeText)
 	if relType == "" {
 		return "", "", false
 	}
@@ -1848,11 +1848,11 @@ func parsePolicyForClause(forClause string) (sourceLabel string, relType string,
 	if !ok {
 		return "", "", "", false
 	}
-	colon := strings.Index(relInside, ":")
-	if colon < 0 {
+	declaration := relationshipDeclarationHead(relInside)
+	if !declaration.hasColon {
 		return "", "", "", false
 	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(relInside[colon+1:]))
+	relType = normalizeIdentifierToken(declaration.typeText)
 	if relType == "" {
 		return "", "", "", false
 	}
@@ -1937,6 +1937,10 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
 	}
 	variable := normalizeIdentifierToken(patternInside[:colon])
+	if isRelationship {
+		// The relationship's variable, read by its declaration owner.
+		variable = normalizeIdentifierToken(relationshipDeclarationHead(patternInside).variable)
+	}
 	propertyExpr := requireExpr
 	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
 		propertyExpr = inside

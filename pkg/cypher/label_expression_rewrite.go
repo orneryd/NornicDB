@@ -699,14 +699,21 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 		variable, variableEnd = written, end
 		i = skipASCIISpaces(q, end, close)
 	}
+	// A relationship's inside (its length and property map) is read by its
+	// one owner, so a '*' or '{' inside a dynamic type or a quoted name is
+	// neither.
+	var declaration relationshipDeclaration
+	if relationship {
+		declaration = relationshipDeclarationHead(q[open+1 : close])
+	}
 	if where := elementWhereIndex(q, open, close); where >= 0 {
-		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
+		if err := r.elementWhere(open, where, close, variable, relationship, quantified, declaration.hasLength, mode, predicates); err != nil {
 			return err
 		}
 		close = trimRightIndex(q, open+1, where)
 	}
 	if mode == labelPatternMatch && !quantified {
-		r.samePatternMapReads(open, i, close, variable, relationship, predicates)
+		r.samePatternMapReads(open, i, close, variable, relationship, declaration, predicates)
 	}
 	if i >= close {
 		return nil
@@ -727,9 +734,8 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	}
 	chainEnd := textStart + chain.end
 	r.syntax.note(chain, q[textStart:close], relationship, viaIS)
-	rest := skipASCIISpaces(q, chainEnd, close)
 	if relationship {
-		return r.relationshipElement(open, chainStart, chainEnd, rest, close, variable, viaIS, chain, quantified, mode, predicates)
+		return r.relationshipElement(open, chainStart, chainEnd, variable, viaIS, chain, declaration, quantified, mode, predicates)
 	}
 	if viaIS && chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedIs(chain.expr.String()))
@@ -778,25 +784,25 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 // a map entry is that equality, null included, and the pattern's routes
 // read property maps as values known before the match. A variable-length
 // relationship's map applies to each of its relationships and is left alone.
-func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, variable string, relationship bool, predicates *[]string) {
+func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, variable string, relationship bool, declaration relationshipDeclaration, predicates *[]string) {
 	if len(r.patternVariables) == 0 {
 		return
 	}
 	q := r.query
 	brace := -1
-	for i := from; i < close; i++ {
+	if relationship {
+		// The map is the declaration's, the last text before the predicate.
+		if declaration.hasLength || !strings.HasPrefix(declaration.properties, "{") {
+			return
+		}
+		brace = trimRightIndex(q, open+1, close) - len(declaration.properties)
+	}
+	for i := from; i < close && brace < 0; i++ {
 		switch c := q[i]; c {
 		case '\'', '"', '`':
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '*':
-			if relationship {
-				return
-			}
 		case '{':
 			brace = i
-		}
-		if brace >= 0 {
-			break
 		}
 	}
 	if brace < 0 {
@@ -880,14 +886,19 @@ func declaredPatternVariables(pattern string) map[string]bool {
 			if depth > 0 {
 				continue
 			}
-			name, _, ok := scanSymbolicName(pattern, skipASCIISpaces(pattern, i+1, len(pattern)))
-			if !ok {
-				continue
+			if name, _, ok := scanSymbolicName(pattern, skipASCIISpaces(pattern, i+1, len(pattern))); ok {
+				if variables == nil {
+					variables = make(map[string]bool)
+				}
+				variables[symbolicNameValue(name)] = true
 			}
-			if variables == nil {
-				variables = make(map[string]bool)
+			// Nothing else in a relationship's inside (its dynamic type, its
+			// map or its predicate) declares a variable.
+			if c == '[' {
+				if end := findMatchingBracket(pattern, i); end > i {
+					i = end
+				}
 			}
-			variables[symbolicNameValue(name)] = true
 		}
 	}
 	return variables
@@ -914,7 +925,7 @@ func elementWhereIndex(q string, open, close int) int {
 // reads the iteration variable under the relationship's own name. Neo4j
 // rejects the predicate on a * variable-length relationship and in CREATE or
 // MERGE.
-func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified, variableLength bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	element := "Node"
 	if relationship {
@@ -923,7 +934,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 	if mode != labelPatternMatch {
 		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateInWritePattern(element, mode.clause()))
 	}
-	if relationship && indexOutsideQuotes(q[open+1:where], '*') >= 0 {
+	if relationship && variableLength {
 		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateVariableLength())
 	}
 	predicate, err := r.rewrittenPredicate(strings.TrimSpace(q[where+len("WHERE") : close]))
@@ -958,15 +969,15 @@ func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, 
 }
 
 // relationshipElement rewrites a relationship pattern's type chain
-// (query[chainStart:chainEnd]; rest is where the length or properties
-// start). A quantified relationship's type expression applies to each of its
+// (query[chainStart:chainEnd]; declaration is the relationship's inside). A
+// quantified relationship's type expression applies to each of its
 // relationships (#864).
-func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
+func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd int, variable string, viaIS bool, chain labelChain, declaration relationshipDeclaration, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	if chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonConjunction())
 	}
-	variableLength := rest < close && q[rest] == '*'
+	variableLength := declaration.hasLength
 	if chain.dynamic {
 		resolved, constant, err := r.resolveDynamicChain(chain, mode)
 		if err != nil {
@@ -974,9 +985,12 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 		}
 		if variableLength && mode == labelPatternMatch && chain.expr.kind == labelExpressionDynamic {
 			// Neo4j 5.26.30's legacy * range ignores dynamic type values,
-			// including on its first hop; static types and quantified
-			// relationships still filter. Normalize this here, before any
-			// traversal/optional/subquery/shortest-path route is selected.
+			// including on its first hop ([:$('NOPE')*1..2] matches every
+			// type); static types, property maps and quantified relationships
+			// still filter. This looks like a Neo4j defect; it is followed here
+			// as the reference behaviour, and is this one place to change if
+			// the project decides otherwise. Normalized before any traversal,
+			// optional, subquery or shortest-path route is selected.
 			r.edit(chainStart, chainEnd, "")
 			if !constant {
 				variable = r.elementVariable(open, variable)
@@ -1011,8 +1025,7 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	}
 	alternatives, plain := chain.expr.alternatives()
 	if chain.barColons {
-		hasProperties := strings.IndexByte(q[rest:close], '{') >= 0
-		if variable != "" || variableLength || quantified || hasProperties {
+		if variable != "" || variableLength || quantified || declaration.properties != "" {
 			return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonDisjunction(chain.expr.String()))
 		}
 	}

@@ -629,50 +629,19 @@ func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
 
 func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) {
 	// Only handle outgoing arrow form: (start)-[:TYPE [{props}]]->(end).
-	arrowIdx := strings.Index(body, "]->")
-	if arrowIdx < 0 {
+	startVar, declaration, endVar, ok := boundOutgoingRelationship(body)
+	if !ok || declaration.variable != "" {
 		return createEdgeSpec{}, false
 	}
-	lBracketIdx := strings.LastIndex(body[:arrowIdx], "-[")
-	if lBracketIdx < 0 {
+	relType, ok := declaration.singleStaticType()
+	if !ok {
 		return createEdgeSpec{}, false
 	}
-	// Start node: body[0 : lBracketIdx] — must be "(start)".
-	startPart := strings.TrimSpace(body[:lBracketIdx])
-	if !strings.HasPrefix(startPart, "(") || !strings.HasSuffix(startPart, ")") {
-		return createEdgeSpec{}, false
-	}
-	startVar := strings.TrimSpace(startPart[1 : len(startPart)-1])
-	if !isSimpleIdentifier(startVar) {
-		return createEdgeSpec{}, false
-	}
-	// End node: body[arrowIdx+3 :] — must be "(end)".
-	endPart := strings.TrimSpace(body[arrowIdx+3:])
-	if !strings.HasPrefix(endPart, "(") || !strings.HasSuffix(endPart, ")") {
-		return createEdgeSpec{}, false
-	}
-	endVar := strings.TrimSpace(endPart[1 : len(endPart)-1])
-	if !isSimpleIdentifier(endVar) {
-		return createEdgeSpec{}, false
-	}
-	// Relationship: body[lBracketIdx+2 : arrowIdx] — `:TYPE` or `:TYPE {props}`.
-	rel := strings.TrimSpace(body[lBracketIdx+2 : arrowIdx])
-	if !strings.HasPrefix(rel, ":") {
-		return createEdgeSpec{}, false
-	}
-	rel = strings.TrimSpace(rel[1:])
-	relType := rel
 	propsBody := ""
-	if braceIdx := strings.Index(rel, "{"); braceIdx >= 0 {
-		relType = strings.TrimSpace(rel[:braceIdx])
-		closeBrace := strings.LastIndex(rel, "}")
-		if closeBrace < 0 {
+	if declaration.properties != "" {
+		if propsBody, ok = declaration.propertyMapBody(); !ok {
 			return createEdgeSpec{}, false
 		}
-		propsBody = strings.TrimSpace(rel[braceIdx+1 : closeBrace])
-	}
-	if !isSimpleIdentifier(relType) {
-		return createEdgeSpec{}, false
 	}
 	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)
 	if !ok {

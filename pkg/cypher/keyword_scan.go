@@ -1944,7 +1944,7 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 		metadata, metadataRestored := r.restoreValue(result.Metadata)
 		var rows interface{}
 		rowsRestored := false
-		if len(result.Rows) > 0 && isExplainOrProfileText(r.canonical) {
+		if len(result.Rows) > 0 && isExplainText(r.canonical) {
 			rows, rowsRestored = r.restoreValue(result.Rows)
 		}
 		if columns != nil || metadataRestored || rowsRestored {
@@ -1969,11 +1969,12 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 	return result, err
 }
 
-// isExplainOrProfileText reports whether a canonical statement starts with
-// EXPLAIN or PROFILE.
-func isExplainOrProfileText(query string) bool {
-	query = strings.TrimLeft(query, " ")
-	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
+// isExplainText reports whether a canonical statement starts with EXPLAIN,
+// whose rows describe the plan. A PROFILE statement's rows are its data and
+// are never rewritten: a value equal to a rewritten part of the statement (the
+// type T of a constant dynamic type $('T')) stays the value.
+func isExplainText(query string) bool {
+	return startsWithKeywordFold(strings.TrimLeft(query, " "), "EXPLAIN")
 }
 
 // restoreValue restores the statement text in the strings of value (a plan

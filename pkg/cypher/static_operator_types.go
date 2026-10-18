@@ -1164,29 +1164,41 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 	if !mayNeedStaticTypeCheck(text) {
 		return nil
 	}
-	visitPatternValues := func(pattern string) error {
-		for index := 0; index < len(pattern); index++ {
-			switch pattern[index] {
-			case '\'', '"':
-				index = skipQuotedSemanticText(pattern, index) - 1
-			case '{':
-				closing := findMatchingDelimiter(pattern, index, '{', '}')
-				if closing < 0 {
-					return nil
-				}
-				if body := pattern[index+1 : closing]; mayNeedStaticTypeCheck(body) {
-					for _, pair := range splitTopLevelComma(body) {
-						if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-							if err := visit(pair[separator+1:], false); err != nil {
-								return err
-							}
-						}
+	visitMapValues := func(properties string) error {
+		if len(properties) < 2 || properties[0] != '{' {
+			return nil
+		}
+		closing := findMatchingDelimiter(properties, 0, '{', '}')
+		if closing < 0 {
+			return nil
+		}
+		if body := properties[1:closing]; mayNeedStaticTypeCheck(body) {
+			for _, pair := range splitTopLevelComma(body) {
+				if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
+					if err := visit(pair[separator+1:], false); err != nil {
+						return err
 					}
 				}
-				index = closing
 			}
 		}
 		return nil
+	}
+	// The property maps of the pattern's nodes and relationships; a
+	// relationship's map is its declaration's (a '{' in a dynamic type or a
+	// quoted name is not one).
+	visitPatternValues := func(pattern string) (err error) {
+		eachPatternElement(pattern, func(opener byte, element string) {
+			if err != nil {
+				return
+			}
+			if opener == '(' {
+				_, properties := splitNodePatternProperties(element)
+				err = visitMapValues(properties)
+				return
+			}
+			err = visitMapValues(relationshipDeclarationHead(element[1 : len(element)-1]).properties)
+		})
+		return err
 	}
 	visitPredicate := func(body string, afterProjection bool) error {
 		where := topLevelKeywordIndex(body, "WHERE")

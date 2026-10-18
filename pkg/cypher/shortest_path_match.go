@@ -173,13 +173,8 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 	}
 	if len(traversal.Relationship.Properties) > 0 {
 		properties := ""
-		if open := strings.IndexByte(pattern, '['); open >= 0 {
-			if close := findMatchingBracket(pattern, open); close > open {
-				relationship := pattern[open:close]
-				if brace := strings.IndexByte(relationship, '{'); brace >= 0 {
-					properties = strings.TrimSpace(relationship[brace:])
-				}
-			}
+		if open, close := firstRelationshipBracket(pattern); open >= 0 {
+			properties = relationshipDeclarationHead(pattern[open+1 : close]).properties
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathRelationshipProperties",
 			localization.CypherMatchingShortestPathRelationshipProperties(funcName, properties))

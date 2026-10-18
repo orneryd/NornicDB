@@ -531,7 +531,7 @@ func eachPatternElement(pattern string, visit func(opener byte, element string))
 	for index := 0; index < len(pattern); index++ {
 		switch pattern[index] {
 		case '\'', '"', '`':
-			index = skipQuotedSemanticText(pattern, index) - 1
+			index = skipCypherQuotedText(pattern, index, pattern[index]) - 1
 		case '(', '[':
 			closer := ')'
 			if pattern[index] == '[' {

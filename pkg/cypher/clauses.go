@@ -674,33 +674,33 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 	if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(afterFrom, "-") {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	openBracket := strings.Index(afterFrom, "[")
+	openBracket := strings.IndexByte(afterFrom, '[')
 	if openBracket < 0 {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	closeBracket := findMatchingDelimiter(afterFrom, openBracket, '[', ']')
-	if openBracket < 0 || closeBracket <= openBracket {
+	closeBracket := findMatchingBracket(afterFrom, openBracket)
+	if closeBracket < 0 {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	declaration := relationshipDeclarationOf(afterFrom[openBracket+1 : closeBracket])
-	if declaration.hasLength || declaration.lengthInvalid || declaration.invalidType != "" || len(declaration.types) != 1 || hasDynamicToken(declaration.typeText) {
+	relVar := declaration.variable
+	relType, ok := declaration.singleStaticType()
+	if !ok {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	var matchAssignments []unwindSimpleSetAssignment
-	if properties := declaration.properties; properties != "" {
-		if len(properties) < 2 || properties[0] != '{' || findMatchingDelimiter(properties, 0, '{', '}') != len(properties)-1 {
+	if declaration.properties != "" {
+		matchProperties, ok := declaration.propertyMapBody()
+		if !ok {
 			return unwindMergeChainRelationshipPlan{}, false
 		}
-		matchProperties := strings.TrimSpace(properties[1 : len(properties)-1])
 		if matchProperties != "" {
-			var ok bool
 			matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(matchProperties)
 			if !ok {
 				return unwindMergeChainRelationshipPlan{}, false
 			}
 		}
 	}
-	relVar, relType := declaration.variable, declaration.typeText
 	if relVar != "" && !isSimpleIdentifier(relVar) {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
@@ -1269,16 +1269,20 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(rest, "-") {
 			return "", "", "", false
 		}
-		openBracket := strings.Index(rest, "[")
-		closeBracket := strings.Index(rest, "]")
-		if openBracket < 0 || closeBracket <= openBracket {
+		openBracket := strings.IndexByte(rest, '[')
+		if openBracket < 0 {
 			return "", "", "", false
 		}
-		relInner := strings.TrimSpace(rest[openBracket+1 : closeBracket])
-		if !strings.HasPrefix(relInner, ":") {
+		closeBracket := findMatchingBracket(rest, openBracket)
+		if closeBracket < 0 {
 			return "", "", "", false
 		}
-		relType := strings.TrimSpace(relInner[1:])
+		// One unnamed relationship of one type, nothing else.
+		declaration := relationshipDeclarationOf(rest[openBracket+1 : closeBracket])
+		relType, ok := declaration.singleStaticType()
+		if !ok || declaration.variable != "" || declaration.properties != "" {
+			return "", "", "", false
+		}
 		afterRel := strings.TrimSpace(rest[closeBracket+1:])
 		if !strings.HasPrefix(afterRel, "->") {
 			return "", "", "", false
@@ -1989,90 +1993,6 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 		return nil
 	}
 	return projected.Rows[0][0]
-}
-
-// parseOptionalRelPattern parses patterns like (a)-[r:TYPE]->(b:Label)
-func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
-	result := optionalRelPattern{
-		direction:   "out",
-		targetProps: make(map[string]interface{}),
-	}
-	pattern = normalizeAnonymousTraversalRelationships(strings.TrimSpace(pattern))
-
-	// Check direction
-	if strings.Contains(pattern, "<-") {
-		result.direction = "in"
-	} else if strings.Contains(pattern, "->") {
-		result.direction = "out"
-	} else if strings.Contains(pattern, "-") {
-		result.direction = "both"
-	}
-
-	// Extract source variable
-	if idx := strings.Index(pattern, "("); idx >= 0 {
-		endIdx := strings.Index(pattern[idx:], ")")
-		if endIdx > 0 {
-			sourceStr := pattern[idx+1 : idx+endIdx]
-			if colonIdx := strings.Index(sourceStr, ":"); colonIdx > 0 {
-				result.sourceVar = strings.TrimSpace(sourceStr[:colonIdx])
-			} else {
-				result.sourceVar = strings.TrimSpace(sourceStr)
-			}
-		}
-	}
-
-	// Extract relationship type and variable
-	if idx := strings.Index(pattern, "["); idx >= 0 {
-		endIdx := strings.Index(pattern[idx:], "]")
-		if endIdx > 0 {
-			relStr := pattern[idx+1 : idx+endIdx]
-			if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-				result.relVar = strings.TrimSpace(relStr[:colonIdx])
-				result.relType = strings.TrimSpace(relStr[colonIdx+1:])
-			} else {
-				result.relVar = strings.TrimSpace(relStr)
-			}
-		}
-	}
-
-	// Extract target
-	relEnd := strings.Index(pattern, "]")
-	if relEnd > 0 {
-		remaining := pattern[relEnd+1:]
-		if idx := strings.Index(remaining, "("); idx >= 0 {
-			endIdx := strings.Index(remaining[idx:], ")")
-			if endIdx > 0 {
-				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo := e.parseNodePattern(ctx, "("+targetStr+")")
-				if targetInfo.variable != "" {
-					result.targetVar = targetInfo.variable
-				}
-				if len(targetInfo.labels) > 0 {
-					result.targetLabels = append([]string(nil), targetInfo.labels...)
-				}
-				if len(targetInfo.properties) > 0 {
-					result.targetProps = targetInfo.properties
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-func optionalRelationshipTypeMatches(filter, actual string) bool {
-	if filter == "" {
-		return true
-	}
-	if !strings.Contains(filter, "|") {
-		return filter == actual
-	}
-	for _, candidate := range strings.Split(filter, "|") {
-		if strings.TrimSpace(candidate) == actual {
-			return true
-		}
-	}
-	return false
 }
 
 func joinedValueKey(val interface{}) string {

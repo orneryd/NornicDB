@@ -979,27 +979,25 @@ func parseCallTailNodeToken(input string) (variable, label, rest string, ok bool
 }
 
 func parseCallTailRelationshipToken(input string) (variable, relType, propertyKey, propertyExpr string, ok bool) {
-	rest := strings.TrimSpace(input)
-	variable, rest, ok = parseCallTailIdentifier(rest)
-	if !ok || variable == "" {
+	declaration := relationshipDeclarationOf(input)
+	variable, rest, ok := parseCallTailIdentifier(declaration.variable)
+	if !ok || variable == "" || strings.TrimSpace(rest) != "" {
 		return "", "", "", "", false
 	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, ":") {
-		rest = strings.TrimSpace(rest[1:])
-		relType, rest, ok = parseCallTailIdentifier(rest)
-		if !ok || relType == "" {
+	if declaration.hasColon {
+		if relType, ok = declaration.singleStaticType(); !ok {
 			return "", "", "", "", false
 		}
-		rest = strings.TrimSpace(rest)
-	}
-	if rest == "" {
-		return variable, relType, "", "", true
-	}
-	if !strings.HasPrefix(rest, "{") {
+	} else if declaration.hasLength || declaration.lengthInvalid || declaration.predicate != "" {
 		return "", "", "", "", false
 	}
-	propertyKey, propertyExpr, rest, ok = parseCallTailSinglePropertyMap(rest)
+	if declaration.properties == "" {
+		return variable, relType, "", "", true
+	}
+	if !strings.HasPrefix(declaration.properties, "{") {
+		return "", "", "", "", false
+	}
+	propertyKey, propertyExpr, rest, ok = parseCallTailSinglePropertyMap(declaration.properties)
 	if !ok || strings.TrimSpace(rest) != "" {
 		return "", "", "", "", false
 	}
@@ -1305,47 +1303,6 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 		}
 	}
 	return strings.TrimSpace(rest[:end])
-}
-
-func callTailHasRelationshipTypeConstraint(tail string) bool {
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(tail); i++ {
-		ch := tail[i]
-		if inSingle {
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		}
-		if inDouble {
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch != '[' {
-			continue
-		}
-		end := strings.IndexByte(tail[i+1:], ']')
-		if end < 0 {
-			return false
-		}
-		segment := tail[i+1 : i+1+end]
-		if strings.Contains(segment, ":") {
-			return true
-		}
-		i += end
-	}
-	return false
 }
 
 // callTailRow returns a yielded row as a pipeline row, with the statement's

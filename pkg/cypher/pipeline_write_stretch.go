@@ -195,6 +195,10 @@ func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 		}
 		declaration := relationshipDeclarationOf(inner)
 		addStretchMapKeys(declaration.properties, tokens)
+		if declaration.predicate != "" {
+			// [r:T WHERE …] reads what its predicate reads.
+			addStretchExpressionReads(declaration.predicate, tokens)
+		}
 		if !declaration.hasColon {
 			tokens.anyRelationship = true
 			return

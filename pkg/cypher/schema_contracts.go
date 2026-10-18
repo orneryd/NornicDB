@@ -37,12 +37,12 @@ func parseConstraintContractForClause(forClause string) (entityType storage.Cons
 		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
 			return "", "", "", false
 		}
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
+		declaration := relationshipDeclarationHead(inside)
+		if !declaration.hasColon {
 			return "", "", "", false
 		}
-		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+		variable = normalizeIdentifierToken(declaration.variable)
+		labelOrType = normalizeIdentifierToken(declaration.typeText)
 		if labelOrType == "" {
 			return "", "", "", false
 		}

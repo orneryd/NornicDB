@@ -557,31 +557,12 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	}
 }
 
+// containsVariableLengthPathPattern reports a variable-length relationship
+// (-[*]->, -[r:T*1..3]->) in query, read by the declaration owner.
 func containsVariableLengthPathPattern(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if query[i] != '[' {
-			continue
-		}
-		inside, _, ok := extractBracketSection(query[i:])
-		if !ok {
-			continue
-		}
-		inner := strings.TrimSpace(inside)
-		if !strings.HasPrefix(inner, "*") {
-			continue
-		}
-		rangeExpr := strings.TrimSpace(inner[1:])
-		if rangeExpr == "" {
-			return true // [*]
-		}
-		dotIdx := strings.Index(rangeExpr, "..")
-		if dotIdx < 0 {
-			continue
-		}
-		left := strings.TrimSpace(rangeExpr[:dotIdx])
-		right := strings.TrimSpace(rangeExpr[dotIdx+2:])
-		if (left == "" || isAllDigits(left)) && (right == "" || isAllDigits(right)) {
-			return true // [*1..3], [*..5], [*1..]
+	for open, close := nextRelationshipBracket(query, 0); open >= 0; open, close = nextRelationshipBracket(query, close+1) {
+		if relationshipDeclarationHead(query[open+1 : close]).hasLength {
+			return true
 		}
 	}
 	return false

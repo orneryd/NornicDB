@@ -156,40 +156,13 @@ func extractMatchClause(query string) string {
 	return query[matchIdx:end]
 }
 
+// countRelationshipPatterns counts the relationship brackets of s, found by
+// the shared bracket finder.
 func countRelationshipPatterns(s string) int {
-	inQuote := false
-	quoteChar := byte(0)
 	count := 0
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		}
-		if inQuote {
-			continue
-		}
-
-		if c != '[' {
-			continue
-		}
-
-		// Relationship patterns are introduced by a preceding '-' (possibly with whitespace).
-		j := i - 1
-		for j >= 0 && isWhitespace(s[j]) {
-			j--
-		}
-		if j >= 0 && s[j] == '-' {
-			count++
-		}
+	for open, close := nextRelationshipBracket(s, 0); open >= 0; open, close = nextRelationshipBracket(s, close+1) {
+		count++
 	}
-
 	return count
 }
 
@@ -536,13 +509,23 @@ func functionCallParenAt(text string, open int) bool {
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery
-// (EXISTS { … } AND …) is not a node.
+// (EXISTS { … } AND …) is not a node, and neither is anything inside a
+// relationship's brackets or a quoted name (a type `x(y)`, a quote in
+// `D]'Z`).
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
-		if matchClause[i] == '\'' || matchClause[i] == '"' {
-			i = skipQuotedSemanticText(matchClause, i) - 1
+		switch c := matchClause[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(matchClause, i, c) - 1
 			continue
+		case '[':
+			if previous := trimRightIndex(matchClause, 0, i); previous > 0 && matchClause[previous-1] == '-' {
+				if end := findMatchingBracket(matchClause, i); end >= 0 {
+					i = end
+					continue
+				}
+			}
 		}
 		if matchClause[i] == '{' {
 			if end := findMatchingDelimiter(matchClause, i, '{', '}'); end >= 0 {
@@ -582,17 +565,6 @@ func extractNodeVariables(matchClause string) []string {
 		vars = append(vars, name)
 	}
 	return vars
-}
-
-// extractRelationshipType extracts the relationship type from a pattern
-func extractRelationshipType(pattern string) string {
-	for open, close := nextRelationshipBracket(pattern, 0); open >= 0; open, close = nextRelationshipBracket(pattern, close+1) {
-		declaration := relationshipDeclarationOf(pattern[open+1 : close])
-		if len(declaration.types) > 0 {
-			return declaration.types[0]
-		}
-	}
-	return ""
 }
 
 func extractRelationshipVariable(pattern string) string {

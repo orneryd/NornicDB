@@ -108,17 +108,17 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 		return err
 	}
 	q := r.query
+	declaration := relationshipDeclarationHead(q[open+1 : close])
+	if declaration.hasLength {
+		return labelExpressionSyntaxError(localization.CypherMatchingVariableLengthInQuantifiedPath())
+	}
+	// The length goes before the property map, which comes before the
+	// predicate.
 	insert := close
 	if where := elementWhereIndex(q, open, close); where >= 0 {
 		insert = where
 	}
-	if brace := indexOutsideQuotes(q[open+1:insert], '{'); brace >= 0 {
-		insert = open + 1 + brace
-	}
-	if indexOutsideQuotes(q[open+1:insert], '*') >= 0 {
-		return labelExpressionSyntaxError(localization.CypherMatchingVariableLengthInQuantifiedPath())
-	}
-	insert = trimRightIndex(q, open+1, insert)
+	insert = trimRightIndex(q, open+1, trimRightIndex(q, open+1, insert)-len(declaration.properties))
 	r.edit(insert, insert, quantifier.length())
 	r.edit(at, quantifier.end, "")
 	return nil

@@ -195,18 +195,9 @@ func TestProfileDynamicRelationshipWrites(t *testing.T) {
 }
 
 func TestRelationshipAuxiliaryReaders(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, typeText := range []string{"$({ts:['R*{..|:quote']}.ts[0..1][0])", "`R*{..|:quote`"} {
 		pattern := "(a)-[r:" + typeText + "*1..2 {w: 17}]->(b)"
-		eps, err := exec.parseOptionalClauseEndpoints(context.Background(), pattern)
-		require.NoError(t, err)
-		assert.Equal(t, "r", eps.relVar)
-		assert.Equal(t, typeText, eps.relType)
-		wantType := typeText
-		if typeText[0] == '`' {
-			wantType = "R*{..|:quote"
-		}
-		assert.Equal(t, wantType, extractRelationshipType(pattern))
+		assert.Equal(t, []string{"r"}, extractRelationshipVariables(pattern))
 		var tokens stretchTokens
 		addStretchPattern(pattern, &tokens, false)
 		assert.True(t, tokens.anyRelationship)

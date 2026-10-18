@@ -337,23 +337,14 @@ func createPropertyMapBody(pattern string) (string, bool) {
 }
 
 // createRelationshipPropertyMapBodies returns the property map text of every
-// relationship ([...]) in a CREATE path pattern.
+// relationship ([...]) in a CREATE path pattern, read by the declaration
+// owner: a '{' in a dynamic type is not the map.
 func createRelationshipPropertyMapBodies(pattern string) []string {
 	var bodies []string
-	for offset := 0; offset < len(pattern); {
-		open := strings.Index(pattern[offset:], "[")
-		if open < 0 {
-			break
-		}
-		open += offset
-		close := findMatchingBracket(pattern, open)
-		if close < 0 {
-			break
-		}
-		if properties, ok := createPropertyMapBody(pattern[open+1 : close]); ok {
+	for open, close := nextRelationshipBracket(pattern, 0); open >= 0; open, close = nextRelationshipBracket(pattern, close+1) {
+		if properties, ok := relationshipDeclarationHead(pattern[open+1 : close]).propertyMapBody(); ok {
 			bodies = append(bodies, properties)
 		}
-		offset = close + 1
 	}
 	return bodies
 }

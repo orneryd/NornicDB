@@ -195,43 +195,18 @@ func splitTopLevelOrTerms(expr string) []string {
 func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []string {
 	var varNames []string
 	seen := make(map[string]bool)
-
-	// Find all node patterns (...)
-	inParen := false
-	inBracket := false
-	var current strings.Builder
-
-	for _, c := range pattern {
-		switch c {
-		case '(':
-			inParen = true
-			current.Reset()
-		case ')':
-			if inParen {
-				nodeContent := current.String()
-				// Extract variable name (before : or end)
-				varName, _, _ := splitNodeHead(nodeContent)
-				// Remove any property part
-				if idx := strings.Index(varName, "{"); idx > 0 {
-					varName = strings.TrimSpace(varName[:idx])
-				}
-				if varName != "" && !seen[varName] {
-					varNames = append(varNames, varName)
-					seen[varName] = true
-				}
-			}
-			inParen = false
-		case '[':
-			inBracket = true
-		case ']':
-			inBracket = false
-		default:
-			if inParen && !inBracket {
-				current.WriteRune(c)
-			}
+	// The pattern's nodes, read by the element walker: a relationship's
+	// inside, a quoted name or a property map is never a node.
+	eachPatternElement(pattern, func(opener byte, element string) {
+		if opener != '(' {
+			return
 		}
-	}
-
+		head, _ := splitNodePatternProperties(element)
+		if varName, _, _ := splitNodeHead(head); varName != "" && !seen[varName] {
+			varNames = append(varNames, varName)
+			seen[varName] = true
+		}
+	})
 	return varNames
 }
 

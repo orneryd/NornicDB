@@ -1201,175 +1201,89 @@ func normalizeAnonymousTraversalRelationships(pattern string) string {
 	return normalized.String()
 }
 
+// traversalPart is one node of a pattern and the relationship that follows
+// it: relationship is the text from the node's ')' to the next node's '('
+// (its arrows and brackets, as in "<-[:R]-"), "" after the last node.
+type traversalPart struct {
+	node, relationship string
+}
+
+// traversalPatternParts splits a pattern ((a)<-[:R1]-(b)-[:R2]->(c)) into
+// its nodes and relationships with the shared quote-aware matchers
+// (findMatchingParen, nextRelationshipBracket): a ')', ']' or arrow inside a
+// string, a backtick-quoted type or a dynamic type's expression belongs to
+// its element. Text before the first node (p =) and after the last is not
+// part of it.
+func traversalPatternParts(pattern string) []traversalPart {
+	var parts []traversalPart
+	start := strings.IndexByte(pattern, '(')
+	for start >= 0 {
+		end := findMatchingParen(pattern, start)
+		if end < 0 {
+			return parts
+		}
+		part := traversalPart{node: pattern[start+1 : end]}
+		start = -1
+		if open, close := nextRelationshipBracket(pattern, end+1); open >= 0 && strings.IndexByte(pattern[end+1:open], '(') < 0 {
+			relationshipEnd := close + 1
+			for relationshipEnd < len(pattern) && (pattern[relationshipEnd] == '-' || pattern[relationshipEnd] == '>') {
+				relationshipEnd++
+			}
+			part.relationship = pattern[end+1 : relationshipEnd]
+			if next := strings.IndexByte(pattern[relationshipEnd:], '('); next >= 0 {
+				start = relationshipEnd + next
+			}
+		}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
 // isChainedPattern checks if a pattern has multiple relationship segments
 // e.g., (a)<-[:R1]-(b)-[:R2]->(c) or (a)-[:R1]->(b)-[:R2]->(c)
 func (e *StorageExecutor) isChainedPattern(pattern string) bool {
-	// Count relationship patterns by counting ]-
-	// A chained pattern has at least 2 relationship segments
-	count := 0
-	// Reverse iteration: order doesn't matter for counting
-	for i := len(pattern) - 2; i >= 0; i-- {
-		if pattern[i] == ']' && (pattern[i+1] == '-' || pattern[i+1] == '>') {
-			count++
+	relationships := 0
+	for open, close := nextRelationshipBracket(pattern, 0); open >= 0; open, close = nextRelationshipBracket(pattern, close+1) {
+		if relationships++; relationships == 2 {
+			return true
 		}
 	}
-	return count >= 2
+	return false
 }
 
 // parseChainedTraversalPattern parses multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+	parts := traversalPatternParts(pattern)
+	if len(parts) < 2 {
+		return nil // Not enough parts for a valid pattern
+	}
 	result := &TraversalMatch{
 		IsChained:         true,
 		Segments:          []TraversalSegment{},
 		IntermediateNodes: []nodePatternInfo{},
 	}
 
-	// Parse segments by splitting on relationship boundaries
-	// We need to find each (node)-[rel]->(node) or (node)<-[rel]-(node) segment
-
-	// Use state machine to properly handle nested parens and quotes
-	type segmentPart struct {
-		nodeStr string
-		relStr  string
-	}
-
-	var parts []segmentPart
-	var currentNode strings.Builder
-	var currentRel strings.Builder
-	inNode := false
-	inRel := false
-	parenDepth := 0
-	bracketDepth := 0
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
-
-		// Handle quotes
-		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		}
-
-		if inQuote {
-			if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-			continue
-		}
-
-		switch c {
-		case '(':
-			if parenDepth == 0 {
-				inNode = true
-			}
-			parenDepth++
-			if inNode {
-				currentNode.WriteByte(c)
-			}
-		case ')':
-			parenDepth--
-			if inNode {
-				currentNode.WriteByte(c)
-			}
-			if parenDepth == 0 {
-				inNode = false
-			}
-		case '[':
-			if bracketDepth == 0 {
-				inRel = true
-			}
-			bracketDepth++
-			if inRel {
-				currentRel.WriteByte(c)
-			}
-		case ']':
-			if inRel {
-				currentRel.WriteByte(c)
-			}
-			bracketDepth--
-			if bracketDepth == 0 {
-				inRel = false
-				// Capture the direction arrows after ]
-				for j := i + 1; j < len(pattern) && (pattern[j] == '-' || pattern[j] == '>'); j++ {
-					currentRel.WriteByte(pattern[j])
-					i = j
-				}
-				// Save this part
-				parts = append(parts, segmentPart{
-					nodeStr: currentNode.String(),
-					relStr:  currentRel.String(),
-				})
-				currentNode.Reset()
-				currentRel.Reset()
-			}
-		case '<', '-':
-			if !inNode && !inRel && parenDepth == 0 && bracketDepth == 0 {
-				// Direction marker before relationship - add to next rel
-				currentRel.WriteByte(c)
-			} else if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-		default:
-			if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-		}
-	}
-
-	// Capture final node if present
-	if currentNode.Len() > 0 {
-		parts = append(parts, segmentPart{
-			nodeStr: currentNode.String(),
-			relStr:  "",
-		})
-	}
-
-	// Now convert parts to segments
-	if len(parts) < 2 {
-		return nil // Not enough parts for a valid pattern
-	}
-
 	// Parse all nodes first
-	var allNodes []nodePatternInfo
+	allNodes := make([]nodePatternInfo, 0, len(parts))
 	for _, part := range parts {
-		nodeStr := strings.Trim(part.nodeStr, "()")
-		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, nodeStr))
+		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, part.node))
 	}
 
 	// Build segments
 	for i := 0; i < len(parts)-1; i++ {
-		relStr := parts[i].relStr
-		if relStr == "" {
+		if parts[i].relationship == "" {
 			continue
 		}
-
-		segment := TraversalSegment{
+		result.Segments = append(result.Segments, TraversalSegment{
 			FromNode:     allNodes[i],
 			ToNode:       allNodes[i+1],
-			Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		}
-		result.Segments = append(result.Segments, segment)
+			Relationship: *e.parseRelationshipPattern(ctx, parts[i].relationship),
+		})
 	}
 
 	// Set start and end nodes
-	if len(allNodes) > 0 {
-		result.StartNode = allNodes[0]
-	}
-	if len(allNodes) > 1 {
-		result.EndNode = allNodes[len(allNodes)-1]
-	}
+	result.StartNode = allNodes[0]
+	result.EndNode = allNodes[len(allNodes)-1]
 
 	// Intermediate nodes are all nodes except first and last
 	if len(allNodes) > 2 {
@@ -1384,59 +1298,17 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 	return result
 }
 
-// parseTraversalPatternStateMachine parses patterns with a state machine
-// to properly handle parentheses and special characters inside quoted property values.
+// parseTraversalPatternStateMachine parses a one-relationship pattern
+// ((a)-[r:T]->(b)) from its parts (traversalPatternParts).
 func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
-	// Find the boundaries of (startNode), -[rel]->, and (endNode)
-	// respecting quotes and nested parentheses
-
-	// Find start node: first balanced parentheses
-	startIdx := strings.Index(pattern, "(")
-	if startIdx < 0 {
+	parts := traversalPatternParts(pattern)
+	if len(parts) < 2 || parts[0].relationship == "" {
 		return nil
 	}
-	startEnd := findMatchingParen(pattern, startIdx)
-	if startEnd < 0 {
-		return nil
-	}
-	startNodeStr := pattern[startIdx+1 : startEnd]
-
-	// Find relationship: -[...]-> or <-[...]-
-	relStart := strings.Index(pattern[startEnd:], "[")
-	if relStart < 0 {
-		return nil
-	}
-	relStart += startEnd
-	relEnd := findMatchingBracket(pattern, relStart)
-	if relEnd < 0 {
-		return nil
-	}
-
-	// Extract full relationship pattern including arrows
-	relPatternStart := startEnd + 1
-	relPatternEnd := relEnd + 1
-	// Include the arrow after ]
-	for relPatternEnd < len(pattern) && (pattern[relPatternEnd] == '-' || pattern[relPatternEnd] == '>') {
-		relPatternEnd++
-	}
-	relStr := pattern[relPatternStart:relPatternEnd]
-
-	// Find end node: next balanced parentheses after relationship
-	endStart := strings.Index(pattern[relEnd:], "(")
-	if endStart < 0 {
-		return nil
-	}
-	endStart += relEnd
-	endEnd := findMatchingParen(pattern, endStart)
-	if endEnd < 0 {
-		return nil
-	}
-	endNodeStr := pattern[endStart+1 : endEnd]
-
 	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(ctx, startNodeStr),
-		Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		EndNode:      e.parseNodePatternFromString(ctx, endNodeStr),
+		StartNode:    e.parseNodePatternFromString(ctx, parts[0].node),
+		Relationship: *e.parseRelationshipPattern(ctx, parts[0].relationship),
+		EndNode:      e.parseNodePatternFromString(ctx, parts[1].node),
 	}
 }
 
