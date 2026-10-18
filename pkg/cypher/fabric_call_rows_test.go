@@ -153,7 +153,7 @@ func BenchmarkFabricCallRows(b *testing.B) {
 	} {
 		b.Run(tt.name, func(b *testing.B) {
 			exec := newFabricCallRowsExecutor(b)
-			exec.cache.SetEnabled(false)
+			exec.cache = nil
 			ctx := context.Background()
 			b.ReportAllocs()
 			b.ResetTimer()
