@@ -507,7 +507,7 @@ func TestUniqueValueKeyOrdersPublications(t *testing.T) {
 			_, err := b.CreateNode(&Node{ID: "db:vy", Labels: []string{"L"}, Properties: map[string]any{"p": "A", "q": "w", "u": "A"}})
 			return err
 		}, nil)
-	key, ok := uniqueConstraintValueKey("A")
+	key, ok := indexValueKey("A")
 	require.True(t, ok)
 	constraint.mu.RLock()
 	holder := constraint.values[key]

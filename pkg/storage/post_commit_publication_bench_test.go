@@ -2,8 +2,18 @@ package storage
 
 import (
 	"fmt"
+	"runtime/pprof"
 	"testing"
 )
+
+// publicationBenchPhase labels only the measured writes, excluding population
+// and engine cleanup so CPU profiles identify the publication path being tuned.
+func publicationBenchPhase(b *testing.B, operation, path string) func() {
+	previous := b.Context()
+	pprof.SetGoroutineLabels(pprof.WithLabels(previous, pprof.Labels("operation", operation, "path", path)))
+	b.ResetTimer()
+	return func() { pprof.SetGoroutineLabels(previous) }
+}
 
 // BenchmarkPublicationWritePath is the write path's post-commit publication
 // cost (F-PUBLISH) under one property index and one uniqueness constraint:
@@ -62,7 +72,7 @@ func BenchmarkPublicationWritePath(b *testing.B) {
 		b.Run("create/"+mode, func(b *testing.B) {
 			engine, _ := setup(b)
 			b.ReportAllocs()
-			b.ResetTimer()
+			defer publicationBenchPhase(b, "create", mode)()
 			for i := 0; i < b.N; i++ {
 				if explicit {
 					inTx(b, engine, func(tx *BadgerTransaction) error { _, err := tx.CreateNode(node(i, "v")); return err })
@@ -75,7 +85,7 @@ func BenchmarkPublicationWritePath(b *testing.B) {
 			engine, _ := setup(b)
 			populate(b, engine, population)
 			b.ReportAllocs()
-			b.ResetTimer()
+			defer publicationBenchPhase(b, "update", mode)()
 			for i := 0; i < b.N; i++ {
 				updated := node(i%population, fmt.Sprintf("v%d", i))
 				if explicit {
@@ -89,7 +99,7 @@ func BenchmarkPublicationWritePath(b *testing.B) {
 			engine, _ := setup(b)
 			populate(b, engine, b.N)
 			b.ReportAllocs()
-			b.ResetTimer()
+			defer publicationBenchPhase(b, "delete", mode)()
 			for i := 0; i < b.N; i++ {
 				id := NodeID(fmt.Sprintf("db:n%d", i))
 				if explicit {
@@ -104,7 +114,7 @@ func BenchmarkPublicationWritePath(b *testing.B) {
 		engine, _ := setup(b)
 		populate(b, engine, population)
 		b.ReportAllocs()
-		b.ResetTimer()
+		defer publicationBenchPhase(b, "read_after_write", "direct")()
 		for i := 0; i < b.N; i++ {
 			updated := node(i%population, fmt.Sprintf("v%d", i))
 			if err := engine.UpdateNode(updated); err != nil {
@@ -120,7 +130,7 @@ func BenchmarkPublicationWritePath(b *testing.B) {
 	b.Run("tx_create_10k", func(b *testing.B) {
 		engine, _ := setup(b)
 		b.ReportAllocs()
-		b.ResetTimer()
+		defer publicationBenchPhase(b, "create", "tx_10k")()
 		for i := 0; i < b.N; i++ {
 			inTx(b, engine, func(tx *BadgerTransaction) error {
 				for j := 0; j < 10000; j++ {
