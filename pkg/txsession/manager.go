@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -25,8 +26,10 @@ type Session struct {
 	Executor *cypher.StorageExecutor
 	Expires  time.Time
 
-	mu          sync.Mutex
-	terminalErr error
+	mu             sync.Mutex
+	terminalErr    error
+	lifetimeCancel context.CancelFunc
+	idleTimer      *time.Timer
 }
 
 // Manager tracks explicit transaction sessions and lifecycle operations.
@@ -44,6 +47,7 @@ type Manager struct {
 
 	factory               ExecutorFactory
 	terminalErrorObserver func(*Session, error)
+	lifetimeCtx           context.Context
 }
 
 func NewManager(ttl time.Duration, factory ExecutorFactory) *Manager {
@@ -51,12 +55,21 @@ func NewManager(ttl time.Duration, factory ExecutorFactory) *Manager {
 		ttl = 30 * time.Second
 	}
 	return &Manager{
-		sessions: make(map[string]*Session),
-		ttl:      ttl,
-		nowFunc:  time.Now,
-		lastID:   uint64(time.Now().UnixNano()),
-		factory:  factory,
+		sessions:    make(map[string]*Session),
+		ttl:         ttl,
+		nowFunc:     time.Now,
+		lastID:      uint64(time.Now().UnixNano()),
+		factory:     factory,
+		lifetimeCtx: context.Background(),
 	}
+}
+
+// SetLifetimeContext selects the server owner for newly opened transactions.
+// Individual HTTP requests carry values and cancellation for statements only.
+func (m *Manager) SetLifetimeContext(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lifetimeCtx = ctx
 }
 
 func (m *Manager) Open(ctx context.Context, dbName string) (*Session, error) {
@@ -87,16 +100,24 @@ func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, e
 		return nil, fmt.Errorf("transaction executor is not available")
 	}
 
-	if _, err := executor.Execute(cypher.WithTransactionControl(ctx), "BEGIN", nil); err != nil {
+	m.mu.RLock()
+	serverLifetime := m.lifetimeCtx
+	m.mu.RUnlock()
+	lifetime, cancel := context.WithCancel(serverLifetime)
+	beginCtx := fabric.WithTransactionLifetime(ctx, lifetime)
+	if _, err := executor.Execute(cypher.WithTransactionControl(beginCtx), "BEGIN", nil); err != nil {
+		cancel()
 		return nil, err
 	}
 
 	now := m.nowFunc()
 	session := &Session{
-		Database: dbName,
-		Owner:    strings.TrimSpace(owner),
-		Executor: executor,
-		Expires:  now.Add(m.ttl),
+		Database:       dbName,
+		Owner:          strings.TrimSpace(owner),
+		Executor:       executor,
+		Expires:        now.Add(m.ttl),
+		lifetimeCancel: cancel,
+		idleTimer:      time.AfterFunc(m.ttl, cancel),
 	}
 
 	m.mu.Lock()
@@ -134,6 +155,14 @@ func (m *Manager) GetForOwner(txID string, owner string) (*Session, bool) {
 
 func (m *Manager) Delete(txID string) {
 	m.mu.Lock()
+	if session := m.sessions[txID]; session != nil {
+		if session.idleTimer != nil {
+			session.idleTimer.Stop()
+		}
+		if session.lifetimeCancel != nil {
+			session.lifetimeCancel()
+		}
+	}
 	delete(m.sessions, txID)
 	m.mu.Unlock()
 }
@@ -149,6 +178,9 @@ func (m *Manager) Touch(session *Session) {
 		return
 	}
 	session.Expires = m.nowFunc().Add(m.ttl)
+	if session.idleTimer != nil {
+		session.idleTimer.Reset(m.ttl)
+	}
 }
 
 func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
@@ -161,15 +193,18 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 		session.mu.Unlock()
 		return nil, err
 	}
+	if session.idleTimer != nil {
+		session.idleTimer.Stop()
+	}
 
 	result, err := session.Executor.Execute(ctx, query, params)
+	m.Touch(session)
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
 		m.notifyTerminalError(session, terminalErr, notify)
 		return result, terminalErr
 	}
-	session.Expires = m.nowFunc().Add(m.ttl)
 	session.mu.Unlock()
 	return result, nil
 }
@@ -180,6 +215,9 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 	}
 	defer m.Delete(session.ID)
 	session.mu.Lock()
+	if session.idleTimer != nil {
+		session.idleTimer.Stop()
+	}
 	if session.terminalErr != nil {
 		err := session.terminalErr
 		session.mu.Unlock()
@@ -203,6 +241,9 @@ func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) error
 	}
 	defer m.Delete(session.ID)
 	session.mu.Lock()
+	if session.idleTimer != nil {
+		session.idleTimer.Stop()
+	}
 	if session.terminalErr != nil {
 		session.mu.Unlock()
 		return nil

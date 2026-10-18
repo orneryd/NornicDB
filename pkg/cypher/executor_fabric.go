@@ -67,6 +67,10 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 		if useIdx < 0 {
 			break
 		}
+		if !fabric.ClauseKeywordAt(cypher, useIdx, "USE") {
+			searchFrom = useIdx + len("USE")
+			continue
+		}
 		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
 		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
 			return true
@@ -693,14 +697,14 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 		return query
 	}
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
+	if !fabric.ClauseKeywordAt(trimmed, 0, "WITH") {
 		return query
 	}
 	withEnd := findLeadingWithEndLocal(trimmed)
 	if withEnd <= 0 || withEnd >= len(trimmed) {
 		return query
 	}
-	withClause := strings.TrimSpace(trimmed[len("WITH "):withEnd])
+	withClause := strings.TrimSpace(trimmed[len("WITH"):withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
 	if rest == "" {
 		return query
@@ -738,132 +742,19 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 }
 
 func findLeadingWithEndLocal(query string) int {
-	inSingle, inDouble, inBacktick := false, false, false
-	depth := 0
-	for i := len("WITH "); i < len(query); i++ {
-		ch := query[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		}
-		if depth != 0 {
-			continue
-		}
-		if startsWithKeywordAtLocal(query, i, "MATCH") ||
-			startsWithKeywordAtLocal(query, i, "OPTIONAL MATCH") ||
-			startsWithKeywordAtLocal(query, i, "RETURN") ||
-			startsWithKeywordAtLocal(query, i, "WHERE") ||
-			startsWithKeywordAtLocal(query, i, "USE") ||
-			startsWithKeywordAtLocal(query, i, "WITH") ||
-			startsWithKeywordAtLocal(query, i, "CALL") ||
-			startsWithKeywordAtLocal(query, i, "CREATE") ||
-			startsWithKeywordAtLocal(query, i, "MERGE") ||
-			startsWithKeywordAtLocal(query, i, "UNWIND") ||
-			startsWithKeywordAtLocal(query, i, "SET") ||
-			startsWithKeywordAtLocal(query, i, "DELETE") ||
-			startsWithKeywordAtLocal(query, i, "DETACH DELETE") {
-			return i
-		}
+	end, ok := fabric.LeadingWithClauseEnd(query)
+	if !ok || end == len(query) {
+		return -1
 	}
-	return -1
+	return end
 }
 
 func startsWithKeywordAtLocal(s string, i int, kw string) bool {
-	if i < 0 || i+len(kw) > len(s) {
-		return false
-	}
-	if i > 0 {
-		prev := s[i-1]
-		if isIdentByte(prev) {
-			return false
-		}
-	}
-	if !strings.EqualFold(s[i:i+len(kw)], kw) {
-		return false
-	}
-	j := i + len(kw)
-	if j < len(s) {
-		next := s[j]
-		if isIdentByte(next) {
-			return false
-		}
-	}
-	return true
+	return fabric.ClauseKeywordAt(s, i, kw)
 }
 
 func splitCommaTopLevelLocal(s string) []string {
-	var parts []string
-	start := 0
-	depth := 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
+	return splitTopLevelComma(s)
 }
 
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
