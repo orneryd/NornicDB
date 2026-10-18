@@ -727,6 +727,10 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 // schema index covers them from the replay onward.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	if len(w.draining) > 0 && w.draining[0] == buf {
+		w.draining = w.draining[1:]
+	}
+
 	// The generation's writes are committed: the schema's committed index
 	// now covers its nodes, so retire them from the pending index exactly
 	// once. A later generation may already have replaced a node's entries;
@@ -748,9 +752,6 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 				}
 			}
 		}
-	}
-	if len(w.draining) > 0 && w.draining[0] == buf {
-		w.draining = w.draining[1:]
 	}
 	// A burst fills the pending index with map buckets Go never shrinks;
 	// drop it entirely once every generation has retired, so an idle
@@ -837,6 +838,10 @@ func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey inter
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.keyCandidatesLocked(label, property, valueKey)
+}
+
+func (w *WriteBehindBuffer) keyCandidatesLocked(label, property string, valueKey interface{}) []*Node {
 	if w.pendingIndex == nil {
 		return nil // nothing unflushed (the index is released once empty)
 	}
@@ -953,6 +958,10 @@ func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
 func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.labelOverlayLocked(label)
+}
+
+func (w *WriteBehindBuffer) labelOverlayLocked(label string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -973,6 +982,10 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.typeOverlayLocked(edgeType)
+}
+
+func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1029,6 +1042,10 @@ func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
 func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.allNodesOverlayLocked()
+}
+
+func (w *WriteBehindBuffer) allNodesOverlayLocked() ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1048,6 +1065,10 @@ func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.allEdgesOverlayLocked()
+}
+
+func (w *WriteBehindBuffer) allEdgesOverlayLocked() ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1207,6 +1228,10 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	return w.edgeAdjacencyOverlayLocked(nodeID, outgoing)
+}
+
+func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1236,15 +1261,20 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 // sourceDeleted / targetDeleted report buffered deletes of the endpoints,
 // which hide all committed between results for them.
 func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
-	live, suppressed, _ = w.EdgeAdjacencyOverlay(source, true)
+ w.mu.RLock(); defer w.mu.RUnlock()
+ return w.edgesBetweenOverlayLocked(source, target)
+}
+
+func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
+	live, suppressed, _ = w.edgeAdjacencyOverlayLocked(source, true)
 	filtered := live[:0]
 	for _, e := range live {
 		if e.EndNode == target {
 			filtered = append(filtered, e)
 		}
 	}
-	sourceDeleted = w.NodeDeletedOverlay(source)
-	targetDeleted = w.NodeDeletedOverlay(target)
+	sourceDeleted = w.entityStateLocked(bufferedNodeEntity, string(source)).deleted
+	targetDeleted = w.entityStateLocked(bufferedNodeEntity, string(target)).deleted
 	return filtered, suppressed, sourceDeleted, targetDeleted
 }
 

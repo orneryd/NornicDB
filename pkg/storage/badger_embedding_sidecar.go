@@ -282,26 +282,17 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
-	if b.writeBehind != nil {
-		if node, found, deleted := b.writeBehind.GetNode(id); found {
-			if deleted {
-				return nil, ErrNotFound
-			}
-			if len(node.EmbedMeta) == 0 {
-				return nil, nil
-			}
-			meta := make(map[string]any, len(node.EmbedMeta))
-			for key, value := range node.EmbedMeta {
-				meta[key] = value
-			}
-			return meta, nil
-		}
-	}
 	if err := b.ensureOpen(); err != nil {
 		return nil, err
 	}
+	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+  if state.found {
+   if state.deleted { return ErrNotFound }
+   meta = copyNode(state.node).EmbedMeta
+   return nil
+  }
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
