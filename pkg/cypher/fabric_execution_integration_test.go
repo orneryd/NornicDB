@@ -1196,7 +1196,13 @@ func TestExecute_FabricResultCache_SkipsRemoteConstituentTargets(t *testing.T) {
 	defer remote.Close()
 
 	base := storage.NewMemoryEngine()
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	config := multidb.DefaultConfig()
+	// Executable remote constituents use the manager's runtime factory;
+	// a nil factory supports stored metadata only.
+	config.RemoteEngineFactory = func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
+		return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: authToken})
+	}
+	mgr, err := multidb.NewDatabaseManager(base, config)
 	require.NoError(t, err)
 	defer mgr.Close()
 

@@ -63,6 +63,12 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool) {
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"HOME=" + dir, "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "NORNICDB_LANGUAGE=en", "NORNICDB_BOLT_ENABLED=true", "NORNICDB_EMBEDDING_ENABLED=false", "NORNICDB_TELEMETRY_ENABLED=false", "NORNICDB_TELEMETRY_LISTEN=127.0.0.1:0", "NORNICDB_AUTH_JWT_SECRET=synthetic-investigation-encryption-key-78369214"}
+	parser := "nornic"
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("NORNICDB_PARSER")), "antlr") {
+		parser = "antlr"
+	}
+	cmd.Env = append(cmd.Env, "NORNICDB_PARSER="+parser)
+	t.Logf("real server parser=%s authenticated_remote=%t", parser, remote)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -123,7 +129,7 @@ func investigationMustHTTP(t *testing.T, base, db, query, password string, marke
 	var body investigationResponse
 	parseErr := json.Unmarshal(data, &body)
 	if err != nil || parseErr != nil || status != 200 || len(body.Errors) > 0 || (marker && !bytes.Contains(data, []byte(investigationMarker))) {
-		t.Fatalf("HTTP control/setup failed: status=%d transportError=%t parseError=%t errors=%d marker=%t", status, err != nil, parseErr != nil, len(body.Errors), bytes.Contains(data, []byte(investigationMarker)))
+		t.Fatalf("HTTP control/setup failed: status=%d transportError=%t parseError=%t errors=%d marker=%t details=%s", status, err != nil, parseErr != nil, len(body.Errors), bytes.Contains(data, []byte(investigationMarker)), investigationDiagnostic(fmt.Sprint(body.Errors)))
 	}
 }
 
