@@ -14,14 +14,18 @@ func embedDocumentPropertyBatchFallback(
 	fallbackTexts []string,
 	properties []map[string]any,
 	maxTokens, overlap int,
-	embedOne func(context.Context, string, map[string]any, int, int) (*DocumentChunkResult, error),
+	provider DocumentPropertyChunkEmbedder,
+	embedTextBatch func(context.Context, []string, int, int) ([]*DocumentChunkResult, error),
 ) ([]*DocumentChunkResult, error) {
 	if len(fallbackTexts) != len(properties) {
 		return nil, fmt.Errorf("structured document batch length mismatch: %d texts, %d property maps", len(fallbackTexts), len(properties))
 	}
+	if !provider.UsesDocumentProperties() {
+		return embedTextBatch(ctx, fallbackTexts, maxTokens, overlap)
+	}
 	results := make([]*DocumentChunkResult, len(fallbackTexts))
 	for i := range fallbackTexts {
-		result, err := embedOne(ctx, fallbackTexts[i], properties[i], maxTokens, overlap)
+		result, err := provider.EmbedDocumentPropertyChunks(ctx, fallbackTexts[i], properties[i], maxTokens, overlap)
 		if err != nil {
 			return nil, err
 		}
