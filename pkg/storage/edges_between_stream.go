@@ -83,10 +83,15 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
 	var live []*Edge
- var suppressed map[EdgeID]struct{}
- var sourceDeleted, targetDeleted bool
- view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID) })
- if err != nil { return nil, err }; defer view.Close()
+	var suppressed map[EdgeID]struct{}
+	var sourceDeleted, targetDeleted bool
+	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+		live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer view.Close()
 	if sourceDeleted || targetDeleted {
 		return nil, nil
 	}
@@ -116,8 +121,10 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 // predate the index: its legacy outgoing index is read as GetEdgesBetween
 // reads it.
 func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}

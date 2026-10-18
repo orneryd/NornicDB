@@ -811,12 +811,21 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withReadView(func(w *WriteBehindBuffer) {
-  states = make(map[NodeID]bufferedEntityState, len(ids))
-  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
- }, func(txn *badger.Txn) error {
+		states = make(map[NodeID]bufferedEntityState, len(ids))
+		for _, id := range ids {
+			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
+				states[id] = state
+			}
+		}
+	}, func(txn *badger.Txn) error {
 		loaded = loaded[:0]
 		for _, id := range missing {
-			if state, found := states[id]; found { if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) { result[id] = copyNode(state.node) }; continue }
+			if state, found := states[id]; found {
+				if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) {
+					result[id] = copyNode(state.node)
+				}
+				continue
+			}
 			item, err := txn.Get(nodeKey(id))
 			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue // Skip missing nodes
@@ -897,11 +906,20 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 
 	nowNanos := DecayScoringTime()
 	err := b.withReadView(func(w *WriteBehindBuffer) {
-  states = make(map[NodeID]bufferedEntityState, len(ids))
-  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
- }, func(txn *badger.Txn) error {
+		states = make(map[NodeID]bufferedEntityState, len(ids))
+		for _, id := range ids {
+			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
+				states[id] = state
+			}
+		}
+	}, func(txn *badger.Txn) error {
 		for _, id := range missing {
-			if state, found := states[id]; found { if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) { result[id] = copyNodeWithoutEmbeddings(state.node) }; continue }
+			if state, found := states[id]; found {
+				if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) {
+					result[id] = copyNodeWithoutEmbeddings(state.node)
+				}
+				continue
+			}
 			item, err := txn.Get(nodeKey(id))
 			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
@@ -941,11 +959,20 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]bool, len(ids))
 	err := b.withReadView(func(w *WriteBehindBuffer) {
-  states = make(map[NodeID]bufferedEntityState, len(ids))
-  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
- }, func(txn *badger.Txn) error {
-  for _, id := range ids {
-   if state, found := states[id]; found { if !state.deleted && hasLabel(state.node.Labels, label) { result[id] = true }; continue }
+		states = make(map[NodeID]bufferedEntityState, len(ids))
+		for _, id := range ids {
+			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
+				states[id] = state
+			}
+		}
+	}, func(txn *badger.Txn) error {
+		for _, id := range ids {
+			if state, found := states[id]; found {
+				if !state.deleted && hasLabel(state.node.Labels, label) {
+					result[id] = true
+				}
+				continue
+			}
 			if id == "" {
 				continue
 			}
@@ -972,16 +999,9 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 }
 
 // GetOutgoingEdges returns all edges where the given node is the source.
-// mergeWriteBehindAdjacency overlays buffered adjacency state onto a
-// committed adjacency result: committed rows whose IDs the buffer deleted
-// are dropped and buffered live edges are appended (copies; the buffer owns
-// its pointers). When the node itself is buffered-deleted the result is
-// empty. edges may be nil when only ids were resolved (cache hit); it is
-// then materialized from the filtered ids.
-
-
 func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
- out, _, err := b.readAdjacency(nodeID, true, false); return out, err
+	out, _, err := b.readAdjacency(nodeID, true, false)
+	return out, err
 }
 
 // GetAdjacentEdges fetches both outgoing and incoming edges for nodeID. On a
@@ -989,7 +1009,7 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // entirely, falling back to a single view transaction when either direction
 // misses.
 func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
- return b.readAdjacency(nodeID, true, true)
+	return b.readAdjacency(nodeID, true, true)
 }
 
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
@@ -1112,10 +1132,15 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		// unnamed-relationship expansion sees acknowledged-but-unflushed edges
 		// (PR #1043 read-overlay parity; monster retest part 1).
 		var live []*Edge
- var suppressed map[EdgeID]struct{}
- var nodeDeleted bool
- view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, nodeDeleted = w.edgeAdjacencyOverlayLocked(nodeID, outgoing) })
- if err != nil { return nil, true, err }; defer view.Close()
+		var suppressed map[EdgeID]struct{}
+		var nodeDeleted bool
+		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+			live, suppressed, nodeDeleted = w.edgeAdjacencyOverlayLocked(nodeID, outgoing)
+		})
+		if err != nil {
+			return nil, true, err
+		}
+		defer view.Close()
 		if nodeDeleted {
 			return nil, true, nil
 		}
@@ -1143,8 +1168,10 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 }
 
 func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, bool, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	if nodeID == "" {
 		return nil, true, ErrInvalidID
 	}
@@ -1275,13 +1302,16 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	}); err != nil {
 		return nil, err
 	}
-	if b.writeBehind == nil { b.cacheFillEdge(gen, edge) }
+	if b.writeBehind == nil {
+		b.cacheFillEdge(gen, edge)
+	}
 	return edge, nil
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.
 func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
- _, in, err := b.readAdjacency(nodeID, false, true); return in, err
+	_, in, err := b.readAdjacency(nodeID, false, true)
+	return in, err
 }
 
 // GetEdgesBetween returns all edges between two nodes.
@@ -1297,10 +1327,15 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		// edges between the pair are appended (PR #1043 read-overlay
 		// parity, MERGE identity reads).
 		var live []*Edge
- var suppressed map[EdgeID]struct{}
- var sourceDeleted, targetDeleted bool
- view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID) })
- if err != nil { return nil, err }; defer view.Close()
+		var suppressed map[EdgeID]struct{}
+		var sourceDeleted, targetDeleted bool
+		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+			live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID)
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer view.Close()
 		if sourceDeleted || targetDeleted {
 			return nil, nil
 		}
@@ -1330,8 +1365,10 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 // committedEdgesBetween is the committed between-index read, set index first
 // with the legacy outgoing fallback and self-heal.
 func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	result, err := b.edgesBetweenFromSetIndex(startID, endID, edgeType, withView)
 	if err != nil {
 		return nil, err
@@ -1356,14 +1393,21 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	if source == "" || target == "" {
 		return nil
 	}
-	if b.writeBehind == nil { return b.committedEdgeBetween(source, target, edgeType) }
+	if b.writeBehind == nil {
+		return b.committedEdgeBetween(source, target, edgeType)
+	}
 	// A buffered endpoint delete hides the committed row; a buffered delete
 	// of the edge hides it; a buffered live edge of the type wins.
 	var live []*Edge
- var suppressed map[EdgeID]struct{}
- var sourceDeleted, targetDeleted bool
- view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(source, target) })
- if err != nil { return nil }; defer view.Close()
+	var suppressed map[EdgeID]struct{}
+	var sourceDeleted, targetDeleted bool
+	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
+		live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(source, target)
+	})
+	if err != nil {
+		return nil
+	}
+	defer view.Close()
 	if sourceDeleted || targetDeleted {
 		return nil
 	}
@@ -1385,8 +1429,10 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 
 // committedEdgeBetween is the committed between-index read for one edge.
 func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) *Edge {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	if edgeType != "" {
 		edge, err := b.edgeBetweenFromHeadIndex(source, target, edgeType, withView)
 		if err != nil {
@@ -1416,8 +1462,10 @@ func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType stri
 
 // edgeBetweenFromHeadIndex loads the typed common-case lookup without scanning.
 func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) (*Edge, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	sourceNum, sourceOK := b.idDict.lookupNodeNumID(source)
 	targetNum, targetOK := b.idDict.lookupNodeNumID(target)
 	if !sourceOK || !targetOK {
@@ -1468,8 +1516,10 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 // before scanning. Each entry's VALUE carries the string edge ID, which
 // saves a reverse-dict lookup for the scan payload.
 func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	startNum, sOK := b.idDict.lookupNodeNumID(startID)
 	endNum, eOK := b.idDict.lookupNodeNumID(endID)
 	if !sOK || !eOK {
@@ -1530,8 +1580,10 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 // the between index every time, and walking the hub's outgoing edges made a
 // bulk load quadratic in the hub's degree.
 func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
- withView := b.withView
- if len(views) > 0 { withView = views[0] }
+	withView := b.withView
+	if len(views) > 0 {
+		withView = views[0]
+	}
 	outPrefix := b.outgoingIndexPrefixString(startID)
 	inPrefix := b.incomingIndexPrefixString(endID)
 	if outPrefix == nil || inPrefix == nil {
