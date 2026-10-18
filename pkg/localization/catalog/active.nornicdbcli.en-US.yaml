@@ -118,7 +118,7 @@
   other: Min batch size before parallelizing
 - id: nornicdbcli.flag.memory_limit
   description: Runtime memory limit flag help.
-  other: "Memory limit in MB as an integer (e.g., 500, 0 for unlimited)"
+  other: "Memory limit in MB as an integer (e.g., 500), 0 for unlimited, or auto (the default: 85% of the container's memory limit)"
 - id: nornicdbcli.flag.gc_percent
   description: Garbage collector aggressiveness flag help.
   other: GC aggressiveness (100=default, lower=more aggressive)
@@ -220,6 +220,12 @@
   other: "   Parallel exec:   ❌ disabled"
 - id: nornicdbcli.serve.memory_limit
   other: "   Memory limit:    {{.Value}}"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  description: Startup line when the runtime memory limit is derived from the container's cgroup memory limit.
+  other: "   Memory limit:    {{.Value}} ({{.Percent}}% of the container limit {{.Cgroup}})"
+- id: nornicdbcli.serve.memory_limit_clamped
+  description: Startup warning when the configured runtime memory limit is above the container's cgroup memory limit and is lowered.
+  other: "⚠️  Warning: memory limit {{.Configured}} is above the container's memory limit {{.Cgroup}} and could not prevent an OOM kill; using {{.Value}}"
 - id: nornicdbcli.serve.memory_unlimited
   other: "   Memory limit:    unlimited"
 - id: nornicdbcli.serve.gc_percent
