@@ -1553,7 +1553,7 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusServiceUnavailable}, rec.Code)
@@ -2197,7 +2197,7 @@ func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusInternalServerError}, rec.Code)

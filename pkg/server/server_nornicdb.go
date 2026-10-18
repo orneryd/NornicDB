@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -69,6 +70,15 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	regenerate := r.URL.Query().Get("regenerate") == "true"
 
 	if regenerate {
+		// Regenerating clears embeddings, which /nornicdb/embed/clear reserves for admins;
+		// the route only requires write (enough to wake the worker), so check here.
+		if s.isRBACEnforced() {
+			claims := getClaims(r)
+			if claims == nil || !hasPermission(s, claims.Roles, auth.PermAdmin) {
+				s.writeNeo4jInsufficientPermissions(w, r)
+				return
+			}
+		}
 		// Return 202 Accepted immediately - clearing happens in background
 		response := map[string]interface{}{
 			"accepted":   true,
