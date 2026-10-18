@@ -1511,8 +1511,8 @@ type Session struct {
 	// contexts derive from this so a long-running Cypher query
 	// terminates promptly when the connection drops, instead of pinning
 	// a CPU core indefinitely (the v1.1.2 #184 bug).
-	connCtx    context.Context
-	connCancel context.CancelFunc
+	connCtx              context.Context
+	connCancel           context.CancelFunc
 	continuationDelivery resultstream.Delivery
 
 	// Database context (from HELLO message)

@@ -21,10 +21,16 @@ func (searchContinuationStats) TagRPC(ctx context.Context, info *stats.RPCTagInf
 func (searchContinuationStats) HandleRPC(ctx context.Context, event stats.RPCStats) {
 	if end, ok := event.(*stats.End); ok {
 		if delivery := resultstream.DeliveryFromContext(ctx); delivery != nil {
-			if end.Error != nil { delivery.Fail() } else { delivery.Delivered() }
+			if end.Error != nil {
+				delivery.Fail()
+			} else {
+				delivery.Delivered()
+			}
 		}
 	}
 }
 
-func (searchContinuationStats) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
+func (searchContinuationStats) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
 func (searchContinuationStats) HandleConn(context.Context, stats.ConnStats) {}
