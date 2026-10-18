@@ -379,7 +379,7 @@ func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, w
 			s.updateRelationshipNow(write)
 		case write.node != nil:
 			if err = s.admitNodeWriteLocked(true); err == nil {
-				err = s.indexNodeLockedAs(write.node, !bm25On, write.current)
+				err = s.indexNodeAsLocked(write.node, !bm25On, write.current)
 			}
 			if err == nil {
 				job.markNodeWrittenLocked(string(write.node.ID))

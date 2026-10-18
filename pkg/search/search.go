@@ -3225,12 +3225,12 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		defer s.rememberChunkSpansLocked(string(node.ID), node)
 		return err
 	}
-	return s.indexNodeLockedAs(node, skipFulltext, shouldIndex)
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex)
 }
 
-// indexNodeLockedAs is indexNodeLocked with the temporal decision already
+// indexNodeAsLocked is indexNodeLocked with the temporal decision already
 // made: by indexNodeLocked, or at the call for a write queued on a population.
-func (s *Service) indexNodeLockedAs(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
+func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
 	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
