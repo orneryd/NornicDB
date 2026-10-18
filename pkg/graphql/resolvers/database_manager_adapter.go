@@ -1,6 +1,7 @@
 package resolvers
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -19,6 +20,9 @@ func (a *graphqlDatabaseManagerAdapter) CreateDatabase(name string) error {
 }
 func (a *graphqlDatabaseManagerAdapter) DropDatabase(name string) error {
 	return a.manager.DropDatabase(name)
+}
+func (a *graphqlDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropDatabaseContext(ctx, name)
 }
 func (a *graphqlDatabaseManagerAdapter) Exists(name string) bool { return a.manager.Exists(name) }
 func (a *graphqlDatabaseManagerAdapter) CreateAlias(alias, databaseName string) error {

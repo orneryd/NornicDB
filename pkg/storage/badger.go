@@ -195,6 +195,10 @@ type BadgerEngine struct {
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
+	// Immutable publication fences exist only while prefix deletion is active.
+	// Updates use prefixDeleteMu; ordinary commits perform one atomic load.
+	prefixDeleteMu   sync.Mutex
+	deletingPrefixes atomic.Pointer[[]string]
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup
@@ -1299,6 +1303,14 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+	if err := b.checkNamespacePublication(namespace); err != nil {
+		return MVCCVersion{}, err
+	}
+	return b.reserveMVCCVersion(txn, namespace, commitTime)
+}
+
+// reserveMVCCVersion also serves replay of already acknowledged commits.
+func (b *BadgerEngine) reserveMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
 	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {

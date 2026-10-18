@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -17,6 +18,9 @@ func (a *boltDatabaseManagerAdapter) CreateDatabase(name string) error {
 }
 func (a *boltDatabaseManagerAdapter) DropDatabase(name string) error {
 	return a.manager.DropDatabase(name)
+}
+func (a *boltDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropDatabaseContext(ctx, name)
 }
 func (a *boltDatabaseManagerAdapter) Exists(name string) bool { return a.manager.Exists(name) }
 func (a *boltDatabaseManagerAdapter) CreateAlias(alias, databaseName string) error {

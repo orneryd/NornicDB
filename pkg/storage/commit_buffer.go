@@ -600,15 +600,18 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 // It is O(1); writers immediately continue on the new generation.
 func (w *WriteBehindBuffer) rotate() {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.rotateLocked()
+}
+
+func (w *WriteBehindBuffer) rotateLocked() {
 	if w.opCount == 0 {
-		w.mu.Unlock()
 		return
 	}
 	w.active.ops = w.opCount
 	w.draining = append(w.draining, w.active)
 	w.active = newCommitBuffer()
 	w.opCount = 0
-	w.mu.Unlock()
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
