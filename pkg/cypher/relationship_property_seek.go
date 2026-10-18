@@ -40,26 +40,23 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 	for key, value := range rel.Properties {
 		values[key] = value
 	}
-	seekContext := ctx
-	if len(unknown) > 0 {
-		// EXPLAIN has incoming variable names but no row values. Use the
-		// existing release equality reader with symbolic incoming bindings.
-		bindings := valueBindingsLayer(ctx, len(unknown))
-		for variable := range unknown {
-			bindings[variable] = "<incoming value>"
-		}
-		seekContext = withValueBindings(ctx, bindings)
-	}
 	if rel.Variable != "" {
 		for _, conjunct := range splitTopLevelAndConjuncts(where) {
-			property, value, constant := e.parseSimpleIndexedEquality(seekContext, rel.Variable, conjunct)
-			if !constant || !relationshipSeekExactProperty(rel.Variable, property, conjunct) {
+			// The release reader returns the property even when an incoming
+			// value is not yet bound. Keep that eligibility check symbolic.
+			property, _, _ := e.parseSimpleIndexedEquality(ctx, rel.Variable, conjunct)
+			constant, exact := relationshipSeekExactProperty(rel.Variable, property, conjunct)
+			if property == "" || !exact {
 				continue
 			}
 			if _, exists := values[property]; exists {
 				continue
 			}
-			values[property] = value
+			if value, ok := e.indexSeekConstant(ctx, constant); ok {
+				values[property] = value
+			} else if relationshipSeekIncomingExpression(constant, unknown) {
+				values[property] = "<incoming value>"
+			}
 		}
 	}
 	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(rel.Types[0]) {
@@ -170,13 +167,14 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 
 // The generic node equality shape reader folds variable case. Relationship
 // candidate ownership is exact: node R and relationship r are distinct bindings.
-func relationshipSeekExactProperty(variable, property, predicate string) bool {
+func relationshipSeekExactProperty(variable, property, predicate string) (string, bool) {
 	clause := unwrapOuterParens(strings.TrimSpace(predicate))
 	equals := topLevelEqualsIndex(clause)
 	if equals < 0 {
-		return false
+		return "", false
 	}
-	for _, side := range []string{clause[:equals], clause[equals+1:]} {
+	sides := []string{clause[:equals], clause[equals+1:]}
+	for index, side := range sides {
 		name, rest, ok := parseIdentifierToken(strings.TrimSpace(side))
 		if !ok || symbolicNameValue(name) != variable {
 			continue
@@ -187,8 +185,21 @@ func relationshipSeekExactProperty(variable, property, predicate string) bool {
 		}
 		name, tail, ok := parseIdentifierToken(strings.TrimSpace(rest[1:]))
 		if ok && strings.TrimSpace(tail) == "" && symbolicNameValue(name) == property {
-			return true
+			return strings.TrimSpace(sides[1-index]), true
 		}
 	}
-	return false
+	return "", false
+}
+
+func relationshipSeekIncomingExpression(expr string, unknown map[string]bool) bool {
+	variables := expressionFreeVariables(expr)
+	if len(variables) == 0 {
+		return false
+	}
+	for _, variable := range variables {
+		if !unknown[variable] {
+			return false
+		}
+	}
+	return true
 }
