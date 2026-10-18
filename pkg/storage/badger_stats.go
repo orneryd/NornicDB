@@ -289,6 +289,7 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.nodeBodyCacheBytes = 0
 	b.edgeTypeCache = nil
 	b.edgeCache = nil
+	b.edgeCacheVersions = nil
 	b.outgoingAdjCache = nil
 	b.incomingAdjCache = nil
 	b.labelFirstNodeCache = nil
