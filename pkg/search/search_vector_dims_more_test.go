@@ -186,14 +186,14 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 1, svc.EmbeddingCount())
 	require.Equal(t, 4, svc.VectorIndexDimensions())
 
-	// Empty file store should fall back to in-memory index for count/dimensions.
+	// An empty file store keeps its own dimension: vectors are written to it.
 	svcFallback := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 	emptyVFS, err := NewVectorFileStore(t.TempDir()+"/vectors-empty", 7)
 	require.NoError(t, err)
 	defer func() { _ = emptyVFS.Close() }()
 	svcFallback.vectorFileStore = emptyVFS
 	require.Equal(t, 0, svcFallback.EmbeddingCount())
-	require.Equal(t, 3, svcFallback.VectorIndexDimensions())
+	require.Equal(t, 7, svcFallback.VectorIndexDimensions())
 
 	// No vector backends => zero count/dimensions fallback branches.
 	svcNoIndex := NewService(storage.NewMemoryEngine())

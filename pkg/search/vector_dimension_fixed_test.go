@@ -159,3 +159,31 @@ func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
 	require.False(t, stored.AdmitsVectorDimensions(4))
 	require.ErrorIs(t, stored.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
 }
+
+// A file-backed store decides the dimension even when it is empty: vectors
+// are written to it, and its records keep the size it was created with. An
+// unfixed service whose last vector was removed therefore neither adopts a
+// new dimension nor reports success for a vector it cannot store.
+func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetPersistenceEnabled(true)
+	t.Cleanup(func() { _ = svc.Close() })
+	eight := make([]float32, 8)
+	eight[0] = 1
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "previous", NamedEmbeddings: map[string][]float32{"default": eight}}))
+	require.NoError(t, svc.RemoveNode("previous"))
+	require.Zero(t, svc.EmbeddingCount())
+	svc.mu.RLock()
+	require.NotNil(t, svc.vectorFileStore, "the vector went to the file-backed store")
+	svc.mu.RUnlock()
+
+	require.False(t, svc.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, svc.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+	require.Equal(t, 8, svc.VectorIndexDimensions(), "an empty file-backed store is not re-dimensioned")
+	require.Zero(t, svc.EmbeddingCount())
+
+	require.True(t, svc.AdmitsVectorDimensions(8))
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "eight", NamedEmbeddings: map[string][]float32{"default": eight}}))
+	require.Equal(t, 1, svc.EmbeddingCount())
+}
