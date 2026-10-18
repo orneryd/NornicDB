@@ -182,12 +182,12 @@ func (s *Service) SearchTextContinuation(
 	}
 	database := request.Database
 	if database == "" {
-		database = s.cacheNamespace
-	}
-	if database == "" {
-		database = "default"
+		database = s.continuationDatabase()
 	}
 	scope := resultstream.Scope{Owner: request.Owner, Database: database}
+	if binder, ok := registry.(interface { BindScope(resultstream.Scope) resultstream.Scope }); ok {
+		scope = binder.BindScope(scope)
+	}
 	if request.Discard {
 		if request.QID == "" {
 			return nil, resultstream.ErrInvalidQID
@@ -461,9 +461,9 @@ func (s *Service) searchContinuationRegistry() (continuationRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.continuationRegistry = registry
+	s.continuationRegistry = registry.ForDatabase(s.continuationDatabase())
 	s.continuationOwned = true
-	return registry, nil
+	return s.continuationRegistry, nil
 }
 
 // SetContinuationRegistry shares one process registry across database-scoped
@@ -479,12 +479,17 @@ func (s *Service) SetContinuationRegistry(registry *resultstream.Registry) {
 	if s.continuationRegistry != nil && s.continuationOwned {
 		s.continuationRegistry.Close()
 	}
-	s.continuationRegistry = registry
+	s.continuationRegistry = registry.ForDatabase(s.continuationDatabase())
 	s.continuationOwned = false
 	if metrics != nil {
 		registry.SetObserver(newCursorObserver(metrics))
 	}
 	s.continuationMu.Unlock()
+}
+
+func (s *Service) continuationDatabase() string {
+	if s.cacheNamespace != "" { return s.cacheNamespace }
+	return "default"
 }
 
 func (p *cachedTextPreparation) chunker(chunkQuery ChunkQueryFunc) ChunkQueryFunc {

@@ -25,9 +25,11 @@ type Delivery struct {
  pending atomic.Bool
 }
 
+// WithDelivery attaches transport delivery ownership to stream operations.
 func WithDelivery(ctx context.Context, delivery *Delivery) context.Context {
  return context.WithValue(ctx,deliveryKey{},delivery)
 }
+// DeliveryFromContext returns the batch attached to this operation.
 func DeliveryFromContext(ctx context.Context) *Delivery {
  delivery,_:=ctx.Value(deliveryKey{}).(*Delivery)
  return delivery
