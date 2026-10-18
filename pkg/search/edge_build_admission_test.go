@@ -83,6 +83,10 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 			require.NoError(t, engine.CreateEdge(edge))
 			svc := NewServiceWithDimensions(engine, 3)
 			t.Cleanup(func() { release(); _ = svc.Close() })
+			// Fixed dimensions: with open ones the stream's stored edge chooses
+			// them first, so a live edge vector waits for it
+			// (TestBuildStoredVectorChoosesTheDimensionBeforeQueuedVectors).
+			svc.FixVectorDimensions()
 
 			built := make(chan error, 1)
 			go func() { built <- svc.BuildIndexes(ctx) }()

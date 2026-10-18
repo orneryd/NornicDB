@@ -496,3 +496,118 @@ func TestBuildIndexingSettingIsOrderedWithQueuedWrites(t *testing.T) {
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:t"}, buildWriteSearchIDs(t, svc, "titleterm"), "the write was indexed under a setting made after it")
 }
+
+// TestBuildRelationshipRemovalIsOrderedWithQueuedEdgeWrites: a storage
+// event's RemoveRelationship made after an IndexEdge was acknowledged leaves
+// the relationship out of the relationship index, as the same calls one after
+// another would.
+func TestBuildRelationshipRemovalIsOrderedWithQueuedEdgeWrites(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	svc.EnableRelationshipSearch(nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	for _, n := range []*storage.Node{buildWriteNode("nornic:s", "sterm", []float32{1, 0, 0}), buildWriteNode("nornic:e", "eterm", []float32{0, 1, 0})} {
+		_, err := engine.CreateNode(n)
+		require.NoError(t, err)
+	}
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"note": "relterm", "v": []float32{1, 0, 0}}}
+	require.NoError(t, engine.CreateEdge(storage.CopyEdge(edge)))
+	requireReturnsDuringBuild(t, "an edge write", func() error { return svc.IndexEdge(edge) })
+	require.NoError(t, engine.DeleteEdge(edge.ID))
+	svc.RemoveRelationship(edge.ID)
+	engine.open()
+	require.NoError(t, <-built)
+	rs := svc.relationshipSearch()
+	require.NotNil(t, rs)
+	rs.mu.Lock()
+	_, present := rs.entries[string(edge.ID)]
+	hits := rs.fulltext.Search("relterm", 10)
+	rs.mu.Unlock()
+	require.False(t, present, "an acknowledged edge write restored a relationship removed after it")
+	require.Empty(t, hits, "an acknowledged edge write restored the removed relationship's keyword document")
+}
+
+type queuedTypedStruct struct {
+	Values []uint16
+}
+
+// queuedTypedProperties returns property values of typed containers the
+// deferred apply can read, and a function that rewrites every buffer in them
+// the way a caller reusing its buffers would.
+func queuedTypedProperties() (map[string]any, func(byte)) {
+	u64, i32, nested, arr := []uint64{424242}, []int32{737373}, []uint64{515151}, [2][]int64{{262626}, {0}}
+	ptr, st := &[]int{1}, queuedTypedStruct{Values: []uint16{7}}
+	inner := []uint8{9}
+	props := map[string]any{
+		"text": "typedterm", "u64": u64, "i32": i32,
+		"nested": map[string]any{"deep": map[string][]uint64{"k": nested}},
+		"array":  arr, "ptr": ptr, "struct": st, "list": []map[string]any{{"b": inner}},
+	}
+	rewrite := func(b byte) {
+		u64[0], i32[0], nested[0], arr[0][0] = uint64(b), int32(b), uint64(b), int64(b)
+		(*ptr)[0], st.Values[0], inner[0] = int(b), uint16(b), b
+	}
+	return props, rewrite
+}
+
+// TestQueuedValuesAreOwnedWhateverTheirType: the queued copy of a property
+// value shares no buffer with the caller, for any container type.
+func TestQueuedValuesAreOwnedWhateverTheirType(t *testing.T) {
+	props, rewrite := queuedTypedProperties()
+	copied := cloneQueuedMap(props)
+	want, _ := queuedTypedProperties()
+	rewrite(1)
+	require.Equal(t, want, copied, "the queued copy changed with the caller's buffers")
+}
+
+// TestBuildQueuedWriteOwnsTypedContainers: a caller rewriting typed property
+// buffers (read by the chunk-span fallback's JSON encoding, among others)
+// after IndexNode returns does not race the build applying the write.
+func TestBuildQueuedWriteOwnsTypedContainers(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	props, rewrite := queuedTypedProperties()
+	node := &storage.Node{ID: "nornic:typed", Labels: []string{"Doc"}, Properties: props, ChunkEmbeddings: [][]float32{{0, 1, 0}}}
+	// The stored copy only has to exist (the build's warmup removes orphans).
+	_, err := engine.CreateNode(&storage.Node{ID: node.ID, Labels: []string{"Doc"}, Properties: map[string]any{"text": "typedterm"}})
+	require.NoError(t, err)
+	requireReturnsDuringBuild(t, "a write with typed containers", func() error { return svc.IndexNode(node) })
+	stop := make(chan struct{})
+	rewriting := make(chan struct{})
+	go func() {
+		defer close(rewriting)
+		for b := byte(0); ; b++ {
+			select {
+			case <-stop:
+				return
+			default:
+				rewrite(b)
+			}
+		}
+	}()
+	engine.open()
+	require.NoError(t, <-built)
+	close(stop)
+	<-rewriting
+	require.Equal(t, []string{"nornic:typed"}, buildWriteSearchIDs(t, svc, "typedterm"))
+	requireBuildWriteVector(t, svc, "nornic:typed", []float32{0, 1, 0})
+}

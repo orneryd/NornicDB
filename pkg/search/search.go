@@ -1484,7 +1484,7 @@ func (s *Service) MarkReadyDisabled() {
 // the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
 	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
-	s.orderWithBuild(func() {
+	s.orderDimensionChange(func() {
 		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
 		prevVec := s.vectorEnabled.Swap(vectorEnabled)
 		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
@@ -2197,6 +2197,14 @@ func (s *Service) SetHNSWIndexPath(path string) {
 // When false, all persist paths (debounced writes, build checkpoints, and shutdown flush)
 // are treated as no-ops even if index paths are configured.
 func (s *Service) SetPersistenceEnabled(enabled bool) {
+	// The build reads persistence and owns the vector source it closes, so a
+	// change during a build takes effect in the build sequence, after the
+	// build's own saves.
+	s.orderWithBuildEnd(func() { s.setPersistenceEnabledNow(enabled) })
+}
+
+func (s *Service) setPersistenceEnabledNow(enabled bool) {
+	s.persistEnabled.Store(enabled)
 	if enabled {
 		s.persistEnabled.Store(true)
 		return
@@ -2751,7 +2759,7 @@ func (s *Service) getVectorForCypherLocked(vecID string) ([]float32, bool) {
 // vector-shaped value sets the dimension of an empty index (a database with
 // no embedder storing its own vectors).
 func (s *Service) FixVectorDimensions() {
-	s.orderWithBuild(func() { s.vectorDimensionsFixed.Store(true) })
+	s.orderDimensionChange(func() { s.vectorDimensionsFixed.Store(true) })
 }
 
 // AdmitsVectorDimensions reports whether IndexNode indexes a vector of
@@ -2810,19 +2818,6 @@ func firstEdgeVectorDimensions(edge *storage.Edge) int {
 		}
 	}
 	return 0
-}
-
-// adoptFirstVectorDimensions applies IndexNode's rule to a batch of a rebuild
-// from storage: the first vector of an empty index whose dimension isn't fixed
-// sets the dimension, whichever stored node carries it. A node without a
-// vector (a document, a Qdrant collection's metadata node) never decides it.
-func (s *Service) adoptFirstVectorDimensions(batch []*storage.Node) {
-	for _, node := range batch {
-		if dims := firstVectorDimensions(node); dims > 0 {
-			s.maybeAutoSetVectorDimensions(dims)
-			return
-		}
-	}
 }
 
 func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
@@ -2895,11 +2890,12 @@ func (s *Service) IndexNode(node *storage.Node) error {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(node)
+	return s.indexNodeOwned(node, nil)
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
-func (s *Service) indexNodeOwned(node *storage.Node) error {
+// current, when set, is the temporal decision made at the call.
+func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2919,7 +2915,12 @@ func (s *Service) indexNodeOwned(node *storage.Node) error {
 	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
 
 	s.indexMu.Lock()
-	err := s.indexNodeLocked(node, false)
+	var err error
+	if current == nil {
+		err = s.indexNodeLocked(node, false)
+	} else {
+		err = s.indexNodeAsLocked(node, false, *current)
+	}
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3172,6 +3173,12 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	if err != nil {
 		return err
 	}
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex)
+}
+
+// indexNodeAsLocked is indexNodeLocked with the temporal decision already
+// made: by indexNodeLocked, or at the call for a write handed to a build.
+func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
@@ -3522,6 +3529,10 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
 	}
+	// The relationship index has its own loader; during a build its update is
+	// ordered in the build sequence too (IndexRelationship), as storage
+	// events' RemoveRelationship is.
+	s.IndexRelationship(edge)
 	// Like node writes: the explicit build's relationship stream applies a
 	// snapshot of stored edges, so during a build a live edge write is handed
 	// to the build, which applies it after the stream's copy.
@@ -3534,7 +3545,6 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
 func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
-	s.IndexRelationship(edge)
 	if !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3624,6 +3634,8 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
+	// The relationship index update is ordered like IndexEdge's.
+	s.RemoveRelationship(edgeID)
 	// Like node writes (see IndexEdge): during a build the removal is handed
 	// to the build, so its relationship stream cannot re-add the edge.
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
@@ -3636,7 +3648,6 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 
 // removeEdgeOwned is RemoveEdge for a caller holding buildMu.
 func (s *Service) removeEdgeOwned(edgeID storage.EdgeID) {
-	s.RemoveRelationship(edgeID)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -3762,7 +3773,7 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
 		if s.edgeWritten(string(edge.ID)) {
 			return nil
 		}
-		s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
+		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		_ = s.indexEdgeLocked(edge)
 		s.indexMu.Unlock()
@@ -3811,6 +3822,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
 	defer s.endBuildWrites()
+	s.startBuildWrites()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -4174,6 +4186,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
+		// The indexes are restored: the population is complete.
+		s.completeBuildPopulation()
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 		s.warmupVectorPipeline(ctx, nil)
 		// Writes handed over since the last step, including during the
@@ -4207,7 +4221,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			if len(batch) == 0 {
 				return nil
 			}
-			s.adoptBuildVectorDimensions(batch)
+			s.adoptBuildBatchDimensions(batch)
 			// Writes handed over since the last batch are applied first; a node
 			// one of them wrote keeps that write, whether this batch read it
 			// before or after it.
@@ -4323,6 +4337,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
 			return err
 		}
+		// The population is complete: every queued operation, administrative
+		// ones included, is installed before the base save.
+		s.completeBuildPopulation()
 		// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 		s.setBuildPhase("persisting_base_indexes")
 		if err := s.persistBaseIndexes(); err != nil {
@@ -4344,7 +4361,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		s.adoptBuildVectorDimensions(batch)
+		s.adoptBuildBatchDimensions(batch)
 		// Writes handed over since the last batch are applied first; a node
 		// one of them wrote keeps that write, whether this batch read it
 		// before or after it.
@@ -4439,6 +4456,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
 		return err
 	}
+	// The population is complete: every queued operation, administrative ones
+	// included, is installed before the base save.
+	s.completeBuildPopulation()
 	// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 	s.setBuildPhase("persisting_base_indexes")
 	if err := s.persistBaseIndexes(); err != nil {
