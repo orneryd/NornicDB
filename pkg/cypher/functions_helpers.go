@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -34,6 +35,11 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
 	if nativeAPOCForeignGraphHandler(name, handler) {
 		return nil, false, nil
+	}
+	if bundledAPOCMapHandler(name, handler, len(args)) {
+		if value, handled, err := apocMapNullResult(name, args); handled {
+			return value, true, err
+		}
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
@@ -102,6 +108,7 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 			result = nil
 			err = fmt.Errorf("plugin handler panic: %v", recovered)
 		}
+		result = cypherfn.RuntimeValue(result)
 	}()
 
 	if handler == nil {

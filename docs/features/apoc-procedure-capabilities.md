@@ -2,10 +2,17 @@
 
 The Go APOC library catalog contains 983 names. Its historical list of 118
 procedure-only entries is **excluded from the optional plugin's scalar function
-exports**; the plugin exports the other 865 entries. Removing a false function
-declaration does not implement its `CALL` procedure. Genuine scalar functions,
-including `apoc.math.sigmoid`, remain function exports and are not promoted to
-procedures.
+exports**; the other 865 entries are scalar functions. The plugin exports 815:
+50 registered scalar names belong to the query engine's 52-name native APOC
+catalog and are left to their native implementations. `pkg/apocmeta` owns that
+catalog once; Cypher's function catalog and `apoc.PluginFunctionNames` both derive
+from it. The two native catalog names absent from the Go library do not
+change its export count. All ten native collection functions (`toSet`, `union`,
+`intersection`, `subtract`, `contains`, `containsAll`, `containsAny`, `indexOf`,
+`occurrences` and `frequencies`) are excluded from the real bundled plugin.
+Removing a false function declaration does not implement its `CALL` procedure.
+Genuine scalar functions, including `apoc.math.sigmoid`, remain function exports
+and are not promoted to procedures.
 
 Of those 118 historical entries, 16 have a registered native procedure contract
 (including the new `apoc.cypher.doIt`); 102 have no bundled procedure declaration.
