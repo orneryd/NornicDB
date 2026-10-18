@@ -2705,6 +2705,31 @@ func (s *Service) FixVectorDimensions() {
 	s.vectorDimensionsFixed.Store(true)
 }
 
+// AdmitsVectorDimensions reports whether IndexNode accepts a vector of
+// dimensions: the index's dimension, or any dimension while the index is empty
+// and its dimension isn't fixed (the first vector sets it,
+// maybeAutoSetVectorDimensions). A service with vector search off accepts
+// every dimension, since it indexes no vectors. Writers that store vectors
+// before indexing them check it first, so a vector the index can't hold is
+// rejected rather than stored and left unindexed.
+func (s *Service) AdmitsVectorDimensions(dimensions int) bool {
+	if s == nil || dimensions <= 0 || !s.vectorEnabled.Load() {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
+		return s.vectorFileStore.GetDimensions() == dimensions
+	}
+	if s.vectorIndex == nil {
+		return !s.vectorDimensionsFixed.Load()
+	}
+	if s.vectorIndex.GetDimensions() == dimensions {
+		return true
+	}
+	return !s.vectorDimensionsFixed.Load() && s.vectorIndex.Count() == 0
+}
+
 func firstVectorDimensions(node *storage.Node) int {
 	if node == nil {
 		return 0
