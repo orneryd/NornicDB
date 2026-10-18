@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -206,13 +207,29 @@ func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
+	return e.DeleteByPrefixContext(context.Background(), prefix)
+}
+
+// DeleteByPrefixContext retains the caller's cancellation through replication.
+func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
 	payload, err := encodeGob(struct {
 		Prefix string `json:"prefix"`
 	}{Prefix: prefix})
 	if err != nil {
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
-	if err := e.replicator.Apply(&Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
+	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
+	if replicator, ok := e.replicator.(ContextReplicator); ok {
+		err = replicator.ApplyContext(ctx, cmd, e.timeout)
+	} else if ctx.Done() == nil {
+		err = e.replicator.Apply(cmd, e.timeout)
+	} else {
+		err = storage.ErrNotImplemented
+	}
+	if err != nil {
 		return 0, 0, err
 	}
 	// Best-effort counts are not returned by the replication protocol today.
