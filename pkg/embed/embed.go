@@ -590,8 +590,16 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return [][]float32{}, nil
 	}
 	path := e.config.APIPath
-	if path == "/api/embeddings" {
-		path = "/api/embed"
+	route, query, hasQuery := strings.Cut(path, "?")
+	if strings.HasSuffix(route, "/api/embeddings") {
+		if route == "/api/embeddings" {
+			path = "/api/embed"
+		} else {
+			path = strings.TrimSuffix(route, "/embeddings") + "/embed"
+		}
+		if hasQuery {
+			path += "?" + query
+		}
 	}
 	body, err := json.Marshal(openaiRequest{Model: e.Model(), Input: texts})
 	if err != nil {
