@@ -84,11 +84,8 @@ The installer copies the repository's `pre-commit`, `post-merge`, `post-rewrite`
 and `reference-transaction` hooks into Git's configured hook directory, replacing those hook files. Review and
 combine any custom hooks first. It honors `core.hooksPath` and linked worktrees.
 Running the installer without an option installs hooks without enabling duplicate
-checking. To turn checking off:
-
-```sh
-bash scripts/install-git-hooks.sh --without-code-intelligence
-```
+checking. Once enabled, the check is mandatory: repair configuration, readiness
+or duplicate-code findings before committing; do not disable it to proceed.
 
 The installer records an absolute fallback runner path so hooks can also run on
 older branches without these scripts. Keep that tooling checkout and its Python
@@ -109,13 +106,18 @@ The detector uses the reference action's analysis, not just an embedding thresho
    at least one changed code line. Generated paths are excluded. The local
    guard deliberately checks small edits too; the reference action defaults to
    requiring 50% added body lines.
-2. Start NornicDB continuation in `ranked_then_id` mode with a 25-hit ranked
-   prefix, then drain every subsequent page through `qid`. The remaining eligible
-   functions are scanned in ID order, so lexical/structural checks are not limited
-   to the initial similarity results. Each request retains the same database and
-   credentials. Duplicate hits are compared once; failed or repeated cursors and
-   terminal responses without `collection_exhausted: true` block the commit.
-   Abandoned cursors are explicitly discarded.
+2. Start NornicDB continuation in `ranked` mode with 25 results per page, then
+   drain subsequent matching results through `qid`. Compare only ranked matches
+   whose finite RRF score is at least **0.01**, including matches on later pages.
+   This is the search engine's default RRF floor; it is distinct from cosine
+   similarity and the code-similarity threshold below. The hook verifies the
+   score on every page and rejects missing/malformed scores or a catalog-mode
+   response. Each request retains the same database and credentials. Duplicate
+   hits are compared once. Completion must report ranked candidate-pool or
+   retrieval exhaustion; arbitrary `max_results` truncation, failed/repeated
+   cursors and incomplete responses block the commit. Abandoned cursors are
+   explicitly discarded. The console reports search/comparison time separately
+   from staged-tree extraction time.
    Compare code tokens, normalized structure and receiver-normalized code; a
    similarity of at least 0.8 is a code match.
 3. Also detect semantic standouts using chunk similarity relative to the result
@@ -213,7 +215,7 @@ so NornicDB worktrees reuse `nornicdbcode`. The commit check never creates a dat
 An unborn branch can be checked against an existing ingested graph without a Git
 `HEAD`. A missing database or ingest record still blocks source commits. An empty
 database is never accepted as a substitute for the intended graph. Search must be
-ready and continuation must completely exhaust the eligible functions. Failed
+ready and continuation must exhaust the ranked matching candidates. Failed
 authentication, unavailable service, timeouts and incomplete searches block commits.
 
 **Mandatory check:** Do not override, bypass or disable the hook to get a commit
@@ -228,6 +230,12 @@ changed its empty-result behavior instead of reusing the owner. The real commit
 was rejected with a reuse finding at 99% similarity and the mandatory warning.
 `HEAD` and the staged tree stayed unchanged; the staged probe was then removed.
 Test and production sources remain separate comparison populations, as requested.
+
+The ranked-only follow-up retained that rejection with a 0.01 RRF floor: four
+successful search/continuation requests took 2.81 seconds on the server. Local
+search preparation and comparison completed in 13.58 seconds; the whole hook,
+including staged-tree extraction, took 54.07 seconds. These are one live probe's
+measurements, not a whole-repository latency guarantee.
 
 Global hooks require URL/credentials in the Git process environment; installation
 stores no credentials. Export them in your shell startup configuration and ensure

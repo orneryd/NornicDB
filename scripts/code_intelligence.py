@@ -140,10 +140,16 @@ def check_staged(root):
         deadline_seconds = int(os.environ.get("CODE_INTEL_DEADLINE_SECONDS", "300"))
         db = pd.NornicDB(uri, user, password, token, database, exhaust=True, repo=repo,
                          deadline=time.monotonic() + deadline_seconds)
-        report = pd.analyze(db, repo, graph, source, diff, head_sha=head, base_sha=head,
-                            options={"max_candidates": sys.maxsize, "min_added_fraction": 0.0, "max_matches": 0,
-                                     "deadline_seconds": deadline_seconds},
-                            ignore=pd.DEFAULT_IGNORE)
+        analysis_started = time.monotonic()
+        try:
+            report = pd.analyze(db, repo, graph, source, diff, head_sha=head, base_sha=head,
+                                options={"max_candidates": sys.maxsize, "min_added_fraction": 0.0, "max_matches": 0,
+                                         "deadline_seconds": deadline_seconds},
+                                ignore=pd.DEFAULT_IGNORE)
+        except pd.AnalysisError as error:
+            raise CheckError(str(error)) from error
+        print(f"Ranked-match analysis completed in {time.monotonic() - analysis_started:.2f}s "
+              f"(RRF score floor {db.min_rrf_score:g}).")
         print(pd.render_summary(report, max_findings=sys.maxsize))
         if report.nothing_compared:
             raise CheckError(report.nothing_compared + " Run scripts/code_intelligence.py ingest first.")
