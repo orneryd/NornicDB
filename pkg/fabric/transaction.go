@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -42,11 +43,12 @@ type SubTransaction struct {
 //
 // This mirrors Neo4j's FabricTransaction.java.
 type FabricTransaction struct {
-	subTxns    map[string]*SubTransaction
-	writeShard string // name of the single shard that has writes, or ""
-	mu         sync.Mutex
-	state      string // "open", "committed", "rolledback"
-	txID       string
+	subTxns     map[string]*SubTransaction
+	writeShard  string // name of the single shard that has writes, or ""
+	mu          sync.Mutex
+	state       string // "open", "committed", "rolledback"
+	txID        string
+	lifetimeCtx context.Context
 }
 
 // NewFabricTransaction creates a new distributed transaction.
@@ -56,6 +58,22 @@ func NewFabricTransaction(txID string) *FabricTransaction {
 		state:   "open",
 		txID:    txID,
 	}
+}
+
+// BindContext anchors participant completion to the transaction owner's
+// lifetime. BEGIN supplies it for explicit transactions; otherwise the root
+// Execute binds it before any branch or batch derives a shorter-lived context.
+// Subsequent statements and fragments cannot replace that owner.
+func (t *FabricTransaction) BindContext(ctx context.Context) context.Context {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.lifetimeCtx == nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		t.lifetimeCtx = ctx
+	}
+	return t.lifetimeCtx
 }
 
 // TxID returns the transaction identifier.
