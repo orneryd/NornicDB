@@ -11,6 +11,8 @@ type deliveryKey struct{}
 type deliveryCursor struct {
 	qid     string
 	discard func()
+	written bool
+	suffix []byte
 }
 
 // Delivery owns pages that have not reached their transport. Fork separates
@@ -76,7 +78,7 @@ func (d *Delivery) register(qid string, discard func()) {
 		failed = !d.parent.attach(d)
 	}
 	if !failed {
-		d.discards = append(d.discards, deliveryCursor{qid, discard})
+		d.discards = append(d.discards, deliveryCursor{qid: qid, discard: discard})
 		d.pending.Store(true)
 	}
 	d.mu.Unlock()
@@ -124,6 +126,10 @@ func (d *Delivery) DeliveredValues(value any) { d.finishValues(value, false) }
 func (d *Delivery) DiscardValues(value any) { d.finishValues(value, true) }
 
 func (d *Delivery) finishValues(value any, discard bool) {
+	d.finishWhere(func(cursor deliveryCursor) bool { return deliveryContainsQID(value, cursor.qid) }, discard)
+}
+
+func (d *Delivery) finishWhere(matches func(deliveryCursor) bool, discard bool) {
 	if !d.pending.Load() {
 		return
 	}
@@ -131,7 +137,7 @@ func (d *Delivery) finishValues(value any, discard bool) {
 	var removed []deliveryCursor
 	kept := d.discards[:0]
 	for _, cursor := range d.discards {
-		if deliveryContainsQID(value, cursor.qid) {
+		if matches(cursor) {
 			if discard {
 				removed = append(removed, cursor)
 			}
