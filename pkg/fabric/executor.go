@@ -69,6 +69,9 @@ func NewFabricExecutor(catalog *Catalog, local *LocalFragmentExecutor, remote *R
 //   - params: query parameters
 //   - authToken: the caller's auth token for OIDC forwarding to remote shards
 func (e *FabricExecutor) Execute(ctx context.Context, tx *FabricTransaction, fragment Fragment, params map[string]interface{}, authToken string) (*ResultStream, error) {
+	if tx != nil {
+		tx.BindContext(ctx)
+	}
 	switch f := fragment.(type) {
 	case *FragmentInit:
 		return e.executeInit(f)
