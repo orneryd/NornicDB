@@ -1,0 +1,25 @@
+tnrun: job i20261018121700-104052-707f: wt-fmem1412-test@7f42f0ff, 2 untracked file(s); submitted in 4.0s
+tnrun: running
+tnrun job i20261018121700-104052-707f (wt-fmem1412-test@7f42f0ff): worker 1, CPUs 6,7,70,71, commit 7f42f0ffa2bdd707dfa0dc6ce2d16c5130b37118, go1.26.9
+untracked files: overlaid i20261018121700-104052-707f.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test -race -count=1 -v -timeout 58m -run ^TestZZRule73Attack$ ./pkg/cypher
+=== RUN   TestZZRule73Attack
+    zz_rule73_attack_test.go:205: R73	R reviewed one-node read: existence check on a hub (evaluateRelationshipPatternInWhere / traversalEdges)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	R reviewed one-node read: degree count (nodeDegreeCount)	over=FAIL(no error at 960000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	S pattern comprehension over a hub	over=ok near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	S quantified path state (quantifiedPathState) from a hub	over=ok near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	P temporal viewport loader (loadNodesWithTemporalViewport) via OPTIONAL MATCH	over=FAIL(no error at 1280000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P db.labels (AllNodes)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P db.relationshipTypes (AllEdges)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P db.propertyKeys (AllNodes + AllEdges)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P db.schema.nodeTypeProperties	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P db.stats.retrieve GRAPH COUNTS	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P fulltext queryNodes scan	over=ok near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	P APOC algorithm input (algorithmNodes, wcc)	over=ok near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	S APOC path expansion from a hub (apocExpansion)	over=ok near=n/a zero=ok
+Terminated
+=== parser antlr: exit 143 after 3281s
+tnrun: job i20261018121700-104052-707f: DONE exit 143 (antlr 143 in 3281s); box 3281s, total 3289s
