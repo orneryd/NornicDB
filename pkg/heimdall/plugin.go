@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
 
 // DefaultActionInputSchema is the MCP-compatible JSON Schema when an action
@@ -1702,6 +1703,9 @@ type dbEventDispatcher struct {
 	events       chan *DatabaseEvent
 	done         chan struct{}
 	pluginQueues map[string]*pluginEventQueue
+
+	// afterQueueSnapshot is a test barrier, set before starting publishers.
+	afterQueueSnapshot func()
 }
 
 var globalEventDispatcher = &dbEventDispatcher{
@@ -1717,7 +1721,7 @@ const (
 type pluginEventQueue struct {
 	name string
 	hook DatabaseEventHook
-	ch   chan *DatabaseEvent
+	ch   *eventchannel.Channel[*DatabaseEvent]
 }
 
 // StartEventDispatcher starts the background event dispatcher.
@@ -1750,7 +1754,10 @@ func StartEventDispatcher() {
 
 // StopEventDispatcher stops the background event dispatcher.
 func StopEventDispatcher() {
-	d := globalEventDispatcher
+	globalEventDispatcher.stop()
+}
+
+func (d *dbEventDispatcher) stop() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -1761,7 +1768,7 @@ func StopEventDispatcher() {
 	d.running = false
 	close(d.done)
 	for _, queue := range d.pluginQueues {
-		close(queue.ch)
+		queue.ch.Close()
 	}
 	d.pluginQueues = make(map[string]*pluginEventQueue)
 }
@@ -1801,12 +1808,12 @@ func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHoo
 	queue := &pluginEventQueue{
 		name: name,
 		hook: hook,
-		ch:   make(chan *DatabaseEvent, defaultDatabaseEventQueue),
+		ch:   eventchannel.New[*DatabaseEvent](defaultDatabaseEventQueue),
 	}
 	d.pluginQueues[name] = queue
 
 	go func(q *pluginEventQueue) {
-		for event := range q.ch {
+		for event := range q.ch.Events() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -1828,11 +1835,12 @@ func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, ev
 	if queue == nil {
 		return
 	}
+	if d.afterQueueSnapshot != nil {
+		d.afterQueueSnapshot()
+	}
 
-	select {
-	case queue.ch <- event:
-	default:
-		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full for %s, dropping event: %s", name, event.Type)
+	if !queue.ch.TrySend(event) {
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full or closed for %s, dropping event: %s", name, event.Type)
 	}
 }
 
