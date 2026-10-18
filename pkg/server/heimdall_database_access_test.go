@@ -208,6 +208,11 @@ func TestHeimdallRouterSharesExecutorOnlyAfterStatementAdmitted(t *testing.T) {
 func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
+	require.NoError(t, server.dbManager.CreateDatabase("async_named"))
+	named, err := server.dbManager.GetStorage("async_named")
+	require.NoError(t, err)
+	_, err = named.CreateNode(&storage.Node{ID: "async-named-node", Labels: []string{"Doc"}})
+	require.NoError(t, err)
 	type outcome struct {
 		rows []map[string]interface{}
 		err  error
@@ -217,15 +222,16 @@ func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 		Name:     "heimdall_async_principal_probe",
 		Category: "testing",
 		Handler: func(ctx heimdall.ActionContext) (*heimdall.ActionResult, error) {
-			rows, err := ctx.Database.Query(ctx.Context, "nornic", "MATCH (n) RETURN count(n) AS n", nil)
+			database, _ := ctx.Params["database"].(string)
+			rows, err := ctx.Database.Query(ctx.Context, database, "MATCH (n) RETURN count(n) AS n", nil)
 			outcomes <- outcome{rows: rows, err: err}
 			return &heimdall.ActionResult{Success: err == nil}, nil
 		},
 	})
 	invoker := heimdall.NewLiveHeimdallInvoker(heimdall.GetSubsystemManager(), nil, nil, router, nil)
 
-	request, cancel := context.WithCancel(heimdallPrincipal([]string{"nornic"}, heimdallPermissions(map[auth.Permission]bool{"access": true, auth.PermRead: true})))
-	invoker.InvokeActionAsync(request, "heimdall_async_principal_probe", nil)
+	request, cancel := context.WithCancel(heimdallPrincipal([]string{"nornic", "async_named"}, heimdallPermissions(map[auth.Permission]bool{"access": true, auth.PermRead: true})))
+	invoker.InvokeActionAsync(request, "heimdall_async_principal_probe", map[string]interface{}{"database": "nornic"})
 	cancel()
 	select {
 	case got := <-outcomes:
@@ -235,8 +241,35 @@ func TestHeimdallAsyncActionKeepsCallerPrincipal(t *testing.T) {
 		t.Fatal("the asynchronous action did not run")
 	}
 
+	invoker.InvokeActionAsync(request, "heimdall_async_principal_probe", map[string]interface{}{"database": "async_named"})
+	select {
+	case got := <-outcomes:
+		require.NoError(t, got.err)
+		require.EqualValues(t, 1, got.rows[0]["n"])
+	case <-time.After(10 * time.Second):
+		t.Fatal("the named-database asynchronous action did not run")
+	}
+
+	denied := heimdallPrincipal([]string{"async_named"}, heimdallPermissions(map[auth.Permission]bool{"access": true}))
+	invoker.InvokeActionAsync(denied, "heimdall_async_principal_probe", map[string]interface{}{"database": "async_named"})
+	select {
+	case got := <-outcomes:
+		require.ErrorContains(t, got.err, "read permission")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the denied asynchronous action did not run")
+	}
+
+	invoker.InvokeActionAsync(heimdallAuthDisabled(), "heimdall_async_principal_probe", map[string]interface{}{"database": "async_named"})
+	select {
+	case got := <-outcomes:
+		require.NoError(t, got.err)
+		require.EqualValues(t, 1, got.rows[0]["n"])
+	case <-time.After(10 * time.Second):
+		t.Fatal("the auth-disabled asynchronous action did not run")
+	}
+
 	// Without a principal it is refused, as before.
-	invoker.InvokeActionAsync(context.Background(), "heimdall_async_principal_probe", nil)
+	invoker.InvokeActionAsync(context.Background(), "heimdall_async_principal_probe", map[string]interface{}{"database": "nornic"})
 	select {
 	case got := <-outcomes:
 		requireHeimdallForbidden(t, got.err)

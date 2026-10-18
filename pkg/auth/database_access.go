@@ -52,3 +52,18 @@ type ResolvedAccess struct {
 	Read  bool // Allow MATCH, read properties, etc.
 	Write bool // Allow CREATE, DELETE, SET, MERGE, etc.
 }
+
+// ResolveDatabaseReadAccess is the shared direct-read decision for protocol
+// routes that read a database without going through Cypher. mode owns whether
+// the principal may select the database; resolve owns its per-database read
+// privilege. A nil mode or resolver preserves configurations where that layer
+// of authorization is disabled.
+func ResolveDatabaseReadAccess(mode DatabaseAccessMode, resolve func(string) ResolvedAccess, database string) (accessible, readable bool) {
+	if mode != nil && !mode.CanAccessDatabase(database) {
+		return false, false
+	}
+	if resolve == nil {
+		return true, true
+	}
+	return true, resolve(database).Read
+}
