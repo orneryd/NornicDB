@@ -74,7 +74,11 @@ type remoteStatement struct {
 
 // NewRemoteEngine creates a remote engine. Transport is auto-detected from the URI scheme.
 func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
-	defer func() { err = observability.RedactError(err, remoteDisplayCredentials(cfg)...) }()
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, remoteDisplayCredentials(cfg)...)
+		}
+	}()
 	uri := strings.TrimSpace(cfg.URI)
 	database := strings.TrimSpace(cfg.Database)
 	if uri == "" {
@@ -106,7 +110,7 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
 	}
 
 	return &RemoteEngine{
-		transport: &remoteDisplayTransport{remoteTransport: transport, credentials: remoteDisplayCredentials(cfg)},
+		transport: transport,
 		schema:    NewSchemaManager(),
 	}, nil
 }
@@ -116,13 +120,15 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
 // ---------------------------------------------------------------------------
 
 type boltTransport struct {
-	driver   neo4j.DriverWithContext
-	database string
+	credentials []string
+	driver      neo4j.DriverWithContext
+	database    string
 }
 
 type boltCypherTx struct {
-	session neo4j.SessionWithContext
-	tx      neo4j.ExplicitTransaction
+	credentials []string
+	session     neo4j.SessionWithContext
+	tx          neo4j.ExplicitTransaction
 }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
@@ -131,7 +137,7 @@ func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransp
 	if err != nil {
 		return nil, localizedError(localization.StorageRemoteBoltDriverCreateFailed(err), err)
 	}
-	return &boltTransport{driver: driver, database: database}, nil
+	return &boltTransport{driver: driver, database: database, credentials: remoteDisplayCredentials(cfg)}, nil
 }
 
 func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
@@ -154,7 +160,12 @@ func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
 	return neo4j.NoAuth()
 }
 
-func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) (_ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
@@ -162,7 +173,7 @@ func (b *boltTransport) query(ctx context.Context, statement string, params map[
 	defer func() { _ = session.Close(ctx) }()
 
 	var rows [][]interface{}
-	_, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
+	_, err = executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
 		row := make([]interface{}, len(record.Values))
 		for i, v := range record.Values {
 			row[i] = normalizeBoltValue(v)
@@ -175,7 +186,12 @@ func (b *boltTransport) query(ctx context.Context, statement string, params map[
 	return rows, nil
 }
 
-func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
@@ -237,21 +253,26 @@ func executeManagedStatement(
 	return cols, nil
 }
 
-func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) error {
+func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
 	})
 	defer func() { _ = session.Close(ctx) }()
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		for _, stmt := range statements {
 			result, err := tx.Run(ctx, stmt.Statement, stmt.Parameters)
 			if err != nil {
 				return nil, err
 			}
 			// Consume to ensure statement completes.
-			if _, err := result.Consume(ctx); err != nil {
+			if _, err = result.Consume(ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -260,7 +281,12 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (b *boltTransport) beginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
@@ -270,10 +296,15 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		_ = session.Close(ctx)
 		return nil, err
 	}
-	return &boltCypherTx{session: session, tx: tx}, nil
+	return &boltCypherTx{session: session, tx: tx, credentials: b.credentials}, nil
 }
 
-func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, t.credentials...)
+		}
+	}()
 	result, err := t.tx.Run(ctx, statement, params)
 	if err != nil {
 		return nil, nil, err
@@ -297,17 +328,32 @@ func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params
 	return columns, rows, nil
 }
 
-func (t *boltCypherTx) Commit(ctx context.Context) error {
+func (t *boltCypherTx) Commit(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, t.credentials...)
+		}
+	}()
 	defer func() { _ = t.session.Close(ctx) }()
 	return t.tx.Commit(ctx)
 }
 
-func (t *boltCypherTx) Rollback(ctx context.Context) error {
+func (t *boltCypherTx) Rollback(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, t.credentials...)
+		}
+	}()
 	defer func() { _ = t.session.Close(ctx) }()
 	return t.tx.Rollback(ctx)
 }
 
-func (b *boltTransport) close() error {
+func (b *boltTransport) close() (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, b.credentials...)
+		}
+	}()
 	return b.driver.Close(context.Background())
 }
 
@@ -499,7 +545,12 @@ func (h *httpTransport) doRequest(ctx context.Context, body remoteTxRequest) (*r
 	return h.doRequestToURL(ctx, http.MethodPost, h.commitURL(), body)
 }
 
-func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (*remoteTxResponse, error) {
+func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (_ *remoteTxResponse, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, h.displayCredentials()...)
+		}
+	}()
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -613,7 +664,12 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (h *httpTransport) beginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, h.displayCredentials()...)
+		}
+	}()
 	openBody := remoteTxRequest{Statements: []remoteStatement{}}
 	raw, err := json.Marshal(openBody)
 	if err != nil {

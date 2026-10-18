@@ -88,6 +88,22 @@ func TestDisplaySecretErrorPreservesContracts(t *testing.T) {
 	}
 }
 
+func TestDisplaySecretEndpointContext(t *testing.T) {
+	const credential = "https://synthetic-opaque-credential.invalid/key?value=\"&"
+	text := fmt.Sprintf("provider reflected %q", credential)
+	if strings.Contains(RedactText(text, ClientCredentials("http://example.test", credential)...), "synthetic-opaque-credential") {
+		t.Error("opaque secret was mistaken for an endpoint (text withheld)")
+	}
+	ordinary := errors.New(`parse "://bad-url?model=probe": missing protocol scheme`)
+	if RedactError(ordinary, ClientCredentials("://bad-url?model=probe")...) != ordinary {
+		t.Error("ordinary malformed endpoint error changed")
+	}
+	localized := localization.NewLocalizedError("probe", localization.StorageRemoteError("code", "ordinary message"), ordinary)
+	if RedactError(localized) != localized {
+		t.Error("unchanged localized error identity changed")
+	}
+}
+
 func TestDisplaySecretSpanAliasesAndURL(t *testing.T) {
 	inner := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(NewRedactingSpanProcessor(inner)))

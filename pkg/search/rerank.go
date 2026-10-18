@@ -206,7 +206,11 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 
 // callRerankAPI calls the cross-encoder service.
 func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) (_ []float64, err error) {
-	defer func() { err = observability.RedactError(err, ce.config.APIKey, ce.config.APIURL) }()
+	defer func() {
+		if err != nil {
+			err = observability.RedactError(err, observability.ClientCredentials(ce.config.APIURL, ce.config.APIKey)...)
+		}
+	}()
 	// Build request body - supports multiple formats
 	// Format 1: Cohere-style
 	// Format 2: HuggingFace TEI-style

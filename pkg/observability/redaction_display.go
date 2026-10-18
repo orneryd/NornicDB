@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -25,11 +26,13 @@ type sensitiveNames struct {
 }
 
 func newSensitiveNames(keys map[string]struct{}) *sensitiveNames {
-	names := &sensitiveNames{keys: keys}
-	for key := range keys {
+	names := &sensitiveNames{keys: make(map[string]struct{}, len(keys))}
+	for raw := range keys {
+		key := normalizeFieldName(raw)
 		if key == "" {
 			continue
 		}
+		names.keys[key] = struct{}{}
 		node := names.roots[key[0]]
 		if node == nil {
 			node = &sensitiveNameNode{}
@@ -51,7 +54,7 @@ func newSensitiveNames(keys map[string]struct{}) *sensitiveNames {
 	return names
 }
 
-func (names *sensitiveNames) match(name string) (suffix, candidate bool) {
+func (names *sensitiveNames) matchNormalized(name string) (suffix, candidate bool) {
 	for i := 0; i < len(name); i++ {
 		node := names.roots[name[i]]
 		for j := i; node != nil; j++ {
@@ -65,6 +68,52 @@ func (names *sensitiveNames) match(name string) (suffix, candidate bool) {
 				break
 			}
 			node = node.children[name[j+1]]
+		}
+	}
+	return false, candidate
+}
+
+func normalizedFieldByte(c byte) (byte, bool) {
+	if c >= 'A' && c <= 'Z' {
+		c += 'a' - 'A'
+	}
+	return c, (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+}
+
+// Match the normalized stream without materializing it. Safe names containing
+// separators (for example safe.key) must keep the span clean path allocation-free.
+func (names *sensitiveNames) match(name string) (suffix, candidate bool) {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= 128 {
+			return names.matchNormalized(normalizeFieldName(name))
+		}
+	}
+	for i := 0; i < len(name); i++ {
+		c, letter := normalizedFieldByte(name[i])
+		if !letter {
+			continue
+		}
+		node := names.roots[c]
+		for j := i; node != nil; {
+			next := j + 1
+			for next < len(name) {
+				if _, letter := normalizedFieldByte(name[next]); letter {
+					break
+				}
+				next++
+			}
+			if node.terminal {
+				if next == len(name) {
+					return true, true
+				}
+				candidate = true
+			}
+			if next == len(name) {
+				break
+			}
+			c, _ = normalizedFieldByte(name[next])
+			node = node.children[c]
+			j = next
 		}
 	}
 	return false, candidate
@@ -84,11 +133,12 @@ func normalizeFieldName(name string) string {
 		if c >= 128 {
 			return strings.Join(fieldWords(name), "")
 		}
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
+		normalized, letter := normalizedFieldByte(c)
+		if normalized != c {
 			unchanged = false
 		}
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+		c = normalized
+		if letter {
 			scratch[n] = c
 			n++
 		} else {
@@ -137,8 +187,16 @@ var credentialURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>\x00]+
 func RedactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
-		if strings.Contains(raw, "@") || strings.Contains(raw, "?") {
+		if strings.Contains(raw, "@") {
 			return redactedPlaceholder
+		}
+		for _, separator := range []string{"?", "#"} {
+			if _, query, ok := strings.Cut(raw, separator); ok {
+				_, changed, valid := redactURLQuery(query)
+				if changed || !valid {
+					return redactedPlaceholder
+				}
+			}
 		}
 		return raw
 	}
@@ -210,6 +268,43 @@ func redactJSON(value any, path string) bool {
 	return changed
 }
 
+// ClientCredentials keeps endpoint context distinct from opaque secrets. A key
+// can itself look like a URL; its entire value still needs redaction. Ordinary
+// endpoint text, including credential-free malformed URLs, remains diagnostic.
+func ClientCredentials(endpoint string, secrets ...string) []string {
+	values := append([]string(nil), secrets...)
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		if RedactURL(endpoint) != endpoint {
+			values = append(values, endpoint)
+		}
+		return values
+	}
+	if u.User != nil {
+		values = append(values, u.User.String())
+		if password, ok := u.User.Password(); ok {
+			values = append(values, password, u.User.Username()+":"+password)
+		}
+	}
+	for _, query := range []string{u.RawQuery, u.Fragment} {
+		for _, part := range strings.Split(query, "&") {
+			key, value, ok := strings.Cut(part, "=")
+			if !ok {
+				continue
+			}
+			key, _ = url.QueryUnescape(key)
+			if IsSensitiveFieldName("url_query_" + key) {
+				decoded, err := url.QueryUnescape(value)
+				if err != nil {
+					decoded = value
+				}
+				values = append(values, decoded)
+			}
+		}
+	}
+	return values
+}
+
 // RedactText removes credentials owned by the caller, including the encodings
 // used by HTTP forms, JSON and Basic authorization. It never reads environment
 // variables or discovers credentials from unrelated clients.
@@ -218,8 +313,6 @@ func RedactText(text string, credentials ...string) string {
 		if credential == "" {
 			continue
 		}
-		// A configured URL supplies its userinfo/query credentials too, so a
-		// provider reflecting just a password is covered, not only the full URL.
 		secrets := []string{credential}
 		if scheme, value, ok := strings.Cut(credential, " "); ok {
 			if strings.EqualFold(scheme, "Bearer") {
@@ -234,26 +327,13 @@ func RedactText(text string, credentials ...string) string {
 				}
 			}
 		}
-		if u, err := url.Parse(credential); err == nil && u.Scheme != "" && u.Host != "" {
-			secrets = nil
-			if u.User != nil {
-				secrets = append(secrets, u.User.String())
-				if password, ok := u.User.Password(); ok {
-					secrets = append(secrets, password, u.User.Username()+":"+password)
-				}
-			}
-			for key, values := range u.Query() {
-				if IsSensitiveFieldName(key) {
-					secrets = append(secrets, values...)
-				}
-			}
-		}
 		for _, secret := range secrets {
 			if secret == "" {
 				continue
 			}
 			quoted, _ := json.Marshal(secret)
-			for _, encoded := range []string{string(quoted[1 : len(quoted)-1]), url.QueryEscape(secret), url.PathEscape(secret),
+			goQuoted := strconv.Quote(secret)
+			for _, encoded := range []string{string(quoted[1 : len(quoted)-1]), goQuoted[1 : len(goQuoted)-1], url.QueryEscape(secret), url.PathEscape(secret),
 				base64.StdEncoding.EncodeToString([]byte(secret)), secret} {
 				text = strings.ReplaceAll(text, encoded, redactedPlaceholder)
 			}
@@ -296,31 +376,42 @@ func (e *displayError) As(target any) bool {
 // RedactError keeps errors.Is/As and transport/retry classification intact.
 // Localized message identity/data is also retained as a safe display copy.
 func RedactError(err error, credentials ...string) error {
+	result, _ := redactError(err, credentials...)
+	return result
+}
+
+func redactError(err error, credentials ...string) (error, bool) {
 	if err == nil {
-		return nil
+		return nil, false
 	}
 	text := RedactText(err.Error(), credentials...)
+	changed := text != err.Error()
 	var localized *localization.LocalizedError
 	if errors.As(err, &localized) {
 		copy := *localized
 		copy.Message.Fallback = RedactText(copy.Message.Fallback, credentials...)
+		changed = changed || copy.Message.Fallback != localized.Message.Fallback
 		copy.Message.Data = make(map[string]any, len(localized.Message.Data))
 		for key, value := range localized.Message.Data {
 			switch value := value.(type) {
 			case string:
-				copy.Message.Data[key] = RedactText(value, credentials...)
+				safe := RedactText(value, credentials...)
+				copy.Message.Data[key] = safe
+				changed = changed || safe != value
 			case error:
-				copy.Message.Data[key] = RedactError(value, credentials...)
+				safe, redacted := redactError(value, credentials...)
+				copy.Message.Data[key] = safe
+				changed = changed || redacted
 			default:
 				copy.Message.Data[key] = value
 			}
 		}
 		localized = &copy
 	}
-	if text == err.Error() && localized == nil {
-		return err
+	if !changed {
+		return err, false
 	}
-	return &displayError{cause: err, text: text, localized: localized}
+	return &displayError{cause: err, text: text, localized: localized}, true
 }
 
 // DisplayArgs is a copy of argv for diagnostic endpoints. It never changes the

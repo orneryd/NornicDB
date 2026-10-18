@@ -137,30 +137,30 @@ func (g *ollamaGenerator) Generate(ctx context.Context, prompt string, params Ge
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 
 	url := g.apiURL + ollamaChatPath
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), g.apiURL))
+		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.apiURL)...))
 	}
 
 	var chatResp ollamaChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("ollama decode: %w", observability.RedactError(err, g.apiURL))
+		return "", fmt.Errorf("ollama decode: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	return chatResp.Message.Content, nil
 }
@@ -207,26 +207,26 @@ func (g *ollamaGenerator) GenerateWithTools(ctx context.Context, messages []Tool
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	url := g.apiURL + ollamaChatPath
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return "", nil, fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), g.apiURL))
+		return "", nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.apiURL)...))
 	}
 	var chatResp ollamaChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", nil, fmt.Errorf("ollama decode: %w", observability.RedactError(err, g.apiURL))
+		return "", nil, fmt.Errorf("ollama decode: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	content = chatResp.Message.Content
 	for _, tc := range chatResp.Message.ToolCalls {
@@ -260,25 +260,25 @@ func (g *ollamaGenerator) GenerateStream(ctx context.Context, prompt string, par
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 
 	url := g.apiURL + ollamaChatPath
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("ollama request: %w", observability.RedactError(err, g.apiURL))
+		return fmt.Errorf("ollama request: %w", observability.RedactError(err, observability.ClientCredentials(g.apiURL)...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), g.apiURL))
+		return fmt.Errorf("ollama returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.apiURL)...))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
