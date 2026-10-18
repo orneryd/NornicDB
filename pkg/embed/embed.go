@@ -523,6 +523,14 @@ type ollamaResponse struct {
 //
 // Returns the embedding vector, or an error if the API request fails.
 func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	path, arrayInput := e.embeddingEndpoint(false)
+	if arrayInput {
+		vectors, err := e.EmbedBatch(ctx, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		return vectors[0], nil
+	}
 	req := ollamaRequest{
 		Model:  e.config.Model,
 		Prompt: text,
@@ -533,7 +541,7 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := e.config.APIURL + e.config.APIPath
+	url := e.config.APIURL + path
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -563,7 +571,8 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 // EmbedBatch generates embeddings for multiple texts efficiently.
 //
 // Uses Ollama's array-input /api/embed endpoint. The legacy single-text
-// /api/embeddings configuration selects /api/embed for batch calls.
+// /api/embeddings configuration selects /api/embed for batch calls. Custom
+// legacy endpoints retain their prompt protocol with one request per text.
 //
 // Example:
 //
@@ -589,17 +598,20 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
-	path := e.config.APIPath
-	route, query, hasQuery := strings.Cut(path, "?")
-	if strings.HasSuffix(route, "/api/embeddings") {
-		if route == "/api/embeddings" {
-			path = "/api/embed"
-		} else {
-			path = strings.TrimSuffix(route, "/embeddings") + "/embed"
+	path, arrayInput := e.embeddingEndpoint(true)
+	if !arrayInput {
+		vectors := make([][]float32, len(texts))
+		for i, text := range texts {
+			vector, err := e.Embed(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			vectors[i] = vector
 		}
-		if hasQuery {
-			path += "?" + query
+		if err := CheckEmbeddings(vectors, len(texts), e.Dimensions()); err != nil {
+			return nil, err
 		}
+		return vectors, nil
 	}
 	body, err := json.Marshal(openaiRequest{Model: e.Model(), Input: texts})
 	if err != nil {
@@ -631,6 +643,21 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return nil, err
 	}
 	return wire.Embeddings, nil
+}
+
+// embeddingEndpoint owns Ollama route/protocol selection. Only the documented
+// legacy route has a known array-capable counterpart; aliases keep the prompt
+// protocol that Embed has always used. Proxy prefixes and queries survive.
+func (e *OllamaEmbedder) embeddingEndpoint(batch bool) (string, bool) {
+	route, query, hasQuery := strings.Cut(e.config.APIPath, "?")
+	if batch && strings.HasSuffix(route, "/api/embeddings") {
+		route = strings.TrimSuffix(route, "/embeddings") + "/embed"
+	}
+	arrayInput := strings.HasSuffix(route, "/api/embed")
+	if hasQuery {
+		route += "?" + query
+	}
+	return route, arrayInput
 }
 
 func (e *OllamaEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
