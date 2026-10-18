@@ -158,3 +158,30 @@ func TestStreamLifecycleDiscardDuringExpansion(t *testing.T) {
 	require.ErrorIs(t, <-done, ErrClosed)
 	require.Empty(t, s.rows, "an in-flight expansion must not republish closed rows")
 }
+
+func TestStreamLifecycleDelivery(t *testing.T) {
+	for _, outcome := range []string{"success", "failure", "failure_before_publish"} {
+		t.Run(outcome, func(t *testing.T) {
+			r, err := NewRegistry(Config{MaxStreams: 1})
+			require.NoError(t, err)
+			t.Cleanup(r.Close)
+			delivery := &Delivery{}
+			ctx := WithDelivery(context.Background(), delivery)
+			if outcome == "failure_before_publish" { delivery.Fail() }
+			scope := Scope{Owner: "alice", Database: "one"}
+			s := &lifecycleStream{}
+			_, err = r.Start(ctx, scope, s, 1)
+			require.NoError(t, err)
+			if outcome == "success" {
+				delivery.Delivered()
+				delivery.Fail()
+				require.EqualValues(t, 1, r.count.Load(), "delivered cursors survive connection close")
+			} else {
+				delivery.Fail()
+				delivery.Fail()
+				require.Zero(t, r.count.Load())
+				require.EqualValues(t, 1, s.closes.Load())
+			}
+		})
+	}
+}

@@ -28,6 +28,8 @@ func TestSearchStreamLifecycleDatabaseDrop(t *testing.T) {
 	first, err := svc.SearchTextContinuation(context.Background(), "", search.DefaultSearchOptions(), request, nil, nil, nil, search.ChunkedSearchErrorPolicy{})
 	require.NoError(t, err)
 	db.DropSearchServiceState(database)
+	svc, err = db.GetOrCreateSearchService(database, db.storage)
+	require.NoError(t, err)
 	_, err = svc.SearchTextContinuation(context.Background(), "", nil, search.SearchContinuationRequest{Owner: "alice", QID: first.QID, N: 1}, nil, nil, nil, search.ChunkedSearchErrorPolicy{})
 	require.ErrorIs(t, err, resultstream.ErrGoneQID)
 	require.NoError(t, db.DiscardSearchContinuation("alice", first.QID, database))
