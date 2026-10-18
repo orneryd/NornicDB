@@ -633,9 +633,12 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 // IterateNodes iterates through all nodes one at a time without loading all into memory.
 // The callback returns true to continue, false to stop.
 func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
- return b.StreamNodesWithOptions(context.Background(), StreamNodesOptions{WithEmbeddings: true}, func(n *Node) error {
-  if !fn(n) { return ErrIterationStopped }; return nil
- })
+	return b.StreamNodesWithOptions(context.Background(), StreamNodesOptions{WithEmbeddings: true}, func(n *Node) error {
+		if !fn(n) {
+			return ErrIterationStopped
+		}
+		return nil
+	})
 }
 
 // StreamNodesOptions controls a streaming node scan. The five legacy stream
@@ -700,7 +703,10 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			return nil // the write-behind overlay shadows this committed row
 		}
 		err := fn(node)
-		if err == ErrIterationStopped { stopped = true }; return err
+		if err == ErrIterationStopped {
+			stopped = true
+		}
+		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
@@ -708,7 +714,9 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err != nil {
 		return err
 	}
-	if stopped { return nil }
+	if stopped {
+		return nil
+	}
 	for _, node := range overlay {
 		if !inScope(node.ID) {
 			continue
@@ -716,7 +724,11 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
 			continue
 		}
-		if err := fn(copyNode(node)); err != nil {
+		projected := projectCachedNodeForRead(node, opts.Projection)
+		if opts.StripEmbeddings {
+			projected = copyNodeWithoutEmbeddings(projected)
+		}
+		if err := fn(projected); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -871,7 +883,10 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			return nil
 		}
 		err := fn(edge)
-		if err == ErrIterationStopped { stopped = true }; return err
+		if err == ErrIterationStopped {
+			stopped = true
+		}
+		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
@@ -913,7 +928,9 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	if err != nil {
 		return err
 	}
-	if stopped { return nil }
+	if stopped {
+		return nil
+	}
 	for _, edge := range overlay {
 		if b.filterEdgeByDecay(edge, nowNanos) {
 			continue
@@ -934,68 +951,27 @@ func (b *BadgerEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn f
 	if chunkSize <= 0 {
 		chunkSize = 1000
 	}
-
-	if err := b.ensureOpen(); err != nil {
+	chunk := make([]*Node, 0, chunkSize)
+	stopped := false
+	err := b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+		chunk = append(chunk, node)
+		if len(chunk) < chunkSize {
+			return nil
+		}
+		err := fn(chunk)
+		chunk = chunk[:0]
+		stopped = err == ErrIterationStopped
+		return err
+	})
+	if err != nil || stopped {
 		return err
 	}
-
-	return b.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		chunk := make([]*Node, 0, chunkSize)
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			item := it.Item()
-			var node *Node
-			err := item.Value(func(val []byte) error {
-				key := item.Key()
-				if len(key) <= 1 {
-					return nil
-				}
-				nodeID := NodeID(key[1:])
-				var decErr error
-				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			})
-			if err != nil {
-				continue // Skip invalid nodes
-			}
-
-			chunk = append(chunk, node)
-
-			if len(chunk) >= chunkSize {
-				if err := fn(chunk); err != nil {
-					if err == ErrIterationStopped {
-						return nil
-					}
-					return err
-				}
-				// Reset chunk, reuse capacity
-				chunk = chunk[:0]
-			}
+	if len(chunk) > 0 {
+		if err := fn(chunk); err != ErrIterationStopped {
+			return err
 		}
-
-		// Process remaining nodes
-		if len(chunk) > 0 {
-			if err := fn(chunk); err != nil {
-				if err == ErrIterationStopped {
-					return nil
-				}
-				return err
-			}
-		}
-
-		return nil
-	})
+	}
+	return nil
 }
 
 // ============================================================================
