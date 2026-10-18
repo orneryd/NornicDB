@@ -14,3 +14,5 @@ All submitted jobs were cancelled WHILE QUEUED; no count or identity workload ra
 Bug 2 handoff complete in sig/handoff/park-1.5.0-1412.md: exact evidence, upstream materialization attribution, explicit successful bounded-memory streaming acceptance (graceful failure is insufficient), both-parser public-test requirement. Test outline retained at sig/handoff/codeintel-identity-working-set-test.go.txt; not compiled or submitted again.
 
 Do not implement bug 3 here. Its full scope findings are already in codeintel-three-bugs-scope-20261018.txt and the separate implementer owns its issue/PRs.
+
+FINAL DECISION: both count #1496 and identity #1497 are parked in the 1.5.0 F-MEM family. The tool's unlabelled-count workaround is currently correct and usable. Earlier 1.4.4 implementation plans are superseded. Probes/evidence pushed at 6a0dd4aa83d2f65f55ef76daebc5f82e17169d24 on wip-1.5.0-1412-codeintel-materialization; canonical joint handoff sig/handoff/park-1.5.0-1412.md. No production changes or jobs remain.

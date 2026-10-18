@@ -35,4 +35,3 @@ func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
 	require.Equal(t, edges, rows)
 	require.Less(t, live, int64(8<<20), "fetching 16 scalar rows must not retain all relationship bindings")
 }
-
