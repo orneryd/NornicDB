@@ -1419,7 +1419,7 @@ func (idx *RangeIndex) deleteEntryLocked(nodeID NodeID, value float64) bool {
 		if entry.nodeID != nodeID {
 			continue
 		}
-		idx.entries = append(idx.entries[:i], idx.entries[i+1:]...)
+		idx.entries = slices.Delete(idx.entries, i, i+1)
 		return true
 	}
 

@@ -401,6 +401,7 @@ func (idx *GPUEmbeddingIndex) Remove(nodeID string) bool {
 			idx.cpuData[srcStart:srcStart+idx.dimensions])
 	}
 
+	idx.nodeIDs[lastIdx] = ""
 	idx.nodeIDs = idx.nodeIDs[:lastIdx]
 	idx.cpuData = idx.cpuData[:lastIdx*idx.dimensions]
 	delete(idx.idToIndex, nodeID)
