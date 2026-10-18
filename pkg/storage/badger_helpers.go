@@ -1148,12 +1148,29 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 // is ignored, leaving the node embedding-free so the worker re-embeds the
 // new content.
 func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
+	return b.loadNodeEmbeddingState(txn, node, nodeID, true)
+}
+
+// loadNodeEmbeddingState is loadNodeEmbeddings; with vectors false it settles
+// the node's embedding metadata the same way (the fresh sidecar's, else the
+// body's) but reads no separately stored chunk vector, so the node reads as
+// an embedding-free read returns it: metadata kept (chunk_count counts the
+// stored chunks), ChunkEmbeddings unset, and EmbeddingsStoredSeparately
+// cleared exactly as the full read clears it.
+func (b *BadgerEngine) loadNodeEmbeddingState(txn *badger.Txn, node *Node, nodeID NodeID, vectors bool) (*Node, error) {
 	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, nodeID); err != nil {
 		return nil, err
 	} else if fresh {
 		node.EmbedMeta = sidecarMeta
 		node.EmbeddingsStoredSeparately = false
-		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCountFromMeta(sidecarMeta)); err != nil {
+		chunkCount := chunkCountFromMeta(sidecarMeta)
+		if !vectors {
+			if chunkCount > 0 {
+				node.ChunkEmbeddings = nil
+			}
+			return node, nil
+		}
+		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
 			return nil, err
 		}
 		return node, nil
@@ -1162,8 +1179,10 @@ func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID No
 	// Legacy body-flag path: embeddings stored separately during encode.
 	if node.EmbeddingsStoredSeparately {
 		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
-			if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
-				return nil, err
+			if vectors {
+				if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
+					return nil, err
+				}
 			}
 			node.EmbeddingsStoredSeparately = false
 		}

@@ -105,7 +105,7 @@ func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []st
 		return cachedNode
 	}
 
-	liveNode, err := store.GetNode(cachedNode.ID)
+	liveNode, err := getQueryNode(store, cachedNode.ID)
 	if err == nil && mergeNodeMatches(liveNode, labels, props) {
 		return liveNode
 	}
@@ -157,7 +157,7 @@ func (e *StorageExecutor) loadMergeCandidateNodes(store storage.Engine, ids []st
 			continue
 		}
 		seen[id] = struct{}{}
-		n, err := store.GetNode(id)
+		n, err := getQueryNode(store, id)
 		if err != nil || n == nil {
 			continue
 		}

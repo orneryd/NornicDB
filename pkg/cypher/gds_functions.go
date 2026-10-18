@@ -399,7 +399,7 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 		return nil
 	}
 	id := fmt.Sprint(value)
-	if node, err := store.GetNode(storage.NodeID(id)); err == nil && node != nil {
+	if node, err := getQueryNode(store, storage.NodeID(id)); err == nil && node != nil {
 		return node
 	}
 	return nil
