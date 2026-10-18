@@ -14,9 +14,11 @@ type projectedNodePropertyValueMap = map[string]map[string]interface{}
 // gdsConvertPropertyValue is the single conversion of projected values.
 // An empty target infers the storage type. A target converts to that type;
 // the Relationship target requires a numeric scalar and stores Float. Only
-// native scalar import may widen Integer to Float. All imports validate
-// Long-to-Double conversion with GDS's bound. Array builders keep
-// their first type and permit only lossless Double-to-Long conversion.
+// native scalar import may widen Integer to Float. Imports validate
+// Long-to-Double conversion with GDS's bound, except where GDS converts
+// before reading: the Longs in one mixed numeric list, and a native
+// relationship's stored Long. Array builders keep their first type and permit
+// only lossless Double-to-Long conversion.
 func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exact interface{}, kind string, ok bool, err error) {
 	defaultValue := strings.HasPrefix(target, "Default ")
 	target = strings.TrimPrefix(target, "Default ")
@@ -28,6 +30,18 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		return nil, "", false, nil
 	}
 	if relationship {
+		if defaultValue {
+			// GDS checks a default's type before reading it as a value.
+			switch value.(type) {
+			case string, bool:
+				return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType("Double", gdsJavaType(value)), nil)
+			}
+			if _, isMap := value.(map[string]interface{}); isMap {
+				return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType("Double", "HashMap"), nil)
+			} else if items, list := cypherListValue(value); list && len(items) == 0 {
+				return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType("Double", "Object[]"), nil)
+			}
+		}
 		switch typed := value.(type) {
 		case string:
 			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT", "String("+strconv.Quote(typed)+")"), nil)
@@ -87,10 +101,9 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 				floats := make([]float64, len(items))
 				for i, item := range items {
 					if isIntegerProcedureValue(item) {
-						floats[i], err = gdsLongToDouble(gdsInteger(item), true)
-						if err != nil {
-							return nil, "", false, err
-						}
+						// A mixed numeric list is a Double array before GDS
+						// reads it, so its Longs round without the import bound.
+						floats[i], _ = gdsLongToDouble(gdsInteger(item), false)
 					} else if number, numeric := toFloat64(item); numeric {
 						floats[i] = number
 					} else {
@@ -111,6 +124,13 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType(expected, gdsJavaType(exact)), nil)
 	}
 	if relationship && strings.HasPrefix(kind, "List") {
+		if defaultValue {
+			actual := "long[]"
+			if kind == "List of Float" {
+				actual = "double[]"
+			}
+			return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType("Double", actual), nil)
+		}
 		return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("NUMBER_ARRAY", gdsJavaValueText(exact)), nil)
 	}
 	if target == "" || target == kind {
@@ -118,7 +138,10 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 	}
 	switch {
 	case target == "Float" && kind == "Integer":
-		number, err := gdsLongToDouble(exact.(int64), true)
+		// Native stored relationship Longs round; defaults and explicit
+		// typed-array widening retain the import bound.
+		bounded := !(relationship && widen && !defaultValue)
+		number, err := gdsLongToDouble(exact.(int64), bounded)
 		return number, target, err == nil, err
 	case target == "Integer" && kind == "Float":
 		if widen {
