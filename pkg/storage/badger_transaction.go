@@ -1224,10 +1224,19 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 	if tx.engine.writeBehind != nil {
 		var edges []*Edge
 		var err error
-		if len(prefix) > 0 && prefix[0] == prefixOutgoingIndex { edges, err = tx.engine.GetOutgoingEdges(deletedNodeID) } else { edges, err = tx.engine.GetIncomingEdges(deletedNodeID) }
-		if err != nil { return 0, nil, err }
+		if len(prefix) > 0 && prefix[0] == prefixOutgoingIndex {
+			edges, err = tx.engine.GetOutgoingEdges(deletedNodeID)
+		} else {
+			edges, err = tx.engine.GetIncomingEdges(deletedNodeID)
+		}
+		if err != nil {
+			return 0, nil, err
+		}
 		captured = make(map[EdgeID]*Edge, len(edges))
-		for _, edge := range edges { edgeIDs = append(edgeIDs, edge.ID); captured[edge.ID] = edge }
+		for _, edge := range edges {
+			edgeIDs = append(edgeIDs, edge.ID)
+			captured[edge.ID] = edge
+		}
 	} else if err := tx.scanCommittedKeysWithPrefixLocked(prefix, func(key []byte) error {
 		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(key)
 		if !ok {
@@ -1240,7 +1249,6 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 	}); err != nil {
 		return 0, nil, err
 	}
-
 
 	var deletedCount int64
 	var deletedIDs []EdgeID
@@ -1990,7 +1998,9 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
 func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, properties []string) (*Node, error) {
-	if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetNodeProjected(nodeID, properties) }
+	if tx.engine != nil && tx.engine.writeBehind != nil {
+		return tx.engine.GetNodeProjected(nodeID, properties)
+	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
 	}
@@ -3349,7 +3359,9 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
-	if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetEdge(edgeID) }
+	if tx.engine != nil && tx.engine.writeBehind != nil {
+		return tx.engine.GetEdge(edgeID)
+	}
 	if tx.readTS.IsZero() {
 		key := edgeKey(edgeID)
 		item, err := tx.badgerTx.Get(key)
@@ -3424,7 +3436,9 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	// Updating it is therefore not a write-write conflict — it is the same
 	// latest-committed state the update read from (monster retest part 1,
 	// "SET on a buffered relationship fails with a conflict").
-if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetEdge(edgeID) }
+	if tx.engine != nil && tx.engine.writeBehind != nil {
+		return tx.engine.GetEdge(edgeID)
+	}
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
@@ -4093,7 +4107,6 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 // rows; a value without an index key falls back to the label's whole overlay.
 // Callers compare the full key / interval themselves.
 
-
 // scanForUniqueViolation performs a full database scan to check for UNIQUE violations
 // within a single namespace (database).
 func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property string, value interface{}, excludeNodeID NodeID) error {
@@ -4167,9 +4180,11 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
 		nsPrefix := tx.namespace + ":"
 		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
- if err != nil { return err }
- for _, existing := range candidates {
- id := existing.ID
+		if err != nil {
+			return err
+		}
+		for _, existing := range candidates {
+			id := existing.ID
 			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
 				continue
 			}
