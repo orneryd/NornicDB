@@ -133,7 +133,18 @@ func packageSnowball(opts packageOptions) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "build", "-mod=vendor", "-buildmode=plugin", "-o", outputPath, ".")
+	stageDir, err := os.MkdirTemp(filepath.Dir(outputPath), ".nornicdb-snowball-*")
+	if err != nil {
+		return err
+	}
+	stagedPath := filepath.Join(stageDir, filepath.Base(outputPath))
+	defer func() {
+		_ = os.Remove(stagedPath)
+		_ = os.Remove(manifestPath(stagedPath))
+		// Never recursively delete backups if restoring an old file failed.
+		_ = os.Remove(stageDir)
+	}()
+	cmd := exec.Command("go", "build", "-mod=vendor", "-buildmode=plugin", "-o", stagedPath, ".")
 	cmd.Dir = buildDir
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
 	var stderr bytes.Buffer
@@ -141,7 +152,7 @@ func packageSnowball(opts packageOptions) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("go build plugin failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	digest, err := stemmer.SHA256File(outputPath)
+	digest, err := stemmer.SHA256File(stagedPath)
 	if err != nil {
 		return err
 	}
@@ -161,7 +172,10 @@ func packageSnowball(opts packageOptions) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	return os.WriteFile(manifestPath(outputPath), raw, 0o644)
+	if err := os.WriteFile(manifestPath(stagedPath), raw, 0o644); err != nil {
+		return err
+	}
+	return publishSnowballPackage(stagedPath, outputPath)
 }
 
 // isolateSnowballRuntime gives each generated plugin its own import identity.
