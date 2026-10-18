@@ -709,13 +709,15 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			}
 		}
 	}
-	// With both ends bound, expand from the end with fewer relationships in
-	// the direction it sees them: the same relationships either way.
+	// COUNT can amortize choosing the end with fewer relationships. EXISTS
+	// reads adjacency directly: degree probes scan the storage indexes too,
+	// and paying for two scans before the first possible match is slower
+	// than the bound-hop predicate they replace.
 	from, target := seed, storage.NodeID("")
 	if end != nil {
 		target = end.ID
 		reversed := reverseRelationshipDirection(rel.Direction)
-		if end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
+		if !first && end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
 			from, target, rel.Direction = end, seed.ID, reversed
 		}
 	}
