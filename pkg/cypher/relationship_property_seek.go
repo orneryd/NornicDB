@@ -11,6 +11,8 @@ type relationshipSeek struct {
 	name, relType string
 	properties    []string
 	values        []interface{}
+	runtimeKey    bool // EXPLAIN: supported equality key is resolved per incoming row.
+	estimatedRows int64
 }
 
 type relationshipSeekPredicateKey struct{}
@@ -37,6 +39,7 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 	}
 	rel := match.Relationship
 	values := make(map[string]interface{}, len(rel.Properties))
+	var unresolved map[string]bool
 	for key, value := range rel.Properties {
 		values[key] = value
 	}
@@ -52,24 +55,42 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 			if value, ok := e.indexSeekConstant(ctx, shape.constant); ok {
 				values[shape.property] = value
 			} else if relationshipSeekIncomingExpression(shape.constant, unknown) {
-				// EXPLAIN knows an incoming row's variables, not their values.
-				values[shape.property] = "<incoming value>"
+				// The semantic scope owner supplies incoming names. Keep a
+				// deferred key explicit, rather than inventing a scalar value.
+				if unresolved == nil {
+					unresolved = make(map[string]bool)
+				}
+				unresolved[shape.property] = true
 			}
 		}
 	}
 	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(rel.Types[0]) {
 		key := make([]interface{}, len(index.Properties))
 		complete := true
+		runtimeKey := false
 		for i, property := range index.Properties {
 			var exists bool
 			key[i], exists = values[property]
+			if unresolved[property] {
+				runtimeKey = true
+				continue
+			}
 			if !exists {
 				complete = false
 				break
 			}
 		}
-		if complete && storage.RelationshipIndexValuesSupported(key) {
-			return relationshipSeek{name: index.Name, relType: rel.Types[0], properties: index.Properties, values: key}, true
+		supportedValues := key
+		if runtimeKey {
+			supportedValues = make([]interface{}, 0, len(key))
+			for i, property := range index.Properties {
+				if !unresolved[property] {
+					supportedValues = append(supportedValues, key[i])
+				}
+			}
+		}
+		if complete && (len(supportedValues) == 0 || storage.RelationshipIndexValuesSupported(supportedValues)) {
+			return relationshipSeek{name: index.Name, relType: rel.Types[0], properties: index.Properties, values: key, runtimeKey: runtimeKey, estimatedRows: 10}, true
 		}
 	}
 	return empty, false
@@ -84,14 +105,14 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 	}
 	seek, ok := e.relationshipPropertySeek(ctx, match, seekWhere, nil)
 	if !ok {
-		recordRelationshipSeekFallback(ctx, match.Relationship.Variable)
+		recordRelationshipSeekFallback(ctx, pattern, seekWhere, match.Relationship.Variable)
 		return nil, false, nil
 	}
 	reader := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
 	edges, answered, err := reader.SeekRelationships(ctx, seek.relType, seek.properties, seek.values)
 	if err != nil || !answered {
 		if !answered {
-			recordRelationshipSeekFallback(ctx, match.Relationship.Variable)
+			recordRelationshipSeekFallback(ctx, pattern, seekWhere, match.Relationship.Variable)
 		}
 		return nil, answered, err
 	}
@@ -163,7 +184,7 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 	if match.TraversalLimit > 0 && len(paths) > match.TraversalLimit {
 		paths = paths[:match.TraversalLimit]
 	}
-	recordRelationshipSeek(ctx, match.Relationship.Variable, seek, int64(len(edges)), int64(len(paths)))
+	recordRelationshipSeek(ctx, pattern, seekWhere, match.Relationship.Variable, seek, int64(len(edges)), int64(len(paths)))
 	return paths, true, nil
 }
 
