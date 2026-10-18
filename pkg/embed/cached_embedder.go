@@ -302,8 +302,9 @@ func (c *CachedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 	if batcher, ok := c.base.(DocumentBatchChunkEmbedder); ok {
 		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
 	}
-	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
-		return c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, []providerBatchUsage, error) {
+		vectors, err := c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		return vectors, nil, err
 	}, c.Model())
 }
 
