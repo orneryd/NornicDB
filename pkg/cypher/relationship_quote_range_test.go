@@ -83,7 +83,7 @@ func TestDynamicRelationshipRangeModes(t *testing.T) {
 			if typeText == "R" {
 				length = "*1..2"
 			}
-			result, err := exec.Execute(ctx, "MATCH (a:A)-[r:" + typeText + length + " {w:1}]->() RETURN count(r)", nil)
+			result, err := exec.Execute(ctx, "MATCH (a:A)-[r:"+typeText+length+" {w:1}]->() RETURN count(r)", nil)
 			require.NoError(t, err)
 			assert.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 		}
