@@ -774,25 +774,23 @@ func (h *HNSWIndex) liveNeighborsLocked(node uint32, level int, out []uint32) []
 }
 
 // scanLiveLocked scores every live vector, closest first, in a slice from
-// itemsPool. h.mu must be held.
+// itemsPool. It ranges the live IDs (idToInternal), so its work follows the
+// live population: tombstone slots left by removals are never visited.
+// h.mu must be held.
 func (h *HNSWIndex) scanLiveLocked(ctx context.Context, query []float32) ([]hnswDistItem, error) {
 	items := h.itemsPool.Get().([]hnswDistItem)[:0]
-	for id, deleted := range h.deleted {
-		if id&1023 == 0 {
+	visited := 0
+	for _, internalID := range h.idToInternal {
+		if visited&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				h.itemsPool.Put(items[:0])
 				return nil, err
 			}
 		}
-		if deleted {
+		visited++
+		if !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
 			continue
 		}
-		// Allocation-free bounds check (util.SafeIntToUint32 formats and
-		// parses the number: about five allocations per vector here).
-		if uint64(id) > uint64(^uint32(0)) {
-			break
-		}
-		internalID := uint32(id)
 		vec := h.vectorAtLocked(internalID)
 		if len(vec) != h.dimensions {
 			continue
