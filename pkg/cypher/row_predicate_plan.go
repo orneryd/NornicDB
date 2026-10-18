@@ -643,10 +643,12 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 		})
 		return value, err
 	}
-	switch part.kind {
-	case rowPredicatePattern:
+	// Keep graph-pattern dispatch separate from the hot scalar switch.
+	if part.kind == rowPredicatePattern {
 		matched, err := part.pattern.evaluate(e, ctx, scope)
 		return matched, err
+	}
+	switch part.kind {
 	case rowPredicateAnd, rowPredicateOr:
 		value, _, err := evaluateLogicalOperands(len(part.parts), part.kind == rowPredicateOr, func(i int) (interface{}, bool, error) {
 			value, err := e.rowPredicatePartValue(ctx, &part.parts[i], scope, memberships)
