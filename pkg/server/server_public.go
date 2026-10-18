@@ -103,6 +103,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 					if ns == "" || ns == "system" {
 						continue
 					}
+					if _, readable := s.databaseReadAccess(getClaims(r), ns); !readable {
+						continue
+					}
 					databaseCount++
 					prefix := ns + ":"
 					if n, err := statsEngine.NodeCountByPrefix(prefix); err == nil {
@@ -129,6 +132,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			}
 			dbName := dbInfo.Name
 			if dbName == "system" {
+				continue
+			}
+			if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
 				continue
 			}
 			databaseCount++
@@ -158,6 +164,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if s.dbManager != nil {
 		for _, info := range s.dbManager.ListDatabases() {
 			if info.Name == "" || info.Name == "system" {
+				continue
+			}
+			if _, readable := s.databaseReadAccess(getClaims(r), info.Name); !readable {
 				continue
 			}
 			st := s.db.GetDatabaseSearchStatus(info.Name)
