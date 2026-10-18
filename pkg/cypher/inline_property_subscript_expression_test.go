@@ -140,3 +140,52 @@ func TestRelationshipRangeReadersSkipPropertyMaps(t *testing.T) {
 	open, end := nextRelationshipBracket("(a)-[r->(b)", 0)
 	assert.Equal(t, []int{-1, -1}, []int{open, end})
 }
+
+// TestDynamicRelationshipTypeExpressionKeepsItsRange pins a variable-length
+// relationship whose dynamic type is an expression with a map literal, a
+// subscript or arithmetic ($({k: t}.k), $(['PR', 'X'][i - 1])): the '{', '*'
+// or '..' inside $(...) is part of the type expression, and the '*' after it
+// still makes the variable a relationship list. The expected results are
+// Neo4j 5.26's.
+func TestDynamicRelationshipTypeExpressionKeepsItsRange(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dynamic_type_range"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:A {id: 'a'})-[:PR]->(:B)-[:PR]->(:C)", nil)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"UNWIND ['PR'] AS t MATCH (a:A)-[r:$({k: t}.k)*1..2]->(b) RETURN size(r) AS hops ORDER BY hops", [][]interface{}{{int64(1)}, {int64(2)}}},
+		{"UNWIND ['PR'] AS t MATCH (a:A)-[r:$({k: t}.k)*1..2]->(b) RETURN r[0].x IS NULL AS first ORDER BY first", [][]interface{}{{true}, {true}}},
+		{"UNWIND ['PR'] AS t MATCH (a:A)-[r:$({k: t}.k)]->(b) RETURN type(r) AS ty", [][]interface{}{{"PR"}}},
+		{"UNWIND [1] AS i MATCH (a:A)-[r:$(['PR', 'X'][i - 1])*2]->(b) RETURN size(r) AS hops", [][]interface{}{{int64(2)}}},
+		{"UNWIND [['PR']] AS ts MATCH (a:A)-[r:$(ts[0..1][0])]->(b) RETURN type(r) AS ty", [][]interface{}{{"PR"}}},
+		{"UNWIND [1] AS i MATCH (a:A)-[r:$(['X', 'PR'][i * 1])]->(b) RETURN type(r) AS ty", [][]interface{}{{"PR"}}},
+		{"UNWIND [1] AS i MATCH (a:A)-[r:$(['X', 'PR'][i * 1])*2]->(b) RETURN size(r) AS hops", [][]interface{}{{int64(2)}}},
+		{"UNWIND ['PR'] AS t MATCH p = (a:A)-[r:$({k: t}.k)*1..2]->(b) RETURN [x IN r | type(x)] AS ts ORDER BY size(ts)", [][]interface{}{{[]interface{}{"PR"}}, {[]interface{}{"PR", "PR"}}}},
+		{"UNWIND ['PR'] AS t MATCH (a:A) OPTIONAL MATCH (a)-[r:$({k: t}.k)]->(b) RETURN type(r) AS ty", [][]interface{}{{"PR"}}},
+		{"UNWIND ['PR'] AS t MATCH (a:A) OPTIONAL MATCH (a)-[r:$({k: t}.k)*1..2]->(b) RETURN size(r) AS hops ORDER BY hops", [][]interface{}{{int64(1)}, {int64(2)}}},
+		{"UNWIND [1] AS i MATCH (a:A) OPTIONAL MATCH (a)-[r:$(['X', 'PR'][i * 1])]->(b) RETURN type(r) AS ty", [][]interface{}{{"PR"}}},
+		{"UNWIND [1] AS i MATCH (a:A) OPTIONAL MATCH (a)-[r:$(['X', 'PR'][i * 1])*2]->(b) RETURN size(r) AS hops", [][]interface{}{{int64(2)}}},
+	} {
+		result, err := exec.Execute(ctx, tc.query, nil)
+		if assert.NoError(t, err, tc.query) {
+			assert.Equal(t, tc.want, result.Rows, tc.query)
+		}
+	}
+
+	for pattern, invalid := range map[string]bool{
+		"(a)-[r:$({k: t}.k)*1..2]->(b)":     false,
+		"(a)-[r:$(t * 2)]->(b)":             false,
+		"(a)-[r:$(['A', 'B'][0..1])]->(b)":  false,
+		"(a)-[r:$({k: t}.k)*x]->(b)":        true,
+		"(a)-[r:$({k: t}.k) {w: 1}]->(b)":   false,
+		"(a)-[r:$({k: t}.k)*2 {w: 1}]->(b)": false,
+	} {
+		assert.Equal(t, invalid, invalidRelationshipPattern(pattern), pattern)
+	}
+	assert.Equal(t,
+		map[string]struct{}{"r": {}},
+		variableLengthRelationshipVariableSet("(a)-[r:$({k: t}.k)*1..2]->(b)-[s:$(t * 2)]->(c)"))
+}
