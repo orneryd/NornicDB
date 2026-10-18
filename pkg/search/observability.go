@@ -77,7 +77,7 @@ func (s *Service) AttachMetrics(metrics *observability.SearchMetrics) {
 	s.mu.Unlock()
 
 	s.continuationMu.Lock()
-	if registry, ok := s.continuationRegistry.(*resultstream.Registry); ok {
+	if registry, ok := s.continuationRegistry.(interface{ SetObserver(resultstream.Observer) }); ok {
 		registry.SetObserver(newCursorObserver(metrics))
 	}
 	s.continuationMu.Unlock()
