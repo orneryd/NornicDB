@@ -159,17 +159,19 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 	return s.GetResolvedAccessForRoles(claims.Roles, dbName)
 }
 
-// databaseReadAccess is the one check of whether the principal may read a
-// database through a route that reads it directly (search, similarity, the
-// graph routes): accessible is whether the database allowlist lets it use the
-// database at all, readable whether it may also read it (the per-database
-// read privilege of a signed-in principal; a request without claims passes
-// the allowlist only when authentication is disabled).
+// databaseReadAccess is the shared decision for HTTP routes that read database
+// data directly instead of executing an authorized Cypher statement.
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	dataDatabase, accessible := s.graphAccess(s.getDatabaseAccessMode(claims), dbName)
+	if !accessible {
 		return false, false
 	}
-	return true, claims == nil || s.getResolvedAccess(claims, dbName).Read
+	var resolve func(string) auth.ResolvedAccess
+	if claims != nil {
+		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
+	}
+	_, readable = auth.ResolveDatabaseReadAccess(nil, resolve, dataDatabase)
+	return true, readable
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request

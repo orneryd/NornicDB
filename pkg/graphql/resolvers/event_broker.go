@@ -9,10 +9,17 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ch     interface{} // Channel (type varies by subscription type)
-	labels []string
-	types  []string
-	id     *string
+	ch       interface{} // Channel (type varies by subscription type)
+	database string
+	labels   []string
+	types    []string
+	id       *string
+}
+
+func matchesDatabase(subscriptionDatabase, eventDatabase string) bool {
+	// Empty is retained as the legacy broker-wide test/API scope. Production
+	// GraphQL subscriptions and storage events always carry a database.
+	return subscriptionDatabase == "" || eventDatabase == "" || subscriptionDatabase == eventDatabase
 }
 
 // EventBroker is a thread-safe pub/sub system for GraphQL subscriptions.
@@ -107,12 +114,17 @@ func matchesFilter(labels []string, types []string, id *string, eventLabels []st
 // Returns a channel that will receive events for nodes matching the label filter.
 // If labels is empty, receives all node created events.
 func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string) <-chan *models.Node {
+	return b.SubscribeNodeCreatedInDatabase(ctx, "", labels)
+}
+
+func (b *EventBroker) SubscribeNodeCreatedInDatabase(ctx context.Context, database string, labels []string) <-chan *models.Node {
 	ch := make(chan *models.Node, 10) // Buffered to prevent blocking
 
 	b.mu.Lock()
 	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		ch:       ch,
+		database: database,
+		labels:   labels,
 	})
 	b.mu.Unlock()
 
@@ -128,13 +140,18 @@ func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string)
 // SubscribeNodeUpdated subscribes to node updated events.
 // Returns a channel that will receive events for nodes matching the ID or label filter.
 func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labels []string) <-chan *models.Node {
+	return b.SubscribeNodeUpdatedInDatabase(ctx, "", id, labels)
+}
+
+func (b *EventBroker) SubscribeNodeUpdatedInDatabase(ctx context.Context, database string, id *string, labels []string) <-chan *models.Node {
 	ch := make(chan *models.Node, 10)
 
 	b.mu.Lock()
 	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
-		id:     id,
+		ch:       ch,
+		database: database,
+		labels:   labels,
+		id:       id,
 	})
 	b.mu.Unlock()
 
@@ -149,12 +166,17 @@ func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labe
 // SubscribeNodeDeleted subscribes to node deleted events.
 // Returns a channel that will receive node IDs for deleted nodes matching the label filter.
 func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string) <-chan string {
+	return b.SubscribeNodeDeletedInDatabase(ctx, "", labels)
+}
+
+func (b *EventBroker) SubscribeNodeDeletedInDatabase(ctx context.Context, database string, labels []string) <-chan string {
 	ch := make(chan string, 10)
 
 	b.mu.Lock()
 	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		ch:       ch,
+		database: database,
+		labels:   labels,
 	})
 	b.mu.Unlock()
 
@@ -169,12 +191,17 @@ func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string)
 // SubscribeRelationshipCreated subscribes to relationship created events.
 // Returns a channel that will receive events for relationships matching the type filter.
 func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []string) <-chan *models.Relationship {
+	return b.SubscribeRelationshipCreatedInDatabase(ctx, "", types)
+}
+
+func (b *EventBroker) SubscribeRelationshipCreatedInDatabase(ctx context.Context, database string, types []string) <-chan *models.Relationship {
 	ch := make(chan *models.Relationship, 10)
 
 	b.mu.Lock()
 	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		ch:       ch,
+		database: database,
+		types:    types,
 	})
 	b.mu.Unlock()
 
@@ -189,13 +216,18 @@ func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []
 // SubscribeRelationshipUpdated subscribes to relationship updated events.
 // Returns a channel that will receive events for relationships matching the ID or type filter.
 func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *string, types []string) <-chan *models.Relationship {
+	return b.SubscribeRelationshipUpdatedInDatabase(ctx, "", id, types)
+}
+
+func (b *EventBroker) SubscribeRelationshipUpdatedInDatabase(ctx context.Context, database string, id *string, types []string) <-chan *models.Relationship {
 	ch := make(chan *models.Relationship, 10)
 
 	b.mu.Lock()
 	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
-		id:    id,
+		ch:       ch,
+		database: database,
+		types:    types,
+		id:       id,
 	})
 	b.mu.Unlock()
 
@@ -210,12 +242,17 @@ func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *stri
 // SubscribeRelationshipDeleted subscribes to relationship deleted events.
 // Returns a channel that will receive relationship IDs for deleted relationships matching the type filter.
 func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []string) <-chan string {
+	return b.SubscribeRelationshipDeletedInDatabase(ctx, "", types)
+}
+
+func (b *EventBroker) SubscribeRelationshipDeletedInDatabase(ctx context.Context, database string, types []string) <-chan string {
 	ch := make(chan string, 10)
 
 	b.mu.Lock()
 	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		ch:       ch,
+		database: database,
+		types:    types,
 	})
 	b.mu.Unlock()
 
@@ -229,6 +266,10 @@ func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []
 
 // PublishNodeCreated publishes a node created event to all matching subscribers.
 func (b *EventBroker) PublishNodeCreated(node *models.Node) {
+	b.PublishNodeCreatedInDatabase("", node)
+}
+
+func (b *EventBroker) PublishNodeCreatedInDatabase(database string, node *models.Node) {
 	if node == nil {
 		return
 	}
@@ -240,7 +281,7 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -254,6 +295,10 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 
 // PublishNodeUpdated publishes a node updated event to all matching subscribers.
 func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
+	b.PublishNodeUpdatedInDatabase("", node)
+}
+
+func (b *EventBroker) PublishNodeUpdatedInDatabase(database string, node *models.Node) {
 	if node == nil {
 		return
 	}
@@ -264,7 +309,7 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -280,6 +325,10 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 // Note: For deleted events, we only have the ID, so label filtering is not possible.
 // We send to all subscriptions (label filters are ignored for deletions).
 func (b *EventBroker) PublishNodeDeleted(nodeID string) {
+	b.PublishNodeDeletedInDatabase("", nodeID)
+}
+
+func (b *EventBroker) PublishNodeDeletedInDatabase(database, nodeID string) {
 	if nodeID == "" {
 		return
 	}
@@ -291,6 +340,9 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
+		if !matchesDatabase(sub.database, database) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- nodeID:
@@ -303,6 +355,10 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 
 // PublishRelationshipCreated publishes a relationship created event to all matching subscribers.
 func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
+	b.PublishRelationshipCreatedInDatabase("", rel)
+}
+
+func (b *EventBroker) PublishRelationshipCreatedInDatabase(database string, rel *models.Relationship) {
 	if rel == nil {
 		return
 	}
@@ -313,7 +369,7 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -327,6 +383,10 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 
 // PublishRelationshipUpdated publishes a relationship updated event to all matching subscribers.
 func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
+	b.PublishRelationshipUpdatedInDatabase("", rel)
+}
+
+func (b *EventBroker) PublishRelationshipUpdatedInDatabase(database string, rel *models.Relationship) {
 	if rel == nil {
 		return
 	}
@@ -337,7 +397,7 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -353,6 +413,10 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 // Note: For deleted events, we only have the ID, so type filtering is not possible.
 // We send to all subscriptions (type filters are ignored for deletions).
 func (b *EventBroker) PublishRelationshipDeleted(relID string) {
+	b.PublishRelationshipDeletedInDatabase("", relID)
+}
+
+func (b *EventBroker) PublishRelationshipDeletedInDatabase(database, relID string) {
 	if relID == "" {
 		return
 	}
@@ -364,6 +428,9 @@ func (b *EventBroker) PublishRelationshipDeleted(relID string) {
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
+		if !matchesDatabase(sub.database, database) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- relID:

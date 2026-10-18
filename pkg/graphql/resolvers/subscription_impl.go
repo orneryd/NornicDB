@@ -14,7 +14,11 @@ func (r *subscriptionResolver) subscriptionNodeCreated(ctx context.Context, labe
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeNodeCreated(ctx, labels), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeNodeCreatedInDatabase(ctx, database, labels), nil
 }
 
 // subscriptionNodeUpdated subscribes to node updated events.
@@ -23,7 +27,11 @@ func (r *subscriptionResolver) subscriptionNodeUpdated(ctx context.Context, id *
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeNodeUpdated(ctx, id, labels), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeNodeUpdatedInDatabase(ctx, database, id, labels), nil
 }
 
 // subscriptionNodeDeleted subscribes to node deleted events.
@@ -32,7 +40,11 @@ func (r *subscriptionResolver) subscriptionNodeDeleted(ctx context.Context, labe
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeNodeDeleted(ctx, labels), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeNodeDeletedInDatabase(ctx, database, labels), nil
 }
 
 // subscriptionRelationshipCreated subscribes to relationship created events.
@@ -41,7 +53,11 @@ func (r *subscriptionResolver) subscriptionRelationshipCreated(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeRelationshipCreated(ctx, types), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeRelationshipCreatedInDatabase(ctx, database, types), nil
 }
 
 // subscriptionRelationshipUpdated subscribes to relationship updated events.
@@ -50,7 +66,11 @@ func (r *subscriptionResolver) subscriptionRelationshipUpdated(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeRelationshipUpdated(ctx, id, types), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeRelationshipUpdatedInDatabase(ctx, database, id, types), nil
 }
 
 // subscriptionRelationshipDeleted subscribes to relationship deleted events.
@@ -59,7 +79,11 @@ func (r *subscriptionResolver) subscriptionRelationshipDeleted(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	return r.EventBroker.SubscribeRelationshipDeleted(ctx, types), nil
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.EventBroker.SubscribeRelationshipDeletedInDatabase(ctx, database, types), nil
 }
 
 // subscriptionSearchStream subscribes to streaming search results.
