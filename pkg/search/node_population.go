@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/security"
 )
@@ -104,9 +105,16 @@ func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
 // nodePopulationAdmission is the NODE phase of the existing base operation,
 // not another worker or ANN job. baseBuildControlMu protects publication; err
 // is immutable after done closes. A caller waiting for NODE never waits for ANN.
+// baseBuildControlMu protects the queued live writes and indexMu the IDs
+// they wrote (node_population_writes.go); queued is set while any write is
+// queued.
 type nodePopulationAdmission struct {
-	done chan struct{}
-	err  error
+	done         chan struct{}
+	err          error
+	deferred     []deferredIndexWrite
+	queued       atomic.Bool
+	writtenNodes map[string]struct{}
+	writtenEdges map[string]struct{}
 }
 
 func (s *Service) nodeSourcesCompleteLocked() bool {
@@ -126,24 +134,63 @@ func (s *Service) claimNodeAdmission() *nodePopulationAdmission {
 	}
 	job := &nodePopulationAdmission{done: make(chan struct{})}
 	s.nodeAdmission = job
+	s.populationRunning.Store(true)
 	return job
 }
 
 func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
+	s.publishNodeAdmission(job, err, "")
+}
+
+// publishNodeAdmission publishes NODE. The queued live writes are applied
+// first, outside the write lock; the last of them, and closing the job, share
+// one indexMu section, so every write is applied either here or directly
+// after it. A failed population marks its sources incomplete before any
+// queued write is applied, as a write after the failure would find them.
+// parkPath, set by an explicit build that has just saved BM25 there (caller
+// holds persistRunMu), parks BM25 through the warmup only when no queued
+// write changed it since the save.
+func (s *Service) publishNodeAdmission(job *nodePopulationAdmission, err error, parkPath string) {
+	if err != nil {
+		s.indexMu.Lock()
+		if !nodeAdmissionClosed(job) {
+			s.changeNodeSourcesLocked(nodePopulationFailed)
+		}
+		s.indexMu.Unlock()
+	}
+	// Under a steady write stream each pass applies what arrived during the
+	// previous one; after a few the rest is applied under the lock.
+	for pass := 0; pass < 3 && job.queued.Load(); pass++ {
+		s.applyDeferredIndexWrites(job)
+	}
+	parked := false
 	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
 	s.baseBuildControlMu.Lock()
-	defer s.baseBuildControlMu.Unlock()
+	if !nodeAdmissionClosed(job) {
+		s.applyDeferredIndexWritesLocked(job, job.takeDeferredLocked())
+		if err == nil && parkPath != "" {
+			parked = s.parkFulltextLocked(parkPath)
+		}
+		job.err = err
+		close(job.done)
+		if s.nodeAdmission == job {
+			s.populationRunning.Store(false)
+		}
+	}
+	s.baseBuildControlMu.Unlock()
+	s.indexMu.Unlock()
+	if parked {
+		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
+	}
+}
+
+func nodeAdmissionClosed(job *nodePopulationAdmission) bool {
 	select {
 	case <-job.done:
-		return
+		return true
 	default:
+		return false
 	}
-	if err != nil {
-		s.changeNodeSourcesLocked(nodePopulationFailed)
-	}
-	job.err = err
-	close(job.done)
 }
 
 // awaitNodeAdmission waits for the running population job and returns its
@@ -162,20 +209,25 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 }
 
 // lockNodeMutation admits a live write. While a build populates the node
-// sources the write waits for it; otherwise it applies at once, also before
-// any population (the build that follows rebuilds or restores around it). A
-// write never starts or runs a population. On success the caller owns indexMu
-// and must call the returned release.
+// sources the write is queued on it (queueOnPopulation) and queued is true;
+// with an index memory budget it waits for the population instead. Otherwise
+// the write applies at once, also before any population (the build that
+// follows rebuilds or restores around it). A write never starts or runs a
+// population. Unless queued, on success the caller owns indexMu and must call
+// the returned release.
 // Private node/edge batch writers never enter this public boundary. nodeWrite
 // marks a node write: only those change the node sources, so only they make
 // the saved node images stale before a population.
-func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), error) {
+func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferredIndexWrite) (release func(), queued bool, err error) {
 	for {
+		if queued, err := s.queueOnPopulation(write); queued || err != nil {
+			return nil, queued, err
+		}
 		s.indexMu.Lock()
 		if s.lifecycleCtx != nil {
 			if err := s.lifecycleCtx.Err(); err != nil {
 				s.indexMu.Unlock()
-				return nil, err
+				return nil, false, err
 			}
 		}
 		s.baseBuildControlMu.Lock()
@@ -192,10 +244,10 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 		if !pending {
 			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
 				s.indexMu.Unlock()
-				return nil, err
+				return nil, false, err
 			}
 			if !s.needsVectorDimensionsLocked(dimensions) {
-				return s.indexMu.Unlock, nil
+				return s.indexMu.Unlock, false, nil
 			}
 			// Joining construction must precede indexMu. Recheck the SAME source
 			// record and dimensions after reacquiring mutation ownership.
@@ -206,7 +258,7 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 				err := s.lifecycleCtx.Err()
 				s.indexMu.Unlock()
 				resume()
-				return nil, err
+				return nil, false, err
 			}
 			s.baseBuildControlMu.Lock()
 			current := s.nodeAdmission
@@ -227,18 +279,23 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool) (func(), erro
 			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
 				s.indexMu.Unlock()
 				resume()
-				return nil, err
+				return nil, false, err
 			}
 			s.replaceEmptyVectorDimensionsLocked(dimensions)
-			return func() { s.indexMu.Unlock(); resume() }, nil
+			return func() { s.indexMu.Unlock(); resume() }, false, nil
 		}
 		if paused {
 			s.indexMu.Unlock()
-			return nil, ErrSearchIndexBuilding
+			return nil, false, ErrSearchIndexBuilding
+		}
+		if s.populationDefersWrites() {
+			// The population began after queueOnPopulation looked: queue on it.
+			s.indexMu.Unlock()
+			continue
 		}
 		s.indexMu.Unlock()
 		if err := s.awaitNodeAdmission(job); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 }
@@ -379,12 +436,15 @@ type nodePopulationPlan struct {
 	vectorCount      int
 }
 
-// completeNodePopulation publishes NODE before relationships/ANN. Initial live
-// mutations use the same source owner but never execute either later phase.
+// completeNodePopulation publishes NODE before ANN. Initial live mutations use
+// the same source owner but never execute the later phase. Live writes stay
+// queued on job until publishNodeAdmission, so the relationship stream and the
+// base persist below run with the population as the only source writer.
 func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulationAdmission, plan nodePopulationPlan, explicit bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	s.applyDeferredIndexWrites(job)
 	s.indexMu.Lock()
 	if err := ctx.Err(); err != nil {
 		s.indexMu.Unlock()
@@ -406,46 +466,65 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		s.ensureVectorFileStore()
 	}
 	s.indexMu.Unlock()
-	if explicit && plan.nodesRebuilt {
-		s.setBuildPhase("persisting_base_indexes")
-		// BM25 is parked through the warmup only at the checkpoint this persist
-		// wrote (persistBaseIndexesAndPark). Every exit of the population
-		// restores it (runBasePopulationAttempt).
-		if err := s.persistBaseIndexesAndPark(plan.fulltextPath != ""); err != nil {
-			return err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if explicit {
-		// Admit a reusable saved graph while initial mutation admission is still
-		// excluded. After NODE publication every live delta must reach a graph
-		// already installed or the canonical construction job's snapshot/log.
-		s.indexMu.Lock()
-		s.restoreNodePopulationANN(ctx, plan)
-		s.indexMu.Unlock()
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if explicit {
-		// The explicit build applies stored edges from a snapshot stream. It
-		// runs before admission closes, so a live edge write or removal is
-		// admitted only after it and is never overtaken by an older snapshot.
-		s.setBuildPhase("iterating_relationship_vectors")
-		if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
-			// The node population is complete; a relationship failure does
-			// not undo it, so a retry keeps skipping the node iteration.
-			s.finishNodeAdmission(job, nil)
-			return err
-		}
-	}
-	s.finishNodeAdmission(job, nil)
 	if !explicit {
+		s.finishNodeAdmission(job, nil)
 		return nil
 	}
+	// Admit a reusable saved graph before NODE publishes. After it every live
+	// delta must reach a graph already installed or the canonical construction
+	// job's snapshot/log.
+	s.indexMu.Lock()
+	s.restoreNodePopulationANN(ctx, plan)
+	s.indexMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The explicit build applies stored edges from a snapshot stream. Live
+	// edge writes meanwhile are queued, and an edge one of them wrote is never
+	// replaced by the stream's older copy.
+	s.setBuildPhase("iterating_relationship_vectors")
+	if err := s.buildRelationshipVectorIndexes(ctx, job); err != nil {
+		// The node population is complete; a relationship failure does
+		// not undo it, so a retry keeps skipping the node iteration.
+		s.finishNodeAdmission(job, nil)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !plan.nodesRebuilt {
+		s.finishNodeAdmission(job, nil)
+		return s.completeBaseIndexBuild(ctx)
+	}
+	s.setBuildPhase("persisting_base_indexes")
+	if err := s.persistBaseIndexesAndPublish(ctx, job, plan.fulltextPath != ""); err != nil {
+		return err
+	}
 	return s.completeBaseIndexBuild(ctx)
+}
+
+// persistBaseIndexesAndPublish saves the rebuilt base indexes and publishes
+// NODE. No live write is applied while they are saved, so BM25's no-copy
+// snapshot reads sources nobody else changes. With park set, BM25 is parked
+// through the warmup at the checkpoint just saved, only when no queued write
+// changed it since. Every exit of the population restores parked BM25
+// (runBasePopulationAttempt).
+func (s *Service) persistBaseIndexesAndPublish(ctx context.Context, job *nodePopulationAdmission, park bool) error {
+	if !s.nodePopulationForPersist(ctx) || !s.persistEnabled.Load() {
+		s.finishNodeAdmission(job, nil)
+		return nil
+	}
+	s.persistRunMu.Lock()
+	defer s.persistRunMu.Unlock()
+	saved, err := s.persistBaseIndexesLocked()
+	if err != nil {
+		return err
+	}
+	if !park {
+		saved = ""
+	}
+	s.publishNodeAdmission(job, nil, saved)
+	return nil
 }
 
 // nodePopulationForPersist reports whether a persist outside a population may

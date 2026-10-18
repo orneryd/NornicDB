@@ -795,6 +795,11 @@ type Service struct {
 	engine          storage.Engine
 	vectorIndex     *VectorIndex
 	vectorFileStore *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
+
+	// populationRunning is set while nodeAdmission is open, so a live write
+	// outside a population skips the queue with one atomic load.
+	populationRunning atomic.Bool
+
 	// indexMu protects which complete source owns live membership, including
 	// an empty source after clear or a persistence-off interval.
 	nodeSources            nodeSourceRecord
@@ -2283,16 +2288,6 @@ func (s *Service) schedulePersist() {
 // persistBaseIndexes writes BM25 + vector store only (no HNSW/IVF-HNSW).
 // Used after BuildIndexes iteration to make base indexes durable before HNSW/k-means.
 func (s *Service) persistBaseIndexes() error {
-	return s.persistBaseIndexesAndPark(false)
-}
-
-// persistBaseIndexesAndPark is persistBaseIndexes that, when park is set,
-// parks BM25 at the checkpoint it wrote. Parking happens under persistRunMu,
-// so no BM25 writer runs between the save and the park, and only when the
-// whole persist succeeded and the index still matches the saved snapshot. A
-// skipped or failed save, or a change after the save, leaves no current
-// checkpoint, so BM25 stays resident.
-func (s *Service) persistBaseIndexesAndPark(park bool) error {
 	if !s.nodePopulationForPersist(context.Background()) {
 		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
 		return nil
@@ -2302,8 +2297,18 @@ func (s *Service) persistBaseIndexesAndPark(park bool) error {
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
+	_, err := s.persistBaseIndexesLocked()
+	return err
+}
+
+// persistBaseIndexesLocked is persistBaseIndexes for a caller holding
+// persistRunMu. It returns the BM25 path it saved when the whole persist
+// succeeded, so the explicit build can park BM25 at that checkpoint when it
+// publishes NODE (publishNodeAdmission). A skipped or failed save leaves no
+// current checkpoint, so BM25 stays resident.
+func (s *Service) persistBaseIndexesLocked() (string, error) {
 	if !s.persistEnabled.Load() {
-		return nil
+		return "", nil
 	}
 	s.mu.RLock()
 	ftPath := s.fulltextIndexPath
@@ -2312,7 +2317,7 @@ func (s *Service) persistBaseIndexesAndPark(park bool) error {
 	vfs := s.vectorFileStore
 	s.mu.RUnlock()
 	if ftPath == "" && vPath == "" && hnswPath == "" {
-		return nil
+		return "", nil
 	}
 	var persistErr error
 	fulltextSaved := false
@@ -2349,10 +2354,10 @@ func (s *Service) persistBaseIndexesAndPark(park bool) error {
 		}
 	}
 	s.persistSearchBuildSettings(ftPath, vPath, hnswPath)
-	if persistErr == nil && park && fulltextSaved {
-		s.parkFulltext(ftPath)
+	if persistErr != nil || !fulltextSaved {
+		return "", persistErr
 	}
-	return persistErr
+	return ftPath, nil
 }
 
 // persistFulltext is the one BM25 writer for every persist entry point. Caller
@@ -2390,20 +2395,17 @@ func (s *Service) persistFulltext(path string, noCopy bool) (saved bool, err err
 	return true, nil
 }
 
-// parkFulltext clears resident BM25 through the warmup, recording the
-// checkpoint at path as the text source. Caller holds persistRunMu and has
-// just saved path; an index changed since then stays resident.
-func (s *Service) parkFulltext(path string) {
-	s.indexMu.Lock()
-	parked := !s.fulltext().IsDirty()
-	if parked {
-		s.setNodeFulltextCheckpointLocked(path, s.fulltext().Count())
-		s.fulltext().Clear()
+// parkFulltextLocked clears resident BM25 through the warmup, recording the
+// checkpoint at path as the text source. Caller holds persistRunMu and
+// indexMu and has just saved path; an index changed since then stays
+// resident. It reports whether BM25 was parked.
+func (s *Service) parkFulltextLocked(path string) bool {
+	if s.fulltext().IsDirty() {
+		return false
 	}
-	s.indexMu.Unlock()
-	if parked {
-		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-	}
+	s.setNodeFulltextCheckpointLocked(path, s.fulltext().Count())
+	s.fulltext().Clear()
+	return true
 }
 
 func (s *Service) runPersist() {
@@ -2942,8 +2944,8 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstVectorDimensions(node), true)
-	if err != nil {
+	release, queued, err := s.lockNodeMutation(firstVectorDimensions(node), true, deferredIndexWrite{node: node})
+	if err != nil || queued {
 		return err
 	}
 	if !s.buildInProgress.Load() {
@@ -3650,8 +3652,8 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
-	release, err := s.lockNodeMutation(0, true)
-	if err != nil {
+	release, queued, err := s.lockNodeMutation(0, true, deferredIndexWrite{nodeID: string(nodeID)})
+	if err != nil || queued {
 		return err
 	}
 	if !s.buildInProgress.Load() {
@@ -3680,11 +3682,14 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		s.IndexRelationship(edge)
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge), false)
+	release, queued, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge), false, deferredIndexWrite{edge: edge})
 	if err != nil {
 		return err
 	}
 	s.IndexRelationship(edge)
+	if queued {
+		return nil
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -3771,11 +3776,14 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	release, err := s.lockNodeMutation(0, false)
+	release, queued, err := s.lockNodeMutation(0, false, deferredIndexWrite{edgeID: string(edgeID)})
 	if err != nil {
 		return err
 	}
 	s.RemoveRelationship(edgeID)
+	if queued {
+		return nil
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -3881,7 +3889,10 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 	}
 }
 
-func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
+// buildRelationshipVectorIndexes applies the stored edges for the population
+// job. Live writes queued on it are applied between edges, and an edge one of
+// them wrote keeps that write rather than the stream's copy.
+func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodePopulationAdmission) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3889,9 +3900,13 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		s.applyDeferredIndexWrites(job)
 		s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		err := s.indexEdgeLocked(edge)
+		var err error
+		if !job.edgeWrittenLocked(string(edge.ID)) {
+			err = s.indexEdgeLocked(edge)
+		}
 		s.indexMu.Unlock()
 		return err
 	})
@@ -4315,16 +4330,30 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 		if count == 0 && len(batch) > 0 {
 			s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
 		}
+		// Live writes queued since the last batch are applied first; a node
+		// one of them wrote keeps that write, whether this batch read the
+		// node before or after it.
+		s.applyDeferredIndexWrites(job)
 		filtered := make([]*storage.Node, 0, len(batch))
+		s.indexMu.RLock()
 		for _, n := range batch {
+			if job.nodeWrittenLocked(string(n.ID)) {
+				continue
+			}
+			filtered = append(filtered, n)
+		}
+		s.indexMu.RUnlock()
+		kept := filtered[:0]
+		for _, n := range filtered {
 			shouldIndex, err := s.shouldIndexNode(n)
 			if err != nil {
 				return err
 			}
 			if shouldIndex {
-				filtered = append(filtered, n)
+				kept = append(kept, n)
 			}
 		}
+		filtered = kept
 		if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
 			s.indexMu.Lock()
 			defer s.indexMu.Unlock()
