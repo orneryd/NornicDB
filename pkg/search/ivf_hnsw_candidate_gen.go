@@ -50,6 +50,27 @@ func (c *clusterServing) open(ctx context.Context, own clusterView) (context.Con
 	return ctx, view, func() { once.Do(c.lock.Unlock) }, done
 }
 
+// population is the vector count of the cluster generation ctx's query
+// serves from (own's when no serving source is set): the population a
+// clustered generator searches when it routes every cluster.
+func (c *clusterServing) population(ctx context.Context, own *gpu.ClusterIndex) int {
+	if c == nil {
+		if own == nil {
+			return 0
+		}
+		return own.Count()
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, view, done := c.view(ctx)
+	defer done()
+	if view.index == nil {
+		return 0
+	}
+	return view.index.Count()
+}
+
 // ownClusterView is a generator's view without a serving source: the
 // index's published routing.
 func ownClusterView(index *gpu.ClusterIndex, probes int, graph clusterHNSWLookup) clusterView {
@@ -58,6 +79,25 @@ func ownClusterView(index *gpu.ClusterIndex, probes int, graph clusterHNSWLookup
 		view.routing = index.PublishedClustering()
 	}
 	return view
+}
+
+// routeClusters is the clusters a clustered generator searches for a request
+// of limit candidates: every populated cluster when the request is as wide as
+// the index's population, so the search can be complete (exhaustion requires
+// every cluster); otherwise the selector's choice, or the view.probes nearest.
+// The caller holds the view's routing section.
+func routeClusters(ctx context.Context, query []float32, view clusterView, selector func(context.Context, []float32, int) []int, limit int) []int {
+	if view.index != nil && limit >= view.index.Count() {
+		return view.routing.PopulatedClusters()
+	}
+	var clusterIDs []int
+	if selector != nil {
+		clusterIDs = selector(ctx, query, view.probes)
+	}
+	if len(clusterIDs) == 0 {
+		clusterIDs = view.routing.NearestClusters(query, view.probes)
+	}
+	return clusterIDs
 }
 
 // IVFHNSWCandidateGen implements IVF-HNSW: centroid routing (IVF) into per-cluster HNSW indexes.
@@ -103,19 +143,57 @@ func (g *IVFHNSWCandidateGen) SetServing(lock sync.Locker, view func(context.Con
 }
 
 func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is the number of vectors the clustered index holds.
+func (g *IVFHNSWCandidateGen) candidatePopulation(ctx context.Context) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
+	defer done()
+	defer unlock()
+	_, population := graphPopulation(view)
+	return population
+}
+
+// graphPopulation is every populated cluster of view and the live vectors
+// their graphs hold together: what IVF-HNSW searches when it routes every
+// cluster. A populated cluster without a graph adds nothing here; routing to
+// it fails (routedGraphs). The caller holds the view's routing section.
+func graphPopulation(view clusterView) (clusters []int, population int) {
+	if view.routing == nil || view.graph == nil {
+		return nil, 0
+	}
+	clusters = view.routing.PopulatedClusters()
+	for _, cluster := range clusters {
+		if graph := view.graph(cluster); graph != nil {
+			population += graph.Size()
+		}
+	}
+	return clusters, population
+}
+
+// searchCandidatesWithExhaustion searches the routed clusters' graphs. It is
+// exhausted only when every cluster graph was routed (routedGraphs routes all
+// of them for a request as wide as their population), every graph search was
+// itself exhausted, and the limit cut none of the merged candidates.
+func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, g.getClusterHNSW))
 	defer done()
 	defer unlock()
-	indexes, err := g.routedGraphs(ctx, query, view)
+	indexes, routedAll, err := g.routedGraphs(ctx, query, view, boundCandidateLimit(k))
 	unlock()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(indexes) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, routedAll, nil
 	}
 
 	// The pool kept for exact rescoring follows the single-graph rule,
@@ -131,6 +209,7 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	}
 	totalLimit := quantizedCandidateLimit(ctx, k, quantized)
 	results := make([][]ANNResult, len(indexes))
+	exhausted := make([]bool, len(indexes))
 	errors := make([]error, len(indexes))
 	ef := hnswEfFromContext(ctx)
 	workers := min(4, runtime.GOMAXPROCS(0), len(indexes))
@@ -141,8 +220,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 				return
 			}
 			// Any list may contain the entire global top-K: retain its full budget,
-			// with a beam wide enough to supply it.
-			results[i], errors[i] = indexes[i].SearchWithEf(ctx, query, totalLimit, minSimilarity, ivfSearchBeam(indexes[i], ef, totalLimit))
+			// with a beam wide enough to supply it. A beam as wide as the
+			// graph's population scores all of it (searchWithEfExhaustion).
+			results[i], exhausted[i], errors[i] = indexes[i].searchWithEfExhaustion(ctx, query, totalLimit, minSimilarity, ivfSearchBeam(indexes[i], ef, totalLimit))
 		}
 	}
 	if workers == 1 {
@@ -156,11 +236,13 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		pending.Wait()
 	}
 	// Merge in route order after all workers finish, preserving error and score policy.
+	complete := routedAll
 	best := make(map[string]float64, totalLimit)
 	for i, hits := range results {
 		if errors[i] != nil {
-			return nil, errors[i]
+			return nil, false, errors[i]
 		}
+		complete = complete && exhausted[i]
 		for _, r := range hits {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
@@ -176,39 +258,46 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > totalLimit {
 		out = out[:totalLimit]
+		complete = false
 	}
-	return out, nil
+	return out, complete, nil
 }
 
 // routedGraphs routes query on view's generation and takes the routed
-// clusters' graphs from the same generation. Missing graphs are incomplete
-// ANN state, not permission to scan the entire routed population.
-func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32, view clusterView) ([]*HNSWIndex, error) {
+// clusters' graphs from the same generation: every cluster that has a graph
+// when limit covers their population (routedAll), else the selector's choice
+// or the view.probes nearest. Missing graphs are incomplete ANN state, not
+// permission to scan the entire routed population.
+func (g *IVFHNSWCandidateGen) routedGraphs(ctx context.Context, query []float32, view clusterView, limit int) ([]*HNSWIndex, bool, error) {
 	if view.routing == nil {
-		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
+		return nil, false, localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
 	if view.graph == nil {
-		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
+		return nil, false, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
 	}
 
-	clusterIDs := []int(nil)
-	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, view.probes)
-	}
-	if len(clusterIDs) == 0 {
-		clusterIDs = view.routing.NearestClusters(query, view.probes)
+	clusterIDs, population := graphPopulation(view)
+	routedAll := limit >= population
+	if !routedAll {
+		clusterIDs = nil
+		if g.clusterSelector != nil {
+			clusterIDs = g.clusterSelector(ctx, query, view.probes)
+		}
+		if len(clusterIDs) == 0 {
+			clusterIDs = view.routing.NearestClusters(query, view.probes)
+		}
 	}
 	indexes := make([]*HNSWIndex, len(clusterIDs))
 	for i, cid := range clusterIDs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		indexes[i] = view.graph(cid)
 		if indexes[i] == nil {
-			return nil, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
+			return nil, false, fmt.Errorf("IVF-HNSW: missing graph for routed cluster %d", cid)
 		}
 	}
-	return indexes, nil
+	return indexes, routedAll, nil
 }
 
 // ivfSearchBeam is a cluster graph's beam for a pool of limit candidates: the
