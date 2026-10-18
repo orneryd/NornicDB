@@ -35,8 +35,6 @@ func TestEntityReadsCountAgainstTheLimit(t *testing.T) {
 		{"merge candidates", "MERGE (n:Bulk {p: 0}) RETURN count(*) AS n"},
 		// A relationship type's relationships, counted in both directions.
 		{"relationship type", "MATCH (a)-[:LINK]-(b) RETURN count(*) AS n"},
-		// The label scan of an unbounded single-node read, counted.
-		{"label scan", "MATCH (n:Bulk) WHERE n.p = 1 RETURN count(*) AS n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ConfigureTransactionMemory(0, TransactionMemoryLimits{})
@@ -55,4 +53,12 @@ func TestEntityReadsCountAgainstTheLimit(t *testing.T) {
 			requirePoolsEmpty(t, "nornic")
 		})
 	}
+
+	// A count over a label streams its nodes and keeps none: it stays
+	// within a limit the label's list wouldn't fit.
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 20})
+	result, err := executor.Execute(ctx, "MATCH (n:Bulk) WHERE n.p = 1 RETURN count(*) AS n", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(20000)}}, result.Rows)
+	requirePoolsEmpty(t, "nornic")
 }
