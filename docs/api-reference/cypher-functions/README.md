@@ -249,6 +249,10 @@ RETURN reduce(out = '', i IN range(0, size(lines) - 1) |
 
 Each overlap list scans all intervals, so a span costs O(intervals). For many spans over one source, bind the lists once (`WITH s.starts AS starts, s.ends AS ends UNWIND $spans AS q …`).
 
+### APOC digests
+
+`apoc.util.sha256(values)`, `apoc.util.sha1(values)` and `apoc.util.md5(values)` are built in. They return the lower-case hex digest of the values' Java string forms concatenated; null list elements add nothing. For example, `apoc.util.sha256(['a', 'b', null, 'c'])` hashes the UTF-8 text `abc`. The bundled APOC handlers use the same implementation.
+
 ### ⏰ Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |
