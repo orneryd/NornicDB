@@ -6,7 +6,7 @@ import "github.com/orneryd/nornicdb/pkg/storage"
 // service. Configure it before building indexes. Named and property vectors
 // retain their existing Neo4j-compatible behavior.
 func (s *Service) SetEmbeddingSpace(space string) {
-	s.orderWithBuild(func() {
+	s.orderDimensionChange(func() {
 		current, loaded := s.embeddingSpace.Load().(string)
 		if loaded && current == space {
 			return
