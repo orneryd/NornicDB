@@ -749,8 +749,10 @@ type Server struct {
 	searchServices   map[string]*search.Service
 
 	// Cached Cypher executors per database (thread-safe, reusable)
-	executorsMu sync.RWMutex
-	executors   map[string]*cypher.StorageExecutor
+	statementCacheIndex multidb.StatementCacheIndex
+	heimdallCacheRouter *heimdallDBRouter
+	executorsMu         sync.RWMutex
+	executors           map[string]*cypher.StorageExecutor
 
 	// Explicit transaction sessions shared across transports.
 	txSessions *txsession.Manager
@@ -1358,6 +1360,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			// Create database router wrapper for Heimdall (multi-db aware)
 			dbRouter := newHeimdallDBRouter(db, dbManager, featuresConfig)
+			s.heimdallCacheRouter = dbRouter
 			metricsReader := &heimdallMetricsReader{}
 			handler := heimdall.NewHandler(manager, heimdallCfg, dbRouter, metricsReader)
 			handler.SetLocalizer(s.localizer)
@@ -2029,6 +2032,14 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 			}
 		}()
 	}
+
+	s.statementCacheIndex.Close()
+	if s.heimdallCacheRouter != nil {
+		s.heimdallCacheRouter.Close()
+	}
+	s.executorsMu.Lock()
+	s.executors = nil
+	s.executorsMu.Unlock()
 
 	s.stopQdrantGRPC()
 

@@ -146,3 +146,7 @@ func adapterString(m map[string]interface{}, key string) string {
 	}
 	return ""
 }
+
+func (a *graphqlDatabaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
+	return a.manager.StatementCacheScope(name)
+}

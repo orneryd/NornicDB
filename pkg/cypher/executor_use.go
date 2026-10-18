@@ -102,9 +102,10 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned.vectorIndexSpaces = e.vectorIndexSpaces
 	cloned.txContext = e.txContext
 	cloned.fabricPlanCache = e.fabricPlanCache
-	// The statement caches depend only on the text: a fabric fragment run
-	// per record on a fresh clone is validated once, not once per clone.
+	// Inherit the owner and selected generation together, including a retired
+	// alias token; choosing storage alone does not select a new catalog view.
 	cloned.UseStatementCaches(e.StatementCaches())
+	cloned.statementCacheScope = e.statementCacheScope
 	cloned.hotPathTraceState = e.hotPathTraceState
 
 	e.shellParamsMu.RLock()
@@ -120,7 +121,30 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	return cloned
 }
 
-func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*StorageExecutor, string, error) {
+func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (scoped *StorageExecutor, resolved string, retErr error) {
+	// Select a view before binding a catalog generation; never reconfigure the
+	// shared parent when USE names its own database through a removable alias.
+	defer func() {
+		if retErr != nil {
+			return
+		}
+		resolver, ok := e.dbManager.(statementCacheScopeResolver)
+		if !ok {
+			return
+		}
+		scope, err := resolver.StatementCacheScope(strings.TrimSpace(db))
+		if err != nil {
+			retErr = err
+			return
+		}
+		if scoped == e {
+			if scope == e.statementCacheScope {
+				return
+			}
+			scoped = e.cloneForStorage(e.storage)
+		}
+		scoped.statementCacheScope = scope
+	}()
 	targetDB := strings.TrimSpace(db)
 	if targetDB == "" {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)

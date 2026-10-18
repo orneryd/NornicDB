@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -27,12 +29,22 @@ func transactionalCypherExecutor(t *testing.T, session *Session, dbName string) 
 func TestBearerExplicitTransactionsShareStatementCaches(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = store.Close() })
-	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
+	manager, err := multidb.NewDatabaseManager(store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	if err := manager.CreateDatabase("other"); err != nil {
+		t.Fatal(err)
+	}
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	bearerA := &Session{server: server, forwardedAuthHeader: "Bearer token-a"}
 	bearerB := &Session{server: server, forwardedAuthHeader: "Bearer token-b"}
 	plain := &Session{server: server}
-	shared := server.statementCachesFor("nornic")
+	shared, err := cypher.DatabaseStatementCaches(manager, "nornic")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	first := transactionalCypherExecutor(t, bearerA, "nornic")
 	if _, err := first.executor.Execute(context.Background(), "MATCH (n:BearerShare) RETURN count(n) AS c", nil); err != nil {
@@ -57,7 +69,11 @@ func TestBearerExplicitTransactionsShareStatementCaches(t *testing.T) {
 	if base.(*boltQueryExecutorAdapter).executor.StatementCaches() != shared {
 		t.Fatalf("the cached database executor does not use the database's statement caches")
 	}
-	if server.statementCachesFor("other") == shared {
+	other, err := cypher.DatabaseStatementCaches(manager, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == shared {
 		t.Fatalf("another database shares the statement caches")
 	}
 }

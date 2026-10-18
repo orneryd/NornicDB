@@ -869,55 +869,6 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	return e.syntaxValidationCache
 }
 
-func newSyntaxValidationCache() *syntaxValidationCache {
-	cache := &syntaxValidationCache{max: 4096}
-	for i := range cache.shards {
-		cache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
-	}
-	return cache
-}
-
-// StatementCaches is a database's caches that depend only on the statement
-// text: the syntax verdicts and the upper-cased text. Protocol servers build
-// executors per transaction and per authenticated session; they give each
-// executor of a database the same StatementCaches, so a statement is
-// validated once per database instead of once per executor (under
-// NORNICDB_PARSER=antlr, a full grammar parse of the statement).
-type StatementCaches struct {
-	syntax *syntaxValidationCache
-	upper  *upperQueryCache
-}
-
-// NewStatementCaches returns empty statement caches for one database.
-func NewStatementCaches() *StatementCaches {
-	return &StatementCaches{syntax: newSyntaxValidationCache(), upper: newUpperQueryCache()}
-}
-
-// StatementCaches returns the statement caches e uses: the ones given to
-// UseStatementCaches, or e's own.
-func (e *StorageExecutor) StatementCaches() *StatementCaches {
-	e.statementCachesOnce.Do(func() {
-		if e.statementCaches == nil {
-			e.statementCaches = &StatementCaches{syntax: e.ensureSyntaxValidationCache(), upper: e.ensureUpperQueryCache()}
-		}
-	})
-	return e.statementCaches
-}
-
-// UseStatementCaches makes e use caches, shared with the database's other
-// executors; nil keeps e's own. Configure it before executing queries.
-//
-//	transactionExecutor := NewStorageExecutor(databaseStorage)
-//	transactionExecutor.UseStatementCaches(databaseCaches)
-func (e *StorageExecutor) UseStatementCaches(caches *StatementCaches) {
-	if caches == nil {
-		return
-	}
-	e.statementCaches = caches
-	e.syntaxValidationCache = caches.syntax
-	e.upperQueryCache = caches.upper
-}
-
 // The validators a statement text is cached as valid for: each marks only
 // its own acceptance, so the Nornic validator, which also runs when the
 // ANTLR parse fails, never marks a text the ANTLR grammar rejected.
@@ -943,11 +894,7 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 	if cypher == "" {
 		return false
 	}
-	c := e.ensureSyntaxValidationCache()
-	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
-	sh.mu.RLock()
-	accepted := sh.cache[cypher]
-	sh.mu.RUnlock()
+	accepted := e.cachedSyntaxVerdict(cypher)
 	if accepted&validator != 0 {
 		return true
 	}
@@ -956,10 +903,7 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 	// through the canonical form (PR #1043 #6). The canonical form is only
 	// computed on an exact-text miss.
 	if canonical, normalized := normalizeLiteralText(cypher); normalized {
-		csh := &c.shards[boundedCacheStringShardIndex(canonical)]
-		csh.mu.RLock()
-		accepted = csh.cache[canonical]
-		csh.mu.RUnlock()
+		accepted = e.cachedSyntaxVerdict(canonical)
 	}
 	return accepted&validator != 0
 }
@@ -968,19 +912,11 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) 
 	if cypher == "" {
 		return
 	}
-	c := e.ensureSyntaxValidationCache()
-	add := func(key string) {
-		sh := &c.shards[boundedCacheStringShardIndex(key)]
-		sh.mu.Lock()
-		if _, cached := sh.cache[key]; !cached && len(sh.cache) >= c.max/boundedCacheShardCount {
-			for k := range sh.cache {
-				delete(sh.cache, k)
-				break
-			}
-		}
-		sh.cache[key] |= validator
-		sh.mu.Unlock()
+	scopes, cacheable := e.cacheDependencyScopes(cypher)
+	if !cacheable {
+		return
 	}
+	add := func(key string) { e.addSyntaxCacheEntry(key, validator, scopes) }
 	add(cypher)
 	if canonical, normalized := normalizeLiteralText(cypher); normalized {
 		add(canonical)

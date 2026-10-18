@@ -716,3 +716,7 @@ func TestParseConstituentFromTokens_Branches(t *testing.T) {
 	require.Equal(t, "remote", ref["type"])
 	require.Equal(t, "user_password", ref["auth_mode"])
 }
+
+func (a *testDatabaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
+	return a.manager.StatementCacheScope(name)
+}

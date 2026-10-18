@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Statement cache lifetime fixes
+
+- Share statement-text cache owners across authenticated, transactional and
+  routed executors, and release their entries after database, alias or
+  constituent removal and shutdown (#1382). Keep live owners warm, evict dropped
+  execution views, and key Fabric results by target identity and selection
+  generation to survive retargeting. Bind cold Heimdall USE/Fabric requests
+  without publishing unadmitted source executors.
+
 ### Search readiness fixes
 
 - Return the documented retryable `search_not_ready` HTTP 503 response when search readiness changes during
