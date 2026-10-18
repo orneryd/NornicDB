@@ -44,3 +44,9 @@ type RetainedBytesReporter interface {
 type RetainedBytesGrowthGuard interface {
 	SetRetainedBytesGrowthGuard(func() bool)
 }
+
+// ValidityChecker lets the registry retire invalidated, abandoned streams
+// during periodic cleanup or before rejecting a new admission for capacity.
+type ValidityChecker interface {
+	CheckValid() error
+}
