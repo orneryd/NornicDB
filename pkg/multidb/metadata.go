@@ -3,6 +3,8 @@ package multidb
 
 import (
 	"encoding/json"
+	"log"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,12 +49,26 @@ func (m *DatabaseManager) loadMetadata() error {
 		}
 		m.databases = databases
 	}
+	if m.hasLegacyRemoteCredentials() && !m.canMigrateRemoteCredentials() {
+		log.Printf("WARNING: legacy remote credentials remain unencrypted; configure NORNICDB_REMOTE_CREDENTIALS_KEY and reopen on writable storage to migrate them")
+		return nil
+	}
+	changed, err := m.normalizeConstituentMetadata()
+	if err != nil {
+		return err
+	}
+	if changed {
+		return m.persistMetadata()
+	}
 
 	return nil
 }
 
 // persistMetadata saves database metadata to storage.
 func (m *DatabaseManager) persistMetadata() error {
+	if _, err := m.normalizeConstituentMetadata(); err != nil {
+		return err
+	}
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
@@ -99,6 +115,70 @@ func (m *DatabaseManager) persistMetadata() error {
 	// Update existing
 	node.CreatedAt = existing.CreatedAt
 	return systemEngine.UpdateNode(node)
+}
+
+// normalizeConstituentMetadata guards every metadata writer and the load/open
+// migration. Work on copies so a failed normalization cannot partially change
+// the live catalog. No credential is decrypted at this persistence boundary.
+func (m *DatabaseManager) normalizeConstituentMetadata() (bool, error) {
+	if !m.canMigrateRemoteCredentials() {
+		// New input has already passed normalizeRemoteCredentials with
+		// newInput=true. Preserve loaded legacy records until keyed/writable.
+		return false, nil
+	}
+	type replacement struct {
+		database *DatabaseInfo
+		refs     []ConstituentRef
+	}
+	var replacements []replacement
+	for _, database := range m.databases {
+		var refs []ConstituentRef
+		for i, original := range database.Constituents {
+			normalized, err := m.normalizeRemoteCredentials(original, false)
+			if err != nil {
+				return false, err
+			}
+			if normalized != original {
+				if refs == nil {
+					refs = append([]ConstituentRef(nil), database.Constituents...)
+				}
+				refs[i] = normalized
+			}
+		}
+		if refs != nil {
+			replacements = append(replacements, replacement{database, refs})
+		}
+	}
+	for _, update := range replacements {
+		update.database.Constituents = update.refs
+	}
+	return len(replacements) != 0, nil
+}
+
+func (m *DatabaseManager) canMigrateRemoteCredentials() bool {
+	if m.remoteCredentialCipher == nil {
+		return false
+	}
+	leader, ok := m.inner.(interface{ IsLeader() bool })
+	return !ok || leader.IsLeader()
+}
+
+func (m *DatabaseManager) hasLegacyRemoteCredentials() bool {
+	for _, database := range m.databases {
+		for _, ref := range database.Constituents {
+			if ref.Type != "remote" {
+				continue
+			}
+			if ref.Password != "" && !isEncryptedRemoteCredential(ref.Password) {
+				return true
+			}
+			endpoint, err := url.Parse(ref.URI)
+			if err == nil && endpoint.User != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ServerIdentity returns the persisted installation UUID and creation time.

@@ -42,6 +42,8 @@ type ConstituentRef struct {
 	// ... AT '<url>' USER <user> PASSWORD '<password>'
 	//
 	// Password is encrypted before persisting metadata to the system namespace.
+	// URI userinfo is normalized into these same fields, retaining forwarding
+	// mode so that URI credentials remain a fallback when no token is supplied.
 	// At runtime, DatabaseManager decrypts it before invoking RemoteEngineFactory.
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
@@ -151,18 +153,15 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 		aliasMap[ref.Alias] = true
 	}
 
-	// Encrypt remote user_password credentials before persistence.
+	// Normalize new input through the same owner used by metadata persistence.
 	encrypted := make([]ConstituentRef, len(constituents))
 	copy(encrypted, constituents)
 	for i := range encrypted {
-		ref := &encrypted[i]
-		if ref.Type == "remote" && strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
-			ciphertext, err := m.encryptRemotePassword(ref.Password)
-			if err != nil {
-				return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
-			}
-			ref.Password = ciphertext
+		ref, err := m.normalizeRemoteCredentials(encrypted[i], true)
+		if err != nil {
+			return err
 		}
+		encrypted[i] = ref
 	}
 
 	// Create composite database info
@@ -244,13 +243,9 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 		}
 	}
 
-	encrypted := constituent
-	if encrypted.Type == "remote" && strings.EqualFold(strings.TrimSpace(encrypted.AuthMode), "user_password") {
-		ciphertext, err := m.encryptRemotePassword(encrypted.Password)
-		if err != nil {
-			return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(encrypted.Alias, err), err)
-		}
-		encrypted.Password = ciphertext
+	encrypted, err := m.normalizeRemoteCredentials(constituent, true)
+	if err != nil {
+		return err
 	}
 
 	// Add constituent
