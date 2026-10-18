@@ -293,7 +293,7 @@ func (c *CachedEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	if provider, ok := c.base.(DocumentPropertyBatchChunkEmbedder); ok && provider.UsesDocumentProperties() {
 		return provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
 	}
-	return embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, c.EmbedDocumentPropertyChunks)
+	return embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, c, c.EmbedDocumentBatchChunks)
 }
 
 // EmbedDocumentBatchChunks preserves provider-managed batching when available
