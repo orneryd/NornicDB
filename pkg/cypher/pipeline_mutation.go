@@ -30,11 +30,18 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
 			)
 		}
-		if root := deleteExpressionRootIdentifier(expression); root != "" {
-			if _, bound := scope[root]; !bound {
-				return nil, true, deleteUndefinedVariableError(expression)
+		references := expressionFreeVariables(expression)
+		for _, name := range references {
+			if _, bound := scope[name]; !bound {
+				return nil, true, deleteUndefinedVariableError(name)
 			}
-		} else if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+		}
+		// A row-dependent target is evaluated with its row below, never with
+		// an empty planning scope (id(n) is not a constant).
+		if len(references) > 0 {
+			continue
+		}
+		if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
 			return nil, true, err
 		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
@@ -548,7 +555,11 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		ctx := withValueBindings(ctx, row)
 		// The clause parsed once: a row whose relationship already exists
 		// is its matches, without rendering and parsing the row's text.
-		if pattern, startNode, endNode, templated := template.pattern(ctx, e, row); templated {
+		pattern, startNode, endNode, templated, templateErr := template.pattern(ctx, e, row)
+		if templateErr != nil {
+			return nil, nil, templateErr
+		}
+		if templated {
 			matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, pattern, startNode, endNode)
 			if findErr != nil {
 				return nil, nil, findErr
@@ -605,21 +616,27 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				continue
 			}
 			if open, _ := firstRelationshipBracket(mergePattern); open >= 0 {
-				var parseErr error
-				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
-				if parseErr != nil {
-					return nil, nil, parseErr
+				shape, shapeErr := e.parseMergeRelationshipShape(mergePattern)
+				if shapeErr != nil {
+					return nil, nil, shapeErr
 				}
-				for _, variable := range [...]string{relationshipPattern.startVariable, relationshipPattern.endVariable} {
+				start := nodePatternStructure(shape.startContent).variable
+				end := nodePatternStructure(shape.endContent).variable
+				for _, variable := range [...]string{start, end} {
 					if missingRelationshipEndpoint(row, variable) {
 						return nil, nil, relationshipEndpointMissingError(variable)
 					}
 				}
-				if nodeContext[relationshipPattern.startVariable] == nil || nodeContext[relationshipPattern.endVariable] == nil {
+				if nodeContext[start] == nil || nodeContext[end] == nil {
 					if err := mergeWholePath(); err != nil {
 						return nil, nil, err
 					}
 					continue
+				}
+				var parseErr error
+				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
+				if parseErr != nil {
+					return nil, nil, parseErr
 				}
 			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
 				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])

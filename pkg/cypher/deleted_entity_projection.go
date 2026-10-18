@@ -219,14 +219,11 @@ type deletedEntityRead struct {
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
 	for index := 0; index < len(expression); {
-		switch character := expression[index]; {
-		case character == '\'' || character == '"' || character == '`':
-			end := strings.IndexByte(expression[index+1:], character)
-			if end < 0 {
-				return reads
-			}
-			index += end + 2
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end
 			continue
+		}
+		switch character := expression[index]; {
 		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
 			index++
 			continue
@@ -350,15 +347,11 @@ func iterationSourceVariable(clause, variable string) string {
 // outside string literals, -1 when it isn't there.
 func indexIdentifierFold(text, identifier string) int {
 	for index := 0; index+len(identifier) <= len(text); {
-		switch character := text[index]; {
-		case character == '\'' || character == '"' || character == '`':
-			end := strings.IndexByte(text[index+1:], character)
-			if end < 0 {
-				return -1
-			}
-			index += end + 2
+		if end, quoted := skipCypherLexicalToken(text, index); quoted {
+			index = end
 			continue
-		case (index > 0 && isIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier):
+		}
+		if (index > 0 && isIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier) {
 			index++
 			continue
 		}

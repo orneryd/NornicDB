@@ -142,7 +142,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 					}
 					if aliasIndex := projectionAliasIndex(item); aliasIndex >= 0 {
 						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
-						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
+						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && isCypherBacktickByte(alias[0]) && isCypherBacktickByte(alias[len(alias)-1])) {
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
 						}
 					}
@@ -364,18 +364,9 @@ func leadingWithUndefinedVariable(branch string) error {
 }
 
 func hasUnexpectedIdentifierAfterNumber(expression string) bool {
-	quote := byte(0)
 	for index := 0; index < len(expression); index++ {
-		if quote != 0 {
-			if expression[index] == '\\' {
-				index++
-			} else if expression[index] == quote {
-				quote = 0
-			}
-			continue
-		}
-		if expression[index] == '\'' || expression[index] == '"' || expression[index] == '`' {
-			quote = expression[index]
+		if end, skipped := skipCypherLexicalToken(expression, index); skipped {
+			index = end - 1
 			continue
 		}
 		if expression[index] < '0' || expression[index] > '9' || (index > 0 && isIdentByte(expression[index-1])) {
@@ -584,8 +575,8 @@ func maskPathFunctionCalls(expression string) string {
 func maskPredicatePatterns(expression string) string {
 	var masked []byte
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, character) - 1
 			continue
 		case '(':

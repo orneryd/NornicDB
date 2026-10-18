@@ -99,7 +99,7 @@ func projectionWords(query string) []projectionWord {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '(' || c == '[' || c == '{':
 			depth++
@@ -125,8 +125,8 @@ func projectionWords(query string) []projectionWord {
 func enclosingClose(query string, at int) int {
 	depth := 0
 	for i := at; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[', '{':
 			depth++
@@ -272,7 +272,7 @@ func replaceGroupingKeys(expression string, keys []string) (string, bool) {
 func replaceWholeExpression(text, old, replacement string) string {
 	var out strings.Builder
 	for i := 0; i < len(text); {
-		if c := text[i]; c == '\'' || c == '"' || c == '`' {
+		if c := text[i]; isCypherQuoteByte(c) {
 			end := skipCypherQuotedText(text, i, c)
 			out.WriteString(text[i:end])
 			i = end

@@ -51,13 +51,12 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
 		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantErr := exec.evaluateRowFallback(expr, values)
-		wantOK := true
-		if text, isText := want.(string); isText && text == expr {
-			want, wantOK = nil, false
-		}
+		want, wantOK, wantErr := exec.evaluateRowFallback(expr, values)
 		if gotErr != nil || wantErr != nil {
-			t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
+			if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() {
+				t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
+			}
+			continue
 		}
 		if gotOK != wantOK || !sameRowValue(got, want) {
 			t.Fatalf("%s: row evaluator %#v (%v), context evaluator %#v (%v)", expr, got, gotOK, want, wantOK)
@@ -67,7 +66,7 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
 		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, wantErr := exec.evaluateRowFallback(expr, values)
+		_, _, wantErr := exec.evaluateRowFallback(expr, values)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
@@ -214,7 +213,7 @@ func TestRowValueProgramsCompileIssueForms(t *testing.T) {
 	}
 	compiler := rowValueCompiler{}
 	root, _ := compiler.compile("any(k IN $keys WHERE k = startNode(r).id + '|' + r.kind)")
-	quantifier := root.(*rowBoundNode).inner.(*rowQuantifierNode)
+	quantifier := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowQuantifierNode)
 	if quantifier.loop.slots != 1 {
 		t.Fatalf("memo slots %d, want the key once", quantifier.loop.slots)
 	}
@@ -231,7 +230,7 @@ func firstRowTextNode(nodes ...rowValueNode) string {
 }
 
 func firstRowTextNodeOf(node rowValueNode) string {
-	switch n := node.(type) {
+	switch n := rowValueShape(node).(type) {
 	case *rowTextNode:
 		return n.text
 	case *rowFallbackNode:

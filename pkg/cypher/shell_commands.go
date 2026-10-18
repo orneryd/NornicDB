@@ -105,83 +105,18 @@ func consumeShellMapCommand(input string) (string, int, bool) {
 	if start == -1 {
 		return "", 0, false
 	}
-
-	depth := 0
-	inSingle := false
-	inDouble := false
-	inLineComment := false
-	inBlockComment := false
-	escaped := false
-
-	for i := start; i < len(input); i++ {
-		ch := input[i]
-		next := byte(0)
-		if i+1 < len(input) {
-			next = input[i+1]
-		}
-
-		if inLineComment {
-			if ch == '\n' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if ch == '*' && next == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-		if escaped {
-			escaped = false
-			continue
-		}
-		if (inSingle || inDouble) && ch == '\\' {
-			escaped = true
-			continue
-		}
-		if !inSingle && !inDouble && ch == '/' && next == '/' {
-			inLineComment = true
-			i++
-			continue
-		}
-		if !inSingle && !inDouble && ch == '/' && next == '*' {
-			inBlockComment = true
-			i++
-			continue
-		}
-		if ch == '\'' && !inDouble {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
-
-		switch ch {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				end := i + 1
-				for end < len(input) && (input[end] == ';' || input[end] == ' ' || input[end] == '\t' || input[end] == '\r') {
-					end++
-				}
-				if end < len(input) && input[end] == '\n' {
-					end++
-				}
-				return strings.TrimSpace(input[:i+1]), end, true
-			}
-		}
+	close := findMatchingDelimiter(input, start, '{', '}')
+	if close < 0 {
+		return "", 0, false
 	}
-
-	return "", 0, false
+	end := close + 1
+	for end < len(input) && (input[end] == ';' || input[end] == ' ' || input[end] == '\t' || input[end] == '\r') {
+		end++
+	}
+	if end < len(input) && input[end] == '\n' {
+		end++
+	}
+	return strings.TrimSpace(input[:close+1]), end, true
 }
 
 func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, query string, explicitParams map[string]interface{}) (*ExecuteResult, context.Context, error) {
@@ -372,7 +307,7 @@ func (e *StorageExecutor) evaluateParamMapExpression(ctx context.Context, mapExp
 		if pair == "" {
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryEmpty(), nil)
 		}
-		colonIdx := topLevelColonIndex(pair)
+		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx >= len(pair)-1 {
 			return nil, localizedError(localization.CypherCommandRoutingParameterMapEntryInvalid(pair), nil)
 		}
@@ -425,37 +360,6 @@ func isUnevaluatedParameterExpression(expr string, value interface{}) bool {
 		return false
 	}
 	return true
-}
-
-func topLevelColonIndex(input string) int {
-	inSingle := false
-	inDouble := false
-	depth := 0
-	for index, r := range input {
-		switch r {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(', '[', '{':
-			if !inSingle && !inDouble {
-				depth++
-			}
-		case ')', ']', '}':
-			if !inSingle && !inDouble && depth > 0 {
-				depth--
-			}
-		case ':':
-			if !inSingle && !inDouble && depth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
 }
 
 func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams map[string]interface{}) map[string]interface{} {

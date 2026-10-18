@@ -41,7 +41,7 @@ func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
 	if idx <= 0 {
 		t.Fatalf("expected positive with-end index, got %d", idx)
 	}
-	parts := splitCommaTopLevelLocal("a, collect({k: b, t: c}) AS rows, `quoted`")
+	parts := splitTopLevelComma("a, collect({k: b, t: c}) AS rows, `quoted`")
 	if len(parts) != 3 {
 		t.Fatalf("expected 3 top-level parts, got %#v", parts)
 	}

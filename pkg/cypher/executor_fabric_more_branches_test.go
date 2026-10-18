@@ -44,17 +44,11 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.Greater(t, findLeadingWithEndLocal("WITH {k: 1} AS m MATCH (n) RETURN n"), 0)
 	require.Equal(t, -1, findLeadingWithEndLocal("WITH 'unterminated"))
 
-	// startsWithKeywordAtLocal boundaries
-	require.False(t, startsWithKeywordAtLocal("AMATCH", 1, "MATCH"))
-	require.False(t, startsWithKeywordAtLocal("MATCHED", 0, "MATCH"))
-	require.True(t, startsWithKeywordAtLocal(" MATCH ", 1, "MATCH"))
-	require.False(t, startsWithKeywordAtLocal("MATCH", -1, "MATCH"))
-
-	// splitCommaTopLevelLocal with nesting/quotes
-	parts := splitCommaTopLevelLocal("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")
-	require.Equal(t, []string{"a", " apoc.map.fromPairs([[1,2],[3,4]])", " 'x,y'", " `q,r`", " b"}, parts)
-	parts = splitCommaTopLevelLocal("a, \"x,y\", {k:[1,2,3]}, b")
-	require.Equal(t, []string{"a", " \"x,y\"", " {k:[1,2,3]}", " b"}, parts)
+	// The canonical comma reader handles nesting, strings and quoted names.
+	parts := splitTopLevelComma("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")
+	require.Equal(t, []string{"a", "apoc.map.fromPairs([[1,2],[3,4]])", "'x,y'", "`q,r`", "b"}, parts)
+	parts = splitTopLevelComma("a, \"x,y\", {k:[1,2,3]}, b")
+	require.Equal(t, []string{"a", "\"x,y\"", "{k:[1,2,3]}", "b"}, parts)
 }
 
 func TestFabricHelpers_MoreContextAndWrapperBranches(t *testing.T) {

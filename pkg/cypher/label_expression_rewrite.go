@@ -165,8 +165,8 @@ func mayTestExpressionLabels(query string) bool {
 func mayReadPatternInPropertyMap(query string) bool {
 	var openers []byte
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[':
 			openers = append(openers, c)
@@ -195,8 +195,8 @@ func mayReadPatternInPropertyMap(query string) bool {
 func mayUsePatternPredicate(query string) bool {
 	var openers []int
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[', '{':
 			openers = append(openers, i)
@@ -229,8 +229,8 @@ func mayUsePatternPredicate(query string) bool {
 func mayUseLabelExpressions(query string) bool {
 	brackets := 0
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '|', '&', '!', '%':
 			return true
@@ -435,7 +435,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 	for i := start; i < end; i++ {
 		c := q[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
 		case c == '(' || c == '[' || c == '{':
@@ -616,8 +616,8 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch c {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
 			// A quantifier ({1,3}) or a stray map: no labels in it.
@@ -785,8 +785,8 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 	q := r.query
 	brace := -1
 	for i := from; i < close; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '*':
 			if relationship {
@@ -841,7 +841,7 @@ func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, var
 func (r *labelExpressionRewriter) readsPatternVariable(expression string) bool {
 	for i := 0; i < len(expression); i++ {
 		c := expression[i]
-		if c == '\'' || c == '"' {
+		if isCypherStringQuoteByte(c) {
 			i = skipCypherQuotedText(expression, i, c) - 1
 			continue
 		}
@@ -869,8 +869,8 @@ func declaredPatternVariables(pattern string) map[string]bool {
 	var variables map[string]bool
 	depth := 0
 	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
-		case '\'', '"', '`':
+		switch c := pattern[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '{':
 			depth++
@@ -1126,8 +1126,8 @@ func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
 	partStart := start
 	for i := start; i <= end; i++ {
 		if i < end {
-			switch c := q[i]; c {
-			case '\'', '"', '`':
+			switch c := q[i]; cypherLexicalByte(c) {
+			case cypherQuoteClass:
 				i = skipCypherQuotedText(q[:end], i, c) - 1
 				continue
 			case '(', '[', '{':
@@ -1209,7 +1209,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			return labelExpressionSyntaxError(localization.CypherMatchingQuantifierInExpressionPattern(string(c)))
 		}
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 		case c == '{':
 			close := findMatchingDelimiter(q[:end], i, '{', '}')
@@ -1282,8 +1282,8 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 			if depth == 0 && (isASCIISpace(c) || strings.IndexByte(",]}=<>+-*/^", c) >= 0) {
 				break
 			}
-			switch c {
-			case '\'', '"', '`':
+			switch cypherLexicalByte(c) {
+			case cypherQuoteClass:
 				chainEnd = skipCypherQuotedText(q, chainEnd, c) - 1
 			case '(':
 				depth++
@@ -1752,8 +1752,8 @@ func topLevelByteIndex(q string, start, end int, b byte) int {
 	depth := 0
 	for i := start; i < end; i++ {
 		c := q[i]
-		switch c {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 			continue
 		case '(', '[', '{':

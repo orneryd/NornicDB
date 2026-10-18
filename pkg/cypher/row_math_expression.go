@@ -27,7 +27,7 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 	if !isSharedMathFunction(name) {
 		return nil, false, false, nil
 	}
-	value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+	value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 	return value, true, resolved, err
 }
 

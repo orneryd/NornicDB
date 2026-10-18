@@ -123,26 +123,13 @@ func semanticAggregateCalls(expression string) []string {
 func canonicalSemanticExpression(expression string) string {
 	var normalized strings.Builder
 	normalized.Grow(len(expression))
-	var quote byte
 	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			normalized.WriteString(expression[index:end])
+			index = end - 1
+			continue
+		}
 		current := expression[index]
-		if quote != 0 {
-			normalized.WriteByte(current)
-			if current == '\\' && quote != '`' && index+1 < len(expression) {
-				index++
-				normalized.WriteByte(expression[index])
-				continue
-			}
-			if current == quote {
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			normalized.WriteByte(current)
-			continue
-		}
 		if isASCIIWhitespace(current) {
 			continue
 		}
@@ -310,7 +297,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 			index = end
 			continue
 		}
-		if expression[index] == '\'' || expression[index] == '"' {
+		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
 		}
@@ -358,7 +345,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
 		// A keyword-named variable (where.id, #894) is still a variable when
 		// a property access follows it; a keyword is never followed by '.'.
-		if name[0] != '`' && !propertyAccess && isSemanticLiteralWord(normalized) {
+		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
 			continue
 		}
 		if propertyAccess {
@@ -423,8 +410,8 @@ func maskSemanticBraceBodies(expression string) string {
 	expression = maskSubqueryBodies(expression)
 	masked := []byte(expression)
 	for index := 0; index < len(expression); index++ {
-		switch expression[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(expression[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
 			continue
 		case '{':
