@@ -313,3 +313,47 @@ func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	require.ElementsMatch(t, []NodeID{"test:a", "test:new"}, schema.PropertyIndexLookup("Live", "v", int64(2)))
 	b.writeBehind.removeDrained(generation)
 }
+
+func TestSnapshotOverlayTransactionLabelCache(t *testing.T) {
+	for _, stopEarly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "complete", true: "prefix"}[stopEarly], func(t *testing.T) {
+			b := snapshotOverlayFixture(t)
+			require.NoError(t, b.FlushWriteBehind())
+			tx, err := b.BeginTransaction()
+			require.NoError(t, err)
+			defer tx.Rollback()
+			require.NoError(t, tx.SetNamespace("test"))
+			err = tx.StreamNodesByLabelProjected("Live", []string{"v"}, func(*Node) error {
+				if stopEarly {
+					return ErrIterationStopped
+				}
+				return nil
+			})
+			if stopEarly {
+				require.ErrorIs(t, err, ErrIterationStopped)
+			} else {
+				require.NoError(t, err)
+			}
+			writer, err := b.BeginTransaction()
+			require.NoError(t, err)
+			require.NoError(t, writer.SetNamespace("test"))
+			require.NoError(t, writer.SetImplicit(true))
+			require.NoError(t, writer.UpdateNode(&Node{ID: "test:a", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}))
+			require.NoError(t, writer.DeleteNode("test:new"))
+			_, err = writer.CreateNode(&Node{ID: "test:second", Labels: []string{"Live"}})
+			require.NoError(t, err)
+			require.NoError(t, writer.Commit())
+			check := func() {
+				var ids []NodeID
+				require.NoError(t, tx.StreamNodesByLabelProjected("Live", []string{"v"}, func(n *Node) error {
+					ids = append(ids, n.ID)
+					return nil
+				}))
+				require.Equal(t, []NodeID{"test:second"}, ids)
+			}
+			check()
+			require.NoError(t, b.FlushWriteBehind())
+			check()
+		})
+	}
+}
