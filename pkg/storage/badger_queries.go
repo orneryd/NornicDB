@@ -241,7 +241,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 
 	// Cache loaded nodes for future label scans.
 	for _, n := range loaded {
-		if n != nil {
+		if n != nil && b.writeBehind == nil {
 			b.cacheFillNode(gen, n)
 		}
 	}
@@ -542,7 +542,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 		return nil, err
 	}
 	for _, node := range loaded {
-		if node != nil {
+		if node != nil && b.writeBehind == nil {
 			b.cacheFillNode(gen, node)
 		}
 	}
@@ -850,7 +850,7 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 
 	// Cache loaded nodes for future batch lookups.
 	for _, n := range loaded {
-		if n != nil {
+		if n != nil && b.writeBehind == nil {
 			b.cacheFillNode(gen, n)
 		}
 	}
