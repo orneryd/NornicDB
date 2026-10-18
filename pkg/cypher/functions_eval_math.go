@@ -1089,7 +1089,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// [x IN list WHERE predicate | projection], each part but the list
 	// optional; parseListComprehension finds the parts at the top level, so a
 	// list literal holding a nested comprehension or reduce isn't one.
-	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', contextPipelineProbe(ctx)); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if varName, listExpr, condition, projection, comprehension := parseListComprehensionWithCancellation(inner, contextPipelineProbe(ctx)); comprehension {
 			return e.evaluateListComprehension(ctx, varName, listExpr, condition, projection, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}

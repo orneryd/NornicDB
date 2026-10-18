@@ -189,7 +189,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 	if value, matched, resolved, err := e.evaluateRowMapProjectionWithCancellation(expr, values, probe); matched {
 		return value, resolved, err
 	}
-	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '{', '}', probe); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
 		keys := make([]string, 0)
 		if inner == "" {
@@ -225,7 +225,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		return value, ok, err
 	}
 
-	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if inner == "" {
 			return []interface{}{}, true, nil
 		}
@@ -1149,7 +1149,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if len(budgets) > 0 {
 		probe = budgets[0]
 	}
-	inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe)
+	inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']')
 	if !enclosed {
 		return nil, false, false, nil
 	}
@@ -1563,8 +1563,7 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
 		return "", false
 	}
-	inner := trimSpaceWithCancellation(expr[1:len(expr)-1], probe)
-	return inner, probe == nil || probe.err == nil
+	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {

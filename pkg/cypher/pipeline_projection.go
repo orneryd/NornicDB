@@ -924,7 +924,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 	if name, inner, distinct, ok := parsePipelineAggregateWithCancellation(expr, probe); ok {
 		return e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
 	}
-	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '{', '}', probe); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
 		if inner == "" {
 			return result, true
@@ -946,7 +946,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		}
 		return result, true
 	}
-	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if inner == "" {
 			return []interface{}{}, true
 		}

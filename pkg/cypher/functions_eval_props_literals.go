@@ -116,7 +116,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// List literal [a, b, c]: every element is an expression evaluated in the
 	// same context (as the row and path evaluators do), so [a.v, b.v] yields
 	// the property values rather than their text.
-	if inner, isList := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', contextPipelineProbe(ctx)); isList {
+	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
 		elements := e.splitArrayElements(strings.TrimSpace(inner))
 		result, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
 			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(elements[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
