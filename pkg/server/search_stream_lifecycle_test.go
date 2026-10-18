@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -34,10 +33,16 @@ func TestSearchStreamLifecycleHTTP(t *testing.T) {
 				for {
 					response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", request, token)
 					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-					var page struct { Results []any `json:"results"`; QID string `json:"qid"`; HasMore bool `json:"has_more"` }
+					var page struct {
+						Results []any  `json:"results"`
+						QID     string `json:"qid"`
+						HasMore bool   `json:"has_more"`
+					}
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
 					count += len(page.Results)
-					if !page.HasMore { break }
+					if !page.HasMore {
+						break
+					}
 					request = map[string]any{"qid": page.QID, "n": 1}
 				}
 				require.Equal(t, 3, count)
@@ -46,7 +51,7 @@ func TestSearchStreamLifecycleHTTP(t *testing.T) {
 	}
 }
 
-type disconnectedSearchWriter struct { *httptest.ResponseRecorder }
+type disconnectedSearchWriter struct{ *httptest.ResponseRecorder }
 
 func (w disconnectedSearchWriter) Write(data []byte) (int, error) {
 	_, _ = w.ResponseRecorder.Write(data)
@@ -66,7 +71,9 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				_, err := engine.CreateNode(&storage.Node{ID: id})
 				require.NoError(t, err)
 			}
-			var first struct { QID string `json:"qid"` }
+			var first struct {
+				QID string `json:"qid"`
+			}
 			if end == "disconnect" {
 				req := httptest.NewRequest(http.MethodPost, "/nornicdb/search", strings.NewReader(`{"database":"stream_lifecycle","mode":"id","n":1}`))
 				req.Header.Set("Authorization", token)
@@ -92,7 +99,8 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
 				require.NoError(t, engine.UpdateNode(node))
-			case "drop": require.NoError(t, s.databaseManager().DropDatabase(database))
+			case "drop":
+				require.NoError(t, s.databaseManager().DropDatabase(database))
 			}
 			if end == "write" || end == "backfill" || end == "disconnect" {
 				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "n": 1}, token)
@@ -101,7 +109,9 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "discard": true}, token)
 				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				var released struct { Released bool `json:"released"` }
+				var released struct {
+					Released bool `json:"released"`
+				}
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &released))
 				require.True(t, released.Released)
 			}
