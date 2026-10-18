@@ -79,10 +79,8 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 	}
 	for i := len(w.draining) - 1; i >= 0; i-- {
 		buf := w.draining[i]
-		if !buf.IsApplied() {
-			if state := buf.entityState(kind, id); state.found {
-				return state
-			}
+		if state := buf.entityState(kind, id); state.found {
+			return state
 		}
 	}
 	return bufferedEntityState{}
@@ -109,8 +107,6 @@ func (w *WriteBehindBuffer) visitEntityOverlayLocked(kind bufferedEntityKind, ca
 	}
 	collect(w.active)
 	for i := len(w.draining) - 1; i >= 0; i-- {
-		if !w.draining[i].IsApplied() {
-			collect(w.draining[i])
-		}
+		collect(w.draining[i])
 	}
 }
