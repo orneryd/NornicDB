@@ -48,25 +48,13 @@ func TestWriteBehind_MemoryComesDownAfterBurst(t *testing.T) {
 		})
 	}
 
-	deadline := time.Now().Add(60 * time.Second)
-	drained := false
-	for time.Now().Before(deadline) {
-		if engine.writeBehind.PendingOps() == 0 {
-			// PendingOps hits zero the instant the last generation is
-			// marked applied, a hair before the flusher removes it from the
-			// draining slice. Wait for the removal too so the assertions
-			// below see a fully settled buffer.
-			engine.writeBehind.mu.RLock()
-			remaining := len(engine.writeBehind.draining)
-			engine.writeBehind.mu.RUnlock()
-			if remaining == 0 {
-				drained = true
-				break
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.True(t, drained, "buffer must drain after the burst")
+	// Wait for retirement, not just publication: PendingOps can reach zero
+	// before removeDrained releases the generation and pending-node index.
+	require.Eventually(t, func() bool {
+		engine.writeBehind.mu.RLock()
+		defer engine.writeBehind.mu.RUnlock()
+		return engine.writeBehind.opCount == 0 && len(engine.writeBehind.draining) == 0
+	}, 60*time.Second, time.Millisecond, "buffer must retire every generation after the burst")
 	require.Zero(t, engine.writeBehind.PendingOps(), "buffer must drain after the burst")
 
 	// The active generation rotates on the flush cadence, so what the burst
@@ -79,14 +67,15 @@ func TestWriteBehind_MemoryComesDownAfterBurst(t *testing.T) {
 	targetOps := engine.writeBehind.targetOps
 	engine.writeBehind.mu.RUnlock()
 	require.Zero(t, draining, "no draining generations may remain")
-	require.True(t, activeCommits < 1000 && activeNodes < 1000,
+	require.True(t, activeCommits == 0 && activeNodes == 0,
 		"the active generation must have rotated past the burst (commits=%d nodes=%d)", activeCommits, activeNodes)
-	require.True(t, pendingIndex == nil || pendingIndex.empty(),
+	require.Nil(t, pendingIndex,
 		"the pending-node index must be released once every generation has retired")
 
-	// The adaptive sizer must have scaled back down: a burst's drain rate
-	// must not leave the idle target pinned at the cap.
-	require.True(t, targetOps < 100000, "adaptive target must decay after the burst, got %d", targetOps)
+	// The target tracks measured replay throughput, not live memory. It may
+	// remain at the cap while idle: newCommitBuffer does not preallocate to
+	// that target, and empty ticks do not change the last throughput sample.
+	// Assert released state above and retained heap below instead.
 
 	// Heap returns toward baseline plus the database itself (Badger's
 	// in-memory tables and caches hold the committed nodes). Budget
@@ -94,6 +83,8 @@ func TestWriteBehind_MemoryComesDownAfterBurst(t *testing.T) {
 	// point is that burst-sized buffered state is gone, not that the store
 	// is free.
 	settled := heapMB()
+	t.Logf("retired burst: target=%d active_commits=%d active_nodes=%d draining=%d pending_index_released=%t heap_growth=%.1fMB",
+		targetOps, activeCommits, activeNodes, draining, pendingIndex == nil, settled-base)
 	const perNodeBudgetMB = float64(n) * 0.002 // ~2KB/node of stored data
 	if settled-base > perNodeBudgetMB {
 		t.Fatalf("heap did not come down after the burst: baseline=%.1fMB settled=%.1fMB growth=%.1fMB > budget=%.1fMB",
