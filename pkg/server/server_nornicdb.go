@@ -881,11 +881,6 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 }
 
 func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
-	if page.QID != "" {
-		if delivery, ok := r.Context().Value(searchDeliveryKey{}).(*searchContinuationDelivery); ok {
-			delivery.register(func() { _ = s.db.DiscardSearchContinuation(owner, page.QID, database) })
-		}
-	}
 	response := page.SearchResponse()
 	setSearchFallbackReasonHeader(w, page.FallbackReason)
 	if provider, ok := any(response).(interface{ ResponseHeaders() map[string]string }); ok {

@@ -144,6 +144,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -1305,6 +1306,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 		implicitBearer: implicitBearer,
 	}
 	session.publishConnectionListing()
+	session.connCtx = resultstream.WithDelivery(session.connCtx, &session.continuationDelivery)
+	defer session.continuationDelivery.Fail()
 	defer session.removeConnectionListing()
 	_, sourceTransactional := s.executor.(TransactionalExecutor)
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
@@ -1510,6 +1513,7 @@ type Session struct {
 	// a CPU core indefinitely (the v1.1.2 #184 bug).
 	connCtx    context.Context
 	connCancel context.CancelFunc
+	continuationDelivery resultstream.Delivery
 
 	// Database context (from HELLO message)
 	database         string // Database name for this session (defaults to default database)

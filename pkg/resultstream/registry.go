@@ -228,6 +228,7 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 	r.observe("start")
 	r.observeUsage()
 	page.QID = encodeToken(r.secret, r.instance, streamID, page.Next, entry.expires, entry.ownerHash, entry.database)
+	r.trackDelivery(ctx, scope, page.QID)
 	page.ExpiresAt = time.Unix(entry.expires, 0).UTC()
 	return page, nil
 }
@@ -318,6 +319,7 @@ func (r *Registry) Pull(ctx context.Context, scope Scope, qid string, n int) (*P
 	}
 	if page.HasMore {
 		page.QID = encodeToken(r.secret, r.instance, token.streamID, page.Next, entry.expires, entry.ownerHash, entry.database)
+		r.trackDelivery(ctx, scope, page.QID)
 	}
 	page.ExpiresAt = time.Unix(entry.expires, 0).UTC()
 	r.observe("pull")

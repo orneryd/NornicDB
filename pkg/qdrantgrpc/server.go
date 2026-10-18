@@ -377,6 +377,7 @@ func (s *Server) Start() error {
 	}
 
 	opts := []grpc.ServerOption{
+		grpc.StatsHandler(searchContinuationStats{}),
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
 		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
