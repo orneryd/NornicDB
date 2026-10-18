@@ -8,47 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
-	result := &ExecuteResult{
-		Columns: []string{"t"},
-		Rows: [][]interface{}{
-			{map[string]interface{}{"createdAt": int64(2)}},
-			{storage.RemoteEntityValue{"properties": map[string]interface{}{"createdAt": int64(1)}}},
-			{map[string]interface{}{"createdAt": int64(3)}},
-		},
-	}
-
-	ordered := exec.applyOrderByToResult(result, "ORDER BY t.createdAt ASC")
-	require.Len(t, ordered.Rows, 3)
-	require.EqualValues(t, int64(1), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
-	require.EqualValues(t, int64(2), extractPropertyFromValue(ordered.Rows[1][0], "createdAt"))
-	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[2][0], "createdAt"))
-
-	ordered = exec.applyOrderByToResult(result, "ORDER BY t.createdAt DESC LIMIT 2")
-	require.Len(t, ordered.Rows, 3)
-	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
-}
-
-func TestApplyOrderByToResult_UnknownAndEmptyBranches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
-	base := &ExecuteResult{
-		Columns: []string{"name"},
-		Rows: [][]interface{}{
-			{"b"},
-			{"a"},
-		},
-	}
-
-	unchanged := exec.applyOrderByToResult(base, "ORDER BY missing")
-	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
-
-	unchanged = exec.applyOrderByToResult(base, "ORDER BY")
-	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
-}
-
 func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 

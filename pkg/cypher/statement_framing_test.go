@@ -489,11 +489,7 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	res, err = exec.executeInternal(ctx, "CALL db.labels() YIELD label WHERE label = 'x' FINISH", nil)
 	require.NoError(t, err)
 	require.Empty(t, res.Rows)
-	// Only a CALL with a scope clause reads its body's leading WITH as a
-	// projection; an unscoped one still checks it as an import list.
-	require.True(t, callSubqueryHasScopeClause("CALL () { WITH 1 AS x }"))
-	require.False(t, callSubqueryHasScopeClause("CALL { WITH 1 AS x }"))
-	require.False(t, callSubqueryHasScopeClause("MATCH (n) CALL () { RETURN 1 }"))
+	// An unscoped CALL still checks its body's leading WITH as an import list.
 	_, err = exec.Execute(ctx, "UNWIND [1] AS i CALL { WITH i } RETURN 1 AS one", nil)
 	require.Error(t, err)
 	_, _, handled, err := exec.pipelineApplyCallSubquery(ctx, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }")

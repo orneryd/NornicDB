@@ -96,10 +96,17 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
 	// defined"); NornicDB keeps running such statements as before, since
 	// the import is unambiguous (#907, kept at the owner's direction).
+	// A name only a nested EXISTS / COUNT / COLLECT mentions is not read by
+	// the body: there it is a new variable of the subquery, as in Neo4j
+	// (#1317 S08), so the extension doesn't import it.
 	imports := scopedImports
 	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
+		readText := body
+		if !scoped {
+			readText = maskSubqueryBodies(body)
+		}
 		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
+			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(readText, name)) {
 				imports = append(imports, name)
 			}
 		}
