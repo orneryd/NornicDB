@@ -242,3 +242,16 @@ qids remain usable across requests/connections until a terminal outcome or their
 fixed TTL. Abandoned catalog cursors invalidated by writes/backfill/policy changes
 are collected by registry maintenance and before a capacity rejection. Database
 reset/drop retires that database's cursors without closing the shared registry.
+
+HTTP transactions, GraphQL and the search endpoint keep delivery ownership until
+the response's cursor references are written and its final page flush succeeds.
+Bolt RUN metadata does not acknowledge a page: PULL must deliver its records.
+Projected or selected results that omit a cursor reference release that page's
+admission when the response/result ends. Independent records and statements keep
+separate delivery ownership. A reset/drop also invalidates a service's pending
+first-page preparation, so old work cannot publish a cursor afterward.
+
+Pure one-shot `db.rretrieve($request)` calls retain result caching. Eligibility
+uses the same evaluated continuation options as execution; START/PULL/DISCARD
+always reach the registry. Qids bound their self-contained database-name payload
+to 64 KiB and reject longer encoded input before allocating decoded storage.
