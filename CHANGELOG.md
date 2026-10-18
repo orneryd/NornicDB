@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inherited v1 limits, without reading unrelated cgroups (#1390).
 - Derive the Go soft memory limit from the container's cgroup limit by default,
   and clamp configured limits above it with a startup warning (#1369).
+- Bound aggregate ANTLR prediction generations with an exactly counted ledger,
+  and detach completed parsers so idle validators and kept trees release retired
+  prediction state (#1382).
 - Preserve the prompt wire format for custom legacy Ollama endpoints during batching and use array input for scalar calls to modern /api/embed endpoints.
 
 - Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
