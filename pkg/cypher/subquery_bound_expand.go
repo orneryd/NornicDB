@@ -160,4 +160,3 @@ func (e *StorageExecutor) relationshipDegree(id storage.NodeID, direction string
 	}
 	return e.storage.GetOutDegree(id) + e.storage.GetInDegree(id)
 }
-
