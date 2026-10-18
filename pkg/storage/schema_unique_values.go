@@ -227,6 +227,28 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 			default:
 				continue
 			}
+			// Composite/list-bearing TEMPORAL keys must lock on the same raw
+			// whole-key hash used by their history and creation validation.
+			// Extract it before the ordinary constraint lock projection loses
+			// the original list shape. Other constraint and temporal keys keep
+			// their existing lock representation.
+			if c.Type == ConstraintTemporal && len(properties) > 1 {
+				spec, specOK := splitTemporalKeySpec(c.Properties)
+				if specOK {
+					keyValue, missing := spec.keyValue(node.Properties)
+					if missing == "" && spec.composite() && spec.listBearing(keyValue) {
+						if keys == nil {
+							keys = make([]uniqueConstraintLockKey, 0, len(nodes))
+						}
+						keys = append(keys, uniqueConstraintLockKey{
+							label:    c.Label,
+							property: string(c.Type) + ":" + strings.Join(properties, ","),
+							value:    spec.keyHash(keyValue),
+						})
+						continue
+					}
+				}
+			}
 			if len(properties) == 1 {
 				// One key property (UNIQUE, a one-property NODE KEY, the
 				// temporal key): no intermediate slice.

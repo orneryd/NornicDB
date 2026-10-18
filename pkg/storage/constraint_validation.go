@@ -320,14 +320,15 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
 
-	byKey := make(map[string][]temporalInterval)
+	groups := temporalCreationGroups{spec: spec}
+	byKey := make(map[int][]temporalInterval)
 	for _, node := range nodes {
 		keyVal, missing := spec.keyValue(node.Properties)
 		if missing != "" {
 			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), missing)
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 		}
-		key := spec.groupString(keyVal)
+		key := groups.groupFor(keyVal)
 
 		interval, ok := spec.interval(node.Properties)
 		if !ok {
