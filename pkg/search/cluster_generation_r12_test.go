@@ -139,7 +139,9 @@ func (cgPanicAnalyzer) Analyze(string) []string { panic("routing analyzer") }
 func TestClusterGenerationRoutingPanicReleasesLock(t *testing.T) {
 	for _, ivf := range []string{"true", "false"} {
 		t.Run("ivf="+ivf, func(t *testing.T) {
-			f := newCGFixture(t, 20, false)
+			// More documents than a default search asks for, so it routes
+			// through the selector rather than every cluster.
+			f := newCGFixture(t, 100, false)
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", ivf)
 			f.svc.publishClusterServing() // resolve the strategy under this setting
 			vec, _ := f.svc.getVectorLookup()("n-0001")
