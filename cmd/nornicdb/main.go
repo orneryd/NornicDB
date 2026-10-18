@@ -264,6 +264,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
+	rootCmd.AddCommand(newStemmerCommand(text))
 	return rootCmd
 }
 
