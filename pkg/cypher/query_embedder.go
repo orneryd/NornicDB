@@ -11,8 +11,8 @@ import (
 // replaces both the provider's embedding cache and its result-cache generation.
 // It retains no registry of services, executors, caches, or previous providers.
 type QueryEmbedderBinding struct {
-	current atomic.Pointer[queryEmbedderState]
-	next    atomic.Uint64
+	current  atomic.Pointer[queryEmbedderState]
+	next     atomic.Uint64
 	beginUse func(context.Context) (context.Context, func(), error)
 }
 
