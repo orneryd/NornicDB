@@ -295,12 +295,7 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 				return nil, true
 			}
 			if propName == "has_embedding" {
-				if node.EmbedMeta != nil {
-					if val, ok := node.EmbedMeta["has_embedding"]; ok {
-						return val, true
-					}
-				}
-				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0, true
+				return nodeHasEmbeddingValue(node), true
 			}
 			return node.Properties[propName], true
 		}

@@ -30,12 +30,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			}
 			// has_embedding is stored in EmbedMeta by the managed embedding system
 			if propName == "has_embedding" {
-				if node.EmbedMeta != nil {
-					if val, ok := node.EmbedMeta["has_embedding"]; ok {
-						return val
-					}
-				}
-				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
+				return nodeHasEmbeddingValue(node)
 			}
 			if val, ok := e.queryEntityProperties(node)[propName]; ok {
 				return val
