@@ -284,7 +284,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 			}
 			edge := &storage.Edge{ID: "nornic:x", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
 			require.NoError(t, engine.CreateEdge(edge))
-			gate := engine.arm("edges", "buildRelationshipVectorIndexes")
+			gate := engine.arm("edges", "readStoredRelationships")
 			done := make(chan error, 1)
 			go func() { done <- svc.BuildIndexes(ctx) }()
 			waitClosed(t, gate.entered, "the build's relationship stream")

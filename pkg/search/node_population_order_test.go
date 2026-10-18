@@ -359,10 +359,7 @@ func buildReplayOps(r *rand.Rand, n int) []buildReplayOp {
 			keys := [][]string{nil, {"text"}, {"text", "title"}, {"title"}}[r.Intn(4)]
 			ops = append(ops, buildReplayOp{kind: "setting", keys: keys})
 		default:
-			// BM25 only: the relationship stream reads storage when it runs, so
-			// a relationship stored during the build and held behind a queued
-			// vector-off change has no serial-order counterpart (see the PR).
-			ops = append(ops, buildReplayOp{kind: "flags", flags: [2]bool{r.Intn(3) > 0, true}})
+			ops = append(ops, buildReplayOp{kind: "flags", flags: [2]bool{r.Intn(3) > 0, r.Intn(3) > 0}})
 		}
 	}
 	return ops
@@ -494,7 +491,7 @@ func buildReplayState(svc *Service) string {
 // equal outcomes and equal indexes.
 func TestPopulationOrderSequenceReplaysAsTheSerialOrder(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	for seed := int64(1); seed <= 40; seed++ {
+	for seed := int64(1); seed <= 80; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			ops := buildReplayOps(rand.New(rand.NewSource(seed)), 25)
 			run := func(gated bool) ([]string, string) {
@@ -550,8 +547,8 @@ func TestPopulationOrderSequenceReplaysAsTheSerialOrder(t *testing.T) {
 			}
 			serialOut, serialState := run(false)
 			gatedOut, gatedState := run(true)
-			require.Equal(t, serialOut, gatedOut, "outcomes differ from the serial order")
-			require.Equal(t, serialState, gatedState, "indexes differ from the serial order")
+			require.Equal(t, serialOut, gatedOut, "outcomes differ from the serial order; calls: %+v", ops)
+			require.Equal(t, serialState, gatedState, "indexes differ from the serial order; calls: %+v", ops)
 		})
 	}
 }

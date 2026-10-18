@@ -516,6 +516,8 @@ func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, w
 		switch {
 		case write.relationship:
 			s.updateRelationshipNow(write)
+		case write.node != nil && !s.bm25Enabled.Load() && !s.vectorEnabled.Load():
+			// Both indexes off at its turn: a no-op, as IndexNode is.
 		case write.node != nil:
 			if err = s.admitNodeWriteLocked(true); err == nil {
 				err = s.indexNodeAsLocked(write.node, !s.bm25Enabled.Load(), write.current)

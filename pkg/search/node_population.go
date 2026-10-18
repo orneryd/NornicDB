@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/security"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // baseOperationMutex keeps the existing base-operation exclusion, with a
@@ -446,6 +447,9 @@ type nodePopulationPlan struct {
 	skipIteration    bool
 	forceHNSWRebuild bool
 	vectorCount      int
+	// relationships are the stored relationships an explicit build read where
+	// it reads its nodes (readStoredRelationships).
+	relationships []*storage.Edge
 }
 
 // completeNodePopulation publishes NODE before ANN. Initial live mutations use
@@ -496,7 +500,7 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	// edge writes meanwhile are queued, and an edge one of them wrote is never
 	// replaced by the stream's older copy.
 	s.setBuildPhase("iterating_relationship_vectors")
-	if err := s.buildRelationshipVectorIndexes(ctx, job); err != nil {
+	if err := s.buildRelationshipVectorIndexes(ctx, job, plan.relationships); err != nil {
 		// The node population is complete; a relationship failure does
 		// not undo it, so a retry keeps skipping the node iteration.
 		s.finishNodeAdmission(job, nil)
