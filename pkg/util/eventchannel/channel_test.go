@@ -13,6 +13,11 @@ func TestChannelBufferedDelivery(t *testing.T) {
 	}
 	queue.Close()
 	queue.Close()
+	select {
+	case <-queue.Done():
+	default:
+		t.Fatal("Close did not signal subscription watchers")
+	}
 	if queue.TrySend(4) {
 		t.Fatal("closed owner accepted an event")
 	}
