@@ -64,9 +64,10 @@ func edgeStreamCallerOnStack(name string) bool {
 }
 
 // TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites: the explicit
-// build owns buildMu, and live edge writes take it shared like node writes,
-// so a live edge update or removal made while the build's relationship stream
-// runs lands after the stream and wins (no lost update, no resurrection).
+// build owns buildMu, and a live edge write made while it owns buildMu is
+// handed to it, like node writes. An update or removal made while the build's
+// relationship stream runs returns at once, and the build applies it after
+// the stream's copy, so it wins (no lost update, no resurrection).
 func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 	ctx := context.Background()
 	for _, removal := range []bool{false, true} {
@@ -122,7 +123,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 				require.True(t, present)
 				require.Equal(t, []float32{0, 1, 0}, got["v"], "the live edge update was lost to the build's stream")
 			}
-			require.False(t, finishedDuringStream, "a live edge write waits for the explicit build (buildMu), like node writes")
+			require.True(t, finishedDuringStream, "a live edge write is handed to the explicit build and returns at once, like node writes")
 		})
 	}
 }
