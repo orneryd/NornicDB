@@ -2630,13 +2630,33 @@ func (s *Service) embeddingCountLocked() int {
 func (s *Service) VectorIndexDimensions() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
+	return s.activeVectorDimensions()
+}
+
+// activeVectorDimensions is the dimension of the store vectors are written to
+// (addVectorLocked): the file-backed store whenever there is one, empty or
+// not, since its records have that size; otherwise the in-memory index. It is
+// the one reader of that dimension for admission, validation and insertion.
+// Caller holds s.mu or s.indexMu.
+func (s *Service) activeVectorDimensions() int {
+	if s.vectorFileStore != nil {
 		return s.vectorFileStore.GetDimensions()
 	}
 	if s.vectorIndex != nil {
 		return s.vectorIndex.GetDimensions()
 	}
 	return 0
+}
+
+// vectorDimensionsAdoptable reports whether the next vector may set the
+// dimension (maybeAutoSetVectorDimensions): the dimension isn't fixed, no
+// file-backed store exists (its record size can't change), and the in-memory
+// index is empty. Caller holds s.mu.
+func (s *Service) vectorDimensionsAdoptable() bool {
+	if s.vectorDimensionsFixed.Load() || s.vectorFileStore != nil {
+		return false
+	}
+	return s.vectorIndex == nil || s.vectorIndex.Count() == 0
 }
 
 // getVectorLookup returns a VectorLookup that resolves ids from vectorFileStore (if active) or vectorIndex.
@@ -2705,29 +2725,20 @@ func (s *Service) FixVectorDimensions() {
 	s.vectorDimensionsFixed.Store(true)
 }
 
-// AdmitsVectorDimensions reports whether IndexNode accepts a vector of
-// dimensions: the index's dimension, or any dimension while the index is empty
-// and its dimension isn't fixed (the first vector sets it,
-// maybeAutoSetVectorDimensions). A service with vector search off accepts
-// every dimension, since it indexes no vectors. Writers that store vectors
-// before indexing them check it first, so a vector the index can't hold is
-// rejected rather than stored and left unindexed.
+// AdmitsVectorDimensions reports whether IndexNode indexes a vector of
+// dimensions: the active store's dimension (activeVectorDimensions), or any
+// dimension while the next vector may still set it
+// (vectorDimensionsAdoptable). A service with vector search off accepts every
+// dimension, since it indexes no vectors. Writers that store vectors before
+// indexing them check it first, so a vector the index can't hold is rejected
+// rather than stored and left unindexed.
 func (s *Service) AdmitsVectorDimensions(dimensions int) bool {
 	if s == nil || dimensions <= 0 || !s.vectorEnabled.Load() {
 		return true
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
-		return s.vectorFileStore.GetDimensions() == dimensions
-	}
-	if s.vectorIndex == nil {
-		return !s.vectorDimensionsFixed.Load()
-	}
-	if s.vectorIndex.GetDimensions() == dimensions {
-		return true
-	}
-	return !s.vectorDimensionsFixed.Load() && s.vectorIndex.Count() == 0
+	return s.activeVectorDimensions() == dimensions || s.vectorDimensionsAdoptable()
 }
 
 func firstVectorDimensions(node *storage.Node) int {
@@ -2791,16 +2802,11 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	}
 
 	s.mu.RLock()
-	currentDims := 0
-	currentCount := 0
-	if s.vectorIndex != nil {
-		currentDims = s.vectorIndex.GetDimensions()
-		currentCount = s.vectorIndex.Count()
-	}
+	adopt := s.vectorDimensionsAdoptable() && s.activeVectorDimensions() != dimensions
 	s.mu.RUnlock()
 
 	// Only auto-adjust when the index is still empty (first embedding wins).
-	if currentCount > 0 || currentDims == dimensions {
+	if !adopt {
 		return
 	}
 
@@ -2811,9 +2817,7 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	// publication holding clusterStateMu publishes only for the index it saw.
 	s.clusterStateMu.Lock()
 	s.mu.Lock()
-	if s.vectorIndex == nil {
-		s.vectorIndex = NewVectorIndex(dimensions)
-	} else if s.vectorIndex.Count() == 0 && s.vectorIndex.GetDimensions() != dimensions {
+	if s.vectorDimensionsAdoptable() && s.activeVectorDimensions() != dimensions {
 		s.vectorIndex = NewVectorIndex(dimensions)
 	}
 
@@ -3185,10 +3189,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 
 			// Index each named embedding with ID: "node-id-named-{vectorName}"
 			namedID := fmt.Sprintf("%s-named-%s", node.ID, vectorName)
-			expectedDim := s.vectorIndex.GetDimensions()
-			if s.vectorFileStore != nil {
-				expectedDim = s.vectorFileStore.GetDimensions()
-			}
+			expectedDim := s.activeVectorDimensions()
 			if err := s.addVectorLocked(namedID, embedding); err != nil {
 				if err == ErrDimensionMismatch {
 					s.logPrintf("⚠️ IndexNode %s named[%s]: embedding dimension mismatch (got %d, expected %d)",
@@ -3227,10 +3228,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		chunkIDs := make([]string, 0, len(node.ChunkEmbeddings)+1)
 		// Always index a main embedding at the node ID (using first chunk)
 		mainEmbedding := node.ChunkEmbeddings[0]
-		expectedDim := s.vectorIndex.GetDimensions()
-		if s.vectorFileStore != nil {
-			expectedDim = s.vectorFileStore.GetDimensions()
-		}
+		expectedDim := s.activeVectorDimensions()
 		if err := s.addVectorLocked(string(node.ID), mainEmbedding); err != nil {
 			if err == ErrDimensionMismatch {
 				s.logPrintf("⚠️ IndexNode %s main: embedding dimension mismatch (got %d, expected %d)",
@@ -3289,10 +3287,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// Index vector-shaped property values for Cypher compatibility.
 	// These are indexed under IDs: "node-id-prop-{propertyKey}".
 	if indexVectorState && node.Properties != nil {
-		dim := s.vectorIndex.GetDimensions()
-		if s.vectorFileStore != nil {
-			dim = s.vectorFileStore.GetDimensions()
-		}
+		dim := s.activeVectorDimensions()
 		for key, value := range node.Properties {
 			vec, ok := vectorFromPropertyValue(value, dim)
 			if !ok {
@@ -3330,10 +3325,7 @@ func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 	if node == nil || node.ID == "" {
 		return false
 	}
-	dim := s.vectorIndex.GetDimensions()
-	if s.vectorFileStore != nil {
-		dim = s.vectorFileStore.GetDimensions()
-	}
+	dim := s.activeVectorDimensions()
 	if dim <= 0 {
 		return false
 	}
@@ -3611,10 +3603,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		s.ensureVectorFileStore()
 	}
 
-	dim := s.vectorIndex.GetDimensions()
-	if s.vectorFileStore != nil {
-		dim = s.vectorFileStore.GetDimensions()
-	}
+	dim := s.activeVectorDimensions()
 	if dim <= 0 {
 		return nil
 	}
