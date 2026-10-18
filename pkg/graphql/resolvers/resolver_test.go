@@ -38,9 +38,12 @@ func testDBManager(t *testing.T, db *nornicdb.DB) *multidb.DatabaseManager {
 	inner := db.GetBaseStorageForManager()
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
-	// The manager borrows this DB's storage. Stop its background workers before
-	// closing that storage through the manager.
-	t.Cleanup(func() { db.Close(); manager.Close() })
+	t.Cleanup(func() {
+		// The manager shares db's base storage. Stop and join the owning DB's
+		// background workers before the manager closes that storage.
+		assert.NoError(t, db.Close())
+		assert.NoError(t, manager.Close())
+	})
 	return manager
 }
 
