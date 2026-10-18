@@ -9,5 +9,5 @@ package cypher
 // (TestListLiteralReadersUseIsListLiteral); none checks "starts with '[' and
 // ends with ']'" on its own.
 func isListLiteral(text string) bool {
-	return len(text) >= 2 && text[0] == '[' && findMatchingBracket(text, 0) == len(text)-1
+	return len(text) >= 2 && text[0] == '[' && text[len(text)-1] == ']' && findMatchingBracket(text, 0) == len(text)-1
 }
