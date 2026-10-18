@@ -39,5 +39,5 @@ func (tx *BadgerTransaction) checkNamespaceLifetimeLocked() error {
 		lifetimes.retired[tx.namespace] > tx.beginNamespaceRevision {
 		return fmt.Errorf("%w: namespace %q was dropped after transaction began", ErrConflict, tx.namespace)
 	}
-	return tx.engine.checkNamespacePublication(tx.namespace)
+	return nil
 }
