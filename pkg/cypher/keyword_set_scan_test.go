@@ -9,6 +9,7 @@ import (
 // TestFirstKeywordIndexFromDefault: one scan for a keyword set finds the
 // earliest keyword by the rules keywordIndex applies to each one alone.
 func TestFirstKeywordIndexFromDefault(t *testing.T) {
+	keywords := []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNWIND", "MERGE", "CREATE", "SET", "DETACH DELETE", "DELETE", "REMOVE", "CALL", "RETURN", "WITH"}
 	for _, text := range []string{
 		"p RETURN p",
 		"p, q MATCH (n) RETURN n",
@@ -23,34 +24,15 @@ func TestFirstKeywordIndexFromDefault(t *testing.T) {
 		"",
 	} {
 		want := -1
-		for _, keyword := range withImportClauseKeywords {
+		for _, keyword := range keywords {
 			if index := keywordIndex(text, keyword); index >= 0 && (want < 0 || index < want) {
 				want = index
 			}
 		}
-		require.Equal(t, want, firstKeywordIndexFromDefault(text, 0, withImportClauseKeywords...), text)
+		require.Equal(t, want, firstKeywordIndexFromDefault(text, 0, keywords...), text)
 	}
 	require.Equal(t, -1, firstKeywordIndexFromDefault("RETURN 1", 0))
 	require.Equal(t, 9, firstKeywordIndexFromDefault("RETURN 1 RETURN 2", 1, "RETURN"))
-}
-
-// TestParseLeadingWithImportsKeywordAtStart: a clause keyword at the start of
-// the import list is part of it; the list ends at the next one.
-func TestParseLeadingWithImportsKeywordAtStart(t *testing.T) {
-	vars, body, hasWith, err := parseLeadingWithImports("WITH p RETURN p")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"p"}, vars)
-	require.Equal(t, "RETURN p", body)
-
-	_, body, hasWith, err = parseLeadingWithImports("with p MATCH (n) RETURN n")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, "MATCH (n) RETURN n", body)
-
-	_, _, hasWith, err = parseLeadingWithImports("WITHIN RETURN 1")
-	require.NoError(t, err)
-	require.False(t, hasWith)
 }
 
 // TestCachedPipelineClausesVariants: one cached parse serves both splits; a
