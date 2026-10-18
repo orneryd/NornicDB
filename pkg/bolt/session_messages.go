@@ -227,6 +227,12 @@ func (s *Session) handleRun(data []byte) error {
 	s.setActiveRun(runCancel)
 	defer s.clearActiveRun()
 	ctx = s.withSessionIdentity(ctx)
+	ctx = s.beginContinuationDelivery(ctx)
+	delivery := s.lastDelivery
+	published := false
+	defer func() {
+		if !published { delivery.Fail() }
+	}()
 	ctx = cypher.WithClientStatement(ctx)
 	if mode != nil || s.authResult != nil {
 		// The principal's one permission resolver (principalAccess), which the
@@ -327,6 +333,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Store result for PULL
 	s.lastResult = result
 	s.resultIndex = 0
+	published = true
 
 	// Return SUCCESS with field names (Neo4j compatible metadata)
 	// Note: Neo4j only sends qid for EXPLICIT transactions, not implicit/autocommit
@@ -339,6 +346,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		s.resultStreams[statementID] = &resultStream{
 			result:   result,
+			delivery: delivery,
 			isWrite:  isWrite,
 			database: resultDatabase,
 		}
@@ -718,6 +726,7 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 	}
 	return resultStream{
 		result:   s.lastResult,
+		delivery: s.lastDelivery,
 		index:    s.resultIndex,
 		isWrite:  s.lastQueryIsWrite,
 		database: s.lastQueryDatabase,
@@ -744,6 +753,7 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.lastResult = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
+		s.lastDelivery = nil
 	}
 }
 
@@ -776,6 +786,7 @@ func (s *Session) handlePull(data []byte) error {
 	if err := s.fillLazyResult(&stream, options.limit); err != nil {
 		lazyFailure = err.(*lazyStatementError)
 	}
+	firstRecord := stream.index
 
 	// Stream records - use batched writing for large result sets
 	remaining := len(stream.result.Rows) - stream.index
@@ -810,12 +821,14 @@ func (s *Session) handlePull(data []byte) error {
 	}
 
 	if lazyFailure != nil {
+		if stream.delivery != nil { stream.delivery.Fail() }
 		s.updateResultStream(statementID, stream, false)
 		return s.sendLazyFailure(lazyFailure)
 	}
 
 	// Check if more records available
 	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
+	deliveredRows := stream.result.Rows[firstRecord:stream.index]
 	s.updateResultStream(statementID, stream, hasMore)
 
 	// Clear result if done
@@ -883,7 +896,7 @@ func (s *Session) handlePull(data []byte) error {
 		if err := s.sendSuccessNoFlush(metadata); err != nil {
 			return err
 		}
-		return s.flushIfPending()
+		return s.flushResultDelivery(stream, deliveredRows, true)
 	}
 
 	// When there are more records, send has_more: true
@@ -892,7 +905,7 @@ func (s *Session) handlePull(data []byte) error {
 	}); err != nil {
 		return err
 	}
-	return s.flushIfPending()
+	return s.flushResultDelivery(stream, deliveredRows, false)
 }
 
 // boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
@@ -955,6 +968,9 @@ func (s *Session) handleDiscard(data []byte) error {
 		if options.limit > 0 && discardCount > options.limit-discarded {
 			discardCount = options.limit - discarded
 		}
+		if stream.delivery != nil {
+			stream.delivery.DiscardValues(stream.result.Rows[stream.index:stream.index+discardCount])
+		}
 		stream.index += discardCount
 		discarded += discardCount
 		if stream.lazy == nil || discarded == options.limit {
@@ -966,6 +982,7 @@ func (s *Session) handleDiscard(data []byte) error {
 		}
 	}
 	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
+	if !hasMore && stream.delivery != nil { stream.delivery.Fail() }
 	s.updateResultStream(statementID, stream, hasMore)
 	if hasMore {
 		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {
@@ -1693,8 +1710,6 @@ func (s *Session) flushDelivery() error {
 	err := s.writer.Flush()
 	if err != nil {
 		s.continuationDelivery.Fail()
-	} else {
-		s.continuationDelivery.Delivered()
 	}
 	return err
 }
@@ -1704,7 +1719,8 @@ func (s *Session) flushDelivery() error {
 //
 // Bolt messages are chunked with 2-byte big-endian sizes and a 0-sized terminator.
 // A single message may span multiple chunks (max chunk size is 65535 bytes).
-func (s *Session) writeMessageNoFlush(data []byte) error {
+func (s *Session) writeMessageNoFlush(data []byte) (retErr error) {
+	defer func() { if retErr != nil { s.continuationDelivery.Fail() } }()
 	const maxChunkSize = 0xFFFF
 
 	// Preserve existing behavior: even for empty messages, write an explicit
