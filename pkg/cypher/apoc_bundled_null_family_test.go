@@ -2,10 +2,6 @@ package cypher
 
 import (
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"strconv"
 	"testing"
 
 	apocpkg "github.com/orneryd/nornicdb/apoc"
@@ -14,42 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Read the current wrapper's procedure exclusions: develop has not yet
-// incorporated the built-in export exclusions from the separate #1422 PR.
+// Use the exact export owner shared with the bundled plugin wrapper.
 func bundledAPOCPluginFunctions(t *testing.T) map[string]interface{} {
 	t.Helper()
 	require.NoError(t, apocpkg.Initialize(apocstorage.NewInMemoryStorage(), nil))
-	file, err := parser.ParseFile(token.NewFileSet(), "../../apoc/plugin-src/apoc/apoc_plugin.go", nil, 0)
-	require.NoError(t, err)
-	procedures := map[string]bool{}
-	for _, declaration := range file.Decls {
-		fn, ok := declaration.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "isAPOCProcedureName" {
-			continue
-		}
-		ast.Inspect(fn.Body, func(node ast.Node) bool {
-			clause, ok := node.(*ast.CaseClause)
-			if ok {
-				for _, expression := range clause.List {
-					literal, ok := expression.(*ast.BasicLit)
-					if ok && literal.Kind == token.STRING {
-						name, err := strconv.Unquote(literal.Value)
-						require.NoError(t, err)
-						procedures[name] = true
-					}
-				}
-			}
-			return true
-		})
-	}
-	require.NotEmpty(t, procedures)
-	functions := map[string]interface{}{}
-	for _, name := range apocpkg.List() {
-		if procedures[name] {
-			continue
-		}
+	functions := make(map[string]interface{})
+	for _, name := range apocpkg.PluginFunctionNames() {
 		info, ok := apocpkg.GetInfo(name)
-		require.True(t, ok)
+		require.True(t, ok, name)
 		functions[name] = info.Handler
 	}
 	return functions

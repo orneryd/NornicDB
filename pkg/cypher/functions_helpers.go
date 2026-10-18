@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -108,14 +108,7 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 			result = nil
 			err = fmt.Errorf("plugin handler panic: %v", recovered)
 		}
-		// Common and reflected invocations return through this conversion.
-		// A nil Go map is Cypher null; an allocated empty map remains {}.
-		if result != nil {
-			value := reflect.ValueOf(result)
-			if value.Kind() == reflect.Map && value.IsNil() {
-				result = nil
-			}
-		}
+		result = cypherfn.RuntimeValue(result)
 	}()
 
 	if handler == nil {

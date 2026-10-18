@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/apocmeta"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -14,39 +15,20 @@ import (
 // independent in-memory graph. Compatible explicitly registered handlers
 // retain precedence; this owner supplies the native-value fallback.
 func nativeAPOCFunctionCatalog() []cypherFunctionSpec {
-	var out []cypherFunctionSpec
-	add := func(name, result string, arguments ...ProcedureParam) {
-		out = append(out, cypherFunctionSpec{name: name, category: "APOC", signature: nativeAPOCSignature(name, result, arguments), arguments: arguments, listed: true, userDefined: true, description: "Operates on native query values in the current graph."})
+	var catalog []cypherFunctionSpec
+	for _, function := range apocmeta.NativeFunctions() {
+		var arguments []ProcedureParam
+		for _, argument := range function.Arguments {
+			arguments = append(arguments, ProcedureParam{Name: argument.Name, Type: argument.Type, Description: argument.Description, Default: argument.Default, Optional: argument.Optional, IsDeprecated: argument.IsDeprecated})
+		}
+		catalog = append(catalog, cypherFunctionSpec{name: function.Name, category: function.Category, signature: function.Signature, description: function.Description, argumentDescriptions: function.ArgumentDescriptions, arguments: arguments, listed: true, userDefined: true})
 	}
-	node := ProcedureParam{Name: "node", Type: "NODE"}
-	rel := ProcedureParam{Name: "relationship", Type: "RELATIONSHIP"}
-	path := ProcedureParam{Name: "path", Type: "PATH"}
-	filter := ProcedureParam{Name: "relationshipFilter", Type: "STRING", Optional: true, Default: ""}
-	add("apoc.node.id", "STRING", node)
-	add("apoc.node.labels", "LIST<STRING>", node)
-	add("apoc.node.degree", "INTEGER", node, filter)
-	add("apoc.rel.id", "STRING", rel)
-	add("apoc.rel.type", "STRING", rel)
-	add("apoc.rel.startNode", "NODE", rel)
-	add("apoc.rel.endNode", "NODE", rel)
-	add("apoc.nodes.connected", "BOOLEAN", node, ProcedureParam{Name: "other", Type: "NODE"}, filter)
-	add("apoc.path.elements", "LIST<ANY>", path)
-	add("apoc.path.slice", "PATH", path, ProcedureParam{Name: "offset", Type: "INTEGER", Optional: true, Default: "0"}, ProcedureParam{Name: "length", Type: "INTEGER", Optional: true, Default: "-1"})
-	add("apoc.path.combine", "PATH", path, ProcedureParam{Name: "other", Type: "PATH"})
-	add("apoc.temporal.format", "STRING", ProcedureParam{Name: "input", Type: "ANY"}, ProcedureParam{Name: "format", Type: "STRING", Optional: true, Default: "yyyy-MM-dd"})
-	return out
+	return catalog
 }
 
-func isNativeAPOCFunction(name string) bool {
-	switch name {
-	case "apoc.node.id", "apoc.node.labels", "apoc.node.degree", "apoc.rel.id", "apoc.rel.type", "apoc.rel.startNode", "apoc.rel.endNode", "apoc.nodes.connected", "apoc.path.elements", "apoc.path.slice", "apoc.path.combine", "apoc.temporal.format":
-		return true
-	}
-	return false
-}
+func isNativeAPOCFunction(name string) bool { return apocmeta.IsNativeValue(name) }
 func nativeAPOCCaseMismatch(name string) bool {
-	lower := lowerASCII(name)
-	return (name != lower && isNativeAPOCFunction(lower)) || (lower == "apoc.rel.startnode" && name != "apoc.rel.startNode") || (lower == "apoc.rel.endnode" && name != "apoc.rel.endNode")
+	return apocmeta.IsNativeValueCaseMismatch(name)
 }
 func nativeAPOCCallFailure(name string, value interface{}) error {
 	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed", invalidFunctionArgument(name, value).Error())
@@ -281,17 +263,6 @@ func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (inter
 		}
 	}
 	return e.pathToMap(path), nil
-}
-
-func nativeAPOCSignature(name, result string, arguments []ProcedureParam) string {
-	parts := make([]string, len(arguments))
-	for i, arg := range arguments {
-		parts[i] = arg.Name + " :: " + arg.Type
-		if arg.Optional {
-			parts[i] += " = " + arg.Default
-		}
-	}
-	return name + "(" + strings.Join(parts, ", ") + ") :: " + result
 }
 
 // APOC's standalone Go graph uses integer IDs and its own global store. It
