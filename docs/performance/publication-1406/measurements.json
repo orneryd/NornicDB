@@ -1,0 +1,1067 @@
+{
+  "starting_pr": "0e4c36b9027c2511a625f2c98948c5a1f6243cfc",
+  "integration_base": "128bd67aa724688d8fd9f56a08515875f697db8b",
+  "recorded_develop": "436fd21d278b10130004d08808b06ba3e9fc09e8",
+  "go": "1.26.9",
+  "hardware": "Apple M2 Max, darwin/arm64, 12 logical CPUs",
+  "date": "2026-10-18",
+  "benchtime": "1s",
+  "rounds": 5,
+  "order": "Rotate integration-base, original, inline-queue each round",
+  "tuned_source_sha256": {
+    "pkg/storage/badger_publication_stage.go": "a9c7fc65576aa59e239cdbcbebc9e4a6bed83acb672c890094d67167b75d27c1",
+    "pkg/storage/schema.go": "8c2cb9403c395874ca1f056650052ba117d1a49aae7810f4f8f5e6c6e6828082",
+    "pkg/storage/badger_commit_writer.go": "a51d78a0c9b84ee685103ff224e0fb9eb5e94bd52c07f48c5557cff3013397da"
+  },
+  "background": "Local NornicDB server and embedding workers remained running",
+  "samples": {
+    "BenchmarkPublicationWritePath/create/direct-12": {
+      "integration-base": [
+        {
+          "ns/op": 49530.0,
+          "B/op": 11108.0,
+          "allocs/op": 225.0
+        },
+        {
+          "ns/op": 49667.0,
+          "B/op": 11112.0,
+          "allocs/op": 225.0
+        },
+        {
+          "ns/op": 49382.0,
+          "B/op": 11117.0,
+          "allocs/op": 225.0
+        },
+        {
+          "ns/op": 49705.0,
+          "B/op": 11109.0,
+          "allocs/op": 225.0
+        },
+        {
+          "ns/op": 50243.0,
+          "B/op": 11110.0,
+          "allocs/op": 225.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 49811.0,
+          "B/op": 11645.0,
+          "allocs/op": 237.0
+        },
+        {
+          "ns/op": 49152.0,
+          "B/op": 11648.0,
+          "allocs/op": 237.0
+        },
+        {
+          "ns/op": 49292.0,
+          "B/op": 11648.0,
+          "allocs/op": 237.0
+        },
+        {
+          "ns/op": 48717.0,
+          "B/op": 11640.0,
+          "allocs/op": 237.0
+        },
+        {
+          "ns/op": 48637.0,
+          "B/op": 11640.0,
+          "allocs/op": 237.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 49270.0,
+          "B/op": 11391.0,
+          "allocs/op": 233.0
+        },
+        {
+          "ns/op": 49193.0,
+          "B/op": 11393.0,
+          "allocs/op": 233.0
+        },
+        {
+          "ns/op": 48727.0,
+          "B/op": 11398.0,
+          "allocs/op": 233.0
+        },
+        {
+          "ns/op": 48846.0,
+          "B/op": 11394.0,
+          "allocs/op": 233.0
+        },
+        {
+          "ns/op": 49338.0,
+          "B/op": 11401.0,
+          "allocs/op": 233.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/update/direct-12": {
+      "integration-base": [
+        {
+          "ns/op": 24290.0,
+          "B/op": 15199.0,
+          "allocs/op": 240.0
+        },
+        {
+          "ns/op": 23949.0,
+          "B/op": 15153.0,
+          "allocs/op": 239.0
+        },
+        {
+          "ns/op": 24141.0,
+          "B/op": 15131.0,
+          "allocs/op": 239.0
+        },
+        {
+          "ns/op": 24500.0,
+          "B/op": 15151.0,
+          "allocs/op": 239.0
+        },
+        {
+          "ns/op": 24258.0,
+          "B/op": 15013.0,
+          "allocs/op": 237.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 25645.0,
+          "B/op": 15916.0,
+          "allocs/op": 255.0
+        },
+        {
+          "ns/op": 25726.0,
+          "B/op": 15787.0,
+          "allocs/op": 255.0
+        },
+        {
+          "ns/op": 25270.0,
+          "B/op": 15919.0,
+          "allocs/op": 255.0
+        },
+        {
+          "ns/op": 25639.0,
+          "B/op": 13091.0,
+          "allocs/op": 253.0
+        },
+        {
+          "ns/op": 25190.0,
+          "B/op": 15880.0,
+          "allocs/op": 255.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 25416.0,
+          "B/op": 15438.0,
+          "allocs/op": 249.0
+        },
+        {
+          "ns/op": 25342.0,
+          "B/op": 15433.0,
+          "allocs/op": 250.0
+        },
+        {
+          "ns/op": 25460.0,
+          "B/op": 15440.0,
+          "allocs/op": 250.0
+        },
+        {
+          "ns/op": 26012.0,
+          "B/op": 15387.0,
+          "allocs/op": 249.0
+        },
+        {
+          "ns/op": 25488.0,
+          "B/op": 15439.0,
+          "allocs/op": 249.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/delete/direct-12": {
+      "integration-base": [
+        {
+          "ns/op": 31208.0,
+          "B/op": 16851.0,
+          "allocs/op": 297.0
+        },
+        {
+          "ns/op": 31271.0,
+          "B/op": 16882.0,
+          "allocs/op": 294.0
+        },
+        {
+          "ns/op": 30850.0,
+          "B/op": 16901.0,
+          "allocs/op": 292.0
+        },
+        {
+          "ns/op": 31849.0,
+          "B/op": 16844.0,
+          "allocs/op": 297.0
+        },
+        {
+          "ns/op": 31342.0,
+          "B/op": 16886.0,
+          "allocs/op": 294.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 39734.0,
+          "B/op": 17309.0,
+          "allocs/op": 297.0
+        },
+        {
+          "ns/op": 39950.0,
+          "B/op": 17319.0,
+          "allocs/op": 297.0
+        },
+        {
+          "ns/op": 40967.0,
+          "B/op": 17281.0,
+          "allocs/op": 302.0
+        },
+        {
+          "ns/op": 40709.0,
+          "B/op": 17348.0,
+          "allocs/op": 304.0
+        },
+        {
+          "ns/op": 40239.0,
+          "B/op": 17366.0,
+          "allocs/op": 298.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 33178.0,
+          "B/op": 17232.0,
+          "allocs/op": 301.0
+        },
+        {
+          "ns/op": 32149.0,
+          "B/op": 17222.0,
+          "allocs/op": 301.0
+        },
+        {
+          "ns/op": 31935.0,
+          "B/op": 17227.0,
+          "allocs/op": 303.0
+        },
+        {
+          "ns/op": 32131.0,
+          "B/op": 17252.0,
+          "allocs/op": 301.0
+        },
+        {
+          "ns/op": 32545.0,
+          "B/op": 17270.0,
+          "allocs/op": 301.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/create/tx-12": {
+      "integration-base": [
+        {
+          "ns/op": 49988.0,
+          "B/op": 16539.0,
+          "allocs/op": 279.0
+        },
+        {
+          "ns/op": 50337.0,
+          "B/op": 16531.0,
+          "allocs/op": 279.0
+        },
+        {
+          "ns/op": 50045.0,
+          "B/op": 16538.0,
+          "allocs/op": 279.0
+        },
+        {
+          "ns/op": 50090.0,
+          "B/op": 16523.0,
+          "allocs/op": 279.0
+        },
+        {
+          "ns/op": 50586.0,
+          "B/op": 16533.0,
+          "allocs/op": 279.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 51170.0,
+          "B/op": 17073.0,
+          "allocs/op": 290.0
+        },
+        {
+          "ns/op": 51366.0,
+          "B/op": 17074.0,
+          "allocs/op": 290.0
+        },
+        {
+          "ns/op": 50974.0,
+          "B/op": 17076.0,
+          "allocs/op": 290.0
+        },
+        {
+          "ns/op": 50771.0,
+          "B/op": 17071.0,
+          "allocs/op": 290.0
+        },
+        {
+          "ns/op": 51158.0,
+          "B/op": 17067.0,
+          "allocs/op": 290.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 51081.0,
+          "B/op": 16816.0,
+          "allocs/op": 286.0
+        },
+        {
+          "ns/op": 50718.0,
+          "B/op": 16813.0,
+          "allocs/op": 286.0
+        },
+        {
+          "ns/op": 50223.0,
+          "B/op": 16828.0,
+          "allocs/op": 286.0
+        },
+        {
+          "ns/op": 51139.0,
+          "B/op": 16811.0,
+          "allocs/op": 286.0
+        },
+        {
+          "ns/op": 50792.0,
+          "B/op": 16816.0,
+          "allocs/op": 286.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/update/tx-12": {
+      "integration-base": [
+        {
+          "ns/op": 30080.0,
+          "B/op": 18657.0,
+          "allocs/op": 292.0
+        },
+        {
+          "ns/op": 29991.0,
+          "B/op": 18657.0,
+          "allocs/op": 292.0
+        },
+        {
+          "ns/op": 30325.0,
+          "B/op": 18658.0,
+          "allocs/op": 292.0
+        },
+        {
+          "ns/op": 30155.0,
+          "B/op": 18657.0,
+          "allocs/op": 292.0
+        },
+        {
+          "ns/op": 30328.0,
+          "B/op": 18658.0,
+          "allocs/op": 292.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 33116.0,
+          "B/op": 19538.0,
+          "allocs/op": 308.0
+        },
+        {
+          "ns/op": 32596.0,
+          "B/op": 19538.0,
+          "allocs/op": 308.0
+        },
+        {
+          "ns/op": 32963.0,
+          "B/op": 19538.0,
+          "allocs/op": 308.0
+        },
+        {
+          "ns/op": 33054.0,
+          "B/op": 19538.0,
+          "allocs/op": 308.0
+        },
+        {
+          "ns/op": 32569.0,
+          "B/op": 19538.0,
+          "allocs/op": 308.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 32654.0,
+          "B/op": 19044.0,
+          "allocs/op": 302.0
+        },
+        {
+          "ns/op": 32497.0,
+          "B/op": 19043.0,
+          "allocs/op": 302.0
+        },
+        {
+          "ns/op": 32752.0,
+          "B/op": 19043.0,
+          "allocs/op": 302.0
+        },
+        {
+          "ns/op": 32752.0,
+          "B/op": 19043.0,
+          "allocs/op": 302.0
+        },
+        {
+          "ns/op": 32084.0,
+          "B/op": 19043.0,
+          "allocs/op": 302.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/delete/tx-12": {
+      "integration-base": [
+        {
+          "ns/op": 42113.0,
+          "B/op": 21897.0,
+          "allocs/op": 410.0
+        },
+        {
+          "ns/op": 42284.0,
+          "B/op": 21972.0,
+          "allocs/op": 411.0
+        },
+        {
+          "ns/op": 41446.0,
+          "B/op": 21871.0,
+          "allocs/op": 409.0
+        },
+        {
+          "ns/op": 40401.0,
+          "B/op": 21843.0,
+          "allocs/op": 402.0
+        },
+        {
+          "ns/op": 40550.0,
+          "B/op": 21838.0,
+          "allocs/op": 402.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 46955.0,
+          "B/op": 24933.0,
+          "allocs/op": 397.0
+        },
+        {
+          "ns/op": 45952.0,
+          "B/op": 24686.0,
+          "allocs/op": 392.0
+        },
+        {
+          "ns/op": 46520.0,
+          "B/op": 24874.0,
+          "allocs/op": 395.0
+        },
+        {
+          "ns/op": 46506.0,
+          "B/op": 24911.0,
+          "allocs/op": 398.0
+        },
+        {
+          "ns/op": 46828.0,
+          "B/op": 24875.0,
+          "allocs/op": 395.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 42707.0,
+          "B/op": 22565.0,
+          "allocs/op": 410.0
+        },
+        {
+          "ns/op": 41946.0,
+          "B/op": 25390.0,
+          "allocs/op": 409.0
+        },
+        {
+          "ns/op": 42106.0,
+          "B/op": 25120.0,
+          "allocs/op": 404.0
+        },
+        {
+          "ns/op": 40591.0,
+          "B/op": 24813.0,
+          "allocs/op": 396.0
+        },
+        {
+          "ns/op": 41469.0,
+          "B/op": 25386.0,
+          "allocs/op": 409.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/read_after_write-12": {
+      "integration-base": [
+        {
+          "ns/op": 24873.0,
+          "B/op": 16530.0,
+          "allocs/op": 250.0
+        },
+        {
+          "ns/op": 25395.0,
+          "B/op": 16641.0,
+          "allocs/op": 251.0
+        },
+        {
+          "ns/op": 25283.0,
+          "B/op": 16417.0,
+          "allocs/op": 249.0
+        },
+        {
+          "ns/op": 25277.0,
+          "B/op": 16500.0,
+          "allocs/op": 250.0
+        },
+        {
+          "ns/op": 25598.0,
+          "B/op": 16384.0,
+          "allocs/op": 249.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 26760.0,
+          "B/op": 16952.0,
+          "allocs/op": 266.0
+        },
+        {
+          "ns/op": 26837.0,
+          "B/op": 15802.0,
+          "allocs/op": 265.0
+        },
+        {
+          "ns/op": 26690.0,
+          "B/op": 16213.0,
+          "allocs/op": 266.0
+        },
+        {
+          "ns/op": 26485.0,
+          "B/op": 16232.0,
+          "allocs/op": 266.0
+        },
+        {
+          "ns/op": 26685.0,
+          "B/op": 16188.0,
+          "allocs/op": 266.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 26796.0,
+          "B/op": 15753.0,
+          "allocs/op": 260.0
+        },
+        {
+          "ns/op": 26267.0,
+          "B/op": 16503.0,
+          "allocs/op": 260.0
+        },
+        {
+          "ns/op": 26491.0,
+          "B/op": 15717.0,
+          "allocs/op": 260.0
+        },
+        {
+          "ns/op": 26318.0,
+          "B/op": 15718.0,
+          "allocs/op": 260.0
+        },
+        {
+          "ns/op": 25932.0,
+          "B/op": 15698.0,
+          "allocs/op": 260.0
+        }
+      ]
+    },
+    "BenchmarkPublicationWritePath/tx_create_10k-12": {
+      "integration-base": [
+        {
+          "ns/op": 382397073.0,
+          "B/op": 113547982.0,
+          "allocs/op": 1542362.0
+        },
+        {
+          "ns/op": 564251139.0,
+          "B/op": 114908917.0,
+          "allocs/op": 1542363.0
+        },
+        {
+          "ns/op": 390662167.0,
+          "B/op": 113548338.0,
+          "allocs/op": 1542369.0
+        },
+        {
+          "ns/op": 389243010.0,
+          "B/op": 113550656.0,
+          "allocs/op": 1542405.0
+        },
+        {
+          "ns/op": 390850969.0,
+          "B/op": 113548486.0,
+          "allocs/op": 1542371.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 397006708.0,
+          "B/op": 119023120.0,
+          "allocs/op": 1602449.0
+        },
+        {
+          "ns/op": 396654927.0,
+          "B/op": 119022348.0,
+          "allocs/op": 1602434.0
+        },
+        {
+          "ns/op": 401532802.0,
+          "B/op": 119022332.0,
+          "allocs/op": 1602443.0
+        },
+        {
+          "ns/op": 399571156.0,
+          "B/op": 119023370.0,
+          "allocs/op": 1602443.0
+        },
+        {
+          "ns/op": 396720188.0,
+          "B/op": 119022362.0,
+          "allocs/op": 1602436.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 399875677.0,
+          "B/op": 116673390.0,
+          "allocs/op": 1562431.0
+        },
+        {
+          "ns/op": 395917146.0,
+          "B/op": 116675594.0,
+          "allocs/op": 1562464.0
+        },
+        {
+          "ns/op": 400419302.0,
+          "B/op": 116674222.0,
+          "allocs/op": 1562439.0
+        },
+        {
+          "ns/op": 396805573.0,
+          "B/op": 116674804.0,
+          "allocs/op": 1562451.0
+        },
+        {
+          "ns/op": 394803677.0,
+          "B/op": 116673506.0,
+          "allocs/op": 1562433.0
+        }
+      ]
+    },
+    "BenchmarkPublicationConcurrentWriters/distinct/writers=8-12": {
+      "integration-base": [
+        {
+          "ns/op": 11177.0,
+          "p50-ns": 78459.0,
+          "p99-ns": 226166.0,
+          "writes/s": 89467.0,
+          "B/op": 20101.0,
+          "allocs/op": 266.0
+        },
+        {
+          "ns/op": 11427.0,
+          "p50-ns": 78250.0,
+          "p99-ns": 272583.0,
+          "writes/s": 87512.0,
+          "B/op": 19943.0,
+          "allocs/op": 265.0
+        },
+        {
+          "ns/op": 11839.0,
+          "p50-ns": 82916.0,
+          "p99-ns": 245958.0,
+          "writes/s": 84464.0,
+          "B/op": 20167.0,
+          "allocs/op": 266.0
+        },
+        {
+          "ns/op": 11038.0,
+          "p50-ns": 77584.0,
+          "p99-ns": 231916.0,
+          "writes/s": 90595.0,
+          "B/op": 19499.0,
+          "allocs/op": 264.0
+        },
+        {
+          "ns/op": 11017.0,
+          "p50-ns": 77792.0,
+          "p99-ns": 219042.0,
+          "writes/s": 90767.0,
+          "B/op": 20103.0,
+          "allocs/op": 266.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 11185.0,
+          "p50-ns": 79458.0,
+          "p99-ns": 222875.0,
+          "writes/s": 89402.0,
+          "B/op": 20459.0,
+          "allocs/op": 282.0
+        },
+        {
+          "ns/op": 11235.0,
+          "p50-ns": 79500.0,
+          "p99-ns": 224959.0,
+          "writes/s": 89007.0,
+          "B/op": 20625.0,
+          "allocs/op": 282.0
+        },
+        {
+          "ns/op": 11394.0,
+          "p50-ns": 81000.0,
+          "p99-ns": 225375.0,
+          "writes/s": 87765.0,
+          "B/op": 20606.0,
+          "allocs/op": 282.0
+        },
+        {
+          "ns/op": 11212.0,
+          "p50-ns": 79750.0,
+          "p99-ns": 222125.0,
+          "writes/s": 89191.0,
+          "B/op": 20734.0,
+          "allocs/op": 283.0
+        },
+        {
+          "ns/op": 11564.0,
+          "p50-ns": 81834.0,
+          "p99-ns": 235000.0,
+          "writes/s": 86477.0,
+          "B/op": 20462.0,
+          "allocs/op": 282.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 11237.0,
+          "p50-ns": 79542.0,
+          "p99-ns": 222416.0,
+          "writes/s": 88988.0,
+          "B/op": 20028.0,
+          "allocs/op": 276.0
+        },
+        {
+          "ns/op": 11222.0,
+          "p50-ns": 79666.0,
+          "p99-ns": 225250.0,
+          "writes/s": 89113.0,
+          "B/op": 19884.0,
+          "allocs/op": 275.0
+        },
+        {
+          "ns/op": 11554.0,
+          "p50-ns": 82000.0,
+          "p99-ns": 230583.0,
+          "writes/s": 86549.0,
+          "B/op": 20057.0,
+          "allocs/op": 276.0
+        },
+        {
+          "ns/op": 11338.0,
+          "p50-ns": 80500.0,
+          "p99-ns": 223792.0,
+          "writes/s": 88203.0,
+          "B/op": 20114.0,
+          "allocs/op": 276.0
+        },
+        {
+          "ns/op": 11105.0,
+          "p50-ns": 78625.0,
+          "p99-ns": 221167.0,
+          "writes/s": 90046.0,
+          "B/op": 20017.0,
+          "allocs/op": 276.0
+        }
+      ]
+    },
+    "BenchmarkPublicationConcurrentWriters/overlapping/writers=8-12": {
+      "integration-base": [
+        {
+          "ns/op": 10526.0,
+          "p50-ns": 74709.0,
+          "p99-ns": 205791.0,
+          "writes/s": 95004.0,
+          "B/op": 14666.0,
+          "allocs/op": 253.0
+        },
+        {
+          "ns/op": 10598.0,
+          "p50-ns": 75500.0,
+          "p99-ns": 204500.0,
+          "writes/s": 94354.0,
+          "B/op": 14670.0,
+          "allocs/op": 253.0
+        },
+        {
+          "ns/op": 10619.0,
+          "p50-ns": 75459.0,
+          "p99-ns": 207583.0,
+          "writes/s": 94174.0,
+          "B/op": 14684.0,
+          "allocs/op": 250.0
+        },
+        {
+          "ns/op": 10407.0,
+          "p50-ns": 73917.0,
+          "p99-ns": 203083.0,
+          "writes/s": 96087.0,
+          "B/op": 14665.0,
+          "allocs/op": 254.0
+        },
+        {
+          "ns/op": 10795.0,
+          "p50-ns": 76208.0,
+          "p99-ns": 216750.0,
+          "writes/s": 92634.0,
+          "B/op": 14668.0,
+          "allocs/op": 253.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 10790.0,
+          "p50-ns": 77167.0,
+          "p99-ns": 206709.0,
+          "writes/s": 92675.0,
+          "B/op": 15581.0,
+          "allocs/op": 271.0
+        },
+        {
+          "ns/op": 10760.0,
+          "p50-ns": 76667.0,
+          "p99-ns": 203792.0,
+          "writes/s": 92937.0,
+          "B/op": 15590.0,
+          "allocs/op": 270.0
+        },
+        {
+          "ns/op": 10682.0,
+          "p50-ns": 76750.0,
+          "p99-ns": 200334.0,
+          "writes/s": 93617.0,
+          "B/op": 15592.0,
+          "allocs/op": 269.0
+        },
+        {
+          "ns/op": 10801.0,
+          "p50-ns": 76791.0,
+          "p99-ns": 207083.0,
+          "writes/s": 92588.0,
+          "B/op": 15591.0,
+          "allocs/op": 270.0
+        },
+        {
+          "ns/op": 10986.0,
+          "p50-ns": 77958.0,
+          "p99-ns": 213792.0,
+          "writes/s": 91022.0,
+          "B/op": 15588.0,
+          "allocs/op": 270.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 10856.0,
+          "p50-ns": 77625.0,
+          "p99-ns": 208333.0,
+          "writes/s": 92111.0,
+          "B/op": 15090.0,
+          "allocs/op": 265.0
+        },
+        {
+          "ns/op": 10607.0,
+          "p50-ns": 75875.0,
+          "p99-ns": 200458.0,
+          "writes/s": 94278.0,
+          "B/op": 15102.0,
+          "allocs/op": 264.0
+        },
+        {
+          "ns/op": 10663.0,
+          "p50-ns": 76333.0,
+          "p99-ns": 202584.0,
+          "writes/s": 93784.0,
+          "B/op": 15087.0,
+          "allocs/op": 264.0
+        },
+        {
+          "ns/op": 10729.0,
+          "p50-ns": 76583.0,
+          "p99-ns": 203500.0,
+          "writes/s": 93202.0,
+          "B/op": 15089.0,
+          "allocs/op": 264.0
+        },
+        {
+          "ns/op": 10725.0,
+          "p50-ns": 76458.0,
+          "p99-ns": 205792.0,
+          "writes/s": 93244.0,
+          "B/op": 15091.0,
+          "allocs/op": 265.0
+        }
+      ]
+    },
+    "BenchmarkPublicationLargeCommitThenSmallWrites-12": {
+      "integration-base": [
+        {
+          "ns/op": 120209.0,
+          "p50-ns": 35209.0,
+          "p99-ns": 1140500.0,
+          "writes/s": 8319.0,
+          "B/op": 51868.0,
+          "allocs/op": 690.0
+        },
+        {
+          "ns/op": 120030.0,
+          "p50-ns": 35083.0,
+          "p99-ns": 1138458.0,
+          "writes/s": 8331.0,
+          "B/op": 52680.0,
+          "allocs/op": 700.0
+        },
+        {
+          "ns/op": 123432.0,
+          "p50-ns": 35625.0,
+          "p99-ns": 1147209.0,
+          "writes/s": 8102.0,
+          "B/op": 51568.0,
+          "allocs/op": 686.0
+        },
+        {
+          "ns/op": 118302.0,
+          "p50-ns": 35583.0,
+          "p99-ns": 1132959.0,
+          "writes/s": 8453.0,
+          "B/op": 51907.0,
+          "allocs/op": 690.0
+        },
+        {
+          "ns/op": 119741.0,
+          "p50-ns": 34959.0,
+          "p99-ns": 1141542.0,
+          "writes/s": 8351.0,
+          "B/op": 52476.0,
+          "allocs/op": 697.0
+        }
+      ],
+      "original": [
+        {
+          "ns/op": 123765.0,
+          "p50-ns": 36834.0,
+          "p99-ns": 1147083.0,
+          "writes/s": 8080.0,
+          "B/op": 54511.0,
+          "allocs/op": 728.0
+        },
+        {
+          "ns/op": 124212.0,
+          "p50-ns": 36500.0,
+          "p99-ns": 1143125.0,
+          "writes/s": 8051.0,
+          "B/op": 55293.0,
+          "allocs/op": 737.0
+        },
+        {
+          "ns/op": 124824.0,
+          "p50-ns": 36292.0,
+          "p99-ns": 1134500.0,
+          "writes/s": 8011.0,
+          "B/op": 55133.0,
+          "allocs/op": 734.0
+        },
+        {
+          "ns/op": 124894.0,
+          "p50-ns": 36666.0,
+          "p99-ns": 1143792.0,
+          "writes/s": 8007.0,
+          "B/op": 52857.0,
+          "allocs/op": 732.0
+        },
+        {
+          "ns/op": 126510.0,
+          "p50-ns": 36500.0,
+          "p99-ns": 1146000.0,
+          "writes/s": 7904.0,
+          "B/op": 53208.0,
+          "allocs/op": 735.0
+        }
+      ],
+      "inline-queue": [
+        {
+          "ns/op": 124807.0,
+          "p50-ns": 36666.0,
+          "p99-ns": 1143166.0,
+          "writes/s": 8012.0,
+          "B/op": 53811.0,
+          "allocs/op": 715.0
+        },
+        {
+          "ns/op": 125344.0,
+          "p50-ns": 37000.0,
+          "p99-ns": 1147584.0,
+          "writes/s": 7978.0,
+          "B/op": 54081.0,
+          "allocs/op": 719.0
+        },
+        {
+          "ns/op": 123631.0,
+          "p50-ns": 36000.0,
+          "p99-ns": 1147667.0,
+          "writes/s": 8089.0,
+          "B/op": 54119.0,
+          "allocs/op": 720.0
+        },
+        {
+          "ns/op": 124473.0,
+          "p50-ns": 36292.0,
+          "p99-ns": 1140959.0,
+          "writes/s": 8034.0,
+          "B/op": 54219.0,
+          "allocs/op": 721.0
+        },
+        {
+          "ns/op": 124966.0,
+          "p50-ns": 36458.0,
+          "p99-ns": 1146500.0,
+          "writes/s": 8002.0,
+          "B/op": 54332.0,
+          "allocs/op": 723.0
+        }
+      ]
+    }
+  }
+}

@@ -50,13 +50,22 @@ type stagedPublication struct {
 	running bool
 }
 
+// publicationKeyQueue keeps the first timestamp inline: most entity keys
+// have only one pending writer and need no separately allocated slice.
+// Further timestamps retain registration order, which may differ from commit
+// order; dependency selection still examines every pending timestamp.
+type publicationKeyQueue struct {
+	first uint64
+	rest  []uint64
+}
+
 // publicationStage orders the publications of written commits by commit
 // timestamp, per key.
 type publicationStage struct {
 	mu      sync.Mutex
 	changed sync.Cond
 	pending map[uint64]*stagedPublication
-	byKey   map[any][]uint64 // the pending timestamps of each key
+	byKey   map[any]publicationKeyQueue // the pending timestamps of each key
 }
 
 // register adds the publication of the commit written at ts. The committer
@@ -70,12 +79,18 @@ func (s *publicationStage) register(ts uint64, pub *commitPublication) {
 	defer s.mu.Unlock()
 	if s.pending == nil {
 		s.pending = make(map[uint64]*stagedPublication)
-		s.byKey = make(map[any][]uint64)
+		s.byKey = make(map[any]publicationKeyQueue)
 		s.changed.L = &s.mu
 	}
 	s.pending[ts] = &stagedPublication{ts: ts, keys: pub.keys, run: pub.run}
 	for _, key := range pub.keys {
-		s.byKey[key] = append(s.byKey[key], ts)
+		queue, exists := s.byKey[key]
+		if !exists {
+			queue.first = ts
+		} else {
+			queue.rest = append(queue.rest, ts)
+		}
+		s.byKey[key] = queue
 	}
 }
 
@@ -119,7 +134,11 @@ func (s *publicationStage) runnableLocked(p *stagedPublication) *stagedPublicati
 func (s *publicationStage) earliestDependencyLocked(p *stagedPublication) *stagedPublication {
 	var earliest *stagedPublication
 	for _, key := range p.keys {
-		for _, at := range s.byKey[key] {
+		queue := s.byKey[key]
+		if queue.first < p.ts && (earliest == nil || queue.first < earliest.ts) {
+			earliest = s.pending[queue.first]
+		}
+		for _, at := range queue.rest {
 			if at < p.ts && (earliest == nil || at < earliest.ts) {
 				earliest = s.pending[at]
 			}
@@ -144,18 +163,22 @@ func (s *publicationStage) runLocked(p *stagedPublication) {
 func (s *publicationStage) retireLocked(p *stagedPublication) {
 	delete(s.pending, p.ts)
 	for _, key := range p.keys {
-		pending := s.byKey[key]
-		for i, at := range pending {
-			if at == p.ts {
-				pending = append(pending[:i], pending[i+1:]...)
-				break
+		queue := s.byKey[key]
+		if queue.first == p.ts {
+			if len(queue.rest) == 0 {
+				delete(s.byKey, key)
+				continue
+			}
+			queue.first, queue.rest = queue.rest[0], queue.rest[1:]
+		} else {
+			for i, at := range queue.rest {
+				if at == p.ts {
+					queue.rest = append(queue.rest[:i], queue.rest[i+1:]...)
+					break
+				}
 			}
 		}
-		if len(pending) == 0 {
-			delete(s.byKey, key)
-		} else {
-			s.byKey[key] = pending
-		}
+		s.byKey[key] = queue
 	}
 	s.changed.Broadcast()
 }
@@ -172,14 +195,22 @@ func (s *publicationStage) pendingCount() int {
 // and written hold, the ones the write frees and takes.
 func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old, written *Node) []any {
 	keys = append(keys, id)
-	if schema == nil || !schema.HasUniqueValueTracking() {
+	if schema == nil {
+		return keys
+	}
+	// Publication dependencies are a set: unlike validation, they need no
+	// name ordering. Read the schema once without copying and sorting its
+	// constraints for each version of the node.
+	schema.mu.RLock()
+	defer schema.mu.RUnlock()
+	if len(schema.uniqueConstraints) == 0 {
 		return keys
 	}
 	for _, node := range []*Node{old, written} {
 		if node == nil {
 			continue
 		}
-		for _, c := range schema.GetConstraintsForLabels(node.Labels) {
+		for _, c := range schema.constraints {
 			if c.EffectiveEntityType() != ConstraintEntityNode || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 				continue
 			}
@@ -203,12 +234,14 @@ func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old
 	if schema == nil {
 		return keys
 	}
+	schema.mu.RLock()
+	defer schema.mu.RUnlock()
 	for _, edge := range []*Edge{old, written} {
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
-		for _, c := range schema.GetConstraintsForLabels([]string{edge.Type}) {
-			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
+		for _, c := range schema.constraints {
+			if c.Label != edge.Type || c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
 			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
