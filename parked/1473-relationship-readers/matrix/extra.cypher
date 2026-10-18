@@ -1,0 +1,86 @@
+// (c) mixed-type dynamic range: hop types differ
+CREATE (:RMa {id:1})-[:`D{Z}..*` {w:1}]->(:RMa {id:2})-[:DZ {w:1}]->(:RMa {id:3});
+WITH 'D{Z}..*' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'DZ' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)*0..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH ['NOPE'] AS t MATCH p=(:RMa {id:1})-[r:$any(t)*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2 {w:1}]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2 {w:2}]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+WITH 'NOPE' AS t MATCH (a:RMa {id:1}) OPTIONAL MATCH p=(a)-[r:$(t)*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+MATCH p=(:RMa {id:1})-[r:NOPE*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+MATCH p=(:RMa {id:1})-[r:`D{Z}..*`*1..2]->(b) RETURN length(p) AS len, b.id AS b ORDER BY len;
+UNWIND ['D{Z}..*', 'DZ', 'NOPE', 7, null] AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2]->(b) RETURN t, length(p) AS len ORDER BY len;
+WITH 'NOPE' AS t MATCH p=(:RMa {id:1})-[r:$(t)*1..2]->(b) WHERE all(x IN r WHERE type(x) = t) RETURN length(p) AS len;
+// (d) nested map access in inline property maps
+WITH 1 AS i CREATE (n:NMa {k: {outer:{xs:[11,17]}}.outer.xs[i]}) RETURN n.k AS k;
+CREATE (:NMb {k:17}), (:NMb {k:999});
+WITH 1 AS i MERGE (n:NMb {k: {outer:{xs:[11,17]}}.outer.xs[i]}) RETURN n.k AS k;
+MATCH (n:NMb) RETURN count(n) AS c;
+WITH 1 AS i MATCH (n:NMb {k: {outer:{xs:[11,17]}}.outer.xs[i]}) RETURN n.k AS k;
+WITH 1 AS i OPTIONAL MATCH (n:NMb {k: {outer:{xs:[11,17]}}.outer.xs[i]}) RETURN n.k AS k;
+WITH 1 AS i CREATE (:NMc)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(:NMc) RETURN r.k AS k;
+CREATE (:NMd)-[:NR {k:17}]->(:NMd), (:NMd)-[:NR {k:999}]->(:NMd);
+WITH 1 AS i MATCH (:NMd)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(:NMd) RETURN r.k AS k;
+WITH 1 AS i OPTIONAL MATCH (:NMd)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(:NMd) RETURN r.k AS k;
+WITH 1 AS i MATCH (a:NMd)-[:NR {k:17}]->(b:NMd) MERGE (a)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(b) RETURN r.k AS k;
+MATCH (:NMd)-[r:NR]->(:NMd) RETURN count(r) AS c;
+WITH 1 AS i MATCH (:NMd)-[r:NR WHERE r.k = {outer:{xs:[11,17]}}.outer.xs[i]]->(:NMd) RETURN r.k AS k;
+UNWIND [{i:1}] AS row MERGE (a:NMe {id:1}) MERGE (b:NMe {id:2}) MERGE (a)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[row.i]}]->(b) RETURN r.k AS k;
+WITH 1 AS i MATCH (a:NMd)-[r:NR {k: {outer:{xs:[11,17]}}['outer'].xs[i]}]->() RETURN r.k AS k;
+WITH 1 AS i MATCH (a:NMd)-[r:NR {k: [{xs:[11,17]}][0].xs[i]}]->() RETURN r.k AS k;
+EXPLAIN WITH 1 AS i MATCH (:NMd)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(:NMd) RETURN r.k AS k;
+PROFILE WITH 1 AS i MATCH (:NMd)-[r:NR {k: {outer:{xs:[11,17]}}.outer.xs[i]}]->(:NMd) RETURN r.k AS k;
+// quoted values inside property maps / inline WHERE of static types
+CREATE (:QPa {id:1})-[:QR {s:'a]-[:X {b}|*..', t:"x\"]->y"}]->(:QPa {id:2});
+MATCH (:QPa)-[r:QR {s:'a]-[:X {b}|*..'}]->(b) RETURN b.id AS b;
+MATCH (:QPa)-[r:QR {t:"x\"]->y"}]->(b) RETURN b.id AS b;
+MATCH (:QPa)-[r:QR WHERE r.s = 'a]-[:X {b}|*..']->(b) RETURN b.id AS b;
+MATCH (a:QPa {id:1}) OPTIONAL MATCH (a)-[r:QR {s:'a]-[:X {b}|*..'}]->(b) RETURN b.id AS b;
+MATCH (a:QPa {id:1}), (b:QPa {id:2}) MERGE (a)-[r:QR {s:'a]-[:X {b}|*..'}]->(b) RETURN count(r) AS c;
+MATCH (:QPa)-[r]->(:QPa) RETURN count(r) AS c;
+UNWIND [1] AS x MERGE (a:QPa {id:1}) MERGE (b:QPa {id:2}) MERGE (a)-[r:QR {s:'a]-[:X {b}|*..'}]->(b) RETURN count(r) AS c;
+MATCH (:QPa)-[r]->(:QPa) RETURN count(r) AS c;
+EXPLAIN MATCH (:QPa)-[r:QR {s:'a]-[:X {b}|*..'}]->(b) RETURN b.id AS b;
+PROFILE MATCH (:QPa)-[r:QR WHERE r.s = 'a]-[:X {b}|*..']->(b) RETURN b.id AS b;
+// CASE as dynamic types elsewhere
+WITH 1 AS i CREATE (n:$(CASE WHEN i = 1 THEN 'CL' ELSE 'X' END)) RETURN labels(n) AS l;
+WITH 2 AS i CREATE (:CSa)-[r:$(CASE i WHEN 1 THEN 'X' WHEN 2 THEN 'CY' ELSE 'Z' END)]->(:CSa) RETURN type(r) AS t;
+WITH 2 AS i MATCH (:CSa)-[r:$(CASE i WHEN 1 THEN 'X' WHEN 2 THEN 'CY' ELSE 'Z' END)]->(:CSa) RETURN type(r) AS t;
+WITH 2 AS i MATCH (:CSa)-[r:$any(CASE WHEN i = 2 THEN ['CY', 'Q'] ELSE ['Z'] END)]->(:CSa) RETURN type(r) AS t;
+// backtick-quoted relationship types with quotes and arrows, schema statements
+CREATE (a:QB {id:1})-[:`D]'Z` {w:17}]->(b:QB {id:2}), (c:QB {id:3})-[:`D"Z]-[` {w:17}]->(d:QB {id:4});
+MATCH (a:QB)-[r:`D]'Z`]->(b:QB) RETURN type(r) AS t, b.id AS b;
+MATCH (a:QB)-[r:`D"Z]-[` {w:17}]->(b:QB) RETURN type(r) AS t, b.id AS b;
+MATCH (a:QB {id:1}) OPTIONAL MATCH (a)-[r:`D]'Z`]->(b) RETURN type(r) AS t, b.id AS b;
+MERGE (a:QB {id:3})-[r:`D"Z]-[` {w:17}]->(b:QB {id:4}) RETURN type(r) AS t;
+MATCH (:QB)-[r]->(:QB) RETURN count(r) AS c;
+MATCH (a:QB)-[r:`D]'Z`]->(b:QB) SET b.k = 1 RETURN b.k AS k;
+MATCH (a:QB {id:1}) RETURN [(a)-[:`D]'Z`]->(b) | b.id] AS ids, '-[x]-' AS s;
+MATCH (a:QB {id:1}) RETURN exists((a)-[:`D]'Z`]->()) AS e;
+MATCH (a:QB {id:1}) RETURN COUNT { (a)-[:`D]'Z`]->() } AS c;
+MATCH (a:QB {id:1}) WHERE (a)-[:`D]'Z`]->(:QB {id:2}) RETURN a.id AS a;
+CREATE INDEX relinv_ri FOR ()-[r:`T]x:y`]-() ON (r.p);
+SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name = 'relinv_ri' RETURN name, labelsOrTypes, properties;
+CREATE CONSTRAINT relinv_rc FOR ()-[r:`U]-[:z`]-() REQUIRE r.k IS UNIQUE;
+SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE name = 'relinv_rc' RETURN name, labelsOrTypes, properties;
+CREATE FULLTEXT INDEX relinv_ft FOR ()-[r:`V]x`|W]-() ON EACH [r.s];
+SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name = 'relinv_ft' RETURN name, labelsOrTypes, properties;
+CREATE ()-[:`U]-[:z` {k:1}]->();
+MATCH ()-[r:`U]-[:z` {k:1}]->() RETURN count(r) AS c;
+// a call inside a relationship property map; a pattern string in a DELETE statement
+WITH 1 AS x CREATE (:SN)-[r:SR {k: toString(x)}]->(:SN) RETURN r.k AS k;
+MATCH (n:SN) RETURN count(n) AS c;
+CREATE (:DL {s:']->(x)'}), (:DL {s:'keep'});
+MATCH (n:DL) WHERE n.s = ']->(x)' DELETE n;
+MATCH (n:DL) RETURN n.s AS s;
+// inline WHERE with a range-looking dynamic type, and props plus WHERE
+CREATE (:IW {id:1})-[:DZ {w:17, v:2}]->(:IW {id:2});
+WITH 1 AS i MATCH (a:IW)-[r:$(['X','DZ'][i * 1]) WHERE r.w = 17]->(b) RETURN type(r) AS t, b.id AS b;
+WITH 1 AS i MATCH (a:IW)-[r:$({ts:['DZ']}.ts[0..1][0]) WHERE r.w = 17 AND r.v * 2 = 4]->(b) RETURN b.id AS b;
+WITH 1 AS i MATCH (a:IW) OPTIONAL MATCH (a)-[r:$('D*Z') WHERE r.w = 17]->(b) RETURN b.id AS b;
+MATCH (a:IW)-[r:DZ WHERE r.w = 17 AND r.v IN [1, 2]]->(b) RETURN b.id AS b;
+MATCH (a:IW)-[r:DZ WHERE r.w = {k:17}.k]->(b) RETURN b.id AS b;
+MATCH (a:IW)-[r WHERE type(r) = 'DZ']->(b) RETURN b.id AS b;
+MATCH (a:IW)-[r:DZ WHERE r.w = 17]->(b) WITH a, b CREATE (a)-[:IWX {w:1}]->(b) WITH a MATCH (a)-[q:IWX WHERE q.w = 1]->() RETURN count(q) AS c;

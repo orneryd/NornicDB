@@ -1,0 +1,14 @@
+plain	RIa	:DZ	:DZ
+brace	RIb	:$({k:'DZ'}.k)	:$({k:'DZ'}.k)
+star	RIc	:$(['X','DZ'][i * 1])	:$(['X','DZ'][row.i * 1])
+slice	RId	:$({ts:['DZ','X']}.ts[0..1][0])	:$({ts:['DZ','X']}.ts[0..1][0])
+squote	RIe	:$('D):Z|Q{*..')	:$('D):Z|Q{*..')
+dquote	RIf	:$("D]:Z|{*..")	:$("D]:Z|{*..")
+escsq	RIg	:$('D]\'Z')	:$('D]\'Z')
+escdq	RIh	:$("D\"Z]-[")	:$("D\"Z]-[")
+backtick	RIi	:`D):Z|Q{*..`	:`D):Z|Q{*..`
+case	RIj	:$(CASE WHEN i = 1 THEN 'DZ' ELSE 'X' END)	:$(CASE WHEN row.i = 1 THEN 'DZ' ELSE 'X' END)
+caselist	RIk	:$(CASE WHEN i * 1 = 1 THEN {ts:['DZ']}.ts[0..1] ELSE ['X'] END)	:$(CASE WHEN row.i * 1 = 1 THEN {ts:['DZ']}.ts[0..1] ELSE ['X'] END)
+backq	RIl	:`D]'Z]-[`	:`D]'Z]-[`
+backdq	RIm	:`D"Z]->(x)`	:`D"Z]->(x)`
+dynbt	RIn	:$('D`Z]-(')	:$('D`Z]-(')

@@ -1,0 +1,286 @@
+entries: ['executor_entry.go:100 .Execute()']
+outside-called pkg/cypher functions: 59
+UNREACHED | apoc_load_export.go:201 normalizeAPOCImportRelativePath() | prod callers 1 test callers 0 | .rebaseAPOCImportPath()
+UNREACHED | arrow_validation.go:16 validateArrowOperators() | prod callers 1 test callers 1 | .validateSyntax()
+UNREACHED | ast_builder.go:1028 splitOutsideBrackets() | prod callers 6 test callers 1 | .parseExpression(),.parseOrderBy(),.parsePatterns(),.parseReturn(),.parseSetItems(),.parseWith()
+UNREACHED | ast_builder.go:29 NewASTBuilder() | prod callers 1 test callers 8 | .GetAST()
+UNREACHED | binding_where_compile.go:181 .matchesRelationships() | prod callers 0 test callers 0 | 
+OTHER-ENTRY | call.go:1059 findTopLevelByte() | prod callers 4 test callers 1 | findTopLevelByte() <- splitSetAssignment() <- setItemKeepsMergeKey() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | call.go:1310 callTailHasRelationshipTypeConstraint() | prod callers 0 test callers 1 | 
+UNREACHED | call.go:863 .parseCallTailRelationshipMatchPlan() | prod callers 1 test callers 0 | .tryExecuteCallTailRelationshipMatchProjection()
+UNREACHED | call.go:876 .planCallTailRelationshipMatch() | prod callers 1 test callers 0 | .parseCallTailRelationshipMatchPlan()
+UNREACHED | call.go:924 parseCallTailRelationshipPattern() | prod callers 1 test callers 0 | .planCallTailRelationshipMatch()
+UNREACHED | call.go:981 parseCallTailRelationshipToken() | prod callers 1 test callers 1 | parseCallTailRelationshipPattern()
+UNREACHED | call_apoc_path.go:290 parseApocRelationshipFilter() | prod callers 5 test callers 1 | .configure(),.getNeighborsByhop(),.nativeAPOCAdjacency(),parseApocSequence(),pathAlgorithmArguments()
+UNREACHED | call_compat.go:397 matchesRelationshipTypes() | prod callers 1 test callers 0 | .callDbIndexFulltextQueryRelationships()
+UNREACHED | call_compat.go:491 .callDbIndexVectorQueryRelationships() | prod callers 0 test callers 0 | 
+UNREACHED | call_compat.go:501 .callDbIndexVectorQueryRelationshipsInput() | prod callers 1 test callers 0 | .callDbIndexVectorQueryRelationships()
+UNREACHED | call_compat.go:924 .splitArgsRespectingArrays() | prod callers 0 test callers 0 | 
+UNREACHED | call_compat.go:972 .callDbCreateSetRelationshipVectorProperty() | prod callers 0 test callers 0 | 
+UNREACHED | call_vector.go:351 .parseVectorQueryParams() | prod callers 1 test callers 0 | .callDbIndexVectorQueryNodes()
+UNREACHED | call_vector.go:463 splitParamsCarefully() | prod callers 1 test callers 2 | .parseVectorQueryParams()
+EXEC | case_expression.go:505 caseOperandEndsAt() | prod callers 3 test callers 0 | caseOperandEndsAt() <- caseSimpleTestContinuesAt() <- caseKeywordAtMode() <- caseKeywordAt() <- insideCaseBlock() <- clauseKeywordUsedAsName() <- lastTopLevelClauseWord() <- .Execute()
+EXEC | case_expression.go:547 caseSimpleTestContinuesAt() | prod callers 3 test callers 0 | caseSimpleTestContinuesAt() <- caseKeywordAtMode() <- caseKeywordAt() <- insideCaseBlock() <- clauseKeywordUsedAsName() <- lastTopLevelClauseWord() <- .Execute()
+UNREACHED | case_expression.go:606 caseBlockSpans() | prod callers 4 test callers 1 | .evaluateExpressionWithContextFull(),.evaluateRowPredicateMode(),compileRowPredicateProgram(),subqueryInsideCase()
+UNREACHED | clauses.go:1128 setRelationshipPropertyIfChanged() | prod callers 0 test callers 0 | 
+UNREACHED | clauses.go:1155 .executeUnwindFixedChainLinkBatch() | prod callers 0 test callers 0 | 
+UNREACHED | clauses.go:1516 rewriteUnwindCorrelationToIn() | prod callers 2 test callers 2 | .executeSetBasedUnwindCreateOperator(),.executeUnwindBatchOperator()
+UNREACHED | clauses.go:153 .splitWithItems() | prod callers 0 test callers 0 | 
+UNREACHED | clauses.go:2006 .parseOptionalRelPattern() | prod callers 0 test callers 0 | 
+UNREACHED | clauses.go:2074 optionalRelationshipTypeMatches() | prod callers 0 test callers 0 | 
+UNREACHED | clauses.go:659 parseUnwindMergeRelationshipClause() | prod callers 1 test callers 3 | parseUnwindMergeChainPattern()
+UNREACHED | comparison_chain.go:208 incomingArrowAt() | prod callers 2 test callers 1 | scanComparisonChain(),scanPlainComparisonChain()
+UNREACHED | count_store.go:156 countUndirectedRelationshipMatches() | prod callers 1 test callers 0 | .relationshipCountFromStore()
+UNREACHED | create.go:137 .planCreatePatterns() | prod callers 1 test callers 0 | .createPatternsInScope()
+UNREACHED | create.go:630 .scanCreatePatterns() | prod callers 0 test callers 0 | 
+UNREACHED | create.go:753 .splitNodePatterns() | prod callers 2 test callers 0 | .isSingleNodePattern(),.tryResolveMatchNodesByIDFromWhere()
+UNREACHED | create.go:845 .parseRelationshipTypeAndProps() | prod callers 1 test callers 0 | .planCreatePatterns()
+UNREACHED | create.go:968 parseCreateRelationshipContent() | prod callers 2 test callers 1 | .parseMergeRelationshipShape(),.parseSimpleMatchRelationshipPattern()
+UNREACHED | create_pipeline_helpers.go:175 .parseCreateRelPatternWithVars() | prod callers 1 test callers 0 | extractCreateVariableRefs()
+UNREACHED | create_pipeline_helpers.go:185 .scanCreateRelPatternWithVars() | prod callers 1 test callers 0 | .parseCreateRelPatternWithVars()
+UNREACHED | create_pipeline_template.go:152 .parseCreateEdgeTemplates() | prod callers 1 test callers 0 | .buildPipelineCreateTemplate()
+NOGRAPH | create_pipeline_template.go:30 <top-level var>
+UNREACHED | create_pipeline_template.go:66 .buildPipelineCreateTemplate() | prod callers 1 test callers 0 | .pipelineCreateTemplateFor()
+UNREACHED | create_semantic_validation.go:203 validateCreateRelationshipShape() | prod callers 1 test callers 0 | .validateCreateClauseBindings()
+UNREACHED | create_semantic_validation.go:234 validateSingleRelationshipDeclaration() | prod callers 2 test callers 0 | validateCreateRelationshipShape(),validateMergeRelationshipShape()
+UNREACHED | create_semantic_validation.go:319 .validateCreateRelationshipExpressions() | prod callers 1 test callers 0 | .validateCreateClauseBindings()
+UNREACHED | create_semantic_validation.go:341 createRelationshipPropertyMapBodies() | prod callers 2 test callers 0 | .validateCreateRelationshipExpressions(),.validateCreateSamePatternReferences()
+UNREACHED | create_semantic_validation.go:431 simpleCreatePropertyReference() | prod callers 1 test callers 0 | .validateCreatePropertyExpressions()
+UNREACHED | create_semantic_validation.go:461 singleRelationshipTypeError() | prod callers 1 test callers 0 | validateSingleRelationshipDeclaration()
+EXEC | cypher25_expression_rewrite.go:70 projectionAllEdits() | prod callers 1 test callers 0 | projectionAllEdits() <- desugarCypher25Expressions() <- .Execute()
+UNREACHED | cypher25_value_text.go:27 writeCypher25ValueText() | prod callers 2 test callers 0 | convertToStringInVersion(),cypher25ValueText()
+UNREACHED | dynamic_tokens.go:442 .resolveRowDynamicTokens() | prod callers 0 test callers 0 | 
+EXEC | executor.go:1266 queryDeletesNodes() | prod callers 1 test callers 1 | queryDeletesNodes() <- .Execute()
+EXEC | executor.go:1490 cypherSyntaxConfusableReplacement() | prod callers 1 test callers 1 | cypherSyntaxConfusableReplacement() <- normalizeCypherSyntaxConfusables() <- .Execute()
+EXEC | executor.go:1537 cypherArrowReplacement() | prod callers 1 test callers 0 | cypherArrowReplacement() <- normalizeCypherSyntaxConfusables() <- .Execute()
+EXEC | executor.go:2154 graphReadingExpression() | prod callers 2 test callers 1 | graphReadingExpression() <- expressionReadsGraphText() <- statementAccessesGraphText() <- .Execute()
+UNREACHED | executor_match_vector_cosine_fastpath.go:1172 .fetchCosineRelationshipScores() | prod callers 2 test callers 0 | .tryFastPathMatchRelationshipVectorCosine(),.tryFastPathMatchWithRelationshipVectorCosineProjection()
+UNREACHED | executor_match_vector_cosine_fastpath.go:1471 .parseSimpleMatchRelationshipPattern() | prod callers 2 test callers 0 | .tryFastPathMatchRelationshipVectorCosine(),.tryFastPathMatchWithRelationshipVectorCosineProjection()
+UNREACHED | executor_match_vector_cosine_fastpath.go:1521 .buildRelationshipContextInto() | prod callers 3 test callers 0 | .buildRelationshipContext(),.tryFastPathMatchRelationshipVectorCosine(),.tryFastPathMatchWithRelationshipVectorCosineProjection()
+UNREACHED | executor_match_vector_cosine_fastpath.go:484 .tryFastPathMatchRelationshipVectorCosine() | prod callers 1 test callers 0 | .tryFastPathAnyMatchVectorCosine()
+UNREACHED | executor_match_vector_cosine_fastpath.go:608 .tryFastPathMatchWithRelationshipVectorCosineProjection() | prod callers 1 test callers 0 | .tryFastPathAnyMatchVectorCosine()
+UNREACHED | executor_mutations.go:1066 extractVariableNameFromReturnItem() | prod callers 1 test callers 1 | extractScopeVariablesFromSetAndReturn()
+UNREACHED | executor_mutations.go:1099 .extractTargetVariable() | prod callers 1 test callers 0 | .evaluateRelationshipPatternInWhere()
+UNREACHED | executor_mutations.go:1130 .extractRelTypesFromPattern() | prod callers 1 test callers 0 | .relationshipExistencePatternDirections()
+UNREACHED | executor_mutations.go:1161 .relationshipExistencePatternDirections() | prod callers 1 test callers 0 | .evaluateRelationshipPatternInWhere()
+UNREACHED | executor_mutations.go:845 .idCounter() | prod callers 0 test callers 0 | 
+UNREACHED | executor_mutations.go:854 .evaluateRelationshipPatternInWhere() | prod callers 0 test callers 0 | 
+UNREACHED | executor_mutations.go:945 .parseRelationshipHops() | prod callers 1 test callers 0 | .checkChainedPattern()
+UNREACHED | executor_mutations_delete_guard.go:317 pipelineUnwindAlias() | prod callers 1 test callers 0 | .runPipelineClauseRows()
+UNREACHED | executor_mutations_relationship_delete.go:194 .boundRelationshipDeleteCandidateEdges() | prod callers 1 test callers 0 | .tryExecuteBoundRelationshipDelete()
+UNREACHED | executor_mutations_relationship_delete.go:224 parseBoundRelationshipDeleteWithLimitSegment() | prod callers 1 test callers 2 | .tryExecuteBoundRelationshipDelete()
+UNREACHED | executor_mutations_relationship_delete.go:259 isSimpleBoundRelationshipDeleteMatchSegment() | prod callers 2 test callers 2 | .tryExecuteBoundRelationshipDelete(),parseBoundRelationshipDeleteWithLimitSegment()
+UNREACHED | executor_mutations_relationship_delete.go:307 relationshipTypeAllowed() | prod callers 1 test callers 1 | .tryExecuteBoundRelationshipDelete()
+UNREACHED | executor_mutations_where_eval.go:147 .parseValue() | prod callers 0 test callers 0 | 
+UNREACHED | executor_mutations_where_eval.go:68 .compileRelationshipWhereFilter() | prod callers 0 test callers 0 | 
+UNREACHED | executor_query_routing.go:465 .validateSyntaxNornic() | prod callers 2 test callers 0 | .validateSyntax(),.validateSyntaxANTLR()
+UNREACHED | executor_query_routing.go:618 hasAdjacentOperands() | prod callers 1 test callers 0 | .validateSyntaxNornic()
+UNREACHED | executor_subqueries.go:1058 isPatternVariableAt() | prod callers 1 test callers 0 | branchDeclaresVariable()
+UNREACHED | executor_subqueries.go:1686 extractCallSubqueryCorrelationWhere() | prod callers 1 test callers 1 | .tryExecuteCorrelatedBatchedLookup()
+UNREACHED | executor_subqueries.go:223 .tryExecuteCorrelatedReturnProjection() | prod callers 0 test callers 0 | 
+UNREACHED | executor_subqueries.go:229 .tryExecuteCorrelatedReturnProjectionPreChecked() | prod callers 1 test callers 0 | .tryExecuteCorrelatedReturnProjection()
+UNREACHED | executor_subqueries.go:36 appendCorrelatedBinding() | prod callers 0 test callers 0 | 
+UNREACHED | executor_subqueries.go:52 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | executor_subqueries.go:606 callSeedIsFirstNode() | prod callers 0 test callers 0 | 
+UNREACHED | explain.go:556 containsVariableLengthPathPattern() | prod callers 1 test callers 1 | .analyzeMatchClause()
+UNREACHED | expression_failure.go:501 inLocalExpressionScope() | prod callers 1 test callers 0 | liftableSubquery()
+UNREACHED | expression_failure.go:753 relationshipPatternMayFail() | prod callers 2 test callers 0 | operandCannotFail(),rowOperandRecordsFailure()
+UNREACHED | expression_validation.go:209 localBindingAt() | prod callers 4 test callers 1 | caseVariableScopeOpensAt(),expressionLocalBindings(),inLocalExpressionScope(),localBindingStep()
+UNREACHED | expression_validation.go:309 localScopeStart() | prod callers 1 test callers 0 | localBindingAt()
+UNREACHED | expression_validation.go:689 staticListOperand() | prod callers 1 test callers 0 | validateListOperands()
+UNREACHED | expression_validation.go:838 validateListComprehensionVariables() | prod callers 1 test callers 0 | .validateSemanticScopes()
+UNREACHED | functions_eval_functions.go:17 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | functions_eval_props_literals.go:10 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | functions_text_locate.go:38 fnTextLocate() | prod callers 0 test callers 0 | 
+UNREACHED | gds_projection_state.go:109 .resolveRelationshipTypes() | prod callers 0 test callers 0 | 
+UNREACHED | gds_projection_state.go:174 gdsRelationshipDirections() | prod callers 2 test callers 0 | .buildGraphProjection(),.gdsCypherProjection()
+UNREACHED | gds_projection_state.go:77 gdsRelationshipTypeOrder() | prod callers 1 test callers 2 | .finishCounts()
+UNREACHED | group_by_rewrite.go:96 projectionWords() | prod callers 5 test callers 0 | cypher5ImportGrouping(),expressionVariables(),groupByEdits(),projectionItemAlias(),showContinuationStart()
+EXEC | keyword_scan.go:125 nameContinuesExpression() | prod callers 1 test callers 1 | nameContinuesExpression() <- startsWithClauseAfterName() <- startsWithClauseAfterDistinct() <- clauseKeywordNamedByContext() <- clauseKeywordUsedAsName() <- lastTopLevelClauseWord() <- .Execute()
+EXEC | keyword_scan.go:1461 queryMayNeedCanonicalRewrite() | prod callers 1 test callers 2 | queryMayNeedCanonicalRewrite() <- canonicalizeQueryText() <- .Execute()
+EXEC | keyword_scan.go:1512 scanCanonicalQueryText() | prod callers 1 test callers 1 | scanCanonicalQueryText() <- canonicalizeQueryText() <- .Execute()
+EXEC | keyword_scan.go:1647 inPatternClause() | prod callers 2 test callers 0 | inPatternClause() <- scanCanonicalQueryText() <- canonicalizeQueryText() <- .Execute()
+EXEC | keyword_scan.go:261 isOperatorWith() | prod callers 4 test callers 1 | isOperatorWith() <- keywordIndexFrom() <- statementAccessesGraphText() <- .Execute()
+EXEC | keyword_scan.go:325 clauseKeywordNamedByContext() | prod callers 1 test callers 0 | clauseKeywordNamedByContext() <- clauseKeywordUsedAsName() <- lastTopLevelClauseWord() <- .Execute()
+EXEC | knowledgepolicy_ddl.go:566 parseEdgeTarget() | prod callers 1 test callers 1 | parseEdgeTarget() <- parseForTarget() <- parsePromotionPolicyDefinition() <- parseCreatePromotionPolicy() <- ParseKnowledgePolicyDDL() <- .Execute()
+UNREACHED | label_expression_rewrite.go:1179 .foreach() | prod callers 0 test callers 0 | 
+EXEC | label_expression_rewrite.go:1202 .expression() | prod callers 7 test callers 0 | .expression() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:165 mayReadPatternInPropertyMap() | prod callers 1 test callers 1 | mayReadPatternInPropertyMap() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:1683 relationshipChainEnd() | prod callers 10 test callers 3 | relationshipChainEnd() <- .parenthesised() <- .expression() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:195 mayUsePatternPredicate() | prod callers 1 test callers 0 | mayUsePatternPredicate() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:229 mayUseLabelExpressions() | prod callers 1 test callers 1 | mayUseLabelExpressions() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:431 .clauses() | prod callers 2 test callers 1 | .clauses() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:615 .patternElements() | prod callers 1 test callers 0 | .patternElements() <- .pattern() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:781 .samePatternMapReads() | prod callers 1 test callers 0 | .samePatternMapReads() <- .element() <- .patternElements() <- .pattern() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:868 declaredPatternVariables() | prod callers 1 test callers 1 | declaredPatternVariables() <- .patternWithWhere() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | label_expression_rewrite.go:964 .relationshipElement() | prod callers 1 test callers 0 | .relationshipElement() <- .element() <- .patternElements() <- .pattern() <- .statement() <- desugarLabelExpressions() <- .Execute()
+UNREACHED | list_literal.go:11 isListLiteral() | prod callers 17 test callers 0 | .evaluateExpressionWithContextFullMath(),.parseExpression(),.parsePropertyValue(),.parseSimpleIndexedInLiteral(),.parseValue(),.parseVectorQueryParams(),entityListLiteralKind(),evaluateStaticListForPi
+UNREACHED | map_literal_validation.go:8 validateStaticMapKeys() | prod callers 2 test callers 6 | .validateSyntax(),validateCreatePropertyKeys()
+UNREACHED | map_pattern_context.go:16 .insidePatternDelimiter() | prod callers 0 test callers 0 | 
+UNREACHED | map_pattern_context.go:160 mapRelationshipDelimiter() | prod callers 1 test callers 0 | .insidePatternDelimiter()
+UNREACHED | map_pattern_context.go:208 newMapPatternContext() | prod callers 1 test callers 3 | validateStaticMapKeys()
+UNREACHED | map_pattern_context.go:65 mapNodeDelimiter() | prod callers 1 test callers 0 | .insidePatternDelimiter()
+UNREACHED | match_multi.go:255 mergeRelBindingsChecked() | prod callers 0 test callers 1 | 
+UNREACHED | match_multi.go:368 .filterBindingsByWhereWithRels() | prod callers 0 test callers 0 | 
+UNREACHED | match_multi.go:396 bindingWithRelView() | prod callers 0 test callers 1 | 
+UNREACHED | match_multi.go:451 .resolveBindingExprWithRelationships() | prod callers 2 test callers 0 | .resolveBindingExpr(),.resolveBindingItemWithRelationships()
+UNREACHED | match_multi.go:525 relationshipBindingFromEdges() | prod callers 2 test callers 0 | .resolveBindingExpr(),.resolveBindingItem()
+UNREACHED | match_multi.go:68 splitMatchClauses() | prod callers 1 test callers 2 | .tryExecuteBoundRelationshipDelete()
+UNREACHED | match_semantic_validation.go:1331 variableLengthRelationshipVariableSet() | prod callers 3 test callers 2 | .applyGeneralOptionalClause(),.validateMatchClauseBindings(),validateBoundPatternKinds()
+UNREACHED | match_semantic_validation.go:1375 invalidRelationshipPattern() | prod callers 1 test callers 2 | .validateMatchClauseBindings()
+UNREACHED | match_semantic_validation.go:841 maskPatternComprehensions() | prod callers 1 test callers 0 | .validateWherePatternExpressionScope()
+UNREACHED | match_semantic_validation.go:957 validateExpressionPatternBindings() | prod callers 1 test callers 0 | .validateSubqueryPatternBindings()
+UNREACHED | match_with_rel.go:133 .evaluateExpressionFromValuesContext() | prod callers 2 test callers 0 | .evaluateExpressionFromValues(),.evaluateRowFallback()
+UNREACHED | match_with_rel.go:296 startsWithRelationshipFragment() | prod callers 1 test callers 1 | .evaluateExpressionFromValuesContext()
+UNREACHED | merge_actions.go:144 .isMultiRelationshipPattern() | prod callers 0 test callers 0 | 
+UNREACHED | merge_actions.go:159 mergePathSegments() | prod callers 3 test callers 1 | .isMultiRelationshipPattern(),.pipelineMergePath(),.validateMergeClause()
+UNREACHED | merge_context.go:176 splitTopLevelOrTerms() | prod callers 2 test callers 0 | impliedBounds(),whereLabelDisjunction()
+UNREACHED | merge_context.go:195 .extractVariableNamesFromPattern() | prod callers 0 test callers 0 | 
+UNREACHED | merge_context.go:405 .executeMergeRelationshipWithContext() | prod callers 1 test callers 0 | .executeMergeWithContext()
+UNREACHED | merge_context.go:501 .applySetToRelationshipWithContext() | prod callers 0 test callers 0 | 
+OTHER-ENTRY | merge_context.go:733 splitSetAssignment() | prod callers 14 test callers 0 | splitSetAssignment() <- setItemKeepsMergeKey() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | merge_relationship_pattern.go:52 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | merge_semantic_validation.go:241 validateMergeRelationshipShape() | prod callers 1 test callers 0 | .validateMergeClause()
+UNREACHED | merge_semantic_validation.go:267 mergePatternUsesParameterPredicate() | prod callers 2 test callers 0 | .validateMatchClauseBindings(),.validateMergeClause()
+OTHER-ENTRY | operators.go:144 findTopLevelOperator() | prod callers 7 test callers 2 | findTopLevelOperator() <- hasTopLevelExpressionOperator() <- splitPostfixPropertyAccess() <- parseSetAssignmentTarget() <- splitSetAssignment() <- setItemKeepsMergeKey() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | optimized_executors.go:67 .executeMutualRelationshipOptimized() | prod callers 1 test callers 0 | .ExecuteOptimized()
+UNREACHED | optional_match_traversal.go:113 extractRelationshipVariables() | prod callers 21 test callers 2 | .applyGeneralOptionalClause(),.eachPipelinePatternBinding(),.pipelineApplyChainedMatch(),.pipelineApplyInitialTraversalMatch(),.pipelineApplyOptionalMatch(),.repeatedRelationshipVariables(),.setOthers
+UNREACHED | optional_match_traversal.go:138 .parseOptionalClauseEndpoints() | prod callers 0 test callers 0 | 
+UNREACHED | optional_match_traversal.go:83 splitOptionalMatchClauses() | prod callers 2 test callers 0 | .boundPatternRows(),.pipelineApplyOptionalMatch()
+UNREACHED | path_selector.go:415 .plainParenthesisedPath() | prod callers 1 test callers 0 | .pathPrefixes()
+UNREACHED | path_selector.go:508 hasUnboundedRepetition() | prod callers 1 test callers 2 | .pathPrefixes()
+UNREACHED | path_selector.go:565 hasVariableLengthRelationship() | prod callers 2 test callers 2 | .pathPrefixes(),quantifiedGroupError()
+UNREACHED | path_selector_search.go:187 parsePathPatternRelationship() | prod callers 1 test callers 0 | parsePathPatternItemsContext()
+UNREACHED | path_selector_search.go:847 readsPatternVariable() | prod callers 3 test callers 0 | .compileGroup(),buildSelectedPathPlanContext(),pathLengthBoundOf()
+UNREACHED | path_selector_search.go:920 topLevelOperatorIndex() | prod callers 1 test callers 0 | pathLengthBoundOf()
+UNREACHED | path_selector_search.go:97 parsePathPatternItemsContext() | prod callers 2 test callers 1 | buildSelectedPathPlanContext(),parsePathPatternItems()
+OTHER-ENTRY | path_selector_search_run.go:219 .relationships() | prod callers 1 test callers 0 | .relationships() <- .expand()
+EXEC | pattern_comprehension_classification.go:15 classifyPatternComprehensions() | prod callers 2 test callers 1 | classifyPatternComprehensions() <- graphReadingExpression() <- expressionReadsGraphText() <- statementAccessesGraphText() <- .Execute()
+EXEC | pattern_comprehension_classification.go:70 mayHavePatternComprehension() | prod callers 1 test callers 0 | mayHavePatternComprehension() <- classifyPatternComprehensions() <- graphReadingExpression() <- expressionReadsGraphText() <- statementAccessesGraphText() <- .Execute()
+EXEC | pattern_comprehension_classification.go:99 relationshipPatternFollows() | prod callers 2 test callers 0 | relationshipPatternFollows() <- graphReadingExpression() <- expressionReadsGraphText() <- statementAccessesGraphText() <- .Execute()
+UNREACHED | pattern_expression.go:129 isStandaloneExistsSubquery() | prod callers 3 test callers 0 | rowContextShapeOf(),semiApplyPredicate(),wholeExistsPredicate()
+UNREACHED | pattern_expression.go:18 splitPatternComprehension() | prod callers 11 test callers 0 | .evaluateExpressionWithContextFull(),containsIllegalProjectedPatternExpression(),expressionFreeVariables(),inLocalExpressionScope(),maskPatternComprehensions(),rowContextShapeOf(),rowPatternComprehens
+UNREACHED | pattern_parser.go:291 .splitPropertyPairs() | prod callers 1 test callers 0 | .parsePropertyMap()
+OTHER-ENTRY | pattern_parser.go:59 containsReservedKeyword() | prod callers 1 test callers 1 | containsReservedKeyword() <- validateChainLabel() <- parseLabelChain() <- appendPatternPropertyExpressions() <- mergeStatementSetItems() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | pipeline_executor.go:1138 .tryExecutePipelineSimpleRelationshipCountPlan() | prod callers 1 test callers 0 | .executePipeline()
+UNREACHED | pipeline_executor.go:2058 .pipelineApplyBoundRelationshipListMatch() | prod callers 1 test callers 0 | .pipelineApplyMatchWithHint()
+UNREACHED | pipeline_executor.go:2145 traceRelationshipList() | prod callers 1 test callers 1 | .pipelineApplyBoundRelationshipListMatch()
+UNREACHED | pipeline_mutation.go:806 .mergeRelationshipRows() | prod callers 1 test callers 0 | .pipelineApplyMerge()
+UNREACHED | pipeline_pattern_template.go:123 pipelinePropertiesKey() | prod callers 2 test callers 0 | .pipelineApplyInitialNodeMatch(),.pipelineNodeMatchSourceWithHint()
+UNREACHED | pipeline_write_stretch.go:245 addStretchExpressionReads() | prod callers 2 test callers 1 | addStretchSetItems(),analyzeStretchClause()
+UNREACHED | pipeline_write_stretch.go:329 addStretchPropertyReads() | prod callers 2 test callers 1 | addStretchExpressionReads(),analyzeStretchClause()
+UNREACHED | property_access_semantic_validation.go:287 scanPropertyAccesses() | prod callers 2 test callers 1 | checkExpressionPropertyAccesses(),checkPropertyAccesses()
+UNREACHED | property_access_semantic_validation.go:429 parameterMayRejectPropertyAccess() | prod callers 1 test callers 2 | validateStaticPropertyAccessParameters()
+EXEC | quantified_path_pattern.go:101 quantifiedGroupFrom() | prod callers 2 test callers 0 | quantifiedGroupFrom() <- nextQuantifiedGroup() <- hasQuantifiedGroup() <- .statement() <- desugarLabelExpressions() <- .Execute()
+UNREACHED | quantified_path_pattern.go:251 lastNodePatternStart() | prod callers 1 test callers 1 | nameChainEnds()
+EXEC | quantified_path_pattern.go:696 parenthesisedPathAt() | prod callers 4 test callers 1 | parenthesisedPathAt() <- mayUseParenthesisedPath() <- desugarLabelExpressions() <- .Execute()
+OTHER-ENTRY | query_info.go:530 eachPatternElement() | prod callers 3 test callers 0 | eachPatternElement() <- appendPatternPropertyExpressions() <- mergeStatementSetItems() <- MergeUniqueConflictIsRetrySafe()
+OTHER-ENTRY | query_info.go:553 appendPatternPropertyExpressions() | prod callers 1 test callers 1 | appendPatternPropertyExpressions() <- mergeStatementSetItems() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | query_patterns.go:159 countRelationshipPatterns() | prod callers 1 test callers 0 | DetectQueryPattern()
+UNREACHED | query_patterns.go:197 detectMutualRelationship() | prod callers 1 test callers 0 | DetectQueryPattern()
+UNREACHED | query_patterns.go:540 extractNodeVariables() | prod callers 18 test callers 5 | .applyGeneralOptionalClause(),.pipelineApplyChainedMatch(),.pipelineApplyInitialTraversalMatch(),.pipelineApplyOptionalMatch(),.setOthersVariables(),.unmatchedRow(),.validateCreateSemanticScopes(),.va
+UNREACHED | query_patterns.go:588 extractRelationshipType() | prod callers 0 test callers 1 | 
+UNREACHED | query_patterns.go:613 extractRelationshipVariable() | prod callers 1 test callers 0 | detectEdgePropertyAgg()
+EXEC | query_structure_rewrite.go:103 topLevelWords() | prod callers 4 test callers 0 | topLevelWords() <- .region() <- desugarQueryStructure() <- .Execute()
+EXEC | quoted_variables.go:299 classifyQuotedToken() | prod callers 1 test callers 0 | classifyQuotedToken() <- scanQuotedTokens() <- canonicalizeQuotedVariables() <- .Execute()
+UNREACHED | rel_existence_pattern.go:5 bareRelDirection() | prod callers 1 test callers 1 | .relationshipExistencePatternDirections()
+UNREACHED | relationship_brackets.go:13 nextRelationshipBracket() | prod callers 3 test callers 1 | extractRelationshipVariables(),firstRelationshipBracket(),variableLengthRelationshipVariableSet()
+UNREACHED | relationship_brackets.go:22 scanRelationshipBracket() | prod callers 2 test callers 0 | invalidRelationshipPattern(),nextRelationshipBracket()
+UNREACHED | relationship_brackets.go:59 patternHasRelationship() | prod callers 5 test callers 2 | .createPatternSplitFor(),.tryResolveMatchNodesByIDFromWhere(),.validateCreateClauseBindings(),.validateMergeClause(),quantifiedGroupError()
+UNREACHED | relationship_brackets.go:93 firstRelationshipBracket() | prod callers 7 test callers 0 | .isMultiRelationshipPattern(),.parseMergeRelationshipShape(),.parseOptionalClauseEndpoints(),.pipelineApplyMerge(),.pipelineMergeTemplateFor(),validateCreateRelationshipShape(),validateMergeRelationsh
+UNREACHED | relationship_declaration.go:126 relationshipLengthInvalid() | prod callers 1 test callers 0 | relationshipDeclarationHead()
+UNREACHED | relationship_declaration.go:145 blankRelationshipExpressions() | prod callers 1 test callers 0 | relationshipDeclarationHead()
+UNREACHED | relationship_declaration.go:48 relationshipDeclarationOf() | prod callers 7 test callers 2 | .parseCreateEdgeTemplates(),.parseRelationshipPattern(),.parseRelationshipTypeAndProps(),.planCreatePatterns(),parseCreateRelationshipContent(),parsePathPatternRelationship(),validateSingleRelationshi
+UNREACHED | relationship_declaration.go:83 relationshipDeclarationHead() | prod callers 3 test callers 0 | invalidRelationshipPattern(),relationshipDeclarationOf(),variableLengthRelationshipVariableSet()
+UNREACHED | relationship_equality_pushdown.go:17 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | relationship_equality_pushdown.go:64 parseRelationshipEqualityTerms() | prod callers 0 test callers 0 | 
+UNREACHED | relationship_merge_identity_cache.go:105 relationshipMergeIdentityEntryKey() | prod callers 2 test callers 0 | .created(),.relationships()
+UNREACHED | relationship_merge_identity_cache.go:119 relationshipMergeIdentityValuesKey() | prod callers 3 test callers 1 | .add(),.relationships(),pipelinePropertiesKey()
+UNREACHED | relationship_merge_identity_cache.go:42 .relationships() | prod callers 0 test callers 0 | 
+EXEC | relationship_quantifier_rewrite.go:152 arrowEndsAt() | prod callers 1 test callers 0 | arrowEndsAt() <- .expression() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | relationship_quantifier_rewrite.go:200 mayUseRelationshipQuantifier() | prod callers 2 test callers 0 | mayUseRelationshipQuantifier() <- desugarLabelExpressions() <- .Execute()
+EXEC | relationship_quantifier_rewrite.go:41 relationshipQuantifierAt() | prod callers 8 test callers 1 | relationshipQuantifierAt() <- .expression() <- .statement() <- desugarLabelExpressions() <- .Execute()
+EXEC | relationship_variable_repeat.go:112 mayRepeatRelationshipVariable() | prod callers 1 test callers 1 | mayRepeatRelationshipVariable() <- desugarLabelExpressions() <- .Execute()
+EXEC | relationship_variable_repeat.go:141 relationshipBracketAt() | prod callers 2 test callers 0 | relationshipBracketAt() <- mayRepeatRelationshipVariable() <- desugarLabelExpressions() <- .Execute()
+EXEC | relationship_variable_repeat.go:148 relationshipVariableAt() | prod callers 2 test callers 0 | relationshipVariableAt() <- mayRepeatRelationshipVariable() <- desugarLabelExpressions() <- .Execute()
+UNREACHED | relationship_variable_repeat.go:36 labelExpressionRewriter | prod callers 0 test callers 0 | 
+UNREACHED | row_expression.go:1881 .rowRelationshipEndpoint() | prod callers 1 test callers 0 | .evaluateRowValueText()
+UNREACHED | row_expression.go:1966 isRelationshipPatternOperand() | prod callers 11 test callers 0 | .compile(),.evaluateRowPredicateTextFromSubqueries(),.evaluateRowValueText(),.rowPredicateOperand(),compileRowPredicateLeaf(),compileRowPredicateOperand(),operandCannotFail(),parseSimpleCreateClause()
+UNREACHED | row_expression.go:1975 containsRelationshipPattern() | prod callers 25 test callers 1 | .ExecuteRecordQuery(),.analyzeMatchClause(),.compileComprehension(),.evaluateExpressionFromValuesContext(),.evaluateRowListComprehension(),.evaluateRowPredicateParts(),.executeChainedMatch(),.executeM
+UNREACHED | row_expression.go:85 .evaluateRowValueText() | prod callers 0 test callers 0 | 
+UNREACHED | row_graph_function_validation.go:30 staticLiteralTypeName() | prod callers 12 test callers 0 | .checkAtom(),.staticExpressionType(),literalListElementType(),propertyAccessExpressionType(),setClauseSourceTypeError(),staticArithmeticTypeName(),staticFormatArguments(),staticFunctionResultType(),st
+UNREACHED | row_value_program.go:222 .compile() | prod callers 2 test callers 0 | .compileLoopBody(),rowValueProgramFor()
+UNREACHED | runtime_type_errors.go:118 neo4jValueRepr() | prod callers 20 test callers 3 | .evaluateRowValueText(),.transactionIDFilter(),apocMapArgumentTypeError(),collArguments(),collIndex(),cypherRegexMatch(),databaseOptionValue(),durationScaleError(),evaluateListAccessFunction(),fnScala
+UNREACHED | runtime_type_errors.go:321 isOperatorExpressionText() | prod callers 3 test callers 1 | .check(),.evaluateArithmeticExpr(),isOperandExpressionText()
+UNREACHED | schema.go:1128 parseCreateFulltextForPattern() | prod callers 1 test callers 1 | .parseCreateFulltextIndexDDL()
+UNREACHED | schema.go:1587 .parseRelationshipKeyOrCompositeUniquePredicate() | prod callers 2 test callers 0 | .executeCreateConstraint(),.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL()
+UNREACHED | schema.go:1716 parseRelationshipForDirection() | prod callers 1 test callers 1 | .parseCreateConstraintCardinalityDDL()
+UNREACHED | schema.go:1825 parsePolicyForClause() | prod callers 1 test callers 1 | .parseCreateConstraintPolicyDDL()
+UNREACHED | schema.go:1913 .parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL() | prod callers 1 test callers 0 | .executeCreateConstraint()
+UNREACHED | schema.go:2422 parseFulltextRelationshipTypes() | prod callers 2 test callers 2 | .parseCreateFulltextIndexDDL(),parseCreateFulltextForPattern()
+UNREACHED | schema.go:831 parseCreateIndexForPattern() | prod callers 8 test callers 1 | .canonicalConstraintRequirement(),.parseCreateConstraintForRequireDDL(),.parseCreateConstraintNodeKeyDDL(),.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(),.parseCreateConstraintSimplePrope
+UNREACHED | schema_contracts.go:20 parseConstraintContractForClause() | prod callers 1 test callers 0 | .parseCreateConstraintContractDDL()
+UNREACHED | schema_contracts.go:253 splitConstraintContractEntries() | prod callers 1 test callers 1 | .createConstraintContractForTarget()
+UNREACHED | schema_lookup_index.go:123 showLookupIndexCreateStatement() | prod callers 1 test callers 0 | .executeShowIndexes()
+NOGRAPH | schema_lookup_index.go:23 <top-level var>
+UNREACHED | semantic_validation.go:459 validatePatternExpressionPlacement() | prod callers 1 test callers 0 | .validateSemanticScopes()
+UNREACHED | semantic_validation.go:567 maskPredicatePatterns() | prod callers 1 test callers 1 | validatePatternExpressionPlacement()
+UNREACHED | set_helpers.go:119 setRelationshipProperty() | prod callers 4 test callers 0 | .applySetToRelationshipWithContext(),.applyToRelationship(),.pipelineApplySet(),setRelationshipPropertyIfChanged()
+OTHER-ENTRY | set_helpers.go:216 splitSetAssignments() | prod callers 13 test callers 0 | splitSetAssignments() <- mergeStatementSetItems() <- MergeUniqueConflictIsRetrySafe()
+UNREACHED | set_semantic_validation.go:155 trailingWordAfterOperand() | prod callers 1 test callers 1 | validateDeleteClauseScope()
+UNREACHED | set_semantic_validation.go:311 expressionFreeVariables() | prod callers 8 test callers 4 | .indexSeekConstant(),.validateCreateSamePatternReferences(),branchLeadingWithImport(),firstUndefinedSetExpressionVariable(),leadingWithUndefinedVariable(),paginationExpressionUsesRowVariable(),singleF
+UNREACHED | shortest_path_match.go:166 shortestPathPatternError() | prod callers 2 test callers 1 | .evaluateShortestPathValue(),.parseShortestPathMatch()
+EXEC | shortest_path_match.go:233 shortestPathEndpointPatterns() | prod callers 3 test callers 0 | shortestPathEndpointPatterns() <- shortestPathExpressionError() <- .expression() <- .statement() <- desugarLabelExpressions() <- .Execute()
+UNREACHED | shortest_path_match.go:397 errBoundShortestRelationships() | prod callers 2 test callers 0 | .shortestPathsBetween(),validateShortestCallBindings()
+UNREACHED | show_schema_values.go:149 showConstraintCreateStatement() | prod callers 3 test callers 1 | .executeShowConstraints(),.executeShowIndexes(),schemaVisualizationLabelMetadata()
+EXEC | show_schema_values.go:46 quoteSchemaName() | prod callers 9 test callers 1 | quoteSchemaName() <- labelExpressionNameText() <- returnColumnsText() <- .unionParts() <- .segment() <- .region() <- desugarQueryStructure() <- .Execute()
+UNREACHED | show_schema_values.go:53 schemaPattern() | prod callers 3 test callers 0 | showConstraintCreateStatement(),showIndexCreateStatement(),showPropertyTypeCreateStatement()
+EXEC | standalone_order_rewrite.go:54 scanStandaloneOrderClauses() | prod callers 1 test callers 0 | scanStandaloneOrderClauses() <- desugarStandaloneOrderClauses() <- .Execute()
+UNREACHED | static_function_argument_types.go:611 validateStaticFunctionParameters() | prod callers 1 test callers 1 | .validateBoundParameterExpressions()
+UNREACHED | static_function_argument_types.go:689 parameterMayBeFunctionArgument() | prod callers 1 test callers 1 | validateStaticFunctionParameters()
+UNREACHED | static_operator_types.go:1162 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | static_operator_types.go:382 .check() | prod callers 7 test callers 0 | .checkPostfix(),.validateStaticOperatorTypes(),checkReduceForm(),expressionSubqueryClauseBindingError(),forEachStaticFunctionArgument(),forEachStrictMapEntry(),requireUnwindMergeChainParameters()
+UNREACHED | static_operator_types.go:838 staticPatternExpressionType() | prod callers 1 test callers 0 | .check()
+UNREACHED | static_operator_types.go:860 staticMapProjectionReceiver() | prod callers 1 test callers 2 | .check()
+UNREACHED | static_operator_types.go:926 endsWithOperand() | prod callers 1 test callers 0 | staticMapProjectionReceiver()
+UNREACHED | static_operator_types.go:962 .checkAtom() | prod callers 1 test callers 0 | .check()
+UNREACHED | subquery_value_expression.go:1090 containsIdentifierWord() | prod callers 2 test callers 2 | .executeCorrelatedSubqueryBody(),boundPatternCountBindings()
+UNREACHED | subquery_value_expression.go:235 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | subquery_value_expression.go:381 .runCorrelatedSubquery() | prod callers 1 test callers 0 | .rowSubqueryValue()
+UNREACHED | subquery_value_expression.go:401 .executeCorrelatedSubqueryBody() | prod callers 1 test callers 0 | .runCorrelatedSubquery()
+UNREACHED | subquery_value_expression.go:811 reverseRelationshipDirection() | prod callers 1 test callers 0 | .boundExpandCount()
+UNREACHED | subquery_value_expression.go:823 .relationshipDegree() | prod callers 1 test callers 0 | .boundExpandCount()
+UNREACHED | subquery_value_expression.go:888 patternMapsAreConstantText() | prod callers 1 test callers 0 | patternMapsAreConstant()
+UNREACHED | temporal_parse.go:198 parseCypherDateTimeTextWithError() | prod callers 2 test callers 0 | parseCypherDateTimeText(),parseTemporalTextWithError()
+UNREACHED | temporal_pattern.go:75 compileTemporalPattern() | prod callers 4 test callers 0 | fnFormat(),nativeAPOCISOFormat(),nativeAPOCTemporalFormat(),parseTemporalPattern()
+UNREACHED | traversal.go:1068 .aggregatePathCollect() | prod callers 1 test callers 0 | .executeMatchWithRelationshipsWithPathSeeded()
+UNREACHED | traversal.go:1163 normalizeAnonymousTraversalRelationships() | prod callers 3 test callers 0 | .parseOptionalClauseEndpoints(),.parseOptionalRelPattern(),.parseTraversalPattern()
+UNREACHED | traversal.go:1206 .isChainedPattern() | prod callers 1 test callers 0 | .parseTraversalPattern()
+UNREACHED | traversal.go:1389 .parseTraversalPatternStateMachine() | prod callers 1 test callers 0 | .parseTraversalPattern()
+UNREACHED | traversal.go:165 buildRelTypeSet() | prod callers 4 test callers 1 | .newTraversalContext(),.traverseGraphParallel(),.traverseGraphSequential(),.tryExecuteBoundRelationshipDelete()
+UNREACHED | traversal.go:188 .parseRelationshipPattern() | prod callers 2 test callers 0 | .parseChainedTraversalPattern(),.parseTraversalPatternStateMachine()
+UNREACHED | traversal.go:272 .executeMatchWithRelationshipsWithPathSeeded() | prod callers 1 test callers 0 | .tryExecuteTraversalStartSeedOrderLimit()
+UNREACHED | traversal_relationship_id_seed.go:18 StorageExecutor | prod callers 0 test callers 0 | 
+UNREACHED | unwind_multi_match_create.go:54 .batchKey() | prod callers 0 test callers 0 | 
+UNREACHED | unwind_multi_match_create.go:630 parseSimpleCreateEdge() | prod callers 1 test callers 1 | parseSimpleCreateClause()
+UNREACHED | unwind_relationship_merge_batch.go:184 parseRelationshipBatchMergeClause() | prod callers 1 test callers 0 | parseUnwindRelationshipMergeBatchPlan()
+UNREACHED | unwind_relationship_merge_batch.go:248 relationshipMergeKeyProps() | prod callers 1 test callers 2 | parseRelationshipBatchMergeClause()
+UNREACHED | unwind_relationship_merge_batch.go:260 parseRelationshipBatchSetClause() | prod callers 1 test callers 0 | parseUnwindRelationshipMergeBatchPlan()
+UNREACHED | unwind_relationship_merge_batch.go:273 parseRelationshipBatchVectorSetters() | prod callers 1 test callers 0 | parseUnwindRelationshipMergeBatchPlan()
+UNREACHED | unwind_relationship_merge_batch.go:337 parseRelationshipBatchReturn() | prod callers 1 test callers 1 | parseUnwindRelationshipMergeBatchPlan()
+UNREACHED | unwind_relationship_merge_batch.go:353 parseRelationshipBatchRowFieldExpr() | prod callers 2 test callers 0 | parseRelationshipBatchReturn(),parseRelationshipBatchVectorSetters()
+UNREACHED | unwind_relationship_merge_batch.go:366 relationshipBatchRowHasRequiredFields() | prod callers 1 test callers 1 | .executeUnwindRelationshipMergeBatch()
+UNREACHED | unwind_relationship_merge_batch.go:393 .buildRelationshipBatchNodeMatchIndex() | prod callers 1 test callers 0 | .executeUnwindRelationshipMergeBatch()
+UNREACHED | unwind_relationship_merge_batch.go:497 .lookupRelationshipBatchMatchedNode() | prod callers 0 test callers 0 | 
+UNREACHED | unwind_relationship_merge_batch.go:505 .evaluateRelationshipBatchLookupExpr() | prod callers 2 test callers 0 | .buildRelationshipBatchNodeMatchIndex(),.lookupRelationshipBatchMatchedNode()
+UNREACHED | unwind_relationship_merge_batch.go:514 normalizeRelationshipBatchRowProperties() | prod callers 1 test callers 2 | .executeUnwindRelationshipMergeBatch()
+UNREACHED | unwind_relationship_merge_batch.go:571 buildRelationshipBatchReturnRow() | prod callers 0 test callers 1 | 
+UNREACHED | unwind_relationship_merge_batch.go:613 relationshipBatchEdgeKeyFromRow() | prod callers 1 test callers 2 | .executeUnwindRelationshipMergeBatch()
+UNREACHED | unwind_relationship_merge_batch.go:626 relationshipBatchEdgeKey() | prod callers 2 test callers 2 | relationshipBatchEdgeKeyFromProperties(),relationshipBatchEdgeKeyFromRow()
+UNREACHED | unwind_relationship_merge_batch.go:634 relationshipBatchEdgeKeyFromProperties() | prod callers 1 test callers 2 | lookupRelationshipBatchExistingEdge()
+UNREACHED | unwind_relationship_merge_batch.go:689 appendRelationshipBatchScalarKeyValue() | prod callers 1 test callers 2 | relationshipBatchScalarEdgeKey()
+UNREACHED | unwind_relationship_merge_batch.go:91 parseUnwindRelationshipMergeBatchPlan() | prod callers 1 test callers 0 | .executeUnwindRelationshipMergeBatch()
+UNREACHED | validator_strictness.go:107 containsTrailingListComma() | prod callers 1 test callers 0 | .validateSyntaxNornic()
+UNREACHED | validator_strictness.go:73 containsNotInOperator() | prod callers 1 test callers 1 | .validateSyntaxNornic()
+UNREACHED | write_endpoints.go:14 missingRelationshipEndpoint() | prod callers 2 test callers 1 | .pipelineApplyMerge(),.planCreateEndpoint()
+UNREACHED | write_endpoints.go:33 relationshipEndpointMissingError() | prod callers 2 test callers 0 | .pipelineApplyMerge(),.planCreateEndpoint()

@@ -1,0 +1,69 @@
+./ast_builder.go:32:		relationPattern: regexp.MustCompile(`-\[(\w*)?(?::(\w+))?\]->`),
+./create.go:246:			if remainder != "" && (strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[")) {
+./create.go:726:			// Preserve path assignment prefixes like "p=(:A)-[:R]->(:B)".
+./create_pipeline_helpers.go:208:	if strings.HasPrefix(rest, "-[") {
+./create_pipeline_helpers.go:209:		relStart = 2 // Skip "-["
+./create_pipeline_helpers.go:210:	} else if strings.HasPrefix(rest, "<-[") {
+./create_pipeline_helpers.go:212:		relStart = 3 // Skip "<-["
+./create_pipeline_template.go:30:// `(source)-[:TYPE {prop: expr}]->(target)`, direction included.
+./create_pipeline_template.go:81:		if strings.Contains(body, "-[") || strings.Contains(body, "]-") {
+./create_pipeline_template.go:202:		if strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[") {
+./cypher25_expression_rewrite.go:95:		signOrList := cypher25 && strings.IndexByte("+-[", query[next]) >= 0
+./executor.go:1272:	if strings.Contains(query, "]->(") || strings.Contains(query, ")<-[") {
+./executor_mutations.go:852:// like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
+./executor_mutations.go:853:// Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
+./executor_mutations.go:858:	relationshipCount := strings.Count(pattern, "-[")
+./executor_mutations.go:953:		outIdx := strings.Index(remaining, "-[")
+./executor_mutations.go:954:		inIdx := strings.Index(remaining, "<-[")
+./executor_mutations.go:1098:// e.g., from "(m)-[:MANAGES]->(report)" it extracts "report"
+./executor_mutations.go:1101:	if arrowIdx := strings.Index(pattern, "]->"); arrowIdx >= 0 {
+./executor_mutations.go:1114:	if arrowIdx := strings.Index(pattern, "<-["); arrowIdx >= 0 {
+./executor_mutations.go:1177:		case strings.HasPrefix(after, "<-["):
+./executor_mutations.go:1179:			relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+./executor_mutations.go:1180:		case strings.HasPrefix(after, "-["):
+./executor_mutations.go:1181:			relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+./executor_mutations.go:1182:			if strings.Contains(after, "]->") {
+./executor_mutations.go:1184:			} else if strings.Contains(after, "]-") {
+./executor_mutations.go:1191:		case strings.HasSuffix(before, "]->"):
+./executor_mutations.go:1194:				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+./executor_mutations.go:1196:		case strings.Contains(before, "<-[") && strings.HasSuffix(before, "]-"):
+./executor_mutations.go:1199:				relTypes = e.extractRelTypesFromPattern(pattern, "<-[")
+./executor_mutations.go:1201:		case strings.HasSuffix(before, "]-"):
+./executor_mutations.go:1205:				relTypes = e.extractRelTypesFromPattern(pattern, "-[")
+./executor_mutations_delete_guard.go:340:// "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
+./keyword_scan.go:126:	if strings.IndexByte(".,:/%^=<>*+-[)", rest[0]) >= 0 {
+./match_multi.go:124:// bound by a MATCH clause (e.g. "rel" in `(s)-[rel]->(x)`) are tracked in a
+./match_with_rel.go:303:	return strings.HasPrefix(expr, "-[") || strings.HasPrefix(expr, "--") || strings.HasPrefix(expr, "->")
+./merge_context.go:194:// e.g., "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)" returns ["p", "poc", "a"]
+./optional_match_traversal.go:110:// MATCH pattern, e.g. "rel" from "(a)-[rel:INHERITS]->(b)". Anonymous
+./pipeline_pattern_template.go:149:// template covers `MERGE (a)-[r:T {…}]->(b)` without ON CREATE / ON MATCH SET.
+./pipeline_write_stretch.go:251:	if strings.Contains(text, "-[") || strings.Contains(text, "]-") || strings.Contains(text, ")-") ||
+./quantified_path_pattern.go:706:	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && strings.IndexByte("-[>", s[arrow+1]) >= 0
+./rel_existence_pattern.go:6:	if strings.Contains(pattern, "-[") {
+./runtime_type_errors.go:134:			return "-[" + string(v.ID) + "]-"
+./runtime_type_errors.go:337:	// <-- and <-[ (covered by "--" and "-[") start an incoming arrow; a bare <-
+./runtime_type_errors.go:339:	for _, token := range []string{"->", "-[", "]-", "--", "{."} {
+./schema_lookup_index.go:125:		return "CREATE LOOKUP INDEX " + quoteSchemaName(name) + " FOR ()-[r]-() ON EACH type(r)"
+./semantic_validation.go:489:// expression. Relationship brackets (`-[r]->`) are not list delimiters.
+./show_schema_values.go:51:// (n:`A`|`B`) for nodes, ()-[r:`T`]-() for relationships. It returns the
+./show_schema_values.go:59:		return "()-[r:" + strings.Join(names, "|") + "]-()", "r"
+./show_schema_values.go:172:		relationship := "()-[r:" + quoteSchemaName(c.Label) + "]->()"
+./show_schema_values.go:174:			relationship = "()<-[r:" + quoteSchemaName(c.Label) + "]-()"
+./show_schema_values.go:178:		return head + "(:" + quoteSchemaName(c.SourceLabel) + ")-[r:" + quoteSchemaName(c.Label) + "]->(:" + quoteSchemaName(c.TargetLabel) + ") REQUIRE " + strings.ToUpper(c.PolicyMode)
+./subquery_value_expression.go:434:			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
+./testutil/fixtures.go:164://	        "MATCH (p:Person)-[:WORKS_AT]->(c:Company) RETURN p.name, c.name", nil)
+./testutil/fixtures.go:188:		`MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) CREATE (a)-[:KNOWS {since: 2020}]->(b)`,
+./testutil/fixtures.go:189:		`MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'}) CREATE (b)-[:KNOWS {since: 2018}]->(c)`,
+./testutil/fixtures.go:190:		`MATCH (a:Person {name: 'Alice'}), (acme:Company {name: 'Acme Corp'}) CREATE (a)-[:WORKS_AT {role: 'Engineer'}]->(acme)`,
+./testutil/fixtures.go:191:		`MATCH (b:Person {name: 'Bob'}), (tech:Company {name: 'TechStart'}) CREATE (b)-[:WORKS_AT {role: 'Developer'}]->(tech)`,
+./traversal.go:180:	Direction      string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
+./traversal.go:1121:	PathVariable      string             // Variable name for path assignment (e.g., "path" in "path = (a)-[r]-(b)")
+./traversal.go:1185:			normalized.WriteString("-[]-")
+./traversal.go:1188:			normalized.WriteString("-[]->")
+./traversal.go:1191:			normalized.WriteString("<-[]-")
+./traversal.go:1194:			normalized.WriteString("-[]-")
+./unwind_multi_match_create.go:75:// createEdgeSpec represents `CREATE (src)-[:TYPE {...}]->(dst)`.
+./unwind_multi_match_create.go:632:	arrowIdx := strings.Index(body, "]->")
+./unwind_multi_match_create.go:636:	lBracketIdx := strings.LastIndex(body[:arrowIdx], "-[")
+./unwind_relationship_merge_batch.go:191:	arrowIdx := strings.Index(body, "]->")
+./unwind_relationship_merge_batch.go:195:	lBracketIdx := strings.LastIndex(body[:arrowIdx], "-[")

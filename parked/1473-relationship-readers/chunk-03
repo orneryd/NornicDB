@@ -1,0 +1,67 @@
+schema.go:2422 func parseFulltextRelationshipTypes(raw string) ([]string, error)
+schema.go:831 func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) 
+schema_contracts.go:20 func parseConstraintContractForClause(forClause string) (entityType storage.ConstraintEntityType, variable string, labelOrType string, ok bool) 
+schema_contracts.go:253 func splitConstraintContractEntries(body string) ([]string, error) 
+schema_lookup_index.go:123 func showLookupIndexCreateStatement(name, entityType string) string 
+schema_lookup_index.go:23 <top-level var>
+semantic_validation.go:459 func validatePatternExpressionPlacement(cypher string) error 
+semantic_validation.go:567 func maskPredicatePatterns(expression string) string 
+set_helpers.go:119 func setRelationshipProperty(relationship *storage.Edge, propName string, value interface{})
+set_helpers.go:216 func splitSetAssignments(setClause string) []string 
+set_semantic_validation.go:155 func trailingWordAfterOperand(expression string) (string, bool) 
+set_semantic_validation.go:311 func expressionFreeVariables(expression string) []string 
+shortest_path_match.go:166 func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatch) error 
+shortest_path_match.go:233 func shortestPathEndpointPatterns(pattern string) (string, string, bool) 
+shortest_path_match.go:397 func errBoundShortestRelationships(function string) error
+show_schema_values.go:149 func showConstraintCreateStatement(c storage.Constraint) interface
+show_schema_values.go:46 func quoteSchemaName(name string) string 
+show_schema_values.go:53 func schemaPattern(entityType string, labelsOrTypes []string) (string, string) 
+standalone_order_rewrite.go:54 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) 
+static_function_argument_types.go:611 func validateStaticFunctionParameters(cypher string, params map[string]interface
+static_function_argument_types.go:689 func parameterMayBeFunctionArgument(cypher string) bool 
+static_operator_types.go:1162 func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause, visit func(expression string, afterProjection bool) error) error
+static_operator_types.go:382 func (checker staticOperatorChecker) check(expression string) (staticOperand, error)
+static_operator_types.go:838 func staticPatternExpressionType(expression string) staticOperand
+static_operator_types.go:860 func staticMapProjectionReceiver(expression string) (receiver string, projected bool) 
+static_operator_types.go:926 func endsWithOperand(text string) bool 
+static_operator_types.go:962 func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error)
+subquery_value_expression.go:1090 func containsIdentifierWord(text, name string) bool 
+subquery_value_expression.go:235 func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor
+subquery_value_expression.go:381 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error)
+subquery_value_expression.go:401 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface
+subquery_value_expression.go:811 func reverseRelationshipDirection(direction string) string
+subquery_value_expression.go:823 func (e *StorageExecutor) relationshipDegree(id storage.NodeID, direction string) int
+subquery_value_expression.go:888 func patternMapsAreConstantText(pattern string) bool
+temporal_parse.go:198 func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, error) 
+temporal_pattern.go:75 func compileTemporalPattern(pattern string) (items []patternItem, ok bool) 
+traversal.go:1068 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface
+traversal.go:1163 func normalizeAnonymousTraversalRelationships(pattern string) string 
+traversal.go:1206 func (e *StorageExecutor) isChainedPattern(pattern string) bool 
+traversal.go:1389 func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch 
+traversal.go:165 func buildRelTypeSet(relTypes []string) map[string]struct
+traversal.go:188 func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern
+traversal.go:272 func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error)
+traversal_relationship_id_seed.go:18 func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool)
+unwind_multi_match_create.go:54 func (m matchClauseSpec) batchKey() nodeBatchMatchKey 
+unwind_multi_match_create.go:630 func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) 
+unwind_relationship_merge_batch.go:184 func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMergeSpec, bool) 
+unwind_relationship_merge_batch.go:248 func relationshipMergeKeyProps(rowRefs map[string]string, literals map[string]interface{}) []relationshipMergeKeyProp
+unwind_relationship_merge_batch.go:260 func parseRelationshipBatchSetClause(clause, unwindVar string) (relVar, rowVar string, ok bool)
+unwind_relationship_merge_batch.go:273 func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationshipVectorSetterSpec, bool)
+unwind_relationship_merge_batch.go:337 func parseRelationshipBatchReturn(returnPart, unwindVar string) ([]rowFieldReturnSpec, bool)
+unwind_relationship_merge_batch.go:353 func parseRelationshipBatchRowFieldExpr(expr, unwindVar string) (string, bool)
+unwind_relationship_merge_batch.go:366 func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwindRelationshipMergeBatchPlan) bool
+unwind_relationship_merge_batch.go:393 func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error)
+unwind_relationship_merge_batch.go:497 func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node
+unwind_relationship_merge_batch.go:505 func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseSpec, row map[string]interface{}) (interface{}, bool)
+unwind_relationship_merge_batch.go:514 func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool)
+unwind_relationship_merge_batch.go:571 func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFieldReturnSpec) []interface{}
+unwind_relationship_merge_batch.go:613 func relationshipBatchEdgeKeyFromRow(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, row map[string]interface{}) string
+unwind_relationship_merge_batch.go:626 func relationshipBatchEdgeKey(startID storage.NodeID, endID storage.NodeID, relType string, mergeProps map[string]interface{}) string
+unwind_relationship_merge_batch.go:634 func relationshipBatchEdgeKeyFromProperties(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, edgeProps map[string]interface{}) (string, bool)
+unwind_relationship_merge_batch.go:689 func appendRelationshipBatchScalarKeyValue(b *strings.Builder, value interface{}) bool
+unwind_relationship_merge_batch.go:91 func parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool)
+validator_strictness.go:107 func containsTrailingListComma(cypher string) bool 
+validator_strictness.go:73 func containsNotInOperator(cypher string) bool 
+write_endpoints.go:14 func missingRelationshipEndpoint(bindings map[string]interface{}, variable string) bool
+write_endpoints.go:33 func relationshipEndpointMissingError(variable string) error

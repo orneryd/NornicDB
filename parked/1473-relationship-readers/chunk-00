@@ -1,0 +1,72 @@
+apoc_load_export.go:201 func normalizeAPOCImportRelativePath(localPath string) string
+arrow_validation.go:16 func validateArrowOperators(query string) error 
+ast_builder.go:1028 func splitOutsideBrackets(s string, delim rune) []string 
+ast_builder.go:29 func NewASTBuilder() *ASTBuilder 
+binding_where_compile.go:181 func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool
+call.go:1059 func findTopLevelByte(input string, target byte) int 
+call.go:1310 func callTailHasRelationshipTypeConstraint(tail string) bool 
+call.go:863 func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context, tail string) (*callTailRelationshipMatchPlan, bool)
+call.go:876 func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan
+call.go:924 func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool)
+call.go:981 func parseCallTailRelationshipToken(input string) (variable, relType, propertyKey, propertyExpr string, ok bool)
+call_apoc_path.go:290 func parseApocRelationshipFilter(filter string) []apocRelationshipStep
+call_compat.go:397 func matchesRelationshipTypes(edge *storage.Edge, targetTypes []string) bool
+call_compat.go:491 func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Context, cypher string) (*ExecuteResult, error)
+call_compat.go:501 func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error)
+call_compat.go:924 func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string 
+call_compat.go:972 func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error)
+call_vector.go:351 func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName string, k int, input *vectorQueryInput, err error) 
+call_vector.go:463 func splitParamsCarefully(params string) []string 
+case_expression.go:505 func caseOperandEndsAt(s string, i int) bool 
+case_expression.go:547 func caseSimpleTestContinuesAt(s string, i int) bool 
+case_expression.go:606 func caseBlockSpans(expr string) []caseBlockSpan
+clauses.go:1128 func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value interface{}) bool
+clauses.go:1155 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface
+clauses.go:1516 func rewriteUnwindCorrelationToIn(query string, variable string, paramName string) (string, bool)
+clauses.go:153 func (e *StorageExecutor) splitWithItems(expr string) []string 
+clauses.go:2006 func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern 
+clauses.go:2074 func optionalRelationshipTypeMatches(filter, actual string) bool
+clauses.go:659 func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelationshipPlan, bool) 
+comparison_chain.go:208 func incomingArrowAt(expression string, index int) bool 
+count_store.go:156 func countUndirectedRelationshipMatches(store storage.Engine, types []string) (int64, bool, error)
+create.go:137 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) 
+create.go:630 func (e *StorageExecutor) scanCreatePatterns(pattern string) []string 
+create.go:753 func (e *StorageExecutor) splitNodePatterns(pattern string) []string
+create.go:845 func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error)
+create.go:968 func parseCreateRelationshipContent(content string) (relVar string, relType string, relPropsStr string, err error)
+create_pipeline_helpers.go:175 func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error)
+create_pipeline_helpers.go:185 func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) 
+create_pipeline_template.go:152 func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTemplate, bool) 
+create_pipeline_template.go:30 <top-level var>
+create_pipeline_template.go:66 func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate 
+create_semantic_validation.go:203 func validateCreateRelationshipShape(pattern string) error
+create_semantic_validation.go:234 func validateSingleRelationshipDeclaration(clause, verb, content string) error
+create_semantic_validation.go:319 func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern string) error
+create_semantic_validation.go:341 func createRelationshipPropertyMapBodies(pattern string) []string 
+create_semantic_validation.go:431 func simpleCreatePropertyReference(expression string) (string, bool)
+create_semantic_validation.go:461 func singleRelationshipTypeError(clause string) error
+cypher25_expression_rewrite.go:70 func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) 
+cypher25_value_text.go:27 func writeCypher25ValueText(out *strings.Builder, value interface a=3 b=1
+dynamic_tokens.go:442 func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error)
+executor.go:1266 func queryDeletesNodes(query string) bool 
+executor.go:1490 func cypherSyntaxConfusableReplacement(r rune) (string, bool)
+executor.go:1537 func cypherArrowReplacement(runes []rune, i int) (byte, bool) 
+executor.go:2154 func graphReadingExpression(cypher string) string
+executor_match_vector_cosine_fastpath.go:1172 func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool)
+executor_match_vector_cosine_fastpath.go:1471 func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (parsedSimpleMatchRelationshipPattern, bool)
+executor_match_vector_cosine_fastpath.go:1521 func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool
+executor_match_vector_cosine_fastpath.go:484 func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool)
+executor_match_vector_cosine_fastpath.go:608 func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool)
+executor_mutations.go:1066 func extractVariableNameFromReturnItem(expr string) string 
+executor_mutations.go:1099 func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string 
+executor_mutations.go:1130 func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string 
+executor_mutations.go:1161 func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) 
+executor_mutations.go:845 func (e *StorageExecutor) idCounter() int64 
+executor_mutations.go:854 func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool 
+executor_mutations.go:945 func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop 
+executor_mutations_delete_guard.go:317 func pipelineUnwindAlias(clause string) string 
+executor_mutations_relationship_delete.go:194 func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error)
+executor_mutations_relationship_delete.go:224 func parseBoundRelationshipDeleteWithLimitSegment(matchSegment, deleteVar string) (string, int, bool)
+executor_mutations_relationship_delete.go:259 func isSimpleBoundRelationshipDeleteMatchSegment(matchSegment string) bool
+executor_mutations_relationship_delete.go:307 func relationshipTypeAllowed(edgeType string, allowed []string, allowedSet map[string]struct{}) bool
+executor_mutations_where_eval.go:147 func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface a=1 b=1

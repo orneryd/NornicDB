@@ -1,0 +1,137 @@
+./apoc_load_export.go:201:func normalizeAPOCImportRelativePath(localPath string) string {
+./binding_where_compile.go:181:func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool {
+./call.go:863:func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context, tail string) (*callTailRelationshipMatchPlan, bool) {
+./call.go:876:func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan {
+./call.go:924:func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
+./call.go:981:func parseCallTailRelationshipToken(input string) (variable, relType, propertyKey, propertyExpr string, ok bool) {
+./call.go:1310:func callTailHasRelationshipTypeConstraint(tail string) bool {
+./call_apoc_path.go:290:func parseApocRelationshipFilter(filter string) []apocRelationshipStep {
+./call_compat.go:397:func matchesRelationshipTypes(edge *storage.Edge, targetTypes []string) bool {
+./call_compat.go:491:func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Context, cypher string) (*ExecuteResult, error) {
+./call_compat.go:501:func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+./call_compat.go:972:func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+./clauses.go:659:func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelationshipPlan, bool) {
+./clauses.go:1128:func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value interface{}) bool {
+./clauses.go:1516:func rewriteUnwindCorrelationToIn(query string, variable string, paramName string) (string, bool) {
+./clauses.go:2006:func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
+./clauses.go:2074:func optionalRelationshipTypeMatches(filter, actual string) bool {
+./count_store.go:156:func countUndirectedRelationshipMatches(store storage.Engine, types []string) (int64, bool, error) {
+./create.go:845:func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error) {
+./create.go:968:func parseCreateRelationshipContent(content string) (relVar string, relType string, relPropsStr string, err error) {
+./create_pipeline_helpers.go:175:func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+./create_pipeline_helpers.go:185:func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+./create_semantic_validation.go:203:func validateCreateRelationshipShape(pattern string) error {
+./create_semantic_validation.go:234:func validateSingleRelationshipDeclaration(clause, verb, content string) error {
+./create_semantic_validation.go:319:func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern string) error {
+./create_semantic_validation.go:341:func createRelationshipPropertyMapBodies(pattern string) []string {
+./create_semantic_validation.go:461:func singleRelationshipTypeError(clause string) error {
+./executor_match_vector_cosine_fastpath.go:484:func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+./executor_match_vector_cosine_fastpath.go:608:func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+./executor_match_vector_cosine_fastpath.go:1172:func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+./executor_match_vector_cosine_fastpath.go:1471:func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (parsedSimpleMatchRelationshipPattern, bool) {
+./executor_match_vector_cosine_fastpath.go:1521:func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
+./executor_mutations.go:854:func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+./executor_mutations.go:945:func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
+./executor_mutations.go:1130:func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
+./executor_mutations.go:1161:func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) {
+./executor_mutations_relationship_delete.go:194:func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+./executor_mutations_relationship_delete.go:224:func parseBoundRelationshipDeleteWithLimitSegment(matchSegment, deleteVar string) (string, int, bool) {
+./executor_mutations_relationship_delete.go:259:func isSimpleBoundRelationshipDeleteMatchSegment(matchSegment string) bool {
+./executor_mutations_relationship_delete.go:307:func relationshipTypeAllowed(edgeType string, allowed []string, allowedSet map[string]struct{}) bool {
+./executor_mutations_where_eval.go:68:func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
+./executor_subqueries.go:36:func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
+./executor_subqueries.go:52:func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, outerPart, seedVar, seedID, importVar string, cache map[string]map[string]interface{}) (interface{}, bool, error) {
+./executor_subqueries.go:223:func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
+./executor_subqueries.go:229:func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
+./executor_subqueries.go:1686:func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
+./expression_failure.go:753:func relationshipPatternMayFail(pattern string) bool {
+./gds_projection_state.go:77:func gdsRelationshipTypeOrder(types []string, nativeContexts int) []string {
+./gds_projection_state.go:109:func (p *GraphProjection) resolveRelationshipTypes(types []string, allIfEmpty bool, purpose string) ([]string, error) {
+./gds_projection_state.go:174:func gdsRelationshipDirections(source, target, orientation string) [][2]string {
+./label_expression_rewrite.go:964:func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
+./label_expression_rewrite.go:1683:func relationshipChainEnd(q string, open, end int) (int, bool) {
+./map_pattern_context.go:160:func mapRelationshipDelimiter(query string, open, previous int, context *mapPatternContext) bool {
+./match_multi.go:255:func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[string]*storage.Edge, bool) {
+./match_multi.go:368:func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
+./match_multi.go:396:func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
+./match_multi.go:451:func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Context, expr string, b binding, rels relationshipBinding) interface{} {
+./match_multi.go:525:func relationshipBindingFromEdges(edges map[string]*storage.Edge) relationshipBinding {
+./match_semantic_validation.go:1331:func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
+./match_semantic_validation.go:1375:func invalidRelationshipPattern(pattern string) bool {
+./match_with_rel.go:296:func startsWithRelationshipFragment(expr string) bool {
+./merge_actions.go:144:func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
+./merge_context.go:405:func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+./merge_context.go:501:func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+./merge_relationship_pattern.go:52:func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRelationshipShape, error) {
+./merge_semantic_validation.go:241:func validateMergeRelationshipShape(pattern string) error {
+./optimized_executors.go:67:func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+./optional_match_traversal.go:113:func extractRelationshipVariables(matchClause string) []string {
+./path_selector.go:565:func hasVariableLengthRelationship(q string, start, end int) bool {
+./path_selector_search.go:187:func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
+./path_selector_search_run.go:219:func (s *pathSearch) relationships(node storage.NodeID, direction string) []*storage.Edge {
+./pattern_comprehension_classification.go:99:func relationshipPatternFollows(cypher string, at int) bool {
+./pipeline_executor.go:1138:func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error) {
+./pipeline_executor.go:2058:func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
+./pipeline_executor.go:2145:func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.NodeID {
+./pipeline_mutation.go:806:func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow {
+./query_patterns.go:159:func countRelationshipPatterns(s string) int {
+./query_patterns.go:197:func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
+./query_patterns.go:588:func extractRelationshipType(pattern string) string {
+./query_patterns.go:613:func extractRelationshipVariable(pattern string) string {
+./relationship_brackets.go:13:func nextRelationshipBracket(text string, from int) (open, close int) {
+./relationship_brackets.go:22:func scanRelationshipBracket(text string, from int) (open, close int) {
+./relationship_brackets.go:59:func patternHasRelationship(pattern string) bool {
+./relationship_brackets.go:93:func firstRelationshipBracket(text string) (open, close int) {
+./relationship_declaration.go:48:func relationshipDeclarationOf(inner string) relationshipDeclaration {
+./relationship_declaration.go:83:func relationshipDeclarationHead(inner string) relationshipDeclaration {
+./relationship_declaration.go:126:func relationshipLengthInvalid(masked string) bool {
+./relationship_declaration.go:145:func blankRelationshipExpressions(text string) string {
+./relationship_equality_pushdown.go:17:func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matches *TraversalMatch, whereClause string) {
+./relationship_equality_pushdown.go:64:func parseRelationshipEqualityTerms(whereClause string) []relationshipEqualityTerm {
+./relationship_merge_identity_cache.go:42:func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
+./relationship_merge_identity_cache.go:105:func relationshipMergeIdentityEntryKey(startID, endID storage.NodeID, relType string, keys []string) string {
+./relationship_merge_identity_cache.go:119:func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []string) (string, bool) {
+./relationship_quantifier_rewrite.go:41:func relationshipQuantifierAt(query string, at, end int) (relationshipQuantifier, bool) {
+./relationship_quantifier_rewrite.go:200:func mayUseRelationshipQuantifier(query string) bool {
+./relationship_variable_repeat.go:112:func mayRepeatRelationshipVariable(query string) bool {
+./relationship_variable_repeat.go:141:func relationshipBracketAt(query string, start, i int) bool {
+./relationship_variable_repeat.go:148:func relationshipVariableAt(query string, open int) (string, int, bool) {
+./rel_existence_pattern.go:5:func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) {
+./row_expression.go:1881:func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+./row_expression.go:1966:func isRelationshipPatternOperand(expression string) bool {
+./row_expression.go:1975:func containsRelationshipPattern(expression string) bool {
+./schema.go:1587:func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predicateExpr string) (string, []string, bool) {
+./schema.go:1716:func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
+./schema.go:1913:func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) {
+./schema.go:2422:func parseFulltextRelationshipTypes(raw string) ([]string, error) {
+./set_helpers.go:119:func setRelationshipProperty(relationship *storage.Edge, propName string, value interface{}) {
+./shortest_path_match.go:397:func errBoundShortestRelationships(function string) error {
+./subquery_value_expression.go:235:func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
+./subquery_value_expression.go:381:func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+./subquery_value_expression.go:401:func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+./subquery_value_expression.go:811:func reverseRelationshipDirection(direction string) string {
+./subquery_value_expression.go:823:func (e *StorageExecutor) relationshipDegree(id storage.NodeID, direction string) int {
+./traversal.go:165:func buildRelTypeSet(relTypes []string) map[string]struct{} {
+./traversal.go:188:func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
+./traversal.go:272:func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+./traversal.go:1163:func normalizeAnonymousTraversalRelationships(pattern string) string {
+./traversal_relationship_id_seed.go:18:func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
+./unwind_relationship_merge_batch.go:91:func parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
+./unwind_relationship_merge_batch.go:184:func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMergeSpec, bool) {
+./unwind_relationship_merge_batch.go:248:func relationshipMergeKeyProps(rowRefs map[string]string, literals map[string]interface{}) []relationshipMergeKeyProp {
+./unwind_relationship_merge_batch.go:260:func parseRelationshipBatchSetClause(clause, unwindVar string) (relVar, rowVar string, ok bool) {
+./unwind_relationship_merge_batch.go:273:func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationshipVectorSetterSpec, bool) {
+./unwind_relationship_merge_batch.go:337:func parseRelationshipBatchReturn(returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
+./unwind_relationship_merge_batch.go:353:func parseRelationshipBatchRowFieldExpr(expr, unwindVar string) (string, bool) {
+./unwind_relationship_merge_batch.go:366:func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwindRelationshipMergeBatchPlan) bool {
+./unwind_relationship_merge_batch.go:393:func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+./unwind_relationship_merge_batch.go:497:func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
+./unwind_relationship_merge_batch.go:505:func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
+./unwind_relationship_merge_batch.go:514:func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool) {
+./unwind_relationship_merge_batch.go:571:func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFieldReturnSpec) []interface{} {
+./unwind_relationship_merge_batch.go:613:func relationshipBatchEdgeKeyFromRow(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, row map[string]interface{}) string {
+./unwind_relationship_merge_batch.go:626:func relationshipBatchEdgeKey(startID storage.NodeID, endID storage.NodeID, relType string, mergeProps map[string]interface{}) string {
+./unwind_relationship_merge_batch.go:634:func relationshipBatchEdgeKeyFromProperties(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, edgeProps map[string]interface{}) (string, bool) {
+./unwind_relationship_merge_batch.go:689:func appendRelationshipBatchScalarKeyValue(b *strings.Builder, value interface{}) bool {
+./write_endpoints.go:14:func missingRelationshipEndpoint(bindings map[string]interface{}, variable string) bool {
+./write_endpoints.go:33:func relationshipEndpointMissingError(variable string) error {

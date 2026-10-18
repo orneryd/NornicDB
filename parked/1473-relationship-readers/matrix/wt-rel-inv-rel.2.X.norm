@@ -1,0 +1,1099 @@
+stmt
+1
+t, w, same
+"DZ", 17, TRUE
+stmt
+2
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+3
+t, a
+"DZ", 1
+stmt
+4
+t, a
+"DZ", 2
+stmt
+5
+t, b
+"DZ", 2
+stmt
+6
+t, b
+NULL, NULL
+stmt
+7
+len, b
+1, 2
+2, 3
+stmt
+8
+len
+1
+2
+stmt
+9
+len, b
+2, 3
+stmt
+10
+t, n
+"DZ", 1
+stmt
+11
+t, n
+"DZ", 2
+stmt
+12
+rels, n
+1, 2
+stmt
+13
+t
+"DZ"
+stmt
+14
+t
+"DZ"
+stmt
+15
+nodes, rels
+2, 1
+stmt
+16
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+17
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+18
+x, c
+1, 2
+2, 2
+stmt
+19
+x, c
+1, 1
+2, 1
+stmt
+20
+x, c
+1, 8
+2, 8
+stmt
+21
+<explain ok>
+stmt
+22
+t, c
+"DZ", 3
+stmt
+23
+<explain ok>
+stmt
+24
+c
+2
+stmt
+25
+t, w, same
+"DZ", 17, TRUE
+stmt
+26
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+27
+t, a
+"DZ", 1
+stmt
+28
+t, a
+"DZ", 2
+stmt
+29
+t, b
+"DZ", 2
+stmt
+30
+t, b
+NULL, NULL
+stmt
+31
+len, b
+1, 2
+2, 3
+stmt
+32
+len
+1
+2
+stmt
+33
+len, b
+2, 3
+stmt
+34
+t, n
+"DZ", 1
+stmt
+35
+t, n
+"DZ", 2
+stmt
+36
+rels, n
+1, 2
+stmt
+37
+t
+"DZ"
+stmt
+38
+t
+"DZ"
+stmt
+39
+nodes, rels
+2, 1
+stmt
+40
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+41
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+42
+x, c
+1, 2
+2, 2
+stmt
+43
+x, c
+1, 1
+2, 1
+stmt
+44
+x, c
+1, 8
+2, 8
+stmt
+45
+<explain ok>
+stmt
+46
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+47
+<explain ok>
+stmt
+48
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+49
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be created
+stmt
+50
+stmt
+51
+stmt
+52
+ERROR Neo.ClientError.Statement.SyntaxError: Relationship pattern predicates are not supported for variable-length relationships.
+stmt
+53
+stmt
+54
+stmt
+55
+stmt
+56
+stmt
+57
+stmt
+58
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+59
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+60
+rels, n
+0, 0
+stmt
+61
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+62
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+63
+nodes, rels
+0, 0
+stmt
+64
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+65
+stmt
+66
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be created
+stmt
+67
+stmt
+68
+ERROR Neo.ClientError.Statement.SyntaxError: Relationship pattern predicates are not supported for variable-length relationships.
+stmt
+69
+<explain ok>
+stmt
+70
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+71
+<explain ok>
+stmt
+72
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+73
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+74
+stmt
+75
+stmt
+76
+stmt
+77
+stmt
+78
+stmt
+79
+stmt
+80
+stmt
+81
+stmt
+82
+stmt
+83
+stmt
+84
+rels, n
+0, 0
+stmt
+85
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+86
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+87
+nodes, rels
+0, 0
+stmt
+88
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+89
+stmt
+90
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+91
+stmt
+92
+stmt
+93
+<explain ok>
+stmt
+94
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+95
+<explain ok>
+stmt
+96
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+97
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+98
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+99
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+100
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was List<Relationship>
+stmt
+101
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+102
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+103
+stmt
+104
+stmt
+105
+stmt
+106
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+107
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+108
+rels, n
+0, 0
+stmt
+109
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+110
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+111
+nodes, rels
+0, 0
+stmt
+112
+t, n
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 1
+stmt
+113
+a, b, t, n
+10, 11, "D):Z|Q{*..", 2
+11, 12, "D):Z|Q{*..", 1
+stmt
+114
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+115
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+116
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+117
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+118
+PANIC runtime error: slice bounds out of range [:-1]
+stmt
+119
+<explain ok>
+stmt
+120
+c
+0
+stmt
+121
+t, w, same
+"D]:Z|{*..", 17, TRUE
+stmt
+122
+t, a, b
+"D]:Z|{*..", 1, 2
+"D]:Z|{*..", 2, 3
+stmt
+123
+t, a
+"D]:Z|{*..", 1
+stmt
+124
+t, a
+"D]:Z|{*..", 2
+stmt
+125
+t, b
+"D]:Z|{*..", 2
+stmt
+126
+t, b
+NULL, NULL
+stmt
+127
+len, b
+1, 2
+2, 3
+stmt
+128
+len
+1
+2
+stmt
+129
+len, b
+2, 3
+stmt
+130
+t, n
+"D]:Z|{*..", 1
+stmt
+131
+t, n
+"D]:Z|{*..", 2
+stmt
+132
+rels, n
+1, 2
+stmt
+133
+t
+"D]:Z|{*.."
+stmt
+134
+t
+"D]:Z|{*.."
+stmt
+135
+nodes, rels
+2, 1
+stmt
+136
+t, n
+"D]:Z|{*..", 2
+"D]:Z|{*..", 2
+"D]:Z|{*..", 1
+stmt
+137
+a, b, t, n
+10, 11, "D]:Z|{*..", 2
+11, 12, "D]:Z|{*..", 1
+stmt
+138
+x, c
+1, 2
+2, 2
+stmt
+139
+x, c
+1, 1
+2, 1
+stmt
+140
+x, c
+1, 8
+2, 8
+stmt
+141
+<explain ok>
+stmt
+142
+t, c
+"D]:Z|{*..", 3
+stmt
+143
+<explain ok>
+stmt
+144
+c
+2
+stmt
+145
+t, w, same
+"D]'Z", 17, TRUE
+stmt
+146
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+147
+t, a
+"D]'Z", 1
+stmt
+148
+t, a
+"D]'Z", 2
+stmt
+149
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+150
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+151
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+152
+len
+1
+2
+stmt
+153
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+154
+t, n
+"D]'Z", 1
+stmt
+155
+t, n
+"D]'Z", 2
+stmt
+156
+rels, n
+1, 2
+stmt
+157
+t
+"D]'Z"
+stmt
+158
+t
+"D]'Z"
+stmt
+159
+nodes, rels
+2, 1
+stmt
+160
+t, n
+"D]'Z", 2
+"D]'Z", 2
+"D]'Z", 1
+stmt
+161
+a, b, t, n
+10, 11, "D]'Z", 2
+11, 12, "D]'Z", 1
+stmt
+162
+x, c
+1, 2
+2, 2
+stmt
+163
+x, c
+1, 1
+2, 1
+stmt
+164
+x, c
+1, 8
+2, 8
+stmt
+165
+<explain ok>
+stmt
+166
+t, c
+":$('D]\\'Z')", 3
+stmt
+167
+<explain ok>
+stmt
+168
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+169
+t, w, same
+"D\"Z]-[", 17, TRUE
+stmt
+170
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+171
+ERROR : invalid traversal pattern: (a:RIh)-[r:`:$("D\"Z]-[")` {w:17}]->(b:RIh {id:2})
+stmt
+172
+ERROR : invalid traversal pattern: (a:RIh)-[r:`:$("D\"Z]-[")` ]->(b:RIh {id:3})
+stmt
+173
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+174
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+175
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+176
+ERROR : invalid traversal pattern: p=(a:RIh {id:1})-[r:`:$("D\"Z]-[")`*1..2 {w:17}]->(b)
+stmt
+177
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+178
+t, n
+"D\"Z]-[", 1
+stmt
+179
+t, n
+"D\"Z]-[", 2
+stmt
+180
+rels, n
+1, 2
+stmt
+181
+ERROR : invalid traversal pattern: (a:RIh {id:4})-[r:`:$("D\"Z]-[")` {w:17}]->(b:RIh {id:5})
+stmt
+182
+ERROR : invalid traversal pattern: (a:RIh {id:4})-[r:`:$("D\"Z]-[")` {w:17}]->(b:RIh {id:5})
+stmt
+183
+nodes, rels
+0, 0
+stmt
+184
+t, n
+"D\"Z]-[", 2
+"D\"Z]-[", 2
+"D\"Z]-[", 1
+stmt
+185
+a, b, t, n
+10, 11, "D\"Z]-[", 2
+11, 12, "D\"Z]-[", 1
+stmt
+186
+ERROR : invalid traversal pattern: (:RIh)-[r:`:$("D\"Z]-[")`]->()
+stmt
+187
+ERROR : invalid traversal pattern: (s:RIh {ws:x})-[r:`:$("D\"Z]-[")`]->()
+stmt
+188
+stmt
+189
+<explain ok>
+stmt
+190
+ERROR : invalid traversal pattern: (a:RIh)-[r:`:$("D\"Z]-[")` {w:17}]->(b)
+stmt
+191
+<explain ok>
+stmt
+192
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable b is not defined
+stmt
+193
+t, w, same
+"D):Z|Q{*..", 17, TRUE
+stmt
+194
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+195
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+196
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was List<Relationship>
+stmt
+197
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+198
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+199
+len, b
+1, 2
+2, 3
+stmt
+200
+len
+1
+2
+stmt
+201
+len, b
+2, 3
+stmt
+202
+t, n
+"D):Z|Q{*..", 1
+stmt
+203
+t, n
+"D):Z|Q{*..", 2
+stmt
+204
+rels, n
+1, 2
+stmt
+205
+t
+"D):Z|Q{*.."
+stmt
+206
+t
+"D):Z|Q{*.."
+stmt
+207
+nodes, rels
+2, 1
+stmt
+208
+t, n
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 1
+stmt
+209
+a, b, t, n
+10, 11, "D):Z|Q{*..", 2
+11, 12, "D):Z|Q{*..", 1
+stmt
+210
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: property access is not supported on r
+stmt
+211
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Node or Relationship but was List<Relationship>
+stmt
+212
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime but was List<Relationship>
+stmt
+213
+<explain ok>
+stmt
+214
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: Type mismatch: expected Relationship but was List<Relationship>
+stmt
+215
+<explain ok>
+stmt
+216
+c
+2
+stmt
+217
+t, w, same
+"DZ", 17, TRUE
+stmt
+218
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+219
+t, a
+"DZ", 1
+stmt
+220
+t, a
+"DZ", 2
+stmt
+221
+t, b
+"DZ", 2
+stmt
+222
+t, b
+NULL, NULL
+stmt
+223
+len, b
+1, 2
+2, 3
+stmt
+224
+len
+1
+2
+stmt
+225
+len, b
+2, 3
+stmt
+226
+t, n
+"DZ", 1
+stmt
+227
+t, n
+"DZ", 2
+stmt
+228
+rels, n
+1, 2
+stmt
+229
+t
+"DZ"
+stmt
+230
+t
+"DZ"
+stmt
+231
+nodes, rels
+2, 1
+stmt
+232
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+233
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+234
+x, c
+1, 2
+2, 2
+stmt
+235
+x, c
+1, 1
+2, 1
+stmt
+236
+x, c
+1, 8
+2, 8
+stmt
+237
+<explain ok>
+stmt
+238
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+239
+<explain ok>
+stmt
+240
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+241
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be created
+stmt
+242
+stmt
+243
+stmt
+244
+ERROR Neo.ClientError.Statement.SyntaxError: Relationship pattern predicates are not supported for variable-length relationships.
+stmt
+245
+stmt
+246
+stmt
+247
+stmt
+248
+stmt
+249
+stmt
+250
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+251
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+252
+rels, n
+0, 0
+stmt
+253
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+254
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+255
+nodes, rels
+0, 0
+stmt
+256
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be merged
+stmt
+257
+stmt
+258
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: variable-length relationships cannot be created
+stmt
+259
+stmt
+260
+ERROR Neo.ClientError.Statement.SyntaxError: Relationship pattern predicates are not supported for variable-length relationships.
+stmt
+261
+<explain ok>
+stmt
+262
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+263
+<explain ok>
+stmt
+264
+ERROR Neo.ClientError.Statement.SyntaxError: Neo.ClientError.Statement.SyntaxError: unknown function: __nornic_haslabels
+stmt
+265
+stmt
+266
+len, b
+1, 2
+stmt
+267
+stmt
+268
+stmt
+269
+len, b
+0, 1
+stmt
+270
+stmt
+271
+stmt
+272
+stmt
+273
+stmt
+274
+len, b
+NULL, NULL
+stmt
+275
+stmt
+276
+len, b
+1, 2
+stmt
+277
+ERROR Neo.ClientError.Statement.TypeError: Expected node label to be a string or list of strings.
+stmt
+278
+stmt
+279
+k
+NULL
+stmt
+280
+stmt
+281
+ERROR Neo.ClientError.Statement.SemanticError: Cannot merge the following node because of null property value for 'k'
+stmt
+282
+c
+2
+stmt
+283
+stmt
+284
+k
+NULL
+stmt
+285
+k
+NULL
+stmt
+286
+stmt
+287
+k
+17
+999
+stmt
+288
+k
+17
+999
+stmt
+289
+ERROR Neo.ClientError.Statement.SemanticError: Cannot merge the following relationship because of null property value for 'k'
+stmt
+290
+c
+2
+stmt
+291
+stmt
+292
+ERROR Neo.ClientError.Statement.SemanticError: Cannot merge the following relationship because of null property value for 'k'
+stmt
+293
+k
+17
+999
+stmt
+294
+ERROR Neo.ClientError.Statement.TypeError: Neo.ClientError.Statement.TypeError: Type mismatch: expected a map but was String("{")
+stmt
+295
+<explain ok>
+stmt
+296
+k
+17
+999
+stmt
+297
+stmt
+298
+b
+2
+stmt
+299
+b
+2
+stmt
+300
+b
+2
+stmt
+301
+b
+2
+stmt
+302
+c
+1
+stmt
+303
+c
+1
+stmt
+304
+c
+1
+stmt
+305
+c
+1
+stmt
+306
+<explain ok>
+stmt
+307
+b
+2
+stmt
+308
+l
+["CL"]
+stmt
+309
+t
+"CY"
+stmt
+310
+t
+"CY"
+stmt
+311
+t
+"CY"

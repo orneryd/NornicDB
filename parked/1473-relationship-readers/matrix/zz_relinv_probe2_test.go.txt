@@ -1,0 +1,30 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func TestZZRelInvProbe2(t *testing.T) {
+	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "probe2"))
+	ctx := context.Background()
+	for _, q := range []string{
+		"CREATE (a:QB {id:1})-[:`D]'Z` {w:17}]->(b:QB {id:2}), (c:QB {id:3})-[:`D\"Z]-[` {w:17}]->(d:QB {id:4})",
+		"MATCH (a:QB)-[r:`D]'Z`]->(b:QB) RETURN type(r) AS t, b.id AS b",
+		"MATCH (a:QB)-[r:`D\"Z]-[` {w:17}]->(b:QB) RETURN type(r) AS t, b.id AS b",
+		"MATCH (a:QB {id:1}) OPTIONAL MATCH (a)-[r:`D]'Z`]->(b) RETURN type(r) AS t, b.id AS b",
+		"MERGE (a:QB {id:3})-[r:`D\"Z]-[` {w:17}]->(b:QB {id:4}) RETURN type(r) AS t",
+	} {
+		res, err := e.Execute(ctx, q, nil)
+		if err != nil {
+			fmt.Println("Q:", q, "\n  ERR:", err)
+			continue
+		}
+		fmt.Println("Q:", q, "\n  ROWS:", res.Rows)
+	}
+	s, err := e.resolveRowDynamicTokens(ctx, `(a:RIh)-[r:$("D\"Z]-[") {w:17}]->(b:RIh {id:2})`, nil, nil)
+	fmt.Printf("resolveRowDynamicTokens: %q %v\n", s, err)
+}

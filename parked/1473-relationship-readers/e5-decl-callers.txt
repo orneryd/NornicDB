@@ -1,0 +1,14 @@
+./create.go:189:			relVar := relationshipDeclarationOf(relStr).variable
+./create.go:860:	// may hold any character (relationshipDeclarationOf). No colon ("r")
+./create.go:863:	declaration := relationshipDeclarationOf(relStr)
+./create.go:966:// relationshipDeclarationOf) and its property map text. A property map
+./create.go:969:	declaration := relationshipDeclarationOf(content)
+./create_pipeline_template.go:172:		declaration := relationshipDeclarationOf(relStr)
+./create_semantic_validation.go:229:// a relationship's inside (relationshipDeclarationOf), read outside
+./create_semantic_validation.go:235:	declaration := relationshipDeclarationOf(content)
+./path_selector_search.go:209:	declaration := relationshipDeclarationOf(inner)
+./relationship_declaration.go:6:// scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf, and
+./relationship_declaration.go:45:// relationshipDeclarationOf reads a relationship pattern's inside (the text
+./relationship_declaration.go:48:func relationshipDeclarationOf(inner string) relationshipDeclaration {
+./relationship_declaration.go:80:// relationshipDeclarationOf does, without the type list (types and
+./traversal.go:223:		declaration := relationshipDeclarationOf(pattern[1 : len(pattern)-1])

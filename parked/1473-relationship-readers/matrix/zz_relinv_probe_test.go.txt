@@ -1,0 +1,52 @@
+package cypher
+
+// Temporary probe (never committed): which reader misreads an escaped quote
+// inside a dynamic relationship type.
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func TestZZRelInvProbe(t *testing.T) {
+	queries := []string{
+		`WITH 1 AS i MATCH (a:RIg)-[r:$('D]\'Z')]->(b:RIg) RETURN type(r) AS t, b.id AS b`,
+		`WITH 1 AS i MATCH (a:RIh)-[r:$("D\"Z]-[") {w:17}]->(b:RIh {id:2}) RETURN type(r) AS t, a.id AS a`,
+		`WITH 1 AS i MATCH (a:RIc)-[r:$(['X','DZ'][i * 1]) WHERE r.w = 17]->(b:RIc {id:3}) RETURN type(r) AS t`,
+		`WITH 1 AS i MATCH (a:RIb)-[r:$({k:'DZ'}.k) {w:17}]->(b) RETURN type(r) AS t, count(*) AS c`,
+	}
+	for _, q := range queries {
+		fmt.Println("Q:", q)
+		c, _ := canonicalizeQueryText(q)
+		fmt.Println("  canonical:", c)
+		d, _, err := desugarLabelExpressions(c, nil, false)
+		fmt.Println("  desugared:", d, "err:", err)
+		open, close := nextRelationshipBracket(q, 0)
+		if close > open {
+			inner := q[open+1 : close]
+			fmt.Printf("  bracket inner: %q decl=%+v\n", inner, relationshipDeclarationOf(inner))
+		} else {
+			fmt.Println("  bracket:", open, close)
+		}
+		fmt.Println("  relVars:", extractRelationshipVariables(q))
+		fmt.Println("  declared:", declaredPatternVariables(q))
+		e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "probe"))
+		if tm := e.parseTraversalPattern(context.Background(), q[len("WITH 1 AS i MATCH "):indexOf(q, " RETURN")]); tm != nil {
+			fmt.Printf("  traversal rel: %+v\n", tm.Relationship)
+		}
+	}
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return len(s)
+}
+
+func dq(q string) string { return q[len("WITH 1 AS i MATCH "):indexOf(q, " RETURN")] }

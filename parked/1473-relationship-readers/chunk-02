@@ -1,0 +1,75 @@
+operators.go:144 func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int 
+optimized_executors.go:67 func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error)
+optional_match_traversal.go:113 func extractRelationshipVariables(matchClause string) []string 
+optional_match_traversal.go:138 func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error)
+optional_match_traversal.go:83 func splitOptionalMatchClauses(section string) []optionalMatchClause 
+path_selector.go:415 func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite *pathPrefixRewrite) error
+path_selector.go:508 func hasUnboundedRepetition(q string, start, end int) bool
+path_selector.go:565 func hasVariableLengthRelationship(q string, start, end int) bool
+path_selector_search.go:187 func parsePathPatternRelationship(text string) (pathPatternItem, bool) 
+path_selector_search.go:847 func readsPatternVariable(term, name string) bool 
+path_selector_search.go:920 func topLevelOperatorIndex(term, operator string) int
+path_selector_search.go:97 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) 
+path_selector_search_run.go:219 func (s *pathSearch) relationships(node storage.NodeID, direction string) []*storage.Edge
+pattern_comprehension_classification.go:15 func classifyPatternComprehensions(query string) (pattern, singleton bool) 
+pattern_comprehension_classification.go:70 func mayHavePatternComprehension(query string) bool 
+pattern_comprehension_classification.go:99 func relationshipPatternFollows(cypher string, at int) bool 
+pattern_expression.go:129 func isStandaloneExistsSubquery(expr string) bool
+pattern_expression.go:18 func splitPatternComprehension(expr string) (string, string, bool)
+pattern_parser.go:291 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string 
+pattern_parser.go:59 func containsReservedKeyword(s string) bool
+pipeline_executor.go:1138 func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error)
+pipeline_executor.go:2058 func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error)
+pipeline_executor.go:2145 func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.NodeID
+pipeline_mutation.go:806 func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow
+pipeline_pattern_template.go:123 func pipelinePropertiesKey(props map[string]interface
+pipeline_write_stretch.go:245 func addStretchExpressionReads(text string, tokens *stretchTokens) 
+pipeline_write_stretch.go:329 func addStretchPropertyReads(text string, tokens *stretchTokens) 
+property_access_semantic_validation.go:287 func scanPropertyAccesses(text string, types map[string]string, params map[string]interface
+property_access_semantic_validation.go:429 func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
+quantified_path_pattern.go:101 func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relationshipQuantifier, bool)
+quantified_path_pattern.go:251 func lastNodePatternStart(chain string) int
+quantified_path_pattern.go:696 func parenthesisedPathAt(s string, open, close int) bool 
+query_info.go:530 func eachPatternElement(pattern string, visit func(opener byte, element string)) 
+query_info.go:553 func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string
+query_patterns.go:159 func countRelationshipPatterns(s string) int
+query_patterns.go:197 func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool
+query_patterns.go:540 func extractNodeVariables(matchClause string) []string
+query_patterns.go:588 func extractRelationshipType(pattern string) string
+query_patterns.go:613 func extractRelationshipVariable(pattern string) string
+query_structure_rewrite.go:103 func topLevelWords(q string, start, end int) []topLevelWord 
+quoted_variables.go:299 func classifyQuotedToken(query string, token *quotedToken, inner byte) 
+rel_existence_pattern.go:5 func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) 
+relationship_brackets.go:13 func nextRelationshipBracket(text string, from int) (open, close int)
+relationship_brackets.go:22 func scanRelationshipBracket(text string, from int) (open, close int)
+relationship_brackets.go:59 func patternHasRelationship(pattern string) bool 
+relationship_brackets.go:93 func firstRelationshipBracket(text string) (open, close int)
+relationship_declaration.go:126 func relationshipLengthInvalid(masked string) bool
+relationship_declaration.go:145 func blankRelationshipExpressions(text string) string
+relationship_declaration.go:48 func relationshipDeclarationOf(inner string) relationshipDeclaration
+relationship_declaration.go:83 func relationshipDeclarationHead(inner string) relationshipDeclaration
+relationship_equality_pushdown.go:17 func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matches *TraversalMatch, whereClause string)
+relationship_equality_pushdown.go:64 func parseRelationshipEqualityTerms(whereClause string) []relationshipEqualityTerm
+relationship_merge_identity_cache.go:105 func relationshipMergeIdentityEntryKey(startID, endID storage.NodeID, relType string, keys []string) string
+relationship_merge_identity_cache.go:119 func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []string) (string, bool)
+relationship_merge_identity_cache.go:42 func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error)
+relationship_quantifier_rewrite.go:152 func arrowEndsAt(query string, start, i int) bool 
+relationship_quantifier_rewrite.go:200 func mayUseRelationshipQuantifier(query string) bool
+relationship_quantifier_rewrite.go:41 func relationshipQuantifierAt(query string, at, end int) (relationshipQuantifier, bool)
+relationship_variable_repeat.go:112 func mayRepeatRelationshipVariable(query string) bool 
+relationship_variable_repeat.go:141 func relationshipBracketAt(query string, start, i int) bool
+relationship_variable_repeat.go:148 func relationshipVariableAt(query string, open int) (string, int, bool)
+relationship_variable_repeat.go:36 func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, modeWritten bool) ([]string, error)
+row_expression.go:1881 func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, values map[string]interface{}) (interface{}, bool, error)
+row_expression.go:1966 func isRelationshipPatternOperand(expression string) bool
+row_expression.go:1975 func containsRelationshipPattern(expression string) bool
+row_expression.go:85 func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface a=1 b=1
+row_graph_function_validation.go:30 func staticLiteralTypeName(expression string) string
+row_value_program.go:222 func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo)
+runtime_type_errors.go:118 func neo4jValueRepr(value interface
+runtime_type_errors.go:321 func isOperatorExpressionText(text string) bool 
+schema.go:1128 func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error)
+schema.go:1587 func (e *StorageExecutor) parseRelationshipKeyOrCompositeUniquePredicate(predicateExpr string) (string, []string, bool)
+schema.go:1716 func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) 
+schema.go:1825 func parsePolicyForClause(forClause string) (sourceLabel string, relType string, targetLabel string, ok bool) 
+schema.go:1913 func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) 

@@ -1,0 +1,113 @@
+./arrow_validation.go:32:			if i > 0 && (query[i-1] == '-' || query[i-1] == ']') {
+./ast_builder.go:1051:		if ch == '(' || ch == '[' || ch == '{' {
+./ast_builder.go:1057:		if ch == ')' || ch == ']' || ch == '}' {
+./call.go:1084:		case ch == '[':
+./call.go:1086:		case ch == ']':
+./call.go:1338:		end := strings.IndexByte(tail[i+1:], ']')
+./call_compat.go:941:		} else if c == '[' && !inQuote {
+./call_compat.go:944:		} else if c == ']' && !inQuote {
+./call_vector.go:401:		if c == '(' || c == '[' {
+./call_vector.go:403:		} else if c == ')' || c == ']' {
+./call_vector.go:491:		} else if c == '[' || c == '(' || c == '{' {
+./call_vector.go:494:		} else if c == ']' || c == ')' || c == '}' {
+./case_expression.go:514:		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
+./case_expression.go:556:		return strings.IndexByte(".=<>*/%^", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
+./clauses.go:170:		case c == '(' || c == '[' || c == '{':
+./clauses.go:175:		case c == ')' || c == ']' || c == '}':
+./clauses.go:677:	openBracket := strings.Index(afterFrom, "[")
+./clauses.go:678:	closeBracket := strings.Index(afterFrom, "]")
+./clauses.go:1283:		openBracket := strings.Index(rest, "[")
+./clauses.go:1284:		closeBracket := strings.Index(rest, "]")
+./clauses.go:2036:	if idx := strings.Index(pattern, "["); idx >= 0 {
+./clauses.go:2037:		endIdx := strings.Index(pattern[idx:], "]")
+./clauses.go:2050:	relEnd := strings.Index(pattern, "]")
+./comparison_chain.go:210:		(expression[index+2] == '-' || expression[index+2] == '[')
+./create.go:719:			if depth > 0 || inRelationship || c == '-' || c == '<' || c == '[' || c == ']' || c == '>' || c == ':' {
+./create_semantic_validation.go:344:		open := strings.Index(pattern[offset:], "[")
+./executor.go:1549:		before := previous == ')' || previous == ']' || previous == '<' || previous == '-' || isArrowDashRune(previous) || isArrowLeftHeadRune(previous)
+./executor.go:1550:		after := next == '(' || next == '[' || next == '>' || next == '-' || isArrowDashRune(next) || isArrowRightHeadRune(next)
+./executor_mutations.go:959:			relEnd := strings.Index(remaining[relStart:], "]")
+./executor_mutations.go:987:			relEnd := strings.Index(remaining[relStart:], "]")
+./executor_mutations.go:1139:	endIdx := strings.Index(rest, "]")
+./executor_query_routing.go:687:		case c == ')' || c == ']':
+./executor_subqueries.go:1071:		opening := strings.LastIndexByte(text[:index], '[')
+./executor_subqueries.go:1075:		return next == ':' || next == ']' || next == '{' || next == '*'
+./expression_failure.go:524:			if expression[i] == '[' {
+./expression_failure.go:534:			if expression[i] == '[' {
+./expression_validation.go:211:	list := text[open] == '[' // else the '(' of a call: callers pass only these
+./group_by_rewrite.go:104:		case c == '(' || c == '[' || c == '{':
+./group_by_rewrite.go:106:		case c == ')' || c == ']' || c == '}':
+./keyword_scan.go:281:	case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+./keyword_scan.go:1464:		case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+./keyword_scan.go:1561:		if (c == ')' || c == ']' || c == '}') && index >= verbatimEnd && gluedAliasKeywordAt(query, index+1) {
+./keyword_scan.go:1671:		case c == '(' || c == '[':
+./keyword_scan.go:1673:		case c == ')' || c == ']':
+./knowledgepolicy_ddl.go:602:	if i < len(s) && s[i] == ']' {
+./label_expression_rewrite.go:441:		case c == '(' || c == '[' || c == '{':
+./label_expression_rewrite.go:444:		case c == ')' || c == ']' || c == '}':
+./label_expression_rewrite.go:1227:		case c == '[':
+./label_expression_rewrite.go:1702:		if i < end && q[i] == '[' {
+./list_literal.go:12:	return len(text) >= 2 && text[0] == '[' && text[len(text)-1] == ']' && findMatchingBracket(text, 0) == len(text)-1
+./map_pattern_context.go:90:		if next < len(query) && (query[next] == '.' || query[next] == '[') {
+./map_pattern_context.go:102:			if next < len(query) && (query[next] == '-' || query[next] == '[' || query[next] == '>') {
+./map_pattern_context.go:113:	if prior >= 0 && ((query[previous] == '>' && query[prior] == '-') || (query[previous] == '-' && (query[prior] == ')' || query[prior] == ']' || query[prior] == '-'))) {
+./map_pattern_context.go:247:			if query[open] == '(' && c == ')' || query[open] == '[' && c == ']' || query[open] == '{' && c == '}' {
+./match_semantic_validation.go:842:	if strings.IndexByte(expression, '[') < 0 {
+./match_semantic_validation.go:979:		if structure[index] == '[' {
+./match_with_rel.go:164:	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
+./merge_actions.go:168:			if character == '[' {
+./merge_context.go:736:	if bracket := strings.IndexByte(assignment, '['); bracket >= 0 && (eq < 0 || bracket < eq) {
+./operators.go:175:		case trackBrackets && c == '[':
+./operators.go:177:		case trackBrackets && c == ']':
+./optional_match_traversal.go:128:			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{' || matchClause[next] == '$') {
+./path_selector_search.go:136:			if end < len(pattern) && pattern[end] == '[' {
+./path_selector_search.go:196:	open := strings.IndexByte(text, '[')
+./path_selector_search.go:856:		case c == '(' || c == '[' || c == '{':
+./path_selector_search.go:858:		case c == ')' || c == ']' || c == '}':
+./pattern_comprehension_classification.go:42:			candidate := previous >= 0 && query[previous] == '['
+./pattern_comprehension_classification.go:46:				candidate = isASCIISpace(before) || !(isIdentByte(before) || before == ']' || before == ')' || before == '\'' || before == '"' || before == '`' || before == '$')
+./pattern_comprehension_classification.go:71:	if strings.IndexByte(query, '[') < 0 {
+./pattern_comprehension_classification.go:109:		return next < len(cypher) && (cypher[next] == '-' || cypher[next] == '[')
+./pattern_comprehension_classification.go:115:	return next < len(cypher) && (cypher[next] == '-' || cypher[next] == '[' || cypher[next] == '>')
+./pattern_parser.go:320:		case (c == '[' || c == '{' || c == '(') && !inQuote:
+./pattern_parser.go:323:		case (c == ']' || c == '}' || c == ')') && !inQuote:
+./pipeline_write_stretch.go:339:		case character == '[' && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
+./property_access_semantic_validation.go:318:		case c == '[':
+./property_access_semantic_validation.go:451:		accessed := propertyAccessFollows(cypher, next) || after < len(cypher) && cypher[after] == '['
+./query_info.go:537:			if pattern[index] == '[' {
+./query_structure_rewrite.go:114:		case c == '(' || c == '[' || c == '{':
+./quoted_variables.go:326:	case (prev == '[' || prev == '(' || prev == ',') && declaredAt(query, prevIndex+1, token.start):
+./quoted_variables.go:330:	case prev == '[' && (next == ':' || next == ']' || next == '*' || next == '{'):
+./relationship_brackets.go:79:			if index+1 < len(pattern) && (pattern[index+1] == '>' || pattern[index+1] == '[') {
+./relationship_quantifier_rewrite.go:157:	return query[j-1] == '>' && query[j-2] == '-' || query[j-1] == '-' && (query[j-2] == '-' || query[j-2] == ']')
+./relationship_variable_repeat.go:115:	for i := strings.IndexByte(query, '['); i >= 0; {
+./relationship_variable_repeat.go:130:		next := strings.IndexByte(query[i+1:], '[')
+./schema.go:838:		bracketStart := strings.Index(forClause, "[")
+./schema.go:1721:	bracketStart := strings.Index(forClause, "[")
+./schema.go:1843:	bracketStart := strings.Index(leftRest, "[")
+./schema.go:1931:		patternInside, _, ok = extractBracketSection(patternExpr[strings.Index(patternExpr, "["):])
+./schema_contracts.go:27:		bracketStart := strings.Index(forClause, "[")
+./schema_contracts.go:288:		case ch == '[':
+./schema_contracts.go:291:		case ch == ']':
+./semantic_validation.go:578:		if index > 0 && expression[index-1] == '[' { // a pattern comprehension
+./set_helpers.go:239:		case (c == '(' || c == '{' || c == '[') && !inQuote:
+./set_helpers.go:242:		case (c == ')' || c == '}' || c == ']') && !inQuote:
+./set_semantic_validation.go:165:		case c == '(' || c == '[' || c == '{':
+./set_semantic_validation.go:168:		case c == ')' || c == ']' || c == '}':
+./set_semantic_validation.go:323:		if character == '[' {
+./shortest_path_match.go:176:		if open := strings.IndexByte(pattern, '['); open >= 0 {
+./shortest_path_match.go:240:	if open := strings.IndexByte(pattern[rest:], '['); startEnd >= 0 && open >= 0 {
+./standalone_order_rewrite.go:73:		case character == '(' || character == '[':
+./standalone_order_rewrite.go:75:			if character == '[' {
+./static_function_argument_types.go:616:	if strings.IndexByte(cypher, '[') >= 0 {
+./static_function_argument_types.go:695:		if before > 0 && (cypher[before-1] == '(' || cypher[before-1] == ',' || cypher[before-1] == '[') {
+./static_operator_types.go:870:			if expression[open] == '[' {
+./static_operator_types.go:932:	case last == '\'' || last == '"' || last == '`' || last == ')' || last == ']' || last == '}':
+./temporal_parse.go:201:	if len(text) > 0 && text[len(text)-1] == ']' {
+./temporal_parse.go:202:		open := strings.LastIndexByte(text, '[')
+./temporal_pattern.go:136:		case c == '[':
+./temporal_pattern.go:140:		case c == ']':
+./traversal.go:1212:		if pattern[i] == ']' && (pattern[i+1] == '-' || pattern[i+1] == '>') {
+./traversal.go:1405:	relStart := strings.Index(pattern[startEnd:], "[")
+./validator_strictness.go:86:		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
+./validator_strictness.go:120:			if queryGapEnd(cypher, i+1) < len(cypher) && cypher[queryGapEnd(cypher, i+1)] == ']' {

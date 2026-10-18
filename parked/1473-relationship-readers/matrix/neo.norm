@@ -1,0 +1,1320 @@
+stmt
+1
+t, w, same
+"DZ", 17, TRUE
+stmt
+2
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+3
+t, a
+"DZ", 1
+stmt
+4
+t, a
+"DZ", 2
+stmt
+5
+t, b
+"DZ", 2
+stmt
+6
+t, b
+NULL, NULL
+stmt
+7
+len, b
+1, 2
+2, 3
+stmt
+8
+len
+1
+2
+stmt
+9
+len, b
+2, 3
+stmt
+10
+t, n
+"DZ", 1
+stmt
+11
+t, n
+"DZ", 2
+stmt
+12
+rels, n
+1, 2
+stmt
+13
+t
+"DZ"
+stmt
+14
+t
+"DZ"
+stmt
+15
+nodes, rels
+2, 1
+stmt
+16
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+17
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+18
+x, c
+1, 2
+2, 2
+stmt
+19
+x, c
+1, 1
+2, 1
+stmt
+20
+x, c
+1, 8
+2, 8
+stmt
+21
+<explain ok>
+stmt
+22
+t, c
+"DZ", 3
+stmt
+23
+<explain ok>
+stmt
+24
+c
+2
+stmt
+25
+t, w, same
+"DZ", 17, TRUE
+stmt
+26
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+27
+t, a
+"DZ", 1
+stmt
+28
+t, a
+"DZ", 2
+stmt
+29
+t, b
+"DZ", 2
+stmt
+30
+t, b
+NULL, NULL
+stmt
+31
+len, b
+1, 2
+2, 3
+stmt
+32
+len
+1
+2
+stmt
+33
+len, b
+2, 3
+stmt
+34
+t, n
+"DZ", 1
+stmt
+35
+t, n
+"DZ", 2
+stmt
+36
+rels, n
+1, 2
+stmt
+37
+t
+"DZ"
+stmt
+38
+t
+"DZ"
+stmt
+39
+nodes, rels
+2, 1
+stmt
+40
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+41
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+42
+x, c
+1, 2
+2, 2
+stmt
+43
+x, c
+1, 1
+2, 1
+stmt
+44
+x, c
+1, 8
+2, 8
+stmt
+45
+<explain ok>
+stmt
+46
+t, c
+"DZ", 3
+stmt
+47
+<explain ok>
+stmt
+48
+c
+2
+stmt
+49
+t, w, same
+"DZ", 17, TRUE
+stmt
+50
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+51
+t, a
+"DZ", 1
+stmt
+52
+t, a
+"DZ", 2
+stmt
+53
+t, b
+"DZ", 2
+stmt
+54
+t, b
+NULL, NULL
+stmt
+55
+len, b
+1, 2
+2, 3
+stmt
+56
+len
+1
+2
+stmt
+57
+len, b
+2, 3
+stmt
+58
+t, n
+"DZ", 1
+stmt
+59
+t, n
+"DZ", 2
+stmt
+60
+rels, n
+1, 2
+stmt
+61
+t
+"DZ"
+stmt
+62
+t
+"DZ"
+stmt
+63
+nodes, rels
+2, 1
+stmt
+64
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+65
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+66
+x, c
+1, 2
+2, 2
+stmt
+67
+x, c
+1, 1
+2, 1
+stmt
+68
+x, c
+1, 8
+2, 8
+stmt
+69
+<explain ok>
+stmt
+70
+t, c
+"DZ", 3
+stmt
+71
+<explain ok>
+stmt
+72
+c
+2
+stmt
+73
+t, w, same
+"DZ", 17, TRUE
+stmt
+74
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+75
+t, a
+"DZ", 1
+stmt
+76
+t, a
+"DZ", 2
+stmt
+77
+t, b
+"DZ", 2
+stmt
+78
+t, b
+NULL, NULL
+stmt
+79
+len, b
+1, 2
+2, 3
+stmt
+80
+len
+1
+2
+stmt
+81
+len, b
+2, 3
+stmt
+82
+t, n
+"DZ", 1
+stmt
+83
+t, n
+"DZ", 2
+stmt
+84
+rels, n
+1, 2
+stmt
+85
+t
+"DZ"
+stmt
+86
+t
+"DZ"
+stmt
+87
+nodes, rels
+2, 1
+stmt
+88
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+89
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+90
+x, c
+1, 2
+2, 2
+stmt
+91
+x, c
+1, 1
+2, 1
+stmt
+92
+x, c
+1, 8
+2, 8
+stmt
+93
+<explain ok>
+stmt
+94
+t, c
+"DZ", 3
+stmt
+95
+<explain ok>
+stmt
+96
+c
+2
+stmt
+97
+t, w, same
+"D):Z|Q{*..", 17, TRUE
+stmt
+98
+t, a, b
+"D):Z|Q{*..", 1, 2
+"D):Z|Q{*..", 2, 3
+stmt
+99
+t, a
+"D):Z|Q{*..", 1
+stmt
+100
+t, a
+"D):Z|Q{*..", 2
+stmt
+101
+t, b
+"D):Z|Q{*..", 2
+stmt
+102
+t, b
+NULL, NULL
+stmt
+103
+len, b
+1, 2
+2, 3
+stmt
+104
+len
+1
+2
+stmt
+105
+len, b
+2, 3
+stmt
+106
+t, n
+"D):Z|Q{*..", 1
+stmt
+107
+t, n
+"D):Z|Q{*..", 2
+stmt
+108
+rels, n
+1, 2
+stmt
+109
+t
+"D):Z|Q{*.."
+stmt
+110
+t
+"D):Z|Q{*.."
+stmt
+111
+nodes, rels
+2, 1
+stmt
+112
+t, n
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 1
+stmt
+113
+a, b, t, n
+10, 11, "D):Z|Q{*..", 2
+11, 12, "D):Z|Q{*..", 1
+stmt
+114
+x, c
+1, 2
+2, 2
+stmt
+115
+x, c
+1, 1
+2, 1
+stmt
+116
+x, c
+1, 8
+2, 8
+stmt
+117
+<explain ok>
+stmt
+118
+t, c
+"D):Z|Q{*..", 3
+stmt
+119
+<explain ok>
+stmt
+120
+c
+2
+stmt
+121
+t, w, same
+"D]:Z|{*..", 17, TRUE
+stmt
+122
+t, a, b
+"D]:Z|{*..", 1, 2
+"D]:Z|{*..", 2, 3
+stmt
+123
+t, a
+"D]:Z|{*..", 1
+stmt
+124
+t, a
+"D]:Z|{*..", 2
+stmt
+125
+t, b
+"D]:Z|{*..", 2
+stmt
+126
+t, b
+NULL, NULL
+stmt
+127
+len, b
+1, 2
+2, 3
+stmt
+128
+len
+1
+2
+stmt
+129
+len, b
+2, 3
+stmt
+130
+t, n
+"D]:Z|{*..", 1
+stmt
+131
+t, n
+"D]:Z|{*..", 2
+stmt
+132
+rels, n
+1, 2
+stmt
+133
+t
+"D]:Z|{*.."
+stmt
+134
+t
+"D]:Z|{*.."
+stmt
+135
+nodes, rels
+2, 1
+stmt
+136
+t, n
+"D]:Z|{*..", 2
+"D]:Z|{*..", 2
+"D]:Z|{*..", 1
+stmt
+137
+a, b, t, n
+10, 11, "D]:Z|{*..", 2
+11, 12, "D]:Z|{*..", 1
+stmt
+138
+x, c
+1, 2
+2, 2
+stmt
+139
+x, c
+1, 1
+2, 1
+stmt
+140
+x, c
+1, 8
+2, 8
+stmt
+141
+<explain ok>
+stmt
+142
+t, c
+"D]:Z|{*..", 3
+stmt
+143
+<explain ok>
+stmt
+144
+c
+2
+stmt
+145
+t, w, same
+"D]'Z", 17, TRUE
+stmt
+146
+t, a, b
+"D]'Z", 1, 2
+"D]'Z", 2, 3
+stmt
+147
+t, a
+"D]'Z", 1
+stmt
+148
+t, a
+"D]'Z", 2
+stmt
+149
+t, b
+"D]'Z", 2
+stmt
+150
+t, b
+NULL, NULL
+stmt
+151
+len, b
+1, 2
+2, 3
+stmt
+152
+len
+1
+2
+stmt
+153
+len, b
+2, 3
+stmt
+154
+t, n
+"D]'Z", 1
+stmt
+155
+t, n
+"D]'Z", 2
+stmt
+156
+rels, n
+1, 2
+stmt
+157
+t
+"D]'Z"
+stmt
+158
+t
+"D]'Z"
+stmt
+159
+nodes, rels
+2, 1
+stmt
+160
+t, n
+"D]'Z", 2
+"D]'Z", 2
+"D]'Z", 1
+stmt
+161
+a, b, t, n
+10, 11, "D]'Z", 2
+11, 12, "D]'Z", 1
+stmt
+162
+x, c
+1, 2
+2, 2
+stmt
+163
+x, c
+1, 1
+2, 1
+stmt
+164
+x, c
+1, 8
+2, 8
+stmt
+165
+<explain ok>
+stmt
+166
+t, c
+"D]'Z", 3
+stmt
+167
+<explain ok>
+stmt
+168
+c
+2
+stmt
+169
+t, w, same
+"D\"Z]-[", 17, TRUE
+stmt
+170
+t, a, b
+"D\"Z]-[", 1, 2
+"D\"Z]-[", 2, 3
+stmt
+171
+t, a
+"D\"Z]-[", 1
+stmt
+172
+t, a
+"D\"Z]-[", 2
+stmt
+173
+t, b
+"D\"Z]-[", 2
+stmt
+174
+t, b
+NULL, NULL
+stmt
+175
+len, b
+1, 2
+2, 3
+stmt
+176
+len
+1
+2
+stmt
+177
+len, b
+2, 3
+stmt
+178
+t, n
+"D\"Z]-[", 1
+stmt
+179
+t, n
+"D\"Z]-[", 2
+stmt
+180
+rels, n
+1, 2
+stmt
+181
+t
+"D\"Z]-["
+stmt
+182
+t
+"D\"Z]-["
+stmt
+183
+nodes, rels
+2, 1
+stmt
+184
+t, n
+"D\"Z]-[", 2
+"D\"Z]-[", 2
+"D\"Z]-[", 1
+stmt
+185
+a, b, t, n
+10, 11, "D\"Z]-[", 2
+11, 12, "D\"Z]-[", 1
+stmt
+186
+x, c
+1, 2
+2, 2
+stmt
+187
+x, c
+1, 1
+2, 1
+stmt
+188
+x, c
+1, 8
+2, 8
+stmt
+189
+<explain ok>
+stmt
+190
+t, c
+"D\"Z]-[", 3
+stmt
+191
+<explain ok>
+stmt
+192
+c
+2
+stmt
+193
+t, w, same
+"D):Z|Q{*..", 17, TRUE
+stmt
+194
+t, a, b
+"D):Z|Q{*..", 1, 2
+"D):Z|Q{*..", 2, 3
+stmt
+195
+t, a
+"D):Z|Q{*..", 1
+stmt
+196
+t, a
+"D):Z|Q{*..", 2
+stmt
+197
+t, b
+"D):Z|Q{*..", 2
+stmt
+198
+t, b
+NULL, NULL
+stmt
+199
+len, b
+1, 2
+2, 3
+stmt
+200
+len
+1
+2
+stmt
+201
+len, b
+2, 3
+stmt
+202
+t, n
+"D):Z|Q{*..", 1
+stmt
+203
+t, n
+"D):Z|Q{*..", 2
+stmt
+204
+rels, n
+1, 2
+stmt
+205
+t
+"D):Z|Q{*.."
+stmt
+206
+t
+"D):Z|Q{*.."
+stmt
+207
+nodes, rels
+2, 1
+stmt
+208
+t, n
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 2
+"D):Z|Q{*..", 1
+stmt
+209
+a, b, t, n
+10, 11, "D):Z|Q{*..", 2
+11, 12, "D):Z|Q{*..", 1
+stmt
+210
+x, c
+1, 2
+2, 2
+stmt
+211
+x, c
+1, 1
+2, 1
+stmt
+212
+x, c
+1, 8
+2, 8
+stmt
+213
+<explain ok>
+stmt
+214
+t, c
+"D):Z|Q{*..", 3
+stmt
+215
+<explain ok>
+stmt
+216
+c
+2
+stmt
+217
+t, w, same
+"DZ", 17, TRUE
+stmt
+218
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+219
+t, a
+"DZ", 1
+stmt
+220
+t, a
+"DZ", 2
+stmt
+221
+t, b
+"DZ", 2
+stmt
+222
+t, b
+NULL, NULL
+stmt
+223
+len, b
+1, 2
+2, 3
+stmt
+224
+len
+1
+2
+stmt
+225
+len, b
+2, 3
+stmt
+226
+t, n
+"DZ", 1
+stmt
+227
+t, n
+"DZ", 2
+stmt
+228
+rels, n
+1, 2
+stmt
+229
+t
+"DZ"
+stmt
+230
+t
+"DZ"
+stmt
+231
+nodes, rels
+2, 1
+stmt
+232
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+233
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+234
+x, c
+1, 2
+2, 2
+stmt
+235
+x, c
+1, 1
+2, 1
+stmt
+236
+x, c
+1, 8
+2, 8
+stmt
+237
+<explain ok>
+stmt
+238
+t, c
+"DZ", 3
+stmt
+239
+<explain ok>
+stmt
+240
+c
+2
+stmt
+241
+t, w, same
+"DZ", 17, TRUE
+stmt
+242
+t, a, b
+"DZ", 1, 2
+"DZ", 2, 3
+stmt
+243
+t, a
+"DZ", 1
+stmt
+244
+t, a
+"DZ", 2
+stmt
+245
+t, b
+"DZ", 2
+stmt
+246
+t, b
+NULL, NULL
+stmt
+247
+len, b
+1, 2
+2, 3
+stmt
+248
+len
+1
+2
+stmt
+249
+len, b
+2, 3
+stmt
+250
+t, n
+"DZ", 1
+stmt
+251
+t, n
+"DZ", 2
+stmt
+252
+rels, n
+1, 2
+stmt
+253
+t
+"DZ"
+stmt
+254
+t
+"DZ"
+stmt
+255
+nodes, rels
+2, 1
+stmt
+256
+t, n
+"DZ", 2
+"DZ", 2
+"DZ", 1
+stmt
+257
+a, b, t, n
+10, 11, "DZ", 2
+11, 12, "DZ", 1
+stmt
+258
+x, c
+1, 2
+2, 2
+stmt
+259
+x, c
+1, 1
+2, 1
+stmt
+260
+x, c
+1, 8
+2, 8
+stmt
+261
+<explain ok>
+stmt
+262
+t, c
+"DZ", 3
+stmt
+263
+<explain ok>
+stmt
+264
+c
+2
+stmt
+265
+stmt
+266
+len, b
+1, 2
+2, 3
+stmt
+267
+len, b
+1, 2
+2, 3
+stmt
+268
+len, b
+1, 2
+2, 3
+stmt
+269
+len, b
+0, 1
+1, 2
+2, 3
+stmt
+270
+len, b
+1, 2
+2, 3
+stmt
+271
+len, b
+1, 2
+2, 3
+stmt
+272
+stmt
+273
+stmt
+274
+len, b
+1, 2
+2, 3
+stmt
+275
+stmt
+276
+len, b
+1, 2
+stmt
+277
+t, len
+"D{Z}..*", 1
+"DZ", 1
+"NOPE", 1
+7, 1
+NULL, 1
+"D{Z}..*", 2
+"DZ", 2
+"NOPE", 2
+7, 2
+NULL, 2
+stmt
+278
+stmt
+279
+k
+17
+stmt
+280
+stmt
+281
+k
+17
+stmt
+282
+c
+2
+stmt
+283
+k
+17
+stmt
+284
+k
+17
+stmt
+285
+k
+17
+stmt
+286
+stmt
+287
+k
+17
+stmt
+288
+k
+17
+stmt
+289
+k
+17
+stmt
+290
+c
+2
+stmt
+291
+k
+17
+stmt
+292
+k
+17
+stmt
+293
+k
+17
+stmt
+294
+k
+17
+stmt
+295
+<explain ok>
+stmt
+296
+k
+17
+stmt
+297
+stmt
+298
+b
+2
+stmt
+299
+b
+2
+stmt
+300
+b
+2
+stmt
+301
+b
+2
+stmt
+302
+c
+1
+stmt
+303
+c
+1
+stmt
+304
+c
+1
+stmt
+305
+c
+1
+stmt
+306
+<explain ok>
+stmt
+307
+b
+2
+stmt
+308
+l
+["CL"]
+stmt
+309
+t
+"CY"
+stmt
+310
+t
+"CY"
+stmt
+311
+t
+"CY"

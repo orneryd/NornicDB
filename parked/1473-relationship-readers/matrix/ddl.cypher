@@ -1,0 +1,16 @@
+RETURN 1 AS stmt;
+CREATE INDEX relinv_ri FOR ()-[r:`T]x:y`]-() ON (r.p);
+RETURN 2 AS stmt;
+SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name = 'relinv_ri' RETURN name, labelsOrTypes, properties;
+RETURN 3 AS stmt;
+CREATE CONSTRAINT relinv_rc FOR ()-[r:`U]-[:z`]-() REQUIRE r.k IS UNIQUE;
+RETURN 4 AS stmt;
+SHOW CONSTRAINTS YIELD name, labelsOrTypes, properties WHERE name = 'relinv_rc' RETURN name, labelsOrTypes, properties;
+RETURN 5 AS stmt;
+CREATE FULLTEXT INDEX relinv_ft FOR ()-[r:`V]x`|W]-() ON EACH [r.s];
+RETURN 6 AS stmt;
+SHOW INDEXES YIELD name, labelsOrTypes, properties WHERE name = 'relinv_ft' RETURN name, labelsOrTypes, properties;
+RETURN 7 AS stmt;
+CREATE ()-[:`U]-[:z` {k:1}]->();
+RETURN 8 AS stmt;
+MATCH ()-[r:`U]-[:z` {k:1}]->() RETURN count(r) AS c;

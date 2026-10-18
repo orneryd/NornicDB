@@ -1,0 +1,121 @@
+arrow_validation.go:16 func validateArrowOperators(query string) error 
+ast_builder.go:1028 func splitOutsideBrackets(s string, delim rune) []string 
+ast_builder.go:29 func NewASTBuilder() *ASTBuilder 
+call.go:1059 func findTopLevelByte(input string, target byte) int 
+call.go:1310 func callTailHasRelationshipTypeConstraint(tail string) bool 
+call_compat.go:924 func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string 
+call_vector.go:351 func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName string, k int, input *vectorQueryInput, err error) 
+call_vector.go:463 func splitParamsCarefully(params string) []string 
+case_expression.go:505 func caseOperandEndsAt(s string, i int) bool 
+case_expression.go:547 func caseSimpleTestContinuesAt(s string, i int) bool 
+clauses.go:1155 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface
+clauses.go:153 func (e *StorageExecutor) splitWithItems(expr string) []string 
+clauses.go:2006 func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern 
+clauses.go:659 func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelationshipPlan, bool) 
+comparison_chain.go:208 func incomingArrowAt(expression string, index int) bool 
+create.go:137 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) 
+create.go:630 func (e *StorageExecutor) scanCreatePatterns(pattern string) []string 
+create_pipeline_helpers.go:185 func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) 
+create_pipeline_template.go:152 func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTemplate, bool) 
+create_pipeline_template.go:30 <top-level var>
+create_pipeline_template.go:66 func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate 
+create_semantic_validation.go:341 func createRelationshipPropertyMapBodies(pattern string) []string 
+cypher25_expression_rewrite.go:70 func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) 
+executor.go:1266 func queryDeletesNodes(query string) bool 
+executor.go:1537 func cypherArrowReplacement(runes []rune, i int) (byte, bool) 
+executor_mutations.go:1066 func extractVariableNameFromReturnItem(expr string) string 
+executor_mutations.go:1099 func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string 
+executor_mutations.go:1130 func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string 
+executor_mutations.go:1161 func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) 
+executor_mutations.go:845 func (e *StorageExecutor) idCounter() int64 
+executor_mutations.go:854 func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool 
+executor_mutations.go:945 func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop 
+executor_mutations_delete_guard.go:317 func pipelineUnwindAlias(clause string) string 
+executor_query_routing.go:618 func hasAdjacentOperands(cypher string) bool 
+executor_subqueries.go:1058 func isPatternVariableAt(text string, index, length int) bool 
+expression_failure.go:501 func inLocalExpressionScope(expression string, offset int) bool 
+expression_validation.go:209 func localBindingAt(text string, open int) (localBinding, bool) 
+functions_text_locate.go:38 func fnTextLocate(ctx cypherfn.Context, args []string) (interface
+group_by_rewrite.go:96 func projectionWords(query string) []projectionWord 
+keyword_scan.go:125 func nameContinuesExpression(rest string) bool 
+keyword_scan.go:1461 func queryMayNeedCanonicalRewrite(query string) bool 
+keyword_scan.go:1512 func scanCanonicalQueryText(query string) (string, *queryRewrite) 
+keyword_scan.go:1647 func inPatternClause(query string, index int) bool 
+keyword_scan.go:261 func isOperatorWith(s string, pos int) bool 
+knowledgepolicy_ddl.go:566 func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding) (knowledgepolicy.DecayProfileBinding, int, error) 
+label_expression_rewrite.go:1202 func (r *labelExpressionRewriter) expression(start, end int) error 
+label_expression_rewrite.go:1683 func relationshipChainEnd(q string, open, end int) (int, bool) 
+label_expression_rewrite.go:431 func (r *labelExpressionRewriter) clauses(start, end int) []labelClause 
+list_literal.go:11 func isListLiteral(text string) bool 
+map_pattern_context.go:208 func newMapPatternContext(query string) *mapPatternContext 
+map_pattern_context.go:65 func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool 
+match_multi.go:68 func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string 
+match_semantic_validation.go:841 func maskPatternComprehensions(expression string) string 
+match_semantic_validation.go:957 func validateExpressionPatternBindings(scope staticTypeScope, text string) error 
+match_with_rel.go:133 func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface
+match_with_rel.go:296 func startsWithRelationshipFragment(expr string) bool 
+merge_actions.go:159 func mergePathSegments(pattern string) []string 
+merge_context.go:176 func splitTopLevelOrTerms(expr string) []string 
+merge_context.go:733 func splitSetAssignment(assignment string) (target, property, operator, right string) 
+operators.go:144 func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int 
+optional_match_traversal.go:113 func extractRelationshipVariables(matchClause string) []string 
+optional_match_traversal.go:83 func splitOptionalMatchClauses(section string) []optionalMatchClause 
+path_selector_search.go:187 func parsePathPatternRelationship(text string) (pathPatternItem, bool) 
+path_selector_search.go:847 func readsPatternVariable(term, name string) bool 
+path_selector_search.go:97 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) 
+pattern_comprehension_classification.go:15 func classifyPatternComprehensions(query string) (pattern, singleton bool) 
+pattern_comprehension_classification.go:70 func mayHavePatternComprehension(query string) bool 
+pattern_comprehension_classification.go:99 func relationshipPatternFollows(cypher string, at int) bool 
+pattern_parser.go:291 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string 
+pipeline_pattern_template.go:123 func pipelinePropertiesKey(props map[string]interface
+pipeline_write_stretch.go:245 func addStretchExpressionReads(text string, tokens *stretchTokens) 
+pipeline_write_stretch.go:329 func addStretchPropertyReads(text string, tokens *stretchTokens) 
+property_access_semantic_validation.go:287 func scanPropertyAccesses(text string, types map[string]string, params map[string]interface
+property_access_semantic_validation.go:429 func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
+quantified_path_pattern.go:696 func parenthesisedPathAt(s string, open, close int) bool 
+query_info.go:530 func eachPatternElement(pattern string, visit func(opener byte, element string)) 
+query_structure_rewrite.go:103 func topLevelWords(q string, start, end int) []topLevelWord 
+quoted_variables.go:299 func classifyQuotedToken(query string, token *quotedToken, inner byte) 
+rel_existence_pattern.go:5 func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) 
+relationship_brackets.go:59 func patternHasRelationship(pattern string) bool 
+relationship_quantifier_rewrite.go:152 func arrowEndsAt(query string, start, i int) bool 
+relationship_variable_repeat.go:112 func mayRepeatRelationshipVariable(query string) bool 
+runtime_type_errors.go:118 func neo4jValueRepr(value interface
+runtime_type_errors.go:321 func isOperatorExpressionText(text string) bool 
+schema.go:1716 func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) 
+schema.go:1825 func parsePolicyForClause(forClause string) (sourceLabel string, relType string, targetLabel string, ok bool) 
+schema.go:1913 func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL(cypher string) (parsedRelationshipKeyOrCompositeUniqueDDL, error) 
+schema.go:831 func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) 
+schema_contracts.go:20 func parseConstraintContractForClause(forClause string) (entityType storage.ConstraintEntityType, variable string, labelOrType string, ok bool) 
+schema_contracts.go:253 func splitConstraintContractEntries(body string) ([]string, error) 
+schema_lookup_index.go:123 func showLookupIndexCreateStatement(name, entityType string) string 
+schema_lookup_index.go:23 <top-level var>
+semantic_validation.go:459 func validatePatternExpressionPlacement(cypher string) error 
+semantic_validation.go:567 func maskPredicatePatterns(expression string) string 
+set_helpers.go:216 func splitSetAssignments(setClause string) []string 
+set_semantic_validation.go:155 func trailingWordAfterOperand(expression string) (string, bool) 
+set_semantic_validation.go:311 func expressionFreeVariables(expression string) []string 
+shortest_path_match.go:166 func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatch) error 
+shortest_path_match.go:233 func shortestPathEndpointPatterns(pattern string) (string, string, bool) 
+show_schema_values.go:149 func showConstraintCreateStatement(c storage.Constraint) interface
+show_schema_values.go:46 func quoteSchemaName(name string) string 
+show_schema_values.go:53 func schemaPattern(entityType string, labelsOrTypes []string) (string, string) 
+standalone_order_rewrite.go:54 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) 
+static_function_argument_types.go:611 func validateStaticFunctionParameters(cypher string, params map[string]interface
+static_function_argument_types.go:689 func parameterMayBeFunctionArgument(cypher string) bool 
+static_operator_types.go:860 func staticMapProjectionReceiver(expression string) (receiver string, projected bool) 
+static_operator_types.go:926 func endsWithOperand(text string) bool 
+subquery_value_expression.go:1090 func containsIdentifierWord(text, name string) bool 
+subquery_value_expression.go:401 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface
+temporal_parse.go:198 func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, error) 
+temporal_pattern.go:75 func compileTemporalPattern(pattern string) (items []patternItem, ok bool) 
+traversal.go:1068 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface
+traversal.go:1163 func normalizeAnonymousTraversalRelationships(pattern string) string 
+traversal.go:1206 func (e *StorageExecutor) isChainedPattern(pattern string) bool 
+traversal.go:1389 func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch 
+traversal.go:165 func buildRelTypeSet(relTypes []string) map[string]struct
+unwind_multi_match_create.go:54 func (m matchClauseSpec) batchKey() nodeBatchMatchKey 
+unwind_multi_match_create.go:630 func parseSimpleCreateEdge(body, unwindVar string) (createEdgeSpec, bool) 
+unwind_relationship_merge_batch.go:184 func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMergeSpec, bool) 
+validator_strictness.go:107 func containsTrailingListComma(cypher string) bool 
+validator_strictness.go:73 func containsNotInOperator(cypher string) bool 

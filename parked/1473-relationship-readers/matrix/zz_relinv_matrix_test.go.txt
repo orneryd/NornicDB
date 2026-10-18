@@ -1,0 +1,134 @@
+package cypher
+
+// Temporary test-only harness (never committed): runs zz_relinv_matrix.cypher
+// statement by statement, auto-commit (A|) and one explicit transaction per
+// statement (X|), printing rows the way cypher-shell --format plain does, so
+// the output diffs against the Neo4j 5.26.30 run of the same file.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func relinvValue(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return "NULL"
+	case bool:
+		if x {
+			return "TRUE"
+		}
+		return "FALSE"
+	case string:
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(x)
+		return strings.TrimSpace(b.String())
+	case []interface{}:
+		parts := make([]string, len(x))
+		for i, item := range x {
+			parts[i] = relinvValue(item)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []string:
+		parts := make([]string, len(x))
+		for i, item := range x {
+			parts[i] = relinvValue(item)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]interface{}:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + ": " + relinvValue(x[k])
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case float64:
+		return fmt.Sprintf("%v", x)
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+func TestZZRelInvMatrix(t *testing.T) {
+	file := os.Getenv("RELINV_FILE")
+	if file == "" {
+		file = "zz_relinv_matrix.cypher"
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statements []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		statements = append(statements, strings.TrimSuffix(line, ";"))
+	}
+	for _, mode := range []string{"A", "X"} {
+		e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "relinv"))
+		ctx := context.Background()
+		for _, q := range statements {
+			func() {
+				explicit := mode == "X" && !strings.HasPrefix(q, "RETURN ")
+				defer func() {
+					if p := recover(); p != nil {
+						fmt.Printf("%s|PANIC %v\n", mode, p)
+						if explicit {
+							_, _ = e.Execute(ctx, "ROLLBACK", nil)
+						}
+					}
+				}()
+				if explicit {
+					if _, err := e.Execute(ctx, "BEGIN", nil); err != nil {
+						fmt.Printf("%s|ERROR BEGIN %v\n", mode, err)
+						return
+					}
+				}
+				res, err := e.Execute(ctx, q, nil)
+				if err == nil && explicit {
+					if _, cerr := e.Execute(ctx, "COMMIT", nil); cerr != nil {
+						err = cerr
+					}
+				}
+				if err != nil {
+					if explicit {
+						_, _ = e.Execute(ctx, "ROLLBACK", nil)
+					}
+					fmt.Printf("%s|ERROR %s: %s\n", mode, errorStatusCode(err), strings.ReplaceAll(err.Error(), "\n", " "))
+					return
+				}
+				upper := strings.ToUpper(q)
+				if strings.HasPrefix(upper, "EXPLAIN") {
+					fmt.Printf("%s|<explain ok>\n", mode)
+					return
+				}
+				if res == nil || len(res.Rows) == 0 {
+					return
+				}
+				fmt.Printf("%s|%s\n", mode, strings.Join(res.Columns, ", "))
+				for _, row := range res.Rows {
+					parts := make([]string, len(row))
+					for i, v := range row {
+						parts[i] = relinvValue(v)
+					}
+					fmt.Printf("%s|%s\n", mode, strings.Join(parts, ", "))
+				}
+			}()
+		}
+	}
+}

@@ -1,0 +1,4 @@
+./ast_builder.go:32:		relationPattern: regexp.MustCompile(`-\[(\w*)?(?::(\w+))?\]->`),
+./functions_text_locate.go:92:	textLocateEscapedBreak = regexp.MustCompile(`\\[nrt]`)
+./schema_lookup_index.go:23:	lookupRelationshipPattern = regexp.MustCompile(`(?is)^FOR\s*\(\s*\)\s*<?-\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*->?\s*\(\s*\)\s*ON\s+EACH\s+type\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$`)
+./subquery_value_expression.go:1114:var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
