@@ -7,6 +7,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -185,4 +186,93 @@ func TestBuildSupersededWriteIsSkippedAtInstall(t *testing.T) {
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:r"}, buildWriteSearchIDs(t, svc, "storedterm"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "staleterm"))
+}
+
+// TestBuildRelationshipPhaseReadsWithTheNodeSnapshot: the build reads its
+// stored relationships where it reads its nodes. A relationship stored during
+// the build, whose IndexEdge follows a queued change that turns vectors off,
+// keeps the vector it had when the build began, as the same calls after the
+// build would leave it.
+func TestBuildRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	run := func(gated bool) []float32 {
+		engine := newNodeSnapshotGateEngine(t)
+		buildWriteEdgeEndpoints(t, engine)
+		stored := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{1, 0, 0}}}
+		require.NoError(t, engine.CreateEdge(storage.CopyEdge(stored)))
+		svc := buildWriteService(t, engine, "", "v2", nil)
+		t.Cleanup(func() { _ = svc.Close() })
+		t.Cleanup(engine.open)
+		var built chan error
+		if gated {
+			built = startGatedBuild(t, engine, svc)
+		} else {
+			engine.open()
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+		}
+		svc.SetIndexFlags(true, false)
+		updated := &storage.Edge{ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
+		require.NoError(t, engine.UpdateEdge(storage.CopyEdge(updated)))
+		require.NoError(t, svc.IndexEdge(updated))
+		if gated {
+			engine.open()
+			require.NoError(t, <-built)
+		}
+		svc.mu.RLock()
+		defer svc.mu.RUnlock()
+		return svc.edgePropVector[string(stored.ID)]["v"]
+	}
+	serial := run(false)
+	require.Equal(t, []float32{1, 0, 0}, serial)
+	require.Equal(t, serial, run(true), "the relationship phase read storage written after the build's node snapshot")
+}
+
+// BenchmarkStoredRelationshipRead measures what the build retains between its
+// node snapshot and its relationship phase: per relationship, its ID, type,
+// endpoints and vector-shaped properties (here one 1024-dimension vector and
+// one text property, which is not retained).
+func BenchmarkStoredRelationshipRead(b *testing.B) {
+	engine := storage.NewMemoryEngine()
+	defer engine.Close()
+	vec := make([]float32, 1024)
+	for i := range vec {
+		vec[i] = float32(i) / 1024
+	}
+	const relationships = 1000
+	for i := range relationships {
+		start, end := storage.NodeID(fmt.Sprintf("nornic:s%d", i)), storage.NodeID(fmt.Sprintf("nornic:e%d", i))
+		for _, id := range []storage.NodeID{start, end} {
+			if _, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}}); err != nil {
+				b.Fatal(err)
+			}
+		}
+		edge := &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("nornic:r%d", i)), StartNode: start, EndNode: end, Type: "REL",
+			Properties: map[string]any{"v": vec, "note": strings.Repeat("text ", 40)}}
+		if err := engine.CreateEdge(edge); err != nil {
+			b.Fatal(err)
+		}
+	}
+	svc := NewServiceWithDimensions(engine, 1024)
+	defer svc.Close()
+	// Retained: what the read keeps per relationship, counted as the build
+	// queue counts a copied edge (an engine that decodes values, like Badger,
+	// allocates all of it; the memory engine shares its stored vectors).
+	held, err := svc.readStoredRelationships(context.Background())
+	if err != nil {
+		b.Fatal(err)
+	}
+	retained := 0
+	for _, edge := range held {
+		_, size := copyQueuedEdge(edge)
+		retained += size + len(edge.ID) + len(edge.Type) + len(edge.StartNode) + len(edge.EndNode)
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		edges, err := svc.readStoredRelationships(context.Background())
+		if err != nil || len(edges) != relationships {
+			b.Fatalf("read %d relationships: %v", len(edges), err)
+		}
+	}
+	b.ReportMetric(float64(retained)/relationships, "retained-B/rel")
 }
