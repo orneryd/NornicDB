@@ -611,6 +611,10 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 	t.Run("removeNodeFromEvent unprefixed ID falls back to default db", func(t *testing.T) {
 		svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 		require.NoError(t, err)
+		// A write during the startup build is applied by the build; this
+		// case counts entries right after the write.
+		_, err = db.EnsureSearchIndexesBuilt(context.Background(), db.defaultDatabaseName(), nil)
+		require.NoError(t, err)
 
 		node := &storage.Node{
 			ID:              "n-local",
