@@ -676,7 +676,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 			continue
 		}
 		key := []byte(keyStr)
-		if err := w.write(func(txn *badger.Txn) error { return txn.Set(key, value) }); err != nil {
+		if err := w.write(func(txn *badger.Txn) error {
+			return tx.engine.setKeyWithPendingHint(txn, key, value)
+		}); err != nil {
 			return fmt.Errorf("flushing write for key %s: %w", keyStr, err)
 		}
 	}
