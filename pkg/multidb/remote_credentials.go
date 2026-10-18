@@ -27,20 +27,63 @@ func (m *DatabaseManager) resolveRemoteCredentials(ref ConstituentRef, authToken
 		return ConstituentRef{}, observability.RedactError(err, observability.ClientCredentials(ref.URI)...)
 	}
 	ref.AuthMode = strings.ToLower(strings.TrimSpace(ref.AuthMode))
-	if ref.AuthMode == "user_password" {
+	if ref.AuthMode == "user_password" || (ref.Password != "" && strings.TrimSpace(authToken) == "") {
 		ref.Password, err = m.decryptStoredRemotePassword(ref.Password)
 		if err != nil {
 			return ConstituentRef{}, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(ref.Alias, err), err)
 		}
-	} else if endpoint.User != nil && strings.TrimSpace(authToken) == "" {
-		// Preserve explicit credentials and forwarded-token precedence. URL
-		// userinfo supplies the Basic identity when neither is configured.
 		ref.AuthMode = "user_password"
+	} else if endpoint.User != nil && strings.TrimSpace(authToken) == "" {
+		// Legacy records remain usable before a writable, keyed migration.
+		ref.AuthMode = "user_password"
+		ref.User = endpoint.User.Username()
+		ref.Password, _ = endpoint.User.Password()
+	} else {
+		// URI-origin credentials are encrypted fallback fields in metadata.
+		// A forwarded token takes precedence over that fallback.
+		ref.User, ref.Password = "", ""
+	}
+	endpoint.User = nil
+	ref.URI = endpoint.String()
+	return ref, nil
+}
+
+// normalizeRemoteCredentials is the persistence representation owner. New
+// explicit input is always encrypted, even if its text starts with enc:v1:.
+// Existing ciphertext is retained unchanged by metadata rewrites and migration.
+// URI-origin fallback credentials keep their forwarding auth mode, so a caller
+// token still takes precedence; explicit user_password credentials always win.
+func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInput bool) (ConstituentRef, error) {
+	if ref.Type != "remote" {
+		return ref, nil
+	}
+	endpoint, err := url.Parse(strings.TrimSpace(ref.URI))
+	if err != nil {
+		if !newInput {
+			// Do not turn an existing unusable endpoint into an open failure.
+			return ref, nil
+		}
+		return ConstituentRef{}, observability.RedactError(err, observability.ClientCredentials(ref.URI)...)
+	}
+	explicit := strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password")
+	uriCredential := endpoint.User != nil && !explicit
+	if uriCredential {
 		ref.User = endpoint.User.Username()
 		ref.Password, _ = endpoint.User.Password()
 	}
 	endpoint.User = nil
 	ref.URI = endpoint.String()
+	if uriCredential || (ref.Password != "" && (newInput || !isEncryptedRemoteCredential(ref.Password))) {
+		if explicit {
+			ref.Password, err = m.encryptRemotePassword(ref.Password)
+		} else {
+			// URL userinfo permits an empty password; explicit DDL does not.
+			ref.Password, err = m.encryptRemoteCredential(ref.Password)
+		}
+		if err != nil {
+			return ConstituentRef{}, localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
+		}
+	}
 	return ref, nil
 }
 
@@ -101,6 +144,10 @@ func (m *DatabaseManager) encryptRemotePassword(password string) (string, error)
 	if strings.TrimSpace(password) == "" {
 		return "", localizedError(localization.MultidbRemotePasswordEmpty(), nil)
 	}
+	return m.encryptRemoteCredential(password)
+}
+
+func (m *DatabaseManager) encryptRemoteCredential(password string) (string, error) {
 	if m.remoteCredentialCipher == nil {
 		return "", localizedError(localization.MultidbCredentialKeyConfigurationRequired(), nil)
 	}
