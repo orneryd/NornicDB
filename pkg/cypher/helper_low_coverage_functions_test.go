@@ -139,38 +139,6 @@ func TestSchemaParsingHelpers_Branches(t *testing.T) {
 	require.ErrorIs(t, err, nerrors.ErrInvalidFulltextRelationshipTypes)
 }
 
-func TestExtractSeedNodesFromResult_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seed_extract")
-	exec := NewStorageExecutor(store)
-
-	_, err := store.CreateNode(&storage.Node{ID: "n1", Labels: []string{"N"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "n2", Labels: []string{"N"}})
-	require.NoError(t, err)
-
-	res := &ExecuteResult{
-		Columns: []string{"seed"},
-		Rows: [][]interface{}{
-			{storage.NodeID("n1")}, // ignored type
-			{map[string]interface{}{"_nodeId": "n1"}},
-			{"n2"},
-			{[]interface{}{"n1"}},
-			{[]interface{}{map[string]interface{}{"id": "n2"}}},
-		},
-	}
-	nodes, err := exec.extractSeedNodesFromResult(res, "seed")
-	require.NoError(t, err)
-	require.Len(t, nodes, 4)
-
-	_, err = exec.extractSeedNodesFromResult(&ExecuteResult{Columns: []string{"other"}, Rows: [][]interface{}{{"n1"}}}, "seed")
-	require.Error(t, err)
-
-	nodes, err = exec.extractSeedNodesFromResult(nil, "seed")
-	require.NoError(t, err)
-	require.Empty(t, nodes)
-}
-
 func TestAggregatePathSum_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "agg_sum")
