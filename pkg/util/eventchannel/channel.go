@@ -27,6 +27,11 @@ func (c *Channel[T]) Events() <-chan T { return c.events }
 // TrySend queues an event without waiting for a reader. It returns false when
 // the buffer is full or the owner is closed, leaving existing events intact.
 func (c *Channel[T]) TrySend(event T) bool {
+	// A full buffer can reject immediately: no send can race with Close.
+	// Unbuffered channels still need the select to find a waiting reader.
+	if cap(c.events) > 0 && len(c.events) == cap(c.events) {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
