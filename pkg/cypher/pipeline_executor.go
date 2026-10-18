@@ -1132,31 +1132,49 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 	return nil, false, nil
 }
 
-// pipelineReadsImportedBinding reports whether a clause mentions a variable
+// pipelineReadsImportedBinding reports whether the clauses read a variable
 // the pipeline's first row imports: a correlated subquery body's outer row
 // (fabricRecordBindings) or an enclosing value scope. Parameters are not
-// imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
-// use, so a body that only names its own variables keeps the shortcuts.
+// imports. The body's reads and declarations are the body's scope
+// (bodyScopeOf); a name the body uses in a pattern position, or declares
+// again, counts as read, so a body that only names its own variables keeps
+// the shortcuts.
 func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	references := func(name string) bool {
+	values := valueBindingsFromContext(ctx)
+	if len(clauses) > 0 && clauses[0].kind == pipelineClauseCallSubquery {
+		values = nil
+	}
+	if len(e.fabricRecordBindings) == 0 && len(values) == 0 {
+		return false
+	}
+	bound := func(name string) bool {
 		if strings.HasPrefix(name, "$") {
 			return false
 		}
-		for _, clause := range clauses {
-			if isIdentifierReferenced(clause.text, name) {
-				return true
-			}
+		if _, ok := e.fabricRecordBindings[name]; ok {
+			return true
 		}
-		return false
+		_, ok := values[name]
+		return ok
 	}
-	for name := range e.fabricRecordBindings {
-		if references(name) {
+	texts := make([]string, len(clauses))
+	for index, clause := range clauses {
+		texts[index] = clause.text
+	}
+	scope, err := e.bodyScopeOf(strings.Join(texts, " "), nil, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		// A body the static walk rejects runs on the row pipeline, which
+		// reports its error.
+		return true
+	}
+	for _, name := range scope.Reads {
+		if bound(name) {
 			return true
 		}
 	}
-	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name := range valueBindingsFromContext(ctx) {
-			if references(name) {
+	for _, branch := range scope.Branches {
+		for _, name := range branch.Declares {
+			if bound(name) {
 				return true
 			}
 		}
