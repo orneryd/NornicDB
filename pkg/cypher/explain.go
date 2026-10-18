@@ -561,7 +561,7 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 // (-[*]->, -[r:T*1..3]->) in query, read by the declaration owner.
 func containsVariableLengthPathPattern(query string) bool {
 	for open, close := nextRelationshipBracket(query, 0); open >= 0; open, close = nextRelationshipBracket(query, close+1) {
-		if relationshipDeclarationHead(query[open+1 : close]).hasLength {
+		if declaration := relationshipDeclarationHead(query[open+1 : close]); declaration.hasLength && !declaration.lengthInvalid {
 			return true
 		}
 	}

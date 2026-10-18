@@ -2430,7 +2430,6 @@ func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n)"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n.name)"))
 
-
 	got := dedupeNonEmpty([]string{"a", "", "a", " b ", "b"}, []string{"", "c", "a"})
 	assert.Equal(t, []string{"a", "b", "c"}, got)
 }

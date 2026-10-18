@@ -509,9 +509,9 @@ func functionCallParenAt(text string, open int) bool {
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery
-// (EXISTS { … } AND …) is not a node, and neither is anything inside a
-// relationship's brackets or a quoted name (a type `x(y)`, a quote in
-// `D]'Z`).
+// (EXISTS { … } AND …) is not a node, and neither is anything in a
+// relationship's head (its type `x(y)`, a quote in `D]'Z`, its map) or a
+// quoted name; a relationship's own WHERE predicate is read as written.
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
@@ -522,7 +522,12 @@ func extractNodeVariables(matchClause string) []string {
 		case '[':
 			if previous := trimRightIndex(matchClause, 0, i); previous > 0 && matchClause[previous-1] == '-' {
 				if end := findMatchingBracket(matchClause, i); end >= 0 {
-					i = end
+					// Resume at the relationship's own WHERE, if any.
+					if where := elementWhereIndex(matchClause, i, end); where >= 0 {
+						i = where + len("WHERE") - 1
+					} else {
+						i = end
+					}
 					continue
 				}
 			}

@@ -886,41 +886,62 @@ func patternMapsAreConstant(pattern string) bool {
 var patternMapsConstant = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
 
 func patternMapsAreConstantText(pattern string) bool {
-	constant := true
-	eachPatternElement(pattern, func(opener byte, element string) {
-		if !constant {
-			return
-		}
-		var properties string
-		if opener == '(' {
-			_, properties = splitNodePatternProperties(element)
-		} else {
+	depth := 0
+	for index := 0; index < len(pattern); index++ {
+		switch c := pattern[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(pattern, index, c) - 1
+		case '[':
+			if previous := trimRightIndex(pattern, 0, index); previous == 0 || pattern[previous-1] != '-' {
+				depth++
+				continue
+			}
 			// A relationship's map is its declaration's; its own WHERE is
 			// read per relationship, so the pattern isn't constant.
-			declaration := relationshipDeclarationHead(element[1 : len(element)-1])
-			if declaration.predicate != "" {
-				constant = false
-				return
+			close := findMatchingBracket(pattern, index)
+			if close < 0 {
+				return false
 			}
-			properties = declaration.properties
-		}
-		if properties == "" || properties[0] != '{' {
-			return
-		}
-		close := findMatchingDelimiter(properties, 0, '{', '}')
-		if close < 0 {
-			constant = false
-			return
-		}
-		for _, pair := range splitTopLevelComma(properties[1:close]) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
-			if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
-				constant = false
-				return
+			declaration := relationshipDeclarationHead(pattern[index+1 : close])
+			if declaration.predicate != "" || !constantPropertyMap(declaration.properties) {
+				return false
 			}
+			index = close
+		case '(':
+			depth++
+		case ')', ']':
+			depth--
+		case '{':
+			if depth <= 0 {
+				continue
+			}
+			close := findMatchingDelimiter(pattern, index, '{', '}')
+			if close < 0 || !constantPropertyMap(pattern[index:close+1]) {
+				return false
+			}
+			index = close
 		}
-	})
-	return constant
+	}
+	return true
+}
+
+// constantPropertyMap reports whether a property map's ({…}) values are all
+// literals or parameters; no map (or a parameter map) is constant.
+func constantPropertyMap(properties string) bool {
+	if properties == "" || properties[0] != '{' {
+		return true
+	}
+	close := findMatchingDelimiter(properties, 0, '{', '}')
+	if close < 0 {
+		return false
+	}
+	for _, pair := range splitTopLevelComma(properties[1:close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
+			return false
+		}
+	}
+	return true
 }
 
 // isConstantMapValue reports a property map value that is a literal or a
