@@ -27,9 +27,10 @@ import (
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
 	batchWriter
-	engine *BadgerEngine
-	db     *managedBadgerDB
-	large  *largeCommit
+	engine              *BadgerEngine
+	db                  *managedBadgerDB
+	large               *largeCommit
+	pendingEmbeddingIDs map[NodeID]struct{}
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -49,6 +50,7 @@ func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *co
 // commitBatch writes a full batch as the next batch of the large commit,
 // turning the commit into one first.
 func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
+	cw.collectPendingEmbeddingAdds(txn)
 	if cw.large == nil {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
@@ -102,16 +104,24 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
 func (cw *commitWriter) finish() error {
+	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commit(cw.txn)
+		if err := cw.db.commit(cw.txn); err != nil {
+			return err
+		}
+		cw.publishPendingEmbeddingAdds()
+		return nil
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
 		err = cw.large.finish(&cw.batchWriter)
+	}
+	if err == nil {
+		cw.publishPendingEmbeddingAdds()
 	}
 	return err
 }
@@ -120,6 +130,7 @@ func (cw *commitWriter) finish() error {
 // belongs to the caller, which discards it. An error means the rollback
 // failed and the engine refuses writes until restart (commitOracle.fail).
 func (cw *commitWriter) abort() error {
+	cw.engine.pendingEmbeddingAdds.Delete(cw.txn)
 	if cw.large == nil {
 		return nil
 	}

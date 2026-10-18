@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,6 +13,7 @@ import (
 // payloads before their ACK.
 func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duration) (*BadgerEngine, *WAL) {
 	t.Helper()
+	t.Cleanup(config.WithWALEnabled())
 	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		WriteBehind:         true,

@@ -282,7 +282,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			}
 			key := []byte(keyStr)
 			val := value
-			if err := w.write(func(t *badger.Txn) error { return t.Set(key, val) }); err != nil {
+			if err := w.write(func(t *badger.Txn) error { return b.setKeyWithPendingHint(t, key, val) }); err != nil {
 				return abort(err)
 			}
 		}
