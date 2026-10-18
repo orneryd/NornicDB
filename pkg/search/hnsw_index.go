@@ -787,10 +787,12 @@ func (h *HNSWIndex) scanLiveLocked(ctx context.Context, query []float32) ([]hnsw
 		if deleted {
 			continue
 		}
-		internalID, ok := util.SafeIntToUint32(id)
-		if !ok {
+		// Allocation-free bounds check (util.SafeIntToUint32 formats and
+		// parses the number: about five allocations per vector here).
+		if uint64(id) > uint64(^uint32(0)) {
 			break
 		}
+		internalID := uint32(id)
 		vec := h.vectorAtLocked(internalID)
 		if len(vec) != h.dimensions {
 			continue
@@ -1203,10 +1205,12 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	)
 
 	for id := range h.nodeLevel {
-		internalID, ok := util.SafeIntToUint32(id)
-		if !ok {
-			continue
+		// Allocation-free bounds check: this loop visits every node on each
+		// removal of the entry point or of a top-level node.
+		if uint64(id) > uint64(^uint32(0)) {
+			break
 		}
+		internalID := uint32(id)
 		if validHNSWIndex(internalID, len(h.deleted)) && h.deleted[internalID] {
 			continue
 		}
