@@ -318,6 +318,7 @@ func (ka *KalmanSearchAdapter) recordRanking(query string, results []SearchResul
 
 	// Trim to window size
 	if len(ka.recentRankings) > ka.config.StabilityWindow {
+		ka.recentRankings[0] = queryRanking{}
 		ka.recentRankings = ka.recentRankings[1:]
 	}
 }
@@ -411,6 +412,7 @@ func (ka *KalmanSearchAdapter) Reset() {
 	defer ka.mu.Unlock()
 
 	ka.docFilters = make(map[string]*filter.Kalman)
+	clear(ka.recentRankings)
 	ka.recentRankings = ka.recentRankings[:0]
 	ka.latencyFilter = filter.NewKalmanVelocity(filter.DefaultVelocityConfig())
 	ka.stats = SearchAdapterStats{}

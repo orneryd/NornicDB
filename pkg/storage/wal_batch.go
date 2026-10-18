@@ -189,6 +189,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 	b.wal.lastEntryTime.Store(time.Now().UnixNano())
 
 	// Clear batch
+	clear(b.pending)
 	b.pending = b.pending[:0]
 	return firstSeq, lastSeq, nil
 }
@@ -197,6 +198,7 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 func (b *BatchWriter) Rollback() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	clear(b.pending)
 	b.pending = b.pending[:0]
 }
 

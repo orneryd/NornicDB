@@ -1211,6 +1211,7 @@ func (p *WatcherPlugin) addEvent(eventType, message string, data map[string]inte
 
 	p.events = append(p.events, event)
 	if len(p.events) > 100 {
+		clear(p.events[:len(p.events)-100])
 		p.events = p.events[len(p.events)-100:]
 	}
 }
@@ -1343,6 +1344,7 @@ func (p *WatcherPlugin) appendFactLocked(fact string) {
 	}
 	p.facts = append(p.facts, fact)
 	if len(p.facts) > 50 {
+		clear(p.facts[:len(p.facts)-50])
 		p.facts = p.facts[len(p.facts)-50:]
 	}
 }

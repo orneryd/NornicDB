@@ -302,7 +302,9 @@ func (s *ResultStream) take(out, rows [][]interface{}, n int, rest *[][]interfac
 		room = n - len(out)
 	}
 	*rest = rows[room:]
-	return append(out, rows[:room:room]...)
+	out = append(out, rows[:room:room]...)
+	clear(rows[:room])
+	return out
 }
 
 // finishRows takes the statement's last partial batch once it finished.
