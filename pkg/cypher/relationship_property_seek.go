@@ -64,6 +64,9 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 			}
 		}
 	}
+	if len(values) == 0 && len(unresolved) == 0 {
+		return empty, false
+	}
 	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(rel.Types[0]) {
 		key := make([]interface{}, len(index.Properties))
 		complete := true
