@@ -842,16 +842,10 @@ func (ci *ClusterIndex) NumClusters() int {
 // GetCentroids returns a copy of the centroid vectors for persistence.
 // Returns nil if not clustered.
 func (ci *ClusterIndex) GetCentroids() [][]float32 {
-	c := ci.PublishedClustering()
-	if c == nil || len(c.centroids) == 0 {
-		return nil
+	if c := ci.PublishedClustering(); c != nil {
+		return c.Centroids()
 	}
-	out := make([][]float32, len(c.centroids))
-	for i, vec := range c.centroids {
-		out[i] = make([]float32, len(vec))
-		copy(out[i], vec)
-	}
-	return out
+	return nil
 }
 
 // ClusterStats returns clustering statistics.
@@ -910,11 +904,10 @@ func (ci *ClusterIndex) ClusterStats() ClusterStats {
 
 // FindNearestCentroid finds the cluster ID nearest to the given embedding.
 func (ci *ClusterIndex) FindNearestCentroid(embedding []float32) int {
-	c := ci.PublishedClustering()
-	if c == nil || len(c.centroids) == 0 {
-		return -1
+	if c := ci.PublishedClustering(); c != nil {
+		return c.NearestCentroid(embedding)
 	}
-	return nearestCentroidFromList(embedding, c.centroids)
+	return -1
 }
 
 // FindNearestClusters finds the k nearest cluster IDs to the given embedding.
