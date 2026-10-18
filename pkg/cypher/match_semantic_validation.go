@@ -95,6 +95,9 @@ type subqueryScope struct {
 	// that ("is shadowing an imported variable"); NornicDB keeps it as an
 	// extension (#907).
 	outer bool
+	// reads records what the body reads from the scope around it and what
+	// it declares (bodyScopeOf); nil for a walk that records nothing.
+	reads *scopeRecorder
 }
 
 // redeclarationError is the error for a WITH … AS or UNWIND … AS that
@@ -136,7 +139,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	// view is the static view of types; stale after a clause changes them.
 	var view staticTypeScope
 	stale := true
-	for _, clause := range clauses {
+	for index, clause := range clauses {
 		// An unresolved option candidate is validated as a normal projection
 		// whenever the engine's existing typed scope binds it. Otherwise defer
 		// the extension decision to the real execution frame, retaining input
@@ -149,6 +152,17 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
 			return types, false, err
 		}
+		// A body walked for bodyScopeOf records what the clause reads and
+		// declares; a name an unscoped CALL body reads becomes visible to
+		// it, as its implicit import does at runtime.
+		for _, name := range enclosing.reads.clause(clause) {
+			if _, bound := types[name]; !bound {
+				types[name] = staticOperand{}
+				stale = true
+			}
+		}
+		// recordRest records the clauses after one that ends the walk early.
+		recordRest := func() { enclosing.reads.rest(clauses[index+1:]) }
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
 			// legal statement (RETURN 1 AS x RETURN 2 AS y is Neo4j's
@@ -162,6 +176,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		}
 		if stale {
 			view = types.static(cypher25)
+			view.reads = enclosing.reads
 		}
 		scope, valueTypes, valueMembers = view.kinds, view.values, view.members
 		// Every clause but RETURN and DELETE may change types.
@@ -225,7 +240,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			// The body is a query of its own, walked from the variables it
 			// imports; its subqueries see its scope.
-			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25)
+			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25, enclosing.reads)
 			if err != nil {
 				return types, false, err
 			}
@@ -236,6 +251,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 					// names nothing statically: as after YIELD *, the rest
 					// of the statement isn't checked (#907; checking it
 					// rejected CALL { UNWIND [2] AS b RETURN * } RETURN b).
+					recordRest()
 					return types, false, nil
 				}
 				for _, name := range columns {
@@ -250,6 +266,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 					}
 					types[name] = returned[name]
 					scope[name] = types[name].bindingKind()
+					enclosing.reads.declare(name)
 				}
 			}
 		case pipelineClauseCall:
@@ -266,6 +283,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 						return types, false, err
 					}
 				}
+				recordRest()
 				return types, false, nil
 			}
 			outputTypes := procedureOutputTypes(clause.text)
@@ -300,13 +318,13 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			// A quantified group's predicates see one iteration's node and
 			// relationship; every check after them reads the clause without
 			// them, where the group's variables are lists.
-			masked, err := e.validateQuantifiedGroupPredicates(clause.text, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25})
+			masked, err := e.validateQuantifiedGroupPredicates(clause.text, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25, reads: enclosing.reads})
 			if err != nil {
 				return types, false, err
 			}
 			clause.text = masked
 			// The clause's WHERE subqueries see its own bindings.
-			if err := e.validateSubqueryPatternBindings(staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}, clause.text); err != nil {
+			if err := e.validateSubqueryPatternBindings(staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25, reads: enclosing.reads}, clause.text); err != nil {
 				return types, false, err
 			}
 			types.adoptKinds(scope)
@@ -315,6 +333,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 		case pipelineClauseWith:
 			if containsMalformedCreateClauseToken(clause.text) {
+				recordRest()
 				return types, false, nil
 			}
 			if err := validateWithOrderBySemanticScope(scope, clause.text, enclosing.visible); err != nil {
@@ -367,6 +386,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			unwound = projectUnwoundValues(unwound, clause.text)
 			projected := types.static(cypher25)
 			scope, valueTypes, valueMembers = projected.kinds, projected.values, projected.members
+			projected.reads = enclosing.reads
 			view, stale = projected, false
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
 				return validateStaticFunctionVariables(expression, projected)
@@ -948,12 +968,22 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 			branches = unionBranches
 		}
 		visible := typeScopeOf(local)
+		// The names an enclosing expression binds around the subquery (a
+		// comprehension's iterator) are locals of the body's reads.
+		var locals []string
+		if scope.reads != nil {
+			for name := range visible {
+				if !scope.bound(name) {
+					locals = append(locals, name)
+				}
+			}
+		}
 		for _, branch := range branches {
 			clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
 			if !ok {
 				continue
 			}
-			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true}); err != nil {
+			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true, reads: scope.reads.child(locals)}); err != nil {
 				return err
 			}
 		}
@@ -1632,5 +1662,6 @@ func (e *StorageExecutor) validateClauseSubqueries(clause pipelineClause, types 
 	}
 	tail := merged.static(cypher25)
 	tail.params = view.params
+	tail.reads = view.reads
 	return e.validateSubqueryPatternBindings(tail, rest)
 }

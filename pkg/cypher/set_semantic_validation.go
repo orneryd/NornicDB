@@ -343,19 +343,35 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if character == '\'' || character == '"' || character == '`' {
+		if character == '`' {
+			// A quoted name: a variable where a plain one would be (`n`.id),
+			// not a property key, label, parameter or map key.
+			end := skipCypherQuotedText(expression, index, '`')
+			previous := previousSetExpressionByte(expression, index)
+			following := nextSetExpressionByte(expression, end)
+			inMap := len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{'
+			mapKey := following == ':' && inMap && (previous == '{' || previous == ',')
+			// After a colon: a label (n:`L`), unless the colon ends a map key
+			// ({id: `n`.id}).
+			label := previous == ':' && !(inMap && mapValueColon(expression, index))
+			if end-1 > index+1 && previous != '.' && !label && previous != '$' && following != '(' && !mapKey {
+				name := strings.ReplaceAll(expression[index+1:end-1], "``", "`")
+				if !locals.shadows(name, index) {
+					names = append(names, name)
+				}
+			}
+			index = end
+			continue
+		}
+		if character == '\'' || character == '"' {
 			quote := character
 			index++
 			for index < len(expression) {
 				if expression[index] == quote {
-					if quote == '`' && index+1 < len(expression) && expression[index+1] == '`' {
-						index += 2
-						continue
-					}
 					index++
 					break
 				}
-				if expression[index] == '\\' && quote != '`' && index+1 < len(expression) {
+				if expression[index] == '\\' && index+1 < len(expression) {
 					index += 2
 					continue
 				}
@@ -512,6 +528,35 @@ func expressionLocalBindings(expression string) map[string]struct{} {
 		}
 	}
 	return locals
+}
+
+// mapValueColon reports whether the colon before text[index] ends a map
+// key: the key before it (a name or a quoted name) follows { or ,.
+func mapValueColon(text string, index int) bool {
+	colon := index - 1
+	for colon >= 0 && isWhitespace(text[colon]) {
+		colon--
+	}
+	key := colon - 1
+	for key >= 0 && isWhitespace(text[key]) {
+		key--
+	}
+	if key >= 0 && text[key] == '`' {
+		key--
+		for key >= 0 && text[key] != '`' {
+			key--
+		}
+	} else {
+		for key >= 0 && isIdentByte(text[key]) {
+			key--
+		}
+		key++
+	}
+	if key < 0 {
+		return false
+	}
+	before := previousSetExpressionByte(text, key)
+	return before == '{' || before == ','
 }
 
 func previousSetExpressionByte(text string, index int) byte {
