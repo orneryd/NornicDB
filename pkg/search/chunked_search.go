@@ -171,9 +171,13 @@ func searchSeveralQueryChunks(
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, int, error) {
 	searched := 0
+	// vectorRank and bm25Rank are the best (lowest positive) rank any chunk
+	// gave the result by that method; 0 means no chunk found it that way.
 	type fusedResult struct {
-		best  *SearchResult
-		score float64
+		best       *SearchResult
+		score      float64
+		vectorRank int
+		bm25Rank   int
 	}
 
 	chunkOpts := *opts
@@ -258,6 +262,8 @@ func searchSeveralQueryChunks(
 				fusedResult.best = result
 			}
 			fusedResult.score += 1.0 / (outerRRFK + float64(rank+1))
+			fusedResult.vectorRank = bestChunkRank(fusedResult.vectorRank, result.VectorRank)
+			fusedResult.bm25Rank = bestChunkRank(fusedResult.bm25Rank, result.BM25Rank)
 		}
 	}
 	if embeddingErr != nil {
@@ -317,11 +323,22 @@ func searchSeveralQueryChunks(
 		result := *fusedResult.best
 		result.Score = fusedResult.score
 		result.RRFScore = fusedResult.score
-		result.VectorRank = 0
-		result.BM25Rank = 0
+		// A chunked result's ranks are its best per-chunk ranks, keeping
+		// SearchResult's meaning of 0 (not found by that method); the outer
+		// fusion score is not derivable from them alone.
+		result.VectorRank = fusedResult.vectorRank
+		result.BM25Rank = fusedResult.bm25Rank
 		response.Results = append(response.Results, result)
 	}
 	return response, searched, nil
+}
+
+// bestChunkRank is the better of two per-chunk ranks, where 0 means absent.
+func bestChunkRank(best, rank int) int {
+	if rank > 0 && (best == 0 || rank < best) {
+		return rank
+	}
+	return best
 }
 
 func withSearchFallback(response *SearchResponse, reason SearchFallbackReason) *SearchResponse {

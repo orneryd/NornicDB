@@ -154,6 +154,11 @@ that matches nothing returns no rows; to learn its coverage anyway, continue it
 when `results` is empty. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such
 a query fails instead (`search query has N chunks; at most M are searched`).
 
+The chunks' results are fused into one ranking: `score` and `rrf_score` are
+that fusion's score. A row's `vector_rank` and `bm25_rank` are the best rank
+any searched chunk gave it by that method, and 0 means no searched chunk found
+it that way, as for a query searched whole.
+
 ### What matched: `matches`
 
 Every `db.retrieve` / `db.rretrieve` row has a `matches` column, a list of maps
