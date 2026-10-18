@@ -405,3 +405,94 @@ func BenchmarkQueuedNodeCopy(b *testing.B) {
 		}
 	}
 }
+
+// TestBuildFirstVectorChoosesTheDimensionInOrder: on an empty index whose
+// dimensions are not fixed, the first vector chooses them. A write that
+// waited for the build would come after the build's first stored vector, so a
+// write with a different dimension fails with ErrDimensionMismatch, and the
+// build's vectors keep their dimension.
+func TestBuildFirstVectorChoosesTheDimensionInOrder(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	_, err := engine.CreateNode(buildWriteNode("nornic:stored", "storedterm", []float32{1, 0, 0, 0}))
+	require.NoError(t, err)
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	written := make(chan error, 1)
+	go func() { written <- svc.IndexNode(buildWriteNode("nornic:live", "liveterm", []float32{0, 1, 0})) }()
+	engine.open()
+	require.NoError(t, <-built)
+	select {
+	case err := <-written:
+		require.ErrorIs(t, err, ErrDimensionMismatch, "a write overtook the build's choice of the dimensions")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write did not finish after the build")
+	}
+	require.Equal(t, 4, svc.VectorIndexDimensions())
+	requireBuildWriteVector(t, svc, "nornic:stored-named-v", []float32{1, 0, 0, 0})
+	_, ok := svc.getVectorLookup()("nornic:live-named-v")
+	require.False(t, ok)
+}
+
+// TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites: a property-vector
+// index removal made after a write was acknowledged removes that write's
+// vector too, as the same calls one after another would.
+func TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	node := &storage.Node{ID: "nornic:p", Labels: []string{"Doc"}, Properties: map[string]any{"text": "pterm", "p": []float32{1, 0, 0}}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	requireReturnsDuringBuild(t, "a write with a property vector", func() error { return svc.IndexNode(node) })
+	svc.RemovePropertyVectorIndex("p")
+	engine.open()
+	require.NoError(t, <-built)
+	require.Zero(t, svc.CountPropertyVectorEntries("p"), "an acknowledged write overtook the property-vector index removal")
+	_, ok := svc.getVectorLookup()("nornic:p-prop-p")
+	require.False(t, ok)
+	require.Equal(t, []string{"nornic:p"}, buildWriteSearchIDs(t, svc, "pterm"))
+}
+
+// TestBuildIndexingSettingIsOrderedWithQueuedWrites: a write acknowledged
+// before an indexing setting changes is indexed under the earlier setting, as
+// the same calls one after another would.
+func TestBuildIndexingSettingIsOrderedWithQueuedWrites(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	node := &storage.Node{ID: "nornic:t", Labels: []string{"Doc"}, Properties: map[string]any{"title": "titleterm", "other": "otherterm"}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(node) })
+	svc.SetFulltextProperties([]string{"other"})
+	engine.open()
+	require.NoError(t, <-built)
+	require.Equal(t, []string{"nornic:t"}, buildWriteSearchIDs(t, svc, "titleterm"), "the write was indexed under a setting made after it")
+}
