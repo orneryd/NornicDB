@@ -754,33 +754,6 @@ func TestFindMatchingBrace_Unmatched(t *testing.T) {
 	}
 }
 
-func TestExtractWithImports(t *testing.T) {
-	tests := []struct {
-		body string
-		want []string
-	}{
-		{"WITH translationId MATCH (n)", []string{"translationId"}},
-		{"WITH a, b MATCH (n)", []string{"a", "b"}},
-		{"with a, b match (n)", []string{"a", "b"}},
-		{"MATCH (n) RETURN n", nil},
-		{"WITH x RETURN x", []string{"x"}},
-		{"WITHOUT something", nil},
-	}
-
-	for _, tt := range tests {
-		got := extractWithImports(tt.body)
-		if len(got) != len(tt.want) {
-			t.Errorf("extractWithImports(%q) = %v, want %v", tt.body, got, tt.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("extractWithImports(%q)[%d] = %s, want %s", tt.body, i, got[i], tt.want[i])
-			}
-		}
-	}
-}
-
 func TestQueryIsWrite(t *testing.T) {
 	tests := []struct {
 		query string
@@ -1367,29 +1340,6 @@ func TestHasGraphWithPrefix_Match(t *testing.T) {
 	c.Register("comp.shard", &LocationLocal{DBName: "shard"})
 	if !c.HasGraphWithPrefix("comp.") {
 		t.Fatal("expected true for matching prefix")
-	}
-}
-
-func TestExtractWithImports_WithoutKeyword(t *testing.T) {
-	got := extractWithImports("WITHOUT something")
-	if got != nil {
-		t.Fatalf("expected nil for WITHOUT, got %v", got)
-	}
-}
-
-func TestExtractWithImports_NotFollowedByWhitespace(t *testing.T) {
-	got := extractWithImports("WITHX something")
-	if got != nil {
-		t.Fatalf("expected nil for WITHX, got %v", got)
-	}
-}
-
-func TestExtractWithImports_WithASKeyword(t *testing.T) {
-	// AS is skipped as a keyword.
-	got := extractWithImports("WITH x AS y MATCH (n)")
-	// "x" is parsed, "AS" is skipped, "y" is parsed, "MATCH" stops.
-	if len(got) != 2 || got[0] != "x" || got[1] != "y" {
-		t.Fatalf("expected [x y], got %v", got)
 	}
 }
 

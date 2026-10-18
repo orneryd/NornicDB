@@ -111,6 +111,12 @@ type FragmentApply struct {
 
 	// Columns lists the combined output columns from Input and Inner.
 	Columns []string
+
+	// Imports are the input columns the inner fragment reads, when
+	// SelectsImports is set (a CALL body's, ImportReader); otherwise it gets
+	// every input column.
+	Imports        []string
+	SelectsImports bool
 }
 
 func (*FragmentApply) fragment() {}

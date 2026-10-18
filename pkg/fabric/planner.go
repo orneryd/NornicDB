@@ -12,6 +12,8 @@ import (
 // This mirrors Neo4j's FabricPlanner.scala.
 type FabricPlanner struct {
 	catalog *Catalog
+	// imports reads what a CALL body imports (ImportReader).
+	imports ImportReader
 }
 
 func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
@@ -600,33 +602,33 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 			return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 		}
 
-		var (
-			subqueryFragment Fragment
-			importCols       []string
-		)
+		var subqueryFragment Fragment
+		body := block.body
 		if hasUse {
 			sub := useTarget(subUse)
 			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
 			subqueryFragment, err = p.planSingleQuery(subBody, sub, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(subBody)
+			body = subBody
 		} else {
 			subqueryFragment, err = p.planSingleQuery(block.body, top, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(block.body)
+		}
+		if err != nil {
+			return nil, err
+		}
+		importCols, imports, selects, err := p.callImports(body)
+		if err != nil {
+			return nil, err
 		}
 		subqueryFragment = bindLeadingImportColumns(subqueryFragment, importCols)
 
 		currentInput = &FragmentApply{
-			Input:   currentInput,
-			Inner:   subqueryFragment,
-			Columns: nil, // determined at execution time
+			Input:          currentInput,
+			Inner:          subqueryFragment,
+			Columns:        nil, // determined at execution time
+			Imports:        imports,
+			SelectsImports: selects,
 		}
 		lastPos = block.endPos
 	}
@@ -1009,72 +1011,6 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	}
 
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
-}
-
-// extractWithImports parses a leading WITH clause to extract imported variable names.
-// e.g. "WITH translationId MATCH ..." returns ["translationId"]
-func extractWithImports(body string) []string {
-	trimmed := strings.TrimSpace(body)
-	if !startsWithFold(trimmed, "WITH") {
-		return nil
-	}
-
-	// Must be followed by whitespace.
-	if len(trimmed) > 4 && !isWhitespace(trimmed[4]) {
-		return nil
-	}
-
-	rest := strings.TrimSpace(trimmed[4:])
-
-	// Extract identifiers until we hit a keyword (MATCH, RETURN, CREATE, etc.).
-	var imports []string
-	parts := strings.FieldsFunc(rest, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-
-	for _, part := range parts {
-		cleaned := strings.TrimSpace(part)
-		if cleaned == "" {
-			continue
-		}
-		if isWithImportStopKeyword(cleaned) {
-			break
-		}
-		// Strip AS alias if present.
-		if strings.EqualFold(cleaned, "AS") {
-			continue
-		}
-		imports = append(imports, cleaned)
-	}
-
-	return imports
-}
-
-func isWithImportStopKeyword(token string) bool {
-	switch {
-	case strings.EqualFold(token, "MATCH"),
-		strings.EqualFold(token, "OPTIONAL"),
-		strings.EqualFold(token, "CREATE"),
-		strings.EqualFold(token, "MERGE"),
-		strings.EqualFold(token, "DELETE"),
-		strings.EqualFold(token, "DETACH"),
-		strings.EqualFold(token, "SET"),
-		strings.EqualFold(token, "REMOVE"),
-		strings.EqualFold(token, "RETURN"),
-		strings.EqualFold(token, "WITH"),
-		strings.EqualFold(token, "WHERE"),
-		strings.EqualFold(token, "ORDER"),
-		strings.EqualFold(token, "SKIP"),
-		strings.EqualFold(token, "LIMIT"),
-		strings.EqualFold(token, "UNWIND"),
-		strings.EqualFold(token, "CALL"),
-		strings.EqualFold(token, "FOREACH"),
-		strings.EqualFold(token, "LOAD"),
-		strings.EqualFold(token, "USE"):
-		return true
-	default:
-		return false
-	}
 }
 
 // queryIsWrite performs a simple heuristic check for write operations.

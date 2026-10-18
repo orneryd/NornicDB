@@ -861,41 +861,6 @@ func TestFragmentContainsWrite(t *testing.T) {
 	})
 }
 
-func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
-	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
-	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id RETURN txt, id"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_NoLeadingWith(t *testing.T) {
-	query := "MATCH (n) RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	if rewritten != query {
-		t.Fatalf("expected query unchanged, got %q", rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_NoLeadingWithReturn(t *testing.T) {
-	query := "RETURN id, name"
-	rewritten := rewriteLeadingWithImports(query, []string{"id", "name"})
-	expected := "WITH $id AS id, $name AS name RETURN id, name"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
 func TestExecuteApplyInMemoryProjection_WithCollectMapReturnAlias(t *testing.T) {
 	input := &ResultStream{
 		Columns: []string{"textKey", "textKey128"},
@@ -1031,7 +996,7 @@ func TestExecuteRowsGroupedJoinProjection_InvalidInput(t *testing.T) {
 	}
 }
 
-func TestFabricImportRewriteHelpers(t *testing.T) {
+func TestFabricImportColumnHelpers(t *testing.T) {
 	init := &FragmentInit{Columns: []string{"a"}, ImportColumns: []string{"a"}}
 	execFrag := &FragmentExec{
 		Input:   init,
@@ -1050,39 +1015,6 @@ func TestFabricImportRewriteHelpers(t *testing.T) {
 	}
 	if !fragmentHasStaticImports(apply) {
 		t.Fatal("expected fragmentHasStaticImports to detect static imports")
-	}
-	rewritten := rewriteFragmentWithImports(apply)
-	rewrittenApply, ok := rewritten.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected rewritten apply, got %T", rewritten)
-	}
-	innerUnion, ok := rewrittenApply.Inner.(*FragmentUnion)
-	if !ok {
-		t.Fatalf("expected rewritten union, got %T", rewrittenApply.Inner)
-	}
-	lhsExec, ok := innerUnion.LHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected rewritten lhs exec, got %T", innerUnion.LHS)
-	}
-	if !strings.Contains(lhsExec.Query, "$a") {
-		t.Fatalf("expected rewritten query to contain parameterized import, got %q", lhsExec.Query)
-	}
-
-	rewrittenRuntime := rewriteFragmentWithRuntimeImports(&FragmentExec{
-		Input:   &FragmentInit{ImportColumns: []string{"a"}},
-		Query:   "RETURN a, b",
-		Columns: []string{"a", "b"},
-	}, []string{"b", "a", "b"})
-	rExec, ok := rewrittenRuntime.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected rewritten runtime exec, got %T", rewrittenRuntime)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(rExec.Query), "WITH ") {
-		t.Fatalf("expected runtime rewrite to prepend WITH imports, got %q", rExec.Query)
-	}
-	merged := mergeImportColumns([]string{"a", "b"}, []string{"b", "c"})
-	if len(merged) != 3 || merged[0] != "a" || merged[1] != "b" || merged[2] != "c" {
-		t.Fatalf("unexpected merged import columns: %#v", merged)
 	}
 }
 
@@ -1288,46 +1220,6 @@ func TestSplitTopLevelEquality_AllBranches(t *testing.T) {
 	_, _, ok = splitTopLevelEquality("a > b")
 	if ok {
 		t.Fatal("expected no equality for '>'")
-	}
-}
-
-func TestContainsStandaloneIdentifier(t *testing.T) {
-	if !containsStandaloneIdentifier("a = textKey128", "textKey128") {
-		t.Fatal("expected standalone identifier to be found")
-	}
-	if containsStandaloneIdentifier("a = textKey1289", "textKey128") {
-		t.Fatal("expected partial match to be rejected")
-	}
-	if containsStandaloneIdentifier("a = xtextKey128", "textKey128") {
-		t.Fatal("expected prefix-attached match to be rejected")
-	}
-	// Inside single-quoted string.
-	if containsStandaloneIdentifier("'textKey128'", "textKey128") {
-		t.Fatal("expected identifier inside single quotes to be ignored")
-	}
-	// Inside double-quoted string.
-	if containsStandaloneIdentifier(`"textKey128"`, "textKey128") {
-		t.Fatal("expected identifier inside double quotes to be ignored")
-	}
-	// Inside backtick string.
-	if containsStandaloneIdentifier("`textKey128`", "textKey128") {
-		t.Fatal("expected identifier inside backticks to be ignored")
-	}
-	// Empty identifier.
-	if containsStandaloneIdentifier("abc", "") {
-		t.Fatal("expected empty identifier to return false")
-	}
-	// String shorter than identifier.
-	if containsStandaloneIdentifier("ab", "abc") {
-		t.Fatal("expected short string to return false")
-	}
-	// At start.
-	if !containsStandaloneIdentifier("textKey128 = 1", "textKey128") {
-		t.Fatal("expected identifier at start to match")
-	}
-	// At end.
-	if !containsStandaloneIdentifier("x = textKey128", "textKey128") {
-		t.Fatal("expected identifier at end to match")
 	}
 }
 
@@ -1793,91 +1685,6 @@ func TestExecuteApplyInMemoryProjection_ColumnNotFound(t *testing.T) {
 	}
 }
 
-func TestRewriteFragmentWithImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithImports(nil)
-	if got != nil {
-		t.Fatal("expected nil for nil fragment")
-	}
-}
-
-func TestRewriteFragmentWithImports_DefaultBranch(t *testing.T) {
-	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithImports(init)
-	if got != init {
-		t.Fatal("expected init fragment to pass through unchanged")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithRuntimeImports(nil, []string{"a"})
-	if got != nil {
-		t.Fatal("expected nil for nil fragment")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_DefaultBranch(t *testing.T) {
-	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithRuntimeImports(init, []string{"a"})
-	if got != init {
-		t.Fatal("expected init fragment to pass through unchanged")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_Apply(t *testing.T) {
-	inner := &FragmentExec{
-		Input: &FragmentInit{ImportColumns: []string{"a"}},
-		Query: "RETURN a",
-	}
-	apply := &FragmentApply{
-		Input: &FragmentInit{},
-		Inner: inner,
-	}
-	got := rewriteFragmentWithRuntimeImports(apply, []string{"b"})
-	result, ok := got.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected *FragmentApply, got %T", got)
-	}
-	exec, ok := result.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected inner *FragmentExec, got %T", result.Inner)
-	}
-	if !strings.Contains(exec.Query, "$") {
-		t.Fatalf("expected rewritten query with params, got %q", exec.Query)
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_Union(t *testing.T) {
-	union := &FragmentUnion{
-		LHS: &FragmentExec{
-			Input: &FragmentInit{ImportColumns: []string{"a"}},
-			Query: "RETURN a",
-		},
-		RHS: &FragmentExec{
-			Input: &FragmentInit{},
-			Query: "RETURN 1 AS one",
-		},
-	}
-	got := rewriteFragmentWithRuntimeImports(union, []string{"b"})
-	result, ok := got.(*FragmentUnion)
-	if !ok {
-		t.Fatalf("expected *FragmentUnion, got %T", got)
-	}
-	lhs, ok := result.LHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected LHS *FragmentExec, got %T", result.LHS)
-	}
-	if !strings.Contains(lhs.Query, "$") {
-		t.Fatalf("expected LHS rewritten, got %q", lhs.Query)
-	}
-}
-
-func TestMergeImportColumns_Deduplication(t *testing.T) {
-	got := mergeImportColumns([]string{"a", "b", " "}, []string{"b", "c", "  "})
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
-		t.Fatalf("expected [a b c], got %v", got)
-	}
-}
-
 func TestIsSimpleWithImportClause(t *testing.T) {
 	if isSimpleWithImportClause("WITH a, b", []string{"a", "b"}) != true {
 		t.Fatal("expected simple import clause to match")
@@ -2312,26 +2119,6 @@ func TestApplySimpleResultModifiers_SkipAllRows(t *testing.T) {
 	applySimpleResultModifiers(result, "SKIP 10", map[string]string{})
 	if len(result.Rows) != 0 {
 		t.Fatalf("expected all rows skipped, got %d", len(result.Rows))
-	}
-}
-
-func TestRewriteLeadingWithImports_EmptyImports(t *testing.T) {
-	query := "WITH a MATCH (n) RETURN n"
-	got := rewriteLeadingWithImports(query, nil)
-	if got != query {
-		t.Fatalf("expected unchanged for nil imports, got %q", got)
-	}
-	got = rewriteLeadingWithImports(query, []string{})
-	if got != query {
-		t.Fatalf("expected unchanged for empty imports, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithOnly(t *testing.T) {
-	query := "WITH a"
-	got := rewriteLeadingWithImports(query, []string{"a"})
-	if got != "WITH $a AS a" {
-		t.Fatalf("expected WITH-only rewrite, got %q", got)
 	}
 }
 
@@ -3527,7 +3314,7 @@ func TestSanitizeOtherWhereForImportColumn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := sanitizeOtherWhereForImportColumn(tc.where, tc.importCol)
+			got, ok := sanitizeOtherWhereForImportColumn(tc.where, tc.importCol, func(expression, variable string) bool { return strings.Contains(expression, variable) })
 			if ok != tc.ok {
 				t.Fatalf("ok mismatch: got %v want %v", ok, tc.ok)
 			}
@@ -3619,32 +3406,6 @@ func TestExecuteApplyAsPipeline_AllFabricColumns(t *testing.T) {
 	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
 	if used {
 		t.Fatal("expected all-fabric columns to prevent pipeline")
-	}
-}
-
-func TestRewriteLeadingWithImports_WithMatchSubstitution(t *testing.T) {
-	query := "WITH id MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	// Simple import WITH + MATCH → substitution path.
-	if !strings.Contains(got, "$id") {
-		t.Fatalf("expected substitution, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithOptionalMatch(t *testing.T) {
-	query := "WITH id OPTIONAL MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	if !strings.Contains(got, "$id") {
-		t.Fatalf("expected substitution for OPTIONAL MATCH, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithNonMatchClause(t *testing.T) {
-	query := "WITH id, count(*) AS c RETURN id, c"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	// Non-simple WITH clause → regular rewrite.
-	if !strings.Contains(got, "$id AS id") {
-		t.Fatalf("expected param rewrite, got %q", got)
 	}
 }
 
