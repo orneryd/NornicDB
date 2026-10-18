@@ -233,8 +233,39 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 	)
 }
 
+// GetQueryNode implements QueryNodeReader with GetNode's reads (the
+// write-behind overlay, the node cache, the stored body) and its embedding
+// metadata, without reading separately stored chunk vectors. In-memory
+// vectors are shared with the returned copy, not copied. The vector-free
+// node is cached apart from the node cache (queryNodeCache), so full reads
+// never see it and still hydrate.
+func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
+	if b.writeBehind != nil {
+		if n, found, deleted := b.writeBehind.GetNode(id); found {
+			if deleted {
+				return nil, ErrNotFound
+			}
+			return copyNodeForCaller(n), nil
+		}
+	}
+	if node, ok := b.cacheLoadQueryNode(id); ok {
+		atomic.AddInt64(&b.cacheHits, 1)
+		if b.filterNodeByDecay(node, DecayScoringTime()) {
+			return nil, ErrNotFound
+		}
+		return node, nil
+	}
+	return b.getNodeByID(id,
+		func(txn *badger.Txn, val []byte) (*Node, error) {
+			return b.decodeNodeEmbeddingState(txn, val, id, false)
+		},
+		copyNodeForCaller,
+		b.cacheFillQueryNode,
+	)
+}
+
 // RelationshipEndpointVisible implements RelationshipEndpointChecker with the
-// lookups GetNode starts with: the node cache, else whether the node's record
+// lookups GetNode starts with: the node caches, else whether the node's record
 // key exists, without reading or decoding the record. It doesn't answer while
 // decay filtering can hide a node at read time, or when the lookup fails.
 func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
@@ -255,6 +286,10 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	}
 	b.nodeCacheMu.RLock()
 	_, cached := b.nodeCache[id]
+	if !cached {
+		// GetQueryNode's entries are invalidated with nodeCache's.
+		_, cached = b.queryNodeCache[id]
+	}
 	b.nodeCacheMu.RUnlock()
 	if cached {
 		return true, true

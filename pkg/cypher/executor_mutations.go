@@ -346,7 +346,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 				switch entity := value.(type) {
 				case *storage.Node:
 					if entity != nil {
-						if _, err := getQueryNode(store, entity.ID); errors.Is(err, storage.ErrNotFound) {
+						if _, err := e.getQueryNode(store, entity.ID); errors.Is(err, storage.ErrNotFound) {
 							nodeIDs = append(nodeIDs, entity.ID)
 						}
 					}
@@ -438,7 +438,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 			if !ok || nodeID == "" {
 				continue
 			}
-			node, err := getQueryNode(store, storage.NodeID(nodeID))
+			node, err := e.getQueryNode(store, storage.NodeID(nodeID))
 			if err != nil || node == nil {
 				continue
 			}
@@ -865,7 +865,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		if len(relPattern.targetLabels) == 0 && len(relPattern.targetProps) == 0 {
 			return true
 		}
-		targetNode, err := getQueryNode(e.storage, targetNodeID)
+		targetNode, err := e.getQueryNode(e.storage, targetNodeID)
 		if err != nil || targetNode == nil {
 			return false
 		}
@@ -1029,7 +1029,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the target node and recurse
-				nextNode, err := getQueryNode(e.storage, edge.EndNode)
+				nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
 				if err != nil {
 					continue
 				}
@@ -1043,7 +1043,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the source node and recurse
-				nextNode, err := getQueryNode(e.storage, edge.StartNode)
+				nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
 				if err != nil {
 					continue
 				}
