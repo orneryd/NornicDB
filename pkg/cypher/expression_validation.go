@@ -427,7 +427,7 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
-func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
+func localBindingOperand(text string, at int, name string, scope staticTypeScope, probe *pipelineCancellation) staticOperand {
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
 		return staticOperand{}
@@ -440,17 +440,17 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	inner := withLocalTypes(scope, text, span[0], probe)
 	types := typeScopeOf(inner)
 	if binding.element[index] {
-		return listElementOperand(types, inner, source)
+		return listElementOperand(types, inner, source, probe)
 	}
-	return projectedOperand(types, inner, source)
+	return projectedOperand(types, inner, source, probe)
 }
 
 // localBindingKind is localBindingOperand's binding kind.
 func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
-	return localBindingOperand(text, at, name, scope).bindingKind()
+	return localBindingOperand(text, at, name, scope, nil).bindingKind()
 }
 
 // withLocalTypes is scope with each name a local binds around offset at of
@@ -458,7 +458,7 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
-func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+func withLocalTypes(scope staticTypeScope, text string, at int, probe *pipelineCancellation) staticTypeScope {
 	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
@@ -467,7 +467,7 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = localBindingOperand(text, at, name, scope, probe)
 	}
 	if types == nil {
 		return scope

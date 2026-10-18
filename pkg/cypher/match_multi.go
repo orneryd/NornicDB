@@ -192,7 +192,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 					if !ok {
 						continue
 					}
-					mergedRels, ok := mergeRelationshipBindingsChecked(existingRels, relationshipBindingsFromPathContext(pathContext))
+					mergedRels, ok := mergeRelationshipBindingsChecked(existingRels, relationshipBindingsFromPathContext(pathContext, probe), probe)
 					if !ok {
 						continue
 					}
@@ -279,7 +279,7 @@ func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[st
 	return merged, true
 }
 
-func relationshipBindingsFromPathContext(pathContext PathContext) relationshipBinding {
+func relationshipBindingsFromPathContext(pathContext PathContext, probe *pipelineCancellation) relationshipBinding {
 	bindings := make(relationshipBinding, len(pathContext.rels)+len(pathContext.paths))
 	for name, relationship := range pathContext.rels {
 		bindings[name] = relationship
@@ -296,7 +296,7 @@ func relationshipBindingsFromPathContext(pathContext PathContext) relationshipBi
 	return bindings
 }
 
-func mergeRelationshipBindingsChecked(existing, current relationshipBinding) (relationshipBinding, bool) {
+func mergeRelationshipBindingsChecked(existing, current relationshipBinding, probe *pipelineCancellation) (relationshipBinding, bool) {
 	if len(existing) == 0 && len(current) == 0 {
 		return nil, true
 	}
@@ -305,7 +305,7 @@ func mergeRelationshipBindingsChecked(existing, current relationshipBinding) (re
 		merged[name] = value
 	}
 	for name, value := range current {
-		if previous, exists := merged[name]; exists && !sameRelationshipBinding(previous, value) {
+		if previous, exists := merged[name]; exists && !sameRelationshipBinding(previous, value, probe) {
 			return nil, false
 		}
 		merged[name] = value
@@ -313,7 +313,7 @@ func mergeRelationshipBindingsChecked(existing, current relationshipBinding) (re
 	return merged, true
 }
 
-func sameRelationshipBinding(left, right interface{}) bool {
+func sameRelationshipBinding(left, right interface{}, probe *pipelineCancellation) bool {
 	leftEdge, leftIsEdge := left.(*storage.Edge)
 	rightEdge, rightIsEdge := right.(*storage.Edge)
 	if leftIsEdge || rightIsEdge {
@@ -491,13 +491,13 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 		varName := expr[:dotIdx]
 		propName := expr[dotIdx+1:]
 		if node := b[varName]; node != nil {
-			if val, ok := getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), propName); ok {
+			if val, ok := getBindingNodeValue(e.queryVisibleValue(node, contextPipelineProbe(ctx)).(*storage.Node), propName); ok {
 				return val
 			}
 			return nil
 		}
 		if edge, ok := rels[varName].(*storage.Edge); ok && edge != nil {
-			return e.queryEntityProperties(edge)[propName]
+			return e.queryEntityProperties(edge, contextPipelineProbe(ctx))[propName]
 		}
 		return nil
 	}
@@ -623,7 +623,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 			return nil
 		}
-		if len(properties) > 0 && !e.nodeMatchesProps(node, properties) {
+		if len(properties) > 0 && !e.nodeMatchesProps(node, properties, probe) {
 			return nil
 		}
 		if whereFilter != nil && !whereFilter(node) {
@@ -655,7 +655,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			*collected = append(*collected, nodes...)
 			return nil
 		}
-		return visitNodeList(nodes, visit)
+		return visitNodeList(nodes, visit, probe)
 	}
 
 	// A label-indexed stream is the primary physical scan for every labelled
@@ -801,7 +801,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	}
 	nodes = filteredNodes
 	if hasViewport && canCheckViewport {
-		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
+		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker, probe)
 		if err != nil {
 			return err
 		}
@@ -809,7 +809,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Apply property filters
 	if len(properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, properties)
+		nodes = e.filterNodesByProperties(nodes, properties, probe)
 	}
 	if strings.TrimSpace(whereClause) != "" {
 		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
@@ -824,7 +824,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 // visitNodeList hands nodes to visit in order. visit returning
 // storage.ErrIterationStopped ends the visit without error; any other error
 // ends it with that error.
-func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error {
+func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error, probe *pipelineCancellation) error {
 	for _, node := range nodes {
 		if err := visit(node); err != nil {
 			if err == storage.ErrIterationStopped {

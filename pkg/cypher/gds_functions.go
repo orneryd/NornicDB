@@ -15,7 +15,7 @@ import (
 // (gds.alpha.linkprediction.*), the gds.util helpers and gds.version(), with
 // GDS 2.13's names, arguments and values. NornicDB's own
 // gds.linkPrediction.*.stream procedures stay as extensions.
-func init() {
+func init(probe *pipelineCancellation) {
 	// One scoring for these functions and the gds.linkPrediction.*.stream
 	// procedures: linkpredict.PairScore (#1192).
 	for name, algorithm := range map[string]string{
@@ -25,7 +25,7 @@ func init() {
 		"resourceallocation":     "resource_allocation",
 		"totalneighbors":         "total_neighbors",
 	} {
-		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm))
+		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm, probe))
 	}
 	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity)
 	cypherfn.Register("gds.util.asnode", fnGDSAsNode)
@@ -110,7 +110,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 	if !strings.HasPrefix(kind, "List") {
 		kind = "Float"
 	}
-	value, err := projection.nodePropertyValue(string(id), key, kind)
+	value, err := projection.nodePropertyValue(string(id), key, kind, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ type gdsLinkConfig struct {
 	direction        string
 }
 
-func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
+func gdsLinkPrediction(name, algorithm string, probe *pipelineCancellation) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if err := gdsArity(name, args, 2, 3); err != nil {
 			return nil, err
@@ -183,19 +183,19 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
-		first, second, err := gdsNodePair(name, values)
+		first, second, err := gdsNodePair(name, values, probe)
 		if err != nil || first == nil || second == nil {
 			return nil, err
 		}
-		config, err := gdsLinkPredictionConfig(name, values)
+		config, err := gdsLinkPredictionConfig(name, values, probe)
 		if err != nil {
 			return nil, err
 		}
-		left, err := gdsNeighbors(ctx.Storage, first.ID, config)
+		left, err := gdsNeighbors(ctx.Storage, first.ID, config, probe)
 		if err != nil {
 			return nil, err
 		}
-		right, err := gdsNeighbors(ctx.Storage, second.ID, config)
+		right, err := gdsNeighbors(ctx.Storage, second.ID, config, probe)
 		if err != nil {
 			return nil, err
 		}
@@ -205,8 +205,8 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		// allocation; a failed read is the statement's error, not an empty
 		// neighbourhood.
 		degrees := map[storage.NodeID]int{}
-		for _, id := range gdsCommon(left, right) {
-			neighbors, err := gdsNeighbors(ctx.Storage, id, config)
+		for _, id := range gdsCommon(left, right, probe) {
+			neighbors, err := gdsNeighbors(ctx.Storage, id, config, probe)
 			if err != nil {
 				return nil, err
 			}
@@ -227,7 +227,7 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 
 // gdsNodePair reads a link-prediction function's two node arguments; a null
 // node gives null.
-func gdsNodePair(name string, values []interface{}) (*storage.Node, *storage.Node, error) {
+func gdsNodePair(name string, values []interface{}, probe *pipelineCancellation) (*storage.Node, *storage.Node, error) {
 	nodes := make([]*storage.Node, 2)
 	for index := range nodes {
 		switch value := values[index].(type) {
@@ -241,7 +241,7 @@ func gdsNodePair(name string, values []interface{}) (*storage.Node, *storage.Nod
 	return nodes[0], nodes[1], nil
 }
 
-func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, error) {
+func gdsLinkPredictionConfig(name string, values []interface{}, probe *pipelineCancellation) (gdsLinkConfig, error) {
 	config := gdsLinkConfig{direction: "BOTH"}
 	if len(values) < 3 || values[2] == nil {
 		return config, nil
@@ -270,7 +270,7 @@ func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, 
 
 // gdsNeighbors returns a node's neighbourhood under config, or the error a
 // read of its relationships gives.
-func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
+func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig, probe *pipelineCancellation) (gdsNeighborhood, error) {
 	neighbors := gdsNeighborhood{nodes: map[storage.NodeID]struct{}{}}
 	if store == nil {
 		return neighbors, nil
@@ -313,7 +313,7 @@ func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig)
 	return neighbors, nil
 }
 
-func gdsCommon(a, b gdsNeighborhood) []storage.NodeID {
+func gdsCommon(a, b gdsNeighborhood, probe *pipelineCancellation) []storage.NodeID {
 	common := make([]storage.NodeID, 0)
 	if a.same {
 		return common
@@ -338,7 +338,7 @@ func fnGDSSameCommunity(ctx cypherfn.Context, args []string) (interface{}, error
 	if err != nil {
 		return nil, err
 	}
-	first, second, err := gdsNodePair(name, values)
+	first, second, err := gdsNodePair(name, values, nil)
 	if err != nil || first == nil || second == nil {
 		return nil, err
 	}

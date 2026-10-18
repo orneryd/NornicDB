@@ -69,11 +69,11 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		value, direct = resolveContextPathRef(ctx, rightExpr)
 	}
 	if direct {
-		props, err := setPropertyMapValue(value, "+=")
+		props, err := setPropertyMapValue(value, "+=", probe)
 		if err != nil {
 			return err
 		}
-		writes.mapEntries(node.Properties, props, false)
+		writes.mapEntries(node.Properties, props, false, probe)
 		for k, v := range props {
 			if probe.stopped() {
 				return probe.failed()
@@ -86,7 +86,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	if err != nil {
 		return err
 	}
-	writes.mapEntries(node.Properties, props, false)
+	writes.mapEntries(node.Properties, props, false, probe)
 	for k, v := range props {
 		if probe.stopped() {
 			return probe.failed()
@@ -135,7 +135,7 @@ func setRelationshipProperty(relationship *storage.Edge, propName string, value 
 	relationship.Properties[propName] = value
 }
 
-func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
+func setPropertyMap(properties map[string]interface{}, probe *pipelineCancellation) map[string]interface{} {
 	result := make(map[string]interface{}, len(properties))
 	for key, value := range properties {
 		if value != nil {
@@ -333,7 +333,7 @@ func (e *StorageExecutor) generateUUID() string {
 // node whose labels changed is checked against the label policies first.
 // On an error the entity is restored and the error is wrapped by its caller
 // (wrap).
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error, probe *pipelineCancellation) error {
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -341,7 +341,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		}
 		if node := state.node; node != nil {
 			labelsAdded := addedLabelCount(state.labels, node.Labels)
-			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
+			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties, probe) == 0 {
 				continue
 			}
 			restore := func() {
@@ -349,7 +349,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 				node.Labels = state.labels
 			}
 			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
+				if err := validatePolicyOnLabelChange(store, node, state.labels, probe); err != nil {
 					restore()
 					return err
 				}
@@ -365,7 +365,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			continue
 		}
 		relationship := state.relationship
-		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
+		if changedPropertyCount(state.properties, relationship.Properties, probe) == 0 {
 			continue
 		}
 		if err := updateMutatedEdge(store, relationship); err != nil {
@@ -458,10 +458,10 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 		if target < 0 {
 			state := setEntityState{variable: run.variable, node: node, relationship: relationship}
 			if node != nil {
-				state.properties = cloneStringAnyMap(node.Properties)
+				state.properties = cloneStringAnyMap(node.Properties, contextPipelineProbe(ctx))
 				state.labels = append([]string(nil), node.Labels...)
 			} else {
-				state.properties = cloneStringAnyMap(relationship.Properties)
+				state.properties = cloneStringAnyMap(relationship.Properties, contextPipelineProbe(ctx))
 			}
 			states = append(states, state)
 			target = len(states) - 1

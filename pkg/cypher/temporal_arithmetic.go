@@ -68,7 +68,7 @@ func durationFits(months, days, seconds float64) bool {
 // durationScaleError is Neo4j's ArgumentError for a duration multiplied or
 // divided by a number whose result doesn't fit a duration
 // (duration('PT1H') * 9007199254740993), or nil.
-func durationScaleError(op byte, left, right interface{}) error {
+func durationScaleError(op byte, left, right interface{}, probe *pipelineCancellation) error {
 	if op != '*' && op != '/' {
 		return nil
 	}
@@ -94,7 +94,7 @@ func durationScaleError(op byte, left, right interface{}) error {
 		return nil
 	}
 	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "NumberOutOfRange",
-		localization.CypherCoreDurationArithmeticOverflow(duration.String(), string(op), neo4jValueRepr(operand)))
+		localization.CypherCoreDurationArithmeticOverflow(duration.String(), string(op), neo4jValueRepr(operand, probe)))
 }
 
 func asCypherDuration(value interface{}) (*CypherDuration, bool) {

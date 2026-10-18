@@ -47,7 +47,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				return nil, false
 			}
 			if accepted {
-				if retention.reserveRow(projected) != nil {
+				if retention.reserveRow(projected, probe) != nil {
 					return nil, false
 				}
 				out = appendPipelineItem(out, projected, probe)
@@ -113,7 +113,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				}
 				projected[name] = value
 			}
-			if retention.reserveRow(projected) != nil {
+			if retention.reserveRow(projected, probe) != nil {
 				return nil, false
 			}
 			out = appendPipelineItem(out, projected, probe)
@@ -131,7 +131,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
 		}
-		kept, ok := retention.keep(e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), reserved)
+		kept, ok := retention.keep(e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), reserved, probe)
 		return kept, ok && probe.err == nil && getExpressionFailure(ctx) == nil
 	}
 	items := splitTopLevelComma(body)
@@ -262,7 +262,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			}
 			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
-				if retention.reserveRow(newRow) != nil {
+				if retention.reserveRow(newRow, probe) != nil {
 					return nil, false
 				}
 				out = appendPipelineItem(out, newRow, probe)
@@ -293,14 +293,14 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
 				continue
 			}
-			if retention.reserveRow(newRow) != nil {
+			if retention.reserveRow(newRow, probe) != nil {
 				return nil, false
 			}
 			out = appendPipelineItem(out, newRow, probe)
 			if probe.err != nil {
 				return nil, false
 			}
-			if retention.reserveRow(orderScope) != nil {
+			if retention.reserveRow(orderScope, probe) != nil {
 				return nil, false
 			}
 			orderScopes = appendPipelineItem(orderScopes, orderScope, probe)
@@ -315,7 +315,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
-		kept, ok := retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
+		kept, ok := retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved, probe)
 		return kept, ok && probe.err == nil && getExpressionFailure(ctx) == nil
 	}
 
@@ -353,7 +353,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !accepted {
 			continue
 		}
-		if retention.reserveRow(newRow) != nil {
+		if retention.reserveRow(newRow, probe) != nil {
 			return nil, false
 		}
 		out = appendPipelineItem(out, newRow, probe)
@@ -372,7 +372,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					scope[ordered.expression] = newRow[ordered.alias]
 				}
 			}
-			if retention.reserveRow(scope) != nil {
+			if retention.reserveRow(scope, probe) != nil {
 				return nil, false
 			}
 			orderScopes = appendPipelineItem(orderScopes, scope, probe)
@@ -388,7 +388,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
-	kept, ok := retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
+	kept, ok := retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved, probe)
 	return kept, ok && probe.err == nil && getExpressionFailure(ctx) == nil
 }
 
@@ -702,7 +702,7 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
 			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index], probe)
-			if !ok || keys.reserveSortKey(value, scopes[index]) != nil {
+			if !ok || keys.reserveSortKey(value, scopes[index], probe) != nil {
 				return false
 			}
 			values = appendPipelineItem(values, value, probe)
@@ -805,7 +805,7 @@ func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipel
 		if _, exists := seen.addTuple(values); exists {
 			continue
 		}
-		if keys.reserveKey(values) != nil {
+		if keys.reserveKey(values, probe) != nil {
 			break
 		}
 		unique = appendPipelineItem(unique, row, probe)
@@ -1506,7 +1506,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			if emit != nil {
 				return emit(values)
 			}
-			if retention.reserveResultRow(values) != nil {
+			if retention.reserveResultRow(values, probe) != nil {
 				sourceProjected = false
 				return false
 			}
@@ -1528,7 +1528,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			return false, true
 		}
 		if emit == nil {
-			if retention.reserveResultRow(values) != nil {
+			if retention.reserveResultRow(values, probe) != nil {
 				return false, true
 			}
 			*out = appendPipelineItem(*out, values, probe)

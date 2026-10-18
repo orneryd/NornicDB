@@ -42,7 +42,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 		}
 	}
 	if err != nil {
-		return nil, true, functionEvaluationError(err)
+		return nil, true, functionEvaluationError(err, contextPipelineProbe(ctx))
 	}
 	return result, true, nil
 }

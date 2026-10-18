@@ -15,7 +15,7 @@ import (
 // pipeline (see validateNoResidualRelationships), which must complete
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
-func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
+func collectDeleteMutationTargets(matchResult *ExecuteResult, probe *pipelineCancellation) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
 	seenNodes := make(map[string]struct{}, len(matchResult.Rows))
 	seenEdges := make(map[string]struct{}, len(matchResult.Rows))
 	nodeIDs = make([]storage.NodeID, 0, len(matchResult.Rows))
@@ -23,14 +23,14 @@ func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage
 
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+			collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs, probe)
 		}
 	}
 
 	return nodeIDs, edgeIDs
 }
 
-func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
+func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID, probe *pipelineCancellation) {
 	target := classifyDeleteTargetValue(value)
 	switch target.kind {
 	case deleteProjectionRelationship:
@@ -52,31 +52,31 @@ func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string
 	switch typed := value.(type) {
 	case PathResult:
 		for _, node := range typed.Nodes {
-			collectDeleteTargetValue(node, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(node, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 		}
 		for _, edge := range typed.Relationships {
-			collectDeleteTargetValue(edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(edge, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 		}
 	case *PathResult:
 		if typed != nil {
-			collectDeleteTargetValue(*typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(*typed, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 		}
 	case []interface{}:
 		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 		}
 	case map[string]interface{}:
 		if path, ok := typed["_pathResult"]; ok {
-			collectDeleteTargetValue(path, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(path, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 			return
 		}
 		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs, probe)
 		}
 	}
 }
 
-func isDeleteTargetValue(value interface{}) bool {
+func isDeleteTargetValue(value interface{}, probe *pipelineCancellation) bool {
 	// Marker keys in an ordinary Cypher map are user data, not authority to
 	// delete an entity. Only the evaluator's actual PathResult carrier is a
 	// map-shaped DELETE value; legacy projection classification stays private.
@@ -94,7 +94,7 @@ func isDeleteTargetValue(value interface{}) bool {
 		return typed != nil
 	case []interface{}:
 		for _, item := range typed {
-			if !isDeleteTargetValue(item) {
+			if !isDeleteTargetValue(item, probe) {
 				return false
 			}
 		}
@@ -339,10 +339,10 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
-	beingDeleted := deletingEdgeSet(edgeIDs)
+func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID, probe *pipelineCancellation) error {
+	beingDeleted := deletingEdgeSet(edgeIDs, probe)
 	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted, probe)
 		if err != nil {
 			return err
 		}
@@ -358,11 +358,11 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
-	beingDeleted := deletingEdgeSet(edgeIDs)
+func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID, probe *pipelineCancellation) (map[storage.NodeID]struct{}, error) {
+	beingDeleted := deletingEdgeSet(edgeIDs, probe)
 	var connected map[storage.NodeID]struct{}
 	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted, probe)
 		if err != nil {
 			return nil, err
 		}
@@ -376,7 +376,7 @@ func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edge
 	return connected, nil
 }
 
-func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
+func deletingEdgeSet(edgeIDs []storage.EdgeID, probe *pipelineCancellation) map[storage.EdgeID]struct{} {
 	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
 	for _, id := range edgeIDs {
 		beingDeleted[id] = struct{}{}
@@ -386,7 +386,7 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID.
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}, probe *pipelineCancellation) (bool, error) {
 	outgoing, err := store.GetOutgoingEdges(nodeID)
 	if err != nil {
 		return false, err
@@ -425,13 +425,13 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 // staticDeleteTargetTypeError keeps known non-entity values as compile-time
 // errors, while widened UNWIND map elements remain runtime checks. Strings
 // and lists retain the existing NornicDB DELETE extensions.
-func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+func staticDeleteTargetTypeError(clause string, scope staticTypeScope, probe *pipelineCancellation) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope}
 	for _, target := range targets {
-		operand, err := checker.check(strings.TrimSpace(target))
+		operand, err := checker.check(strings.TrimSpace(target), probe)
 		if err != nil {
 			return err
 		}

@@ -157,7 +157,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	// Resolve dotted/bracketed parameter map paths like $d.uuid and
 	// $d['uuid'] as typed values.
 	if v, ok := resolveParamPathRef(ctx, expr); ok {
-		return normalizePropValue(v)
+		return normalizePropValue(v, contextPipelineProbe(ctx))
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
 		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -166,13 +166,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value[property]
 		case *storage.Node:
 			if value != nil {
-				propertyValue, _ := getNodePropertyValue(e.queryVisibleValue(value).(*storage.Node), property)
+				propertyValue, _ := getNodePropertyValue(e.queryVisibleValue(value, contextPipelineProbe(ctx)).(*storage.Node), property)
 				return propertyValue
 			}
 			return nil
 		case *storage.Edge:
 			if value != nil {
-				return e.queryEntityProperties(value)[property]
+				return e.queryEntityProperties(value, contextPipelineProbe(ctx))[property]
 			}
 			return nil
 		}
@@ -357,7 +357,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 			if node == nil {
 				return nil, true
 			}
-			if val, ok := getNodePropertyValue(e.queryVisibleValue(node).(*storage.Node), propName); ok {
+			if val, ok := getNodePropertyValue(e.queryVisibleValue(node, contextPipelineProbe(ctx)).(*storage.Node), propName); ok {
 				return val, true
 			}
 			return nil, true
@@ -366,7 +366,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 			if rel == nil {
 				return nil, true
 			}
-			if val, ok := e.queryEntityProperties(rel)[propName]; ok {
+			if val, ok := e.queryEntityProperties(rel, contextPipelineProbe(ctx))[propName]; ok {
 				return val, true
 			}
 			return nil, true
@@ -381,7 +381,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 				}
 				return nil, true
 			case *storage.Node:
-				if propVal, exists := e.queryEntityProperties(v)[propName]; exists {
+				if propVal, exists := e.queryEntityProperties(v, contextPipelineProbe(ctx))[propName]; exists {
 					return propVal, true
 				}
 				return nil, true
@@ -407,7 +407,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 	}
 	if paths != nil {
 		if pathResult, ok := paths[expr]; ok && pathResult != nil {
-			return pathContextEntryValue(pathResult), true
+			return pathContextEntryValue(pathResult, contextPipelineProbe(ctx)), true
 		}
 	}
 

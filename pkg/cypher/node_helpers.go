@@ -86,7 +86,7 @@ type materializedAccessRecorder interface {
 
 // recordMaterializedResultAccess records an access (ON ACCESS policies) for
 // every node and relationship a result returns.
-func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) {
+func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult, probe *pipelineCancellation) {
 	if result == nil {
 		return
 	}
@@ -94,25 +94,25 @@ func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) 
 	if !ok || recorder == nil {
 		return
 	}
-	materializedRows(recorder, result.Rows)
+	materializedRows(recorder, result.Rows, probe)
 }
 
 // resultHasMaterializedEntities reports whether result returns a node or a
 // relationship whose access recordMaterializedResultAccess records. The
 // result cache asks once per stored result, so a cached result with none is
 // not walked on every hit.
-func resultHasMaterializedEntities(result *ExecuteResult) bool {
-	return result != nil && materializedRows(nil, result.Rows)
+func resultHasMaterializedEntities(result *ExecuteResult, probe *pipelineCancellation) bool {
+	return result != nil && materializedRows(nil, result.Rows, probe)
 }
 
 // materializedRows walks rows for the nodes and relationships they return:
 // with a recorder it records an access for each one and reports whether
 // there was any; with a nil recorder it only reports whether there is one,
 // stopping at the first.
-func materializedRows(recorder materializedAccessRecorder, rows [][]interface{}) bool {
+func materializedRows(recorder materializedAccessRecorder, rows [][]interface{}, probe *pipelineCancellation) bool {
 	found := false
 	for _, row := range rows {
-		if materializedValues(recorder, row) {
+		if materializedValues(recorder, row, probe) {
 			if recorder == nil {
 				return true
 			}
@@ -123,10 +123,10 @@ func materializedRows(recorder materializedAccessRecorder, rows [][]interface{})
 }
 
 // materializedValues is materializedRows for a list of values.
-func materializedValues(recorder materializedAccessRecorder, values []interface{}) bool {
+func materializedValues(recorder materializedAccessRecorder, values []interface{}, probe *pipelineCancellation) bool {
 	found := false
 	for _, value := range values {
-		if materializedValue(recorder, value) {
+		if materializedValue(recorder, value, probe) {
 			if recorder == nil {
 				return true
 			}
@@ -138,7 +138,7 @@ func materializedValues(recorder materializedAccessRecorder, values []interface{
 
 // materializedValue is materializedRows for one value, including the nodes
 // and relationships inside maps and lists.
-func materializedValue(recorder materializedAccessRecorder, value interface{}) bool {
+func materializedValue(recorder materializedAccessRecorder, value interface{}, probe *pipelineCancellation) bool {
 	id := ""
 	switch v := value.(type) {
 	case *storage.Node:
@@ -157,7 +157,7 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		}
 		found := false
 		for _, entity := range v {
-			if materializedValue(recorder, entity) {
+			if materializedValue(recorder, entity, probe) {
 				if recorder == nil {
 					return true
 				}
@@ -174,16 +174,16 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 			return false
 		}
 	case PathResult:
-		return materializedPathResult(recorder, &v)
+		return materializedPathResult(recorder, &v, probe)
 	case *PathResult:
-		return materializedPathResult(recorder, v)
+		return materializedPathResult(recorder, v, probe)
 	case map[string]interface{}:
 		if path, ok := cypherPathResultOf(v, v, true); ok {
-			return materializedPathResult(recorder, &path)
+			return materializedPathResult(recorder, &path, probe)
 		}
 		found := false
 		for _, nested := range v {
-			if materializedValue(recorder, nested) {
+			if materializedValue(recorder, nested, probe) {
 				if recorder == nil {
 					return true
 				}
@@ -192,11 +192,11 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		}
 		return found
 	case []interface{}:
-		return materializedValues(recorder, v)
+		return materializedValues(recorder, v, probe)
 	case []map[string]interface{}:
 		found := false
 		for _, nested := range v {
-			if materializedValue(recorder, nested) {
+			if materializedValue(recorder, nested, probe) {
 				if recorder == nil {
 					return true
 				}
@@ -216,13 +216,13 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 // materializedPathResult visits the native entities carried by a local path.
 // The typed carrier is authoritative, so its public map fields are not walked
 // a second time.
-func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult, probe *pipelineCancellation) bool {
 	if path == nil {
 		return false
 	}
 	found := false
 	for _, node := range path.Nodes {
-		if materializedValue(recorder, node) {
+		if materializedValue(recorder, node, probe) {
 			if recorder == nil {
 				return true
 			}
@@ -230,7 +230,7 @@ func materializedPathResult(recorder materializedAccessRecorder, path *PathResul
 		}
 	}
 	for _, relationship := range path.Relationships {
-		if materializedValue(recorder, relationship) {
+		if materializedValue(recorder, relationship, probe) {
 			if recorder == nil {
 				return true
 			}

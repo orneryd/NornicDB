@@ -190,7 +190,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		}
 	}
 	if len(nodePat.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePat.properties)
+		nodes = e.filterNodesByProperties(nodes, nodePat.properties, contextPipelineProbe(ctx))
 	}
 
 	if wherePart != "" {
@@ -366,7 +366,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					pipelineItemUnevaluable(ctx, target)
 					return
 				}
-				collectDeleteTargetValue(value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
+				collectDeleteTargetValue(value, seenNodes, seenEdges, &nodeIDs, &targetEdges, nil)
 			}
 		}
 		for _, id := range targetEdges {
@@ -374,8 +374,8 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		}
 	}
 	deleted := &deletedEntities{}
-	deleted.add(nodeIDs, edgeIDs)
-	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
+	deleted.add(nodeIDs, edgeIDs, nil)
+	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted, nil); err != nil {
 		recordExpressionFailure(ctx, err)
 		return
 	}
@@ -419,7 +419,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	return true
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine, probe *pipelineCancellation) {
 	if matchResult == nil {
 		return
 	}
@@ -447,7 +447,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 	}
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine, probe *pipelineCancellation) {
 	if matchResult == nil {
 		return
 	}
@@ -688,7 +688,7 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 	propsMap, ok := value.(map[string]interface{})
 	if ok {
 		for k, v := range propsMap {
-			propsMap[k] = normalizePropValue(v)
+			propsMap[k] = normalizePropValue(v, nil)
 		}
 		return propsMap, nil
 	}
@@ -699,15 +699,15 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 			if !ok {
 				return nil, localizedError(localization.CypherMutationsSetMergeStringKeysRequired(source, fmt.Sprintf("%T", k)), nil)
 			}
-			propsMap[keyStr] = normalizePropValue(v)
+			propsMap[keyStr] = normalizePropValue(v, nil)
 		}
 		return propsMap, nil
 	}
 	return nil, localizedError(localization.CypherMutationsSetMergeMapRequired(source, fmt.Sprintf("%T", value)), nil)
 }
 
-func normalizePropValue(value interface{}) interface{} {
-	normalized, _ := normalizedPropValue(value)
+func normalizePropValue(value interface{}, probe *pipelineCancellation) interface{} {
+	normalized, _ := normalizedPropValue(value, probe)
 	return normalized
 }
 
@@ -715,7 +715,7 @@ func normalizePropValue(value interface{}) interface{} {
 // become int64, float32 float64 and Go times DateTimes, in lists and maps
 // too. A container is copied only when a descendant changes; rewritten
 // describes a value conversion, independently of a writer's ownership copy.
-func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
+func normalizedPropValue(value interface{}, probe *pipelineCancellation) (normalized interface{}, rewritten bool) {
 	switch v := value.(type) {
 	case time.Time:
 		return dateTimeFromGoTime(v), true
@@ -752,7 +752,7 @@ func normalizedPropValue(value interface{}) (normalized interface{}, rewritten b
 	case []interface{}:
 		var out []interface{}
 		for i, item := range v {
-			stored, changed := normalizedPropValue(item)
+			stored, changed := normalizedPropValue(item, probe)
 			if changed && out == nil {
 				out = make([]interface{}, len(v))
 				copy(out, v)
@@ -768,9 +768,9 @@ func normalizedPropValue(value interface{}) (normalized interface{}, rewritten b
 	case map[string]interface{}:
 		var out map[string]interface{}
 		for k, item := range v {
-			stored, changed := normalizedPropValue(item)
+			stored, changed := normalizedPropValue(item, probe)
 			if changed && out == nil {
-				out = cloneStringAnyMap(v)
+				out = cloneStringAnyMap(v, probe)
 			}
 			if out != nil {
 				out[k] = stored
@@ -1234,7 +1234,7 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist
 // is still satisfied.
-func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string, probe *pipelineCancellation) error {
 	schema := store.GetSchema()
 	if schema == nil {
 		return nil

@@ -23,7 +23,7 @@ var temporalFieldNames = map[string]bool{
 // date of: 03:04:05Z"), a field no temporal value has an ArgumentError ("No
 // such field: a"), and a unit no temporal value has a DatabaseError
 // ("Unsupported unit: zz").
-func truncateTemporalValue(kind, unit string, value interface{}, fields map[string]interface{}) (interface{}, bool, error) {
+func truncateTemporalValue(kind, unit string, value interface{}, fields map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	base, zoneID, hasDate, hasClock, zoned := temporalTruncationParts(value)
 	needsDate := kind == "date" || kind == "localdatetime" || kind == "datetime"
 	needsClock := kind == "localtime" || kind == "time"

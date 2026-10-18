@@ -48,7 +48,7 @@ type temporalCurrentNodeChecker interface {
 	IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
 }
 
-func filterNodesByTemporalViewport(nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
+func filterNodesByTemporalViewport(nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker, probe *pipelineCancellation) ([]*storage.Node, error) {
 	if !viewport.Enabled() || checker == nil {
 		return nodes, nil
 	}

@@ -241,7 +241,7 @@ type pathPrefixRewrite struct {
 
 // pathPrefixes rewrites the match mode and the selectors and path modes of
 // the MATCH pattern query[start:end].
-func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrite, error) {
+func (r *labelExpressionRewriter) pathPrefixes(start, end int, probe *pipelineCancellation) (pathPrefixRewrite, error) {
 	rewrite := pathPrefixRewrite{patternStart: start, patternEnd: end}
 	q := r.query
 	if modeEnd, repeatable, ok := matchModeAt(q, start, end); ok {
@@ -282,7 +282,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			if ok {
 				patternAt = prefix.end
 			}
-			if err := r.plainParenthesisedPath(patternAt, part[1], &rewrite); err != nil {
+			if err := r.plainParenthesisedPath(patternAt, part[1], &rewrite, probe); err != nil {
 				return rewrite, err
 			}
 		}
@@ -305,7 +305,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 			if variable == "" {
 				call = r.variable() + " = " + call
 			}
-			parenthesised, err := r.parenthesisedPathWhere(prefix.end, patternEnd, &rewrite)
+			parenthesised, err := r.parenthesisedPathWhere(prefix.end, patternEnd, &rewrite, probe)
 			if err != nil {
 				return rewrite, err
 			}
@@ -346,7 +346,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 // parenthesisedPathWhere reports whether a selected pattern query[start:end]
 // is one parenthesised path, ((a)-->(b) [WHERE predicate]): pattern() reads
 // its inside, and its WHERE becomes part of the selector's predicate.
-func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite *pathPrefixRewrite) (bool, error) {
+func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite *pathPrefixRewrite, probe *pipelineCancellation) (bool, error) {
 	q := r.query
 	if inner := skipASCIISpaces(q, start+1, end); inner >= end || q[inner] != '(' || findMatchingDelimiter(q[:end], start, '(', ')') != end-1 {
 		return false, nil
@@ -359,7 +359,7 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 	where += start + 1
 	rewrite.patternEnd = where
 	r.edit(trimRightIndex(q, start+1, where), end-1, "")
-	text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), end-1), trimRightIndex(q, where+len("WHERE"), end-1))
+	text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), end-1), trimRightIndex(q, where+len("WHERE"), end-1), probe)
 	if err != nil {
 		return true, err
 	}
@@ -369,10 +369,10 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 
 // rewrittenExpression returns the expression query[start:end] with the
 // rewrite's edits applied, for text that moves elsewhere in the statement.
-func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (string, error) {
+func (r *labelExpressionRewriter) rewrittenExpression(start, end int, probe *pipelineCancellation) (string, error) {
 	q := r.query
 	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
-	if err := sub.expression(start, end); err != nil {
+	if err := sub.expression(start, end, probe); err != nil {
 		return "", err
 	}
 	r.generated = sub.generated
@@ -412,7 +412,7 @@ func mayUseParenthesisedPath(query string) bool {
 // Neo4j reads it: the path, with its WHERE a filter of the clause (redundant
 // parentheses around it are dropped). Such a path written next to another
 // element is Neo4j's juxtaposition error; only quantified paths juxtapose.
-func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite *pathPrefixRewrite) error {
+func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite *pathPrefixRewrite, probe *pipelineCancellation) error {
 	q := r.query
 	end = trimRightIndex(q, start, end)
 	for i := start; i < end; i++ {
@@ -452,7 +452,7 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			if where := topLevelKeywordIndex(q[open+1:last], "WHERE"); where >= 0 {
 				where += open + 1
 				r.edit(trimRightIndex(q, open+1, where), last, "")
-				text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), last), trimRightIndex(q, where+len("WHERE"), last))
+				text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), last), trimRightIndex(q, where+len("WHERE"), last), probe)
 				if err != nil {
 					return err
 				}
@@ -599,11 +599,11 @@ func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
 	}
-	nodes, ok := pathNodeIDs(values[0])
+	nodes, ok := pathNodeIDs(values[0], nil)
 	if !ok {
 		return nil, nil
 	}
-	return distinctNodeIDs(nodes), nil
+	return distinctNodeIDs(nodes, nil), nil
 }
 
 // fnPatternMarker is reached only when a step other than the MATCH step a
@@ -613,19 +613,19 @@ func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
 }
 
 // pathNodeIDs returns the IDs of a path value's nodes in order.
-func pathNodeIDs(value interface{}) ([]storage.NodeID, bool) {
+func pathNodeIDs(value interface{}, probe *pipelineCancellation) ([]storage.NodeID, bool) {
 	var nodes []interface{}
 	switch path := value.(type) {
 	case map[string]interface{}:
-		parts, _, hasNodes, _ := pathValueParts(path)
+		parts, _, hasNodes, _ := pathValueParts(path, probe)
 		if !hasNodes {
 			return nil, false
 		}
 		nodes = parts
 	case PathResult:
-		return pathResultNodeIDs(&path), true
+		return pathResultNodeIDs(&path, probe), true
 	case *PathResult:
-		return pathResultNodeIDs(path), true
+		return pathResultNodeIDs(path, probe), true
 	default:
 		return nil, false
 	}
@@ -640,7 +640,7 @@ func pathNodeIDs(value interface{}) ([]storage.NodeID, bool) {
 	return ids, true
 }
 
-func pathResultNodeIDs(path *PathResult) []storage.NodeID {
+func pathResultNodeIDs(path *PathResult, probe *pipelineCancellation) []storage.NodeID {
 	ids := make([]storage.NodeID, len(path.Nodes))
 	for i, node := range path.Nodes {
 		ids[i] = node.ID
@@ -649,7 +649,7 @@ func pathResultNodeIDs(path *PathResult) []storage.NodeID {
 }
 
 // distinctNodeIDs reports whether no ID in ids repeats.
-func distinctNodeIDs(ids []storage.NodeID) bool {
+func distinctNodeIDs(ids []storage.NodeID, probe *pipelineCancellation) bool {
 	for i := 1; i < len(ids); i++ {
 		for j := 0; j < i; j++ {
 			if ids[i] == ids[j] {

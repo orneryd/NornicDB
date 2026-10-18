@@ -15,8 +15,8 @@ import (
 // count(*)). Anything else read from before the clause (ORDER BY x after
 // RETURN x + 1 AS y, count(*); ORDER BY sum(x) after RETURN count(*)) is a
 // SyntaxError. A projection with * carries every variable.
-func validateAggregatingProjectionScopes(cypher string) error {
-	clauses, ok := splitPipelineClauses(cypher)
+func validateAggregatingProjectionScopes(cypher string, probe *pipelineCancellation) error {
+	clauses, ok := splitPipelineClauses(cypher, probe)
 	if !ok {
 		return nil
 	}

@@ -342,7 +342,7 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(info.rawQuery)
+		return mergeOnlyClauses(info.rawQuery, nil)
 	}
 	return true
 }
@@ -350,11 +350,11 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 // mergeOnlyClauses reports whether query is a single statement of MERGE
 // clauses combined only with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND and
 // RETURN. A statement the clause splitter can't split, or a UNION, is not.
-func mergeOnlyClauses(query string) bool {
+func mergeOnlyClauses(query string, probe *pipelineCancellation) bool {
 	if topLevelUnionCut(query) >= 0 {
 		return false
 	}
-	clauses, ok := splitPipelineClauses(query)
+	clauses, ok := splitPipelineClauses(query, probe)
 	if !ok {
 		return false
 	}
@@ -404,7 +404,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(statement.Query, violation.Label)
+		items, mergeKeys, ok := mergeStatementSetItems(statement.Query, violation.Label, nil)
 		if !ok {
 			return false
 		}
@@ -434,8 +434,8 @@ type mergeSetItem struct {
 // and its MERGE clauses' ON CREATE SET / ON MATCH SET lists) and the property
 // expressions its MERGE patterns key on for label. ok is false when the
 // statement can't be split into clauses.
-func mergeStatementSetItems(statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
-	clauses, ok := splitPipelineClauses(statement)
+func mergeStatementSetItems(statement, label string, probe *pipelineCancellation) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
+	clauses, ok := splitPipelineClauses(statement, probe)
 	if !ok {
 		return nil, nil, false
 	}

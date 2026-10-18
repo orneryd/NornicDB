@@ -189,7 +189,7 @@ func (e *StorageExecutor) compareNodeOrderSpecs(a, b *storage.Node, specs []node
 
 // selectTopKNodesByOrder returns the first k nodes for simple ORDER BY expressions
 // without sorting the full node set. It supports any number of ORDER BY terms.
-func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
+func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int, probe *pipelineCancellation) ([]*storage.Node, bool) {
 	if k <= 0 || len(nodes) <= k {
 		return nodes, false
 	}

@@ -2,7 +2,7 @@ package cypher
 
 import "strings"
 
-func parsePipelineForeach(clause string) (string, string, []pipelineClause, error) {
+func parsePipelineForeach(clause string, probe *pipelineCancellation) (string, string, []pipelineClause, error) {
 	invalid := func() error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
 	}
@@ -29,7 +29,7 @@ func parsePipelineForeach(clause string) (string, string, []pipelineClause, erro
 		return "", "", nil, invalid()
 	}
 	listExpression := strings.TrimSpace(remainder[:pipeIndex])
-	updates, supported := splitPipelineClauses(strings.TrimSpace(remainder[pipeIndex+1:]))
+	updates, supported := splitPipelineClauses(strings.TrimSpace(remainder[pipeIndex+1:]), probe)
 	if !supported || len(updates) == 0 {
 		return "", "", nil, invalid()
 	}

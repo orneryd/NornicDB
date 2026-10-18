@@ -99,7 +99,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if e.txContext == nil || !e.txContext.active {
 		// Implicit administration routing keeps the request's entitlement
 		// context; it chooses the store without selecting another user graph.
-		return e.cloneForStorage(system), nil
+		return e.cloneForStorage(system, contextPipelineProbe(ctx)), nil
 	}
 	if e.txContext.storageWrapper != nil && strings.EqualFold(e.txContext.storageWrapper.Namespace(), "system") {
 		return e, nil
@@ -115,7 +115,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 	if _, err := e.handleRollback(); err != nil {
 		return nil, err
 	}
-	owner := e.cloneForStorage(system)
+	owner := e.cloneForStorage(system, contextPipelineProbe(ctx))
 	if _, err := owner.handleBegin(); err != nil {
 		return nil, err
 	}

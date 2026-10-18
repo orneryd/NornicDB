@@ -101,7 +101,7 @@ func equalStrings(a, b []string) bool {
 // uniformPair returns the rows of the shortest path from source to target
 // (every one for groups) of a uniform pattern, and ok false when the walk
 // search can't answer, which leaves the pair to the general search.
-func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
+func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind func(pathSearchPath) (pipelineRow, bool), probe *pipelineCancellation) ([]pipelineRow, bool) {
 	a := s.a
 	if viewport, ok := TemporalViewportFromContext(s.ctx); a.uniform == nil || source.ID == target.ID || ok && viewport.Enabled() {
 		return nil, false
@@ -115,9 +115,9 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 	for shortest < 0 && len(forward.frontier) > 0 && len(backward.frontier) > 0 && s.ctx.Err() == nil &&
 		(s.maxLength < 0 || forward.radius+backward.radius < s.maxLength) {
 		if len(forward.frontier) <= len(backward.frontier) {
-			shortest, meets = s.walkLevel(forward, backward, groups)
+			shortest, meets = s.walkLevel(forward, backward, groups, probe)
 		} else {
-			shortest, meets = s.walkLevel(backward, forward, groups)
+			shortest, meets = s.walkLevel(backward, forward, groups, probe)
 		}
 		if getExpressionFailure(s.ctx) != nil {
 			return nil, true
@@ -159,7 +159,7 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 			break
 		}
 	}
-	return s.bindWalks(source, target, walks, groups, bind)
+	return s.bindWalks(source, target, walks, groups, bind, probe)
 }
 
 // newWalkSide starts the walk search from the node id.
@@ -179,7 +179,7 @@ func (s *pathSearch) newWalkSide(id storage.NodeID, direction string, groups boo
 // level would have met this side earlier. So one shortest walk ends the
 // level at the first node met, and every shortest walk needs the level
 // whole, for the hops into its nodes.
-func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (int, []storage.NodeID) {
+func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool, probe *pipelineCancellation) (int, []storage.NodeID) {
 	reached := side.radius + 1
 	shortest := -1
 	next := side.next[:0]
@@ -297,7 +297,7 @@ func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, gro
 // source) in one call and returns the rows of the walks the pattern binds:
 // the first one, or all of them for groups. ok is false when a node doesn't
 // load or a walk doesn't bind, which leaves the pair to the general search.
-func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.Edge, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
+func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.Edge, groups bool, bind func(pathSearchPath) (pipelineRow, bool), probe *pipelineCancellation) ([]pipelineRow, bool) {
 	if s.ctx.Err() != nil {
 		return nil, true
 	}

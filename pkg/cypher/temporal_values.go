@@ -343,7 +343,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		if !unitOK || !isTemporalInstant(value) {
 			return nil, true, temporalProcedureCallError("Truncate", unitValue, value, fieldsValue)
 		}
-		return truncateTemporalValue(kind, unit, value, fields)
+		return truncateTemporalValue(kind, unit, value, fields, contextPipelineProbe(ctx))
 	}
 	clock := "transaction"
 	clockFunction := false
@@ -359,7 +359,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		argument = strings.TrimSpace(argument)
 		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
 			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
-				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
+				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])), contextPipelineProbe(ctx))
 				return value, true, err
 			}
 		}
@@ -401,7 +401,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		if !isMap {
 			return nil, true, nil
 		}
-		built, _ := buildTemporalValue(kind, fields)
+		built, _ := buildTemporalValue(kind, fields, contextPipelineProbe(ctx))
 		return built, true, nil
 	case "datetime.fromepoch":
 		// Both arguments are integers, whatever the signature says: a float or
@@ -443,7 +443,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 // supported: epochSeconds"); an epoch that isn't an integer, both keys, or
 // one with a datetime, date or time key is an ArgumentError. A map without
 // either key is returned unchanged.
-func temporalEpochBase(kind string, fields map[string]interface{}) (map[string]interface{}, error) {
+func temporalEpochBase(kind string, fields map[string]interface{}, probe *pipelineCancellation) (map[string]interface{}, error) {
 	seconds, hasSeconds := fields["epochSeconds"]
 	millis, hasMillis := fields["epochMillis"]
 	if !hasSeconds && !hasMillis {
@@ -472,17 +472,17 @@ func temporalEpochBase(kind string, fields map[string]interface{}) (map[string]i
 	if key == "epochMillis" {
 		instant = time.UnixMilli(epoch).UTC()
 	}
-	based := cloneTemporalFields(fields)
+	based := cloneTemporalFields(fields, probe)
 	delete(based, key)
 	based["datetime"] = CypherDateTime{Time: instant}
 	return based, nil
 }
 
-func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}, bool) {
+func buildTemporalValue(kind string, fields map[string]interface{}, probe *pipelineCancellation) (interface{}, bool) {
 	if kind == "duration" {
 		return buildDurationFromFields(fields), true
 	}
-	fields, err := temporalEpochBase(kind, fields)
+	fields, err := temporalEpochBase(kind, fields, probe)
 	if err != nil {
 		return nil, true
 	}
@@ -493,7 +493,7 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	}
 	dateFields := fields
 	if source, exists := fields["datetime"]; exists {
-		dateFields = cloneTemporalFields(fields)
+		dateFields = cloneTemporalFields(fields, probe)
 		if _, hasDate := dateFields["date"]; !hasDate {
 			dateFields["date"] = source
 		}
@@ -696,7 +696,7 @@ func temporalTimeParts(value interface{}) (time.Time, bool, bool) {
 	}
 }
 
-func cloneTemporalFields(fields map[string]interface{}) map[string]interface{} {
+func cloneTemporalFields(fields map[string]interface{}, probe *pipelineCancellation) map[string]interface{} {
 	clone := make(map[string]interface{}, len(fields)+1)
 	for key, value := range fields {
 		clone[key] = value
@@ -984,7 +984,7 @@ func isTemporalConstructor(function string) bool {
 // SyntaxError for text it can't parse, ExecutionFailed for a map with
 // invalid fields, and ProcedureCallFailed for a value of another type. It is
 // nil for a null input, which gives null.
-func temporalConstructorError(function string, input interface{}) error {
+func temporalConstructorError(function string, input interface{}, probe *pipelineCancellation) error {
 	typeName := temporalConstructorTypes[lowerASCII(function)]
 	switch value := input.(type) {
 	case nil:
@@ -993,7 +993,7 @@ func temporalConstructorError(function string, input interface{}) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 			localization.CypherCoreTemporalTextUnparseable(typeName, strconv.Quote(value)))
 	case map[string]interface{}:
-		value, err := temporalEpochBase(lowerASCII(function), value)
+		value, err := temporalEpochBase(lowerASCII(function), value, probe)
 		if err != nil {
 			return err
 		}

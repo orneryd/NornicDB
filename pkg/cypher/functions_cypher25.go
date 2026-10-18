@@ -27,7 +27,7 @@ func init() {
 
 // stringArguments evaluates a string function's arguments: null is true when
 // any is null; each must otherwise be a string.
-func stringArguments(ctx cypherfn.Context, function string, args []string, count int) ([]string, bool, error) {
+func stringArguments(ctx cypherfn.Context, function string, args []string, count int, probe *pipelineCancellation) ([]string, bool, error) {
 	if len(args) != count {
 		return nil, false, argumentCountError(function, strconv.Itoa(count), len(args))
 	}
@@ -52,7 +52,7 @@ func stringArguments(ctx cypherfn.Context, function string, args []string, count
 // fnStringIndexOf is string.indexOf(text, search): the character offset of
 // search's first occurrence in text, or -1.
 func fnStringIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
-	texts, null, err := stringArguments(ctx, "string.indexOf", args, 2)
+	texts, null, err := stringArguments(ctx, "string.indexOf", args, 2, nil)
 	if err != nil || null {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 		text, ok := item.(string)
 		if !ok {
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreStringJoinElementType(neo4jValueRepr(item)))
+				localization.CypherCoreStringJoinElementType(neo4jValueRepr(item, nil)))
 		}
 		parts = append(parts, text)
 	}
@@ -99,7 +99,7 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 // \ escapes) as Neo4j uses. A replacement Java rejects is an error only when
 // regex matches, as in Neo4j.
 func fnStringRegexReplace(ctx cypherfn.Context, args []string) (interface{}, error) {
-	texts, null, err := stringArguments(ctx, "string.regexReplace", args, 3)
+	texts, null, err := stringArguments(ctx, "string.regexReplace", args, 3, nil)
 	if err != nil || null {
 		return nil, err
 	}

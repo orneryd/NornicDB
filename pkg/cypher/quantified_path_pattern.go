@@ -323,7 +323,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 			if m.where != "" && !e.evaluateWithWhereCondition(ctx, m.where, map[string]interface{}(bound)) {
 				return getExpressionFailure(ctx)
 			}
-			if err := retention.reserveDerivedRow(row, bound); err != nil {
+			if err := retention.reserveDerivedRow(row, bound, contextPipelineProbe(ctx)); err != nil {
 				return err
 			}
 			out = append(out, bound)
@@ -436,7 +436,7 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		// The chain's path value carries its PathResult (pathToMap), whose
 		// nodes and relationships are storage entities.
 		value, _ := result[pathVariable].(map[string]interface{})
-		nodes, relationships, _, _ := pathValueParts(value)
+		nodes, relationships, _, _ := pathValueParts(value, probe)
 		next := quantifiedPathState{row: result, used: state.used, checks: state.checks}
 		next.nodes = append([]*storage.Node(nil), state.nodes...)
 		next.relationships = append([]*storage.Edge(nil), state.relationships...)
@@ -649,7 +649,7 @@ func quantifiedGroupAt(query string, close, end int) bool {
 // quantifiedGroup rewrites the quantified group query[open:close+1]: its
 // elements' predicates (label expressions, element WHERE) join the group's
 // own WHERE, which applies to each iteration, not the clause's.
-func (r *labelExpressionRewriter) quantifiedGroup(open, close int) error {
+func (r *labelExpressionRewriter) quantifiedGroup(open, close int, probe *pipelineCancellation) error {
 	q := r.query
 	patternEnd, whereBody := close, -1
 	if where := topLevelKeywordIndex(q[open+1:close], "WHERE"); where >= 0 {
@@ -660,11 +660,11 @@ func (r *labelExpressionRewriter) quantifiedGroup(open, close int) error {
 		return err
 	}
 	var predicates []string
-	if err := r.patternElements(open+1, patternEnd, labelPatternMatch, &predicates); err != nil {
+	if err := r.patternElements(open+1, patternEnd, labelPatternMatch, &predicates, probe); err != nil {
 		return err
 	}
 	if whereBody >= 0 {
-		if err := r.expression(whereBody, close); err != nil {
+		if err := r.expression(whereBody, close, probe); err != nil {
 			return err
 		}
 	}

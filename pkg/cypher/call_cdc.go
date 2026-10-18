@@ -139,7 +139,7 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 // last id as the next from). An identifier older than the earliest retained
 // change is Neo4j's InvalidIdentifier error, one past the last committed
 // change its FutureIdentifier error.
-func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcQuery(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -151,7 +151,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 	if len(args) > 1 {
 		selectorsArg = args[1]
 	}
-	selectors, err := parseChangeSelectors(selectorsArg)
+	selectors, err := parseChangeSelectors(selectorsArg, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -197,13 +197,13 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 		}
 		for index := range events {
 			event := &events[index]
-			if !matchesAnyChangeSelector(selectors, database, event) {
+			if !matchesAnyChangeSelector(selectors, database, event, probe) {
 				continue
 			}
 			result.Rows = append(result.Rows, []interface{}{
 				encodeChangeID(tag, changePosition{commitSeq: event.CommitSeq, seq: event.Seq}),
 				int64(event.CommitSeq), int64(event.Seq),
-				changeMetadataValue(event, databaseID), changeEventValue(database, event),
+				changeMetadataValue(event, databaseID, probe), changeEventValue(database, event, probe),
 			})
 			if hasLimit && int64(len(result.Rows)) == limit {
 				break
@@ -220,10 +220,10 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 
 // changeMetadataValue is an event's metadata as Neo4j gives it. The users
 // and connection are those NornicDB records (none yet).
-func changeMetadataValue(event *storage.ChangeEvent, databaseID string) map[string]interface{} {
+func changeMetadataValue(event *storage.ChangeEvent, databaseID string, probe *pipelineCancellation) map[string]interface{} {
 	txMetadata := map[string]interface{}{}
 	for key, value := range event.TxMetadata {
-		txMetadata[key] = cdcValue(value)
+		txMetadata[key] = cdcValue(value, probe)
 	}
 	return map[string]interface{}{
 		"executingUser": "", "authenticatedUser": "",
@@ -237,29 +237,29 @@ func changeMetadataValue(event *storage.ChangeEvent, databaseID string) map[stri
 }
 
 // changeEventValue is an event as Neo4j gives it.
-func changeEventValue(database string, event *storage.ChangeEvent) map[string]interface{} {
+func changeEventValue(database string, event *storage.ChangeEvent, probe *pipelineCancellation) map[string]interface{} {
 	state := map[string]interface{}{
-		"before": changeStateValue(event.Before, event.Node),
-		"after":  changeStateValue(event.After, event.Node),
+		"before": changeStateValue(event.Before, event.Node, probe),
+		"after":  changeStateValue(event.After, event.Node, probe),
 	}
 	if event.Node {
 		return map[string]interface{}{
 			"elementId": storage.NodeElementID(database, storage.NodeID(event.ID)),
 			"eventType": "n", "operation": string(event.Operation),
-			"labels": nonNilStrings(event.Labels), "keys": nodeKeysValue(event.Keys),
+			"labels": nonNilStrings(event.Labels), "keys": nodeKeysValue(event.Keys, probe),
 			"state": state,
 		}
 	}
 	endpoint := func(id string, labels []string, keys map[string][]map[string]any) map[string]interface{} {
 		return map[string]interface{}{
 			"elementId": storage.NodeElementID(database, storage.NodeID(id)),
-			"keys":      nodeKeysValue(keys), "labels": nonNilStrings(labels),
+			"keys":      nodeKeysValue(keys, probe), "labels": nonNilStrings(labels),
 		}
 	}
 	return map[string]interface{}{
 		"elementId": storage.RelationshipElementID(database, storage.EdgeID(event.ID)),
 		"eventType": "r", "operation": string(event.Operation), "type": event.Type,
-		"keys":  keyMapsValue(event.EdgeKeys),
+		"keys":  keyMapsValue(event.EdgeKeys, probe),
 		"start": endpoint(event.Start, event.StartLabels, event.StartKeys), "end": endpoint(event.End, event.EndLabels, event.EndKeys),
 		"state": state,
 	}
@@ -267,34 +267,34 @@ func changeEventValue(database string, event *storage.ChangeEvent) map[string]in
 
 // nodeKeysValue is a node's key values per label as a Cypher map of lists
 // of maps; an empty map when it has none.
-func nodeKeysValue(keys map[string][]map[string]any) map[string]interface{} {
+func nodeKeysValue(keys map[string][]map[string]any, probe *pipelineCancellation) map[string]interface{} {
 	value := make(map[string]interface{}, len(keys))
 	for label, maps := range keys {
-		value[label] = keyMapsValue(maps)
+		value[label] = keyMapsValue(maps, probe)
 	}
 	return value
 }
 
 // keyMapsValue is a list of key-value maps as Cypher values.
-func keyMapsValue(maps []map[string]any) []interface{} {
+func keyMapsValue(maps []map[string]any, probe *pipelineCancellation) []interface{} {
 	value := make([]interface{}, len(maps))
 	for index, keys := range maps {
 		converted := make(map[string]interface{}, len(keys))
 		for name, key := range keys {
-			converted[name] = cdcValue(key)
+			converted[name] = cdcValue(key, probe)
 		}
 		value[index] = converted
 	}
 	return value
 }
 
-func changeStateValue(state *storage.ChangeState, node bool) interface{} {
+func changeStateValue(state *storage.ChangeState, node bool, probe *pipelineCancellation) interface{} {
 	if state == nil {
 		return nil
 	}
 	properties := make(map[string]interface{}, len(state.Properties))
 	for key, value := range state.Properties {
-		properties[key] = cdcValue(value)
+		properties[key] = cdcValue(value, probe)
 	}
 	value := map[string]interface{}{"properties": properties}
 	if node {
@@ -314,7 +314,7 @@ func nonNilStrings(values []string) []interface{} {
 // cdcValue is a stored property value as a Cypher value: the stored form
 // decodes integers into their smallest Go type and floats into float32 when
 // they fit; Cypher has INTEGER and FLOAT.
-func cdcValue(value interface{}) interface{} {
+func cdcValue(value interface{}, probe *pipelineCancellation) interface{} {
 	switch number := value.(type) {
 	case int8:
 		return int64(number)
@@ -342,13 +342,13 @@ func cdcValue(value interface{}) interface{} {
 	case []interface{}:
 		out := make([]interface{}, len(number))
 		for index, item := range number {
-			out[index] = cdcValue(item)
+			out[index] = cdcValue(item, probe)
 		}
 		return out
 	case map[string]interface{}:
 		out := make(map[string]interface{}, len(number))
 		for key, item := range number {
-			out[key] = cdcValue(item)
+			out[key] = cdcValue(item, probe)
 		}
 		return out
 	}
@@ -375,7 +375,7 @@ type changeSelector struct {
 // with Neo4j's fields for its kind. key matches property values (Neo4j's
 // needs key constraints); start and end take node selectors without
 // operation, changesTo or key.
-func parseChangeSelectors(raw interface{}) ([]changeSelector, error) {
+func parseChangeSelectors(raw interface{}, probe *pipelineCancellation) ([]changeSelector, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -389,7 +389,7 @@ func parseChangeSelectors(raw interface{}) ([]changeSelector, error) {
 		if !ok {
 			return nil, invalidChangeSelector("each selector must be a map")
 		}
-		selector, err := parseChangeSelector(fields, false)
+		selector, err := parseChangeSelector(fields, false, probe)
 		if err != nil {
 			return nil, err
 		}
@@ -398,7 +398,7 @@ func parseChangeSelectors(raw interface{}) ([]changeSelector, error) {
 	return selectors, nil
 }
 
-func parseChangeSelector(fields map[string]interface{}, endpoint bool) (changeSelector, error) {
+func parseChangeSelector(fields map[string]interface{}, endpoint bool, probe *pipelineCancellation) (changeSelector, error) {
 	var selector changeSelector
 	kind, _ := fields["select"].(string)
 	switch {
@@ -427,11 +427,11 @@ func parseChangeSelector(fields map[string]interface{}, endpoint bool) (changeSe
 			selector.operation, ok = value.(string)
 			ok = ok && (selector.operation == "c" || selector.operation == "u" || selector.operation == "d")
 		case "changesTo":
-			selector.changesTo, ok = stringList(value)
+			selector.changesTo, ok = stringList(value, probe)
 		case "elementId":
 			selector.elementID, ok = value.(string)
 		case "labels":
-			selector.labels, ok = stringList(value)
+			selector.labels, ok = stringList(value, probe)
 		case "key":
 			selector.key, ok = value.(map[string]interface{})
 		case "type":
@@ -439,7 +439,7 @@ func parseChangeSelector(fields map[string]interface{}, endpoint bool) (changeSe
 		case "start", "end":
 			var nested map[string]interface{}
 			if nested, ok = value.(map[string]interface{}); ok {
-				parsed, err := parseChangeSelector(nested, true)
+				parsed, err := parseChangeSelector(nested, true, probe)
 				if err != nil {
 					return selector, err
 				}
@@ -470,7 +470,7 @@ func parseChangeSelector(fields map[string]interface{}, endpoint bool) (changeSe
 	return selector, nil
 }
 
-func stringList(value interface{}) ([]string, bool) {
+func stringList(value interface{}, probe *pipelineCancellation) ([]string, bool) {
 	list, ok := value.([]interface{})
 	if !ok {
 		return nil, false
@@ -489,19 +489,19 @@ func invalidChangeSelector(reason string) error {
 		localization.CypherSpecializedCallsCDCSelectorInvalid(reason))
 }
 
-func matchesAnyChangeSelector(selectors []changeSelector, database string, event *storage.ChangeEvent) bool {
+func matchesAnyChangeSelector(selectors []changeSelector, database string, event *storage.ChangeEvent, probe *pipelineCancellation) bool {
 	if len(selectors) == 0 {
 		return true
 	}
 	for index := range selectors {
-		if selectors[index].matches(database, event) {
+		if selectors[index].matches(database, event, probe) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bool {
+func (s *changeSelector) matches(database string, event *storage.ChangeEvent, probe *pipelineCancellation) bool {
 	switch {
 	case s.kind == "n" && !event.Node, s.kind == "r" && event.Node:
 		return false
@@ -541,11 +541,11 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 	if len(s.changesTo) > 0 && !changedAll(event, s.changesTo) {
 		return false
 	}
-	if len(s.key) > 0 && !keyMatches(event, s.key) {
+	if len(s.key) > 0 && !keyMatches(event, s.key, probe) {
 		return false
 	}
 	for key, want := range s.txMetadata {
-		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got, probe), want) {
 			return false
 		}
 	}
@@ -597,13 +597,13 @@ func changedAll(event *storage.ChangeEvent, keys []string) bool {
 // (ChangeEvent.Keys), or else its properties after the change or before a
 // delete, hold every key value. The key maps answer for a DIFF update,
 // whose state carries only the changed properties.
-func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
+func keyMatches(event *storage.ChangeEvent, key map[string]interface{}, probe *pipelineCancellation) bool {
 	keyMaps := append([]map[string]any(nil), event.EdgeKeys...)
 	for _, maps := range event.Keys {
 		keyMaps = append(keyMaps, maps...)
 	}
 	for _, keys := range keyMaps {
-		if holdsValues(keys, key) {
+		if holdsValues(keys, key, probe) {
 			return true
 		}
 	}
@@ -614,13 +614,13 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 	if state == nil {
 		return false
 	}
-	return holdsValues(state.Properties, key)
+	return holdsValues(state.Properties, key, probe)
 }
 
 // holdsValues reports whether properties hold every one of values.
-func holdsValues(properties map[string]any, values map[string]interface{}) bool {
+func holdsValues(properties map[string]any, values map[string]interface{}, probe *pipelineCancellation) bool {
 	for name, want := range values {
-		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got, probe), want) {
 			return false
 		}
 	}

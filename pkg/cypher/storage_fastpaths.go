@@ -24,7 +24,7 @@ func (e *StorageExecutor) prefixNodeIDIfNeeded(id storage.NodeID, idPrefix strin
 	return storage.NodeID(idPrefix + string(id))
 }
 
-func (e *StorageExecutor) getEdgesByTypeFast(edgeType string) ([]*storage.Edge, string, error) {
+func (e *StorageExecutor) getEdgesByTypeFast(edgeType string, probe *pipelineCancellation) ([]*storage.Edge, string, error) {
 	engine, idPrefix := e.storageFast()
 	edges, err := engine.GetEdgesByType(edgeType)
 	if err != nil {

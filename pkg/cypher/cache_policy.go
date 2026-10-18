@@ -11,7 +11,7 @@ import (
 // including an implicit transaction carried by context or a storage-scoped view.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
 	return !e.inTransaction(ctx) && info.IsReadOnly &&
-		e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) &&
+		e.cache != nil && isCacheableReadQuery(cypher, contextPipelineProbe(ctx)) && !profileExecutionBypassesCache(ctx) &&
 		// Visibility changes with elapsed time and access metadata, independently
 		// of graph-write revisions. Cache neither raw nor previously stripped rows.
 		!e.queryPropertyDecayEnabled()
@@ -29,11 +29,11 @@ var (
 // Caching is correctness-preserving because we invalidate on writes, but some Cypher
 // functions can vary over time (or be inherently non-deterministic) without any writes.
 // Those queries should not be cached.
-func isCacheableReadQuery(cypher string) bool {
-	return cacheableReadQuery(cypher, 0)
+func isCacheableReadQuery(cypher string, probe *pipelineCancellation) bool {
+	return cacheableReadQuery(cypher, 0, probe)
 }
 
-func cacheableReadQuery(cypher string, depth int) bool {
+func cacheableReadQuery(cypher string, depth int, probe *pipelineCancellation) bool {
 	if depth >= 16 {
 		return false
 	}
@@ -98,10 +98,10 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		if globalProcedureRegistry.callsUserProcedure(cypher) {
 			return false
 		}
-		if strings.Contains(upper, "APOC.") && !cacheableDynamicStatements(cypher, depth) {
+		if strings.Contains(upper, "APOC.") && !cacheableDynamicStatements(cypher, depth, probe) {
 			return false
 		}
-		for _, procedure := range registeredProceduresForCalls(cypher) {
+		for _, procedure := range registeredProceduresForCalls(cypher, probe) {
 			if procedure.Mode == ProcedureModeDBMS {
 				return false
 			}
@@ -114,7 +114,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 // cacheableDynamicStatements follows literal executable arguments through the
 // same cache policy as the outer statement. Parameters and row expressions
 // are resolved during execution, so their outer results cannot be reused.
-func cacheableDynamicStatements(query string, depth int) bool {
+func cacheableDynamicStatements(query string, depth int, probe *pipelineCancellation) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
 	for from := 0; from < len(query); {
@@ -135,7 +135,7 @@ func cacheableDynamicStatements(query string, depth int) bool {
 			}
 			statement, decoded := decodeCypherQuotedString(args[0])
 			requirements := QueryPermissionRequirements(statement)
-			if !decoded || requirements.Write || requirements.Schema || requirements.Admin || !cacheableReadQuery(statement, depth+1) {
+			if !decoded || requirements.Write || requirements.Schema || requirements.Admin || !cacheableReadQuery(statement, depth+1, probe) {
 				return false
 			}
 		default:

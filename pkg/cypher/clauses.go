@@ -1002,7 +1002,7 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 	return plan
 }
 
-func canonicalUnwindMergeValue(v interface{}) interface{} {
+func canonicalUnwindMergeValue(v interface{}, probe *pipelineCancellation) interface{} {
 	switch val := v.(type) {
 	case map[string]interface{}:
 		keys := make([]string, 0, len(val))
@@ -1012,13 +1012,13 @@ func canonicalUnwindMergeValue(v interface{}) interface{} {
 		sort.Strings(keys)
 		out := make([]interface{}, 0, len(keys))
 		for _, k := range keys {
-			out = append(out, []interface{}{k, canonicalUnwindMergeValue(val[k])})
+			out = append(out, []interface{}{k, canonicalUnwindMergeValue(val[k], probe)})
 		}
 		return map[string]interface{}{"type": "map", "entries": out}
 	case []interface{}:
 		out := make([]interface{}, len(val))
 		for i, item := range val {
-			out[i] = canonicalUnwindMergeValue(item)
+			out[i] = canonicalUnwindMergeValue(item, probe)
 		}
 		return map[string]interface{}{"type": "list", "items": out}
 	case string:
@@ -1056,7 +1056,7 @@ func canonicalUnwindMergeValue(v interface{}) interface{} {
 		if rv.IsValid() && rv.Kind() == reflect.Slice {
 			out := make([]interface{}, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				out[i] = canonicalUnwindMergeValue(rv.Index(i).Interface())
+				out[i] = canonicalUnwindMergeValue(rv.Index(i).Interface(), probe)
 			}
 			return map[string]interface{}{"type": rv.Type().String(), "items": out}
 		}
@@ -1064,11 +1064,11 @@ func canonicalUnwindMergeValue(v interface{}) interface{} {
 	}
 }
 
-func unwindMergeKey(label string, props map[string]interface{}) string {
-	propNames := mergePropertyNamesSorted(props)
+func unwindMergeKey(label string, props map[string]interface{}, probe *pipelineCancellation) string {
+	propNames := mergePropertyNamesSorted(props, probe)
 	entries := make([]interface{}, 0, len(propNames))
 	for _, prop := range propNames {
-		entries = append(entries, []interface{}{prop, canonicalUnwindMergeValue(props[prop])})
+		entries = append(entries, []interface{}{prop, canonicalUnwindMergeValue(props[prop], probe)})
 	}
 	encoded, err := json.Marshal(map[string]interface{}{
 		"label":   label,
@@ -1661,7 +1661,7 @@ func rewriteTopLevelMultiMatchToCartesianMatch(query string) string {
 	return "MATCH " + left + ", " + right + " WHERE " + whereClause + " " + tail
 }
 
-func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
+func canApplySetBasedUnwindRewrite(query string, items []interface{}, probe *pipelineCancellation) bool {
 	if strings.TrimSpace(query) == "" || len(items) == 0 {
 		return false
 	}
@@ -1681,10 +1681,10 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 	}
 	// Rewrites should preserve semantics. We only apply when unwind items are
 	// distinct comparable values so IN-list matching does not collapse duplicates.
-	return unwindItemsAreDistinctComparable(items)
+	return unwindItemsAreDistinctComparable(items, probe)
 }
 
-func unwindItemsAreDistinctComparable(items []interface{}) bool {
+func unwindItemsAreDistinctComparable(items []interface{}, probe *pipelineCancellation) bool {
 	seen := map[interface{}]struct{}{}
 	for _, it := range items {
 		if it == nil {

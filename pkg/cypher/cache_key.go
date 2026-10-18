@@ -45,12 +45,12 @@ func (k *cacheKeyBuilder) Write(p []byte) (int, error) {
 
 // statementCacheKey is the key of text run with params: the text
 // length-prefixed, then the parameters (writeCacheKeyParams).
-func statementCacheKey(text string, params map[string]interface{}) string {
+func statementCacheKey(text string, params map[string]interface{}, probe *pipelineCancellation) string {
 	key := cacheKeyBuilder{buf: make([]byte, 0, len(text)+16+16*len(params))}
 	var scratch [binary.MaxVarintLen64 + 1]byte
 	writeCacheKeyString(&key, &scratch, text)
 	if len(params) > 0 {
-		writeCacheKeyParams(&key, &scratch, params)
+		writeCacheKeyParams(&key, &scratch, params, probe)
 	}
 	return string(key.buf)
 }
@@ -58,7 +58,7 @@ func statementCacheKey(text string, params map[string]interface{}) string {
 // writeCacheKeyParams writes the parameters in sorted name order, each name
 // length-prefixed and each value type-tagged (writeCacheKeyValue): 1, 1.0,
 // "1" and true / "true" are different keys, as are a list and its text.
-func writeCacheKeyParams(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, params map[string]interface{}) {
+func writeCacheKeyParams(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, params map[string]interface{}, probe *pipelineCancellation) {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
@@ -66,12 +66,12 @@ func writeCacheKeyParams(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1
 	sort.Strings(keys)
 	for _, k := range keys {
 		writeCacheKeyString(h, scratch, k)
-		writeCacheKeyValue(h, scratch, params[k])
+		writeCacheKeyValue(h, scratch, params[k], probe)
 	}
 }
 
 // writeCacheKeyValue writes value's tag and payload.
-func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}) {
+func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}, probe *pipelineCancellation) {
 	switch typed := value.(type) {
 	case nil:
 		h.Write([]byte{cacheKeyNull})
@@ -132,14 +132,14 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 		h.Write([]byte{cacheKeyList})
 		writeCacheKeyLength(h, scratch, len(typed))
 		for _, item := range typed {
-			writeCacheKeyValue(h, scratch, item)
+			writeCacheKeyValue(h, scratch, item, probe)
 		}
 		return
 	case storage.RemoteEntityValue:
 		// Graph functions distinguish a transport graph entity from an ordinary
 		// map with identical contents; the result cache must distinguish them too.
 		h.Write([]byte{cacheKeyRemoteEntity})
-		writeCacheKeyValue(h, scratch, map[string]interface{}(typed))
+		writeCacheKeyValue(h, scratch, map[string]interface{}(typed), probe)
 		return
 	case map[string]interface{}:
 		keys := make([]string, 0, len(typed))
@@ -151,7 +151,7 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 		writeCacheKeyLength(h, scratch, len(keys))
 		for _, key := range keys {
 			writeCacheKeyString(h, scratch, key)
-			writeCacheKeyValue(h, scratch, typed[key])
+			writeCacheKeyValue(h, scratch, typed[key], probe)
 		}
 		return
 	case time.Time:
@@ -169,7 +169,7 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 		h.Write([]byte{cacheKeyList})
 		writeCacheKeyLength(h, scratch, reflected.Len())
 		for index := 0; index < reflected.Len(); index++ {
-			writeCacheKeyValue(h, scratch, reflected.Index(index).Interface())
+			writeCacheKeyValue(h, scratch, reflected.Index(index).Interface(), probe)
 		}
 		return
 	case reflect.Map:
@@ -183,7 +183,7 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 			writeCacheKeyLength(h, scratch, len(keys))
 			for _, key := range keys {
 				writeCacheKeyString(h, scratch, key)
-				writeCacheKeyValue(h, scratch, reflected.MapIndex(reflect.ValueOf(key).Convert(reflected.Type().Key())).Interface())
+				writeCacheKeyValue(h, scratch, reflected.MapIndex(reflect.ValueOf(key).Convert(reflected.Type().Key())).Interface(), probe)
 			}
 			return
 		}

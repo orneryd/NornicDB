@@ -73,7 +73,7 @@ func (e *StorageExecutor) sessionIsComposite() bool {
 	return isCompositeRoot(e.storage)
 }
 
-func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
+func (e *StorageExecutor) cloneForStorage(store storage.Engine, probe *pipelineCancellation) *StorageExecutor {
 	cloned := NewStorageExecutor(store)
 	cloned.deferFlush = e.deferFlush
 	cloned.ShareEmbedderFrom(e)
@@ -112,12 +112,12 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 		}
 	}
 	e.shellParamsMu.RUnlock()
-	cloned.shellParamsByToken = cloneShellParamsByToken(e)
+	cloned.shellParamsByToken = cloneShellParamsByToken(e, probe)
 
 	return cloned
 }
 
-func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*StorageExecutor, string, error) {
+func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string, probe *pipelineCancellation) (*StorageExecutor, string, error) {
 	targetDB := strings.TrimSpace(db)
 	if targetDB == "" {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseRequired(), nil)
@@ -135,13 +135,13 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 				}
 				// Resolve the full composite.constituent via GetStorageForUse.
 				// The composite engine's getConstituent will resolve the alias.
-				return e.resolveCompositeConstituent(targetDB, compositeName, targetDB[dotIdx+1:], authToken)
+				return e.resolveCompositeConstituent(targetDB, compositeName, targetDB[dotIdx+1:], authToken, probe)
 			}
 		}
 
 		// Check if the target is itself a composite database.
 		if e.dbManager.IsCompositeDatabase(targetDB) {
-			return e.resolveCompositeStorage(targetDB, authToken)
+			return e.resolveCompositeStorage(targetDB, authToken, probe)
 		}
 
 		// Standard database: resolve alias.
@@ -165,7 +165,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 		if !ok {
 			return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(targetDB), nil)
 		}
-		return e.cloneForStorage(store), targetDB, nil
+		return e.cloneForStorage(store, probe), targetDB, nil
 	}
 
 	// Without a database manager (embedded), a namespaced store switches
@@ -174,7 +174,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
-	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
+	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB), probe), targetDB, nil
 }
 
 // TransactionDatabases resolves database names for TransactionDatabaseError:
@@ -288,12 +288,12 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
 	}
-	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx), contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, ctx, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
-		if err := systemDatabaseStatementError(query); err != nil {
+		if err := systemDatabaseStatementError(query, contextPipelineProbe(ctx)); err != nil {
 			return nil, ctx, err
 		}
 	}
@@ -323,7 +323,7 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // of the system database's records (systemProcedureScope). This is the one
 // policy, applied on every route: the request's or session's database, USE,
 // a statement a procedure runs, and CALL { USE … }.
-func systemDatabaseStatementError(query string) error {
+func systemDatabaseStatementError(query string, probe *pipelineCancellation) error {
 	_, query = parseExecutionMode(query)
 	query = strings.TrimSpace(query)
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
@@ -341,11 +341,11 @@ func systemDatabaseStatementError(query string) error {
 		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
 			body = statement
 		}
-		return systemDatabaseStatementError(body)
+		return systemDatabaseStatementError(body, probe)
 	}
 	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
 		localization.CypherAdminSystemProcedureUnsupported(query))
-	for _, procedure := range registeredProceduresForCalls(query) {
+	for _, procedure := range registeredProceduresForCalls(query, probe) {
 		if !procedure.WorksOnSystem {
 			return notRecognised
 		}
@@ -417,7 +417,7 @@ func systemShowTailError(query string) error {
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement
 // run on this executor's own database (a request's or session's database,
 // not one a USE selects): nil unless that is the system database.
-func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
+func (e *StorageExecutor) systemDatabaseWriteError(query string, probe *pipelineCancellation) error {
 	database := e.currentDatabaseName()
 	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
 		database = "system"
@@ -425,11 +425,11 @@ func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
 	if !strings.EqualFold(database, "system") {
 		return nil
 	}
-	return systemDatabaseStatementError(query)
+	return systemDatabaseStatementError(query, probe)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.
-func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToken string) (*StorageExecutor, string, error) {
+func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToken string, probe *pipelineCancellation) (*StorageExecutor, string, error) {
 	if e.dbManager == nil {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseManagerUnavailable(compositeName), nil)
 	}
@@ -444,12 +444,12 @@ func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToke
 		return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(compositeName), nil)
 	}
 
-	return e.cloneForStorage(engine), compositeName, nil
+	return e.cloneForStorage(engine, probe), compositeName, nil
 }
 
 // resolveCompositeConstituent resolves USE <composite.alias> to a specific
 // constituent engine within a composite database.
-func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, alias string, authToken string) (*StorageExecutor, string, error) {
+func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, alias string, authToken string, probe *pipelineCancellation) (*StorageExecutor, string, error) {
 	if e.dbManager == nil {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseManagerUnavailable(fullName), nil)
 	}
@@ -471,5 +471,5 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
-	return e.cloneForStorage(constituentEngine), fullName, nil
+	return e.cloneForStorage(constituentEngine, probe), fullName, nil
 }

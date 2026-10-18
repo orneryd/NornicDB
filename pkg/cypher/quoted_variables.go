@@ -194,7 +194,7 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 
 // parameterValues returns params with each internal parameter name bound
 // to its parameter's value.
-func (names *quotedVariableNames) parameterValues(params map[string]interface{}) map[string]interface{} {
+func (names *quotedVariableNames) parameterValues(params map[string]interface{}, probe *pipelineCancellation) map[string]interface{} {
 	if names == nil || len(names.parameters) == 0 {
 		return params
 	}
@@ -545,7 +545,7 @@ func isCypherKeyword(name string) bool {
 
 // restore maps an Execute result and error of the canonical statement back
 // to the statement the client sent.
-func (names *quotedVariableNames) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
+func (names *quotedVariableNames) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem, probe *pipelineCancellation) (*ExecuteResult, error) {
 	if names == nil {
 		return result, err
 	}
@@ -571,7 +571,7 @@ func (names *quotedVariableNames) restore(result *ExecuteResult, err error, pars
 		if isExplainOrProfile(names.original) {
 			restored.Rows = names.restoreValue(result.Rows).([][]interface{})
 		} else if len(restored.Columns) > 0 {
-			names.restoreProjection(&restored, parseItems)
+			names.restoreProjection(&restored, parseItems, probe)
 		}
 		result = &restored
 	}
@@ -795,7 +795,7 @@ func finalReturnBody(text string) (int, int, bool) {
 // item its text as written (x + 1 and `x` + 1 are different columns). For
 // RETURN * the columns are sorted by name, as Neo4j lists them, with the
 // rows reordered to match.
-func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parseItems func(string) []returnItem) {
+func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parseItems func(string) []returnItem, probe *pipelineCancellation) {
 	start, end, ok := finalReturnBody(names.canonical)
 	if !ok {
 		return
@@ -803,7 +803,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	body := strings.TrimSpace(names.canonical[start:end])
 	body, _ = cutDistinct(body)
 	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
-		sortColumnsByName(result)
+		sortColumnsByName(result, probe)
 		return
 	}
 	items := parseItems(names.originalText(start, end))
@@ -826,7 +826,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	}
 }
 
-func sortColumnsByName(result *ExecuteResult) {
+func sortColumnsByName(result *ExecuteResult, probe *pipelineCancellation) {
 	order := make([]int, len(result.Columns))
 	for i := range order {
 		order[i] = i

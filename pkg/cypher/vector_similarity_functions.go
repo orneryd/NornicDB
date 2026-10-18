@@ -16,13 +16,13 @@ import (
 // number, a zero vector for cosine) and vectors of different dimensions are
 // Neo4j's ArgumentErrors.
 
-func init() {
-	cypherfn.Register("vector.similarity.cosine", fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64]))
-	cypherfn.Register("vector.similarity.euclidean", fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64]))
+func init(probe *pipelineCancellation) {
+	cypherfn.Register("vector.similarity.cosine", fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64], probe))
+	cypherfn.Register("vector.similarity.euclidean", fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64], probe))
 }
 
 // fnVectorSimilarity checks a, then b, then their dimensions, as Neo4j does.
-func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool)) cypherfn.Func {
+func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool), probe *pipelineCancellation) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, argumentCountError("vector.similarity."+function, "2", len(args))
@@ -31,11 +31,11 @@ func fnVectorSimilarity(function string, valid func([]float64) bool, similarity 
 		if err != nil || values[0] == nil || values[1] == nil {
 			return nil, err
 		}
-		a, err := similarityVectorArgument(function, "a", values[0], valid)
+		a, err := similarityVectorArgument(function, "a", values[0], valid, probe)
 		if err != nil {
 			return nil, err
 		}
-		b, err := similarityVectorArgument(function, "b", values[1], valid)
+		b, err := similarityVectorArgument(function, "b", values[1], valid, probe)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +53,7 @@ func fnVectorSimilarity(function string, valid func([]float64) bool, similarity 
 // a list of numbers, that is a valid vector for the function. A list holding
 // anything else isn't a valid vector; a value that is neither is a
 // TypeError.
-func similarityVectorArgument(function, argument string, value interface{}, valid func([]float64) bool) ([]float64, error) {
+func similarityVectorArgument(function, argument string, value interface{}, valid func([]float64) bool, probe *pipelineCancellation) ([]float64, error) {
 	if typed, isVector := value.(CypherVector); isVector {
 		coordinates := make([]float64, typed.Dimension())
 		for i := range coordinates {
@@ -67,7 +67,7 @@ func similarityVectorArgument(function, argument string, value interface{}, vali
 	items, isList := cypherListValue(value)
 	if !isList {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid("vector.similarity."+function, "LIST<INTEGER | FLOAT>", neo4jValueRepr(value)))
+			localization.CypherCoreFunctionArgumentInvalid("vector.similarity."+function, "LIST<INTEGER | FLOAT>", neo4jValueRepr(value, probe)))
 	}
 	coordinates := make([]float64, len(items))
 	for i, item := range items {

@@ -93,7 +93,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		}
 		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
 		if err != nil {
-			err = functionEvaluationError(err)
+			err = functionEvaluationError(err, contextPipelineProbe(ctx))
 		}
 		return v, true, err
 	case "apoc.rel.startNode", "apoc.rel.endNode":
@@ -112,10 +112,10 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		}
 		return v, true, nil
 	case "apoc.path.slice", "apoc.path.combine":
-		v, err := e.nativeAPOCPath(name, args)
+		v, err := e.nativeAPOCPath(name, args, contextPipelineProbe(ctx))
 		return v, true, err
 	case "apoc.temporal.format":
-		v, err := nativeAPOCTemporalFormat(args)
+		v, err := nativeAPOCTemporalFormat(args, contextPipelineProbe(ctx))
 		return v, true, err
 	}
 	return nil, false, nil
@@ -203,7 +203,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 }
 
 // nativeAPOCPath preserves genuine typed local and remote path carriers.
-func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}) (interface{}, error) {
+func (e *StorageExecutor) nativeAPOCPath(name string, args []interface{}, probe *pipelineCancellation) (interface{}, error) {
 	if name == "apoc.path.combine" {
 		if args[0] == nil {
 			return args[1], nil

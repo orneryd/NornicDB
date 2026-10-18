@@ -75,7 +75,7 @@ func fnJSONStringify(ctx cypherfn.Context, args []string) (interface{}, error) {
 			localization.CypherCoreJSONStringifyProfileUnknown(jsonStringifyProfileText(config["profile"])))
 	}
 	var out strings.Builder
-	if err := profile.write(&out, values[0]); err != nil {
+	if err := profile.write(&out, values[0], nil); err != nil {
 		return nil, err
 	}
 	return out.String(), nil
@@ -89,7 +89,7 @@ func jsonStringifyProfileText(value interface{}) string {
 }
 
 // write writes value as the profile's JSON text.
-func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
+func (p jsonProfile) write(out *strings.Builder, value interface{}, probe *pipelineCancellation) error {
 	switch v := value.(type) {
 	case nil:
 		out.WriteString("null")
@@ -113,7 +113,7 @@ func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
 			if index > 0 {
 				out.WriteString(p.itemSeparator)
 			}
-			if err := p.write(out, item); err != nil {
+			if err := p.write(out, item, probe); err != nil {
 				return err
 			}
 		}
@@ -132,7 +132,7 @@ func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
 			}
 			p.writeString(out, key)
 			out.WriteString(p.keySeparator)
-			if err := p.write(out, v[key]); err != nil {
+			if err := p.write(out, v[key], probe); err != nil {
 				return err
 			}
 		}
@@ -142,17 +142,17 @@ func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
 			out.WriteString("null")
 			return nil
 		}
-		return p.write(out, pythonDurationTuple(*v))
+		return p.write(out, pythonDurationTuple(*v), probe)
 	case CypherDuration:
-		return p.write(out, pythonDurationTuple(v))
+		return p.write(out, pythonDurationTuple(v), probe)
 	case CypherPoint:
-		return p.write(out, pointTuple(v))
+		return p.write(out, pointTuple(v), probe)
 	case *CypherPoint:
 		if v == nil {
 			out.WriteString("null")
 			return nil
 		}
-		return p.write(out, pointTuple(*v))
+		return p.write(out, pointTuple(*v), probe)
 	default:
 		if text, ok := stringDefaultText(value); ok {
 			if !p.stringDefault {
@@ -161,14 +161,14 @@ func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
 			p.writeString(out, text)
 			return nil
 		}
-		return p.writeReflected(out, value)
+		return p.writeReflected(out, value, probe)
 	}
 	return nil
 }
 
 // writeReflected writes the typed lists and string-keyed maps property
 // values and parameters can be (a []int64, a map[string]string).
-func (p jsonProfile) writeReflected(out *strings.Builder, value interface{}) error {
+func (p jsonProfile) writeReflected(out *strings.Builder, value interface{}, probe *pipelineCancellation) error {
 	reflected := reflect.ValueOf(value)
 	switch reflected.Kind() {
 	case reflect.Slice, reflect.Array:
@@ -176,7 +176,7 @@ func (p jsonProfile) writeReflected(out *strings.Builder, value interface{}) err
 		for index := range items {
 			items[index] = reflected.Index(index).Interface()
 		}
-		return p.write(out, items)
+		return p.write(out, items, probe)
 	case reflect.Map:
 		if reflected.Type().Key().Kind() == reflect.String {
 			entries := make(map[string]interface{}, reflected.Len())
@@ -184,11 +184,11 @@ func (p jsonProfile) writeReflected(out *strings.Builder, value interface{}) err
 			for iterator.Next() {
 				entries[iterator.Key().String()] = iterator.Value().Interface()
 			}
-			return p.write(out, entries)
+			return p.write(out, entries, probe)
 		}
 	case reflect.Int8, reflect.Int16, reflect.Uint8, reflect.Uint16, reflect.Uint32:
 		if reflected.Type().PkgPath() == "" {
-			return p.write(out, reflected.Convert(reflect.TypeOf(int64(0))).Interface())
+			return p.write(out, reflected.Convert(reflect.TypeOf(int64(0))).Interface(), probe)
 		}
 	}
 	return p.unsupported(value)

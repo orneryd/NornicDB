@@ -20,7 +20,7 @@ var rowPredicatePrograms = newBoundedCache[string, *rowPredicateProgram](4096, b
 
 // rowPredicateProgramFor returns expression's program, or nil when it is to
 // be read from the text this time.
-func rowPredicateProgramFor(expression string) *rowPredicateProgram {
+func rowPredicateProgramFor(expression string, probe *pipelineCancellation) *rowPredicateProgram {
 	if rowPredicateProgramsDisabled.Load() || rowValueProgramsDisabled.Load() {
 		return nil
 	}
@@ -32,7 +32,7 @@ func rowPredicateProgramFor(expression string) *rowPredicateProgram {
 	if program != rowPredicateSeen {
 		return program
 	}
-	program = compileRowPredicateProgram(expression)
+	program = compileRowPredicateProgram(expression, probe)
 	rowPredicatePrograms.put(expression, program)
 	return program
 }
@@ -47,12 +47,12 @@ type rowPredicateNode interface {
 	holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool
 }
 
-func compileRowPredicateProgram(expression string) *rowPredicateProgram {
+func compileRowPredicateProgram(expression string, probe *pipelineCancellation) *rowPredicateProgram {
 	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(expression)}
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
 		p.root = &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(expression), arithmetic: predicateIsArithmetic(expression)}
 	} else {
-		p.root = compileRowPredicateParts(expression)
+		p.root = compileRowPredicateParts(expression, probe)
 	}
 	return p
 }
@@ -108,15 +108,15 @@ func compileRowPredicateValue(expr string) rowValueNode {
 
 // compileRowPredicateParts compiles a predicate as evaluateRowPredicateParts
 // evaluates it.
-func compileRowPredicateParts(expr string) rowPredicateNode {
+func compileRowPredicateParts(expr string, probe *pipelineCancellation) rowPredicateNode {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return rowPredicateConstNode(false)
 	}
 	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
-		return compileRowPredicateParts(inner)
+		return compileRowPredicateParts(inner, probe)
 	}
-	if mayContainArithmetic(expr) && rowPredicateIsStrictLogical(expr) && !containsRelationshipPattern(expr) {
+	if mayContainArithmetic(expr) && rowPredicateIsStrictLogical(expr, probe) && !containsRelationshipPattern(expr) {
 		return &rowPredicateStrictNode{text: expr, value: compileRowPredicateValue(expr), arithmetic: predicateIsArithmetic(expr)}
 	}
 	return compileRowPredicateFromSubqueries(expr)

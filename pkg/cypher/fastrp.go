@@ -91,8 +91,8 @@ var fastRPConfigKeys = []string{
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
-	embeddings, _, projection, err := e.runGdsFastRP("gds.fastRP.stream", args)
+func (e *StorageExecutor) callGdsFastRPStream(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
+	embeddings, _, projection, err := e.runGdsFastRP("gds.fastRP.stream", args, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +106,9 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
 // runs FastRP and reports, as GDS does, the node count, the time taken and
 // the configuration (#1191).
-func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsFastRPStats(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
 	started := time.Now()
-	embeddings, config, _, err := e.runGdsFastRP("gds.fastRP.stats", args)
+	embeddings, config, _, err := e.runGdsFastRP("gds.fastRP.stats", args, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 
 // runGdsFastRP reads a gds.fastRP call's graph and configuration and computes
 // the embeddings.
-func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, *GraphProjection, error) {
+func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}, probe *pipelineCancellation) ([]fastRPEmbedding, FastRPConfig, *GraphProjection, error) {
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
 		return nil, FastRPConfig{}, nil, err
@@ -129,7 +129,7 @@ func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]
 	if err != nil {
 		return nil, FastRPConfig{}, nil, err
 	}
-	config, err := fastRPConfiguration(options)
+	config, err := fastRPConfiguration(options, probe)
 	if err != nil {
 		return nil, FastRPConfig{}, nil, err
 	}
@@ -137,7 +137,7 @@ func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]
 	if err != nil {
 		return nil, FastRPConfig{}, nil, err
 	}
-	embeddings, err := generateFastRPEmbeddings(projection, config)
+	embeddings, err := generateFastRPEmbeddings(projection, config, probe)
 	return embeddings, config, projection, err
 }
 
@@ -146,13 +146,13 @@ func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]
 // the wrong type or range are refused with GDS's messages. randomSeed
 // defaults to 42, so the same call gives the same embeddings (GDS picks a
 // random seed); embeddingDimension is at most maxFastRPEmbeddingDimension.
-func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
+func fastRPConfiguration(options map[string]interface{}, probe *pipelineCancellation) (FastRPConfig, error) {
 	config := FastRPConfig{IterationWeights: []float64{0.0, 1.0, 1.0}, RandomSeed: 42}
 	c, err := newGDSConfig(options, fastRPConfigKeys...)
 	if err != nil {
 		return config, err
 	}
-	dimension, err := c.integer("embeddingDimension", "Integer", 1, maxFastRPEmbeddingDimension, 0, true)
+	dimension, err := c.integer("embeddingDimension", "Integer", 1, maxFastRPEmbeddingDimension, 0, true, probe)
 	if err != nil {
 		return config, err
 	}
@@ -164,23 +164,23 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 		}
 		config.IterationWeights = make([]float64, 0, len(items))
 		for _, item := range items {
-			number, isNumber := gdsScalarNumber(item)
+			number, isNumber := gdsScalarNumber(item, probe)
 			if !isNumber {
 				return config, localizedError(localization.CypherGraphProceduresIterationWeightType(fmt.Sprint(item), gdsJavaType(item)), nil)
 			}
 			config.IterationWeights = append(config.IterationWeights, number)
 		}
 	}
-	if config.NormalizationStrength, err = c.number("normalizationStrength", "Number", 0); err != nil {
+	if config.NormalizationStrength, err = c.number("normalizationStrength", "Number", 0, probe); err != nil {
 		return config, err
 	}
-	if config.NodeSelfInfluence, err = c.number("nodeSelfInfluence", "Number", 0); err != nil {
+	if config.NodeSelfInfluence, err = c.number("nodeSelfInfluence", "Number", 0, probe); err != nil {
 		return config, err
 	}
 	if config.NodeSelfInfluence < 0 {
 		return config, localizedError(localization.CypherGraphProceduresConfigValueNegative("nodeSelfInfluence"), nil)
 	}
-	if config.PropertyRatio, err = c.number("propertyRatio", "Double", 0); err != nil {
+	if config.PropertyRatio, err = c.number("propertyRatio", "Double", 0, probe); err != nil {
 		return config, err
 	}
 	if features := c.value("featureProperties"); features != nil {
@@ -201,7 +201,7 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 	} else if ok {
 		config.RelationshipWeightProperty = property
 	}
-	seed, err := c.integer("randomSeed", "Long", -1<<63, 1<<63-1, 42, false)
+	seed, err := c.integer("randomSeed", "Long", -1<<63, 1<<63-1, 42, false, probe)
 	if err != nil {
 		return config, err
 	}
@@ -212,7 +212,7 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
 		return config, err
 	}
-	concurrency, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false)
+	concurrency, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false, probe)
 	if err != nil {
 		return config, err
 	}
@@ -237,7 +237,7 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 	}
 	config.Configuration = map[string]interface{}{
 		"embeddingDimension":    int64(config.EmbeddingDimension),
-		"iterationWeights":      floatsToInterfaces(config.IterationWeights),
+		"iterationWeights":      floatsToInterfaces(config.IterationWeights, probe),
 		"normalizationStrength": config.NormalizationStrength,
 		"nodeSelfInfluence":     config.NodeSelfInfluence,
 		"propertyRatio":         config.PropertyRatio,
@@ -270,7 +270,7 @@ func (c FastRPConfig) validate() error {
 	return nil
 }
 
-func floatsToInterfaces(values []float64) []interface{} {
+func floatsToInterfaces(values []float64, probe *pipelineCancellation) []interface{} {
 	out := make([]interface{}, len(values))
 	for i, value := range values {
 		out[i] = value
@@ -433,7 +433,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 // embedding adds each iteration's vector L2-normalised, times its
 // iterationWeights entry, plus nodeSelfInfluence times the normalised start,
 // as GDS does. A node nothing propagates to gets a zero vector.
-func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fastRPEmbedding, error) {
+func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig, probe *pipelineCancellation) ([]fastRPEmbedding, error) {
 	graph, err := selectGDSSubgraph(proj, config.NodeLabels, config.RelationshipTypes, config.RelationshipWeightProperty)
 	if err != nil {
 		return nil, err
@@ -459,7 +459,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 		features = make([][]float64, size)
 		for i, id := range graph.nodes {
 			for p, name := range config.FeatureProperties {
-				values, err := fastRPFeatureValues(proj, id, name, i)
+				values, err := fastRPFeatureValues(proj, id, name, i, probe)
 				if err != nil {
 					return nil, err
 				}
@@ -534,7 +534,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 					current[i][j] /= float64(degree)
 				}
 			}
-			if norm := vectorNorm(current[i]); weight != 0 && norm > 0 {
+			if norm := vectorNorm(current[i], probe); weight != 0 && norm > 0 {
 				for j, value := range current[i] {
 					final[i][j] += weight * value / norm
 				}
@@ -544,7 +544,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 	}
 	if config.NodeSelfInfluence != 0 {
 		for i := range final {
-			norm := vectorNorm(initial[i])
+			norm := vectorNorm(initial[i], probe)
 			if norm < fastRPEpsilon {
 				norm = 1
 			}
@@ -566,7 +566,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 const fastRPEpsilon = 10 / 3.40282346638528859811704183484516925440e+38
 
 // vectorNorm is a vector's L2 norm.
-func vectorNorm(vector []float64) float64 {
+func vectorNorm(vector []float64, probe *pipelineCancellation) float64 {
 	sum := 0.0
 	for _, value := range vector {
 		sum += value * value
@@ -576,12 +576,12 @@ func vectorNorm(vector []float64) float64 {
 
 // fastRPFeatureValues reads scalar and array features through the same
 // typed reader, then validates every component in one place.
-func fastRPFeatureValues(proj *GraphProjection, id, name string, position int) ([]float64, error) {
+func fastRPFeatureValues(proj *GraphProjection, id, name string, position int, probe *pipelineCancellation) ([]float64, error) {
 	kind, invalid := "Float", "`NaN`"
 	if strings.HasPrefix(proj.NodePropertyTypes[name], "List") {
 		kind, invalid = "List of Float", "NaN"
 	}
-	value, err := proj.nodePropertyValue(id, name, kind)
+	value, err := proj.nodePropertyValue(id, name, kind, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -631,8 +631,8 @@ func commonKeys(keys map[string][]string, names []string) []string {
 
 // fastRPConfigInt reads an integer config value (an INTEGER, or a FLOAT
 // with no fraction).
-func fastRPConfigInt(value interface{}) (int, bool) {
-	number, ok := gdsConfigIntegerValue(value, true)
+func fastRPConfigInt(value interface{}, probe *pipelineCancellation) (int, bool) {
+	number, ok := gdsConfigIntegerValue(value, true, probe)
 	return int(number), ok
 }
 

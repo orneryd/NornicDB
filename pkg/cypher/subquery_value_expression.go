@@ -234,7 +234,7 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 // refers to them.
 func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
 	probe := contextPipelineProbe(ctx)
-	correlated := e.cloneWithStorage(e.getStorage(ctx))
+	correlated := e.cloneWithStorage(e.getStorage(ctx), probe)
 	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
 	for name, value := range e.fabricRecordBindings {
 		if probe.stopped() {
@@ -331,7 +331,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
-		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
+		if nodes, rels, ok := boundPatternCountBindings(body, values, probe); ok {
 			// A pattern the kernel can't match goes to the pipeline below:
 			// its failure isn't a count of 0.
 			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
@@ -521,7 +521,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 		if err != nil || !resolved {
 			return 0, false
 		}
-		properties[key] = normalizePropValue(value)
+		properties[key] = normalizePropValue(value, probe)
 	}
 	pattern := nodePatternInfo{variable: shape.variable, labels: shape.labels, properties: properties}
 	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
@@ -547,7 +547,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 			continue
 		}
 		seen[node.ID] = struct{}{}
-		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
+		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties, probe) {
 			continue
 		}
 		if shape.where != "" {
@@ -592,7 +592,7 @@ func parseBoundNodeShape(body string) boundNodeShape {
 	if hasPrefixFold(pattern, "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH"):])
 	}
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if clauses, ok := splitPipelineClauses("MATCH " + pattern, nil); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return boundNodeShape{}
 	}
 	where := ""
@@ -715,7 +715,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
 		return 0, false
 	}
-	if !e.traversalStartMatches(seed, matches.StartNode) {
+	if !e.traversalStartMatches(seed, matches.StartNode, probe) {
 		return 0, true
 	}
 	// chainVariablesBindEntities admitted only entities of the right kind:
@@ -783,7 +783,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 		if boundRel != nil && boundRel.ID != edge.ID {
 			continue
 		}
-		if len(rel.Properties) > 0 && !e.edgeMatchesProps(edge, rel.Properties) {
+		if len(rel.Properties) > 0 && !e.edgeMatchesProps(edge, rel.Properties, probe) {
 			continue
 		}
 		far := edge.StartNode
@@ -802,7 +802,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			}
 			endNode = loaded
 		}
-		if !e.matchesEndPattern(endNode, &matches.EndNode) {
+		if !e.matchesEndPattern(endNode, &matches.EndNode, probe) {
 			continue
 		}
 		if where != "" {
@@ -875,7 +875,7 @@ func parseBoundChainShape(body string) boundChainShape {
 	}
 	// One MATCH clause, its WHERE included: a RETURN or any other clause is
 	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if clauses, ok := splitPipelineClauses("MATCH " + pattern, nil); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return boundChainShape{}
 	}
 	where := ""
@@ -1036,7 +1036,7 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 	values := entityRow(ctx, nodes, rels)
 	for name, path := range paths {
 		if path != nil {
-			values[name] = e.pathContextRowValue(path)
+			values[name] = e.pathContextRowValue(path, contextPipelineProbe(ctx))
 		}
 	}
 	return values
@@ -1070,12 +1070,12 @@ func patternHasInlineWhere(text string) bool {
 	return false
 }
 
-func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+func boundPatternCountBindings(body string, values map[string]interface{}, probe *pipelineCancellation) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
 	query := strings.TrimSpace(body)
 	if !hasPrefixFold(query, "MATCH") {
 		query = "MATCH " + query
 	}
-	clauses, ok := splitPipelineClauses(query)
+	clauses, ok := splitPipelineClauses(query, probe)
 	if !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return nil, nil, false
 	}
@@ -1093,12 +1093,12 @@ func boundPatternCountBindings(body string, values map[string]interface{}) (map[
 			return nil, nil, false
 		}
 	}
-	nodes, rels := entityBindings(values)
+	nodes, rels := entityBindings(values, probe)
 	return nodes, rels, true
 }
 
 // entityBindings splits a row's node and relationship values out of it.
-func entityBindings(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
+func entityBindings(values map[string]interface{}, probe *pipelineCancellation) (map[string]*storage.Node, map[string]*storage.Edge) {
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
 	for name, value := range values {

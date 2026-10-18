@@ -32,7 +32,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			if propName == "has_embedding" {
 				return nodeHasEmbeddingValue(node)
 			}
-			if val, ok := e.queryEntityProperties(node)[propName]; ok {
+			if val, ok := e.queryEntityProperties(node, contextPipelineProbe(ctx))[propName]; ok {
 				return val
 			}
 			return nil
@@ -41,13 +41,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			if rel == nil {
 				return nil
 			}
-			if val, ok := e.queryEntityProperties(rel)[propName]; ok {
+			if val, ok := e.queryEntityProperties(rel, contextPipelineProbe(ctx))[propName]; ok {
 				return val
 			}
 			return nil
 		}
 		if val, ok := e.boundValue(ctx, varName); ok {
-			if property, supported := rowPropertyValue(e.queryVisibleValue(val), propName); supported {
+			if property, supported := rowPropertyValue(e.queryVisibleValue(val, contextPipelineProbe(ctx)), propName); supported {
 				return property
 			}
 		}
@@ -77,7 +77,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// This allows path functions like length(path), relationships(path) to work after WITH
 	if paths != nil {
 		if pathResult, ok := paths[expr]; ok && pathResult != nil {
-			return pathContextEntryValue(pathResult)
+			return pathContextEntryValue(pathResult, contextPipelineProbe(ctx))
 		}
 	}
 

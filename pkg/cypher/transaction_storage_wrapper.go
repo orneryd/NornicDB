@@ -356,7 +356,7 @@ func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.No
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodes(nodes, nil), nil
 }
 
 // StreamNodesByLabelProjected keeps labelled MATCH reads on the transaction's
@@ -511,26 +511,26 @@ func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges, nil), nil
 }
 
 // OutgoingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
 func (w *transactionStorageWrapper) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.OutgoingEdgeHeaders(w.prefixNodeID(nodeID)))
+	return w.userEdgeHeaders(w.tx.OutgoingEdgeHeaders(w.prefixNodeID(nodeID)), nil)
 }
 
 // IncomingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
 func (w *transactionStorageWrapper) IncomingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.IncomingEdgeHeaders(w.prefixNodeID(nodeID)))
+	return w.userEdgeHeaders(w.tx.IncomingEdgeHeaders(w.prefixNodeID(nodeID)), nil)
 }
 
-func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
+func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answered bool, err error, probe *pipelineCancellation) ([]*storage.Edge, bool, error) {
 	if err != nil || !answered || w.namespace == "" {
 		return edges, answered, err
 	}
-	return w.toUserEdges(edges), true, nil
+	return w.toUserEdges(edges, probe), true, nil
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
@@ -541,7 +541,7 @@ func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
@@ -552,7 +552,7 @@ func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeI
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges, nil), nil
 }
 
 // MatchEdgesBetween matches the transaction's edges of one type between two
@@ -572,7 +572,7 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
@@ -594,7 +594,7 @@ func (w *transactionStorageWrapper) GetEdgesByType(edgeType string) ([]*storage.
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
@@ -603,7 +603,7 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, versi
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return nodes, err
 		}
-		return w.toUserNamespacedNodes(nodes), nil
+		return w.toUserNamespacedNodes(nodes, nil), nil
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -620,7 +620,7 @@ func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.Nod
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
@@ -635,7 +635,7 @@ func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.Nod
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
@@ -644,7 +644,7 @@ func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, ver
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return edges, err
 		}
-		return w.toUserNamespacedEdges(edges), nil
+		return w.toUserNamespacedEdges(edges, nil), nil
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -661,7 +661,7 @@ func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(startID, endID stor
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
@@ -672,7 +672,7 @@ func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodes(nodes, nil), nil
 }
 
 func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
@@ -680,7 +680,7 @@ func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges, nil), nil
 }
 
 func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
@@ -688,7 +688,7 @@ func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
 	if w.namespace == "" {
 		return nodes
 	}
-	return w.toUserNamespacedNodes(nodes)
+	return w.toUserNamespacedNodes(nodes, nil)
 }
 
 func (w *transactionStorageWrapper) GetInDegree(nodeID storage.NodeID) int {
@@ -840,7 +840,7 @@ func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge
 	return out
 }
 
-func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storage.Edge {
+func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge, probe *pipelineCancellation) []*storage.Edge {
 	out := make([]*storage.Edge, 0, len(edges))
 	for _, edge := range edges {
 		out = append(out, w.toUserEdge(edge))
@@ -848,7 +848,7 @@ func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storag
 	return out
 }
 
-func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge) []*storage.Edge {
+func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge, probe *pipelineCancellation) []*storage.Edge {
 	prefix := w.namespace + w.separator
 	out := make([]*storage.Edge, 0, len(edges))
 	for _, edge := range edges {
@@ -868,7 +868,7 @@ func (w *transactionStorageWrapper) toUserNodes(nodes []*storage.Node) []*storag
 	return out
 }
 
-func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node) []*storage.Node {
+func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node, probe *pipelineCancellation) []*storage.Node {
 	prefix := w.namespace + w.separator
 	out := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
@@ -981,14 +981,14 @@ func (w *transactionStorageWrapper) edgeCountByTypeScan(edgeType string) (int64,
 // so without the staged deltas they need a transaction with no staged node
 // or relationship changes.
 func (w *transactionStorageWrapper) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	return w.edgeCountByEndpointLabel(label, edgeType, true)
+	return w.edgeCountByEndpointLabel(label, edgeType, true, nil)
 }
 
 func (w *transactionStorageWrapper) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	return w.edgeCountByEndpointLabel(label, edgeType, false)
+	return w.edgeCountByEndpointLabel(label, edgeType, false, nil)
 }
 
-func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType string, start bool) (int64, error) {
+func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType string, start bool, probe *pipelineCancellation) (int64, error) {
 	// The staged positional deltas are not used: DETACH DELETE of a node whose
 	// relationship the same transaction created stages them wrong (#741).
 	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() && !w.tx.HasPendingNodeMutations() {
@@ -997,10 +997,10 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabel(label, edgeType str
 		}
 		return w.underlying.EdgeCountByEndLabel(label, edgeType)
 	}
-	return w.edgeCountByEndpointLabelScan(label, edgeType, start)
+	return w.edgeCountByEndpointLabelScan(label, edgeType, start, probe)
 }
 
-func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType string, start bool) (int64, error) {
+func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType string, start bool, probe *pipelineCancellation) (int64, error) {
 	edges, err := w.GetEdgesByType(edgeType)
 	if err != nil {
 		return 0, err

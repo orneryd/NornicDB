@@ -98,7 +98,7 @@ func ensureLeadingNodeNamed(pattern string) string {
 
 // extendTraversalRowMulti returns a copy of row with additional node,
 // relationship, and scalar or path bindings.
-func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.Node, relBinds map[string]*storage.Edge, valueBinds map[string]interface{}) traversalOptRow {
+func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.Node, relBinds map[string]*storage.Edge, valueBinds map[string]interface{}, probe *pipelineCancellation) traversalOptRow {
 	out := traversalOptRow{
 		nodes: make(map[string]*storage.Node, util.SafePreallocSum(len(row.nodes), len(nodeBinds))),
 		rels:  make(map[string]*storage.Edge, util.SafePreallocSum(len(row.rels), len(relBinds))),
@@ -158,7 +158,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
-		scope := pipelineRowFromTraversalOptionalRow(row)
+		scope := pipelineRowFromTraversalOptionalRow(row, contextPipelineProbe(ctx))
 		matched := false
 		for _, node := range candidates {
 			propertyMatch := true
@@ -184,7 +184,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 				continue
 			}
 			cand.optionalMatched = true
-			if err := retention.reserveTraversalRow(cand); err != nil {
+			if err := retention.reserveTraversalRow(cand, contextPipelineProbe(ctx)); err != nil {
 				return nil, err
 			}
 			out = append(out, cand)
@@ -192,7 +192,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 		}
 		if !matched {
 			unmatched := extendTraversalRow(row, varName, nil, "", nil)
-			if err := retention.reserveTraversalRow(unmatched); err != nil {
+			if err := retention.reserveTraversalRow(unmatched, contextPipelineProbe(ctx)); err != nil {
 				return nil, err
 			}
 			out = append(out, unmatched)
@@ -219,7 +219,7 @@ func nodePatternPropertyExpressions(group string) map[string]string {
 	return expressions
 }
 
-func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
+func pipelineRowFromTraversalOptionalRow(row traversalOptRow, probe *pipelineCancellation) pipelineRow {
 	scope := make(pipelineRow, len(row.nodes)+len(row.rels)+len(row.values))
 	for name, node := range row.nodes {
 		if node == nil {
@@ -271,7 +271,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	}
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
-		scope := pipelineRowFromTraversalOptionalRow(row)
+		scope := pipelineRowFromTraversalOptionalRow(row, contextPipelineProbe(ctx))
 		var matched []pipelineRow
 		// A pattern that reuses a variable bound to null (an earlier OPTIONAL
 		// MATCH found nothing) cannot match; enumerating it as if the variable
@@ -288,7 +288,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 			}
 		}
 		for _, binding := range matched {
-			candidate := extendTraversalRowMulti(row, nil, nil, nil)
+			candidate := extendTraversalRowMulti(row, nil, nil, nil, contextPipelineProbe(ctx))
 			if candidate.values == nil {
 				candidate.values = make(map[string]interface{})
 			}
@@ -303,13 +303,13 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 				}
 			}
 			candidate.optionalMatched = true
-			if err := retention.reserveTraversalRow(candidate); err != nil {
+			if err := retention.reserveTraversalRow(candidate, contextPipelineProbe(ctx)); err != nil {
 				return nil, err
 			}
 			out = append(out, candidate)
 		}
 		if len(matched) == 0 {
-			candidate := extendTraversalRowMulti(row, nil, nil, nil)
+			candidate := extendTraversalRowMulti(row, nil, nil, nil, contextPipelineProbe(ctx))
 			if candidate.values == nil {
 				candidate.values = make(map[string]interface{})
 			}
@@ -328,7 +328,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 					candidate.rels[name] = nil
 				}
 			}
-			if err := retention.reserveTraversalRow(candidate); err != nil {
+			if err := retention.reserveTraversalRow(candidate, contextPipelineProbe(ctx)); err != nil {
 				return nil, err
 			}
 			out = append(out, candidate)

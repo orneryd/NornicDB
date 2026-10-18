@@ -26,15 +26,15 @@ func (e *StorageExecutor) queryPropertyDecayEnabled() bool {
 // queryVisibleValue is a detached projection of entity properties. Internal
 // row bindings and mutation owners retain full entities: filtering their maps
 // in place would make an unrelated SET persist the removal of hidden fields.
-func (e *StorageExecutor) queryVisibleValue(value interface{}) interface{} {
+func (e *StorageExecutor) queryVisibleValue(value interface{}, probe *pipelineCancellation) interface{} {
 	be := e.propertyViewEngine()
 	if be == nil || !be.IsDecayEnabled() {
 		return value
 	}
-	return e.projectVisibleQueryValue(value)
+	return e.projectVisibleQueryValue(value, probe)
 }
 
-func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{} {
+func (e *StorageExecutor) projectVisibleQueryValue(value interface{}, probe *pipelineCancellation) interface{} {
 	switch v := value.(type) {
 	case *storage.Node:
 		if v == nil {
@@ -63,11 +63,11 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		out := *v
 		out.Nodes = make([]*storage.Node, len(v.Nodes))
 		for i, n := range v.Nodes {
-			out.Nodes[i] = e.projectVisibleQueryValue(n).(*storage.Node)
+			out.Nodes[i] = e.projectVisibleQueryValue(n, probe).(*storage.Node)
 		}
 		out.Relationships = make([]*storage.Edge, len(v.Relationships))
 		for i, r := range v.Relationships {
-			out.Relationships[i] = e.projectVisibleQueryValue(r).(*storage.Edge)
+			out.Relationships[i] = e.projectVisibleQueryValue(r, probe).(*storage.Edge)
 		}
 		return &out
 	case []interface{}:
@@ -76,7 +76,7 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		}
 		out := make([]interface{}, len(v))
 		for i, x := range v {
-			out[i] = e.projectVisibleQueryValue(x)
+			out[i] = e.projectVisibleQueryValue(x, probe)
 		}
 		return out
 	case []*storage.Node:
@@ -85,7 +85,7 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		}
 		out := make([]*storage.Node, len(v))
 		for i, n := range v {
-			out[i] = e.projectVisibleQueryValue(n).(*storage.Node)
+			out[i] = e.projectVisibleQueryValue(n, probe).(*storage.Node)
 		}
 		return out
 	case []*storage.Edge:
@@ -94,7 +94,7 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		}
 		out := make([]*storage.Edge, len(v))
 		for i, r := range v {
-			out[i] = e.projectVisibleQueryValue(r).(*storage.Edge)
+			out[i] = e.projectVisibleQueryValue(r, probe).(*storage.Edge)
 		}
 		return out
 	case map[string]interface{}:
@@ -103,15 +103,15 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		}
 		out := make(map[string]interface{}, len(v))
 		for k, x := range v {
-			out[k] = e.projectVisibleQueryValue(x)
+			out[k] = e.projectVisibleQueryValue(x, probe)
 		}
 		return out
 	}
 	return value
 }
 
-func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]interface{} {
-	switch v := e.queryVisibleValue(value).(type) {
+func (e *StorageExecutor) queryEntityProperties(value interface{}, probe *pipelineCancellation) map[string]interface{} {
+	switch v := e.queryVisibleValue(value, probe).(type) {
 	case *storage.Node:
 		if v != nil {
 			return v.Properties
@@ -124,19 +124,19 @@ func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]in
 	return nil
 }
 
-func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
+func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult, probe *pipelineCancellation) {
 	be := e.propertyViewEngine()
 	if result == nil || be == nil || !be.IsDecayEnabled() {
 		return
 	}
 	for i, row := range result.Rows {
-		result.Rows[i] = e.projectVisibleQueryValue(row).([]interface{})
+		result.Rows[i] = e.projectVisibleQueryValue(row, probe).([]interface{})
 	}
 }
 
 func (e *StorageExecutor) projectVisiblePipelineNodeRead(ctx context.Context, nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
 	if e.queryPropertyDecayEnabled() {
-		nodes = e.projectVisibleQueryValue(nodes).([]*storage.Node)
+		nodes = e.projectVisibleQueryValue(nodes, contextPipelineProbe(ctx)).([]*storage.Node)
 	}
 	return projectPipelineSimpleNodeRead(ctx, nodes, items, variable)
 }

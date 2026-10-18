@@ -129,14 +129,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			branches = unionBranches
 		}
 		for _, branch := range branches {
-			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
+			if locals := unscopedBranchLocals(branch, outerNames, preparationProbe); len(locals) > 0 {
 				branchLocals[strings.TrimSpace(branch)] = locals
 			}
 		}
 	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
-		clauses, ok := pipelineClausesFor(body)
+		clauses, ok := pipelineClausesFor(body, preparationProbe)
 		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
@@ -180,7 +180,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				branchClauses := clauses
 				if isUnion {
 					var planned bool
-					branchClauses, planned = pipelineClausesFor(query)
+					branchClauses, planned = pipelineClausesFor(query, cancellation)
 					if !planned {
 						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
 					}
@@ -233,13 +233,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			// outer row's values once, each returned row's in full (#1343).
 			if retention.tracking() && execErr == nil {
 				if !hasReturn {
-					execErr = retention.reserveExtendedRow(outer, nil, nil)
+					execErr = retention.reserveExtendedRow(outer, nil, nil, cancellation)
 				} else if inner != nil {
 					for _, values := range inner.Rows {
 						if cancellation.stopped() {
 							return nil, nil, false, cancellation.failed()
 						}
-						if execErr = retention.reserveExtendedRow(outer, inner.Columns, values); execErr != nil {
+						if execErr = retention.reserveExtendedRow(outer, inner.Columns, values, cancellation); execErr != nil {
 							break
 						}
 					}
@@ -315,7 +315,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					if !probe.check() {
 						return nil, stats, true, probe.err
 					}
-					if err := retention.reserveMergedRow(outer, inner); err != nil {
+					if err := retention.reserveMergedRow(outer, inner, probe); err != nil {
 						return nil, stats, true, err
 					}
 					merged := mergeCallPipelineRowsWithCancellation(outer, inner, probe)

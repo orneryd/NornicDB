@@ -377,10 +377,10 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// Handle $param and dotted $param.path references directly so typed values
 	// survive intact during pattern parsing.
 	if v, ok := resolveParamPathRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
+		return normalizePropValue(v, contextPipelineProbe(ctx))
 	}
 	if v, ok := resolveContextPathRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
+		return normalizePropValue(v, contextPipelineProbe(ctx))
 	}
 
 	// Handle bare $param references directly so the typed value (e.g. []string,
@@ -389,7 +389,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// remaining branches would either misparse it or fall through to the
 	// invalid-value catch-all.
 	if v, ok := resolveDirectParamRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
+		return normalizePropValue(v, contextPipelineProbe(ctx))
 	}
 
 	// Handle null
@@ -448,7 +448,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		return invalidPropertyValue{raw: valueStr}
 	}
 	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
-		return normalizePropValue(value)
+		return normalizePropValue(value, contextPipelineProbe(ctx))
 	}
 
 	// Bound loop variables (FOREACH x, UNWIND rows): a bare identifier that
@@ -456,7 +456,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// string fallback. This is the bound-child path; the query-text
 	// substitution path never leaves bare identifiers here.
 	if v, ok := e.boundValue(ctx, valueStr); ok {
-		return normalizePropValue(v)
+		return normalizePropValue(v, contextPipelineProbe(ctx))
 	}
 
 	// Otherwise return as string (handles unquoted identifiers, etc.)

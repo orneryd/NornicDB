@@ -6,7 +6,7 @@ package cypher
 // set, every label as a label added. The node / relationship itself is
 // counted by the caller, and a SET / ON CREATE SET applied to it afterwards
 // is counted by the SET rule (pipelineApplySet).
-func countCreatedEntity(stats *QueryStats, labels []string, properties map[string]interface{}) {
+func countCreatedEntity(stats *QueryStats, labels []string, properties map[string]interface{}, probe *pipelineCancellation) {
 	if stats == nil {
 		return
 	}

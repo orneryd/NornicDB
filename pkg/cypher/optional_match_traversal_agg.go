@@ -118,7 +118,7 @@ func traversalAggPlaceholder(n int) string {
 func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, rows []traversalOptRow, items []returnItem) ([][]interface{}, error) {
 	bindings := make([]pipelineRow, len(rows))
 	for index, row := range rows {
-		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
+		bindings[index] = pipelineRowFromTraversalOptionalRow(row, contextPipelineProbe(ctx))
 	}
 	plan := returnProjectionPlanFromItems(items)
 	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {

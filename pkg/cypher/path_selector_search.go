@@ -1073,7 +1073,7 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 				direct = false
 			}
 		}
-		rows = s.pair(source, target, count, groups, direct, bind)
+		rows = s.pair(source, target, count, groups, direct, bind, probe)
 	} else if ctx.Err() == nil {
 		if ends != nil {
 			s.ends = make(map[storage.NodeID]bool, len(ends))
@@ -1085,7 +1085,7 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 				s.ends[node.ID] = true
 			}
 		}
-		rows = s.run(source, count, groups, bind)
+		rows = s.run(source, count, groups, bind, probe)
 	}
 	// The search's state goes back whether it found paths, none, or was
 	// cancelled; the rows it found count before they are kept (#1343).
@@ -1093,7 +1093,7 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 	if retention := trackedRetention(ctx); retention != nil {
 		defer retention.close()
 		for _, found := range rows {
-			if retention.reserveRow(found) != nil {
+			if retention.reserveRow(found, probe) != nil {
 				return nil
 			}
 		}
@@ -1267,7 +1267,7 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 		bound[variable] = values
 	}
 	bound[plan.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: nodes, Relationships: relationships, Length: len(relationships)})
-	if plan.acyclic && !distinctNodeIDs(pathResultNodeIDs(&PathResult{Nodes: nodes})) {
+	if plan.acyclic && !distinctNodeIDs(pathResultNodeIDs(&PathResult{Nodes: nodes}, contextPipelineProbe(ctx)), contextPipelineProbe(ctx)) {
 		return nil, false
 	}
 	for group, checks := range plan.iterationChecks {

@@ -162,7 +162,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches, contextPipelineProbe(ctx))
 		if err != nil {
 			return nil, true, err
 		}
@@ -210,13 +210,13 @@ func isSimpleWithPassthroughClause(clause string) bool {
 }
 
 func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row.item, row.itemMap)
+	return e.evaluateBatchLookupExpr(match, row.item, row.itemMap, nil)
 }
 
-func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}, probe *pipelineCancellation) (interface{}, bool) {
 	if match.rowField != "" && bindingMap != nil {
 		if v, ok := bindingMap[match.rowField]; ok {
-			return normalizePropValue(v), true
+			return normalizePropValue(v, probe), true
 		}
 	}
 	expr := strings.TrimSpace(match.lookupExpr)
@@ -224,7 +224,7 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 		return nil, false
 	}
 	if value, ok := e.evaluateBatchLookupExprFast(expr, match.bindingVar, bindingValue, bindingMap); ok {
-		return normalizePropValue(value), true
+		return normalizePropValue(value, probe), true
 	}
 
 	values := make(map[string]interface{}, 1)
@@ -234,11 +234,11 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	value := e.evaluateExpressionFromValues(expr, values)
 	if literal, ok := value.(string); ok && literal == expr {
 		if parsed, parsedOK := parseLiteralValueFromComputedRow(expr); parsedOK {
-			return normalizePropValue(parsed), true
+			return normalizePropValue(parsed, probe), true
 		}
 		return nil, false
 	}
-	return normalizePropValue(value), true
+	return normalizePropValue(value, probe), true
 }
 
 func (e *StorageExecutor) evaluateBatchLookupExprFast(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
@@ -308,10 +308,10 @@ func evaluateBatchLookupOperand(expr, bindingVar string, bindingValue interface{
 // buildPropsFromSpec assembles a property map for a CREATE from a row with
 // the same value semantics as the CREATE core: values are normalized
 // (normalizePropValue) and a null value leaves the property unset.
-func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals map[string]any) map[string]any {
+func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals map[string]any, probe *pipelineCancellation) map[string]any {
 	props := make(map[string]any, len(rowRefs)+len(literals))
 	put := func(name string, value any) {
-		if value = normalizePropValue(value); value != nil {
+		if value = normalizePropValue(value, probe); value != nil {
 			props[name] = value
 		}
 	}

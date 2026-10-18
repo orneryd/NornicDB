@@ -263,7 +263,7 @@ func materializePipelineSource(ctx context.Context, source pipelineRowSource) ([
 			}
 			retained[name] = value
 		}
-		if collected.memory.reserveRow(retained) != nil {
+		if collected.memory.reserveRow(retained, probe) != nil {
 			return false
 		}
 		collected.out = appendPipelineItem(collected.out, retained, probe)
@@ -405,7 +405,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					prefetchedBatch, prefetchedPattern = prefetched[nodeBatchMatchKey{label: pattern.labels[0], prop: template.properties[0].key}]
 				}
 				if !prefetchedPattern {
-					key, keyed = pipelinePropertiesKey(pattern.properties)
+					key, keyed = pipelinePropertiesKey(pattern.properties, probe)
 				}
 				cache := &caches[index]
 				nodes, cached := cache.nodes, keyed && cache.initialized && cache.key == key
@@ -419,7 +419,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 						// value hits it directly instead of an index seek
 						// per row (see buildRelationshipBatchNodeMatchIndex).
 						value, _ := pattern.properties[template.properties[0].key]
-						if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]; ok {
+						if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value, probe))]; ok {
 							nodes = []*storage.Node{node}
 						} else {
 							nodes = nil
@@ -469,7 +469,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							return false
 						}
 					}
-					if !typed || node == nil || !e.pipelineNodeMatchesPattern(node, pattern) {
+					if !typed || node == nil || !e.pipelineNodeMatchesPattern(node, pattern, probe) {
 						return true
 					}
 					return visit(index + 1)
@@ -479,7 +479,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 						valid = false
 						return false
 					}
-					if !e.pipelineNodeMatchesPattern(node, pattern) {
+					if !e.pipelineNodeMatchesPattern(node, pattern, probe) {
 						continue
 					}
 					current[pattern.variable] = node
@@ -537,7 +537,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 				if !probe.check() {
 					return probe.err
 				}
-				if !e.pipelineNodeMatchesPattern(node, pattern) {
+				if !e.pipelineNodeMatchesPattern(node, pattern, probe) {
 					return nil
 				}
 				current[pattern.variable] = node

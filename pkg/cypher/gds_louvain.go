@@ -29,7 +29,7 @@ var louvainConfigKeys = []string{
 // the largest seed + its numeric original ID (string IDs use 1 + their
 // projection position). This can collide with a seed, as in GDS.
 // consecutiveIds numbers them 0, 1, … by first node.
-func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLouvainStream(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -48,16 +48,16 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		return nil, err
 	}
 	run := louvain.Options{}
-	maxLevels, err := c.integer("maxLevels", "Integer", 1, 1<<31-1, 10, false)
+	maxLevels, err := c.integer("maxLevels", "Integer", 1, 1<<31-1, 10, false, probe)
 	if err != nil {
 		return nil, err
 	}
-	maxIterations, err := c.integer("maxIterations", "Integer", 1, 1<<31-1, 10, false)
+	maxIterations, err := c.integer("maxIterations", "Integer", 1, 1<<31-1, 10, false, probe)
 	if err != nil {
 		return nil, err
 	}
 	run.MaxLevels, run.MaxIterations = int(maxLevels), int(maxIterations)
-	if run.Tolerance, err = c.number("tolerance", "Double", 0.0001); err != nil {
+	if run.Tolerance, err = c.number("tolerance", "Double", 0.0001, probe); err != nil {
 		return nil, err
 	}
 	if run.Tolerance < 0 || math.IsNaN(run.Tolerance) || math.IsInf(run.Tolerance, 1) {
@@ -81,7 +81,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if seedProperty != "" && consecutive {
 		return nil, localizedError(localization.CypherGraphProceduresLouvainSeedingConsecutive(), nil)
 	}
-	minSize, err := c.integer("minCommunitySize", "Integer", 1, math.MaxInt64, 1, false)
+	minSize, err := c.integer("minCommunitySize", "Integer", 1, math.MaxInt64, 1, false, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false); err != nil {
+	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false, probe); err != nil {
 		return nil, err
 	}
 	if _, err := c.jobID(); err != nil {
@@ -116,7 +116,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		// Ask the shared typed reader to validate the requested type even
 		// when the selection is empty; translate its error into GDS's
 		// community-seeding message without a second schema/type reader.
-		if _, err := projection.nodePropertyValue("", seedProperty, "Integer"); err != nil {
+		if _, err := projection.nodePropertyValue("", seedProperty, "Integer", probe); err != nil {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
 		}
 	}
@@ -150,7 +150,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			run.Seed[i] = i
 			// Integer reads preserve exact Long values and supply GDS's
 			// missing sentinel through the single projected-property owner.
-			value, err := projection.nodePropertyValue(id, seedProperty, "Integer")
+			value, err := projection.nodePropertyValue(id, seedProperty, "Integer", probe)
 			if err != nil {
 				return nil, err
 			}

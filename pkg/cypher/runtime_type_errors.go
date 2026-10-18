@@ -115,7 +115,7 @@ func predicateValueHolds(ctx context.Context, value interface{}, arithmetic bool
 // Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
 // LongArray[1, 2], List{Long(1), String("a")}; a temporal value or a point
 // as its text (2020-01-02, P1D, point({x: 1.0, y: 2.0, crs: 'cartesian'})).
-func neo4jValueRepr(value interface{}) string {
+func neo4jValueRepr(value interface{}, probe *pipelineCancellation) string {
 	switch v := value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return fmt.Sprintf("Long(%d)", v)
@@ -145,17 +145,17 @@ func neo4jValueRepr(value interface{}) string {
 		sort.Strings(keys)
 		parts := make([]string, len(keys))
 		for index, key := range keys {
-			parts[index] = key + " -> " + neo4jValueRepr(m[key])
+			parts[index] = key + " -> " + neo4jValueRepr(m[key], probe)
 		}
 		return "Map{" + strings.Join(parts, ", ") + "}"
 	}
 	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
 		items := toAnySlice(value)
-		typeName := neo4jValueTypeName(value)
+		typeName := neo4jValueTypeName(value, probe)
 		parts := make([]string, len(items))
 		for index, item := range items {
 			if typeName == "List" {
-				parts[index] = neo4jValueRepr(item)
+				parts[index] = neo4jValueRepr(item, probe)
 			} else {
 				parts[index] = fmt.Sprint(item)
 			}
@@ -171,7 +171,7 @@ func neo4jValueRepr(value interface{}) string {
 		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
 		return formatCypherValueString(value)
 	}
-	return neo4jValueTypeName(value)
+	return neo4jValueTypeName(value, probe)
 }
 
 // isRuntimeNumber reports whether v is a Cypher INTEGER or FLOAT value.
@@ -223,7 +223,7 @@ func isRuntimeList(v interface{}) bool { return cypherValueKindOf(v) == valueKin
 // operand is of a type the operator can't take, or nil. Null operands make the
 // result null and are never an error. A String next to a temporal or duration
 // operand is left alone: NornicDB can carry temporal values as strings.
-func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
+func runtimeArithmeticTypeError(op byte, left, right interface{}, probe *pipelineCancellation) error {
 	if left == nil || right == nil {
 		return nil
 	}
@@ -258,7 +258,7 @@ func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
 	if valid {
 		return nil
 	}
-	leftName, rightName := neo4jValueTypeName(left), neo4jValueTypeName(right)
+	leftName, rightName := neo4jValueTypeName(left, probe), neo4jValueTypeName(right, probe)
 	switch op {
 	case '+':
 		return runtimeTypeError(fmt.Sprintf("Cannot add `%s` and `%s`", leftName, rightName))
@@ -277,16 +277,16 @@ func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
 
 // unaryMinusTypeError is the TypeError of -value (0 - value in Neo4j) for a
 // non-null value that isn't a number or a duration, or nil.
-func unaryMinusTypeError(value interface{}) error {
+func unaryMinusTypeError(value interface{}, probe *pipelineCancellation) error {
 	if value == nil || isRuntimeNumber(value) || isRuntimeDuration(value) {
 		return nil
 	}
-	return runtimeTypeError(fmt.Sprintf("Cannot subtract `%s` from `Long`", neo4jValueTypeName(value)))
+	return runtimeTypeError(fmt.Sprintf("Cannot subtract `%s` from `Long`", neo4jValueTypeName(value, probe)))
 }
 
 // propertyAccessTypeError is the TypeError of value.key for a non-null value
 // that has no properties (a number, a string, a boolean, a list), or nil.
-func propertyAccessTypeError(value interface{}) error {
+func propertyAccessTypeError(value interface{}, probe *pipelineCancellation) error {
 	switch value.(type) {
 	case nil, *storage.Node, *storage.Edge, map[string]interface{}:
 		return nil
@@ -297,7 +297,7 @@ func propertyAccessTypeError(value interface{}) error {
 	if _, isMap := toStringAnyMap(value); isMap {
 		return nil
 	}
-	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value)))
+	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value, probe)))
 }
 
 // temporalNoSuchFieldError is the TypeError of reading a field a temporal
@@ -309,9 +309,9 @@ func temporalNoSuchFieldError(field string) error {
 
 // subscriptReceiverError is the TypeError of base[index] for a base that is
 // neither a list nor a map.
-func subscriptReceiverError(base, index interface{}) error {
-	repr := neo4jValueRepr(base)
-	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
+func subscriptReceiverError(base, index interface{}, probe *pipelineCancellation) error {
+	repr := neo4jValueRepr(base, probe)
+	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index, probe)))
 }
 
 // isOperatorExpressionText reports whether text can be an expression whose

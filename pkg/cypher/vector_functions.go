@@ -62,7 +62,7 @@ func fnVector(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	vector, err := newCypherVector(items, coordinateType)
+	vector, err := newCypherVector(items, coordinateType, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func vectorCoordinateTypeError(function, got string) error {
 // newCypherVector builds a vector of coordinateType from numbers: integer
 // coordinates truncate toward zero and must fit the type; float32 ones round
 // and, like float64 ones, must be finite.
-func newCypherVector(items []interface{}, coordinateType VectorCoordinateType) (CypherVector, error) {
+func newCypherVector(items []interface{}, coordinateType VectorCoordinateType, probe *pipelineCancellation) (CypherVector, error) {
 	vector := CypherVector{Type: coordinateType}
 	limits := map[VectorCoordinateType]float64{VectorInteger64: math.MaxInt64, VectorInteger32: math.MaxInt32, VectorInteger16: math.MaxInt16, VectorInteger8: math.MaxInt8}
 	for _, item := range items {

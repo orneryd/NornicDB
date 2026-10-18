@@ -132,7 +132,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	recordAccess := true
 	defer func() {
 		if recordAccess && retErr == nil && result != nil {
-			e.recordMaterializedResultAccess(result)
+			e.recordMaterializedResultAccess(result, contextPipelineProbe(ctx))
 		}
 	}()
 
@@ -265,7 +265,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if config.IsANTLRParser() {
 		body, _ := stripCypherPreamble(cypher)
-		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
+		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body, preparationProbe) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
 	}
@@ -300,7 +300,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			// statement pay for heap-allocated defers. Restored last pass first.
 			defer func() {
 				for index := len(expressionRewrites) - 1; index >= 0; index-- {
-					result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+					result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result, preparationProbe), retErr)
 				}
 			}()
 		} else {
@@ -322,7 +322,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		} else if structureRewrite != nil {
 			cypher = composed
-			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result, preparationProbe), retErr) }()
 		} else if !mayUseQueryStructure(cypher) {
 			// Only the quick check's verdict is the text's alone.
 			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
@@ -443,10 +443,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// every route; the result's columns and errors are mapped back (#734).
 	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
 		cypher = canonical
-		params = names.parameterValues(params)
+		params = names.parameterValues(params, preparationProbe)
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
-		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems, preparationProbe) }()
 	}
 	if preparationProbe != nil && preparationProbe.err != nil {
 		return nil, preparationProbe.err
@@ -455,14 +455,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates every route reads, once, here; the result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25", preparationProbe)
 	if err != nil {
 		return nil, err
 	}
 	if labelRewrite != nil {
 		rowsRewritten = true
 		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result, preparationProbe), retErr) }()
 	}
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
 	// WITH * they stand for, once, here; errors are mapped back (#907).
@@ -543,7 +543,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 
 		if fabricResultCacheKey != "" {
-			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
+			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration, preparationProbe)
 		}
 
 		if info.IsWriteQuery && e.cache != nil {
@@ -589,7 +589,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	e.statementAdmitted(ctx)
-	if err := e.systemDatabaseWriteError(cypher); err != nil {
+	if err := e.systemDatabaseWriteError(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
 
@@ -626,7 +626,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				return result, err
 			}
 		} else {
-			scriptExec := e.cloneForStorage(e.storage)
+			scriptExec := e.cloneForStorage(e.storage, preparationProbe)
 			scriptExec.txContext = nil
 			if result, err := scriptExec.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 				return result, err
@@ -635,7 +635,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	} else if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 		return result, err
 	}
-	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+	if result, err := e.parseTransactionStatement(cypher, preparationProbe); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
@@ -684,7 +684,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		} else if retErr == nil && result != nil && running.memory != nil {
 			// A nested execution's caller keeps its rows: they count, and
 			// what the execution took goes back here, not in done.
-			err := running.memory.handOver(running.memoryMark, result.Rows)
+			err := running.memory.handOver(running.memoryMark, result.Rows, preparationProbe)
 			running.memory = nil
 			if err != nil {
 				result, retErr = nil, err
@@ -861,7 +861,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if e.canUseResultCache(ctx, info, cypher) {
-		resultCacheKey = resultCacheEntryKey(cypher, params)
+		resultCacheKey = resultCacheEntryKey(cypher, params, preparationProbe)
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
 		}
@@ -928,7 +928,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			restored, _ := rewrite.restore(&ExecuteResult{Columns: columns}, nil)
 			return restored.Columns
 		}, func(rows [][]interface{}) {
-			e.recordMaterializedResultAccess(&ExecuteResult{Rows: rows})
+			e.recordMaterializedResultAccess(&ExecuteResult{Rows: rows}, preparationProbe)
 		})
 	}
 
@@ -959,7 +959,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
-		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
+		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration, preparationProbe)
 	}
 
 	// Invalidate caches on write operations (using cached analysis)

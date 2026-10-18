@@ -21,7 +21,7 @@ import (
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.louvain", args)
+	nodes, err := e.algorithmNodes("apoc.algo.louvain", args, contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -29,10 +29,10 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	weightProp, _ := algorithmConfig(args)["weightProperty"].(string)
 
 	// Run Louvain algorithm
-	communities := e.computeLouvain(nodes, weightProp)
+	communities := e.computeLouvain(nodes, weightProp, contextPipelineProbe(ctx))
 
 	// Build result
-	rows := algorithmRows(nodes, communities)
+	rows := algorithmRows(nodes, communities, contextPipelineProbe(ctx))
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -48,7 +48,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // helps, then merges each community into one node; levels repeat until a
 // level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
 // numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string, probe *pipelineCancellation) map[storage.NodeID]int {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
 	}
@@ -99,14 +99,14 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args)
+	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args, contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, err
 	}
 
-	communities := e.computeLabelPropagation(nodes)
+	communities := e.computeLabelPropagation(nodes, contextPipelineProbe(ctx))
 
-	rows := algorithmRows(nodes, communities)
+	rows := algorithmRows(nodes, communities, contextPipelineProbe(ctx))
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -114,7 +114,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 	}, nil
 }
 
-func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node, probe *pipelineCancellation) map[storage.NodeID]int {
 
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
@@ -172,7 +172,7 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 	}
 
 	// Communities numbered by their first node in the given order (#1183).
-	return renumberInNodeOrder(nodes, labels)
+	return renumberInNodeOrder(nodes, labels, probe)
 }
 
 // =============================================================================
@@ -182,14 +182,14 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.wcc", args)
+	nodes, err := e.algorithmNodes("apoc.algo.wcc", args, contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, err
 	}
 
-	components := e.computeWCC(nodes)
+	components := e.computeWCC(nodes, contextPipelineProbe(ctx))
 
-	rows := algorithmRows(nodes, components)
+	rows := algorithmRows(nodes, components, contextPipelineProbe(ctx))
 
 	return &ExecuteResult{
 		Columns: []string{"node", "componentId"},
@@ -197,7 +197,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 	}, nil
 }
 
-func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *StorageExecutor) computeWCC(nodes []*storage.Node, probe *pipelineCancellation) map[storage.NodeID]int {
 
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}

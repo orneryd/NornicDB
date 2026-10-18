@@ -73,7 +73,7 @@ func buildComparableMembershipIndexWithCancellation(items []interface{}, probe *
 func evaluateComparableMembership(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, equals func(interface{}, interface{}) bool) bool {
 	return indexedMembershipTruth(actual, comparableSet, nonComparable, false, func(left, right interface{}) interface{} {
 		return equals(left, right)
-	}) == truthTrue
+	}, nil) == truthTrue
 }
 
 // membershipKey is the key of a comparable value in a membership index

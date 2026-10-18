@@ -31,7 +31,7 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine, probe *pipelineCancellation) ([]*storage.Node, bool) {
 	if len(nodeInfo.properties) == 0 {
 		return nil, false
 	}
@@ -105,7 +105,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 				probed = true
 			}
 		} else {
-			labels := e.indexCandidateLabels(schema, nil, prop)
+			labels := e.indexCandidateLabels(schema, nil, prop, probe)
 			if labellessPropertyIndexUsable(store, labels...) {
 				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
 				probed = true
@@ -283,7 +283,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			detail: "UnexpectedSyntax",
 		}
 	}
-	if err := validateMergePatternProperties(matchProps, "node"); err != nil {
+	if err := validateMergePatternProperties(matchProps, "node", contextPipelineProbe(ctx)); err != nil {
 		return nil, err
 	}
 
@@ -296,7 +296,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := prepareMergeKeys(ctx, store, labels, matchProps); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(store, labels, matchProps, contextPipelineProbe(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -311,7 +311,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			Labels:     labels,
 			Properties: matchProps,
 		}
-		if err := validatePropertyValues(node.Properties); err != nil {
+		if err := validatePropertyValues(node.Properties, contextPipelineProbe(ctx)); err != nil {
 			return nil, err
 		}
 		actualID, err := store.CreateNode(node)
@@ -320,7 +320,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps, contextPipelineProbe(ctx))
 			if findErr != nil {
 				return nil, findErr
 			}
@@ -332,10 +332,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			node.ID = actualID
 			e.notifyNodeMutated(string(node.ID))
 			result.Stats.NodesCreated = 1
-			countCreatedEntity(result.Stats, node.Labels, node.Properties)
+			countCreatedEntity(result.Stats, node.Labels, node.Properties, contextPipelineProbe(ctx))
 		}
 	}
-	e.cacheMergeNode(labels, matchProps, node)
+	e.cacheMergeNode(labels, matchProps, node, contextPipelineProbe(ctx))
 
 	// Anonymous pattern nodes do not introduce a variable into scope.
 	if varName != "" {
@@ -414,13 +414,13 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
+	if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node", contextPipelineProbe(ctx)); err != nil {
 		return nil, err
 	}
-	if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
+	if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node", contextPipelineProbe(ctx)); err != nil {
 		return nil, err
 	}
-	if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
+	if err := validateMergePatternProperties(parsedPattern.properties, "relationship", contextPipelineProbe(ctx)); err != nil {
 		return nil, err
 	}
 
@@ -444,12 +444,12 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// fields. Scan the bounded endpoint pair so same-type relationships with
 	// different property identities remain distinct.
 	if existingEdge == nil {
-		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties, contextPipelineProbe(ctx))
 		if err != nil {
 			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 		}
 		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties, contextPipelineProbe(ctx))
 			if err != nil {
 				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 			}
@@ -462,20 +462,20 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	} else {
 		// Create new relationship
 		edge = &storage.Edge{
-			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
+			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties, contextPipelineProbe(ctx)),
 			Type:       parsedPattern.relType,
 			StartNode:  mergeStartNode.ID,
 			EndNode:    mergeEndNode.ID,
 			Properties: parsedPattern.properties,
 		}
-		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
+		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties, contextPipelineProbe(ctx))
 		if createErr != nil {
 			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 		}
 		edge = createdEdge
 		if created {
 			result.Stats.RelationshipsCreated = 1
-			countCreatedEntity(result.Stats, nil, edge.Properties)
+			countCreatedEntity(result.Stats, nil, edge.Properties, contextPipelineProbe(ctx))
 			e.notifyEdgeMutated(string(edge.ID))
 			e.notifyNodeMutated(string(edge.StartNode))
 			if edge.EndNode != edge.StartNode {
@@ -535,14 +535,14 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 					return writes.count, err
 				}
 				// A source without properties (an empty node) clears them.
-				writes.mapEntries(edge.Properties, props, true)
-				edge.Properties = setPropertyMap(props)
+				writes.mapEntries(edge.Properties, props, true, probe)
+				edge.Properties = setPropertyMap(props, probe)
 			case operator == "+=":
 				props, err := e.setSourceMap(ctx, right, "+=", nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
-				writes.mapEntries(edge.Properties, props, false)
+				writes.mapEntries(edge.Properties, props, false, probe)
 				for k, v := range props {
 					if probe.stopped() {
 						return 0, probe.failed()
@@ -633,8 +633,8 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 				return err
 			}
 			// A source without properties (an empty node) clears them.
-			writes.mapEntries(node.Properties, props, true)
-			node.Properties = setPropertyMap(props)
+			writes.mapEntries(node.Properties, props, true, contextPipelineProbe(ctx))
+			node.Properties = setPropertyMap(props, contextPipelineProbe(ctx))
 		case operator == ":":
 			items, err := setLabelChainItems(right)
 			if err != nil {
@@ -687,7 +687,7 @@ func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nod
 			return nil, err
 		}
 	}
-	value, _, err := storablePropertyValue(value)
+	value, _, err := storablePropertyValue(value, contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -719,7 +719,7 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 			value = e.parseValue(ctx, strings.TrimSpace(expr))
 		}
 	}
-	return setPropertyMapValue(value, operator)
+	return setPropertyMapValue(value, operator, contextPipelineProbe(ctx))
 }
 
 // splitSetAssignment splits one SET assignment into its target variable,
@@ -802,7 +802,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 // property cannot store. The map's values are the values a property stores
 // (storablePropertyValue), so a map entry is checked as SET x.p = v checks v;
 // the source map is copied only when one of them was rewritten.
-func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
+func setPropertyMapValue(value interface{}, operator string, probe *pipelineCancellation) (map[string]interface{}, error) {
 	typeName := "NULL"
 	if value != nil {
 		typeName = cypherTypeName(value)
@@ -814,7 +814,7 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 	}
 	var stored map[string]interface{}
 	for key, v := range props {
-		storedValue, rewritten, err := storablePropertyValue(v)
+		storedValue, rewritten, err := storablePropertyValue(v, probe)
 		if err != nil {
 			return nil, err
 		}

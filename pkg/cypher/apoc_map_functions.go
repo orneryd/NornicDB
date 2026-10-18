@@ -26,7 +26,7 @@ func init() {
 // apoc.map.removeKeys(map, [key], config). A null key is in no map.
 func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error) {
 	const function = "apoc.map.removeKey"
-	entries, values, err := apocMapArguments(ctx, function, args)
+	entries, values, err := apocMapArguments(ctx, function, args, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -35,9 +35,9 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 	}
 	key, isString := values[1].(string)
 	if !isString {
-		return nil, apocMapArgumentTypeError(function, "String", values[1])
+		return nil, apocMapArgumentTypeError(function, "String", values[1], nil)
 	}
-	recursive, err := apocMapRecursive(function, values)
+	recursive, err := apocMapRecursive(function, values, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 // in the list that isn't a string matches no map key.
 func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, error) {
 	const function = "apoc.map.removeKeys"
-	entries, values, err := apocMapArguments(ctx, function, args)
+	entries, values, err := apocMapArguments(ctx, function, args, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -60,9 +60,9 @@ func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, erro
 	}
 	items, isList := cypherListValue(values[1])
 	if !isList {
-		return nil, apocMapArgumentTypeError(function, "List<String>", values[1])
+		return nil, apocMapArgumentTypeError(function, "List<String>", values[1], nil)
 	}
-	recursive, err := apocMapRecursive(function, values)
+	recursive, err := apocMapRecursive(function, values, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, erro
 
 // apocMapArguments evaluates the (map, key or keys, config = {}) arguments
 // and reads the map.
-func apocMapArguments(ctx cypherfn.Context, function string, args []string) (map[string]interface{}, []interface{}, error) {
+func apocMapArguments(ctx cypherfn.Context, function string, args []string, probe *pipelineCancellation) (map[string]interface{}, []interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, nil, functionParameterCountError(function, len(args) > 3)
 	}
@@ -90,20 +90,20 @@ func apocMapArguments(ctx cypherfn.Context, function string, args []string) (map
 	}
 	entries, isMap := apocMapValue(values[0])
 	if !isMap {
-		return nil, nil, apocMapArgumentTypeError(function, "Map", values[0])
+		return nil, nil, apocMapArgumentTypeError(function, "Map", values[0], probe)
 	}
 	return entries, values, nil
 }
 
 // apocMapRecursive reads config.recursive as APOC's Util.toBoolean does; a
 // missing or null config is {}.
-func apocMapRecursive(function string, values []interface{}) (bool, error) {
+func apocMapRecursive(function string, values []interface{}, probe *pipelineCancellation) (bool, error) {
 	if len(values) < 3 || values[2] == nil {
 		return false, nil
 	}
 	config, isMap := apocMapValue(values[2])
 	if !isMap {
-		return false, apocMapArgumentTypeError(function, "Map", values[2])
+		return false, apocMapArgumentTypeError(function, "Map", values[2], probe)
 	}
 	return apocToBoolean(config["recursive"]), nil
 }
@@ -188,7 +188,7 @@ func apocMapNullArgumentError(function, argument string) error {
 		localization.CypherCoreFunctionArgumentNull(function, argument))
 }
 
-func apocMapArgumentTypeError(function, expected string, value interface{}) error {
+func apocMapArgumentTypeError(function, expected string, value interface{}, probe *pipelineCancellation) error {
 	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFunctionArgumentInvalid(function, "a "+expected, neo4jValueRepr(value)))
+		localization.CypherCoreFunctionArgumentInvalid(function, "a "+expected, neo4jValueRepr(value, probe)))
 }

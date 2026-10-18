@@ -605,7 +605,7 @@ func (n *rowReduceNode) eval(e *StorageExecutor, values map[string]interface{}, 
 	if listValue == nil {
 		return nil, true, nil
 	}
-	scope, inner := rowLoopScope(values, frames, n.loop)
+	scope, inner := rowLoopScope(values, frames, n.loop, probe)
 	return rowReduceLoop(n.form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) {
 			if err := rowLoopCheck(probe); err != nil {
@@ -769,9 +769,9 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 	if !bound {
 		return e.rowValueTextProbed(n.text, values, probe)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base, probe), n.chain)
 	if !ok {
-		return nil, false, rowPropertyChainTypeError(base, n.chain)
+		return nil, false, rowPropertyChainTypeError(base, n.chain, probe)
 	}
 	return value, true, nil
 }
@@ -994,9 +994,9 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 	if !ok {
 		return e.rowValueFallbackProbed(n.text, values, probe)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base, probe), n.chain)
 	if !ok {
-		if err := rowPropertyChainTypeError(base, n.chain); err != nil {
+		if err := rowPropertyChainTypeError(base, n.chain, probe); err != nil {
 			return nil, false, err
 		}
 	}
@@ -1034,7 +1034,7 @@ func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interf
 	case "size":
 		return evaluateCypherSizeWithCancellation(value, probe)
 	case "type":
-		return rowTypeOf(value)
+		return rowTypeOf(value, probe)
 	}
 	result, err := evaluateListAccessFunctionWithCancellation(n.function, value, probe)
 	if probe != nil && probe.err != nil {
@@ -1084,8 +1084,8 @@ func (n *rowMemoNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 // rowLoopScope is the row a list evaluation's element parts see: the row
 // with the element variable bound, one map for every element (as reduce
 // keeps one), and the list's memo frame.
-func rowLoopScope(values map[string]interface{}, frames [][]rowValueMemo, loop *rowValueLoop) (map[string]interface{}, [][]rowValueMemo) {
-	scope := rowElementScope(values, len(loop.variables), loop.localSubqueries)
+func rowLoopScope(values map[string]interface{}, frames [][]rowValueMemo, loop *rowValueLoop, probe *pipelineCancellation) (map[string]interface{}, [][]rowValueMemo) {
+	scope := rowElementScope(values, len(loop.variables), loop.localSubqueries, probe)
 	if loop.slots > 0 {
 		frames = append(frames[:len(frames):len(frames)], make([]rowValueMemo, loop.slots))
 	} else {
@@ -1116,7 +1116,7 @@ func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface
 	if cypherValueKindOf(listValue) == valueKindPath {
 		return nil, false, runtimeTypeError("Type mismatch: expected List<T> but was Path")
 	}
-	scope, inner := rowLoopScope(values, frames, n.loop)
+	scope, inner := rowLoopScope(values, frames, n.loop, probe)
 	items := coerceToUnwindItemsWithCancellation(listValue, probe)
 	if probe != nil && probe.err != nil {
 		return nil, false, probe.err
@@ -1126,7 +1126,7 @@ func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface
 			return nil, false, err
 		}
 		return n.predicate.eval(e, scope, inner, probe)
-	})
+	}, probe)
 }
 
 // rowComprehensionNode is [variable IN list WHERE predicate | projection],
@@ -1152,7 +1152,7 @@ func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interf
 	if n.predicate == nil && n.projection == nil {
 		return listValue, true, nil
 	}
-	scope, inner := rowLoopScope(values, frames, n.loop)
+	scope, inner := rowLoopScope(values, frames, n.loop, probe)
 	var holds func() (bool, bool, error)
 	if n.predicate != nil {
 		holds = func() (bool, bool, error) {
@@ -1176,7 +1176,7 @@ func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interf
 		return nil, false, probe.err
 	}
 	budget := rowExpressionBudget(scope)
-	return rowComprehensionLoop(&budget, items, func(item interface{}) { scope[n.variable] = item }, holds, project)
+	return rowComprehensionLoop(&budget, items, func(item interface{}) { scope[n.variable] = item }, holds, project, probe)
 }
 
 // rowLoopCheck is a compiled list loop's per-element cancellation check:

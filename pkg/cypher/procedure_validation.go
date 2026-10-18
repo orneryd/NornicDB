@@ -36,7 +36,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 		if err := validateProcedureArgCount(spec, args); err != nil {
 			return nil, err
 		}
-		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(callCypher))
+		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(callCypher), contextPipelineProbe(ctx))
 	}
 
 	params := getParamsFromContext(ctx)
@@ -58,7 +58,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	if err := validateProcedureArgCount(spec, args); err != nil {
 		return nil, err
 	}
-	return validateAndCoerceProcedureArguments(spec, args, nil)
+	return validateAndCoerceProcedureArguments(spec, args, nil, contextPipelineProbe(ctx))
 }
 
 func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
@@ -90,7 +90,7 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 		}
 		args[index] = value
 	}
-	return validateAndCoerceProcedureArguments(spec, args, texts)
+	return validateAndCoerceProcedureArguments(spec, args, texts, contextPipelineProbe(ctx))
 }
 
 func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
@@ -188,7 +188,7 @@ func explicitProcedureArgumentTexts(callCypher string) []string {
 	return parts
 }
 
-func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
+func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string, probe *pipelineCancellation) ([]interface{}, error) {
 	coerced := append([]interface{}(nil), args...)
 	for index := range coerced {
 		if index >= len(spec.Params) {
@@ -221,7 +221,7 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
-func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwound map[string]struct{}) error {
+func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwound map[string]struct{}, probe *pipelineCancellation) error {
 	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
 	if !found {
 		return nil
@@ -243,7 +243,7 @@ func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwo
 		if index >= len(procedure.Spec.Params) {
 			break
 		}
-		typeName := scope.staticExpressionType(text)
+		typeName := scope.staticExpressionType(text, probe)
 		if typeName == "" {
 			continue
 		}

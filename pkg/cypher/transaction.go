@@ -163,14 +163,14 @@ func bareTransactionCommand(cypher string) string {
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
-func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) parseTransactionStatement(cypher string, probe *pipelineCancellation) (*ExecuteResult, error) {
 	upper := upperASCII(strings.TrimSpace(cypher))
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
 		return e.handleBegin()
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
-		return e.handleCommit()
+		return e.handleCommit(probe)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
 		return e.handleRollback()
 	default:
@@ -293,7 +293,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 }
 
 // handleCommit commits the active transaction.
-func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleCommit(probe *pipelineCancellation) (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -366,7 +366,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		return nil, failure
 	}
 	if e.txContext.storageWrapper != nil {
-		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
+		txExec := e.cloneWithStorage(e.txContext.storageWrapper, probe)
 		txExec.promoteNodeLookupCacheTo(e)
 		for _, action := range e.txContext.storageWrapper.schemaCommitActions {
 			action()
@@ -500,7 +500,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok &&
 		txWrapper != nil &&
 		txWrapper.tx == tx {
-		txExec := e.cloneWithStorage(txWrapper)
+		txExec := e.cloneWithStorage(txWrapper, contextPipelineProbe(ctx))
 		result, err := txExec.executeQueryAgainstStorage(ctx, cypher, upperQuery)
 		if err != nil {
 			return result, err
@@ -539,7 +539,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// Pass the wrapper through context (same pattern as implicit transactions)
 	// This is thread-safe and allows getStorage() to automatically use the transaction
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
-	txExec := e.cloneWithStorage(txWrapper)
+	txExec := e.cloneWithStorage(txWrapper, contextPipelineProbe(ctx))
 
 	// Execute the query - getStorage() will automatically use the transaction wrapper
 	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)

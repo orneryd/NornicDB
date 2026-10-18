@@ -21,7 +21,7 @@ var conversionFunctionInputs = map[string]string{
 	"tostring":  "a String, Float, Integer, Boolean, Temporal or Duration",
 }
 
-func validConversionArgument(function string, value interface{}, cypher25 bool) bool {
+func validConversionArgument(function string, value interface{}, cypher25 bool, probe *pipelineCancellation) bool {
 	switch function {
 	case "toboolean":
 		switch value.(type) {
@@ -34,7 +34,7 @@ func validConversionArgument(function string, value interface{}, cypher25 bool) 
 		// A Cypher 25 statement writes lists, maps and graph entities too
 		// (cypher25ValueText).
 		if cypher25 {
-			_, ok := cypher25ValueText(value)
+			_, ok := cypher25ValueText(value, probe)
 			return ok
 		}
 		switch value.(type) {

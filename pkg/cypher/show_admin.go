@@ -600,7 +600,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	items, isList := cypherListValueWithCancellation(value, contextPipelineProbe(ctx))
 	if !isList {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))
+			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value, contextPipelineProbe(ctx))))
 	}
 	if len(items) == 0 {
 		return nil, false, nil
@@ -614,7 +614,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 		id, isString := item.(string)
 		if !isString {
 			return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherAdminTransactionIDType(neo4jValueRepr(item)))
+				localization.CypherAdminTransactionIDType(neo4jValueRepr(item, contextPipelineProbe(ctx))))
 		}
 		ids = append(ids, id)
 	}

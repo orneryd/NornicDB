@@ -298,7 +298,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		for _, relationship := range orderedRelationships {
 			edgeRows = append(edgeRows, map[string]interface{}{"relationshipType": relationship, "count": typeCounts[relationship]})
 		}
-		scoped := e.cloneWithStorage(store)
+		scoped := e.cloneWithStorage(store, probe)
 		constraints, err := scoped.executeShowConstraints(ctx, "SHOW CONSTRAINTS YIELD *")
 		if err != nil {
 			return nil, err

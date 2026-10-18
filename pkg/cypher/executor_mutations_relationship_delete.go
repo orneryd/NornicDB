@@ -99,14 +99,14 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			if edge == nil || !relationshipTypeAllowed(edge.Type, relMatch.Relationship.Types, typeSet) {
 				continue
 			}
-			if len(relMatch.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, relMatch.Relationship.Properties) {
+			if len(relMatch.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, relMatch.Relationship.Properties, contextPipelineProbe(ctx)) {
 				continue
 			}
 			target, ok, err := e.boundRelationshipDeleteTargetNode(store, source.ID, edge, relMatch.Relationship.Direction)
 			if err != nil {
 				return nil, true, err
 			}
-			if !ok || !e.matchesEndPattern(target, &relMatch.EndNode) {
+			if !ok || !e.matchesEndPattern(target, &relMatch.EndNode, contextPipelineProbe(ctx)) {
 				continue
 			}
 			if whereClause != "" {
@@ -183,7 +183,7 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 		if len(sourcePattern.labels) > 0 && !mergeNodeHasLabels(node, sourcePattern.labels) {
 			continue
 		}
-		if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties) {
+		if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties, contextPipelineProbe(ctx)) {
 			continue
 		}
 		filtered = append(filtered, node)

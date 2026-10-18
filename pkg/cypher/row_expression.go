@@ -18,7 +18,7 @@ import (
 // the value helper's result: the value, null for a null operand, the
 // statement error (INTEGER division by zero, INTEGER overflow, an operand
 // type the operator doesn't take), or unresolved when none applies.
-func rowArithmeticResult(op byte, value, left, right interface{}) (interface{}, bool, error) {
+func rowArithmeticResult(op byte, value, left, right interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	if value != nil {
 		return value, true, nil
 	}
@@ -28,17 +28,17 @@ func rowArithmeticResult(op byte, value, left, right interface{}) (interface{}, 
 	if left == nil || right == nil {
 		return nil, true, nil
 	}
-	if err := arithmeticError(op, left, right); err != nil {
+	if err := arithmeticError(op, left, right, probe); err != nil {
 		return nil, false, err
 	}
 	return nil, false, nil
 }
 
 // rowTypeOf adapts the shared type owner to the row evaluator's error contract.
-func rowTypeOf(value interface{}) (interface{}, bool, error) {
+func rowTypeOf(value interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	result, err := cypherfn.RelationshipType(value)
 	if err != nil {
-		return nil, false, functionEvaluationError(err)
+		return nil, false, functionEvaluationError(err, probe)
 	}
 	return result, true, nil
 }
@@ -54,15 +54,15 @@ func (e *StorageExecutor) evaluateRowArithmeticValuesWithCancellation(operator b
 		if probe != nil && probe.err != nil {
 			return nil, false, probe.err
 		}
-		return rowArithmeticResult(operator, value, left, right)
+		return rowArithmeticResult(operator, value, left, right, probe)
 	case '-':
-		return rowArithmeticResult(operator, e.subtract(left, right), left, right)
+		return rowArithmeticResult(operator, e.subtract(left, right), left, right, probe)
 	case '*':
-		return rowArithmeticResult(operator, e.multiply(left, right), left, right)
+		return rowArithmeticResult(operator, e.multiply(left, right), left, right, probe)
 	case '/':
-		return rowArithmeticResult(operator, e.divide(left, right), left, right)
+		return rowArithmeticResult(operator, e.divide(left, right), left, right, probe)
 	case '%':
-		return rowArithmeticResult(operator, e.modulo(left, right), left, right)
+		return rowArithmeticResult(operator, e.modulo(left, right), left, right, probe)
 	case '^':
 		if left == nil || right == nil {
 			return nil, true, nil
@@ -70,7 +70,7 @@ func (e *StorageExecutor) evaluateRowArithmeticValuesWithCancellation(operator b
 		base, baseOK := toFloat64(left)
 		exponent, exponentOK := toFloat64(right)
 		if !baseOK || !exponentOK {
-			if err := arithmeticError(operator, left, right); err != nil {
+			if err := arithmeticError(operator, left, right, probe); err != nil {
 				return nil, false, err
 			}
 			return nil, false, nil
@@ -157,9 +157,9 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base, probe), chain)
 			if !ok {
-				return nil, false, rowPropertyChainTypeError(base, chain)
+				return nil, false, rowPropertyChainTypeError(base, chain, probe)
 			}
 			return value, true, nil
 		}
@@ -275,19 +275,19 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 					return nil, false, err
 				}
 				if resolved && input != nil {
-					return nil, false, temporalConstructorError(function, input)
+					return nil, false, temporalConstructorError(function, input, probe)
 				}
 			}
 			return value, true, nil
 		}
-		if value, matched, resolved, err := e.evaluateRowMathFunction(function, argument, values); matched {
+		if value, matched, resolved, err := e.evaluateRowMathFunction(function, argument, values, probe); matched {
 			return value, resolved, err
 		}
 		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
 			return value, resolved, err
 		}
 		if isGDSFunctionName(lowerASCII(function)) {
-			return e.evaluateRowGraphFunction(function, argument, values)
+			return e.evaluateRowGraphFunction(function, argument, values, probe)
 		}
 		switch lowerASCII(function) {
 		case "exists":
@@ -296,7 +296,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 				return matched, recognized, nil
 			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
-			return e.evaluateRowGraphFunction(function, argument, values)
+			return e.evaluateRowGraphFunction(function, argument, values, probe)
 		case "shortestpath", "allshortestpaths":
 			nodes := make(map[string]*storage.Node, len(values))
 			for name, value := range values {
@@ -356,7 +356,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 				return int64(path.Length), true, nil
 			}
 			return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
+				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value, probe)))
 		case "range":
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))
@@ -414,7 +414,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if !isPath {
 				return nil, false, nil
 			}
-			nodes, relationships, hasNodes, hasRelationships := pathValueParts(path)
+			nodes, relationships, hasNodes, hasRelationships := pathValueParts(path, probe)
 			if strings.EqualFold(function, "relationships") {
 				return relationships, hasRelationships, nil
 			}
@@ -435,12 +435,12 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 				if entity == nil {
 					return nil, true, nil
 				}
-				return cypherfn.EntityProperties(e.queryEntityProperties(entity)), true, nil
+				return cypherfn.EntityProperties(e.queryEntityProperties(entity, probe)), true, nil
 			case *storage.Edge:
 				if entity == nil {
 					return nil, true, nil
 				}
-				return cypherfn.EntityProperties(e.queryEntityProperties(entity)), true, nil
+				return cypherfn.EntityProperties(e.queryEntityProperties(entity, probe)), true, nil
 			case storage.RemoteEntityValue:
 				return entity["properties"], true, nil
 			default:
@@ -474,7 +474,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if _, isPath := cypherPathResultOf(value, object, isMap); isPath {
 				return nil, false, invalidFunctionArgument("keys", value)
 			}
-			keys, ok := cypherfn.PropertyKeysWithCancellation(e.queryVisibleValue(value), functionCancellation(probe))
+			keys, ok := cypherfn.PropertyKeysWithCancellation(e.queryVisibleValue(value, probe), functionCancellation(probe))
 			if probe != nil && probe.err != nil {
 				return nil, false, probe.err
 			}
@@ -492,7 +492,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			}
 			result, err := cypherfn.Labels(value)
 			if err != nil {
-				return nil, false, functionEvaluationError(err)
+				return nil, false, functionEvaluationError(err, probe)
 			}
 			return result, true, nil
 		case "type":
@@ -503,7 +503,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if !resolved {
 				return nil, false, nil
 			}
-			return rowTypeOf(value)
+			return rowTypeOf(value, probe)
 		}
 	}
 
@@ -535,7 +535,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if leftValue == nil || rightValue == nil {
 			return nil, true, nil
 		}
-		matched, err := cypherRegexMatch(leftValue, rightValue)
+		matched, err := cypherRegexMatch(leftValue, rightValue, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -560,7 +560,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if err != nil || !ok {
 			return nil, false, err
 		}
-		return evaluateTypePredicate(value, negated, spec), true, nil
+		return evaluateTypePredicate(value, negated, spec, probe), true, nil
 	}
 	if operand, negated, form, isNormalization := splitNormalizationPredicate(expr); isNormalization {
 		value, ok, err := e.evaluateRowValueWithCancellation(operand, values, probe)
@@ -686,7 +686,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		base, baseOK := toFloat64(leftValue)
 		exponent, exponentOK := toFloat64(rightValue)
 		if !baseOK || !exponentOK {
-			if err := arithmeticError('^', leftValue, rightValue); err != nil {
+			if err := arithmeticError('^', leftValue, rightValue, probe); err != nil {
 				return nil, false, err
 			}
 			return nil, false, nil
@@ -715,7 +715,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		}
 		if _, numeric := toFloat64(value); !numeric {
 			// -'a' is Neo4j's TypeError; a duration is negated elsewhere.
-			if err := unaryMinusTypeError(value); err != nil {
+			if err := unaryMinusTypeError(value, probe); err != nil {
 				return nil, false, err
 			}
 			return nil, false, nil
@@ -750,9 +750,9 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base, probe), chain)
 			if !ok {
-				if err := rowPropertyChainTypeError(base, chain); err != nil {
+				if err := rowPropertyChainTypeError(base, chain, probe); err != nil {
 					return nil, false, err
 				}
 			}
@@ -969,7 +969,7 @@ func compareCypherPredicateValueWithCancellation(left, right interface{}, operat
 	if operator == "=~" {
 		// A type or pattern error is null here; the row evaluator's =~ branch
 		// and the predicate evaluator raise it.
-		matched, _ := cypherRegexMatch(left, right)
+		matched, _ := cypherRegexMatch(left, right, probe)
 		return matched
 	}
 
@@ -1176,7 +1176,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		return nil, true, false, probe.err
 	}
 	// One scope for every element, as in evaluateRowQuantifier.
-	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate) || mayContainSubqueryExpression(projection))
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate) || mayContainSubqueryExpression(projection), probe)
 	var holds func() (bool, bool, error)
 	switch {
 	case predicate != "" && containsRelationshipPattern(predicate):
@@ -1208,7 +1208,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		}
 	}
 	budget := rowExpressionBudget(scope)
-	value, resolved, err := rowComprehensionLoop(&budget, items, func(item interface{}) { scope[variable] = item }, holds, project)
+	value, resolved, err := rowComprehensionLoop(&budget, items, func(item interface{}) { scope[variable] = item }, holds, project, probe)
 	if probe != nil && probe.err != nil {
 		return nil, true, false, probe.err
 	}
@@ -1349,13 +1349,13 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	// One scope for every element, the variable rebound per element, as
 	// reduce does: copying the row per element cost an allocation of the
 	// whole row for each one (#1214).
-	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate))
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate), probe)
 	value, resolved, err := rowQuantifierLoop(function, items, func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {
 		if probe != nil && !probe.check() {
 			return nil, false, probe.err
 		}
 		return evaluate(predicate, scope)
-	})
+	}, probe)
 	if probe != nil && probe.err != nil {
 		return nil, true, false, probe.err
 	}
@@ -1407,7 +1407,7 @@ func isQualifiedFunctionCall(expr string) bool {
 // reached a value with no properties: a number, string, boolean, list or path
 // ("Type mismatch: expected a map but was Long(1)", propertyAccessTypeError),
 // as Neo4j reports it at run time. It is nil when every step has properties.
-func rowPropertyChainTypeError(value interface{}, chain string) error {
+func rowPropertyChainTypeError(value interface{}, chain string, probe *pipelineCancellation) error {
 	for start := 0; start < len(chain); {
 		end := nextRowPropertySeparator(chain, start)
 		property := normalizePropertyKey(strings.TrimSpace(chain[start:end]))
@@ -1419,7 +1419,7 @@ func rowPropertyChainTypeError(value interface{}, chain string) error {
 			if isRuntimeTemporal(value) || isRuntimeDuration(value) {
 				return temporalNoSuchFieldError(property)
 			}
-			return propertyAccessTypeError(value)
+			return propertyAccessTypeError(value, probe)
 		}
 		value = next
 		if end == len(chain) {
@@ -1605,13 +1605,13 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 	}
 	// A predicate evaluated before is evaluated from its program: the
 	// decisions below, read from its text once (row_predicate_program.go).
-	if program := rowPredicateProgramFor(expression); program != nil {
+	if program := rowPredicateProgramFor(expression, contextPipelineProbe(ctx)); program != nil {
 		return program.holds(e, ctx, values)
 	}
 	// CASE stays in the value program at its original operand position,
 	// including on the first row.
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		program := compileRowPredicateProgram(expression)
+		program := compileRowPredicateProgram(expression, contextPipelineProbe(ctx))
 		rowPredicatePrograms.put(expression, program)
 		return program.holds(e, ctx, values)
 	}
@@ -1695,7 +1695,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	strictLogical := rowPredicateIsStrictLogical(expression)
+	strictLogical := rowPredicateIsStrictLogical(expression, contextPipelineProbe(ctx))
 	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
 		value, evaluated, err := e.evaluateRowValueProbed(expression, values, contextPipelineProbe(ctx))
 		if err != nil {
@@ -1713,7 +1713,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 // evaluates whole with the row value evaluator first: one with arithmetic
 // that is a NOT or an XOR, or an AND / OR with an operand of a type the
 // static checker can't tell.
-func rowPredicateIsStrictLogical(expression string) bool {
+func rowPredicateIsStrictLogical(expression string, probe *pipelineCancellation) bool {
 	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
 	if mayContainArithmetic(expression) && !strictLogical {
 		checker := staticOperatorChecker{}
@@ -1723,9 +1723,9 @@ func rowPredicateIsStrictLogical(expression string) bool {
 					if mayContainArithmetic(operand) {
 						continue
 					}
-					typeInfo, _ := checker.check(operand)
+					typeInfo, _ := checker.check(operand, probe)
 					if !typeInfo.known() {
-						typeInfo, _ = checker.checkAtom(operand)
+						typeInfo, _ = checker.checkAtom(operand, probe)
 					}
 					if !typeInfo.known() {
 						strictLogical = true
@@ -1837,7 +1837,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		if !leftOK || !rightOK {
 			return false
 		}
-		matched, err := cypherRegexMatch(leftValue, rightValue)
+		matched, err := cypherRegexMatch(leftValue, rightValue, contextPipelineProbe(ctx))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return false
@@ -1861,7 +1861,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 			return false
 		}
 		value, ok := e.rowPredicateOperand(ctx, operand, values)
-		return ok && evaluateTypePredicate(value, negated, spec)
+		return ok && evaluateTypePredicate(value, negated, spec, contextPipelineProbe(ctx))
 	}
 	if operand, negated, form, isNormalization := splitNormalizationPredicate(expression); isNormalization {
 		value, ok := e.rowPredicateOperand(ctx, operand, values)
@@ -1910,7 +1910,7 @@ func evaluateCypherSizeWithCancellation(value interface{}, probe *pipelineCancel
 		if probe != nil && probe.err != nil {
 			return nil, false, probe.err
 		}
-		return nil, false, functionEvaluationError(err)
+		return nil, false, functionEvaluationError(err, probe)
 	}
 	return result, true, nil
 }
@@ -1929,7 +1929,7 @@ func evaluateCypherSizeIntegerWithCancellation(value interface{}, probe *pipelin
 	}
 	length, nonNull, err := cypherfn.SizeInteger(value)
 	if err != nil {
-		return 0, false, functionEvaluationError(err)
+		return 0, false, functionEvaluationError(err, probe)
 	}
 	return length, nonNull, nil
 }

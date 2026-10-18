@@ -30,11 +30,11 @@ func typeNameMismatchError(expected, typeName string) error {
 }
 
 // sizeArgumentError classifies an argument rejected by the shared size owner.
-func sizeArgumentError(value interface{}) error {
+func sizeArgumentError(value interface{}, probe *pipelineCancellation) error {
 	// Static validation owns known type mismatches; rejected runtime values
 	// retain release's TypeError classification.
 	return &classifiedCypherError{
-		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value)), nil),
+		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value, probe)), nil),
 		code:   "Neo.ClientError.Statement.TypeError",
 		detail: "InvalidArgumentType",
 	}
@@ -47,14 +47,14 @@ func sizeArgumentError(value interface{}) error {
 // argument whose type is known when the statement compiles (a literal, a
 // variable bound to one) is the static check's "Type mismatch" SyntaxError
 // first (staticFunctionArguments). Other errors are returned unchanged.
-func typeMismatchFromFunctionError(err error) error {
+func typeMismatchFromFunctionError(err error, probe *pipelineCancellation) error {
 	var mismatch *cypherfn.TypeMismatchError
 	if errors.As(err, &mismatch) {
 		if mismatch.Function == "size" {
-			return sizeArgumentError(mismatch.Value)
+			return sizeArgumentError(mismatch.Value, probe)
 		}
 		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value)))
+			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value, probe)))
 	}
 	return err
 }

@@ -163,10 +163,10 @@ func cypherTypeName(value interface{}) string {
 // errors: Long, Double, String, Map, NoValue, and for a stored array its
 // element class plus Array (LongArray, StringArray, …); any other list is a
 // List.
-func neo4jValueTypeName(value interface{}) string {
+func neo4jValueTypeName(value interface{}, probe *pipelineCancellation) string {
 	kind := cypherValueKindOf(value)
 	if kind == valueKindList {
-		if element, stored := storedArrayElementKind(value); stored {
+		if element, stored := storedArrayElementKind(value, probe); stored {
 			return valueTypeNames[element].runtime + "Array"
 		}
 	}
@@ -206,7 +206,7 @@ func apocValueTypeName(value interface{}) string {
 // and its element kind: a list whose elements are all of one scalar type
 // (Long, Double, String, Boolean). An empty list or any other list is a
 // List.
-func storedArrayElementKind(value interface{}) (cypherValueKind, bool) {
+func storedArrayElementKind(value interface{}, probe *pipelineCancellation) (cypherValueKind, bool) {
 	element := valueKindOther
 	for _, item := range toAnySlice(value) {
 		kind := cypherValueKindOf(item)

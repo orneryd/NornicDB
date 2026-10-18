@@ -19,7 +19,7 @@ func (e *StorageExecutor) validateSetSemanticScopes(cypher string, imports ...st
 		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(cypher, probe)
 	if !ok {
 		return nil
 	}
@@ -46,7 +46,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 				scope.bind(name)
 			}
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
+			if err := bindPipelineLet(scope, clause.text, probe); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
@@ -54,11 +54,11 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 				scope.bind(alias)
 			}
 		case pipelineClauseSet:
-			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
+			if err := e.validateSetClauseScope(scope, clause.text, probe); err != nil {
 				return err
 			}
 		case pipelineClauseForeach:
-			variable, _, updates, err := parsePipelineForeach(clause.text)
+			variable, _, updates, err := parsePipelineForeach(clause.text, probe)
 			if err != nil {
 				return err
 			}
@@ -229,7 +229,7 @@ func deleteUndefinedVariableError(expression string) error {
 // shared by every route (MATCH, CREATE, MERGE, pipeline, fast paths): the
 // assignment shapes (validatePipelineSetAssignments), bound target and value
 // variables, and known functions in the assigned values.
-func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
+func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string, probe *pipelineCancellation) error {
 	body := strings.TrimSpace(clause[len("SET"):])
 	assignments := splitSetAssignments(body)
 	if err := validatePipelineSetAssignments(assignments); err != nil {
@@ -273,7 +273,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		}
 		// Literal sources here; the statement walker
 		// (validatePropertyAccessClauses) also knows WITH / UNWIND types.
-		if err := setSourceTypeError(property, operator, expression, nil, nil); err != nil {
+		if err := setSourceTypeError(property, operator, expression, nil, nil, probe); err != nil {
 			return err
 		}
 	}
@@ -553,16 +553,16 @@ func setExpressionKeyword(token string) bool {
 // reports whether stored is not value itself. Every SET route checks its
 // values here, so a value is storable or not whichever route writes it: a
 // map entry as a direct property value (#1055).
-func storablePropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
-	stored, rewritten = normalizedPropValue(value)
-	validated, coerced, err := validateSetPropertyValue(stored)
+func storablePropertyValue(value interface{}, probe *pipelineCancellation) (stored interface{}, rewritten bool, err error) {
+	stored, rewritten = normalizedPropValue(value, probe)
+	validated, coerced, err := validateSetPropertyValue(stored, probe)
 	if err != nil {
 		return nil, false, err
 	}
 	return validated, rewritten || coerced, nil
 }
 
-func validateSetPropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
+func validateSetPropertyValue(value interface{}, probe *pipelineCancellation) (stored interface{}, rewritten bool, err error) {
 	if value == nil {
 		return value, false, nil
 	}
@@ -707,9 +707,9 @@ func propertyArrayElementOf(item interface{}) propertyArrayElement {
 // at every CREATE / MERGE write: CREATE node preparation (also the auto-commit
 // node fast path) and relationships, MERGE node and relationship creation,
 // and the UNWIND batch creators.
-func validatePropertyValues(properties map[string]interface{}) error {
+func validatePropertyValues(properties map[string]interface{}, probe *pipelineCancellation) error {
 	for key, value := range properties {
-		stored, _, err := storablePropertyValue(value)
+		stored, _, err := storablePropertyValue(value, probe)
 		if err != nil {
 			return err
 		}

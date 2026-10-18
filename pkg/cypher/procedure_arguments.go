@@ -91,7 +91,7 @@ func requiredProcedureNodeID(procedure string, args []interface{}, index int, ar
 // requiredProcedureStringList reads a LIST<STRING> argument the procedure
 // needs; a single STRING is NornicDB's kept one-element form
 // (createNodeIndex('i', 'Label', 'name')).
-func requiredProcedureStringList(procedure string, args []interface{}, index int, argument string) ([]string, error) {
+func requiredProcedureStringList(procedure string, args []interface{}, index int, argument string, probe *pipelineCancellation) ([]string, error) {
 	value := procedureArgument(args, index)
 	if value == nil {
 		return nil, procedureArgumentNullError(procedure, argument)

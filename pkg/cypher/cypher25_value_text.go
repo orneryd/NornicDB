@@ -16,15 +16,15 @@ import (
 // in path order, each relationship pointing the way it is stored:
 // (:A)-[:T]->(:B), (:B)<-[:T]-(:A). ok is false for a value of no Cypher
 // type and for null.
-func cypher25ValueText(value interface{}) (string, bool) {
+func cypher25ValueText(value interface{}, probe *pipelineCancellation) (string, bool) {
 	var out strings.Builder
-	if value == nil || !writeCypher25ValueText(&out, value) {
+	if value == nil || !writeCypher25ValueText(&out, value, probe) {
 		return "", false
 	}
 	return out.String(), true
 }
 
-func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
+func writeCypher25ValueText(out *strings.Builder, value interface{}, probe *pipelineCancellation) bool {
 	switch cypherValueKindOf(value) {
 	case valueKindNull:
 		out.WriteString("null")
@@ -34,7 +34,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 			if index > 0 {
 				out.WriteString(", ")
 			}
-			if !writeCypher25ValueText(out, item) {
+			if !writeCypher25ValueText(out, item, probe) {
 				return false
 			}
 		}
@@ -56,7 +56,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 			}
 			out.WriteString(cypher25NameText(key))
 			out.WriteString(": ")
-			if !writeCypher25ValueText(out, entries[key]) {
+			if !writeCypher25ValueText(out, entries[key], probe) {
 				return false
 			}
 		}
@@ -74,7 +74,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 		}
 		out.WriteString("[:" + cypher25NameText(edge.Type) + "]")
 	case valueKindPath:
-		return writeCypher25PathText(out, value)
+		return writeCypher25PathText(out, value, probe)
 	default:
 		text, isText := convertToStringOrNull(value).(string)
 		if !isText {
@@ -95,7 +95,7 @@ func writeCypher25NodeText(out *strings.Builder, node *storage.Node) {
 
 // writeCypher25PathText writes a path value (a PathResult, or a path map
 // carrying one) as cypher25ValueText describes.
-func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
+func writeCypher25PathText(out *strings.Builder, value interface{}, probe *pipelineCancellation) bool {
 	var path *PathResult
 	switch typed := value.(type) {
 	case PathResult:
@@ -103,7 +103,7 @@ func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
 	case *PathResult:
 		path = typed
 	case map[string]interface{}:
-		nodes, relationships, hasNodes, _ := pathValueParts(typed)
+		nodes, relationships, hasNodes, _ := pathValueParts(typed, probe)
 		if !hasNodes {
 			return false
 		}
@@ -149,7 +149,7 @@ func convertToStringInVersion(value interface{}, cypher25 bool) interface{} {
 		return convertToStringOrNull(value)
 	}
 	var out strings.Builder
-	if !writeCypher25ValueText(&out, value) {
+	if !writeCypher25ValueText(&out, value, nil) {
 		return nil
 	}
 	return out.String()

@@ -522,7 +522,7 @@ type syntaxValidationCacheShard struct {
 	cache map[string]uint8
 }
 
-func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
+func (e *StorageExecutor) cloneWithStorage(override storage.Engine, probe *pipelineCancellation) *StorageExecutor {
 	e.ensureNodeLookupCache()
 	// Transactional clones use the lookup cache pinned to the
 	// transactionStorageWrapper. Concurrent transactions hold distinct
@@ -580,7 +580,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		defaultEmbeddingDimensions:     e.defaultEmbeddingDimensions,
 		dbManager:                      e.dbManager,
 		shellParams:                    e.shellParams,
-		shellParamsByToken:             cloneShellParamsByToken(e),
+		shellParamsByToken:             cloneShellParamsByToken(e, probe),
 		vectorRegistry:                 e.vectorRegistry,
 		vectorIndexSpaces:              e.vectorIndexSpaces,
 		fabricRecordBindings:           e.fabricRecordBindings,
@@ -720,7 +720,7 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 	if !runtimeCfg.Memory.QueryCacheEnabled {
 		maxEntries = 0
 	}
-	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL)
+	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL, nil)
 }
 
 // NewStorageExecutorWithQueryCachePolicy creates an executor whose query-result
@@ -728,7 +728,7 @@ func NewStorageExecutor(store storage.Engine) *StorageExecutor {
 // entries disables caching. A non-positive TTL uses the process default.
 func NewStorageExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
 	runtimeCfg := config.LoadFromEnv()
-	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL)
+	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL, nil)
 }
 
 // QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
@@ -736,7 +736,7 @@ func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration)
 	return e.queryCacheMaxEntries, e.queryCacheTTL
 }
 
-func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration, probe *pipelineCancellation) *StorageExecutor {
 	if queryCacheTTL <= 0 {
 		queryCacheTTL = runtimeCfg.Memory.QueryCacheTTL
 	}
@@ -781,7 +781,7 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
-	ensureBuiltInProceduresRegistered()
+	ensureBuiltInProceduresRegistered(probe)
 	_ = exec.loadPersistedProcedures()
 	return exec
 }
@@ -1661,7 +1661,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// write reads its row nodes without vectors, on a clone so concurrent
 	// statements of this executor keep their own reads.
 	if e.readsQueryNodesWithoutVectors(info) {
-		readExec := e.cloneWithStorage(e.storage)
+		readExec := e.cloneWithStorage(e.storage, contextPipelineProbe(ctx))
 		readExec.readOnlyQueryNodes = true
 		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
@@ -1791,7 +1791,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
-	txExec := e.cloneWithStorage(txWrapper)
+	txExec := e.cloneWithStorage(txWrapper, contextPipelineProbe(ctx))
 
 	// Execute the query
 	result, execErr := execute(txCtx, txExec)

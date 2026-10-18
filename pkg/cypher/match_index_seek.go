@@ -32,7 +32,7 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	if !ok {
 		return nil, false
 	}
-	return normalizePropValue(value), true
+	return normalizePropValue(value, contextPipelineProbe(ctx)), true
 }
 
 // idEqualityLookup reads a WHERE that is one id(<variable>) = <value> or
@@ -388,7 +388,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		return nil, false, nil
 	}
 
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf, probe)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -477,7 +477,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOfWithCancellatio
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf, probe)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -515,7 +515,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf, contextPipelineProbe(ctx))
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
@@ -696,8 +696,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop, probe)
+	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop, probe)
 	if len(leftLabels) == 0 || len(rightLabels) == 0 {
 		return nil, false, nil
 	}
@@ -747,8 +747,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop, probe)
+	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop, probe)
 	if len(leftLabels) == 0 && len(rightLabels) == 0 {
 		return nil, false, nil
 	}
@@ -910,7 +910,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
 			continue
 		}
-		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties) {
+		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties, contextPipelineProbe(ctx)) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -964,7 +964,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, spec.propName)
+	labels := e.indexCandidateLabels(schema, nodePattern.labels, spec.propName, contextPipelineProbe(ctx))
 	if len(labels) != 1 {
 		return nil, false, nil
 	}
@@ -1018,7 +1018,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, whereProp)
+	labels := e.indexCandidateLabels(schema, nodePattern.labels, whereProp, contextPipelineProbe(ctx))
 	if len(labels) != 1 {
 		// Keep semantics simple/deterministic for now; multi-label merge ordering can be added later.
 		return nil, false, nil
@@ -1035,7 +1035,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	nodePattern nodePatternInfo,
 	whereClause string,
-) ([]*storage.Node, bool, error) {
+, probe *pipelineCancellation) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1050,11 +1050,11 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	}
 	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
 		return schema.PropertyIndexAllNonNil(label, property, false), true
-	})
+	}, probe)
 	return nodes, used, nil
 }
 
-func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string) []string {
+func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string, probe *pipelineCancellation) []string {
 	if len(queryLabels) > 0 {
 		out := make([]string, 0, len(queryLabels))
 		for _, label := range queryLabels {
@@ -1122,7 +1122,7 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 // entries lists it, and Neo4j plans the same predicate as one index seek per
 // label. When one of them has no index, the indexes can miss a match and the
 // label-less route decides (labellessPropertyIndexUsable).
-func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
+func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string, probe *pipelineCancellation) ([]string, []string) {
 	if len(patternLabels) == 0 && len(anyOf) > 0 {
 		indexed := true
 		for _, label := range anyOf {
@@ -1135,7 +1135,7 @@ func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, pat
 			return anyOf, anyOf
 		}
 	}
-	return e.indexCandidateLabels(schema, patternLabels, property), nil
+	return e.indexCandidateLabels(schema, patternLabels, property, probe), nil
 }
 
 // seekCandidateHasLabels reports whether a node an index listed still carries
@@ -1908,8 +1908,8 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 	nodePattern nodePatternInfo,
 	property string,
 	lookup func(label string) ([]storage.NodeID, bool),
-) (nodes []*storage.Node, used bool) {
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+, probe *pipelineCancellation) (nodes []*storage.Node, used bool) {
+	labels := e.indexCandidateLabels(schema, nodePattern.labels, property, probe)
 	if len(labels) == 0 {
 		return nil, false
 	}
@@ -1944,7 +1944,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 // number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
 // p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
 // caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}, probe *pipelineCancellation) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1958,7 +1958,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern node
 	}
 	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
 		return schema.PropertyIndexRange(label, property, bounds)
-	})
+	}, probe)
 	return nodes, used, nil
 }
 
@@ -2113,7 +2113,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.
-			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx))
+			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx), probe)
 			if used {
 				e.markMergeSchemaLookupUsed()
 			}
@@ -2132,10 +2132,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			return labelled, true, nil
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params, probe)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
+			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause, probe)
 		}},
 	}
 	for _, plan := range indexedPlans {
@@ -2145,7 +2145,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		}
 		if used {
 			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+				nodes = e.filterNodesByProperties(nodes, nodePattern.properties, probe)
 			}
 			// A WHERE that is exactly <variable>.<property> IN <list> on an
 			// indexed property is answered by the index: one lookup per list

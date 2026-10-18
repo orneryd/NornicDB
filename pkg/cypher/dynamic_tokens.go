@@ -25,7 +25,7 @@ import (
 // then, as Neo4j does (staticDynamicTokenError).
 
 // dynamicLabelNames reads the value of a dynamic label $(expr).
-func dynamicLabelNames(value interface{}) ([]string, error) {
+func dynamicLabelNames(value interface{}, probe *pipelineCancellation) ([]string, error) {
 	switch typed := value.(type) {
 	case string:
 		if err := tokenNameError(typed); err != nil {
@@ -114,7 +114,7 @@ func (e *StorageExecutor) chainLabelNames(ctx context.Context, items []labelChai
 		if err != nil {
 			return nil, err
 		}
-		dynamic, err := dynamicLabelNames(value)
+		dynamic, err := dynamicLabelNames(value, contextPipelineProbe(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -147,8 +147,8 @@ func labelTargetTypeError(typeName string) error {
 // (staticDynamicTokenError); and a pattern's dynamic label or type whose
 // value depends on the row (staticPatternTokenError). Everything else is
 // read at run time.
-func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
-	if err := staticPatternTokenError(clause, scope); err != nil {
+func staticWriteTokenError(clause pipelineClause, scope staticTypeScope, probe *pipelineCancellation) error {
+	if err := staticPatternTokenError(clause, scope, probe); err != nil {
 		return err
 	}
 	// Every item check needs a label item or a dynamic key (: or [), or a
@@ -159,7 +159,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	}
 	switch clause.kind {
 	case pipelineClauseSet:
-		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
+		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope, probe)
 	case pipelineClauseMerge:
 		set := indexASCIIFold(clause.text, " SET ")
 		if set < 0 {
@@ -169,10 +169,10 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 			return nil // the pattern's labels aren't items
 		}
 		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
-		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
+		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope, probe); err != nil {
 			return err
 		}
-		return staticSetItemsTokenError(mergeActionAssignments(actions.onMatch), scope)
+		return staticSetItemsTokenError(mergeActionAssignments(actions.onMatch), scope, probe)
 	case pipelineClauseRemove:
 		items, err := parseRemoveItems(pipelineClauseBody(clause.text, "REMOVE"))
 		if err != nil {
@@ -180,7 +180,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		}
 		for _, item := range items {
 			if item.key != "" {
-				if err := staticDynamicTokenError(item.key, scope, dynamicTokenKey); err != nil {
+				if err := staticDynamicTokenError(item.key, scope, dynamicTokenKey, probe); err != nil {
 					return err
 				}
 				continue
@@ -191,7 +191,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 			if err := staticLabelTargetError(item.variable, scope); err != nil {
 				return err
 			}
-			if err := staticLabelChainTokenError(item.labels, scope); err != nil {
+			if err := staticLabelChainTokenError(item.labels, scope, probe); err != nil {
 				return err
 			}
 		}
@@ -234,14 +234,14 @@ func mentionsNonEntity(text string, scope staticTypeScope) bool {
 	return false
 }
 
-func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error {
+func staticSetItemsTokenError(assignments []string, scope staticTypeScope, probe *pipelineCancellation) error {
 	for _, assignment := range assignments {
 		target, property, operator, right := splitSetAssignment(assignment)
 		if scope.cypher25 && property == "" && (operator == "=" || operator == "+=") {
 			// Cypher 25 (Neo4j 2026.09) removed SET x = e and SET x += e for
 			// a node or relationship e: the right side is a map there
 			// (properties(e)).
-			switch typeName := scope.staticExpressionType(right); typeName {
+			switch typeName := scope.staticExpressionType(right, probe); typeName {
 			case "Node", "Relationship":
 				return typeNameMismatchError("Map", typeName)
 			}
@@ -257,7 +257,7 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 		}
 		switch operator {
 		case "[]=":
-			if err := staticDynamicTokenError(property, scope, dynamicTokenKey); err != nil {
+			if err := staticDynamicTokenError(property, scope, dynamicTokenKey, probe); err != nil {
 				return err
 			}
 		case ":":
@@ -268,7 +268,7 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 			if err != nil {
 				return err
 			}
-			if err := staticLabelChainTokenError(items, scope); err != nil {
+			if err := staticLabelChainTokenError(items, scope, probe); err != nil {
 				return err
 			}
 		}
@@ -276,12 +276,12 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 	return nil
 }
 
-func staticLabelChainTokenError(items []labelChainItem, scope staticTypeScope) error {
+func staticLabelChainTokenError(items []labelChainItem, scope staticTypeScope, probe *pipelineCancellation) error {
 	for _, item := range items {
 		if item.expression == "" {
 			continue
 		}
-		if err := staticDynamicTokenError(item.expression, scope, dynamicTokenLabel); err != nil {
+		if err := staticDynamicTokenError(item.expression, scope, dynamicTokenLabel, probe); err != nil {
 			return err
 		}
 	}
@@ -310,7 +310,7 @@ const (
 // ” computed at run time removes nothing), a list literal holding either
 // (for a label), or an expression whose static type a label (STRING,
 // LIST<STRING>) or a key (STRING) can't take.
-func staticDynamicTokenError(expression string, scope staticTypeScope, use dynamicTokenUse) error {
+func staticDynamicTokenError(expression string, scope staticTypeScope, use dynamicTokenUse, probe *pipelineCancellation) error {
 	expression = strings.TrimSpace(expression)
 	for {
 		inner, wrapped := stripEnclosingExpressionParentheses(expression)
@@ -334,7 +334,7 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 			}
 		}
 	}
-	typeName := scope.staticExpressionType(expression)
+	typeName := scope.staticExpressionType(expression, probe)
 	switch {
 	case typeName == "" || typeName == "String" || typeName == "Any":
 		return nil
@@ -378,7 +378,7 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 		}
 		values[i] = value
 	}
-	names, err := dynamicLabelNames(values[1])
+	names, err := dynamicLabelNames(values[1], nil)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 			if err != nil {
 				return "", err
 			}
-			names, err := dynamicLabelNames(value)
+			names, err := dynamicLabelNames(value, contextPipelineProbe(ctx))
 			if err != nil {
 				return "", err
 			}
@@ -510,7 +510,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 // variable bound to a literal by WITH or UNWIND): the MATCH predicates they
 // became (dynamicLabelTestFunction) and the $(e) a CREATE or MERGE pattern
 // keeps until its rows run.
-func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error {
+func staticPatternTokenError(clause pipelineClause, scope staticTypeScope, probe *pipelineCancellation) error {
 	text := clause.text
 	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) && !strings.Contains(text, dynamicLabelPredicateFunction) {
 		return nil
@@ -528,7 +528,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			if closing < 0 {
 				return nil
 			}
-			if err := staticDynamicTokenError(text[open+1:closing], scope, dynamicTokenLabel); err != nil {
+			if err := staticDynamicTokenError(text[open+1:closing], scope, dynamicTokenLabel, probe); err != nil {
 				return err
 			}
 			i = closing
@@ -551,10 +551,10 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 					i = closing
 					continue
 				}
-				if err := staticDynamicTokenError(args[1], scope, dynamicTokenLabel); err != nil {
+				if err := staticDynamicTokenError(args[1], scope, dynamicTokenLabel, probe); err != nil {
 					// all(l IN ['A'] WHERE x:$(l)) reads the list's l.
 					local, shadowed := withoutLocalVariables(scope, text, open)
-					if !shadowed || staticDynamicTokenError(args[1], local, dynamicTokenLabel) != nil {
+					if !shadowed || staticDynamicTokenError(args[1], local, dynamicTokenLabel, probe) != nil {
 						if predicate {
 							return runtimeTypeError(err.Error())
 						}

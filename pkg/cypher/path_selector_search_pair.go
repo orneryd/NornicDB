@@ -148,18 +148,18 @@ func (s *pathSearch) meet(w *pathSearchWalks, p int32) {
 // shortest walks that are paths are the answer. Otherwise the search from
 // source runs toward target, skipping the products that can't reach it in
 // the length left.
-func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
+func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool), probe *pipelineCancellation) []pipelineRow {
 	if s.ctx.Err() != nil {
 		return nil
 	}
 	s.target = target
 	if direct && count == 1 {
-		if rows, ok := s.uniformPair(source, target, groups, bind); ok {
+		if rows, ok := s.uniformPair(source, target, groups, bind, probe); ok {
 			return rows
 		}
 	}
 	if len(s.a.counters) > 0 {
-		return s.run(source, count, groups, bind)
+		return s.run(source, count, groups, bind, probe)
 	}
 	if s.ctx.Err() != nil {
 		return nil
@@ -203,7 +203,7 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 		s.expandBackward(w)
 	}
 	s.distance = w.backward
-	return s.run(source, count, groups, bind)
+	return s.run(source, count, groups, bind, probe)
 }
 
 // shortestWalkPaths returns the rows of the shortest walks of a pair that

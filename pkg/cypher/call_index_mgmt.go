@@ -19,7 +19,7 @@ func (e *StorageExecutor) callDbAwaitIndexes() (*ExecuteResult, error) {
 // order: a null timeout fails the call (ProcedureCallFailed) before the
 // index is looked up, and a null name is looked up as 'null'
 // (IndexNotFound), as Neo4j 5.26.30 does.
-func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
 	if len(arguments) == 0 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "an index name is required")
 	}

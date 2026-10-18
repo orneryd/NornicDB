@@ -19,7 +19,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		return nil, false, nil
 	}
 	if from, to, slice := staticSliceBounds(subscript); slice {
-		return evaluateCypherListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), evaluate)
+		return evaluateCypherListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), evaluate, probe)
 	}
 	indexValue, ok, err := evaluate(subscript)
 	if err != nil {
@@ -44,7 +44,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		if !isString {
 			return nil, false, mapElementAccessByNonStringError(indexValue)
 		}
-		value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
+		value, ok := rowPropertyValue(e.queryVisibleValue(base, probe), key)
 		return value, ok, nil
 	}
 	if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
@@ -62,11 +62,11 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		return nil, false, probe.err
 	}
 	if !isList {
-		return nil, false, subscriptReceiverError(base, indexValue)
+		return nil, false, subscriptReceiverError(base, indexValue, probe)
 	}
 	index, ok := rowSubscriptIndex(indexValue)
 	if !ok {
-		return nil, false, listSubscriptIndexError(base, indexValue)
+		return nil, false, listSubscriptIndexError(base, indexValue, probe)
 	}
 	if index < 0 {
 		index += len(items)
@@ -77,18 +77,18 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 	return items[index], true, nil
 }
 
-func listSubscriptIndexError(base, index interface{}) error {
+func listSubscriptIndexError(base, index interface{}, probe *pipelineCancellation) error {
 	if isRuntimeNumber(index) {
-		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreListIndexNonInteger(neo4jValueRepr(index)))
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreListIndexNonInteger(neo4jValueRepr(index, probe)))
 	}
 	// Indexing reads a list value, including the context literal reader's
 	// homogeneous Go slices; render its items as Neo4j's virtual List.
 	items, _ := cypherListValue(base)
 	parts := make([]string, len(items))
 	for i, item := range items {
-		parts[i] = neo4jValueRepr(item)
+		parts[i] = neo4jValueRepr(item, probe)
 	}
-	list, value := "List{"+strings.Join(parts, ", ")+"}", neo4jValueRepr(index)
+	list, value := "List{"+strings.Join(parts, ", ")+"}", neo4jValueRepr(index, probe)
 	message := localization.CypherCoreListIndexNonNumber(list, value)
 	if boolean, ok := index.(bool); ok {
 		message = localization.CypherCoreListIndexBoolean(list, value, boolean)
@@ -96,7 +96,7 @@ func listSubscriptIndexError(base, index interface{}) error {
 	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
-func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
+func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression string, evaluate func(string) (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
 	bound := func(expression string) (interface{}, bool, error) {
 		if expression == "" {
 			return nil, true, nil

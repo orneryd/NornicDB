@@ -135,12 +135,12 @@ func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInf
 	if _, viewport := TemporalViewportFromContext(ctx); viewport {
 		return nil, false
 	}
-	properties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	properties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties, contextPipelineProbe(ctx))
 	if properties == nil {
 		return nil, false
 	}
 	for _, text := range readTail {
-		used := pipelineNodePredicateProperties(nodePattern.variable, text, nil)
+		used := pipelineNodePredicateProperties(nodePattern.variable, text, nil, contextPipelineProbe(ctx))
 		if used == nil {
 			return nil, false
 		}
@@ -158,8 +158,8 @@ type pipelineRow map[string]interface{}
 // clause kinds this executor understands. Any unsupported clause (CALL
 // subquery, etc.) causes a false return so the
 // caller can select a specialized physical plan.
-func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
-	clauses, ok := pipelineClausesFor(cypher)
+func canExecuteAsPipeline(cypher string, probe *pipelineCancellation) ([]pipelineClause, bool) {
+	clauses, ok := pipelineClausesFor(cypher, probe)
 	if !ok {
 		return nil, false
 	}
@@ -188,8 +188,8 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 
 // pipelineClausesFor splits a statement, or the clauses after a CALL …
 // YIELD, into pipeline clauses when every clause is one the pipeline runs.
-func pipelineClausesFor(cypher string) ([]pipelineClause, bool) {
-	return splitPipelineClausesAllowingProcedureCalls(cypher)
+func pipelineClausesFor(cypher string, probe *pipelineCancellation) ([]pipelineClause, bool) {
+	return splitPipelineClausesAllowingProcedureCalls(cypher, probe)
 }
 
 // splitUnwindBody splits an UNWIND clause's body (after UNWIND) at its
@@ -235,28 +235,28 @@ const pipelineClauseSplitLimit = 4096
 
 // splitPipelineClauses cuts a statement into its pipeline clauses (see
 // parsePipelineClauses); a CALL makes it unsupported.
-func splitPipelineClauses(cypher string) ([]pipelineClause, bool) {
-	return cachedPipelineClauses(cypher, false)
+func splitPipelineClauses(cypher string, probe *pipelineCancellation) ([]pipelineClause, bool) {
+	return cachedPipelineClauses(cypher, false, probe)
 }
 
 // splitPipelineClausesAllowingProcedureCalls is splitPipelineClauses that also
 // accepts top-level procedure calls (CALL proc(args) YIELD …) as clauses of
 // kind pipelineClauseCall, for the pipeline executor and call-aware semantic
 // validation. splitPipelineClauses rejects statements with procedure calls.
-func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause, bool) {
-	return cachedPipelineClauses(cypher, true)
+func splitPipelineClausesAllowingProcedureCalls(cypher string, probe *pipelineCancellation) ([]pipelineClause, bool) {
+	return cachedPipelineClauses(cypher, true, probe)
 }
 
 // cachedPipelineClauses computes the split of a text once, for both
 // callers: without procedure calls as clauses, a text with a CALL of its own
 // is unsupported, and any other text splits the same way. Callers get their
 // own copy of the clause list.
-func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause, bool) {
+func cachedPipelineClauses(cypher string, procedureCalls bool, probe *pipelineCancellation) ([]pipelineClause, bool) {
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[cypher]
 	pipelineClauseSplits.RUnlock()
 	if !cached {
-		split.clauses, split.ok, split.topLevelCall = parsePipelineClauses(cypher)
+		split.clauses, split.ok, split.topLevelCall = parsePipelineClauses(cypher, probe)
 		pipelineClauseSplits.Lock()
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
 			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
@@ -279,7 +279,7 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 // true) on success. On anything unsupported (e.g. nested MERGE or CALL
 // subquery) returns (nil, false) so the caller falls back. topLevelCall
 // reports whether the query has a CALL of its own (cachedPipelineClauses).
-func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+func parsePipelineClauses(cypher string, probe *pipelineCancellation) (clauses []pipelineClause, ok bool, topLevelCall bool) {
 	type kw struct {
 		name string
 		kind pipelineClauseKind
@@ -389,7 +389,7 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 		if b.name == "CALL" || optional {
 			if startsWithCallSubquery(text) {
 				kind = pipelineClauseCallSubquery
-			} else if !pipelineProcedureCallsAreClauses(text) {
+			} else if !pipelineProcedureCallsAreClauses(text, probe) {
 				return nil, false, topLevelCall
 			}
 		}
@@ -559,14 +559,14 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 			}
 		}
 	}
-	clauses, ok := canExecuteAsPipeline(cypher)
+	clauses, ok := canExecuteAsPipeline(cypher, completion)
 	if !ok {
 		return newPipelineDispatchOutcome(nil, false, nil)
 	}
 	originalClauses := clauses
 	if pipelineHasClauseKind(clauses, pipelineClauseSet) {
 		cypher = normalizePipelineWhitespace(cypher)
-		clauses, ok = canExecuteAsPipeline(cypher)
+		clauses, ok = canExecuteAsPipeline(cypher, completion)
 		if !ok {
 			return newPipelineDispatchOutcome(nil, false, nil)
 		}
@@ -729,7 +729,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 		}
 		if deleted := deletedEntitiesOf(ctx); !deleted.empty() {
-			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
+			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted, cancellation); err != nil {
 				return nil, true, err
 			}
 		}
@@ -788,7 +788,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			if err := generations.charge(newRows); err != nil {
+			if err := generations.charge(newRows, cancellation); err != nil {
 				return nil, true, err
 			}
 			rows = newRows
@@ -1384,7 +1384,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
-		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || (!whereApplied && !whereFilter(node)) {
+		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties, probe) || (!whereApplied && !whereFilter(node)) {
 			return nil
 		}
 		if hasViewport && canCheckViewport {
@@ -1416,7 +1416,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		}
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
-	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties, probe)
 	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
@@ -1430,7 +1430,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}, true, nil
 }
 
-func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}, probe *pipelineCancellation) []string {
 	properties := make([]string, 0, len(inline)+2)
 	seen := make(map[string]struct{}, len(inline)+2)
 	for property := range inline {
@@ -1661,7 +1661,7 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 			}
 			joined[name] = value
 		}
-		if err := retention.reserveRow(joined); err != nil {
+		if err := retention.reserveRow(joined, cancellation); err != nil {
 			return nil, err
 		}
 		out = append(out, joined)
@@ -1810,7 +1810,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		nodePattern, templated := template.node(ctx, e, row)
 		var cacheKey string
 		if templated {
-			if propsKey, keyed := pipelinePropertiesKey(nodePattern.properties); keyed {
+			if propsKey, keyed := pipelinePropertiesKey(nodePattern.properties, cancellation); keyed {
 				cacheKey = "\x03" + propsKey + "\x00" + materializedWhere
 			}
 		} else {
@@ -1821,7 +1821,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
 			node, isNode := bound.(*storage.Node)
-			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(node, nodePattern) {
+			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(node, nodePattern, cancellation) {
 				continue
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
@@ -2042,7 +2042,7 @@ func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context
 		return err
 	}
 	if used {
-		return visitNodeList(nodes, visit)
+		return visitNodeList(nodes, visit, contextPipelineProbe(ctx))
 	}
 	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, "", hint)
 	err = e.visitNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection, nil, visit)
@@ -2061,7 +2061,7 @@ func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodeP
 	}
 	for property, value := range nodePattern.properties {
 		key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
-		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(node, nodePattern) {
+		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(node, nodePattern, contextPipelineProbe(ctx)) {
 			return node
 		}
 	}
@@ -2218,7 +2218,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			start, startErr := e.getQueryNode(store, endpoints[0])
 			end, endErr := e.getQueryNode(store, endpoints[1])
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
-				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
+				!e.pipelineNodeMatchesPattern(start, match.StartNode, cancellation) || !e.pipelineNodeMatchesPattern(end, match.EndNode, cancellation) {
 				continue
 			}
 			if bound, exists := row[match.StartNode.variable]; exists {
@@ -2339,11 +2339,11 @@ func traceRelationshipListWithCancellation(relationships []*storage.Edge, direct
 	return starts
 }
 
-func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
+func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo, probe *pipelineCancellation) bool {
 	if !mergeNodeHasLabels(node, pattern.labels) {
 		return false
 	}
-	return e.nodeMatchesProps(node, pattern.properties)
+	return e.nodeMatchesProps(node, pattern.properties, probe)
 }
 
 // pipelineApplyUnwind evaluates the list expression (which may be a literal,

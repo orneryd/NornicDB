@@ -94,7 +94,7 @@ func runReduceFormWithCancellation(budget *expressionBudget, form reduceForm, ac
 		if accumulator, err = step(accumulator, item); err != nil {
 			return nil, err
 		}
-		if err := budget.holdAccumulator(accumulator); err != nil {
+		if err := budget.holdAccumulator(accumulator, probe); err != nil {
 			return nil, err
 		}
 		if !form.all {
@@ -115,12 +115,12 @@ func runReduceFormWithCancellation(budget *expressionBudget, form reduceForm, ac
 			// A parameter predicate is checked with the statement, as Neo4j
 			// types parameters; any other value fails when it is met.
 			if parameter := strings.TrimSpace(form.predicate); parameter[0] == '$' && simpleSemanticIdentifier(parameter[1:]) != "" {
-				operand := staticParameterOperand(holds)
+				operand := staticParameterOperand(holds, probe)
 				operand.parameter = parameter[1:]
 				return nil, operandMismatch(operand, "Boolean")
 			}
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(holds)))
+				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(holds, probe)))
 		}
 	}
 	if form.all {

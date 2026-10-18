@@ -2,8 +2,8 @@ package cypher
 
 // checkListComprehension validates the source before execution and checks the
 // body with the iterator's element type, shadowing any outer binding.
-func (checker staticOperatorChecker) checkListComprehension(variable, list, predicate, projection string) (staticOperand, error) {
-	source, err := checker.check(list)
+func (checker staticOperatorChecker) checkListComprehension(variable, list, predicate, projection string, probe *pipelineCancellation) (staticOperand, error) {
+	source, err := checker.check(list, probe)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -17,10 +17,10 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 	nested.scope.params = checker.scope.params
 	var element staticOperand
 	for index, expression := range []string{predicate, projection} {
-		if err := validateStaticFunctionVariables(expression, nested.scope); err != nil {
+		if err := validateStaticFunctionVariables(expression, nested.scope, probe); err != nil {
 			return staticOperand{}, err
 		}
-		operand, err := nested.check(expression)
+		operand, err := nested.check(expression, probe)
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -44,15 +44,15 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 
 // checkReduceTypes binds the source element and initial accumulator once, then
 // validates the step with the same local function-argument owner as comprehensions.
-func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOperand, error) {
-	source, err := checker.check(form.list)
+func (checker staticOperatorChecker) checkReduceTypes(form reduceForm, probe *pipelineCancellation) (staticOperand, error) {
+	source, err := checker.check(form.list, probe)
 	if err != nil {
 		return staticOperand{}, err
 	}
 	if source.known() && !source.list() && source.kind != "Null" {
 		return staticOperand{}, operandMismatch(source, "List<T>")
 	}
-	initial, err := checker.check(form.initial)
+	initial, err := checker.check(form.initial, probe)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -66,10 +66,10 @@ func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOp
 		if text == "" {
 			continue
 		}
-		if err := validateStaticFunctionVariables(text, nested.scope); err != nil {
+		if err := validateStaticFunctionVariables(text, nested.scope, probe); err != nil {
 			return staticOperand{}, err
 		}
-		operand, err := nested.check(text)
+		operand, err := nested.check(text, probe)
 		if err != nil {
 			return staticOperand{}, err
 		}

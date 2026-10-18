@@ -99,7 +99,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
-					touched = appendTouchedEntity(touched, entity)
+					touched = appendTouchedEntity(touched, entity, probe)
 				}
 			case *storage.Edge:
 				if entity == nil {
@@ -112,7 +112,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore {
-					touched = appendTouchedEntity(touched, entity)
+					touched = appendTouchedEntity(touched, entity, probe)
 				}
 			}
 		}
@@ -138,7 +138,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 }
 
 // appendTouchedEntity appends entity to touched unless it is there already.
-func appendTouchedEntity(touched []interface{}, entity interface{}) []interface{} {
+func appendTouchedEntity(touched []interface{}, entity interface{}, probe *pipelineCancellation) []interface{} {
 	for _, existing := range touched {
 		if existing == entity {
 			return touched
@@ -163,7 +163,7 @@ func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engi
 		return nil
 	}
 	node.Labels = next
-	if err := validatePolicyOnLabelChange(store, node, before); err != nil {
+	if err := validatePolicyOnLabelChange(store, node, before, contextPipelineProbe(ctx)); err != nil {
 		node.Labels = before
 		return err
 	}

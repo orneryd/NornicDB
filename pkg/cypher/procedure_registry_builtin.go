@@ -11,32 +11,32 @@ import (
 
 var builtinProcedureRegistryOnce sync.Once
 
-func ensureBuiltInProceduresRegistered() {
+func ensureBuiltInProceduresRegistered(probe *pipelineCancellation) {
 	builtinProcedureRegistryOnce.Do(func() {
 		registerProcedure(tokenListingProcedureSpec("db.labels", "label", "A label within the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbLabels()
-			})
+				return e.callDbLabels(probe)
+			}, probe)
 		registerProcedure(tokenListingProcedureSpec("db.relationshipTypes", "relationshipType", "A relationship type in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRelationshipTypes()
-			})
+				return e.callDbRelationshipTypes(probe)
+			}, probe)
 		registerProcedure(tokenListingProcedureSpec("db.propertyKeys", "propertyKey", "A property key in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbPropertyKeys()
-			})
+				return e.callDbPropertyKeys(probe)
+			}, probe)
 		registerBuiltInProcedure("db.indexes", "db.indexes() :: (name :: STRING, type :: STRING, labelsOrTypes :: LIST<STRING>, properties :: LIST<STRING>, state :: STRING)", localization.CypherProcedureMetadata("db.indexes"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexes()
-			})
+				return e.callDbIndexes(probe)
+			}, probe)
 		registerBuiltInProcedure("db.index.stats", "db.index.stats() :: (name :: STRING, type :: STRING, label :: STRING, property :: STRING, totalEntries :: INTEGER, uniqueValues :: INTEGER, selectivity :: FLOAT)", localization.CypherProcedureMetadata("db.index.stats"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexStats()
-			})
+			}, probe)
 		registerBuiltInProcedure("db.constraints", "db.constraints() :: (name :: STRING, type :: STRING, labelsOrTypes :: LIST<STRING>, properties :: LIST<STRING>, propertyType :: STRING)", localization.CypherProcedureMetadata("db.constraints"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbConstraints()
-			})
+			}, probe)
 		registerProcedure(ProcedureSpec{
 			Name:               "db.info",
 			Signature:          "db.info() :: (id :: STRING, name :: STRING, creationDate :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER)",
@@ -54,7 +54,7 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbInfo(ctx)
-			})
+			}, probe)
 		registerProcedure(ProcedureSpec{
 			Name:               "db.ping",
 			Signature:          "db.ping() :: (success :: BOOLEAN)",
@@ -66,101 +66,101 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbPing()
-			})
+			}, probe)
 		registerProcedure(schemaTypePropertiesProcedureSpec("db.schema.nodeTypeProperties", true),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbSchemaTypeProperties(ctx, true)
-			})
+			}, probe)
 		registerProcedure(schemaTypePropertiesProcedureSpec("db.schema.relTypeProperties", false),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbSchemaTypeProperties(ctx, false)
-			})
+			}, probe)
 		registerProcedure(schemaVisualizationProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbSchemaVisualizationWithContext(ctx)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.schema.nodeProperties", "db.schema.nodeProperties() :: (nodeLabel :: STRING, propertyName :: STRING, propertyType :: STRING)", localization.CypherProcedureMetadata("db.schema.nodeProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaNodeProperties()
-			})
+				return e.callDbSchemaNodeProperties(probe)
+			}, probe)
 		registerBuiltInProcedure("db.schema.relProperties", "db.schema.relProperties() :: (relType :: STRING, propertyName :: STRING, propertyType :: STRING)", localization.CypherProcedureMetadata("db.schema.relProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaRelProperties()
-			})
+				return e.callDbSchemaRelProperties(probe)
+			}, probe)
 
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryNodes(args)
-			})
+				return e.callDbIndexFulltextQueryNodes(args, probe)
+			}, probe)
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextQueryRelationships(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextCreateNodeIndex(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.fulltext.createRelationshipIndex", "db.index.fulltext.createRelationshipIndex(indexName :: STRING, relationshipTypes :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createRelationshipIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextCreateRelationshipIndex(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.fulltext.drop", "db.index.fulltext.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.fulltext.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextDrop(args)
-			})
+			}, probe)
 		registerProcedure(fulltextAnalyzerProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexFulltextListAvailableAnalyzers()
-			})
+			}, probe)
 
 		registerProcedure(vectorQueryProcedureSpec("db.index.vector.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callVectorQueryArguments(ctx, args, false)
-			})
+			}, probe)
 		registerProcedure(vectorQueryProcedureSpec("db.index.vector.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callVectorQueryArguments(ctx, args, true)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.vector.embed", "db.index.vector.embed(text :: STRING) :: (embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("db.index.vector.embed"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorEmbed(ctx, args)
-			})
+			}, probe)
 		// Automatic embedding's pause (#1021): administrators only, for the
 		// whole DBMS, so callable from the system database too.
 		pauseEmbedding, resumeEmbedding := true, false
 		registerAdminBuiltInProcedure("db.embedding.pause", "db.embedding.pause() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.pause"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callEmbeddingControl(ctx, &pauseEmbedding)
-			})
+			}, probe)
 		registerAdminBuiltInProcedure("db.embedding.resume", "db.embedding.resume() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.resume"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callEmbeddingControl(ctx, &resumeEmbedding)
-			})
+			}, probe)
 		registerAdminBuiltInProcedure("db.embedding.status", "db.embedding.status() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.status"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callEmbeddingControl(ctx, nil)
-			})
+			}, probe)
 		registerProcedure(vectorCreateNodeProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorCreateIndex(ctx, args, storage.ConstraintEntityNode)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.vector.createRelationshipIndex", "db.index.vector.createRelationshipIndex(indexName :: STRING, relationshipType :: STRING, property :: STRING, dimension :: INTEGER, similarityFunction :: STRING)", localization.CypherProcedureMetadata("db.index.vector.createRelationshipIndex"), ProcedureModeWrite, 4, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorCreateIndex(ctx, args, storage.ConstraintEntityRelationship)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.index.vector.drop", "db.index.vector.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.vector.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorDrop(args)
-			})
+			}, probe)
 
 		registerProcedure(vectorSetterProcedureSpec("db.create.setNodeVectorProperty", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callSetVectorProperty(ctx, args, false)
-			})
+			}, probe)
 		registerProcedure(vectorSetterProcedureSpec("db.create.setRelationshipVectorProperty", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callSetVectorProperty(ctx, args, true)
-			})
+			}, probe)
 
 		registerProcedure(ProcedureSpec{
 			Name:               "dbms.components",
@@ -177,7 +177,7 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsComponents()
-			})
+			}, probe)
 		registerProcedure(ProcedureSpec{
 			Name:               "dbms.info",
 			Signature:          "dbms.info() :: (id :: STRING, name :: STRING, creationDate :: STRING)",
@@ -193,40 +193,40 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsInfo()
-			})
+			}, probe)
 		registerProcedure(dbmsListConfigProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsListConfigArguments(ctx, args)
-			})
+			}, probe)
 		registerProcedure(dbmsSetConfigValueProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsSetConfigValue(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("dbms.clientConfig", "dbms.clientConfig() :: (name :: STRING, description :: STRING, value :: STRING, dynamic :: BOOLEAN, defaultValue :: STRING, startupValue :: STRING, explicitlySet :: BOOLEAN, validValues :: STRING)", localization.CypherProcedureMetadata("dbms.clientConfig"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsClientConfig()
-			})
+			}, probe)
 		registerProcedure(dbmsListConnectionsProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsListConnectionsWithContext(ctx)
-			})
+			}, probe)
 		registerBuiltInProcedure("dbms.procedures", "dbms.procedures() :: (name :: STRING, signature :: STRING, description :: STRING, mode :: STRING)", localization.CypherProcedureMetadata("dbms.procedures"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbmsProcedures()
-			})
+				return e.callDbmsProcedures(probe)
+			}, probe)
 		registerBuiltInProcedure("dbms.functions", "dbms.functions() :: (name :: STRING, description :: STRING, category :: STRING)", localization.CypherProcedureMetadata("dbms.functions"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsFunctions()
-			})
+			}, probe)
 
 		registerProcedure(awaitIndexProcedureSpec("db.awaitIndex", true),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNamedIndexManagement("db.awaitIndex", args)
-			})
+				return e.callNamedIndexManagement("db.awaitIndex", args, probe)
+			}, probe)
 		registerProcedure(awaitIndexProcedureSpec("db.awaitIndexes", false),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbAwaitIndexes()
-			})
+			}, probe)
 		registerProcedure(ProcedureSpec{
 			Name:               "db.resampleIndex",
 			Signature:          "db.resampleIndex(indexName :: STRING)",
@@ -239,8 +239,8 @@ func ensureBuiltInProceduresRegistered() {
 			MaxArgs:            1,
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNamedIndexManagement("db.resampleIndex", args)
-			})
+				return e.callNamedIndexManagement("db.resampleIndex", args, probe)
+			}, probe)
 		registerProcedure(ProcedureSpec{
 			Name:               "db.clearQueryCaches",
 			Signature:          "db.clearQueryCaches() :: (value :: STRING)",
@@ -253,32 +253,32 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbClearQueryCaches()
-			})
+			}, probe)
 
 		registerProcedure(queryStatisticsProcedureSpec("collect"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "collect", args)
-			})
+			}, probe)
 		registerProcedure(queryStatisticsProcedureSpec("retrieve"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "retrieve", args)
-			})
+			}, probe)
 		registerAdminBuiltInProcedure("db.stats.retrieveAllAnTheStats", "db.stats.retrieveAllAnTheStats()", localization.CypherProcedureMetadata("db.stats.retrieveAllAnTheStats"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.retrieveGraphStatistics(ctx, "ALL")
-			})
+			}, probe)
 		registerProcedure(queryStatisticsProcedureSpec("clear"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "clear", args)
-			})
+			}, probe)
 		registerProcedure(queryStatisticsProcedureSpec("status"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "status", args)
-			})
+			}, probe)
 		registerProcedure(queryStatisticsProcedureSpec("stop"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "stop", args)
-			})
+			}, probe)
 
 		registerProcedure(ProcedureSpec{
 			Name:               "tx.setMetaData",
@@ -292,40 +292,40 @@ func ensureBuiltInProceduresRegistered() {
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callTxSetMetadataArguments(ctx, args)
-			})
+			}, probe)
 
 		registerBuiltInProcedure("nornicdb.version", "nornicdb.version() :: (version :: STRING, build :: STRING, edition :: STRING)", localization.CypherProcedureMetadata("nornicdb.version"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbVersion()
-			})
+			}, probe)
 		registerBuiltInProcedure("nornicdb.stats", "nornicdb.stats() :: (nodes :: INTEGER, relationships :: INTEGER, labels :: INTEGER, relationshipTypes :: INTEGER)", localization.CypherProcedureMetadata("nornicdb.stats"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNornicDbStats()
-			})
+				return e.callNornicDbStats(probe)
+			}, probe)
 		registerBuiltInProcedure("kp.decayInfo", "kp.decayInfo() :: (enabled :: BOOLEAN, system :: STRING, configuredVia :: STRING)", localization.CypherProcedureMetadata("kp.decayInfo"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbDecayInfo()
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.info", "kp.info() :: (enabled :: BOOLEAN, system :: STRING, decayProfiles :: INTEGER, decayBindings :: INTEGER, promotionProfiles :: INTEGER, promotionPolicies :: INTEGER, configuredVia :: STRING)", localization.CypherProcedureMetadata("kp.info"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyInfo()
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.profiles", "kp.profiles() :: (kind :: STRING, Name :: STRING, HalfLifeSeconds :: INTEGER, VisibilityThreshold :: FLOAT, ScoreFloor :: FLOAT, Function :: STRING, Scope :: STRING, DecayEnabled :: BOOLEAN, ScoreFrom :: STRING, ScoreFromProperty :: STRING, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, ProfileRef :: STRING, NoDecay :: BOOLEAN, Order :: INTEGER)", localization.CypherProcedureMetadata("kp.profiles"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyProfiles()
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.policies", "kp.policies() :: (kind :: STRING, Name :: STRING, Scope :: STRING, Multiplier :: FLOAT, ScoreFloor :: FLOAT, ScoreCap :: FLOAT, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN)", localization.CypherProcedureMetadata("kp.policies"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyPolicies()
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.resolve", "kp.resolve(entityId :: STRING = '', labelsCsv :: STRING = '', edgeType :: STRING = '') :: (TargetID :: STRING, TargetScope :: STRING, ResolvedDecayProfileID :: STRING, ResolvedScoreFrom :: STRING, ResolutionSourceChain :: LIST<STRING>, AppliedDecayProfileNames :: LIST<STRING>, AppliedPromotionPolicyName :: STRING, AppliedPromotionProfileName :: STRING, EffectiveRate :: FLOAT, EffectiveThreshold :: FLOAT, EffectiveMultiplier :: FLOAT, BaseScore :: FLOAT, FinalScore :: FLOAT, NoDecay :: BOOLEAN, SuppressionEligible :: BOOLEAN, Explanation :: STRING)", localization.CypherProcedureMetadata("kp.resolve"), ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyResolve(args)
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.deindexStatus", "kp.deindexStatus() :: (pending_count :: INTEGER, supported :: BOOLEAN, message :: STRING, workItemId :: STRING, targetId :: STRING, targetScope :: STRING, enqueuedAt :: INTEGER, status :: STRING)", localization.CypherProcedureMetadata("kp.deindexStatus"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyDeindexStatus()
-			})
+			}, probe)
 		// The knowledge-policy procedures are kp.*, a vendor namespace as apoc.*
 		// and gds.* are (#1078); their earlier nornicdb.* names stay as
 		// deprecated aliases of the same procedures.
@@ -347,96 +347,96 @@ func ensureBuiltInProceduresRegistered() {
 		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieve(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieve(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.suppress", "kp.suppress(entity :: ANY)", localization.CypherProcedureMetadata("kp.suppress"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callKpSuppress(ctx, "kp.suppress", args, true)
-			})
+			}, probe)
 		registerBuiltInProcedure("kp.unsuppress", "kp.unsuppress(entity :: ANY)", localization.CypherProcedureMetadata("kp.unsuppress"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callKpSuppress(ctx, "kp.unsuppress", args, false)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.rerank", "db.rerank(request :: MAP) :: (id :: STRING, content :: STRING, original_rank :: INTEGER, new_rank :: INTEGER, bi_score :: FLOAT, cross_score :: FLOAT, final_score :: FLOAT)", localization.CypherProcedureMetadata("db.rerank"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRerank(ctx, args)
-			})
+			}, probe)
 		// db.retrieveRelationships searches relationship properties, when the
 		// database indexes them (#1065).
 		registerBuiltInProcedure("db.retrieveRelationships", "db.retrieveRelationships(request :: MAP) :: (relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING)", localization.CypherProcedureMetadata("db.retrieveRelationships"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieveRelationships(ctx, args)
-			})
+			}, probe)
 		// db.retrieveGraph ranks nodes and relationships together: rows, or
 		// with n / maxResults one terminal page; the signature declares both,
 		// as db.rretrieve's does, so YIELD page holds after MATCH / WITH too.
 		registerBuiltInProcedure("db.retrieveGraph", "db.retrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.retrieveGraph"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieveGraph(ctx, args)
-			})
+			}, probe)
 		// db.rretrieveGraph is db.retrieveGraph with the configured reranker
 		// ordering the fused pool of both kinds, as db.rretrieve is db.retrieve's.
 		registerBuiltInProcedure("db.rretrieveGraph", "db.rretrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieveGraph"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieveGraph(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.infer", "db.infer(request :: MAP) :: (text :: STRING, structured :: ANY, model :: STRING, usage :: MAP, latencyMs :: INTEGER, finishReason :: STRING)", localization.CypherProcedureMetadata("db.infer"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbInfer(ctx, args)
-			})
+			}, probe)
 
 		registerBuiltInProcedure("db.cdc.current", "db.cdc.current() :: (id :: STRING)", localization.CypherProcedureMetadata("db.cdc.current"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbCdcCurrent()
-			})
+			}, probe)
 		registerBuiltInProcedure("db.cdc.earliest", "db.cdc.earliest() :: (id :: STRING)", localization.CypherProcedureMetadata("db.cdc.earliest"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbCdcEarliest()
-			})
+			}, probe)
 		registerAdminBuiltInProcedure("db.cdc.query", "db.cdc.query(from = \"\" :: STRING, selectors = [] :: LIST<MAP>, limit = null :: INTEGER) :: (id :: STRING, txId :: INTEGER, seq :: INTEGER, metadata :: MAP, event :: MAP)", localization.CypherProcedureMetadata("db.cdc.query"), ProcedureModeDBMS, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbCdcQuery(args)
-			})
+				return e.callDbCdcQuery(args, probe)
+			}, probe)
 		registerAdminBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTxlogEntries(ctx, args)
-			})
+			}, probe)
 		registerAdminBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING, limit = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTxlogByTxID(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.temporal.assertNoOverlap", "db.temporal.assertNoOverlap(label :: STRING, keyProp :: STRING, validFromProp :: STRING, validToProp :: STRING, keyValue :: ANY, newValidFrom :: ANY, newValidTo :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER) :: (ok :: BOOLEAN)", localization.CypherProcedureMetadata("db.temporal.assertNoOverlap"), ProcedureModeRead, 7, 9, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTemporalAssertNoOverlap(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("db.temporal.asOf", "db.temporal.asOf(label :: STRING, keyProp :: STRING, keyValue :: ANY, validFromProp :: STRING, validToProp :: STRING, asOf :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER) :: (node :: NODE)", localization.CypherProcedureMetadata("db.temporal.asOf"), ProcedureModeRead, 6, 8, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTemporalAsOf(ctx, args)
-			})
+			}, probe)
 
 		registerBuiltInProcedureLiteral("apoc.path.subgraphNodes", "apoc.path.subgraphNodes(startNode :: ANY, config :: MAP) :: (node :: NODE)", "Returns the nodes reachable from the start node(s) under the config's filters", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathSubgraphNodes(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.path.subgraphAll", "apoc.path.subgraphAll(startNode :: ANY, config :: MAP) :: (nodes :: LIST<NODE>, relationships :: LIST<RELATIONSHIP>)", "Returns the reachable nodes and the relationships between them", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathSubgraphAll(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.path.expand", "apoc.path.expand(startNode :: ANY, relationshipFilter :: STRING, labelFilter :: STRING, minLevel :: INTEGER, maxLevel :: INTEGER) :: (path :: PATH)", "Expands paths from the start node(s)", ProcedureModeRead, 1, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathExpand(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.path.expandConfig", "apoc.path.expandConfig(startNode :: ANY, config :: MAP) :: (path :: PATH)", "Expands paths from the start node(s) under a config", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathExpandConfig(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.path.spanningTree", "apoc.path.spanningTree(startNode :: ANY, config :: MAP) :: (path :: PATH)", "Returns a path from the start node(s) to every node reached once", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathSpanningTree(ctx, args)
-			})
+			}, probe)
 		// A custom procedure is one for the whole server (the procedure
 		// registry is process-wide), and whoever calls it runs its body, on
 		// any database: installing, replacing and dropping one needs the
@@ -445,201 +445,201 @@ func ensureBuiltInProceduresRegistered() {
 		registerAdminBuiltInProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.installProcedure", args, true)
-			})
+			}, probe)
 		registerAdminBuiltInProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.declareProcedure", args, false)
-			})
+			}, probe)
 		registerAdminBuiltInProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomDrop(ctx, args)
-			})
+			}, probe)
 		for _, name := range []string{"apoc.custom.list", "apoc.custom.show"} {
 			registerBuiltInProcedureLiteral(name, name+"() :: (type :: STRING, name :: STRING, description :: STRING, mode :: STRING, statement :: STRING, inputs :: LIST<ANY>, outputs :: LIST<ANY>, forceSingle :: BOOLEAN)", "Lists the custom procedures", ProcedureModeRead, 0, 1, false,
 				func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 					return e.callApocCustomList(ctx)
-				})
+				}, probe)
 		}
 		registerBuiltInProcedureLiteral("apoc.cypher.run", "apoc.cypher.run(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.run", args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.cypher.doIt", "apoc.cypher.doIt(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeWrite, 2, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.doIt", args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.cypher.doitall", "apoc.cypher.doitall(statement :: STRING, params :: MAP) :: (value :: MAP)", "Alias of apoc.cypher.run", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.doitall", args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.cypher.runMany", "apoc.cypher.runMany(statements :: STRING, params :: MAP, config :: MAP = {}) :: (row :: INTEGER, result :: MAP)", "Runs many Cypher statements", ProcedureModeWrite, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRunMany(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.periodic.iterate", "apoc.periodic.iterate(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Runs batch iterate/action jobs", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.periodic.commit", "apoc.periodic.commit(statement :: STRING, params :: MAP) :: (updates :: INTEGER, executions :: INTEGER, runtime :: INTEGER)", "Runs periodic commits", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicCommit(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.periodic.rock_n_roll", "apoc.periodic.rock_n_roll(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Alias of apoc.periodic.iterate", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.rock_n_roll", args)
-			})
+			}, probe)
 
 		registerBuiltInProcedure("gds.version", "gds.version() :: (gdsVersion :: STRING)", localization.CypherProcedureMetadata("gds.version"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
-			})
+			}, probe)
 		// A node ID is the INTEGER an aggregation row supplied, as in GDS, or
 		// NornicDB's stored string ID (#1165), so both procedures declare ANY.
 		registerBuiltInProcedure("gds.louvain.stream", "gds.louvain.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: ANY, communityId :: INTEGER, intermediateCommunityIds :: LIST<INTEGER>)", localization.CypherProcedureMetadata("gds.louvain.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLouvainStream(args)
-			})
+				return e.callGdsLouvainStream(args, probe)
+			}, probe)
 		const nodeSimilaritySignature = "(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: ANY, node2 :: ANY, similarity :: FLOAT, shared :: LIST<MAP>)"
 		registerBuiltInProcedure("gds.nodeSimilarity.stream", "gds.nodeSimilarity.stream"+nodeSimilaritySignature, localization.CypherProcedureMetadata("gds.nodeSimilarity.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(ctx, args, false)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.nodeSimilarity.filtered.stream", "gds.nodeSimilarity.filtered.stream"+nodeSimilaritySignature, localization.CypherProcedureMetadata("gds.nodeSimilarity.filtered.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(ctx, args, true)
-			})
+			}, probe)
 		// Node similarity over the statement's own incidence rows (B9): no
 		// projection, nothing read from storage, so it follows the graph as the
 		// statement sees it. A NornicDB extension.
 		registerBuiltInProcedure("nornicdb.similarity.stream", "nornicdb.similarity.stream(rows :: LIST<MAP>, configuration = {} :: MAP) :: (node1 :: ANY, node2 :: STRING, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("nornicdb.similarity.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return callNornicSimilarityStream(args)
-			})
+				return callNornicSimilarityStream(args, probe)
+			}, probe)
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphExists(args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.graph.list", "gds.graph.list(graphName = __ALL__ :: STRING) :: (degreeDistribution :: MAP, graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.list"), ProcedureModeRead, 0, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphList(args)
-			})
+				return e.callGdsGraphList(args, probe)
+			}, probe)
 		registerBuiltInProcedure("gds.graph.drop", "gds.graph.drop(graphName :: ANY, failIfMissing = true :: BOOLEAN, dbName =  :: STRING, username =  :: STRING) :: (graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.drop"), ProcedureModeWrite, 1, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphDrop(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.graph.project", "gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY, configuration = {} :: MAP) :: (nodeProjection :: MAP, relationshipProjection :: MAP, graphName :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER, projectMillis :: INTEGER)", localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphProject(args, ctx)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsFastRPStream(args)
-			})
+				return e.callGdsFastRPStream(args, probe)
+			}, probe)
 		registerBuiltInProcedure("gds.fastRP.stats", "gds.fastRP.stats(graphName :: STRING, configuration = {} :: MAP) :: (nodeCount :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.fastRP.stats"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsFastRPStats(args)
-			})
+				return e.callGdsFastRPStats(args, probe)
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.adamicAdar.stream", "gds.linkPrediction.adamicAdar.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.adamicAdar.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionAdamicAdar(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.commonNeighbors.stream", "gds.linkPrediction.commonNeighbors.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.commonNeighbors.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionCommonNeighbors(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.resourceAllocation.stream", "gds.linkPrediction.resourceAllocation.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.resourceAllocation.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionResourceAllocation(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.preferentialAttachment.stream", "gds.linkPrediction.preferentialAttachment.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.preferentialAttachment.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionPreferentialAttachment(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.jaccard.stream", "gds.linkPrediction.jaccard.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.jaccard.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionJaccard(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedure("gds.linkPrediction.predict.stream", "gds.linkPrediction.predict.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT, topology_score :: FLOAT, semantic_score :: FLOAT, reason :: STRING)", localization.CypherProcedureMetadata("gds.linkPrediction.predict.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLinkPredictionPredict(ctx, args)
-			})
+			}, probe)
 
 		registerBuiltInProcedureLiteral("apoc.algo.dijkstra", "apoc.algo.dijkstra(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, weightPropertyName :: STRING, defaultWeight :: FLOAT) :: (path :: PATH, weight :: FLOAT)", "Runs weighted shortest path", ProcedureModeRead, 4, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoDijkstra(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.aStar", "apoc.algo.aStar(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, weightPropertyName :: STRING, latPropertyName :: STRING, lonPropertyName :: STRING) :: (path :: PATH, weight :: FLOAT)", "Runs A* shortest path", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoAStar(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.allSimplePaths", "apoc.algo.allSimplePaths(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, maxNodes :: INTEGER) :: (path :: PATH)", "Enumerates all simple paths", ProcedureModeRead, 4, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoAllSimplePaths(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.pageRank", "apoc.algo.pageRank(nodes :: ANY, config :: MAP) :: (node :: NODE, score :: FLOAT)", "Runs PageRank", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoPageRank(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.betweenness", "apoc.algo.betweenness(nodes :: ANY) :: (node :: NODE, score :: FLOAT)", "Runs betweenness centrality", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoBetweenness(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.closeness", "apoc.algo.closeness(nodes :: ANY) :: (node :: NODE, score :: FLOAT)", "Runs closeness centrality", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoCloseness(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)", "Runs Louvain community detection", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLouvain(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.labelPropagation", "apoc.algo.labelPropagation(nodes :: ANY) :: (node :: NODE, community :: INTEGER)", "Runs label propagation", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLabelPropagation(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY) :: (node :: NODE, componentId :: INTEGER)", "Runs weakly connected components", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoWCC(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.neighbors.tohop", "apoc.neighbors.tohop(node :: NODE, relTypes :: STRING = '', distance :: INTEGER = 1) :: (node :: NODE)", "Collects neighbors to N hops", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocNeighborsTohop(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.neighbors.byhop", "apoc.neighbors.byhop(node :: NODE, relTypes :: STRING = '', distance :: INTEGER = 1) :: (nodes :: LIST<NODE>)", "Collects neighbors grouped by hop distance", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocNeighborsByhop(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.load.json", "apoc.load.json(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {}) :: (value :: MAP)", "Loads JSON", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocLoadJson(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.load.jsonArray", "apoc.load.jsonArray(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {}) :: (value :: MAP)", "Loads JSON array", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocLoadJsonArray(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.load.csv", "apoc.load.csv(urlOrBinary :: STRING, config :: MAP = {}, nullValues :: LIST<STRING> = []) :: (lineNo :: INTEGER, list :: LIST<STRING>, map :: MAP)", "Loads CSV", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocLoadCsv(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.export.json.all", "apoc.export.json.all(file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports graph to JSON", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportJsonAll(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.export.json.query", "apoc.export.json.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to JSON", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportJsonQuery(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.export.csv.all", "apoc.export.csv.all(file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports graph to CSV", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportCsvAll(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.export.csv.query", "apoc.export.csv.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to CSV", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportCsvQuery(ctx, args)
-			})
+			}, probe)
 		registerBuiltInProcedureLiteral("apoc.import.json", "apoc.import.json(url :: STRING, config :: MAP = {}) :: (file :: STRING, source :: STRING, format :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Imports JSON", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocImportJson(ctx, args)
-			})
+			}, probe)
 	})
 }
 
@@ -896,7 +896,7 @@ func vectorSetterProcedureSpec(name, entityName, entityType string) ProcedureSpe
 	}
 }
 
-func registerBuiltInProcedure(name, signature string, description localization.Message, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+func registerBuiltInProcedure(name, signature string, description localization.Message, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler, probe *pipelineCancellation) {
 	registerProcedure(ProcedureSpec{
 		Name:               name,
 		Signature:          signature,
@@ -906,12 +906,12 @@ func registerBuiltInProcedure(name, signature string, description localization.M
 		WorksOnSystem:      worksOnSystem,
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
-	}, gdsStreamHandler(name, handler))
+	}, gdsStreamHandler(name, handler, probe), probe)
 }
 
 // registerAdminBuiltInProcedure is registerBuiltInProcedure for a procedure
 // only an administrator runs (ProcedureSpec.Admin).
-func registerAdminBuiltInProcedure(name, signature string, description localization.Message, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+func registerAdminBuiltInProcedure(name, signature string, description localization.Message, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler, probe *pipelineCancellation) {
 	registerProcedure(ProcedureSpec{
 		Name:               name,
 		Signature:          signature,
@@ -922,7 +922,7 @@ func registerAdminBuiltInProcedure(name, signature string, description localizat
 		Admin:              true,
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
-	}, handler)
+	}, handler, probe)
 }
 
 // registerDeprecatedProcedureAlias registers alias as a deprecated name of the
@@ -944,7 +944,7 @@ func registerDeprecatedProcedureAlias(alias, name string) {
 	_ = globalProcedureRegistry.RegisterBuiltIn(spec, procedure.Handler)
 }
 
-func registerBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+func registerBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler, probe *pipelineCancellation) {
 	registerProcedure(ProcedureSpec{
 		Name:          name,
 		Signature:     signature,
@@ -953,12 +953,12 @@ func registerBuiltInProcedureLiteral(name, signature, description string, mode P
 		WorksOnSystem: worksOnSystem,
 		MinArgs:       minArgs,
 		MaxArgs:       maxArgs,
-	}, handler)
+	}, handler, probe)
 }
 
 // registerAdminBuiltInProcedureLiteral is registerBuiltInProcedureLiteral
 // for a procedure only an administrator runs (ProcedureSpec.Admin).
-func registerAdminBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+func registerAdminBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler, probe *pipelineCancellation) {
 	registerProcedure(ProcedureSpec{
 		Name:          name,
 		Signature:     signature,
@@ -968,10 +968,10 @@ func registerAdminBuiltInProcedureLiteral(name, signature, description string, m
 		Admin:         true,
 		MinArgs:       minArgs,
 		MaxArgs:       maxArgs,
-	}, handler)
+	}, handler, probe)
 }
 
-func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
+func registerProcedure(spec ProcedureSpec, handler ProcedureHandler, probe *pipelineCancellation) {
 	arguments, returnSignature := functionSignatureDescriptions(spec.Signature)
 	if len(spec.Params) == 0 {
 		for index, argument := range arguments {

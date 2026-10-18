@@ -511,7 +511,7 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 			}
 			left, right = promoteConstantNumbers(op.op, leftExpr, rightExpr, left, right, cypherVersionFromContext(ctx) == "25")
 			if op.op == "=~" {
-				matched, err := cypherRegexMatch(left, right)
+				matched, err := cypherRegexMatch(left, right, contextPipelineProbe(ctx))
 				if err != nil {
 					recordExpressionFailure(ctx, err)
 				}
@@ -608,7 +608,7 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	// result reports an operator's statement error (overflow, operand type)
 	// and returns its value; a null result is a result, not "not arithmetic".
 	result := func(op byte, left, right, value interface{}) (interface{}, bool) {
-		if err := arithmeticError(op, left, right); err != nil {
+		if err := arithmeticError(op, left, right, contextPipelineProbe(ctx)); err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil, true
 		}

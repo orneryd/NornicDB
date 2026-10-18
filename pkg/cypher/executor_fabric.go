@@ -133,7 +133,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 				return nil, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(dbName), nil)
 			}
 		}
-		scoped, _, err := e.scopedExecutorForUse(dbName, authToken)
+		scoped, _, err := e.scopedExecutorForUse(dbName, authToken, contextPipelineProbe(ctx))
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +182,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 			stream.Columns = inferred
 		}
 	}
-	e.normalizeFabricRowWrapper(cypher, stream)
+	e.normalizeFabricRowWrapper(cypher, stream, contextPipelineProbe(ctx))
 	s := statsAcc.snapshot()
 	return &ExecuteResult{
 		Columns: stream.Columns,
@@ -215,7 +215,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 			return "", false
 		}
 	}
-	key := resultCacheEntryKey(cypher, params)
+	key := resultCacheEntryKey(cypher, params, contextPipelineProbe(ctx))
 	if version, supported := e.fabricGraphMutationVersion(databases, GetAuthTokenFromContext(ctx)); supported {
 		key += ":graph:" + strconv.FormatUint(version, 10)
 	}
@@ -297,7 +297,7 @@ func (e *StorageExecutor) fabricGraphMutationVersion(databases []string, authTok
 }
 
 func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher string) (*fabricPreparedExec, error) {
-	catalog, err := e.buildFabricCatalog()
+	catalog, err := e.buildFabricCatalog(contextPipelineProbe(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +375,7 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	return fragment, nil
 }
 
-func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) {
+func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream, probe *pipelineCancellation) {
 	if stream == nil || len(stream.Columns) != 1 || stream.Columns[0] != "__fabric_row" || len(stream.Rows) == 0 {
 		return
 	}
@@ -388,7 +388,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 		if len(row) == 0 {
 			continue
 		}
-		m, ok := normalizeFabricRowMap(row[0])
+		m, ok := normalizeFabricRowMap(row[0], probe)
 		if !ok {
 			continue
 		}
@@ -400,7 +400,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 				continue
 			}
 			if sourceID != nil {
-				if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col); ok {
+				if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col, probe); ok {
 					out[i] = v
 				}
 			}
@@ -414,7 +414,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 	stream.Rows = projectedRows
 }
 
-func normalizeFabricRowMap(v interface{}) (map[string]interface{}, bool) {
+func normalizeFabricRowMap(v interface{}, probe *pipelineCancellation) (map[string]interface{}, bool) {
 	switch m := v.(type) {
 	case map[string]interface{}:
 		return m, true
@@ -429,7 +429,7 @@ func normalizeFabricRowMap(v interface{}) (map[string]interface{}, bool) {
 	}
 }
 
-func lookupColumnBySourceIDInRows(rowsAny interface{}, sourceID interface{}, col string) (interface{}, bool) {
+func lookupColumnBySourceIDInRows(rowsAny interface{}, sourceID interface{}, col string, probe *pipelineCancellation) (interface{}, bool) {
 	switch rows := rowsAny.(type) {
 	case []interface{}:
 		for _, item := range rows {
@@ -521,7 +521,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
 	return e.buildColumnsFromReturnItems(items)
 }
 
-func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
+func (e *StorageExecutor) buildFabricCatalog(probe *pipelineCancellation) (*fabric.Catalog, error) {
 	catalog := fabric.NewCatalog()
 	for _, db := range e.dbManager.ListDatabases() {
 		dbName := strings.TrimSpace(db.Name())
@@ -628,7 +628,7 @@ func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, 
 }
 
 func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
-	clauses, supported := canExecuteAsPipeline(query)
+	clauses, supported := canExecuteAsPipeline(query, contextPipelineProbe(ctx))
 	if !supported || containsRelationshipPattern(query) {
 		return nil, nil, false, nil
 	}
@@ -641,7 +641,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if keywords["MATCH"] || keywords["STARTNODE"] || keywords["ENDNODE"] || keywords["SHORTESTPATH"] {
 		return nil, nil, false, nil
 	}
-	executor := c.base.cloneForStorage(c.base.storage)
+	executor := c.base.cloneForStorage(c.base.storage, contextPipelineProbe(ctx))
 	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
 	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
@@ -651,7 +651,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
-	exec := c.base.cloneForStorage(engine)
+	exec := c.base.cloneForStorage(engine, contextPipelineProbe(ctx))
 	if len(recordBindings) > 0 {
 		exec.fabricRecordBindings = recordBindings
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)

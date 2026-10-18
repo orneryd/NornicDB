@@ -82,7 +82,7 @@ func cypherMembershipValues(value interface{}, count int, compare func(int) inte
 // followed by comparisons for values that cannot be indexed. A null list item
 // is an unknown probe; non-comparable items preserve Cypher equality's nulls.
 // It runs once per row and comparison, so it takes no callback per probe.
-func indexedMembershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) interface{}) cypherTruth {
+func indexedMembershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) interface{}, probe *pipelineCancellation) cypherTruth {
 	indexed := len(comparableSet) > 0 || hasNull
 	count := len(nonComparable)
 	if indexed {

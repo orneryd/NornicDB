@@ -48,7 +48,7 @@ func pipelineClausesMayDelete(clauses []pipelineClause) bool {
 }
 
 // add records deleted nodes and relationships.
-func (d *deletedEntities) add(nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}) {
+func (d *deletedEntities) add(nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}, probe *pipelineCancellation) {
 	if len(nodeIDs) > 0 && d.nodes == nil {
 		d.nodes = make(map[storage.NodeID]struct{}, len(nodeIDs))
 	}
@@ -189,7 +189,7 @@ func mayBeDeletedRelationshipView(edge *storage.Edge) bool {
 // properties of a deleted node, and n {.*}, are empty instead
 // (replaceDeletedEntityViews); n.p IS NULL is true and SET n.p = 1 writes
 // nothing, without an error (deletedEntityReadsIn, deletedEntityReadText).
-func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities) error {
+func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities, probe *pipelineCancellation) error {
 	if deleted.empty() {
 		return nil
 	}
@@ -201,7 +201,7 @@ func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *dele
 				// A list iteration variable (x IN xs) reads the list's items.
 				variable = iterationSourceVariable(clause, variable)
 			}
-			if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
+			if deleted.bindsDeleted(row, variable, read.relationshipOnly, probe) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.EntityNotFound",
 					"DeletedEntityAccess",
@@ -274,20 +274,20 @@ func skipSpaceIndex(text string, index int) int {
 // bindsDeleted reports whether row binds variable to a deleted node or
 // relationship. For a keys() / properties() read (relationshipOnly) only a
 // relationship counts: a deleted node's are empty.
-func (d *deletedEntities) bindsDeleted(row pipelineRow, variable string, relationshipOnly bool) bool {
+func (d *deletedEntities) bindsDeleted(row pipelineRow, variable string, relationshipOnly bool, probe *pipelineCancellation) bool {
 	if variable == "" {
 		return false
 	}
-	return d.holdsDeleted(row[variable], relationshipOnly)
+	return d.holdsDeleted(row[variable], relationshipOnly, probe)
 }
 
 // holdsDeleted reports whether value is a deleted node or relationship, or a
 // list holding one (bindsDeleted).
-func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool) bool {
+func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool, probe *pipelineCancellation) bool {
 	switch entity := value.(type) {
 	case []interface{}:
 		for _, item := range entity {
-			if d.holdsDeleted(item, relationshipOnly) {
+			if d.holdsDeleted(item, relationshipOnly, probe) {
 				return true
 			}
 		}
