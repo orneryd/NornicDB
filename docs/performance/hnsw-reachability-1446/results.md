@@ -29,4 +29,4 @@ Median of five runs. Latencies are milliseconds per operation; build rows are se
 | SearchTextContinuationRankedIVFHNSW/cache=true/all | 0.111 (150 docs) | 1.866 (2000 docs) | 1.829 (2000 docs) | -2.0% |
 | SearchTextContinuationRankedIVFHNSW/cache=true/selective | 0.008 (11 docs) | 0.012 (11 docs) | 0.012 (11 docs) | -3.0% |
 | IVFPQCandidateGen | 0.038 | 0.039 | 0.038 | -1.7% |
-| IVFPQCandidateGenWithOverlay | 0.000 | 0.000 | 0.000 | -1.3% |
+| IVFPQCandidateGenWithOverlay | 0.000248 | 0.000259 | 0.000256 | -1.3% |

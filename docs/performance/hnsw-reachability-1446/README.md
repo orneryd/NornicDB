@@ -110,6 +110,14 @@ gate self-tests pass, but downstream verifier checks never execute. The hooks
 remain enabled and unchanged. This is a verifier/hook integration blocker, not a
 full-suite pass. Full PR/release readiness is **not established** by these runs.
 
+Published runtime/report commit: `ce2234bfe3704323520dbb00faadbb996d6a557f`.
+Its normal commit hook contacted `http://localhost:7474`, database
+`nornicdbcode`, and found no duplicates among 13 added or rewritten functions
+(151.22 seconds of ranked-match analysis). The hook explicitly warned that its
+corpus was last ingested at `7e90401c6`, older than this source; this is not a
+claim of comparison against a freshly ingested PR head. The committed-head
+`make verify BASE=origin/develop` rerun again stopped at the same fixture gate.
+
 ## Measured behavior and remaining costs
 
 See the [complete latency table](results.md) and the per-round JSON files for

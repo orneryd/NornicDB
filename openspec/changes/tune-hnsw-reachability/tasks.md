@@ -5,4 +5,4 @@
 - [x] Verify mutation/reload reachability and continuation across candidate generators.
 - [x] Run package tests, focused race checks and applicable make verification; report skips.
 - [ ] Resolve or route the pre-existing GPU transition failure and verifier/live-hook fixture blocker before claiming full readiness.
-- [ ] Publish measured findings and any validated changes to #1446.
+- [x] Publish measured findings and validated changes to #1446.
