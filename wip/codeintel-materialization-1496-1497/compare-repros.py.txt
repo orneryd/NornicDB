@@ -1,0 +1,85 @@
+"""Identical native query reproductions, isolated centrally, no paid embeddings."""
+import concurrent.futures,json,os,threading,time,traceback,urllib.request
+from pathlib import Path
+from neo4j import GraphDatabase,Query
+
+base=Path('/ci');identity=os.environ['CODEINTEL_PROBE_ID'];directory=base/'repro-compare'/identity
+receipt=base/'state'/(identity+'.json');secret=json.loads((base/'secrets/credentials.json').read_text())
+cg=Path('/proc/1/root/sys/fs/cgroup') # The explicitly shared OWN scratch server PID namespace.
+result={'phase':'start','server_commit':os.environ['CODEINTEL_SERVER_COMMIT'],'started':time.time(),'tests':{},'shape':{'nodes':54000,'relationships':1300000,'body_bytes':4096}}
+def save():receipt.write_text(json.dumps(result,default=str))
+def memory():
+    values={}
+    for name in ('memory.current','memory.peak','memory.max','memory.events'):
+        try:values[name]=(cg/name).read_text().strip()
+        except OSError as e:values[name]=str(e)
+    return values
+def connect():
+    for attempt in range(180):
+        try:
+            request=urllib.request.Request('http://127.0.0.1:7474/auth/token',data=json.dumps({'username':secret['user'],'password':secret['password'],'grant_type':'password'}).encode(),headers={'Content-Type':'application/json'})
+            with urllib.request.urlopen(request,timeout=3):pass
+            driver=GraphDatabase.driver('bolt://127.0.0.1:7687',auth=(secret['user'],secret['password']),connection_timeout=5,max_connection_pool_size=8)
+            with driver.session(database='nornic') as session:session.run(Query('RETURN 1',timeout=5)).consume()
+            return driver
+        except Exception:
+            if attempt==179:raise
+            time.sleep(2)
+def rows(q,params=None,db='nornic'):
+    with driver.session(database=db) as s:return [dict(x) for x in s.run(Query(q,timeout=180),params or {})]
+def measure(name,q,db='nornic',params=None,profile=False,timeout=900):
+    result['current_query']=q;save()
+    item={'query':q,'database':db,'memory_before':memory(),'rows':0,'sampled_peak_bytes':0}
+    with driver.session(database=db) as session:item['explain']=session.run(Query('EXPLAIN '+q,timeout=30),params or {}).consume().plan
+    stop=threading.Event()
+    def sample():
+        while not stop.wait(.1):
+            try:item['sampled_peak_bytes']=max(item['sampled_peak_bytes'],int((cg/'memory.current').read_text()))
+            except OSError:pass
+    observer=threading.Thread(target=sample,daemon=True);observer.start();started=time.perf_counter()
+    try:
+        with driver.session(database=db,fetch_size=10000) as session:
+            output=session.run(Query(('PROFILE ' if profile else '')+q,timeout=timeout),params or {})
+            samples=[]
+            for row in output:
+                item['rows']+=1
+                if len(samples)<2:samples.append(dict(row))
+            summary=output.consume();item.update(sample=samples,profile=summary.profile,success=True)
+    except Exception as e:item.update(success=False,error=type(e).__name__+': '+str(e))
+    finally:
+        stop.set();observer.join(timeout=2);item.update(seconds=time.perf_counter()-started,memory_after=memory())
+        result['tests'][name]=item;save()
+    return item
+save()
+try:
+    driver=connect();rows('CREATE CONSTRAINT repro_key IF NOT EXISTS FOR (n:CodeIntel) REQUIRE n._ci_key IS UNIQUE')
+    for start in range(0,54000,1000):rows('UNWIND $rows AS row CREATE (:CodeIntel:CodeIntelFunction {_ci_key:row.key,id:row.key,repo:"repro",body:row.body})',{'rows':[{'key':str(i),'body':'x'*4096} for i in range(start,min(start+1000,54000))]})
+    result.update(phase='load edges');save();started=time.perf_counter()
+    def write(start):rows('UNWIND $rows AS row MATCH (a:CodeIntel {_ci_key:row.a}) MATCH (b:CodeIntel {_ci_key:row.b}) CREATE (a)-[:CALLS {props_hash:row.hash}]->(b)',{'rows':[{'a':str(i%54000),'b':str((i*37+i//54000+1)%54000),'hash':'fixed'} for i in range(start,min(start+5000,1300000))]})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        for _ in pool.map(write,range(0,1300000,5000)):pass
+    result.update(phase='query',edge_load_seconds=time.perf_counter()-started,load_memory=memory());save()
+    measure('unlabelled_count','MATCH ()-[r]->() RETURN count(r) AS n')
+    measure('labelled_count','MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r) AS n',timeout=180)
+    if not result['tests']['labelled_count']['success']:driver.close();driver=connect()
+    measure('relationship_identity','MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash')
+    if not result['tests']['relationship_identity']['success']:driver.close();driver=connect()
+    db='repro-index';rows('CREATE DATABASE `'+db+'` IF NOT EXISTS',db='system')
+    rows('CREATE CONSTRAINT probe_key IF NOT EXISTS FOR (n:Probe) REQUIRE n.key IS UNIQUE',db=db)
+    rows('UNWIND $rows AS row CREATE (:Probe {key:row.key})',{'rows':[{'key':str(i)} for i in range(4000)]},db)
+    edges=[{'a':str(i),'b':str(i+1)} for i in range(2000)]
+    # Match the original 10k-edge probe shape, with only 2k indexed KEYED edges.
+    for typ in ('CONTROL1','CONTROL2','CONTROL3','CONTROL4'):
+        rows('UNWIND $rows AS row MATCH (a:Probe {key:row.a}) MATCH (b:Probe {key:row.b}) CREATE (a)-[:'+typ+']->(b)',{'rows':edges},db)
+    rows('CREATE CONSTRAINT probe_edge_key IF NOT EXISTS FOR ()-[r:KEYED]-() REQUIRE r._ci_key IS UNIQUE',db=db)
+    rows('UNWIND $rows AS row MATCH (a:Probe {key:row.a}) MATCH (b:Probe {key:row.b}) CREATE (a)-[:KEYED {_ci_key:row.a,props_hash:"h"}]->(b)',{'rows':edges},db)
+    result['indexes_at_lookup']=rows('SHOW INDEXES',db=db);save()
+    measure('rel_property_index','UNWIND $keys AS ident MATCH ()-[r:KEYED {_ci_key:ident}]->() RETURN r._ci_key AS key,r.props_hash AS hash',db,{'keys':[str(i) for i in range(1000)]},profile=True)
+    measure('rel_property_snapshot','MATCH ()-[r:KEYED]->() WHERE r._ci_key IS NOT NULL RETURN r._ci_key AS key,r.props_hash AS hash',db,profile=True)
+    result['exit']=0
+except BaseException as e:result.update(exit=1,error=str(e),traceback=traceback.format_exc())
+finally:
+    result.update(phase='complete',seconds=time.time()-result['started'],final_memory=memory())
+    result['server_exits']=[json.loads(p.read_text()) for p in sorted(directory.glob('exit-*.json'))]
+    result['server_log_tail']=(directory/'server.log').read_text()[-5000:] if (directory/'server.log').exists() else ''
+    save()

@@ -1,0 +1,18 @@
+On v1.4.3 and the v1.4.4 release candidate at 39e3f7647e034ebe7bf23b067cd161a915700b98, a relationship count with both endpoints labelled materializes traversal paths and row bindings, exhausting the server's 5 GiB limit.
+
+Reproduction shape: 54,000 :CodeIntel:CodeIntelFunction nodes, each with indexed unique _ci_key, id, repo, and a 4096-byte body; 1,300,000 directed CALLS {props_hash:'fixed'} relationships. Server memory.max=5368709120, GOMEMLIMIT=4GiB, embeddings disabled. Load through UNWIND batches of 5,000 relationships.
+
+```cypher
+MATCH ()-[r]->() RETURN count(r) AS n;
+MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r) AS n;
+```
+
+The unlabelled count returns 1,300,000 in 2.7 ms on v1.4.3 and 6.5 ms on the pinned RC. The labelled count is OOM-killed: 78.0 s on v1.4.3; 76.6 s on the RC, supervisor exit 137 and cgroup oom_kill increment. These are isolated scratch-server measurements, not timing comparisons under identical CPU load.
+
+EXPLAIN: NodeByLabelScan -> Expand -> EagerAggregation. Count-store counters cannot represent an arbitrary intersection of endpoint labels, so declining that shortcut is correct. The generic fallback materializes PathResult values and pipeline binding maps before counting; a LIMIT after count cannot bound its input. The same materializing boundary remains in develop 16923aef778025fab3490f6a57549763b536f3d5 by source inspection; no separate develop OOM measurement is claimed.
+
+Expected: count the exact labelled query in bounded memory without retaining traversal paths or binding maps proportional to the relationship count. Keep arbitrary differently labelled endpoints, direction, namespace and transaction visibility correct; the unlabelled total is not a general substitute for arbitrary endpoint-label intersections.
+
+Decision on 2026-10-18: parked for v1.5.0 with the retained-entity/memory family (#1343/#1412), together with the related relationship-identity materialization bug #1497. The tool currently has a correct, usable unlabelled-count workaround for its graph, so no isolated v1.4.4 implementation will be built. The orchestrator can reopen the release decision if the tool's agent reports that the workaround blocks usable operation.
+
+Acceptance: exact 54k-node / 1.3M-edge / 4096-byte-body query succeeds with count 1,300,000 under the isolated 5 GiB cap. Add public-Cypher allocation or retained-memory/peak regressions on both parsers, including increasing edge populations at fixed node/body size, endpoint-label correctness, transaction and namespace controls. Collect paired A/B on resumption. Existing unlabelled count-store behavior must remain intact. The preserved probes have not run; no red/green result is claimed.

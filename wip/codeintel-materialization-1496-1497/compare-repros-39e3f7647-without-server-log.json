@@ -1,0 +1,450 @@
+{
+  "phase": "complete",
+  "server_commit": "39e3f7647e034ebe7bf23b067cd161a915700b98",
+  "started": 1792336757.7212636,
+  "tests": {
+    "unlabelled_count": {
+      "query": "MATCH ()-[r]->() RETURN count(r) AS n",
+      "database": "nornic",
+      "memory_before": {
+        "memory.current": "4980854784",
+        "memory.peak": "5368848384",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 749\noom 0\noom_kill 0\noom_group_kill 0"
+      },
+      "rows": 1,
+      "sampled_peak_bytes": 0,
+      "explain": {
+        "children": [
+          {
+            "operatorType": "Expand",
+            "args": {
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "operatorType": "AllNodesScan",
+                "identifiers": [
+                  "n"
+                ],
+                "args": {
+                  "EstimatedRows": 10000
+                }
+              }
+            ]
+          }
+        ],
+        "operatorType": "EagerAggregation",
+        "args": {
+          "EstimatedRows": 1,
+          "expressions": "count(r) AS n"
+        }
+      },
+      "sample": [
+        {
+          "n": 1300000
+        }
+      ],
+      "profile": null,
+      "success": true,
+      "seconds": 0.006457531824707985,
+      "memory_after": {
+        "memory.current": "4981415936",
+        "memory.peak": "5368848384",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 749\noom 0\noom_kill 0\noom_group_kill 0"
+      }
+    },
+    "labelled_count": {
+      "query": "MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r) AS n",
+      "database": "nornic",
+      "memory_before": {
+        "memory.current": "4981415936",
+        "memory.peak": "5368848384",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 749\noom 0\noom_kill 0\noom_group_kill 0"
+      },
+      "rows": 0,
+      "sampled_peak_bytes": 5368709120,
+      "explain": {
+        "operatorType": "EagerAggregation",
+        "args": {
+          "expressions": "count(r) AS n",
+          "EstimatedRows": 1
+        },
+        "children": [
+          {
+            "operatorType": "Expand",
+            "args": {
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "identifiers": [
+                  "n"
+                ],
+                "args": {
+                  "label": "CodeIntel",
+                  "indexStatus": "available",
+                  "availableIndexes": [
+                    "RANGE(_ci_key)"
+                  ],
+                  "EstimatedRows": 1000
+                },
+                "operatorType": "NodeByLabelScan"
+              }
+            ]
+          }
+        ]
+      },
+      "success": false,
+      "error": "ServiceUnavailable: Failed to read from defunct connection IPv4Address(('127.0.0.1', 7687)) (ResolvedIPv4Address(('127.0.0.1', 7687)))",
+      "seconds": 76.58573175780475,
+      "memory_after": {
+        "memory.current": "4100096",
+        "memory.peak": "5368848384",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 18021\noom 15\noom_kill 1\noom_group_kill 0"
+      }
+    },
+    "relationship_identity": {
+      "query": "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash",
+      "database": "nornic",
+      "memory_before": {
+        "memory.current": "2283270144",
+        "memory.peak": "5368848384",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 18021\noom 15\noom_kill 1\noom_group_kill 0"
+      },
+      "rows": 0,
+      "sampled_peak_bytes": 5369012224,
+      "explain": {
+        "operatorType": "ProduceResults",
+        "args": {
+          "columns": "startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash",
+          "EstimatedRows": 100
+        },
+        "children": [
+          {
+            "operatorType": "Expand",
+            "args": {
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "args": {
+                  "EstimatedRows": 10000
+                },
+                "operatorType": "AllNodesScan",
+                "identifiers": [
+                  "n"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "success": false,
+      "error": "ServiceUnavailable: Failed to read from defunct connection IPv4Address(('127.0.0.1', 7687)) (ResolvedIPv4Address(('127.0.0.1', 7687)))",
+      "seconds": 95.92016720725223,
+      "memory_after": {
+        "memory.current": "3420160",
+        "memory.peak": "5369282560",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+      }
+    },
+    "rel_property_index": {
+      "query": "UNWIND $keys AS ident MATCH ()-[r:KEYED {_ci_key:ident}]->() RETURN r._ci_key AS key,r.props_hash AS hash",
+      "database": "repro-index",
+      "memory_before": {
+        "memory.current": "2727424000",
+        "memory.peak": "5369282560",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+      },
+      "rows": 1000,
+      "sampled_peak_bytes": 3339812864,
+      "explain": {
+        "operatorType": "ProduceResults",
+        "args": {
+          "EstimatedRows": 100,
+          "columns": "r._ci_key AS key,r.props_hash AS hash"
+        },
+        "children": [
+          {
+            "args": {
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "args": {
+                  "EstimatedRows": 10000
+                },
+                "operatorType": "AllNodesScan",
+                "identifiers": [
+                  "n"
+                ]
+              }
+            ],
+            "operatorType": "Expand"
+          }
+        ]
+      },
+      "sample": [
+        {
+          "key": "0",
+          "hash": "h"
+        },
+        {
+          "key": "1",
+          "hash": "h"
+        }
+      ],
+      "profile": {
+        "operatorType": "ProduceResults",
+        "args": {
+          "EstimatedRows": 100,
+          "columns": "r._ci_key AS key,r.props_hash AS hash"
+        },
+        "children": [
+          {
+            "dbHits": 20300,
+            "operatorType": "Expand",
+            "args": {
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "rows": 1000,
+                "dbHits": 20000,
+                "operatorType": "AllNodesScan",
+                "identifiers": [
+                  "n"
+                ],
+                "args": {
+                  "EstimatedRows": 10000
+                }
+              }
+            ],
+            "rows": 1000
+          }
+        ],
+        "rows": 1000,
+        "dbHits": 20400
+      },
+      "success": true,
+      "seconds": 5.568618132732809,
+      "memory_after": {
+        "memory.current": "3335692288",
+        "memory.peak": "5369282560",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+      }
+    },
+    "rel_property_snapshot": {
+      "query": "MATCH ()-[r:KEYED]->() WHERE r._ci_key IS NOT NULL RETURN r._ci_key AS key,r.props_hash AS hash",
+      "database": "repro-index",
+      "memory_before": {
+        "memory.current": "3335692288",
+        "memory.peak": "5369282560",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+      },
+      "rows": 2000,
+      "sampled_peak_bytes": 0,
+      "explain": {
+        "operatorType": "ProduceResults",
+        "args": {
+          "columns": "r._ci_key AS key,r.props_hash AS hash",
+          "EstimatedRows": 100
+        },
+        "children": [
+          {
+            "operatorType": "Filter",
+            "args": {
+              "predicate": "r._ci_key IS NOT NULL",
+              "EstimatedRows": 100
+            },
+            "children": [
+              {
+                "operatorType": "Expand",
+                "args": {
+                  "EstimatedRows": 100
+                },
+                "children": [
+                  {
+                    "operatorType": "AllNodesScan",
+                    "identifiers": [
+                      "n"
+                    ],
+                    "args": {
+                      "EstimatedRows": 10000
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sample": [
+        {
+          "key": "48",
+          "hash": "h"
+        },
+        {
+          "key": "49",
+          "hash": "h"
+        }
+      ],
+      "profile": {
+        "operatorType": "ProduceResults",
+        "args": {
+          "columns": "r._ci_key AS key,r.props_hash AS hash",
+          "EstimatedRows": 100
+        },
+        "children": [
+          {
+            "children": [
+              {
+                "operatorType": "Expand",
+                "args": {
+                  "EstimatedRows": 100
+                },
+                "children": [
+                  {
+                    "operatorType": "AllNodesScan",
+                    "identifiers": [
+                      "n"
+                    ],
+                    "args": {
+                      "EstimatedRows": 10000
+                    },
+                    "rows": 2000,
+                    "dbHits": 20000
+                  }
+                ],
+                "rows": 2000,
+                "dbHits": 20300
+              }
+            ],
+            "rows": 2000,
+            "dbHits": 20400,
+            "operatorType": "Filter",
+            "args": {
+              "predicate": "r._ci_key IS NOT NULL",
+              "EstimatedRows": 100
+            }
+          }
+        ],
+        "rows": 2000,
+        "dbHits": 20500
+      },
+      "success": true,
+      "seconds": 0.06557325227186084,
+      "memory_after": {
+        "memory.current": "3336044544",
+        "memory.peak": "5369282560",
+        "memory.max": "5368709120",
+        "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+      }
+    }
+  },
+  "shape": {
+    "nodes": 54000,
+    "relationships": 1300000,
+    "body_bytes": 4096
+  },
+  "edge_load_seconds": 69.3566286531277,
+  "load_memory": {
+    "memory.current": "4980854784",
+    "memory.peak": "5368848384",
+    "memory.max": "5368709120",
+    "memory.events": "low 0\nhigh 0\nmax 749\noom 0\noom_kill 0\noom_group_kill 0"
+  },
+  "indexes_at_lookup": [
+    {
+      "id": 1,
+      "name": "index_343aff4e",
+      "state": "ONLINE",
+      "populationPercent": 100,
+      "type": "LOOKUP",
+      "entityType": "NODE",
+      "labelsOrTypes": null,
+      "properties": null,
+      "indexProvider": "token-lookup-1.0",
+      "owningConstraint": null,
+      "lastRead": null,
+      "readCount": null
+    },
+    {
+      "id": 2,
+      "name": "index_f7700477",
+      "state": "ONLINE",
+      "populationPercent": 100,
+      "type": "LOOKUP",
+      "entityType": "RELATIONSHIP",
+      "labelsOrTypes": null,
+      "properties": null,
+      "indexProvider": "token-lookup-1.0",
+      "owningConstraint": null,
+      "lastRead": null,
+      "readCount": null
+    },
+    {
+      "id": 4,
+      "name": "probe_edge_key",
+      "state": "ONLINE",
+      "populationPercent": 100,
+      "type": "RANGE",
+      "entityType": "RELATIONSHIP",
+      "labelsOrTypes": [
+        "KEYED"
+      ],
+      "properties": [
+        "_ci_key"
+      ],
+      "indexProvider": "range-1.0",
+      "owningConstraint": "probe_edge_key",
+      "lastRead": null,
+      "readCount": null
+    },
+    {
+      "id": 3,
+      "name": "probe_key",
+      "state": "ONLINE",
+      "populationPercent": 100,
+      "type": "RANGE",
+      "entityType": "NODE",
+      "labelsOrTypes": [
+        "Probe"
+      ],
+      "properties": [
+        "key"
+      ],
+      "indexProvider": "range-1.0",
+      "owningConstraint": "probe_key",
+      "lastRead": null,
+      "readCount": null
+    }
+  ],
+  "exit": 0,
+  "seconds": 465.9394609928131,
+  "final_memory": {
+    "memory.current": "3336044544",
+    "memory.peak": "5369282560",
+    "memory.max": "5368709120",
+    "memory.events": "low 0\nhigh 0\nmax 35614\noom 16\noom_kill 2\noom_group_kill 0"
+  },
+  "server_exits": [
+    {
+      "generation": 1,
+      "exit": 137
+    },
+    {
+      "generation": 2,
+      "exit": 137
+    }
+  ]
+}

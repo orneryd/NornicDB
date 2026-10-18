@@ -1,0 +1,38 @@
+func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
+	const edges = 8192
+	exec := codeIntelReadFixture(t, 256, edges)
+	runtime.GC()
+	var before, blocked runtime.MemStats
+	runtime.ReadMemStats(&before)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run := executeStreamed(ctx, exec, "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash", 16)
+	t.Cleanup(func() { cancel(); <-run.stream.Done() })
+	require.True(t, run.stream.streamed(), "identity query must use the result stream: %v", run.err)
+	// The producer is now stopped at stream demand. GC removes transient
+	// decoder allocations; retained MATCH inputs remain observable.
+	runtime.GC()
+	runtime.ReadMemStats(&blocked)
+	live := int64(blocked.HeapAlloc) - int64(before.HeapAlloc)
+	t.Logf("identity query: %d retained bytes at the first fetch", live)
+	var rows int
+	for {
+		batch, done := run.stream.Next(128)
+		for _, row := range batch {
+			require.Len(t, row, 5)
+			a, b := row[0].(int64), row[1].(int64)
+			require.GreaterOrEqual(t, a, int64(0))
+			require.Less(t, b, int64(256))
+			require.Equal(t, []interface{}{"CALLS", nil, "fixed"}, row[2:])
+		}
+		rows += len(batch)
+		if done {
+			break
+		}
+	}
+	<-run.stream.Done()
+	require.NoError(t, run.err)
+	require.Equal(t, edges, rows)
+	require.Less(t, live, int64(8<<20), "fetching 16 scalar rows must not retain all relationship bindings")
+}
+

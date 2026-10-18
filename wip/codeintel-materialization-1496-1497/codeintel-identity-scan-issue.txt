@@ -1,0 +1,17 @@
+Relationship identity projection materializes MATCH inputs before Bolt can consume scalar results, exhausting bounded server memory. Reproduced on v1.4.3 and v1.4.4 RC 39e3f7647e034ebe7bf23b067cd161a915700b98.
+
+```cypher
+MATCH ()-[r]->()
+RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,
+       r.site AS site,r.props_hash AS hash
+```
+
+On an isolated RC scratch instance with 54,000 indexed CodeIntel nodes, 4096-byte bodies and 1,300,000 directed CALLS relationships, a 5 GiB server cap and GOMEMLIMIT=4GiB: no rows before Bolt fails at 95.92 s, supervisor exit 137, sampled peak 5,369,012,224 bytes, and cgroup oom_kill increments. The driver uses fetch_size=10000. EXPLAIN is AllNodesScan -> Expand -> ProduceResults.
+
+The earlier v1.4.3 full graph (90,032 nodes / 3,250,722 relationships) reaches a 900 s query deadline and connection failures, with process RSS near 12 GiB. That original incident did not establish an OOM kill; its process samples include concurrent work. It is not directly comparable to the smaller isolated scratch run.
+
+Source cause: the relationship-MATCH adapter accumulates traversal PathResult values and binding maps before result projection. Bolt's fetch window therefore does not bound upstream retention. Endpoint functions also retrieve ordinary node properties before selecting .id. Develop 16923aef7 has endpoint memoization and fewer redundant GetEdge calls, but retains the materialization barrier; no separate develop OOM runtime is claimed.
+
+This belongs to the retained-entity/query-memory family in #1343 and #1412 and is deferred to v1.5.0. A separate v1.4.4 standalone labelled-count fix does not resolve this issue.
+
+Acceptance: the exact full query must successfully return all 1.3M scalar identities within the isolated 5 GiB cap, retaining memory proportional to the fetch window plus explicitly bounded internal caches, with row counts/values checked and no server OOM. Add a public-Cypher regression on both parsers that blocks at the first fetch, performs GC and asserts retained heap/peak or allocations as graph size grows; it must catch upstream MATCH materialization, not merely prove that result output is streamed. Preserve transaction/namespace visibility and cancellation. Graceful over-budget failure alone is not successful streaming acceptance.

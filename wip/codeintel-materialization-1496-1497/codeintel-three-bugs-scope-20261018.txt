@@ -1,0 +1,164 @@
+Scope checkpoint: three native relationship-query bugs
+2026-10-18. Analysis only; no production edits, issue/PR creation, or workload jobs.
+
+Pinned evidence
+  Measured RC: 39e3f7647e034ebe7bf23b067cd161a915700b98.
+  develop: 16923aef778025fab3490f6a57549763b536f3d5.
+  release/v1.4.4: 24d08776cdb9cb624da1073007da437306518426.
+  origin/rc/1.4.4-final-2 has since advanced to fe5a92fdb; the supplied runtime
+  receipt proves 39e3f7647, not this newer head.
+  Sources inspected in own detached wt-ci-scope-dev and wt-ci-scope-rc.
+  Rules: sig/RULES_SIMPLE_20261016.md, sig/RULE_TRUENAS.md, develop's
+  AGENTS.md, .agents/rule73.md, .agents/standing-design-principles.md.
+  All three supplied repro handoffs and compare-repros.py read.
+
+Develop conclusions below are source findings. No separate develop runtime
+reproduction or develop OOM/peak-memory magnitude is claimed. Existing receipts
+already establish both memory failures and the ignored seek on the pinned RC.
+EXPLAIN's schematic operators are not an executed physical-read trace.
+
+1. Labelled relationship count
+
+  Observed plan: NodeByLabelScan -> Expand -> EagerAggregation(count(r)).
+  relationshipCountFromStore (pkg/cypher/count_store.go:76) correctly refuses
+  two labelled endpoints at lines 93-100. An unlabelled total cannot answer
+  arbitrary endpoint label intersections. This refusal is not itself the bug.
+
+  The generic pipeline streaming MATCH source accepts node-only patterns
+  (pipeline_row_stream.go:260). Relationship patterns instead enter
+  pipelineApplyInitialTraversalMatch (pipeline_traversal_match.go:14), which
+  calls executeMatchWithRelationshipsWithPathSeeded and retains result rows.
+  traverseGraph collects start candidates; findPaths retains PathResult values
+  with node/edge references and copied slices (traversal.go:2029 onward).
+  Sequential traversal accumulates results; parallel traversal accumulates
+  workerPaths and allResults (traversal.go:1609,1661,1718,1734).
+  The pipeline then appends joined binding maps (pipeline_traversal_match.go:125).
+  count consumes these materialized bindings only after expansion finishes.
+  A LIMIT after count cannot bound its input.
+
+  Thus retained memory scales with matching edges and their entity payloads,
+  instead of a scalar count plus a bounded scan working set. Precise allocation
+  attribution between paths, entity copies, caches and maps needs a profile;
+  the existing receipt is process/cgroup evidence, not that attribution.
+
+  Develop: same count-store rejection and materializing relationship-MATCH
+  boundary remain. count_store.go and traversal_fast_agg.go are identical
+  between pinned RC, release and develop. Develop's memory accountant adds
+  some reservations but does not turn this expansion into a streaming count.
+
+  SIZE: M for the count alone, roughly 200-400 production lines across 3-5
+  files, plus public-query memory regressions/benchmarks. This estimate assumes
+  reuse of existing snapshot-aware EdgeTypeStreamer and projected node reads.
+  Do not implement a label-specific shortcut or a second count-store authority.
+  Shared implementation with bug 2 is L rather than the sum of both estimates.
+
+2. Relationship identity projection
+
+  Observed plan: AllNodesScan -> Expand -> ProduceResults.
+  Same materializing relationship-MATCH boundary as bug 1. The Bolt output
+  projection may stream, but all MATCH paths/bindings are already retained
+  upstream; fetch_size=10000 does not bound those retained inputs.
+
+  Additional cost: rowRelationshipEndpoint -> relationshipEndpoint reads a
+  relationship's endpoint node for startNode/endNode, then the property chain
+  selects id. The pinned RC calls GetEdge for each endpoint and getQueryNode
+  for the node (row_expression.go:1915 onward). Unlike the old v1.4.3 handoff
+  description, this exact RC already has the query-node reader: it skips
+  separately stored vectors, but still reads all ordinary properties, including
+  body. Selective .id hydration is absent. A row-level memo would not remove
+  the upstream graph-sized retention or repeated work across different rows.
+
+  Develop: materialization remains. It has endpoint memoization (intended for
+  repeated endpoint reads within predicate rows), and skips redundant GetEdge
+  except for possible deleted views. It still calls getQueryNode for endpoint
+  properties. Those improvements do not establish bounded end-to-end memory
+  or remove this source defect. No claim that develop hits the identical 5 GiB
+  peak or OOM timing is made.
+
+  SIZE: L, roughly 400-800 production lines across 5-9 files plus tests and
+  benchmarks; includes a shared relationship-row source and projection-aware
+  endpoint property reads. Need to preserve snapshot/pending-write visibility,
+  endpoint existence/label checks, namespace, cancellation, and early consumer
+  stop. Existing EdgeTypeStreamer supports empty type for all relationships,
+  including transaction overlays; extend/reuse it rather than create an
+  importer-only cache or alternate execution engine.
+
+1.5.0 disposition for bugs 1 and 2
+
+  Both overlap the existing F-MEM retained-entity ownership family, issue #1343
+  and PR #1412, explicitly parked for 1.5.0. Its handoff includes traversal
+  paths/caches, fast aggregates, pipeline retention and transaction-cache
+  ownership as part of the unresolved boundary. F-MEM Rule 73 is already
+  active; its next ownership redesign is not yet approved/complete.
+
+  HOLD these two with that family under the user's no-throwaway instruction;
+  do not start another independent per-site ownership/accounting correction.
+  Important limit of that classification: the documented #1412 plan is a
+  holder/accounting redesign that fails over-budget queries. It does not yet
+  promise successful bounded-memory streaming of these two full scans. Their
+  streaming requirement must remain explicit in the eventual acceptance work;
+  a graceful memory-limit error alone is not the requested streaming fix.
+  #1391 covers broader cancellation; #1468 covers graph-expression bodies.
+  Neither is evidence that these top-level MATCH scans are already fixed.
+
+3. Relationship property index ignored
+
+  Observed plan: AllNodesScan -> Expand -> ProduceResults. UNWIND repeats the
+  relationship traversal for each key. Develop may seed an unlabelled typed
+  relationship MATCH from GetEdgesByType (traversal.go:1509); this is a type
+  scan, not an equality seek, and still repeats per key.
+
+  The missing mechanism spans execution and storage, not just plan display:
+  - explain.go:290,315 always describes relationships as Expand plus node scan;
+    there is no relationship-property seek selection there.
+  - Standalone relationship RANGE DDL stores metadata through
+    schema.go:696 / SchemaManager.AddRangeIndexForEntity. The resulting
+    RangeIndex is not a populated string relationship-equality query index.
+  - constraintPropertyIndexKey (storage/schema.go:360) explicitly accepts only
+    NODE constraints; node equality-index seeks cannot serve relationships.
+  - Badger has relationshipUniqueCandidates
+    (badger_relationship_unique_index.go:93), an internally maintained derived
+    equality index used by uniqueness validation. It is not exposed to Cypher
+    read planning. It is bounded/lazy and declines some views, so simply calling
+    it with a fake candidate edge is not a complete query-index contract.
+
+  Consequently SHOW INDEXES ONLINE proves catalog state; it does not prove a
+  usable physical relationship-property query access path. The correct rows
+  and working uniqueness constraint do not contradict the missing read seek.
+
+  Develop: same missing query seek and schema/storage separation. The relevant
+  storage schema and relationship uniqueness-index sources are identical on
+  release, pinned RC and develop. Its type-seeding improvement does not fix it.
+
+  SIZE: L, roughly 600-1200 production lines across 8-14 files plus tests and
+  benchmarks, per branch before accounting for port reuse. Need one maintained
+  relationship equality-index owner (share canonical equality/publication
+  mechanisms), population/restart/schema lifecycle, a snapshot/transaction and
+  namespace-aware read capability, row-bound key evaluation, residual endpoint
+  checks, and truthful seek-plan reporting. No new disk format is implied.
+
+  1.5.0: no existing planned relationship-property read-seek owner found in the
+  parked handoffs or open issue/PR search. F-PUBLISH concerns index publication
+  correctness, not this absent access path. This bug is an independent 1.4.4
+  candidate after the requested scope confirmation; not a planner-only small fix.
+
+Next step after confirmation
+  Keep bugs 1/2 held with F-MEM unless the orchestrator explicitly scopes a
+  durable shared streaming change. For approved work, open separate develop
+  and release/v1.4.4 PRs, milestone v1.4.4, and one authored bug issue per approved
+  bug as instructed. No production change, issue or PR has yet been created.
+  Public-Cypher red/green on both parsers; bounded-memory/allocations assertion;
+  focused changed-package checks; paired ab --no-wait with results collected.
+  No race/full-matrix jobs without a corresponding scope need. Reuse final-head
+  results, shard cypher, and never leave submitted jobs running at turn end.
+
+References
+  sig/handoff/issue-nornic-labelled-count-oom.md
+  sig/handoff/issue-nornic-rel-identity-scan-memory.md
+  sig/handoff/issue-nornic-rel-property-index-ignored.md
+  sig/codeintel/compare-repros.py
+  sig/codeintel/compare-repros-39e3f7647e034ebe7bf23b067cd161a915700b98.json
+  sig/handoff/park-1.5.0-1412.md
+  sig/handoff/fix145-1412.md (course change 2)
+  https://github.com/orneryd/NornicDB/issues/1343
+  https://github.com/orneryd/NornicDB/pull/1412
