@@ -20,6 +20,23 @@ This package provides embedding generation clients for NornicDB's vector search 
 - Context cancellation support
 - Batch processing
 
+HTTP batches retain input order and split at the provider's request limits.
+Ollama batches use `/api/embed` (the legacy `/api/embeddings` setting still
+selects this endpoint for batches). Voyage text requests allow at most 1,000
+inputs and use the model's aggregate token budget; OpenAI/Orca requests allow
+at most 2,048 inputs and 300,000 tokens. UTF-8 bytes conservatively bound text
+tokens; Voyage retrieval instructions are included in that budget. Multimodal
+inputs containing images reserve the full per-input context budget because
+remote image dimensions are unknown.
+
+Returned usage is logged once per successful HTTP response at debug level
+(`embedding provider usage`, with provider, model, inputs and total_tokens).
+Voyage single-document results also retain the exact total in the existing
+`DocumentChunkResult.TotalTokens`, including split requests. A request spanning
+several documents has no provider-supplied per-document attribution, so its
+total is logged rather than copied into every document. No token metric or
+public result/configuration field is added.
+
 #### Usage Example
 
 ```go
