@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -10,6 +11,13 @@ type relationshipSeek struct {
 	name, relType string
 	properties    []string
 	values        []interface{}
+}
+
+type relationshipSeekPredicateKey struct{}
+type relationshipSeekPredicate struct{ pattern, where string }
+
+func withRelationshipSeekPredicate(ctx context.Context, pattern, where string) context.Context {
+	return context.WithValue(ctx, relationshipSeekPredicateKey{}, relationshipSeekPredicate{pattern: pattern, where: where})
 }
 
 // A seek is only a different source of candidates for the existing single-hop
@@ -35,7 +43,7 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 	if rel.Variable != "" {
 		for _, conjunct := range splitTopLevelAndConjuncts(where) {
 			shape := parseSimpleIndexedEqualityShape(rel.Variable, conjunct)
-			if !shape.ok {
+			if !shape.ok || !relationshipSeekExactProperty(rel.Variable, shape.property, conjunct) {
 				continue
 			}
 			if _, exists := values[shape.property]; exists {
@@ -67,19 +75,29 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 	return empty, false
 }
 
-func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, match *TraversalMatch, where string, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
-	seek, ok := e.relationshipPropertySeek(ctx, match, where, nil)
+func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, pattern string, match *TraversalMatch, where string, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
+	seekWhere := where
+	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
+		// The pipeline keeps outer-binding predicates for its joined-row filter.
+		// They can still supply an equality key evaluated in this incoming row.
+		seekWhere = original.where
+	}
+	seek, ok := e.relationshipPropertySeek(ctx, match, seekWhere, nil)
 	if !ok {
+		recordRelationshipSeekFallback(ctx, match.Relationship.Variable)
 		return nil, false, nil
 	}
 	reader := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
 	edges, answered, err := reader.SeekRelationships(ctx, seek.relType, seek.properties, seek.values)
 	if err != nil || !answered {
+		if !answered {
+			recordRelationshipSeekFallback(ctx, match.Relationship.Variable)
+		}
 		return nil, answered, err
 	}
 	traversal := e.newTraversalContext(ctx, nil, &match.Relationship)
-	traversal.endpointsNeedOnlyExist = traversalEndpointsNeedOnlyExist(match)
-	traversal.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
+	// The traversal's projection hints describe only the far endpoint. A
+	// relationship seek loads both ends here, so use full query-node reads.
 	defer traversal.memory.close()
 	seedAllows := func(seeds []*storage.Node, id storage.NodeID) bool {
 		if len(seeds) == 0 {
@@ -160,4 +178,29 @@ func relationshipSeekIncomingExpression(expr string, unknown map[string]bool) bo
 		}
 	}
 	return true
+}
+
+// The generic node equality shape reader folds variable case. Relationship
+// candidate ownership is exact: node R and relationship r are distinct bindings.
+func relationshipSeekExactProperty(variable, property, predicate string) bool {
+	clause := unwrapOuterParens(strings.TrimSpace(predicate))
+	equals := topLevelEqualsIndex(clause)
+	if equals < 0 {
+		return false
+	}
+	for _, side := range []string{clause[:equals], clause[equals+1:]} {
+		name, rest, ok := parseIdentifierToken(strings.TrimSpace(side))
+		if !ok || symbolicNameValue(name) != variable {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if !strings.HasPrefix(rest, ".") {
+			continue
+		}
+		name, tail, ok := parseIdentifierToken(strings.TrimSpace(rest[1:]))
+		if ok && strings.TrimSpace(tail) == "" && symbolicNameValue(name) == property {
+			return true
+		}
+	}
+	return false
 }

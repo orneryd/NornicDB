@@ -399,7 +399,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
-	if seekPaths, sought, err := e.tryRelationshipPropertySeek(ctx, matches, whereClause, seedNodes, endSeedNodes); sought {
+	if seekPaths, sought, err := e.tryRelationshipPropertySeek(ctx, pattern, matches, whereClause, seedNodes, endSeedNodes); sought {
 		if err != nil {
 			return nil, err
 		}

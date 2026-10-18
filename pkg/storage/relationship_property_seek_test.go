@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,6 +44,47 @@ func TestRelationshipEqualitySeekRestartAndMaintenance(t *testing.T) {
 	require.Len(t, seek("new"), 1)
 	require.NoError(t, ns.DeleteEdge("e"))
 	require.Empty(t, seek("new"))
+}
+
+func TestRelationshipEqualitySeekConcurrentWrites(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	ns := NewNamespacedEngine(engine, "test")
+	_, err = ns.CreateNode(&Node{ID: "a"})
+	require.NoError(t, err)
+	_, err = ns.CreateNode(&Node{ID: "b"})
+	require.NoError(t, err)
+	seek := func() ([]*Edge, bool, error) {
+		return ns.SeekRelationships(context.Background(), "KEYED", []string{"key"}, []interface{}{"shared"})
+	}
+	edges, answered, err := seek()
+	require.NoError(t, err)
+	require.True(t, answered)
+	require.Empty(t, edges)
+	var writers sync.WaitGroup
+	errors := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		writers.Add(1)
+		go func(i int) {
+			defer writers.Done()
+			if err := ns.CreateEdge(&Edge{ID: EdgeID(fmt.Sprint(i)), StartNode: "a", EndNode: "b", Type: "KEYED", Properties: map[string]interface{}{"key": "shared"}}); err != nil {
+				errors <- err
+				return
+			}
+			_, _, err := seek()
+			errors <- err
+		}(i)
+	}
+	writers.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	edges, answered, err = seek()
+	require.NoError(t, err)
+	require.True(t, answered)
+	require.Len(t, edges, 8)
 }
 
 func TestRelationshipEqualitySeekSnapshotAndPendingWrites(t *testing.T) {

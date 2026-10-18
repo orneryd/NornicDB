@@ -52,7 +52,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx := withValueBindings(ctx, row)
+		rowCtx := withRelationshipSeekPredicate(withValueBindings(ctx, row), pattern, whereClause)
 		materializedPattern := pattern
 		materializedWhere := whereClause
 		physicalWhere := pipelineTraversalPushdownPredicate(ctx, materializedWhere, row, variables)

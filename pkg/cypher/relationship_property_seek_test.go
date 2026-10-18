@@ -25,15 +25,71 @@ func TestRelationshipPropertySeek(t *testing.T) {
 		"MATCH ()-[r:KEYED]->() WHERE r._ci_key = 'a' RETURN r._ci_key AS key",
 		"UNWIND $keys AS k MATCH ()-[r:KEYED {_ci_key:k}]->() RETURN r._ci_key AS key",
 		"UNWIND $keys AS k MATCH ()-[r:KEYED]->() WHERE r._ci_key = k RETURN r._ci_key AS key",
+		"UNWIND $keys AS k MATCH ()-[r:KEYED]->() WHERE r._ci_key = toString(k) RETURN r._ci_key AS key",
 	} {
 		params := map[string]interface{}{"keys": []interface{}{"a", "missing", "a"}}
 		profile := run("PROFILE "+query, params)
-		require.NotEmpty(t, profile.Rows)
+		want := [][]interface{}{{"a"}}
+		if query[0] == 'U' {
+			want = append(want, []interface{}{"a"})
+		}
+		require.Equal(t, want, profile.Rows)
 		require.Contains(t, planStringFromResult(t, profile), "RelationshipIndexSeek", query)
 		explain := run("EXPLAIN "+query, params)
 		require.Empty(t, explain.Rows)
 		require.Contains(t, planStringFromResult(t, explain), "RelationshipIndexSeek", query)
 	}
+}
+
+func TestRelationshipPropertySeekProfileAccounting(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, query := range []string{
+		"CREATE (:Probe)-[:KEYED {_ci_key:'a'}]->(:Probe)",
+		"CREATE RANGE INDEX rel_key FOR ()-[r:KEYED]-() ON (r._ci_key)",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	result, err := exec.Execute(context.Background(), "PROFILE UNWIND ['a','missing','a'] AS k MATCH ()-[r:KEYED {_ci_key:k}]->() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	plan, ok := result.Metadata["plan"].(*ExecutionPlan)
+	if !ok {
+		t.Fatalf("unexpected plan metadata: %T", result.Metadata["plan"])
+	}
+	var find func(*PlanOperator) *PlanOperator
+	find = func(op *PlanOperator) *PlanOperator {
+		if op.OperatorType == "RelationshipIndexSeek" {
+			return op
+		}
+		for _, child := range op.Children {
+			if found := find(child); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	seek := find(plan.Root)
+	require.NotNil(t, seek)
+	require.Equal(t, int64(2), seek.ActualRows)
+	require.Equal(t, int64(3), seek.Arguments["indexLookups"])
+	require.Equal(t, int64(2), seek.Arguments["relationshipCandidates"])
+	require.Empty(t, seek.Children, "a seek must not claim a graph scan ran")
+	require.Equal(t, plan.TotalDBHits, plan.Root.DBHits, "ancestors must lose the replaced scan's cumulative work too")
+}
+
+func TestRelationshipPropertySeekExactVariableOwnership(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, query := range []string{
+		"CREATE (:Start {key:'x'})-[:KEYED {key:'different'}]->(:End)",
+		"CREATE RANGE INDEX rel_key FOR ()-[r:KEYED]-() ON (r.key)",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	result, err := exec.Execute(context.Background(), "MATCH (R)-[r:KEYED]->(b) WHERE R.key='x' RETURN r.key", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"different"}}, result.Rows)
 }
 
 func TestRelationshipPropertySeekEquivalentRows(t *testing.T) {
@@ -73,7 +129,7 @@ func TestRelationshipPropertySeekEquivalentRows(t *testing.T) {
 	}
 	compare := func() {
 		t.Helper()
-		for _, key := range []interface{}{"x", "loop", "new", "missing", nil} {
+		for _, key := range []interface{}{"x", "loop", "new", "peer", "missing", nil} {
 			for _, number := range []interface{}{int64(1), float64(1), []interface{}{int64(1), int64(2)}} {
 				for _, query := range queries {
 					params := map[string]interface{}{"key": key, "number": number}
@@ -115,6 +171,21 @@ func TestRelationshipPropertySeekEquivalentRows(t *testing.T) {
 	compare()
 	for _, exec := range executors {
 		run(exec, "ROLLBACK", nil)
+	}
+	compare()
+	for _, exec := range executors {
+		run(exec, "BEGIN", nil)
+		run(exec, "MATCH ()-[r:KEYED {_ci_key:'peer'}]->() SET r._ci_key='x'", nil)
+		run(exec, "CREATE (:Left {name:'committed'})-[:KEYED {_ci_key:'new',n:1}]->(:Right {name:'committed-end'})", nil)
+		run(exec, "MATCH ()-[r:KEYED {_ci_key:'list'}]->() DELETE r", nil)
+	}
+	compare()
+	for _, exec := range executors {
+		run(exec, "COMMIT", nil)
+	}
+	compare()
+	for _, exec := range executors {
+		run(exec, "MATCH ()-[r:KEYED {_ci_key:'new'}]->() REMOVE r._ci_key", nil)
 	}
 	compare()
 	// Schema lifecycle: a dropped index must stop being selected and recreating

@@ -65,7 +65,7 @@ func relationshipSeekValues(properties []string, values []interface{}) ([]interf
 	return relationshipConstraintValueKeys(properties, props, true)
 }
 
-// RelationshipIndexValuesSupported identifies values the scalar equality owner
+// RelationshipIndexValuesSupported identifies values the equality owner
 // can key completely. Other Cypher values continue through the existing scan.
 func RelationshipIndexValuesSupported(values []interface{}) bool {
 	properties := make([]string, len(values))
