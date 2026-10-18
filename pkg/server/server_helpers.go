@@ -166,10 +166,16 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 // read privilege of a signed-in principal; a request without claims passes
 // the allowlist only when authentication is disabled).
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
+	dataDatabase, accessible := s.graphAccess(s.getDatabaseAccessMode(claims), dbName)
+	if !accessible {
 		return false, false
 	}
-	return true, claims == nil || s.getResolvedAccess(claims, dbName).Read
+	var resolve func(string) auth.ResolvedAccess
+	if claims != nil {
+		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
+	}
+	_, readable = auth.ResolveDatabaseReadAccess(nil, resolve, dataDatabase)
+	return true, readable
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
