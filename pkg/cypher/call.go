@@ -1574,8 +1574,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	)
 }
 
-func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
-	nodes, err := e.storage.AllNodes()
+func (e *StorageExecutor) callDbLabels(ctx context.Context) (*ExecuteResult, error) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if err != nil {
 		return nil, err
 	}
@@ -1609,8 +1612,11 @@ func sortedStringSet(set map[string]bool) []string {
 	return members
 }
 
-func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
-	edges, err := e.storage.AllEdges()
+func (e *StorageExecutor) callDbRelationshipTypes(ctx context.Context) (*ExecuteResult, error) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}
@@ -1771,20 +1777,23 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
 	return &ExecuteResult{
 		Columns: []string{"nodes", "relationships", "labels", "relationshipTypes"},
 		Rows: [][]interface{}{
-			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
+			{nodeCount, edgeCount, e.countLabels(ctx), e.countRelTypes(ctx)},
 		},
 	}, nil
 }
 
-func (e *StorageExecutor) countLabels() int {
-	nodes, err := e.storage.AllNodes()
+func (e *StorageExecutor) countLabels(ctx context.Context) int {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if err != nil {
 		return 0
 	}
@@ -1797,8 +1806,11 @@ func (e *StorageExecutor) countLabels() int {
 	return len(labelSet)
 }
 
-func (e *StorageExecutor) countRelTypes() int {
-	edges, err := e.storage.AllEdges()
+func (e *StorageExecutor) countRelTypes(ctx context.Context) int {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return 0
 	}
@@ -1865,8 +1877,14 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 	return e.callDbSchemaVisualizationWithContext(context.Background())
 }
 
-func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
+func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*ExecuteResult, error) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(e.storage.AllNodes())
+	if held.failed() {
+		return nil, err
+	}
 
 	// Collect properties per label
 	labelProps := make(map[string]map[string]bool)
@@ -1895,8 +1913,14 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
-	edges, _ := e.storage.AllEdges()
+func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*ExecuteResult, error) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
+	if held.failed() {
+		return nil, err
+	}
 
 	// Collect properties per relationship type
 	typeProps := make(map[string]map[string]bool)
@@ -1923,9 +1947,18 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
-	edges, _ := e.storage.AllEdges()
+func (e *StorageExecutor) callDbPropertyKeys(ctx context.Context) (*ExecuteResult, error) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(e.storage.AllNodes())
+	if held.failed() {
+		return nil, err
+	}
+	edges, err := held.heldEdges(e.storage.AllEdges())
+	if held.failed() {
+		return nil, err
+	}
 
 	propSet := make(map[string]bool)
 	for _, node := range nodes {

@@ -151,7 +151,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	}
 
 	nodes, ok, err := exec.collectDeleteWithLimitCandidates(
-		ctx,
+		ctx, nil,
 		"MATCH (n:Person) WHERE n.name = $name",
 		"n",
 		10,
@@ -163,7 +163,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.Equal(t, storage.NodeID("a"), nodes[0].ID)
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+		ctx, nil,
 		"MATCH (n:Person) WHERE n.tag IN $tags",
 		"n",
 		10,
@@ -174,7 +174,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.Len(t, nodes, 2)
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+		ctx, nil,
 		"MATCH (n:Person) WHERE n.tag IN $tags",
 		"n",
 		10,
@@ -185,7 +185,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.Empty(t, nodes)
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+		ctx, nil,
 		"MATCH (n:Person) WHERE n.name <> 'alice'",
 		"n",
 		10,
@@ -196,7 +196,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.Nil(t, nodes)
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+		ctx, nil,
 		"MATCH (:Person) WHERE n.name = 'alice'",
 		"n",
 		10,

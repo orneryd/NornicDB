@@ -73,7 +73,11 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		whereClause = strings.TrimSpace(pseudo[whereIdx+len("WHERE") : returnIdx])
 	}
 
-	sources, err := e.collectBoundRelationshipDeleteSources(ctx, sourcePattern, inTransactionWrapper)
+	// The source nodes and the relationships to delete count while they
+	// are collected and deleted (#1343).
+	owner := trackedRetention(ctx)
+	defer owner.release()
+	sources, err := e.collectBoundRelationshipDeleteSources(ctx, owner, sourcePattern, inTransactionWrapper)
 	if err != nil {
 		return nil, true, err
 	}
@@ -87,6 +91,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	store := e.getStorage(ctx)
 	edgeIDs := make([]storage.EdgeID, 0)
 	seen := make(map[storage.EdgeID]struct{})
+	heldIDs := 0
 	for _, source := range sources {
 		if source == nil {
 			continue
@@ -130,6 +135,9 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			}
 			seen[edge.ID] = struct{}{}
 			edgeIDs = append(edgeIDs, edge.ID)
+			if err := owner.holdAppended(&heldIDs, len(edgeIDs), false); err != nil {
+				return nil, true, err
+			}
 			if limit > 0 && len(edgeIDs) >= limit {
 				break
 			}
@@ -150,22 +158,23 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	return result, true, nil
 }
 
-func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
+// collectBoundRelationshipDeleteSources holds the sources in owner (#1343).
+func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, owner *memoryRetention, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
 	if !inTransactionWrapper {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(ctx, owner, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 
 	store := e.getStorage(ctx)
 	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(ctx, owner, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 
 	var nodes []*storage.Node
 	var err error
 	if len(sourcePattern.labels) > 0 {
-		nodes, err = store.GetNodesByLabel(sourcePattern.labels[0])
+		nodes, err = owner.heldNodes(store.GetNodesByLabel(sourcePattern.labels[0]))
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = owner.heldNodes(store.AllNodes())
 	}
 	if err != nil {
 		return nil, err

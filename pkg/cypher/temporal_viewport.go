@@ -89,8 +89,8 @@ func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*stor
 	return filtered
 }
 
-func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, labels []string) ([]*storage.Node, error) {
-	return e.loadPatternNodes(ctx, labels, nil)
+func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, owner *memoryRetention, labels []string) ([]*storage.Node, error) {
+	return e.loadPatternNodes(ctx, owner, labels, nil)
 }
 
 // loadPatternNodes returns the nodes of a node pattern (labels, inline
@@ -98,7 +98,8 @@ func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, lab
 // label-indexed, viewport-aware streaming collector as node MATCH, which
 // avoids a second physical scan path that materialises GetNodesByLabel inside
 // explicit transactions. Passing the properties lets a pattern without labels
-// take the projected scan instead of decoding every node (#857).
-func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
-	return e.collectNodesWithStreaming(ctx, labels, properties, "", "", -1)
+// take the projected scan instead of decoding every node (#857). The nodes
+// are held in owner (#1343).
+func (e *StorageExecutor) loadPatternNodes(ctx context.Context, owner *memoryRetention, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
+	return e.collectNodesWithStreaming(ctx, owner, labels, properties, "", "", -1)
 }

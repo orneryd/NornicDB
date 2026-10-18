@@ -522,6 +522,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	}
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
+	mergeCandidates := trackedRetention(ctx)
+	defer mergeCandidates.release()
 	// The relationship lookups of this MERGE over its rows share one read
 	// per endpoint pair (relationshipMergeIdentityCache); one row looks up
 	// directly.
@@ -635,7 +637,10 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
 						return nil, nil, err
 					}
-					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
+					// The candidates count while the row's MERGE matches them
+					// (#1343).
+					mergeCandidates.release()
+					matches, scanned, findErr := e.findMergeNodesScanned(mergeCandidates, e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}

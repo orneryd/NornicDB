@@ -15,15 +15,15 @@ func ensureBuiltInProceduresRegistered() {
 	builtinProcedureRegistryOnce.Do(func() {
 		registerProcedure(tokenListingProcedureSpec("db.labels", "label", "A label within the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbLabels()
+				return e.callDbLabels(ctx)
 			})
 		registerProcedure(tokenListingProcedureSpec("db.relationshipTypes", "relationshipType", "A relationship type in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRelationshipTypes()
+				return e.callDbRelationshipTypes(ctx)
 			})
 		registerProcedure(tokenListingProcedureSpec("db.propertyKeys", "propertyKey", "A property key in the database."),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbPropertyKeys()
+				return e.callDbPropertyKeys(ctx)
 			})
 		registerBuiltInProcedure("db.indexes", "db.indexes() :: (name :: STRING, type :: STRING, labelsOrTypes :: LIST<STRING>, properties :: LIST<STRING>, state :: STRING)", localization.CypherProcedureMetadata("db.indexes"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -81,20 +81,20 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("db.schema.nodeProperties", "db.schema.nodeProperties() :: (nodeLabel :: STRING, propertyName :: STRING, propertyType :: STRING)", localization.CypherProcedureMetadata("db.schema.nodeProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaNodeProperties()
+				return e.callDbSchemaNodeProperties(ctx)
 			})
 		registerBuiltInProcedure("db.schema.relProperties", "db.schema.relProperties() :: (relType :: STRING, propertyName :: STRING, propertyType :: STRING)", localization.CypherProcedureMetadata("db.schema.relProperties"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbSchemaRelProperties()
+				return e.callDbSchemaRelProperties(ctx)
 			})
 
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryNodes(args)
+				return e.callDbIndexFulltextQueryNodes(ctx, args)
 			})
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryRelationships(args)
+				return e.callDbIndexFulltextQueryRelationships(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -300,7 +300,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("nornicdb.stats", "nornicdb.stats() :: (nodes :: INTEGER, relationships :: INTEGER, labels :: INTEGER, relationshipTypes :: INTEGER)", localization.CypherProcedureMetadata("nornicdb.stats"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callNornicDbStats()
+				return e.callNornicDbStats(ctx)
 			})
 		registerBuiltInProcedure("kp.decayInfo", "kp.decayInfo() :: (enabled :: BOOLEAN, system :: STRING, configuredVia :: STRING)", localization.CypherProcedureMetadata("kp.decayInfo"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

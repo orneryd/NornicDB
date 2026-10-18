@@ -201,7 +201,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(queryCtx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -274,7 +274,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		return result, nil
 	}
 
-	edges, err := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(queryCtx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}
@@ -646,8 +649,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		return result, nil
 	}
 
-	// Get all edges and filter to those with embeddings
-	edges, err := e.storage.AllEdges()
+	// Get all edges and filter to those with embeddings, held while they
+	// are scored (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}

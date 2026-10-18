@@ -1029,12 +1029,15 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	if wantDims > 0 && len(queryVector) != wantDims {
 		return []vectorNodeScore{}, true
 	}
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
 	var nodes []*storage.Node
 	var err error
 	if label == "" {
-		nodes, err = e.storage.AllNodes()
+		nodes, err = held.heldNodes(e.storage.AllNodes())
 	} else {
-		nodes, err = e.storage.GetNodesByLabel(label)
+		nodes, err = held.heldNodes(e.storage.GetNodesByLabel(label))
 	}
 	if err != nil {
 		return nil, false
@@ -1068,12 +1071,15 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 }
 
 func (e *StorageExecutor) fetchCosineNodeScoresExactFiltered(ctx context.Context, label string, property string, queryVector []float32, orderDesc bool, filter func(*storage.Node) bool) ([]vectorNodeScore, bool) {
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
 	var nodes []*storage.Node
 	var err error
 	if label == "" {
-		nodes, err = e.storage.AllNodes()
+		nodes, err = held.heldNodes(e.storage.AllNodes())
 	} else {
-		nodes, err = e.storage.GetNodesByLabel(label)
+		nodes, err = held.heldNodes(e.storage.GetNodesByLabel(label))
 	}
 	if err != nil {
 		return nil, false
@@ -1199,7 +1205,10 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 			return out, true
 		}
 	}
-	edges, err := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, false
 	}

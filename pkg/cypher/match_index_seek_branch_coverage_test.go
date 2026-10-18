@@ -127,7 +127,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	}
 
 	nodes, handled, err := exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+		ctx, nil,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name = 'Alice' OR n.code = 'X2'",
 		nil,
@@ -137,7 +137,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	require.Len(t, nodes, 2)
 
 	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+		ctx, nil,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name = 'Alice'",
 		nil,
@@ -147,7 +147,7 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	require.Nil(t, nodes)
 
 	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+		ctx, nil,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name > 'Alice' OR n.code = 'X2'",
 		nil,

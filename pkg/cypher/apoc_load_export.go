@@ -478,8 +478,17 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 		}
 	}
 
-	nodes := e.storage.GetAllNodes()
-	edges, _ := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodeSlice(e.storage.GetAllNodes())
+	if err != nil {
+		return nil, err
+	}
+	edges, err := held.heldEdges(e.storage.AllEdges())
+	if held.failed() {
+		return nil, err
+	}
 
 	export := map[string]interface{}{
 		"nodes":         e.nodesToExportFormat(nodes),
@@ -589,8 +598,17 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 		}
 	}
 
-	nodes := e.storage.GetAllNodes()
-	edges, _ := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodeSlice(e.storage.GetAllNodes())
+	if err != nil {
+		return nil, err
+	}
+	edges, err := held.heldEdges(e.storage.AllEdges())
+	if held.failed() {
+		return nil, err
+	}
 
 	// Build CSV content
 	var csvContent strings.Builder

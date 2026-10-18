@@ -12,7 +12,8 @@ import (
 //
 // This is primarily a performance optimization for patterns that can be answered in a single pass
 // over typed edge indexes (GetEdgesByType) with minimal node lookups.
-func (e *StorageExecutor) tryFastRelationshipAggregations(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+// What the aggregations read is held in owner (#1343).
+func (e *StorageExecutor) tryFastRelationshipAggregations(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle fixed 1-hop segments (no variable-length expansions).
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
@@ -22,10 +23,10 @@ func (e *StorageExecutor) tryFastRelationshipAggregations(matches *TraversalMatc
 	}
 
 	if matches.IsChained {
-		return e.tryFastChainedRelationshipAggregation(matches, returnItems)
+		return e.tryFastChainedRelationshipAggregation(owner, matches, returnItems)
 	}
 
-	return e.tryFastSingleHopAgg(matches, returnItems)
+	return e.tryFastSingleHopAgg(owner, matches, returnItems)
 }
 
 type exprMatcher struct{}
@@ -47,7 +48,7 @@ func (exprMatcher) key(expr string) string {
 	return string(b)
 }
 
-func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastSingleHopAgg(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle typed 1-hop patterns with no properties/filters.
 	if len(matches.Relationship.Types) != 1 {
 		return nil, false, nil
@@ -88,7 +89,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 		return nil, false, nil
 	}
 
-	edgeList, idPrefix, err := e.getEdgesByTypeFast(relType)
+	edgeList, idPrefix, err := e.getEdgesByTypeFast(owner, relType)
 	if err != nil {
 		return nil, false, err
 	}
@@ -228,7 +229,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 
 	var groupNodesForLabel map[storage.NodeID]*storage.Node
 	if len(requiredGroupLabels) > 0 {
-		groupNodesForLabel, _, err = e.batchGetNodesFast(groupIDsForLabel)
+		groupNodesForLabel, _, err = e.batchGetNodesFast(owner, groupIDsForLabel)
 		if err != nil {
 			return nil, false, err
 		}
@@ -237,7 +238,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	var otherNodes map[storage.NodeID]*storage.Node
 	var otherHasLabel map[storage.NodeID]bool
 	if needOtherNodes {
-		otherNodes, _, err = e.batchGetNodesFast(otherIDs)
+		otherNodes, _, err = e.batchGetNodesFast(owner, otherIDs)
 		if err != nil {
 			return nil, false, err
 		}
@@ -250,7 +251,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 			}
 		} else {
 			// Fallback: decode nodes if label index lookup isn't available.
-			otherNodes, _, err = e.batchGetNodesFast(otherIDs)
+			otherNodes, _, err = e.batchGetNodesFast(owner, otherIDs)
 			if err != nil {
 				return nil, false, err
 			}
@@ -380,7 +381,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 
 	// Note: group IDs here come from edges (may be namespaced). When using a NamespacedEngine,
 	// BatchGetNodes would prefix again; use batchGetNodesFast() which unwraps to avoid copies.
-	groupNodes, _, err := e.batchGetNodesFast(groupIDs)
+	groupNodes, _, err := e.batchGetNodesFast(owner, groupIDs)
 	if err != nil {
 		return nil, false, err
 	}
@@ -542,7 +543,7 @@ func appendUniqueNodeID(ids []storage.NodeID, seen map[storage.NodeID]struct{}, 
 	return append(ids, id)
 }
 
-func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastChainedRelationshipAggregation(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	plan, ok := buildChainedAggregationPlan(matches, returnItems)
 	if !ok {
 		return nil, false, nil
@@ -569,11 +570,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 	switch plan.kind {
 	case "two-hop-boundary-count":
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(owner, seg0.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(owner, seg1.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
@@ -588,11 +589,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 			countIDs = appendUniqueNodeID(countIDs, countSeen, edge.StartNode)
 			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, edge.EndNode)
 		}
-		countNodes, _, err := e.batchGetNodesFast(countIDs)
+		countNodes, _, err := e.batchGetNodesFast(owner, countIDs)
 		if err != nil {
 			return nil, false, err
 		}
-		rightNodes, _, err = e.batchGetNodesFast(rightIDs)
+		rightNodes, _, err = e.batchGetNodesFast(owner, rightIDs)
 		if err != nil {
 			return nil, false, err
 		}
@@ -615,15 +616,15 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		seg2 := matches.Segments[2]
 		requiredRightLabels := append([]string(nil), seg2.ToNode.labels...)
 
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(owner, seg0.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(owner, seg1.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges2, _, err := e.getEdgesByTypeFast(seg2.Relationship.Types[0])
+		edges2, _, err := e.getEdgesByTypeFast(owner, seg2.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
@@ -653,15 +654,15 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, rightID)
 		}
 
-		countNodes, _, err := e.batchGetNodesFast(countIDs)
+		countNodes, _, err := e.batchGetNodesFast(owner, countIDs)
 		if err != nil {
 			return nil, false, err
 		}
-		joinNodes, _, err := e.batchGetNodesFast(joinIDs)
+		joinNodes, _, err := e.batchGetNodesFast(owner, joinIDs)
 		if err != nil {
 			return nil, false, err
 		}
-		rightNodes, _, err = e.batchGetNodesFast(rightIDs)
+		rightNodes, _, err = e.batchGetNodesFast(owner, rightIDs)
 		if err != nil {
 			return nil, false, err
 		}
@@ -701,12 +702,12 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		leftIDs = appendUniqueNodeID(leftIDs, leftSeen, key.left)
 		rightIDs = appendUniqueNodeID(rightIDs, rightSeen, key.right)
 	}
-	leftNodes, _, err := e.batchGetNodesFast(leftIDs)
+	leftNodes, _, err := e.batchGetNodesFast(owner, leftIDs)
 	if err != nil {
 		return nil, false, err
 	}
 	if rightNodes == nil {
-		rightNodes, _, err = e.batchGetNodesFast(rightIDs)
+		rightNodes, _, err = e.batchGetNodesFast(owner, rightIDs)
 		if err != nil {
 			return nil, false, err
 		}

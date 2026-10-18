@@ -149,6 +149,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 		}
 	}
 
+	patternNodes := trackedRetention(ctx)
+	defer patternNodes.release()
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
 		if idx < len(existingRelBindings) {
@@ -213,7 +215,10 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
+			// The pattern's nodes count while this binding's rows are built
+			// from them (#1343).
+			patternNodes.release()
+			nodes, _ := e.loadPatternNodes(ctx, patternNodes, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -547,24 +552,27 @@ func isNumericLiteral(s string) bool {
 //   - properties: Optional property filters
 //   - limit: Maximum number of nodes to collect (-1 for unlimited)
 //
-// Returns collected nodes or error.
+// Returns collected nodes or error, held in owner (#1343).
 func (e *StorageExecutor) collectNodesWithStreaming(
 	ctx context.Context,
+	owner *memoryRetention,
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
 	whereClause string,
 	limit int,
 ) ([]*storage.Node, error) {
-	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
+	return e.collectNodesWithStreamingProjection(ctx, owner, labels, properties, whereVariable, whereClause, limit, nil)
 }
 
 // collectNodesWithStreamingProjection is collectNodesWithStreaming whose
 // label scan reads only the projection's user properties; nil reads whole
 // nodes. The caller guarantees nothing else in the statement uses the
-// returned nodes' other properties.
+// returned nodes' other properties. The nodes are held in owner as the scan
+// collects them (#1343).
 func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	ctx context.Context,
+	owner *memoryRetention,
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
@@ -576,16 +584,19 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	if limit > 0 {
 		capacity = limit
 	}
-	collected := make([]*storage.Node, 0, capacity)
+	collected := heldNodeList{owner: owner, nodes: make([]*storage.Node, 0, capacity)}
 	if err := e.visitNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
 		return nil, err
 	}
-	return collected, nil
+	if err := collected.done(); err != nil {
+		return nil, err
+	}
+	return collected.nodes, nil
 }
 
 // visitNodesWithStreamingProjection is collectNodesWithStreamingProjection
-// appending each node to *collected, or handing it to visit when visit is
-// set, as the scan reads it, in the same order. visit returning
+// adding each node to collected, or handing it to visit when visit is set,
+// as the scan reads it, in the same order. visit returning
 // storage.ErrIterationStopped ends the scan without error; any other error
 // ends it with that error.
 func (e *StorageExecutor) visitNodesWithStreamingProjection(
@@ -596,7 +607,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	whereClause string,
 	limit int,
 	projection []string,
-	collected *[]*storage.Node,
+	collected *heldNodeList,
 	visit func(*storage.Node) error,
 ) error {
 	store := e.getStorage(ctx)
@@ -631,7 +642,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			}
 		}
 		if visit == nil {
-			*collected = append(*collected, node)
+			if err := collected.add(node); err != nil {
+				return err
+			}
 		} else if err := visit(node); err != nil {
 			return err
 		}
@@ -644,8 +657,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// A materialized fallback's nodes go to visit as a list.
 	visitAll := func(nodes []*storage.Node) error {
 		if visit == nil {
-			*collected = append(*collected, nodes...)
-			return nil
+			return collected.add(nodes...)
 		}
 		return visitNodeList(nodes, visit)
 	}
@@ -666,8 +678,12 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
+	// What a materialized read returns is held while the scan filters it
+	// (#1343).
+	read := trackedRetention(ctx)
+	defer read.release()
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
+		ids, err := read.heldNodeIDs(storage.NodeIDsByLabel(store, labels[0], limit))
 		if err != nil {
 			return err
 		}
@@ -764,9 +780,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
+		nodes, err = read.heldNodes(store.GetNodesByLabel(labels[0]))
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = read.heldNodes(store.AllNodes())
 	}
 	if err != nil {
 		return err

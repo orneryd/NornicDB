@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -55,7 +56,10 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(queryCtx context.Context, args []interface{}) (*ExecuteResult, error) {
+	// The nodes it reads count while it scores them (#1343).
+	held := trackedRetention(queryCtx)
+	defer held.release()
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},
@@ -104,7 +108,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	// every node in the database. This was the May 2026 mcp-neo4j-memory
 	// Bug 2: fulltext index ignored its declared label scope.
 	if isFulltextWildcard(query) {
-		nodes, err := e.storage.AllNodes()
+		nodes, err := held.heldNodes(e.storage.AllNodes())
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +136,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		if !containsString(targetProperties, propName) {
 			return result, nil
 		}
-		nodes, err := e.storage.AllNodes()
+		nodes, err := held.heldNodes(e.storage.AllNodes())
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +165,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		return result, nil
 	}
 
-	nodes, err := e.storage.AllNodes()
+	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if err != nil {
 		return nil, err
 	}

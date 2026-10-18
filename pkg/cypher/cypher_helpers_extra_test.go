@@ -1586,7 +1586,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
 
 	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
+	edges, prefix, err := exec.getEdgesByTypeFast(nil, "REL")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", prefix)
 	for _, e := range edges {
@@ -1594,7 +1594,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	}
 
 	// batchGetNodesFast happy path.
-	nodes, gotPrefix, err := exec.batchGetNodesFast([]storage.NodeID{"tenant_fast_cov:n1"})
+	nodes, gotPrefix, err := exec.batchGetNodesFast(nil, []storage.NodeID{"tenant_fast_cov:n1"})
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", gotPrefix)
 	require.NotNil(t, nodes["tenant_fast_cov:n1"])
@@ -1608,10 +1608,10 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 		},
 		analyzer: NewQueryAnalyzer(64),
 	}
-	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
+	_, _, err = failExec.batchGetNodesFast(nil, []storage.NodeID{"n1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
+	_, _, err = failExec.getEdgesByTypeFast(nil, "REL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "edges fail")
 }
@@ -2787,7 +2787,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
+			res, ok, err := exec.tryFastRevenueByProduct(nil, tc.matches, tc.with, tc.ret, "", 0, 0)
 			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, res)
@@ -2815,7 +2815,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 			MaxHops:   1,
 		},
 	}
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.tryFastRevenueByProduct(nil,
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2878,7 +2878,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 		},
 	}
 
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.tryFastRevenueByProduct(nil,
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2900,7 +2900,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	}
 
 	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
+	res, ok, err = exec.tryFastRevenueByProduct(nil,
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",

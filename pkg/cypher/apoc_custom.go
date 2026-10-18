@@ -217,7 +217,10 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 // database, in APOC's columns: apoc.custom.list() and apoc.custom.show().
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
-	nodes, err := e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel)
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel))
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)
 	}

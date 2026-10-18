@@ -514,7 +514,7 @@ func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceUsesIndex(
 			"id": "repository:source",
 		},
 	}
-	sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+	sources, err := exec.collectBoundRelationshipDeleteSources(ctx, nil, sourcePattern, true)
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
 	require.Equal(t, "repository:source", sources[0].Properties["id"])
@@ -555,7 +555,7 @@ func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceKeepsPendi
 			"id": "repository:pending-source",
 		},
 	}
-	sources, err := txExec.collectBoundRelationshipDeleteSources(txCtx, sourcePattern, true)
+	sources, err := txExec.collectBoundRelationshipDeleteSources(txCtx, nil, sourcePattern, true)
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
 	require.Equal(t, "repository:pending-source", sources[0].Properties["id"])
@@ -588,7 +588,7 @@ func BenchmarkMatchPatternProperty_BoundRelationshipDeleteTransactionSourceLooku
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+				sources, err := exec.collectBoundRelationshipDeleteSources(ctx, nil, sourcePattern, true)
 				if err != nil {
 					b.Fatal(err)
 				}

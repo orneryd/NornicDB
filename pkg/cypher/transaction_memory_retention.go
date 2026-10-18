@@ -344,6 +344,135 @@ func (r *memoryRetention) reserveCandidates(n int) error {
 	return r.account.grow(sliceHeaderBytes + saturatingProduct(int64(n), entityReferenceBytes))
 }
 
+// The entities a statement reads from storage in bulk are held by their
+// owner from the moment they are read (#1343): a scan's or a seek's nodes, a
+// type's or a node's relationships, an index's node IDs, a batch get. Every
+// such read is passed straight to one of the held methods below, of the
+// owner that keeps the list, and counts there until the owner is released;
+// a function that only returns what it read passes it on to its caller,
+// which holds it (TestEntityReadsHaveAnOwner). An ID list and the nodes read
+// from it count once, as entity references. A list that replaces the last
+// one (a node's relationships, read per node) is held by an owner released
+// before each read. A failed reservation returns the limit's error and no
+// list.
+
+// heldNodes holds nodes read from storage.
+func (r *memoryRetention) heldNodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {
+	if err != nil || r == nil || r.account.scope == nil {
+		return nodes, err
+	}
+	if err := r.reserveCandidates(len(nodes)); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// heldNodeSlice holds nodes read from storage by a read that can't fail.
+func (r *memoryRetention) heldNodeSlice(nodes []*storage.Node) ([]*storage.Node, error) {
+	return r.heldNodes(nodes, nil)
+}
+
+// heldEdges holds relationships read from storage.
+func (r *memoryRetention) heldEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
+	if err != nil || r == nil || r.account.scope == nil {
+		return edges, err
+	}
+	if err := r.reserveCandidates(len(edges)); err != nil {
+		return nil, err
+	}
+	return edges, nil
+}
+
+// heldEdgeHeaders holds relationships read from storage by a reader that
+// reports whether it could answer.
+func (r *memoryRetention) heldEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
+	edges, err = r.heldEdges(edges, err)
+	return edges, answered && err == nil, err
+}
+
+// heldAdjacentEdges holds a node's outgoing and incoming relationships, read
+// together.
+func (r *memoryRetention) heldAdjacentEdges(outgoing, incoming []*storage.Edge, err error) ([]*storage.Edge, []*storage.Edge, error) {
+	if err != nil || r == nil || r.account.scope == nil {
+		return outgoing, incoming, err
+	}
+	if err := r.reserveCandidates(len(outgoing) + len(incoming)); err != nil {
+		return nil, nil, err
+	}
+	return outgoing, incoming, nil
+}
+
+// holdAppended holds the entities a storage visitor appended to a list the
+// owner keeps: length is the list's length now, and held how many of them
+// the owner holds, which it updates. It reserves them in steps of
+// entityHoldStep as the list grows, and the rest once done.
+func (r *memoryRetention) holdAppended(held *int, length int, done bool) error {
+	if r == nil || r.account.scope == nil {
+		return nil
+	}
+	if n := length - *held; n > 0 && (done || n >= entityHoldStep) {
+		*held = length
+		return r.reserveSlots(n, entityReferenceBytes)
+	}
+	return nil
+}
+
+// entityHoldStep is how many entities a visitor appends between reservations.
+const entityHoldStep = 1024
+
+// heldNodeList is a node list a storage visitor appends to, held in owner as
+// it grows (holdAppended).
+type heldNodeList struct {
+	owner *memoryRetention
+	nodes []*storage.Node
+	held  int
+}
+
+// add appends nodes to the list.
+func (l *heldNodeList) add(nodes ...*storage.Node) error {
+	l.nodes = append(l.nodes, nodes...)
+	return l.owner.holdAppended(&l.held, len(l.nodes), false)
+}
+
+// done holds the nodes added since the last step.
+func (l *heldNodeList) done() error {
+	return l.owner.holdAppended(&l.held, len(l.nodes), true)
+}
+
+// heldNodeIDs holds node IDs read from storage.
+func (r *memoryRetention) heldNodeIDs(ids []storage.NodeID, err error) ([]storage.NodeID, error) {
+	if err != nil || r == nil || r.account.scope == nil {
+		return ids, err
+	}
+	if err := r.reserveCandidates(len(ids)); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// heldIndexIDs holds the node IDs an index lookup found.
+func (r *memoryRetention) heldIndexIDs(ids []storage.NodeID) ([]storage.NodeID, error) {
+	return r.heldNodeIDs(ids, nil)
+}
+
+// heldIndexRange holds the node IDs an index range found (ok: the index
+// answered).
+func (r *memoryRetention) heldIndexRange(ids []storage.NodeID, ok bool) ([]storage.NodeID, bool, error) {
+	ids, err := r.heldNodeIDs(ids, nil)
+	return ids, ok && err == nil, err
+}
+
+// heldNodeMap holds nodes a batch get read, by ID.
+func (r *memoryRetention) heldNodeMap(nodes map[storage.NodeID]*storage.Node, err error) (map[storage.NodeID]*storage.Node, error) {
+	if err != nil || r == nil || r.account.scope == nil {
+		return nodes, err
+	}
+	if err := r.reserveCandidates(len(nodes)); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
 // failed reports whether the owner's statement failed over a memory limit:
 // an operator that would otherwise fall back to another plan stops instead.
 func (r *memoryRetention) failed() bool {

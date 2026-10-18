@@ -132,7 +132,7 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(ctx, nodePatternInfo{}, "", "d.rank DESC", 2)
+	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(ctx, nil, nodePatternInfo{}, "", "d.rank DESC", 2)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
@@ -146,7 +146,7 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	nodes, used, err = exec.tryCollectTraversalStartSeedOrderNodes(
-		ctx,
+		ctx, nil,
 		nodePatternInfo{variable: "d", labels: []string{"Drawer"}},
 		"d.rank IS NOT NULL",
 		"d.rank DESC",

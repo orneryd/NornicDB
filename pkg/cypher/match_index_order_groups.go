@@ -58,8 +58,8 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // truncation. A primary-key group may be much larger than the requested page;
 // only the best limit nodes are retained while every boundary tie is examined.
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
-// match.
-func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+// match. The window is held in owner as it fills (#1343).
+func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, owner *memoryRetention, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
@@ -77,6 +77,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	var visitErr error
 	visited := false
+	held := 0
 	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
 		visited = true
 		remaining := limit - len(nodes)
@@ -110,6 +111,10 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			return compareWithinGroup(groupTop.nodes[i], groupTop.nodes[j]) < 0
 		})
 		nodes = append(nodes, groupTop.nodes...)
+		if err := owner.holdAppended(&held, len(nodes), false); err != nil {
+			visitErr = err
+			return false
+		}
 		if len(nodes) == limit {
 			return false
 		}
@@ -120,6 +125,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	if !found || !visited {
 		return nil, false, nil
+	}
+	if err := owner.holdAppended(&held, len(nodes), true); err != nil {
+		return nil, true, err
 	}
 	return nodes, true, nil
 }

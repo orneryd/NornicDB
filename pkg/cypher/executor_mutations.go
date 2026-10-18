@@ -96,7 +96,10 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 	store := e.getStorage(ctx)
 
-	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
+	// The candidates count while they are deleted (#1343).
+	owner := trackedRetention(ctx)
+	defer owner.release()
+	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, owner, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
 	if err != nil {
 		return nil, true, err
 	}
@@ -135,7 +138,8 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	return result, true, getExpressionFailure(ctx)
 }
 
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
+// collectDeleteWithLimitCandidates holds the candidates in owner (#1343).
+func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, owner *memoryRetention, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	matchIdx := findKeywordIndex(baseMatch, "MATCH")
 	if matchIdx < 0 {
 		return nil, false, nil
@@ -157,23 +161,26 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	usedIndex := false
 	if wherePart != "" {
 		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
+			if err := owner.reserveCandidates(len(candidates)); err != nil {
+				return nil, true, err
+			}
 			nodes = candidates
 			usedIndex = true
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(owner, wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, owner, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, owner, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -181,9 +188,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	}
 	if !usedIndex {
 		if len(nodePat.labels) > 0 {
-			nodes, err = e.storage.GetNodesByLabel(nodePat.labels[0])
+			nodes, err = owner.heldNodes(e.storage.GetNodesByLabel(nodePat.labels[0]))
 		} else {
-			nodes, err = e.storage.AllNodes()
+			nodes, err = owner.heldNodes(e.storage.AllNodes())
 		}
 		if err != nil {
 			return nil, true, err

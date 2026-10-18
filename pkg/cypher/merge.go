@@ -195,14 +195,18 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 	return values
 }
 
-func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
+// findMergeNode holds the candidates it reads while it looks for the node
+// (#1343).
+func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
+	held := trackedRetention(ctx)
+	defer held.release()
 	if len(props) == 0 {
 		var candidates []*storage.Node
 		var err error
 		if len(labels) > 0 {
-			candidates, err = store.GetNodesByLabel(labels[0])
+			candidates, err = held.heldNodes(store.GetNodesByLabel(labels[0]))
 		} else {
-			candidates, err = store.AllNodes()
+			candidates, err = held.heldNodes(store.AllNodes())
 		}
 		if err != nil {
 			return nil, err
@@ -215,7 +219,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 		return nil, nil
 	}
 	if len(labels) == 0 {
-		candidates, err := store.AllNodes()
+		candidates, err := held.heldNodes(store.AllNodes())
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +249,11 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			candidateNodes := e.loadMergeCandidateNodes(store, compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true))
+			ids, err := compositeIndexLookup(held, store, idx, compositeLookupValues(idx, props), true)
+			if err != nil {
+				return nil, err
+			}
+			candidateNodes := e.loadMergeCandidateNodes(store, ids)
 			for _, n := range candidateNodes {
 				if mergeNodeMatches(n, labels, props) {
 					e.cacheMergeNode(labels, props, n)
@@ -287,7 +295,10 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			ids := propertyIndexLookup(store, schema, label, prop, val)
+			ids, err := propertyIndexLookup(held, store, schema, label, prop, val)
+			if err != nil {
+				return nil, err
+			}
 			count := len(ids)
 			if bestCount == -1 || count < bestCount {
 				bestIDs = ids
@@ -309,7 +320,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	}
 	e.markMergeScanFallbackUsed()
 
-	nodes, err := store.GetNodesByLabel(labels[0])
+	nodes, err := held.heldNodes(store.GetNodesByLabel(labels[0]))
 	if err != nil {
 		return nil, err
 	}
@@ -334,9 +345,13 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 // answer is complete: a node any other lookup (the MERGE cache, a schema
 // index) could return carries the label, so a scan that found none means
 // there is none. An index answer is not; findMergeNode tries further
-// sources after it.
-func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
-	if ids, indexed := e.mergeNodeIndexedCandidateIDs(store, labels, props); indexed {
+// sources after it. The candidates are held in owner (#1343).
+func (e *StorageExecutor) findMergeNodesScanned(owner *memoryRetention, store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
+	ids, indexed, err := e.mergeNodeIndexedCandidateIDs(owner, store, labels, props)
+	if err != nil {
+		return nil, false, err
+	}
+	if indexed {
 		matches = make([]*storage.Node, 0, len(ids))
 		for _, n := range e.loadMergeCandidateNodes(store, ids) {
 			if mergeNodeMatches(n, labels, props) {
@@ -350,9 +365,9 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 		e.markMergeScanFallbackUsed()
 	}
 	if len(labels) > 0 {
-		candidates, err = store.GetNodesByLabel(labels[0])
+		candidates, err = owner.heldNodes(store.GetNodesByLabel(labels[0]))
 	} else {
-		candidates, err = store.AllNodes()
+		candidates, err = owner.heldNodes(store.AllNodes())
 	}
 	if err != nil {
 		return nil, false, err
@@ -374,13 +389,14 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 // single-property index result. When it answers, every node matching the
 // pattern is among the candidates, so findMergeNodes needs no label scan
 // (#640, #694). It answers nothing for a pattern without labels or properties.
-func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, labels []string, props map[string]interface{}) ([]storage.NodeID, bool) {
+// The IDs are held in owner (#1343).
+func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(owner *memoryRetention, store storage.Engine, labels []string, props map[string]interface{}) ([]storage.NodeID, bool, error) {
 	if len(labels) == 0 || len(props) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	label := labels[0]
 	for _, prop := range mergePropertyNamesSorted(props) {
@@ -390,17 +406,18 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 		}
 		if valueFound {
 			e.markMergeSchemaLookupUsed()
-			return []storage.NodeID{nodeID}, true
+			return []storage.NodeID{nodeID}, true, nil
 		}
 		if cacheComplete {
 			e.markMergeSchemaLookupUsed()
-			return nil, true
+			return nil, true, nil
 		}
 	}
 	for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
 		if mergeIndexMatchesAllProperties(idx, props) {
 			e.markMergeSchemaLookupUsed()
-			return compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true), true
+			ids, err := compositeIndexLookup(owner, store, idx, compositeLookupValues(idx, props), true)
+			return ids, true, err
 		}
 	}
 	var best []storage.NodeID
@@ -409,7 +426,10 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 		if _, ok := schema.GetPropertyIndex(label, prop); !ok {
 			continue
 		}
-		ids := propertyIndexLookup(store, schema, label, prop, props[prop])
+		ids, err := propertyIndexLookup(owner, store, schema, label, prop, props[prop])
+		if err != nil {
+			return nil, true, err
+		}
 		if !found || len(ids) < len(best) {
 			best, found = ids, true
 		}
@@ -417,7 +437,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 	if found {
 		e.markMergeSchemaLookupUsed()
 	}
-	return best, found
+	return best, found, nil
 }
 
 // parseMergePattern parses a MERGE pattern like "(n:Label {prop: value})"

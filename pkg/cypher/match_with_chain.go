@@ -73,7 +73,8 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	}
 }
 
-func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause string) ([]*storage.Node, string, error) {
+// evaluateMatchClauseNodes holds the clause's nodes in owner (#1343).
+func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, owner *memoryRetention, clause string) ([]*storage.Node, string, error) {
 	trimmed := strings.TrimSpace(clause)
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	patternPart := trimmed
@@ -90,7 +91,7 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 
 	var nodes []*storage.Node
 	var err error
-	nodes, err = e.loadPatternNodes(ctx, pattern.labels, pattern.properties)
+	nodes, err = e.loadPatternNodes(ctx, owner, pattern.labels, pattern.properties)
 	if err != nil {
 		return nil, "", err
 	}

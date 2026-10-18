@@ -32,7 +32,7 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "with_chain_eval"))
 	ctx := context.Background()
 
-	_, _, err := exec.evaluateMatchClauseNodes(ctx, "(:Person)")
+	_, _, err := exec.evaluateMatchClauseNodes(ctx, nil, "(:Person)")
 	require.ErrorContains(t, err, "missing variable")
 
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "x", "v": int64(1)}})
@@ -40,13 +40,13 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "y", "v": int64(2)}})
 	require.NoError(t, err)
 
-	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, "(n:A {k:'x'})")
+	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, nil, "(n:A {k:'x'})")
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("a1"), nodes[0].ID)
 
-	nodes, v, err = exec.evaluateMatchClauseNodes(ctx, "(n:A) WHERE n.v = 2")
+	nodes, v, err = exec.evaluateMatchClauseNodes(ctx, nil, "(n:A) WHERE n.v = 2")
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)

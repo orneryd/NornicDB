@@ -55,12 +55,12 @@ func TestCallDbHelpers_ProceduresAndCounts(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE CONSTRAINT c_person_id_cov IF NOT EXISTS FOR (n:Person) REQUIRE n.id IS UNIQUE", nil)
 	require.NoError(t, err)
 
-	labels, err := exec.callDbLabels()
+	labels, err := exec.callDbLabels(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"label"}, labels.Columns)
 	require.NotEmpty(t, labels.Rows)
 
-	relTypes, err := exec.callDbRelationshipTypes()
+	relTypes, err := exec.callDbRelationshipTypes(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"relationshipType"}, relTypes.Columns)
 	require.NotEmpty(t, relTypes.Rows)
@@ -84,7 +84,7 @@ func TestCallDbHelpers_ProceduresAndCounts(t *testing.T) {
 	require.Equal(t, []string{"version", "build", "edition"}, version.Columns)
 	require.Len(t, version.Rows, 1)
 
-	stats, err := exec.callNornicDbStats()
+	stats, err := exec.callNornicDbStats(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"nodes", "relationships", "labels", "relationshipTypes"}, stats.Columns)
 	require.Len(t, stats.Rows, 1)
@@ -100,14 +100,14 @@ func TestCallDbHelpers_ErrorAndNilSchemaBranches(t *testing.T) {
 	edgesErr := errors.New("all edges failed")
 
 	execNodesErr := NewStorageExecutor(&allNodesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: nodesErr})
-	_, err := execNodesErr.callDbLabels()
+	_, err := execNodesErr.callDbLabels(context.Background())
 	require.ErrorIs(t, err, nodesErr)
-	require.Equal(t, 0, execNodesErr.countLabels())
+	require.Equal(t, 0, execNodesErr.countLabels(context.Background()))
 
 	execEdgesErr := NewStorageExecutor(&allEdgesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: edgesErr})
-	_, err = execEdgesErr.callDbRelationshipTypes()
+	_, err = execEdgesErr.callDbRelationshipTypes(context.Background())
 	require.ErrorIs(t, err, edgesErr)
-	require.Equal(t, 0, execEdgesErr.countRelTypes())
+	require.Equal(t, 0, execEdgesErr.countRelTypes(context.Background()))
 
 	execNilSchema := NewStorageExecutor(&callNilSchemaEngine{MemoryEngine: newTestMemoryEngine(t)})
 	res, err := execNilSchema.callDbConstraints()

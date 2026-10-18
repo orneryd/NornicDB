@@ -343,7 +343,7 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// Try to use the property index for O(1) lookup
-	nodeIDs := propertyIndexLookup(store, schema, hint.Label, hint.Property, propertyValue)
+	nodeIDs, _ := propertyIndexLookup(nil, store, schema, hint.Label, hint.Property, propertyValue)
 	if nodeIDs != nil {
 		// Index exists and was used! Get the actual nodes.
 		var result []*storage.Node

@@ -59,7 +59,10 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 		return nil, err
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := temporalNodesByLabel(held, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -142,7 +145,10 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		}
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := temporalNodesByLabel(held, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -258,12 +264,13 @@ func coerceUint64Arg(val interface{}, name string) (uint64, error) {
 	}
 }
 
-func temporalNodesByLabel(engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
+// temporalNodesByLabel holds the label's nodes in owner (#1343).
+func temporalNodesByLabel(owner *memoryRetention, engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
 	if !hasSnapshot {
-		return engine.GetNodesByLabel(label)
+		return owner.heldNodes(engine.GetNodesByLabel(label))
 	}
 	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
+		return owner.heldNodes(provider.GetNodesByLabelVisibleAt(label, version))
 	}
 	return nil, storage.ErrNotImplemented
 }

@@ -70,7 +70,7 @@ func TestFastAgg_WithCypherSeed_ProductsPerCategoryQueryShape(t *testing.T) {
 	require.NotNil(t, matches)
 
 	returnItems := exec.parseReturnItems("c.categoryName, count(p) as productCount")
-	rows, ok, err := exec.tryFastRelationshipAggregations(matches, returnItems)
+	rows, ok, err := exec.tryFastRelationshipAggregations(nil, matches, returnItems)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, rows, 2)

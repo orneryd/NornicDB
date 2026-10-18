@@ -319,8 +319,11 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 			}
 		}
 	}
+	// The walks' nodes count while the rows are bound (#1343).
+	held := trackedRetention(s.ctx)
+	defer held.release()
 	if len(ids) > 0 {
-		loaded, err := s.e.storage.BatchGetNodes(ids)
+		loaded, err := held.heldNodeMap(s.e.storage.BatchGetNodes(ids))
 		if err != nil {
 			return nil, false
 		}

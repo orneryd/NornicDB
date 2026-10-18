@@ -31,13 +31,13 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(owner *memoryRetention, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -85,7 +85,10 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			for i := 0; i < covered; i++ {
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			ids, err := compositeIndexLookup(owner, store, idx, values, covered == len(idx.Properties))
+			if err != nil {
+				return nil, true, err
+			}
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
 			for _, id := range ids {
@@ -97,19 +100,23 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID
+		var err error
 		probed := false
 		if len(nodeInfo.labels) > 0 {
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
-				ids = propertyIndexLookup(store, schema, nodeInfo.labels[0], prop, val)
+				ids, err = propertyIndexLookup(owner, store, schema, nodeInfo.labels[0], prop, val)
 				probed = true
 			}
 		} else {
 			labels := e.indexCandidateLabels(schema, nil, prop)
 			if labellessPropertyIndexUsable(store, labels...) {
-				ids = schema.PropertyIndexLookupAnyLabel(prop, val)
+				ids, err = owner.heldIndexIDs(schema.PropertyIndexLookupAnyLabel(prop, val))
 				probed = true
 			}
+		}
+		if err != nil {
+			return nil, true, err
 		}
 		// Property has no covering index — record nothing for this prop.
 		// The residual `nodeMatchesProps` step still enforces it. A probe
@@ -127,7 +134,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
@@ -158,7 +165,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		}
 		out = append(out, n)
 	}
-	return out, true
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -296,7 +303,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := prepareMergeKeys(ctx, store, labels, matchProps); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(ctx, store, labels, matchProps)
 		if err != nil {
 			return nil, err
 		}
@@ -320,7 +327,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(ctx, store, labels, matchProps)
 			if findErr != nil {
 				return nil, findErr
 			}

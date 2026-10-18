@@ -73,7 +73,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -390,7 +390,11 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+// The index lookups and label scans it reads count while it reads them
+// (#1343).
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+	lookup := trackedRetention(ctx)
+	defer lookup.release()
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -412,7 +416,11 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
-				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
+				lookup.release()
+				ids, err := propertyIndexLookup(lookup, store, schema, key.label, key.prop, value)
+				if err != nil {
+					return nil, false, err
+				}
 				matched := 0
 				for _, id := range ids {
 					node, err := e.getQueryNode(store, id)
@@ -427,7 +435,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				}
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -442,7 +450,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -454,9 +462,12 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
 	idx := make(map[string]*storage.Node, len(distinct))
-	nodes, err := store.GetNodesByLabel(key.label)
+	// The label's nodes count while they are matched (#1343).
+	scan := trackedRetention(ctx)
+	defer scan.release()
+	nodes, err := scan.heldNodes(store.GetNodesByLabel(key.label))
 	if err != nil {
 		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}

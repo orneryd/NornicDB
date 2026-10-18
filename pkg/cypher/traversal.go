@@ -328,7 +328,10 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
 	if whereClause == "" && pathVariable == "" {
-		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
+		// What the aggregation reads counts while it aggregates (#1343).
+		aggregated := trackedRetention(ctx)
+		defer aggregated.release()
+		if rows, ok, err := e.tryFastRelationshipAggregations(aggregated, matches, returnItems); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -339,16 +342,14 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	// OPTIMIZATION: If WHERE clause filters by id(startNode) = value, filter start nodes before traversal
 	// This avoids traversing from all nodes when we only need one specific node
-	// The start nodes count while the traversal runs from them (#1343); a
-	// caller's seeds count where the caller holds them, and the start
-	// property scan's are reserved as it collects them.
+	// The start nodes count while the traversal runs from them (#1343): a
+	// caller's seeds where the caller holds them, a seek's or a scan's here,
+	// as they are read.
 	starts := trackedRetention(ctx)
 	defer starts.release()
-	startsReserved := false
 	var optimizedStartNodes []*storage.Node
 	usedPropertyIndex := false
 	if len(seedNodes) > 0 {
-		startsReserved = true
 		optimizedStartNodes = seedNodes
 		usedPropertyIndex = true
 	} else if whereClause != "" {
@@ -364,12 +365,12 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 		// Prefer indexed start-node pruning for simple property predicates.
 		if matches.StartNode.variable != "" && len(optimizedStartNodes) == 0 {
-			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, matches.StartNode, whereClause); idxErr == nil && used {
+			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, starts, matches.StartNode, whereClause); idxErr == nil && used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
 			}
 			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(matches.StartNode, whereClause); idxErr == nil && used {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(starts, matches.StartNode, whereClause); idxErr == nil && used {
 					optimizedStartNodes = nodes
 					usedPropertyIndex = true
 				}
@@ -383,7 +384,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			// traversal anchored by an IN-list seeds from the property index
 			// instead of scanning every node of the label.
 			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, starts, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
 					optimizedStartNodes = nodes
 					usedPropertyIndex = true
 				}
@@ -394,22 +395,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			// start nodes in patterns like:
 			//   MATCH (n:Label)-[:R]->(m) WHERE n.prop = 'x' RETURN ...
 			if !usedPropertyIndex {
-				nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(ctx, starts, matches.StartNode, whereClause)
-				if starts.failed() {
-					return result, scanErr
-				}
-				if scanErr == nil && used {
+				if nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(ctx, starts, matches.StartNode, whereClause); scanErr == nil && used {
 					optimizedStartNodes = nodes
-					startsReserved = true
 				}
 			}
 		}
 
 	}
-	if !startsReserved {
-		if err := starts.reserveCandidates(len(optimizedStartNodes)); err != nil {
-			return result, err
-		}
+	// A seek over the limit failed the statement: no plan runs after it.
+	if starts.failed() {
+		return result, memoryFailureFromContext(ctx)
 	}
 
 	e.pushRelationshipEqualities(ctx, matches, whereClause)
@@ -717,12 +712,15 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 	}
 
 	seedLimit := topKSeedLimit(limit)
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
+	// The end seeds count while the traversal runs to them (#1343).
+	seeds := trackedRetention(ctx)
+	defer seeds.release()
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, seeds, matches.EndNode, seedWhere, orderExpr, seedLimit)
 	if err != nil {
 		return nil, true, err
 	}
 	if !used {
-		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
+		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, seeds, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
 			return nil, true, err
 		}
 		if !used {
@@ -886,6 +884,7 @@ func topKSeedLimit(limit int) int {
 
 func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	ctx context.Context,
+	owner *memoryRetention,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
@@ -895,7 +894,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 		return nil, false, nil
 	}
 
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, owner, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
 	if err != nil || !used {
 		return nil, used, err
 	}
@@ -922,7 +921,10 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 		matches.PathVariable = pathVariable
 	}
 
-	seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, matches.StartNode, whereClause, orderExpr, limit)
+	// The start seeds count while the traversal runs from them (#1343).
+	seeds := trackedRetention(ctx)
+	defer seeds.release()
+	seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, seeds, matches.StartNode, whereClause, orderExpr, limit)
 	if err != nil {
 		return nil, true, err
 	}
@@ -943,7 +945,8 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 // on the traversal start variable:
 //   - <startVar>.<prop> = <value>
 //   - <startVar>.<prop> IS NOT NULL
-// The candidates come back reserved in owner, which the caller releases.
+//
+// The candidates are held in owner, which the caller releases.
 func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
 	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
@@ -1486,10 +1489,8 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	// The start nodes count while the traversal runs from them (#1343).
 	starts := trackedRetention(ctx)
 	defer starts.release()
-	startNodes, seeded, err := e.relationshipTypeSeedNodes(ctx, match)
-	if seeded && err == nil {
-		err = starts.reserveCandidates(len(startNodes))
-	} else if err == nil {
+	startNodes, seeded, err := e.relationshipTypeSeedNodes(ctx, starts, match)
+	if !seeded && err == nil {
 		startNodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, starts, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	}
 	if err != nil {
@@ -1526,8 +1527,9 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // relationships of those types, read from the type index. A label-less scan
 // would read and decode every node, for a relationship among a few. seeded is
 // false for any other match, which collectPipelineInitialNodeCandidates seeds.
-// The traversal still checks the whole pattern from each start node.
-func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+// The traversal still checks the whole pattern from each start node. The
+// relationships read and the nodes found are held in owner (#1343).
+func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *memoryRetention, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
 		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
@@ -1535,17 +1537,19 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 	}
 	store := e.getStorage(ctx)
 	seen := make(map[storage.NodeID]bool)
-	add := func(id storage.NodeID) {
+	found := heldNodeList{owner: owner}
+	add := func(id storage.NodeID) error {
 		if seen[id] {
-			return
+			return nil
 		}
 		seen[id] = true
 		if node, getErr := e.getQueryNode(store, id); getErr == nil && node != nil {
-			nodes = append(nodes, node)
+			return found.add(node)
 		}
+		return nil
 	}
 	for _, relationshipType := range relationship.Types {
-		edges, err := store.GetEdgesByType(relationshipType)
+		edges, err := owner.heldEdges(store.GetEdgesByType(relationshipType))
 		if err != nil {
 			return nil, true, err
 		}
@@ -1553,18 +1557,26 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			if edge == nil {
 				continue
 			}
+			var addErr error
 			switch relationship.Direction {
 			case "outgoing":
-				add(edge.StartNode)
+				addErr = add(edge.StartNode)
 			case "incoming":
-				add(edge.EndNode)
+				addErr = add(edge.EndNode)
 			default:
-				add(edge.StartNode)
-				add(edge.EndNode)
+				if addErr = add(edge.StartNode); addErr == nil {
+					addErr = add(edge.EndNode)
+				}
+			}
+			if addErr != nil {
+				return nil, true, addErr
 			}
 		}
 	}
-	return nodes, true, nil
+	if err := found.done(); err != nil {
+		return nil, true, err
+	}
+	return found.nodes, true, nil
 }
 
 func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(

@@ -26,7 +26,8 @@ func TestLookupPatternCandidatesUsingPropertyIndex_IntersectsSets(t *testing.T) 
 
 	pattern := nodePatternInfo{variable: "n", labels: []string{"P"}, properties: map[string]interface{}{"a": int64(1), "b": int64(2)}}
 	for i := 0; i < 32; i++ {
-		nodes, ok := exec.lookupPatternCandidatesUsingPropertyIndex(pattern, store)
+		nodes, ok, err := exec.lookupPatternCandidatesUsingPropertyIndex(nil, pattern, store)
+		require.NoError(t, err)
 		require.True(t, ok)
 		require.Len(t, nodes, 1)
 		require.Equal(t, "both", nodes[0].Properties["id"])

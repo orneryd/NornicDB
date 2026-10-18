@@ -121,7 +121,7 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 	ctx := context.Background()
 	item := nodePatternInfo{variable: "n", labels: []string{"Item"}}
 
-	nodes, used, err := exec.tryCollectNodesFromPropertyIndexRange(item, "n.v >= 2 AND n.v < 4 AND n.w > 0", nil)
+	nodes, used, err := exec.tryCollectNodesFromPropertyIndexRange(nil, item, "n.v >= 2 AND n.v < 4 AND n.w > 0", nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	values := make([]string, 0, len(nodes))
@@ -130,7 +130,7 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"2", "2.5", "3"}, values, "the seed holds every value within the bounds; the rest of the WHERE is applied later")
 
-	_, used, err = exec.tryCollectNodesFromPropertyIndexRange(item, "n.v < 0 OR n.v > 10", nil)
+	_, used, err = exec.tryCollectNodesFromPropertyIndexRange(nil, item, "n.v < 0 OR n.v > 10", nil)
 	require.NoError(t, err)
 	require.False(t, used, "a disjunction places no bound")
 
@@ -143,13 +143,13 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 		{item, "n.v > 10"},
 		{item, "n.v IN $ids"},
 	} {
-		_, _, indexed, err := exec.collectPipelineIndexedNodeCandidates(withQueryParams(ctx, map[string]interface{}{"ids": []interface{}{int64(1)}}), seed.pattern, seed.where, pipelineMatchPhysicalHint{})
+		_, _, indexed, err := exec.collectPipelineIndexedNodeCandidates(withQueryParams(ctx, map[string]interface{}{"ids": []interface{}{int64(1)}}), nil, seed.pattern, seed.where, pipelineMatchPhysicalHint{})
 		require.NoError(t, err)
 		require.True(t, indexed, seed.where)
 	}
 
 	unindexed := newRangeSeekExecutor(t, false)
-	_, _, indexed, err := unindexed.collectPipelineIndexedNodeCandidates(ctx, item, "n.v > 10", pipelineMatchPhysicalHint{})
+	_, _, indexed, err := unindexed.collectPipelineIndexedNodeCandidates(ctx, nil, item, "n.v > 10", pipelineMatchPhysicalHint{})
 	require.NoError(t, err)
 	require.False(t, indexed)
 }

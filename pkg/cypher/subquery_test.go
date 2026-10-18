@@ -3219,7 +3219,7 @@ func TestSeedNodesFromOuterMatch_WithPipelineReturnProjection(t *testing.T) {
 	`, nil)
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, `
+	nodes, err := exec.seedNodesFromOuterMatch(ctx, nil, `
 MATCH (p:SystemPrompt)
 WITH p
 LIMIT 1

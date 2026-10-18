@@ -263,8 +263,9 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 
 // seedNodesFromOuterMatch executes the outer MATCH/WHERE segment through the normal
 // execution pipeline (instead of manual scan/filter) so index/hot-path optimizations
-// apply before correlated CALL {} expansion.
-func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart, variable string) ([]*storage.Node, error) {
+// apply before correlated CALL {} expansion. The seeds are held in owner
+// (#1343).
+func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, owner *memoryRetention, outerPart, variable string) ([]*storage.Node, error) {
 	variable = strings.TrimSpace(variable)
 	if variable == "" {
 		return nil, localizedError(localization.CypherSubqueriesCorrelatedVariableEmpty(), nil)
@@ -305,28 +306,28 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
 				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
-					return nodes, err
+					return owner.heldNodes(nodes, err)
 				}
 				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
 				if params := getParamsFromContext(ctx); params != nil {
 					if nodes, ok, err := e.tryCollectNodesFromIDIn(ctx, np, whereClause, params); ok || err != nil {
-						return nodes, err
+						return owner.heldNodes(nodes, err)
 					}
 				}
 				// Indexed IN-list path for batched correlated lookups.
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(owner, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}
 				// Indexed equality path.
-				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, np, whereClause); ok || err != nil {
+				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, owner, np, whereClause); ok || err != nil {
 					return nodes, err
 				}
 			}
 
 			// Label/property-only fast path.
-			nodes, err := e.loadPatternNodes(ctx, np.labels, np.properties)
+			nodes, err := e.loadPatternNodes(ctx, owner, np.labels, np.properties)
 			if err != nil {
 				return nil, err
 			}

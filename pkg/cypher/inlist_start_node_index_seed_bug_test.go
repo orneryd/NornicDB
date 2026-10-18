@@ -33,7 +33,7 @@
 //	already implements and match.go/clauses.go/executor_mutations.go
 //	already use for plain node MATCH and single-clause DELETE. The
 //	traversal path simply never wires them in, so it falls through to
-//	loadNodesWithTemporalViewport(labels) — an O(all label nodes) scan —
+//	loadNodesWithTemporalViewport(labels, nil) — an O(all label nodes) scan —
 //	for every relationship-pattern query anchored by an IN-list.
 package cypher
 
@@ -252,14 +252,14 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	nodePattern := nodePatternInfo{variable: "s", labels: []string{"CloudResource"}}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, "   ", nil)
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern, "   ", nil)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
 	})
 
 	t.Run("simple param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"s.uid IN $u", map[string]interface{}{"u": []interface{}{"a1", "a2"}})
 		require.NoError(t, err)
 		require.True(t, used)
@@ -267,7 +267,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("simple literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"s.uid IN ['a1', 'a3']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -275,7 +275,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("AND-conjunct param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"s.uid IN $u AND rel.evidence_source = $e",
 			map[string]interface{}{"u": []interface{}{"a1"}, "e": "reducer"})
 		require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("AND-conjunct literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -292,7 +292,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"() AND s.uid IN ['a1']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -300,7 +300,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("no recognized IN-list conjunct falls back", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nil, nodePattern,
 			"s.uid = 'a1' AND rel.evidence_source = 'reducer'", nil)
 		require.NoError(t, err)
 		require.False(t, used)

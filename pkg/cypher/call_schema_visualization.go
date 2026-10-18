@@ -11,11 +11,14 @@ import (
 
 func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	nodes, err := store.AllNodes()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	nodes, err := held.heldNodes(store.AllNodes())
 	if err != nil {
 		return nil, err
 	}
-	edges, err := store.AllEdges()
+	edges, err := held.heldEdges(store.AllEdges())
 	if err != nil {
 		return nil, err
 	}

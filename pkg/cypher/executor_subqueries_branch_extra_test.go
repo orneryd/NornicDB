@@ -125,11 +125,11 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
+	nodes, err := exec.seedNodesFromOuterMatch(ctx, nil, "MATCH (seed:Seed {name:'A'})", "seed")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("s1"), nodes[0].ID)
 
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed) RETURN 1", "missing")
+	_, err = exec.seedNodesFromOuterMatch(ctx, nil, "MATCH (seed:Seed) RETURN 1", "missing")
 	require.Error(t, err)
 }

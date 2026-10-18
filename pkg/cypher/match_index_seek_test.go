@@ -361,7 +361,7 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 	lookup := eng.GetSchema().PropertyIndexLookup("MongoDocument", "translationId", "src-a")
 	require.NotEmpty(t, lookup)
 	nodePattern := nodePatternInfo{variable: "n", labels: []string{"MongoDocument"}}
-	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
+	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nil, nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
 	require.NoError(t, idxErr)
 	require.True(t, used)
 	require.Len(t, nodes, 2)

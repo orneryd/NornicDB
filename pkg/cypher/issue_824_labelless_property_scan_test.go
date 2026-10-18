@@ -67,12 +67,12 @@ func TestLabellessPropertyMatchFullReadOutcomes(t *testing.T) {
 	require.NoError(t, err)
 
 	gone := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: storage.ErrNotFound}
-	nodes, err := NewStorageExecutor(gone).collectNodesWithStreaming(context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1)
+	nodes, err := NewStorageExecutor(gone).collectNodesWithStreaming(context.Background(), nil, nil, map[string]interface{}{"id": "a"}, "", "", -1)
 	require.NoError(t, err)
 	require.Empty(t, nodes, "a node deleted between the scan and its read is not a match")
 
 	failure := errors.New("read failed")
 	failing := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: failure}
-	_, err = NewStorageExecutor(failing).collectNodesWithStreaming(context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1)
+	_, err = NewStorageExecutor(failing).collectNodesWithStreaming(context.Background(), nil, nil, map[string]interface{}{"id": "a"}, "", "", -1)
 	require.ErrorIs(t, err, failure)
 }

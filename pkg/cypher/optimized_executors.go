@@ -77,7 +77,10 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 
 	// Get edges by type directly (MUCH faster than AllEdges + filter)
 	// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
-	edgeList, err := e.storage.GetEdgesByType(info.RelType)
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	edgeList, err := held.heldEdges(e.storage.GetEdgesByType(info.RelType))
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +150,10 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	allEdges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +221,10 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	allEdges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +300,10 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	// What it reads counts while it reads it (#1343).
+	held := trackedRetention(ctx)
+	defer held.release()
+	allEdges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
 	}
