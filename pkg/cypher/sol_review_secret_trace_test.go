@@ -2,14 +2,17 @@ package cypher
 
 import (
 	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"strings"
-	"testing"
 )
 
 func TestSolReviewCompositePasswordTrace(t *testing.T) {
@@ -30,8 +33,21 @@ func TestSolReviewCompositePasswordTrace(t *testing.T) {
 	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	query := "CREATE COMPOSITE DATABASE sol_trace ALIAS remote FOR DATABASE nornic AT 'http://127.0.0.1:1' USER 'probe' PASSWORD '" + credential + "' TYPE remote ACCESS read"
 	_, err = executor.Execute(context.Background(), query, nil)
-	if err != nil {
+	if config.IsANTLRParser() {
+		// The strict grammar accepts local composite aliases but not the
+		// remote AT/USER/PASSWORD extension. Rejection must still export a
+		// redacted query and must not create the composite database.
+		var syntax *SemanticError
+		if !errors.As(err, &syntax) || syntax.Code != "Neo.ClientError.Statement.SyntaxError" || syntax.Detail != "UnexpectedSyntax" {
+			t.Fatal("remote composite did not return the expected ANTLR syntax error; details withheld")
+		}
+		if manager.IsCompositeDatabase("sol_trace") {
+			t.Fatal("ANTLR rejected the statement after creating the composite database")
+		}
+	} else if err != nil {
 		t.Fatal("composite configuration did not execute; details withheld")
+	} else if !manager.IsCompositeDatabase("sol_trace") {
+		t.Fatal("successful statement did not create the composite database")
 	}
 	count := 0
 	for _, span := range recorder.Ended() {
