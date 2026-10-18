@@ -46,8 +46,8 @@ func TestNamespaceRelationshipCounterPointReads(t *testing.T) {
 	}
 	probe := &namespaceCountReadProbe{BadgerEngine: base.BadgerEngine}
 	for name, inner := range map[string]Engine{
-		"wal": NewWALEngine(probe, nil),
-		"trace-wal": NewTracedEngine(NewWALEngine(probe, nil)),
+		"wal":                 NewWALEngine(probe, nil),
+		"trace-wal":           NewTracedEngine(NewWALEngine(probe, nil)),
 		"namespace-trace-wal": NewNamespacedEngine(NewTracedEngine(NewWALEngine(probe, nil)), "a"),
 	} {
 		t.Run(name, func(t *testing.T) {
