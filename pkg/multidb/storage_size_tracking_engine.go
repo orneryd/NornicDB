@@ -682,3 +682,10 @@ func (t *sizeTrackingEngine) PropertyKeyKnown(name string) bool {
 	lookup, ok := t.Engine.(storage.PropertyKeyLookup)
 	return ok && lookup.PropertyKeyKnown(name)
 }
+
+// OpenReadSnapshot forwards to the tracked engine; reads are not charged.
+func (t *sizeTrackingEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	return storage.OpenReadSnapshot(ctx, t.Engine)
+}
+
+var _ storage.ReadSnapshotter = (*sizeTrackingEngine)(nil)
