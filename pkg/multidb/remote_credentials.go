@@ -7,12 +7,42 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io"
+	"net/url"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const remoteCredentialPrefix = "enc:v1:"
+
+// resolveRemoteCredentials converts stored constituent metadata to the runtime
+// identity used by its remote engine. Only this manager boundary decrypts stored
+// passwords. URI credentials become reusable Basic credentials so transaction
+// URLs returned by the remote cannot drop authentication on later requests.
+// The returned copy is never persisted or used by metadata/display callers.
+func (m *DatabaseManager) resolveRemoteCredentials(ref ConstituentRef, authToken string) (ConstituentRef, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(ref.URI))
+	if err != nil {
+		return ConstituentRef{}, observability.RedactError(err, observability.ClientCredentials(ref.URI)...)
+	}
+	ref.AuthMode = strings.ToLower(strings.TrimSpace(ref.AuthMode))
+	if ref.AuthMode == "user_password" {
+		ref.Password, err = m.decryptStoredRemotePassword(ref.Password)
+		if err != nil {
+			return ConstituentRef{}, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(ref.Alias, err), err)
+		}
+	} else if endpoint.User != nil && strings.TrimSpace(authToken) == "" {
+		// Preserve explicit credentials and forwarded-token precedence. URL
+		// userinfo supplies the Basic identity when neither is configured.
+		ref.AuthMode = "user_password"
+		ref.User = endpoint.User.Username()
+		ref.Password, _ = endpoint.User.Password()
+	}
+	endpoint.User = nil
+	ref.URI = endpoint.String()
+	return ref, nil
+}
 
 type remoteCredentialCipher struct {
 	aead cipher.AEAD

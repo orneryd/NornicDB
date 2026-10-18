@@ -211,7 +211,11 @@ func cacheKey(loc *LocationRemote, authToken string) string {
 	sum := fnv64aString(authIdentity)
 	var b strings.Builder
 	// uri|db|mode|authhash
-	b.Grow(len(loc.URI) + len(loc.DBName) + len(mode) + 20)
+	b.Grow(len(loc.GraphName) + len(loc.URI) + len(loc.DBName) + len(mode) + 21)
+	if loc.ResolveEngine != nil {
+		b.WriteString(loc.GraphName)
+		b.WriteByte('|')
+	}
 	b.WriteString(loc.URI)
 	b.WriteByte('|')
 	b.WriteString(loc.DBName)
@@ -249,6 +253,18 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 	defer r.mu.Unlock()
 	engine, exists := r.engineCache[key]
 	if !exists {
+		if loc.ResolveEngine != nil {
+			resolved, err := loc.ResolveEngine(authToken)
+			if err != nil {
+				return nil, err
+			}
+			remote, ok := resolved.(*storage.RemoteEngine)
+			if !ok {
+				return nil, fmt.Errorf("remote constituent '%s' resolved to %T", loc.GraphName, resolved)
+			}
+			r.engineCache[key] = remote
+			return remote, nil
+		}
 		cfg := storage.RemoteEngineConfig{
 			URI:      loc.URI,
 			Database: loc.DBName,
