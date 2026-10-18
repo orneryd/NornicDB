@@ -27,7 +27,8 @@ import (
 //     counts the same bound NaN repeated once, by object identity; values here
 //     have no identity, so every NaN is apart.)
 //   - paths are equivalent by their ordered entity identities;
-//   - any other value (temporal, spatial) keeps its Go type and value.
+//   - temporal values use the same canonical parts as temporal equality;
+//   - other values (including spatial values) keep their Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
 	// The common single values get their key in one allocation; the rest are
 	// written by appendEquivalenceKey.
@@ -131,6 +132,15 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 			key.WriteString(name)
 			appendNestedEquivalenceKey(key, fields[name])
 		}
+		return
+	}
+	if kind, parts, temporal := temporalEqualityParts(value); temporal {
+		// The equality owner discards incidental Go representations (pointers,
+		// clock/date fields a type does not use, and duration unit choices).
+		// Reuse it for scalar keys and every recursively nested collection key.
+		key.WriteByte('T')
+		appendNestedEquivalenceKey(key, kind)
+		appendNestedEquivalenceKey(key, parts)
 		return
 	}
 	key.WriteByte('T')
