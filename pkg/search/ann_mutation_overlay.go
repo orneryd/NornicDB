@@ -161,3 +161,13 @@ func (s annMutationOverlaySnapshot) matchesVectorStore(store *VectorFileStore) b
 	count, slots := store.stateVersion()
 	return count == s.VectorStoreCount && slots == s.VectorStoreSlots
 }
+
+// size is the number of vectors the overlay holds.
+func (o *annMutationOverlay) size() int {
+	if o == nil {
+		return 0
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return len(o.vectors)
+}

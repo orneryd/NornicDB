@@ -44,18 +44,46 @@ func (g *IVFPQCandidateGen) preferredCandidateDepth(target, maximum int) int {
 }
 
 func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is every vector the index and its mutation overlay can
+// return.
+func (g *IVFPQCandidateGen) candidatePopulation(context.Context) int {
+	if g == nil || g.index == nil {
+		return 0
+	}
+	return g.index.population() + g.overlay.size()
+}
+
+// searchCandidatesWithExhaustion searches nprobe inverted lists, or all of
+// them when the request is as wide as the population. It is exhausted only
+// when every list was probed and returned whole, the overlay returned all it
+// holds above minSimilarity, and the limit cut none of the merged candidates.
+func (g *IVFPQCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if g == nil || g.index == nil {
-		return nil, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
+		return nil, false, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
+	}
+	limit := boundCandidateLimit(k)
+	nprobe := g.nprobe
+	if limit >= g.index.population()+g.overlay.size() {
+		nprobe = g.index.listCount()
 	}
 	// PQ scores are only an ordering signal and can underestimate exact cosine
 	// similarity. Apply the caller's threshold after exact rescoring in the
 	// shared pipeline instead of dropping viable candidates here.
-	base, err := g.index.SearchApprox(ctx, query, k, -1, g.nprobe)
-	if err != nil || g.overlay == nil {
-		return base, err
+	base, err := g.index.SearchApprox(ctx, query, k, -1, nprobe)
+	if err != nil {
+		return nil, false, err
+	}
+	probedAll := nprobe > 0 && nprobe >= g.index.listCount()
+	complete := probedAll && limit >= g.index.population()
+	if g.overlay == nil {
+		return base, complete, nil
 	}
 	merged := make(map[string]Candidate, len(base)+k)
 	for _, candidate := range base {
@@ -65,8 +93,9 @@ func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float3
 	}
 	overlayCandidates := g.overlay.Search(ctx, query, k, minSimilarity)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	complete = complete && len(overlayCandidates) < limit
 	for _, candidate := range overlayCandidates {
 		merged[candidate.ID] = candidate
 	}
@@ -82,6 +111,7 @@ func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float3
 	})
 	if len(out) > k {
 		out = out[:k]
+		complete = false
 	}
-	return out, nil
+	return out, complete, nil
 }

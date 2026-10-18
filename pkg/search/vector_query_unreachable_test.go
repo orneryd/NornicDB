@@ -33,7 +33,9 @@ func (g *shortApproximateCandidateGenerator) searchCandidatesWithExhaustion(_ co
 	return g.candidates[:min(limit, len(g.candidates))], false, nil
 }
 
-func (g *shortApproximateCandidateGenerator) candidatePopulation() int { return g.population }
+func (g *shortApproximateCandidateGenerator) candidatePopulation(context.Context) int {
+	return g.population
+}
 
 // sparseWordEmbedding is the reporter's embedding: one dimension per word
 // (md5 of the word modulo dimensions), normalized. Texts that share words
