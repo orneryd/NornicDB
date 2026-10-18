@@ -11,4 +11,6 @@
       graph for its fresh plan repository. Downstream verifier checks remain unexecuted.
 - [ ] Resolve verifier fixture ingestion and complete downstream required checks.
 - [x] Record paired workload-specific latency, throughput and allocation evidence.
-- [ ] Commit validated changes and update the PR with evidence and limitations.
+- [x] Commit validated changes and update the PR with evidence and limitations.
+      Source commit 5874f2db6; benchmark/verification comment:
+      https://github.com/orneryd/NornicDB/pull/1406#issuecomment-6252598000
