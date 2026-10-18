@@ -295,3 +295,113 @@ func TestBuildBudgetedWritesWaitForTheRealAnswer(t *testing.T) {
 	require.NoError(t, <-written)
 	require.Equal(t, []string{"nornic:b"}, buildWriteSearchIDs(t, svc, "bterm"))
 }
+
+// TestBuildQueuedWriteIsRejectedLikeALiveWrite: a write the live path would
+// reject (an embedding of the wrong dimensions on a fixed-dimension index) is
+// rejected during a build too, with the same error, and the build keeps the
+// stored node instead of dropping it.
+func TestBuildQueuedWriteIsRejectedLikeALiveWrite(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	for _, backend := range []string{"v1", "v2"} {
+		t.Run(backend, func(t *testing.T) {
+			engine := newNodeSnapshotGateEngine(t)
+			svc := buildWriteService(t, engine, "", backend, nil)
+			t.Cleanup(func() { _ = svc.Close() })
+			t.Cleanup(engine.open)
+			_, err := engine.CreateNode(buildWriteNode("nornic:keep", "keepterm", []float32{1, 0, 0}))
+			require.NoError(t, err)
+			built := make(chan error, 1)
+			go func() { built <- svc.BuildIndexes(context.Background()) }()
+			select {
+			case <-engine.entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the build did not read its node snapshot")
+			}
+			malformed := buildWriteNode("nornic:keep", "badterm", []float32{1, 0})
+			done := make(chan error, 1)
+			go func() { done <- svc.IndexNode(malformed) }()
+			select {
+			case err := <-done:
+				require.ErrorIs(t, err, ErrDimensionMismatch, "a write the live path rejects was acknowledged during the build")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the write waited for the build")
+			}
+			engine.open()
+			require.NoError(t, <-built)
+			require.Equal(t, []string{"nornic:keep"}, buildWriteSearchIDs(t, svc, "keepterm"), "the build dropped the stored node")
+			require.Empty(t, buildWriteSearchIDs(t, svc, "badterm"))
+			requireBuildWriteVector(t, svc, "nornic:keep-named-v", []float32{1, 0, 0})
+		})
+	}
+}
+
+// TestBuildQueuedWriteOwnsItsValues: a caller may reuse its buffers once
+// IndexNode or IndexEdge returns. The build indexes the values the call
+// passed, not what the caller wrote into the buffers afterwards.
+func TestBuildQueuedWriteOwnsItsValues(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	for _, n := range []*storage.Node{buildWriteNode("nornic:s", "sterm", []float32{1, 0, 0}), buildWriteNode("nornic:e", "eterm", []float32{0, 1, 0})} {
+		_, err := engine.CreateNode(n)
+		require.NoError(t, err)
+	}
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its node snapshot")
+	}
+	named, chunk, prop, edgeVec := []float32{0, 0, 1}, []float32{0, 1, 0}, []float32{1, 0, 0}, []float32{0, 0, 1}
+	node := &storage.Node{ID: "nornic:buf", Labels: []string{"Doc"}, Properties: map[string]any{"text": "bufterm", "p": prop},
+		NamedEmbeddings: map[string][]float32{"v": named}, ChunkEmbeddings: [][]float32{chunk}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": edgeVec}}
+	require.NoError(t, engine.CreateEdge(storage.CopyEdge(edge)))
+	requireReturnsDuringBuild(t, "a node write", func() error { return svc.IndexNode(node) })
+	requireReturnsDuringBuild(t, "an edge write", func() error { return svc.IndexEdge(edge) })
+	// The caller reuses its buffers.
+	for _, buf := range [][]float32{named, chunk, prop, edgeVec} {
+		buf[0], buf[1], buf[2] = 0.5, 0.5, 0.5
+	}
+	node.Properties["text"] = "reusedterm"
+	engine.open()
+	require.NoError(t, <-built)
+	requireBuildWriteVector(t, svc, "nornic:buf-named-v", []float32{0, 0, 1})
+	requireBuildWriteVector(t, svc, "nornic:buf", []float32{0, 1, 0})
+	requireBuildWriteVector(t, svc, "nornic:buf-prop-p", []float32{1, 0, 0})
+	require.Equal(t, []string{"nornic:buf"}, buildWriteSearchIDs(t, svc, "bufterm"))
+	require.Empty(t, buildWriteSearchIDs(t, svc, "reusedterm"))
+	svc.mu.RLock()
+	got := svc.edgePropVector[string(edge.ID)]["v"]
+	svc.mu.RUnlock()
+	require.Equal(t, []float32{0, 0, 1}, got, "the build indexed the caller's reused edge buffer")
+}
+
+// BenchmarkQueuedNodeCopy measures the copy a write handed to a build makes:
+// a node with a 1024-dimension chunk embedding, a 1024-dimension named
+// embedding, a 1024-dimension property vector and text properties. Writes
+// outside a build make no copy.
+func BenchmarkQueuedNodeCopy(b *testing.B) {
+	vec := func() []float32 {
+		v := make([]float32, 1024)
+		for i := range v {
+			v[i] = float32(i) / 1024
+		}
+		return v
+	}
+	node := &storage.Node{ID: "nornic:bench", Labels: []string{"Doc", "Chunk"},
+		Properties:      map[string]any{"title": "a title", "content": strings.Repeat("text ", 200), "p": vec()},
+		NamedEmbeddings: map[string][]float32{"default": vec()}, ChunkEmbeddings: [][]float32{vec()},
+		EmbedMeta: map[string]any{"embedding_space": "model-1024"}}
+	b.ReportAllocs()
+	for range b.N {
+		if copyQueuedNode(node) == nil {
+			b.Fatal("nil copy")
+		}
+	}
+}
