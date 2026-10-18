@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +32,12 @@ func TestTypedCountDropRejectsEarlierTransaction(t *testing.T) {
 					typedCountRun(t, f.admin, "CREATE DATABASE scope_old")
 				}
 				_, err := a.Execute(context.Background(), "COMMIT", nil)
-				require.ErrorIs(t, err, storage.ErrConflict, "an old executor/transaction must not resurrect A")
+				if recreate {
+					require.ErrorIs(t, err, storage.ErrConflict, "an old transaction must not enter the recreated namespace")
+				} else {
+					require.True(t, errors.Is(err, storage.ErrConflict) || errors.Is(err, multidb.ErrDatabaseNotFound),
+						"an old transaction must be rejected while its database is absent: %v", err)
+				}
 				typedCountRun(t, b, "COMMIT")
 				if !recreate {
 					typedCountRun(t, f.admin, "CREATE DATABASE scope_old")
