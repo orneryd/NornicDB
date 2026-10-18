@@ -502,6 +502,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 
 	publish := func() {
+		b.unmarkDeletedManualSuppressions("", []EdgeID{id})
 		if edgeType != "" {
 			b.cacheOnEdgeDeleted(id, edgeType)
 		} else {
@@ -579,6 +580,11 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 		return ErrNotFound
 	}
 	if err != nil {
+		return err
+	}
+	// Its on-demand suppression goes with it, in this commit; the delete's
+	// publication updates the mirror (unmarkDeletedManualSuppressions).
+	if err := txn.Delete(manualSuppressionKey(manualSuppressionEdge, string(id))); err != nil {
 		return err
 	}
 
@@ -670,6 +676,11 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		deletedNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
+		return 0, nil, nil, nil, err
+	}
+	// Its on-demand suppression goes with it, in this commit; the delete's
+	// publication updates the mirror (unmarkDeletedManualSuppressions).
+	if err := txn.Delete(manualSuppressionKey(manualSuppressionNode, string(id))); err != nil {
 		return 0, nil, nil, nil, err
 	}
 

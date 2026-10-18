@@ -43,6 +43,7 @@ var publishingPaths = map[string]string{
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
 	"EnqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
 	"UpdateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
+	"setManualSuppression":                     "TestManualSuppressionPublicationOrder (suppress overtaken by unsuppress, and the reverse, on a node and a relationship)",
 }
 
 // stageLocks classifies every lock a publication takes, by the struct field
@@ -63,6 +64,7 @@ var stageLocks = map[string]string{
 	"UniqueConstraint.mu":                "unique-value registry (TestPostCommitPublicationOrder: registry holder, duplicate rejected, replaced value free)",
 	"relationshipUniqueIndexSet.mu":      "relationship-uniqueness index (TestPostCommitEdgePublicationOrder: duplicate rejected, replaced value free)",
 	"pendingEmbeddingCandidates.mu":      "pending-embedding candidates, an add-only set of hints (TestPendingCandidates*)",
+	"BadgerEngine.manualSuppressionMu":   "on-demand suppression mirror (TestManualSuppressionPublicationOrder, TestManualSuppressionConcurrentToggleMatchesStorage, TestManualSuppressionClearedByEveryDeletePath)",
 }
 
 // uniqueKeyLockWait stands for waiting on a unique constraint key lock
@@ -118,6 +120,7 @@ var stageLockObservers = map[string]string{
 	"UniqueConstraint.mu":                "unique-value registry",
 	"relationshipUniqueIndexSet.mu":      "relationship-uniqueness index",
 	"pendingEmbeddingCandidates.mu":      "n/a: add-only hints that commute, so their order can't change them (TestPendingCandidates*)",
+	"BadgerEngine.manualSuppressionMu":   "n/a: the suppression mirror has its own matrix, which compares it with the stored keys (TestManualSuppressionPublicationOrder, TestManualSuppressionClearedByEveryDeletePath over the direct, tx, bulk, large and replay paths)",
 }
 
 // matrixPathCoverage names, for each committing path, the matrix tests that

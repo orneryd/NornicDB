@@ -673,6 +673,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		uniqueSchema = b.GetSchemaForNamespace(dbName)
 	}
 	publish := func() {
+		b.unmarkDeletedManualSuppressions(id, deletedEdgeIDs)
 		if deletedNode == nil {
 			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
 			return

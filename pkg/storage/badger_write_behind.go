@@ -447,6 +447,7 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 		case OpDeleteNode:
+			b.unmarkDeletedManualSuppressions(op.NodeID, op.DeletedEdgeIDs)
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
 				// indexes: buffered nodes never entered the engine node cache.
@@ -467,6 +468,7 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
+			b.unmarkDeletedManualSuppressions("", []EdgeID{op.EdgeID})
 			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
 		}
 	}

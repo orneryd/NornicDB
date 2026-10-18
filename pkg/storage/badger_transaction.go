@@ -1138,6 +1138,9 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 
 	// Buffer pending embeddings index deletion
 	tx.bufferDelete(pendingEmbedKey(nodeID))
+	// Its on-demand suppression goes with it; the commit's publication
+	// updates the mirror (unmarkDeletedManualSuppressions).
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionNode, string(nodeID)))
 
 	// Buffer node deletion. Dict cleanup is deferred to the prune
 	// pipeline — tombstones + MVCC heads reuse the existing numID.
@@ -1180,6 +1183,7 @@ func (tx *BadgerTransaction) deletePendingEdgesIncidentToBuffered(nodeID NodeID,
 // (deletePendingEdgesIncidentToBuffered, #741), so the two stay identical.
 func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
 	tx.bufferDelete(edgeKey(edge.ID))
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edge.ID)))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
 		tx.bufferDelete(outKey)
 	}
@@ -1877,6 +1881,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		tx.cancelledEdgeWrites[edgeID] = struct{}{}
 	} else {
 		tx.bufferDelete(edgeKey(edgeID))
+		tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edgeID)))
 		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
 			tx.bufferDelete(outKey)
 		}
@@ -4004,6 +4009,7 @@ func (tx *BadgerTransaction) publication() (func(), []any) {
 			case OpUpdateNode:
 				engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 			case OpDeleteNode:
+				engine.unmarkDeletedManualSuppressions(op.NodeID, op.DeletedEdgeIDs)
 				if op.OldNode != nil {
 					engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
 				} else {
@@ -4022,6 +4028,7 @@ func (tx *BadgerTransaction) publication() (func(), []any) {
 				if op.OldEdge != nil {
 					oldType = op.OldEdge.Type
 				}
+				engine.unmarkDeletedManualSuppressions("", []EdgeID{op.EdgeID})
 				engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
 			case OpUpdateEmbedding:
 				// Embeddings are regenerable; no-op for cached counts.

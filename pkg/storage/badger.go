@@ -583,7 +583,6 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 
 // publishNodeDeleted publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
 	b.enqueueCommitOperation(Operation{Type: OpDeleteNode, NodeID: nodeID})
 }
@@ -647,7 +646,6 @@ func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 }
 
 func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
 	b.enqueueCommitOperation(Operation{Type: OpDeleteEdge, EdgeID: edgeID})
 }
