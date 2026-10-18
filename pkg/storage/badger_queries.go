@@ -292,19 +292,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	coversDecided := false
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			if properties == nil {
-				return b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
-			}
-			if cached, ok := b.cacheLoadNodeBody(nodeID, item.Version()); ok {
-				return projectCachedNodeForRead(cached, properties), nil
-			}
-			var node *Node
-			err := item.Value(func(value []byte) error {
-				var err error
-				node, err = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return err
-			})
-			return node, err
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		cachedNode := func(nodeID NodeID) (*Node, bool) {
 			b.nodeCacheMu.RLock()

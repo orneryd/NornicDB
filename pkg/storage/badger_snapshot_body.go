@@ -35,3 +35,21 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 	edge, found := b.edgeCache[id]
 	return edge, found && edge != nil && b.edgeCacheVersions[id] == version
 }
+
+// readProjectedNodeItemInTxn shares the versioned body decision between point,
+// label and MVCC projection readers. A nil projection retains full hydration.
+func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}) (*Node, error) {
+	if properties == nil {
+		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
+	}
+	if cached, ok := b.cacheLoadNodeBody(id, item.Version()); ok {
+		return projectCachedNodeForRead(cached, properties), nil
+	}
+	var node *Node
+	err := item.Value(func(value []byte) error {
+		var err error
+		node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
+		return err
+	})
+	return node, err
+}

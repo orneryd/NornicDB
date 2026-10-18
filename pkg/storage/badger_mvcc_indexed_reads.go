@@ -322,19 +322,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			if properties == nil {
-				return b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
-			}
-			if cached, ok := b.cacheLoadNodeBody(nodeID, item.Version()); ok {
-				return projectCachedNodeForRead(cached, properties), nil
-			}
-			var node *Node
-			err := item.Value(func(value []byte) error {
-				var err error
-				node, err = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return err
-			})
-			return node, err
+			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
