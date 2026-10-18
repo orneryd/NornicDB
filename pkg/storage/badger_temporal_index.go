@@ -269,8 +269,15 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 		if err != nil {
 			return false, err
 		}
+		if node == nil {
+			return true, nil
+		}
+		key, _, _, _, ok := temporalNodeState(node, target.constraint)
+		if !ok || !temporalKeyValuesEqual(target.constraint, key, target.keyValue) {
+			return true, nil
+		}
 		prevNode = node
-		return node == nil, nil
+		return false, nil
 	}); err != nil {
 		return nil, nil, err
 	}
@@ -292,8 +299,8 @@ func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target tempor
 		if node == nil {
 			continue
 		}
-		_, candidateStart, _, _, ok := temporalNodeState(node, target.constraint)
-		if !ok {
+		key, candidateStart, _, _, ok := temporalNodeState(node, target.constraint)
+		if !ok || !temporalKeyValuesEqual(target.constraint, key, target.keyValue) {
 			continue
 		}
 		if candidateStart.Before(start) {
@@ -384,6 +391,10 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 	if !ok {
 		return nil, nil
 	}
+	spec, _ := splitTemporalKeySpec(constraint.Properties)
+	if spec.listBearing(keyValue) {
+		return b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, true)
+	}
 	target := temporalRefreshTarget{
 		constraint: constraint,
 		desc:       makeTemporalDescriptor(namespace, constraint, keyValue),
@@ -460,6 +471,27 @@ func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, co
 	return best, nil
 }
 
+// temporalListNodeAsOfInNamespace shares the existing descending history reader
+// across list as-of/current lookups. A current hint can hide a later historical
+// holder when an upgrade merges overlapping old-format list histories.
+func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constraint Constraint, keyValue interface{}, asOf time.Time, withEmbeddings bool) (*Node, error) {
+	if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+		node, err := b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
+		if err != nil || node == nil || !withEmbeddings {
+			return node, err
+		}
+		return b.GetNode(node.ID)
+	}
+	target := temporalRefreshTarget{constraint: constraint, desc: makeTemporalDescriptor(namespace, constraint, keyValue), keyValue: keyValue}
+	var node *Node
+	err := b.withView(func(txn *badger.Txn) error {
+		var err error
+		node, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, withEmbeddings)
+		return err
+	})
+	return node, err
+}
+
 // IsCurrentTemporalNodeInNamespace reports whether the given temporal node is the live/current version.
 func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *Node, asOf time.Time) (bool, error) {
 	if err := b.ensureOpen(); err != nil {
@@ -487,30 +519,36 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 			keyValue:   keyValue,
 		}
 		var current *Node
-		err := b.withView(func(txn *badger.Txn) error {
-			item, err := txn.Get(temporalCurrentKey(target.desc))
-			if err == nil {
-				var currentID NodeID
-				if err := item.Value(func(val []byte) error {
-					currentID = NodeID(append([]byte(nil), val...))
-					return nil
-				}); err != nil {
+		var err error
+		spec, _ := splitTemporalKeySpec(constraint.Properties)
+		if spec.listBearing(keyValue) {
+			current, err = b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, false)
+		} else {
+			err = b.withView(func(txn *badger.Txn) error {
+				item, err := txn.Get(temporalCurrentKey(target.desc))
+				if err == nil {
+					var currentID NodeID
+					if err := item.Value(func(val []byte) error {
+						currentID = NodeID(append([]byte(nil), val...))
+						return nil
+					}); err != nil {
+						return err
+					}
+					currentNode, err := b.loadNodeForTemporalTxn(txn, currentID, false)
+					if err != nil {
+						return err
+					}
+					if nodeMatchesTemporalLookup(currentNode, target.constraint, target.keyValue, asOf) {
+						current = currentNode
+						return nil
+					}
+				} else if err != badger.ErrKeyNotFound {
 					return err
 				}
-				currentNode, err := b.loadNodeForTemporalTxn(txn, currentID, false)
-				if err != nil {
-					return err
-				}
-				if nodeMatchesTemporalLookup(currentNode, target.constraint, target.keyValue, asOf) {
-					current = currentNode
-					return nil
-				}
-			} else if err != badger.ErrKeyNotFound {
+				current, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, false)
 				return err
-			}
-			current, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, false)
-			return err
-		})
+			})
+		}
 		if err != nil {
 			return false, err
 		}
@@ -640,6 +678,13 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	// constraint's index may be trusted to be complete.
 	b.temporalIndexReady.Store(false)
 	b.resetTemporalIndexCompleteness()
+	// A failed rebuild must not leave a current-format marker that a later
+	// clean shutdown could certify over partially cleared/refilled indexes.
+	if err := b.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(temporalIndexFormatKey)
+	}); err != nil {
+		return err
+	}
 	if err := b.clearBadgerPrefix(ctx, prefixTemporalIndex); err != nil {
 		return err
 	}
@@ -670,12 +715,13 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 }
 
 // temporalIndexFormatKey records the key format of the stored temporal
-// history index. Format 2 hashes key values with stableTemporalKeyDigest;
-// earlier stores hashed them with a per-process key, so their entries can't
-// be found after a restart and must be rebuilt before the index is trusted.
+// history index. Format 4 adds canonical list tokens to format 2's stable scalar
+// digests and makes equal composite/list-bearing keys share one whole-key hash.
+// Older list histories/current pointers must be rebuilt before trust, including
+// after a clean shutdown. Pure-scalar hash bytes are unchanged.
 var (
 	temporalIndexFormatKey     = []byte{prefixMVCCMeta, prefixMVCCMetaTemporalIndexFormat}
-	temporalIndexFormatCurrent = []byte{2}
+	temporalIndexFormatCurrent = []byte{4}
 )
 
 // temporalIndexFormatIsCurrent reports whether the stored temporal index was
@@ -721,6 +767,11 @@ type temporalPruneCandidate struct {
 	end   time.Time
 }
 
+type temporalPruneGroup struct {
+	key        interface{}
+	candidates []temporalPruneCandidate
+}
+
 // PruneTemporalHistory removes older closed temporal versions according to opts.
 func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
@@ -733,7 +784,7 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 		ctx = context.Background()
 	}
 	now := time.Now().UTC()
-	groups := make(map[string][]temporalPruneCandidate)
+	groups := make(map[string][]*temporalPruneGroup)
 	err := StreamNodesWithFallback(ctx, b, 1000, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -756,7 +807,19 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 				desc:       makeTemporalDescriptor(namespace, constraint, keyValue),
 				keyValue:   keyValue,
 			}
-			groups[temporalTargetMapKey(target)] = append(groups[temporalTargetMapKey(target)], temporalPruneCandidate{
+			bucket := temporalTargetMapKey(target)
+			var group *temporalPruneGroup
+			for _, existing := range groups[bucket] {
+				if temporalKeyValuesEqual(constraint, existing.key, keyValue) {
+					group = existing
+					break
+				}
+			}
+			if group == nil {
+				group = &temporalPruneGroup{key: keyValue}
+				groups[bucket] = append(groups[bucket], group)
+			}
+			group.candidates = append(group.candidates, temporalPruneCandidate{
 				id:    node.ID,
 				start: start,
 				end:   end,
@@ -772,20 +835,23 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 		cutoff = now.Add(-opts.MinRetentionAge)
 	}
 	deleteIDs := make(map[NodeID]struct{})
-	for _, candidates := range groups {
-		sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].start.After(candidates[j].start)
-		})
-		keptClosed := 0
-		for _, candidate := range candidates {
-			if !cutoff.IsZero() && candidate.end.After(cutoff) {
-				continue
+	for _, bucket := range groups {
+		for _, group := range bucket {
+			candidates := group.candidates
+			sort.Slice(candidates, func(i, j int) bool {
+				return candidates[i].start.After(candidates[j].start)
+			})
+			keptClosed := 0
+			for _, candidate := range candidates {
+				if !cutoff.IsZero() && candidate.end.After(cutoff) {
+					continue
+				}
+				if opts.MaxVersionsPerKey > 0 && keptClosed < opts.MaxVersionsPerKey {
+					keptClosed++
+					continue
+				}
+				deleteIDs[candidate.id] = struct{}{}
 			}
-			if opts.MaxVersionsPerKey > 0 && keptClosed < opts.MaxVersionsPerKey {
-				keptClosed++
-				continue
-			}
-			deleteIDs[candidate.id] = struct{}{}
 		}
 	}
 	var deleted int64

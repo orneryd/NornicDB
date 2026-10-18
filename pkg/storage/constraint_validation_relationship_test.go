@@ -121,7 +121,7 @@ func TestTemporalCompositeKey(t *testing.T) {
 	edge := &Edge{ID: "e1", Properties: map[string]any{"x": "a", "y": int64(7)}}
 	got, err := temporalCompositeKey(edge, []string{"x", "y"})
 	require.NoError(t, err)
-	require.Equal(t, "a\x007", got)
+	require.Equal(t, []interface{}{"a", int64(7)}, got)
 
 	// Nil component → error mentioning the property name.
 	edgeBad := &Edge{ID: "e2", Properties: map[string]any{"x": "a"}}
