@@ -393,7 +393,12 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
-	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
+	if seekPaths, sought, err := e.tryRelationshipPropertySeek(ctx, matches, whereClause, seedNodes, endSeedNodes); sought {
+		if err != nil {
+			return nil, err
+		}
+		paths = seekPaths
+	} else if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
 		// Final even when empty: a bound end node with no qualifying path must
 		// not fall through to the store-wide scan below.
 		paths = endSeededPaths
