@@ -184,6 +184,29 @@ func (index *cypherValueIndex) add(value interface{}) (position int, existed boo
 	return index.addComparable(key)
 }
 
+// find is the position of the value the index holds that is equivalent to
+// value, if it holds one; it adds nothing.
+func (index *cypherValueIndex) find(value interface{}) (position int, found bool) {
+	key, scalar := cypherComparableKey(value)
+	if scalar {
+		position, found = index.single[key]
+		return position, found
+	}
+	for _, candidate := range index.tuples[cypherEquivalenceHash(value)] {
+		if len(candidate.values) == 1 && cypherValuesEquivalent(value, candidate.values[0]) {
+			return candidate.position, true
+		}
+	}
+	return 0, false
+}
+
+// cypherValueEquals is APOC's value equality (Util.valueEquals, used by
+// apoc.coll.contains, containsAll, indexOf, occurrences and split):
+// equivalence, except that a null equals nothing.
+func cypherValueEquals(left, right interface{}) bool {
+	return left != nil && right != nil && cypherValuesEquivalent(left, right)
+}
+
 func (index *cypherValueIndex) addComparable(key interface{}) (position int, existed bool) {
 	if position, existed = index.single[key]; existed {
 		return position, true
