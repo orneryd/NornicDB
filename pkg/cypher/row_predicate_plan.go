@@ -261,6 +261,7 @@ const (
 	rowPredicateOr
 	rowPredicateIn
 	rowPredicateString
+	rowPredicatePattern
 )
 
 // rowPredicatePart is a node of a planned predicate: an AND or OR of parts, a
@@ -277,13 +278,15 @@ type rowPredicatePart struct {
 	parts           []rowPredicatePart
 	membership      *bindingParamMembershipCache
 	stringPredicate func(string, string) bool
+	pattern         *patternPredicatePlan
 }
 
 // rowPredicatePlan is a planned predicate.
 type rowPredicatePlan struct {
 	root rowPredicatePart
 	// complete: no part of the plan is text. Such a predicate is only
-	// comparisons, IN and null tests of simple operands under AND / OR, so
+	// comparisons, IN and null tests of simple operands or owned pattern
+	// predicates under AND / OR, so
 	// none of evaluateRowPredicate's other forms (CASE, arithmetic,
 	// subqueries, label tests) applies to it, and it is evaluated from the
 	// plan without scanning its text for them on every row.
@@ -334,6 +337,9 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 	textPart := rowPredicatePart{kind: rowPredicateText, text: text}
 	if text == "" {
 		return textPart, false
+	}
+	if isRelationshipPatternOperand(text) {
+		return rowPredicatePart{kind: rowPredicatePattern, text: text, pattern: planPatternPredicate(text)}, true
 	}
 	if inner, ok := stripEnclosingExpressionParentheses(text); ok {
 		part, planned := planRowPredicatePart(inner)
@@ -638,6 +644,9 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 		return value, err
 	}
 	switch part.kind {
+	case rowPredicatePattern:
+		matched, err := part.pattern.evaluate(e, ctx, scope)
+		return truthOf(matched), err
 	case rowPredicateAnd, rowPredicateOr:
 		value, _, err := evaluateLogicalOperands(len(part.parts), part.kind == rowPredicateOr, func(i int) (interface{}, bool, error) {
 			value, err := e.rowPredicatePartValue(ctx, &part.parts[i], scope, memberships)

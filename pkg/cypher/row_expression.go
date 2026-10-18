@@ -2060,10 +2060,14 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 
 // rowPatternPredicate is a relationship pattern used as a predicate (in
 // WHERE, bare, or as exists(pattern)): whether it matches, decided by the
-// EXISTS { pattern } owner with the whole row, so bound relationships, row
+// compiled pattern owner with the whole row, so bound relationships, row
 // values in property maps and rows without a node binding are all seen.
 func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
-	return e.evaluateRowExistsPredicate(ctx, "EXISTS { "+strings.TrimSpace(pattern)+" }", values)
+	matched, err := planPatternPredicate(pattern).evaluate(e, ctx, compiledRowScope{values: &values})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+	}
+	return matched, true
 }
 
 // rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the

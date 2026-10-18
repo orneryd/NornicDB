@@ -44,8 +44,12 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
 
-	// Missing node in a relationship predicate should return false.
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	// Named missing variables are errors (Neo4j 5.26.30 / TCK Pattern1 [10]),
+	// rather than locals as in an explicit EXISTS body. This helper fails
+	// closed and records the statement's error for its caller.
+	failureCtx := withExpressionFailureSlot(ctx)
+	require.False(t, exec.evaluateWhereForContext(failureCtx, "(a)-[:KNOWS]->(c)", nodes))
+	requireSemanticPatternDetail(t, getExpressionFailure(failureCtx), "UndefinedVariable")
 
 	// Fallback expression evaluation branch.
 	require.True(t, exec.evaluateWhereForContext(ctx, "1 = 1", nodes))
