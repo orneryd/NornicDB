@@ -14,7 +14,9 @@ import (
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // sharedSearchProvider hands out one search service per database, built from
@@ -275,7 +277,62 @@ func TestSharedIndexFixedProviderDoesNotAcknowledgeLostVectors(t *testing.T) {
 	})
 	createCosineCollection(t, ctx, srv.collections, "fixed", 4)
 	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "fixed", Points: []*qpb.PointStruct{{Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}, Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 0)}}}}}})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
 	require.ErrorContains(t, err, search.ErrDimensionMismatch.Error())
+	// The rejected point was not stored: nothing is left that the index lacks.
+	count, err := srv.points.Count(ctx, &qpb.CountPoints{CollectionName: "fixed"})
+	require.NoError(t, err)
+	require.Zero(t, count.GetResult().GetCount())
+}
+
+// A vector write to a collection whose dimension the search service can't
+// index is rejected before anything is stored, for Upsert and UpdateVectors
+// alike: an existing point keeps its stored vector, and an Upsert of a new
+// point stores nothing.
+func TestSharedIndexFixedProviderRejectsVectorWritesBeforeStoring(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	var fixed atomic.Bool
+	var svc *search.Service
+	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+		if !fixed.Load() {
+			// No search service yet: the point is stored and not indexed.
+			return nil, nil
+		}
+		if svc == nil {
+			svc = search.NewServiceWithDimensions(store, 8)
+			svc.FixVectorDimensions()
+		}
+		return svc, nil
+	})
+	createCosineCollection(t, ctx, srv.collections, "fixed", 4)
+	upsertPoint(t, ctx, srv.points, "fixed", 1, unitVector(4, 0), nil)
+	fixed.Store(true)
+
+	pointID := func(n uint64) *qpb.PointId { return &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: n}} }
+	_, err = srv.points.UpdateVectors(ctx, &qpb.UpdatePointVectors{CollectionName: "fixed", Points: []*qpb.PointVectors{{
+		Id:      pointID(1),
+		Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 1)}}},
+	}}})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "fixed", Points: []*qpb.PointStruct{
+		{Id: pointID(1), Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 2)}}}},
+		{Id: pointID(2), Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 3)}}}},
+	}})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+
+	got, err := srv.points.Get(ctx, &qpb.GetPoints{
+		CollectionName: "fixed",
+		Ids:            []*qpb.PointId{pointID(1), pointID(2)},
+		WithVectors:    &qpb.WithVectorsSelector{SelectorOptions: &qpb.WithVectorsSelector_Enable{Enable: true}},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.GetResult(), 1, "the rejected Upsert must not store the new point")
+	require.Equal(t, uint64(1), got.GetResult()[0].GetId().GetNum())
+	require.Equal(t, unitVector(4, 0), got.GetResult()[0].GetVectors().GetVector().GetDense().GetData(), "the rejected writes must not replace the stored vector")
+	require.Zero(t, svc.EmbeddingCount())
 }
 
 func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
@@ -433,4 +490,45 @@ func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
 			require.Empty(t, results.Results)
 		})
 	}
+}
+
+// A database that indexed and removed vectors before its first Qdrant write
+// keeps an empty file-backed store of the old dimension. A collection of
+// another dimension is rejected before anything is stored, rather than
+// acknowledged with points the index never holds.
+func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	var svc *search.Service
+	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+		if svc == nil {
+			svc = search.NewServiceWithDimensions(store, 8)
+			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetPersistenceEnabled(true)
+			t.Cleanup(func() { _ = svc.Close() })
+			if err := svc.IndexNode(&storage.Node{ID: "previous", NamedEmbeddings: map[string][]float32{"default": unitVector(8, 0)}}); err != nil {
+				return nil, err
+			}
+			if err := svc.RemoveNode("previous"); err != nil {
+				return nil, err
+			}
+		}
+		return svc, nil
+	})
+	createCosineCollection(t, ctx, srv.collections, "four", 4)
+	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "four", Points: []*qpb.PointStruct{{
+		Id:      &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}},
+		Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 0)}}},
+	}}})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+	count, err := srv.points.Count(ctx, &qpb.CountPoints{CollectionName: "four"})
+	require.NoError(t, err)
+	require.Zero(t, count.GetResult().GetCount(), "a rejected point must not be stored")
+	require.Zero(t, svc.EmbeddingCount())
+
+	createCosineCollection(t, ctx, srv.collections, "eight", 8)
+	upsertPoint(t, ctx, srv.points, "eight", 1, unitVector(8, 1), nil)
+	require.Equal(t, 1, svc.EmbeddingCount(), "an acknowledged point is indexed")
 }
