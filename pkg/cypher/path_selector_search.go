@@ -262,7 +262,7 @@ func propertyMapPredicates(variable, properties string) []string {
 		return nil
 	}
 	var predicates []string
-	for _, pair := range (&StorageExecutor{}).splitPropertyPairs(strings.TrimSpace(properties[1 : len(properties)-1])) {
+	for _, pair := range splitTopLevelComma(strings.TrimSpace(properties[1 : len(properties)-1])) {
 		colon := findTopLevelMapKeyValueSeparator(pair)
 		if colon <= 0 {
 			continue
@@ -851,7 +851,7 @@ func readsPatternVariable(term, name string) bool {
 	var brackets []byte
 	for i := 0; i < len(term); i++ {
 		switch c := term[i]; {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(term, i, c) - 1
 		case c == '(' || c == '[' || c == '{':
 			brackets = append(brackets, c)
@@ -921,8 +921,8 @@ func topLevelOperatorIndex(term, operator string) int {
 	found := -1
 	depth := 0
 	for i := 0; i < len(term); i++ {
-		switch c := term[i]; c {
-		case '\'', '"', '`':
+		switch c := term[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(term, i, c) - 1
 		case '(', '[', '{':
 			depth++

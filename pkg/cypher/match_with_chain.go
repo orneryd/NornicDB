@@ -83,7 +83,10 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		whereClause = strings.TrimSpace(trimmed[whereIdx+5:])
 	}
 
-	pattern := e.parseNodePattern(ctx, patternPart)
+	pattern, parseErr := e.parseNodePattern(ctx, patternPart)
+	if parseErr != nil {
+		return nil, "", parseErr
+	}
 	if pattern.variable == "" {
 		return nil, "", localizedError(localization.CypherMatchingMatchPatternVariableMissing(clause), nil)
 	}

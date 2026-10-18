@@ -3,6 +3,8 @@ package fabric
 import (
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // FabricPlanner decomposes a Cypher query into a Fragment tree by splitting
@@ -18,40 +20,15 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	parts := make([]string, 0, 2)
 	ops := make([]bool, 0, 1)
 	start := 0
-	inSingleQuote := false
-	inDoubleQuote := false
 	braceDepth := 0
 	parenDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
+			continue
+		}
 		ch := query[i]
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
-			continue
-		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-		if inSingleQuote || inDoubleQuote {
-			continue
-		}
 
 		switch ch {
 		case '{':
@@ -267,52 +244,17 @@ func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) erro
 }
 
 func splitAtTopLevelUse(query string) (string, string, bool) {
-	inSingleQuote := false
-	inDoubleQuote := false
-	inBacktick := false
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
-		ch := query[i]
-
-		switch {
-		case inSingleQuote:
-			if ch == '\'' {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		case inDoubleQuote:
-			if ch == '"' {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
 			continue
 		}
-
+		ch := query[i]
 		switch ch {
-		case '\'':
-			inSingleQuote = true
-			continue
-		case '"':
-			inDoubleQuote = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			parenDepth++
 			continue
@@ -372,51 +314,17 @@ func ensureRowProducingPrefix(query string) string {
 }
 
 func hasTopLevelReturnClause(query string) bool {
-	inSingleQuote := false
-	inDoubleQuote := false
-	inBacktick := false
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
-		ch := query[i]
-		switch {
-		case inSingleQuote:
-			if ch == '\'' {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		case inDoubleQuote:
-			if ch == '"' {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
 			continue
 		}
-
+		ch := query[i]
 		switch ch {
-		case '\'':
-			inSingleQuote = true
-			continue
-		case '"':
-			inDoubleQuote = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			parenDepth++
 			continue
@@ -454,51 +362,17 @@ func hasTopLevelReturnClause(query string) bool {
 
 func trailingWithAliases(query string) []string {
 	lastWith := -1
-	inSingleQuote := false
-	inDoubleQuote := false
-	inBacktick := false
 	parenDepth := 0
 	braceDepth := 0
 	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
-		ch := query[i]
-		switch {
-		case inSingleQuote:
-			if ch == '\'' {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		case inDoubleQuote:
-			if ch == '"' {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
 			continue
 		}
-
+		ch := query[i]
 		switch ch {
-		case '\'':
-			inSingleQuote = true
-			continue
-		case '"':
-			inDoubleQuote = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			parenDepth++
 			continue
@@ -798,58 +672,15 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 // extractTopLevelCallBlocks finds CALL { ... } blocks in the current query scope.
 func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 	var blocks []callSubqueryBlock
-	inSingleQuote := false
-	inDoubleQuote := false
 	braceDepth := 0
 	parenDepth := 0
 
 	for i := 0; i < len(query); i++ {
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
+			continue
+		}
 		ch := query[i]
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
-			continue
-		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-		if inSingleQuote || inDoubleQuote {
-			continue
-		}
-
-		if ch == '/' && i+1 < len(query) && query[i+1] == '/' {
-			for i < len(query) && query[i] != '\n' {
-				i++
-			}
-			continue
-		}
-		if ch == '/' && i+1 < len(query) && query[i+1] == '*' {
-			i += 2
-			for i+1 < len(query) {
-				if query[i] == '*' && query[i+1] == '/' {
-					i++
-					break
-				}
-				i++
-			}
-			continue
-		}
 
 		switch ch {
 		case '{':
@@ -939,64 +770,13 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	}
 
 	depth := 1
-	inSingleQuote := false
-	inDoubleQuote := false
 
 	for i := pos + 1; i < len(s); i++ {
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
+			continue
+		}
 		ch := s[i]
-
-		// Handle string literals (skip brace counting inside strings).
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				// Check for escaped quote.
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
-			continue
-		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-
-		if inSingleQuote || inDoubleQuote {
-			continue
-		}
-
-		// Handle line comments (// ...).
-		if ch == '/' && i+1 < len(s) && s[i+1] == '/' {
-			// Skip to end of line.
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			continue
-		}
-
-		// Handle block comments (/* ... */).
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			i += 2
-			for i+1 < len(s) {
-				if s[i] == '*' && s[i+1] == '/' {
-					i++
-					break
-				}
-				i++
-			}
-			continue
-		}
 
 		if ch == '{' {
 			depth++

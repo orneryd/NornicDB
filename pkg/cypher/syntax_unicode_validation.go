@@ -21,66 +21,9 @@ func validateUnicodeOperators(query string) error {
 		return nil
 	}
 
-	var quote byte
-	inLineComment := false
-	inBlockComment := false
 	for offset := 0; offset < len(query); {
-		if inLineComment {
-			if query[offset] == '\n' || query[offset] == '\r' {
-				inLineComment = false
-			}
-			offset++
-			continue
-		}
-		if inBlockComment {
-			if query[offset] == '*' && offset+1 < len(query) && query[offset+1] == '/' {
-				inBlockComment = false
-				offset += 2
-				continue
-			}
-			_, size := utf8.DecodeRuneInString(query[offset:])
-			offset += size
-			continue
-		}
-		if quote != 0 {
-			if query[offset] == '\\' {
-				offset++
-				if offset < len(query) {
-					_, size := utf8.DecodeRuneInString(query[offset:])
-					offset += size
-				}
-				continue
-			}
-			if query[offset] == quote {
-				if offset+1 < len(query) && query[offset+1] == quote {
-					offset += 2
-					continue
-				}
-				quote = 0
-				offset++
-				continue
-			}
-			_, size := utf8.DecodeRuneInString(query[offset:])
-			offset += size
-			continue
-		}
-
-		if offset+1 < len(query) {
-			switch query[offset : offset+2] {
-			case "//":
-				inLineComment = true
-				offset += 2
-				continue
-			case "/*":
-				inBlockComment = true
-				offset += 2
-				continue
-			}
-		}
-		switch query[offset] {
-		case '\'', '"', '`':
-			quote = query[offset]
-			offset++
+		if end, quoted := skipCypherLexicalToken(query, offset); quoted {
+			offset = end
 			continue
 		}
 

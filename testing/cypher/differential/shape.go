@@ -1,6 +1,7 @@
 package differential
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 )
@@ -113,32 +114,31 @@ func maskNested(query string) (clean, masked string) {
 	blanked := []byte(query)
 	hidden := []byte(query)
 	depth := 0
-	var quote byte
 	for index := 0; index < len(query); index++ {
-		char := query[index]
-		switch {
-		case quote != 0:
-			if char == '\\' && quote != '`' && index+1 < len(query) {
-				hidden[index] = '_'
-				index++
-			} else if char == quote {
-				quote = 0
-			}
-		case char == '\'' || char == '"' || char == '`':
-			quote = char
-		case char == '/' && index+1 < len(query) && query[index+1] == '/':
-			for ; index < len(query) && query[index] != '\n'; index++ {
+		if end := cyphertext.CommentEnd(query, index); end >= 0 {
+			for ; index < end; index++ {
 				blanked[index], hidden[index] = ' ', ' '
 			}
+			index--
 			continue
-		case char == '(' || char == '[' || char == '{':
+		}
+		if cyphertext.IsQuote(query[index]) {
+			end, _ := cyphertext.ScanQuotedText(query, index)
+			for ; index < end; index++ {
+				hidden[index] = '_'
+			}
+			index--
+			continue
+		}
+		switch query[index] {
+		case '(', '[', '{':
 			depth++
-		case char == ')' || char == ']' || char == '}':
+		case ')', ']', '}':
 			depth--
 			hidden[index] = '_'
 			continue
 		}
-		if quote != 0 || depth > 0 {
+		if depth > 0 {
 			hidden[index] = '_'
 		}
 	}
@@ -149,7 +149,7 @@ func maskNested(query string) (clean, masked string) {
 // surrounding backticks removed.
 func normalizeText(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
-	if len(text) >= 2 && text[0] == '`' && text[len(text)-1] == '`' {
+	if len(text) >= 2 && cyphertext.IsBacktick(text[0]) && cyphertext.IsBacktick(text[len(text)-1]) {
 		text = text[1 : len(text)-1]
 	}
 	return text

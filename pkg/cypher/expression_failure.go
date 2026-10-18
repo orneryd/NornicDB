@@ -14,6 +14,26 @@ type expressionFailureKey struct{}
 // statement's map ordering and REVEAL metadata in expressionFailureKey.
 type expressionOperandFailureKey struct{}
 
+// rowFallbackExpressionKey records dispatch ownership independently of the
+// result/error contract, so context-only functions evaluate their children
+// without handing the same whole expression back to the row evaluator.
+type rowFallbackExpressionKey struct{}
+
+// A fallback may call back into the row evaluator through a legacy reader.
+// Carry its depth with its existing dispatch state, so a non-progressing read
+// fails through the checked contract instead of exhausting the goroutine stack.
+type rowFallbackState struct {
+	text  string
+	depth int
+}
+
+const maxRowFallbackDepth = 64
+
+func handedBackByRowEvaluator(ctx context.Context, expr string) bool {
+	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	return state.text != "" && logicalOperandKey(state.text) == logicalOperandKey(expr)
+}
+
 // deferredExpressionValue adapts a context evaluator to the logical fold's
 // explicit error contract. A later deciding operand can discard this error.
 func deferredExpressionValue(ctx context.Context, evaluate func(context.Context) interface{}) (interface{}, bool, error) {

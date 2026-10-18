@@ -111,7 +111,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.parseRelationshipPattern(ctx, tt.pattern)
+			result := parsedTestValue(exec.parseRelationshipPattern(ctx, tt.pattern))
 
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
@@ -134,7 +134,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 
 func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
 	exec := &StorageExecutor{}
-	pattern := exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->")
+	pattern := parsedTestValue(exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->"))
 
 	if pattern.Direction != "both" {
 		t.Fatalf("expected bidirectional traversal, got %q", pattern.Direction)
@@ -314,7 +314,7 @@ func TestVariableLengthPaths(t *testing.T) {
 	// Parse a variable length pattern
 	ctx := context.Background()
 
-	pattern := exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->")
+	pattern := parsedTestValue(exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->"))
 
 	if pattern.MinHops != 1 {
 		t.Errorf("MinHops = %d, want 1", pattern.MinHops)

@@ -257,8 +257,8 @@ func addStretchExpressionReads(text string, tokens *stretchTokens) {
 	}
 	depth := 0
 	for index := 0; index < len(text); index++ {
-		switch character := text[index]; character {
-		case '\'', '"', '`':
+		switch character := text[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, character) - 1
 		case '{':
 			depth++
@@ -268,10 +268,10 @@ func addStretchExpressionReads(text string, tokens *stretchTokens) {
 			}
 		case ':':
 			// v:Label (a label test) outside a map literal's keys.
-			if depth == 0 && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '`' || text[index-1] == ')') {
+			if depth == 0 && index > 0 && (isIdentByte(text[index-1]) || isCypherBacktickByte(text[index-1]) || text[index-1] == ')') {
 				end := index
 				for end < len(text) && (isIdentByte(text[end]) || strings.IndexByte(":`|&!%", text[end]) >= 0) {
-					if text[end] == '`' {
+					if isCypherBacktickByte(text[end]) {
 						end = skipCypherQuotedText(text, end, '`')
 						continue
 					}
@@ -291,7 +291,7 @@ func addStretchMapKeys(text string, tokens *stretchTokens) {
 		return
 	}
 	for _, entry := range splitTopLevelComma(text[1:end]) {
-		if colon := topLevelColonIndex(entry); colon > 0 {
+		if colon := findTopLevelMapKeyValueSeparator(entry); colon > 0 {
 			tokens.add(&tokens.keys, strings.Trim(strings.TrimSpace(entry[:colon]), "`"))
 		}
 	}
@@ -334,7 +334,7 @@ func addStretchPropertyReads(text string, tokens *stretchTokens) {
 	}
 	for index := 0; index < len(text); index++ {
 		switch character := text[index]; {
-		case character == '\'' || character == '"' || character == '`':
+		case isCypherQuoteByte(character):
 			index = skipCypherQuotedText(text, index, character) - 1
 		case character == '[' && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
 			tokens.anyKey = true
@@ -346,11 +346,11 @@ func addStretchPropertyReads(text string, tokens *stretchTokens) {
 			for after < len(text) && isASCIISpace(text[after]) {
 				after++
 			}
-			if before == 0 || !(isIdentByte(text[before-1]) || text[before-1] == ')' || text[before-1] == '`') || after >= len(text) {
+			if before == 0 || !(isIdentByte(text[before-1]) || text[before-1] == ')' || isCypherBacktickByte(text[before-1])) || after >= len(text) {
 				continue
 			}
-			if before != index || after != index+1 || text[after] == '`' || !isIdentStartByte(text[after]) {
-				if text[after] == '`' || isIdentStartByte(text[after]) {
+			if before != index || after != index+1 || isCypherBacktickByte(text[after]) || !isIdentStartByte(text[after]) {
+				if isCypherBacktickByte(text[after]) || isIdentStartByte(text[after]) {
 					tokens.anyKey = true
 				}
 				continue

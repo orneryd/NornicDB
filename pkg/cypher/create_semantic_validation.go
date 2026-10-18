@@ -386,7 +386,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 		}
 	}
 	for _, properties := range maps {
-		for _, pair := range e.splitPropertyPairs(properties) {
+		for _, pair := range splitTopLevelComma(properties) {
 			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 {
 				continue
@@ -407,7 +407,7 @@ func createSamePatternReferenceError(variable, kind, clause string) error {
 }
 
 func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties string) error {
-	for _, pair := range e.splitPropertyPairs(properties) {
+	for _, pair := range splitTopLevelComma(properties) {
 		separator := findTopLevelMapKeyValueSeparator(pair)
 		if separator <= 0 {
 			continue

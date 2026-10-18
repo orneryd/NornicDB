@@ -276,6 +276,7 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 		return EntityProperties(rel.Properties), nil
 	}
 	value, err := ctx.Eval(inner)
+	value = RuntimeValue(value)
 	if err != nil {
 		return nil, err
 	}
@@ -388,15 +389,18 @@ func EntityProperties(properties map[string]interface{}) map[string]interface{} 
 }
 
 // Coalesce is coalesce over n operands, operand i evaluated by eval(i):
-// the first resolved non-null value; an unresolved operand counts as null,
-// returning null when every operand is null or unresolved.
+// the first non-null value. An unresolved operand remains unresolved; only
+// a successfully evaluated NULL permits evaluation of the next operand.
 func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	for index := 0; index < n; index++ {
 		value, resolved, err := eval(index)
 		if err != nil {
 			return nil, false, err
 		}
-		if resolved && value != nil {
+		if !resolved {
+			return nil, false, nil
+		}
+		if value = RuntimeValue(value); value != nil {
 			return value, true, nil
 		}
 	}

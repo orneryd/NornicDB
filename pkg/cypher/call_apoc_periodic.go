@@ -73,7 +73,10 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 			}
 
 			// Execute action query with row data as parameters
-			actionResult, err := e.executeUserStatement(ctx, actionQuery, params)
+			// The iterate columns are action variables as well as parameters.
+			// Preserve their values at the checked property boundary; their names
+			// must never become stored source text.
+			actionResult, err := e.executeUserStatement(withValueBindings(ctx, params), actionQuery, params)
 			if err != nil {
 				errorCount++
 				continue

@@ -232,29 +232,44 @@ func directedMergePath(pattern string) string {
 // (#907). created reports which. A null or NaN property in the pattern is a
 // SemanticError, as for a single relationship (validateMergePatternProperties).
 func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
-	for _, segment := range mergePathSegments(pattern) {
+	// The match is the statement rewrite's MATCH: a property map reading
+	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
+	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, nil, false, err
+	}
+	// Syntax rewriting moves maps that read this path's variables into
+	// predicates/assignments. Materialize independent identity maps now; the
+	// dependent assignments use the checked SET owner after the path binds.
+	identityPattern := strings.TrimSpace(match[len("MATCH"):])
+	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
+		identityPattern = strings.TrimSpace(identityPattern[:where])
+	}
+	for _, segment := range mergePathSegments(identityPattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
 		if shapeErr != nil {
 			return nil, nil, false, shapeErr
 		}
 		for _, content := range [...]string{shape.startContent, shape.endContent} {
 			if _, properties := splitNodePatternProperties("(" + content + ")"); properties != "" {
-				if err := validateMergePatternProperties(e.parseMergeProperties(ctx, properties, nodeContext, relContext), "node"); err != nil {
+				evaluated, err := e.parseMergeProperties(ctx, properties, nodeContext, relContext)
+				if err != nil {
+					return nil, nil, false, err
+				}
+				if err := validateMergePatternProperties(evaluated, "node"); err != nil {
 					return nil, nil, false, err
 				}
 			}
 		}
 		if shape.relProps != "" {
-			if err := validateMergePatternProperties(e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext), "relationship"); err != nil {
+			evaluated, err := e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			if err := validateMergePatternProperties(evaluated, "relationship"); err != nil {
 				return nil, nil, false, err
 			}
 		}
-	}
-	// The match is the statement rewrite's MATCH: a property map reading
-	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
-	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, nil, false, err
 	}
 	// MERGE identity is stored identity, unlike the visible inline MATCH view.
 	// A private executor keeps this distinction local to the identity lookup;
