@@ -292,7 +292,8 @@ def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_
 class NornicDB:
     """Cypher and search over the HTTP API with Basic or Bearer auth. Never opens a Bolt connection."""
 
-    def __init__(self, uri, user, password, token=None, database="nornic", timeout=60, exhaust=False, repo=None, deadline=None):
+    def __init__(self, uri, user, password, token=None, database="nornic", timeout=60, exhaust=False, repo=None, deadline=None,
+                 min_rrf_score=0.01):
         self.driver = gi.HttpDriver(uri, user, password, token)
         self.base_url = self.driver.base_url
         self.database = database
@@ -300,6 +301,9 @@ class NornicDB:
         self.exhaust = exhaust
         self.repo = repo
         self.deadline = deadline
+        self.min_rrf_score = _number(min_rrf_score)
+        if self.min_rrf_score is None or self.min_rrf_score <= 0:
+            raise ValueError("The ranked-match RRF score floor must be finite and positive.")
 
     def cypher(self, statement, **params):
         try:
@@ -321,27 +325,39 @@ class NornicDB:
         if not self.exhaust:
             payload = self._search_page(body)
             return self._parse_hits(payload if isinstance(payload, list) else payload.get("results", []))
-        body.update(mode="ranked_then_id", ranked_limit=limit, n=limit)
+        body.update(mode="ranked", n=limit)
         active, seen_tokens, hits, seen_hits = None, set(), [], set()
         try:
             while True:
                 payload = self._search_page(body)
                 if not isinstance(payload, dict) or not isinstance(payload.get("has_more"), bool) or not isinstance(payload.get("results"), list):
                     raise AnalysisError("Search continuation is required; enable NORNICDB_SEARCH_CURSOR_MAX on the server and use a server with continuation support.", "incomplete")
-                for hit in self._parse_hits(payload["results"]):
+                if payload["has_more"]:
+                    active = payload.get("qid")
+                    if not isinstance(active, str) or not active or active in seen_tokens:
+                        raise AnalysisError("Search continuation did not advance to a new qid; analysis is incomplete.", "incomplete")
+                    seen_tokens.add(active)
+                if payload.get("mode") != "ranked":
+                    raise AnalysisError("The duplicate check requires ranked matches, not a catalog scan.", "incomplete")
+                matching = []
+                for item in payload["results"]:
+                    score = _number(item.get("rrf_score", item.get("score"))) if isinstance(item, dict) else None
+                    if score is None:
+                        raise AnalysisError("Ranked search returned a missing or invalid match score; analysis is incomplete.", "incomplete")
+                    if score >= self.min_rrf_score:
+                        matching.append(item)
+                for hit in self._parse_hits(matching):
                     identity = (hit.repo, hit.id)
                     if identity not in seen_hits:
                         hits.append(hit)
                         seen_hits.add(identity)
                 if not payload["has_more"]:
                     active = None
-                    if payload.get("collection_exhausted") is not True:
-                        raise AnalysisError("Search ended without complete collection exhaustion: " + str(payload.get("completion", "unknown")), "incomplete")
+                    completion = payload.get("completion")
+                    if completion == "max_results_reached" or (payload.get("collection_exhausted") is not True
+                            and completion != "candidate_pool_exhausted"):
+                        raise AnalysisError("Ranked match search ended incompletely: " + str(completion or "unknown"), "incomplete")
                     return hits
-                active = payload.get("qid")
-                if not isinstance(active, str) or not active or active in seen_tokens:
-                    raise AnalysisError("Search continuation did not advance to a new qid; analysis is incomplete.", "incomplete")
-                seen_tokens.add(active)
                 body = {"database": self.database, "qid": active, "n": limit}
         finally:
             if active:
