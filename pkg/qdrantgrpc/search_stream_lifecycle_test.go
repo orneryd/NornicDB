@@ -28,13 +28,19 @@ func TestSearchStreamLifecycleQdrantStatelessPaging(t *testing.T) {
 			require.NoError(t, err)
 			count += len(page.Result)
 			offset = page.NextPageOffset
-			if offset == nil { break }
+			if offset == nil {
+				break
+			}
 		}
 		require.Equal(t, 3, count)
 		for offset := uint64(0); offset < 4; offset++ {
 			page, err := service.Search(ctx, &qpb.SearchPoints{CollectionName: "test_vectors", Vector: []float32{1, 0, 0, 0}, Limit: 1, Offset: &offset})
 			require.NoError(t, err)
-			if offset < 3 { require.Len(t, page.Result, 1) } else { require.Empty(t, page.Result) }
+			if offset < 3 {
+				require.Len(t, page.Result, 1)
+			} else {
+				require.Empty(t, page.Result)
+			}
 		}
 	}
 }

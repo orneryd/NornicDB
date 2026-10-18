@@ -14,15 +14,15 @@ const (
 )
 
 type decodedToken struct {
-	streamID [16]byte
-	position uint64
-	expires  int64
+	streamID  [16]byte
+	position  uint64
+	expires   int64
 	ownerHash [32]byte
-	database string
+	database  string
 }
 
 func encodeToken(secret [32]byte, instance [8]byte, streamID [16]byte, position uint64, expires int64, ownerHash [32]byte, database string) string {
-	raw := make([]byte, tokenBytes + len(database))
+	raw := make([]byte, tokenBytes+len(database))
 	raw[0] = tokenVersion
 	copy(raw[1:9], instance[:])
 	copy(raw[9:25], streamID[:])
@@ -38,7 +38,7 @@ func encodeToken(secret [32]byte, instance [8]byte, streamID [16]byte, position 
 
 func decodeToken(secret [32]byte, instance [8]byte, qid string) (decodedToken, error) {
 	var token decodedToken
-	if len(qid) < base64.RawURLEncoding.EncodedLen(tokenBytes + 1) {
+	if len(qid) < base64.RawURLEncoding.EncodedLen(tokenBytes+1) {
 		return token, ErrInvalidQID
 	}
 	raw := make([]byte, base64.RawURLEncoding.DecodedLen(len(qid)))

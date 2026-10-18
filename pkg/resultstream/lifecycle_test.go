@@ -13,15 +13,19 @@ import (
 
 type lifecycleStream struct {
 	closes atomic.Int32
-	err error
+	err    error
 }
 
 func (s *lifecycleStream) Pull(ctx context.Context, position uint64, n int) (*Page, error) {
-	if err := ctx.Err(); err != nil { return nil, err }
-	if position > 0 && s.err != nil { return nil, s.err }
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if position > 0 && s.err != nil {
+		return nil, s.err
+	}
 	return &Page{Rows: [][]any{{position}}, Next: position + 1, HasMore: position == 0}, nil
 }
-func (s *lifecycleStream) Close() error { s.closes.Add(1); return nil }
+func (s *lifecycleStream) Close() error         { s.closes.Add(1); return nil }
 func (s *lifecycleStream) RetainedBytes() int64 { return 128 }
 
 func TestStreamLifecycleEndPaths(t *testing.T) {
@@ -39,18 +43,24 @@ func TestStreamLifecycleEndPaths(t *testing.T) {
 				last, err := r.Pull(context.Background(), scope, first.QID, 1)
 				require.NoError(t, err)
 				require.False(t, last.HasMore)
-			case "discard": require.NoError(t, r.Discard(scope, first.QID))
+			case "discard":
+				require.NoError(t, r.Discard(scope, first.QID))
 			case "error", "invalidation":
 				s.err = errors.New("producer failed")
-				if end == "invalidation" { s.err = ErrInvalidated }
+				if end == "invalidation" {
+					s.err = ErrInvalidated
+				}
 				_, err := r.Pull(context.Background(), scope, first.QID, 1)
 				require.ErrorIs(t, err, s.err)
 			case "disconnect":
-				ctx, cancel := context.WithCancel(context.Background()); cancel()
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
 				_, err := r.Pull(ctx, scope, first.QID, 1)
 				require.ErrorIs(t, err, context.Canceled)
-			case "timeout": r.sweepExpired(first.ExpiresAt.Unix())
-			case "shutdown": r.Close()
+			case "timeout":
+				r.sweepExpired(first.ExpiresAt.Unix())
+			case "shutdown":
+				r.Close()
 			}
 			require.Zero(t, r.count.Load(), "ended streams must release admission")
 			require.Zero(t, r.retained.Load())
