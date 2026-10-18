@@ -149,6 +149,7 @@ func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *No
 	for len(tx.snapshotPrefixNodeOrder) >= maxSnapshotPrefixNodeCacheNodes ||
 		tx.snapshotPrefixNodeBytes > maxSnapshotPrefixNodeCacheBytes-nodeBytes {
 		oldest := tx.snapshotPrefixNodeOrder[0]
+		tx.snapshotPrefixNodeOrder[0] = ""
 		tx.snapshotPrefixNodeOrder = tx.snapshotPrefixNodeOrder[1:]
 		tx.snapshotPrefixNodeBytes -= tx.snapshotPrefixNodeBytesByID[oldest]
 		delete(tx.snapshotPrefixNodeBytesByID, oldest)
@@ -267,6 +268,7 @@ func (tx *BadgerTransaction) cacheSnapshotEdgeByIDLocked(edge *Edge) {
 	}
 	for len(tx.snapshotEdgeOrder) >= maxSnapshotEdgeCacheEntries || tx.snapshotEdgeBytes > maxSnapshotEdgeCacheBytes-edgeBytes {
 		oldest := tx.snapshotEdgeOrder[0]
+		tx.snapshotEdgeOrder[0] = ""
 		tx.snapshotEdgeOrder = tx.snapshotEdgeOrder[1:]
 		tx.snapshotEdgeBytes -= tx.snapshotEdgeBytesByID[oldest]
 		delete(tx.snapshotEdgeBytesByID, oldest)

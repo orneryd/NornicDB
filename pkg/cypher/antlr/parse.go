@@ -151,6 +151,7 @@ type parseErrorListener struct {
 }
 
 func (e *parseErrorListener) reset() {
+	clear(e.errors)
 	e.errors = e.errors[:0]
 }
 

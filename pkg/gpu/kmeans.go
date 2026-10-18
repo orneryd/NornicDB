@@ -876,6 +876,7 @@ func (ci *ClusterIndex) Clear() {
 	ci.centroids = nil
 	ci.assignments = nil
 	ci.clusterMap = make(map[int][]int)
+	clear(ci.pendingUpdates)
 	ci.pendingUpdates = ci.pendingUpdates[:0]
 	ci.updatesSinceCluster = 0
 	ci.clustered = false

@@ -47,8 +47,8 @@ func (p *createPlan) release() {
 	if cap(p.nodes) > 256 || cap(p.edges) > 256 || len(p.nodeBindings) > 64 || len(p.edgeBindings) > 64 {
 		return
 	}
-	clear(p.nodes)
-	clear(p.edges)
+	clear(p.nodes[:cap(p.nodes)])
+	clear(p.edges[:cap(p.edges)])
 	clear(p.nodeBindings)
 	clear(p.edgeBindings)
 	p.nodes = p.nodes[:0]

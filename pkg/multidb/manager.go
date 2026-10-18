@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -857,7 +858,7 @@ func (m *DatabaseManager) DropAlias(alias string) error {
 		for i, existingAlias := range info.Aliases {
 			if existingAlias == alias {
 				// Remove alias
-				info.Aliases = append(info.Aliases[:i], info.Aliases[i+1:]...)
+				info.Aliases = slices.Delete(info.Aliases, i, i+1)
 				info.UpdatedAt = time.Now()
 				return m.persistMetadata()
 			}

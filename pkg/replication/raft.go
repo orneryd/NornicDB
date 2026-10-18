@@ -1224,6 +1224,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		if int(idx) < len(r.log) {
 			if r.log[idx].Term != entry.Term {
 				// Conflict: delete this and all following entries
+				clear(r.log[idx:])
 				r.log = r.log[:idx]
 				r.log = append(r.log, entry)
 			}

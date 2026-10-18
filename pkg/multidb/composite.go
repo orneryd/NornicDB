@@ -5,6 +5,7 @@
 package multidb
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -277,7 +278,7 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 	// Find and remove constituent
 	for i, ref := range info.Constituents {
 		if ref.Alias == alias {
-			info.Constituents = append(info.Constituents[:i], info.Constituents[i+1:]...)
+			info.Constituents = slices.Delete(info.Constituents, i, i+1)
 			info.UpdatedAt = time.Now()
 			return m.persistMetadata()
 		}
