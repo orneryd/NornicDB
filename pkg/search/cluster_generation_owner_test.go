@@ -119,10 +119,10 @@ var clusterAccessors = map[string]bool{"Service.currentClusterIndex": true}
 // clusterReaders route a query on the generation it holds: they read
 // generation and view state but reference no mutator or helper.
 var clusterReaders = map[string]bool{
-	"Service.selectHybridClustersLocked":                   true,
-	"IVFHNSWCandidateGen.routedGraphs":                     true,
-	"KMeansCandidateGen.searchCandidatesWithExhaustion":    true,
-	"GPUKMeansCandidateGen.searchCandidatesWithExhaustion": true,
+	"Service.selectHybridClustersLocked":                 true,
+	"IVFHNSWCandidateGen.routedGraphs":                   true,
+	"KMeansCandidateGen.searchCandidatesWithEvidence":    true,
+	"GPUKMeansCandidateGen.searchCandidatesWithEvidence": true,
 	"routeClusters":             true,
 	"graphPopulation":           true,
 	"clusterServing.population": true,

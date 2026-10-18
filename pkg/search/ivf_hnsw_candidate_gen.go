@@ -176,11 +176,18 @@ func graphPopulation(view clusterView) (clusters []int, population int) {
 	return clusters, population
 }
 
-// searchCandidatesWithExhaustion searches the routed clusters' graphs. It is
-// exhausted only when every cluster graph was routed (routedGraphs routes all
-// of them for a request as wide as their population), every graph search was
-// itself exhausted, and the limit cut none of the merged candidates.
 func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, evidence, err := g.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEvidence searches the routed clusters' graphs. The pass
+// is routing-bound when every graph search was itself exhausted and the limit
+// cut none of the merged candidates: a wider limit searches the same graphs
+// whole again. It is exhausted only when, besides, every cluster graph was
+// routed (routedGraphs routes all of them for a request as wide as their
+// population).
+func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -190,10 +197,10 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context
 	indexes, routedAll, err := g.routedGraphs(ctx, query, view, boundCandidateLimit(k))
 	unlock()
 	if err != nil {
-		return nil, false, err
+		return nil, candidateEvidence{}, err
 	}
 	if len(indexes) == 0 {
-		return []Candidate{}, routedAll, nil
+		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}, nil
 	}
 
 	// The pool kept for exact rescoring follows the single-graph rule,
@@ -236,13 +243,13 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context
 		pending.Wait()
 	}
 	// Merge in route order after all workers finish, preserving error and score policy.
-	complete := routedAll
+	routed := true
 	best := make(map[string]float64, totalLimit)
 	for i, hits := range results {
 		if errors[i] != nil {
-			return nil, false, errors[i]
+			return nil, candidateEvidence{}, errors[i]
 		}
-		complete = complete && exhausted[i]
+		routed = routed && exhausted[i]
 		for _, r := range hits {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
@@ -258,9 +265,9 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > totalLimit {
 		out = out[:totalLimit]
-		complete = false
+		routed = false
 	}
-	return out, complete, nil
+	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}, nil
 }
 
 // routedGraphs routes query on view's generation and takes the routed
