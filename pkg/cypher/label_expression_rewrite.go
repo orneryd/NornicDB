@@ -972,6 +972,18 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 		if err != nil {
 			return err
 		}
+		if variableLength && mode == labelPatternMatch && chain.expr.kind == labelExpressionDynamic {
+			// Neo4j 5.26.30's legacy * range ignores dynamic type values,
+			// including on its first hop; static types and quantified
+			// relationships still filter. Normalize this here, before any
+			// traversal/optional/subquery/shortest-path route is selected.
+			r.edit(chainStart, chainEnd, "")
+			if !constant {
+				variable = r.elementVariable(open, variable)
+				*predicates = append(*predicates, dynamicLabelTestFunction+"("+variable+", ("+chain.expr.expression+"), "+cypherStringLiteral(dynamicRangeTypeMode)+")")
+			}
+			return nil
+		}
 		if !constant {
 			// Its value depends on the row: in MATCH a predicate reads it,
 			// on each relationship of a variable-length or quantified one;
@@ -1418,16 +1430,12 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 		i--
 	}
 	if i >= start && q[i] == ')' {
-		depth := 0
-		for ; i >= start; i-- {
-			if q[i] == ')' {
-				depth++
-			} else if q[i] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
+		// Use the shared quoted-text-aware receiver reader. A ')' inside
+		// a dynamic type's string is not a closing CALL import list; the
+		// former backwards counter could run off the beginning and panic.
+		i = matchingRowDelimiterStart(q, i, '(', ')')
+		if i < start {
+			return false
 		}
 		i--
 		for i >= start && isASCIISpace(q[i]) {

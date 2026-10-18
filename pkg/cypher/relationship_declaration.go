@@ -60,6 +60,9 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 				continue
 			case inBacktick:
 				continue
+			case c == '\'' || c == '"':
+				index = skipCypherQuotedText(text, index, c) - 1
+				continue
 			case c == '(':
 				depth++
 				continue

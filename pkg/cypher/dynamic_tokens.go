@@ -363,6 +363,11 @@ const dynamicLabelTestFunction = "__nornic_haslabels"
 // its argument types are checked only when a row reaches the predicate.
 const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
 
+// Neo4j 5.26 checks a legacy variable-length dynamic type statically, but
+// does not evaluate it or filter the expanded relationships by it. Keep a
+// generated call for staticPatternTokenError to check; its runtime is true.
+const dynamicRangeTypeMode = "range"
+
 func init() {
 	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
 	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
@@ -372,6 +377,9 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 	if len(args) != 3 {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))
+	}
+	if strings.TrimSpace(args[2]) == "'"+dynamicRangeTypeMode+"'" {
+		return true, nil
 	}
 	values := make([]interface{}, len(args))
 	for i, arg := range args {
