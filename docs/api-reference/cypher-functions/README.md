@@ -204,7 +204,9 @@ To place many quotes in one long text passed as a parameter, bind it once (`WITH
 
 #### Text intervals and line positions in Cypher
 
-Spans stored as parallel lists (`starts`, `ends` and metadata such as `labels` or `roles`, half-open `[start, end)` in code points, as `substring` and `text.locate` count) need no function of their own. These statements return the same rows in Neo4j:
+Spans stored as parallel lists (`starts`, `ends` and metadata such as `labels` or `roles`, half-open `[start, end)` in code points, as `substring` and `text.locate` count) need no function of their own. These statements return the same rows in Neo4j.
+
+Run the partition statement after a `MATCH` that binds `s`, for example `MATCH (s:Source {id: $id})`, with parameters `start` and `end`. Its lists may be unordered and overlapping: the interval with the earliest start owns the overlap, with the lower list index winning equal starts. A later interval contributes only its uncovered suffix. Empty intervals are ignored; empty or absent lists leave the whole span as `'own'`. The extra empty interval in the statement preserves a row for that case.
 
 ```cypher
 // Intervals overlapping [start, stop), clipped to it, in list order with index and metadata;
@@ -216,16 +218,21 @@ RETURN [i IN range(0, size(coalesce(s.starts, [])) - 1)
            end: CASE WHEN stop < s.ends[i] THEN stop ELSE s.ends[i] END, label: s.labels[i]}] AS overlaps
 
 // [start, end) split into the intervals' clipped parts with their role, gaps as 'own'
-WITH start, end, reduce(acc = {position: start, parts: []}, i IN range(0, size(s.starts) - 1) |
-  CASE WHEN (CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END)
-            >= (CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END) THEN acc
-  ELSE {position: CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END,
+WITH s, $start AS start, $end AS end
+UNWIND [i IN range(0, size(coalesce(s.starts, [])) - 1) |
+        {start: s.starts[i], end: s.ends[i], role: s.roles[i], index: i}]
+       + [{start: end, end: end, index: -1}] AS part
+WITH s, start, end, part ORDER BY part.start, part.index
+WITH s, start, end, collect(part) AS intervals
+WITH start, end, reduce(acc = {position: start, parts: []}, part IN intervals |
+  CASE WHEN start >= end OR part.start >= part.end OR part.start >= end OR part.end <= acc.position THEN acc
+  ELSE {position: CASE WHEN part.end < end THEN part.end ELSE end END,
         parts: acc.parts
-          + CASE WHEN acc.position < (CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END)
-                 THEN [{start: acc.position, end: CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END, role: 'own'}]
+          + CASE WHEN acc.position < part.start
+                 THEN [{start: acc.position, end: part.start, role: 'own'}]
                  ELSE [] END
-          + [{start: CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END,
-              end: CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END, role: s.roles[i]}]}
+          + [{start: CASE WHEN part.start > acc.position THEN part.start ELSE acc.position END,
+              end: CASE WHEN part.end < end THEN part.end ELSE end END, role: part.role}]}
   END) AS acc
 RETURN acc.parts + CASE WHEN acc.position < end THEN [{start: acc.position, end: end, role: 'own'}] ELSE [] END AS parts
 

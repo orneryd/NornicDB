@@ -26,23 +26,6 @@ RETURN [i IN range(0, size(coalesce(s.starts, [])) - 1)
            end: CASE WHEN stop < s.ends[i] THEN stop ELSE s.ends[i] END,
            label: s.labels[i]}] AS overlaps`
 
-	// textIntervalPartition splits [start, end) into the intervals' clipped
-	// parts with their role, and the gaps between them as 'own'.
-	textIntervalPartition = `
-WITH s, $start AS start, $end AS end
-WITH start, end, reduce(acc = {position: start, parts: []}, i IN range(0, size(s.starts) - 1) |
-  CASE WHEN (CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END)
-            >= (CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END) THEN acc
-  ELSE {position: CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END,
-        parts: acc.parts
-          + CASE WHEN acc.position < (CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END)
-                 THEN [{start: acc.position, end: CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END, role: 'own'}]
-                 ELSE [] END
-          + [{start: CASE WHEN s.starts[i] > start THEN s.starts[i] ELSE start END,
-              end: CASE WHEN s.ends[i] < end THEN s.ends[i] ELSE end END, role: s.roles[i]}]}
-  END) AS acc
-RETURN acc.parts + CASE WHEN acc.position < end THEN [{start: acc.position, end: end, role: 'own'}] ELSE [] END AS parts`
-
 	// textLinePosition is the 1-based line, the 0-based column and the line's
 	// text at a code-point offset.
 	textLinePosition = `
@@ -103,9 +86,9 @@ func TestTextIntervalRecipesMatchNeo4j(t *testing.T) {
 		require.Equal(t, c.want, row[0], "[%d, %d)", c.start, c.end)
 	}
 
-	row := textIntervalRow(t, exec, textIntervalPartition, map[string]interface{}{"start": int64(5), "end": int64(30)})
+	row := textIntervalRow(t, exec, documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(5), "end": int64(30)})
 	require.Equal(t, []interface{}{textPart(5, 11, "own"), textPart(11, 25, "quoted"), textPart(25, 26, "own"), textPart(26, 30, "own")}, row[0])
-	row = textIntervalRow(t, exec, textIntervalPartition, map[string]interface{}{"start": int64(12), "end": int64(14)})
+	row = textIntervalRow(t, exec, documentedTextIntervalPartition(t), map[string]interface{}{"start": int64(12), "end": int64(14)})
 	require.Equal(t, []interface{}{textPart(12, 14, "quoted")}, row[0])
 
 	for offset, want := range map[int64][]interface{}{
