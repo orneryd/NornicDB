@@ -449,7 +449,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	if inputIter == nil {
 		inputIter = NewResultRowIterator(nil)
 	}
-	if continuation, ok := f.Inner.(*FragmentExec); ok && f.Projection && continuation.Graph == nil {
+	if continuation, ok := f.Inner.(*FragmentExec); ok && f.Projection {
 		inputResult, err := materializeIterator(inputCols, inputIter)
 		if err != nil {
 			return nil, fmt.Errorf("apply input failed: %w", err)
@@ -460,9 +460,8 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		inputIter = NewResultRowIterator(inputResult)
 	}
 
-	// For non-simple leading WITH pipelines (e.g. trailing WITH collect(...) after
-	// CALL blocks), execute once over the full input row stream instead of per-row.
-	// A dynamic graph reference resolves per row, so it takes the per-row path.
+	// The remaining paths execute correlated CALL bodies per outer record. Their
+	// lookup rewrites do not apply to the outer continuation above.
 	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil {
 		// Streaming fast path: avoid full outer materialization when correlated
 		// batched row lookup rewrite can consume the iterator directly.
@@ -2925,22 +2924,12 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	isWith := startsWithFold(trimmed, "WITH ")
-	isReturn := startsWithFold(trimmed, "RETURN ")
-	if !isWith && !isReturn {
+	if trimmed == "" {
 		return nil, false, nil
 	}
-	if isWith {
-		withEnd, ok := findLeadingWithClauseEnd(trimmed)
-		if !ok || withEnd <= 0 {
-			return nil, false, nil
-		}
-		withClause := strings.TrimSpace(trimmed[:withEnd])
-		// Keep correlated per-row APPLY for simple import WITH clauses.
-		if isSimpleWithImportClause(withClause, inputResult.Columns) {
-			return nil, false, nil
-		}
-	}
+	// The planner's Projection marker owns this decision. A continuation consumes
+	// the complete input stream even when it starts with a simple WITH, UNWIND or
+	// another CALL. Guessing from the leading clause loses later query horizons.
 
 	rows := make([]map[string]interface{}, 0, len(inputResult.Rows))
 	for _, row := range inputResult.Rows {
