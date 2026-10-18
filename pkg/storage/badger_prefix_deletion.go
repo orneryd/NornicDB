@@ -62,7 +62,7 @@ func (b *BadgerEngine) beginSchemaWriteContext(ctx context.Context) (func(), err
 		return nil, err
 	}
 	b.mu.RLock()
-	closed := b.closed || b.closing
+	closed := b.closed
 	b.mu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		release()
