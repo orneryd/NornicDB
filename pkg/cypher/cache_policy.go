@@ -12,8 +12,8 @@ import (
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
 	return !e.inTransaction(ctx) && info.IsReadOnly &&
 		e.cache != nil && cacheableReadQueryWithRetrieval(cypher, 0, func(argument string) (bool, bool) {
-			return cacheableBoundRetrievalRequest(ctx, argument)
-		}) && !profileExecutionBypassesCache(ctx) &&
+		return cacheableBoundRetrievalRequest(ctx, argument)
+	}) && !profileExecutionBypassesCache(ctx) &&
 		// Visibility changes with elapsed time and access metadata, independently
 		// of graph-write revisions. Cache neither raw nor previously stripped rows.
 		!e.queryPropertyDecayEnabled()
@@ -139,7 +139,9 @@ func cacheableRetrievalCalls(query string, resolve func(string) (bool, bool)) bo
 			}
 			if resolve != nil {
 				if cacheable, known := resolve(args[0]); known {
-					if !cacheable { return false }
+					if !cacheable {
+						return false
+					}
 					continue
 				}
 			}

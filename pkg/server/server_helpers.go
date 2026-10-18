@@ -194,6 +194,8 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 		return r
 	}
 	ctx := r.Context()
+	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
+	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
