@@ -1678,7 +1678,7 @@ func (s *Session) sendChunk(data []byte) error {
 	if err := s.writeMessageNoFlush(data); err != nil {
 		return err
 	}
-	return s.writer.Flush()
+	return s.flushDelivery()
 }
 
 func (s *Session) flushIfPending() error {
@@ -1686,7 +1686,17 @@ func (s *Session) flushIfPending() error {
 		return nil
 	}
 	s.flushPending = false
-	return s.writer.Flush()
+	return s.flushDelivery()
+}
+
+func (s *Session) flushDelivery() error {
+	err := s.writer.Flush()
+	if err != nil {
+		s.continuationDelivery.Fail()
+	} else {
+		s.continuationDelivery.Delivered()
+	}
+	return err
 }
 
 // writeMessageNoFlush writes a complete Bolt message using chunk framing, but does
