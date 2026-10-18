@@ -267,31 +267,42 @@ func (b *BadgerEngine) cacheStoreEdge(edge *Edge) {
 	}
 	b.edgeCacheMu.Lock()
 	b.edgeCacheGen.advance()
-	b.putEdgeLocked(edge)
+	b.putEdgeLocked(edge, 0)
 	b.edgeCacheMu.Unlock()
 }
 
 // cacheFillEdge caches edge as read by a read that captured gen before it
 // read, unless the edge cache was written since.
-func (b *BadgerEngine) cacheFillEdge(gen uint64, edge *Edge) {
+func (b *BadgerEngine) cacheFillEdge(gen uint64, edge *Edge) { b.cacheFillEdgeAtVersion(gen, edge, 0) }
+
+func (b *BadgerEngine) cacheFillEdgeAtVersion(gen uint64, edge *Edge, version uint64) {
 	if edge == nil {
 		return
 	}
 	b.edgeCacheMu.Lock()
 	if b.edgeCacheGen.current() == gen {
-		b.putEdgeLocked(edge)
+		b.putEdgeLocked(edge, version)
 	}
 	b.edgeCacheMu.Unlock()
 }
 
 // putEdgeLocked stores a copy of edge; the caller holds edgeCacheMu.
-func (b *BadgerEngine) putEdgeLocked(edge *Edge) {
+func (b *BadgerEngine) putEdgeLocked(edge *Edge, version uint64) {
 	if b.edgeCacheMaxItems > 0 && len(b.edgeCache) > b.edgeCacheMaxItems {
 		b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+		b.edgeCacheVersions = nil
 	}
 	cached := copyEdge(edge)
 	normalizePropertyMapShapes(cached.Properties)
 	b.edgeCache[edge.ID] = cached
+	if version == 0 {
+		delete(b.edgeCacheVersions, edge.ID)
+	} else {
+		if b.edgeCacheVersions == nil {
+			b.edgeCacheVersions = make(map[EdgeID]uint64)
+		}
+		b.edgeCacheVersions[edge.ID] = version
+	}
 }
 
 // cacheDeleteEdge drops an edge from the body cache. Called from the edge
@@ -303,6 +314,7 @@ func (b *BadgerEngine) cacheDeleteEdge(id EdgeID) {
 	b.edgeCacheMu.Lock()
 	b.edgeCacheGen.advance()
 	delete(b.edgeCache, id)
+	delete(b.edgeCacheVersions, id)
 	b.edgeCacheMu.Unlock()
 }
 
@@ -312,6 +324,7 @@ func (b *BadgerEngine) cacheInvalidateEdges() {
 	b.edgeCacheMu.Lock()
 	b.edgeCacheGen.advance()
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheVersions = nil
 	b.edgeCacheMu.Unlock()
 }
 
