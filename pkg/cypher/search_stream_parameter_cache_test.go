@@ -37,3 +37,30 @@ func TestSearchStreamParameterAwareCache(t *testing.T) {
  next,err:=run(ctx,start);require.NoError(t,err)
  nextQID:=next.Rows[0][0].(map[string]any)["qid"].(string);require.NotEqual(t,qid,nextQID,"START must allocate a new stream")
 }
+
+func TestSearchStreamParameterAwareEligibility(t *testing.T) {
+ store:=storage.NewNamespacedEngine(newTestMemoryEngine(t),"bench")
+ exec:=NewStorageExecutorWithQueryCachePolicy(store,64,time.Hour)
+ for _,request:=range []any{
+  map[string]any{"query":"transcript","limit":int64(2)},
+  map[string]any{"query":"transcript","qid":"","discard":false,"n":nil},
+  "transcript",
+ } {
+  ctx:=withQueryParams(context.Background(),map[string]any{"request":request})
+  for _,query:=range []string{"CALL db.rretrieve($request)","CALL db.rretrieve($request) YIELD node RETURN node","CALL { CALL db.rretrieve($request) YIELD node RETURN node } RETURN node"} {
+   require.True(t,exec.canUseResultCache(ctx,exec.analyzer.Analyze(query),query),query)
+  }
+ }
+ for _,request:=range []map[string]any{
+  {"qid":"live"},{"discard":true},{"n":int64(1)},{"mode":"id"},
+  {"groupBy":"document"},{"group_by":"document"},{"rankedLimit":int64(2)},{"ranked_limit":int64(2)},
+ } {
+  ctx:=withQueryParams(context.Background(),map[string]any{"request":request})
+  query:="CALL db.rretrieve($request)"
+  require.False(t,exec.canUseResultCache(ctx,exec.analyzer.Analyze(query),query),request)
+ }
+ ctx:=withQueryParams(context.Background(),map[string]any{"requests":[]any{map[string]any{"query":"transcript"}}})
+ query:="UNWIND $requests AS request CALL db.rretrieve(request) YIELD node RETURN node"
+ require.False(t,exec.canUseResultCache(ctx,exec.analyzer.Analyze(query),query),"row expressions are interpreted by execution, never pre-evaluated to admit outer caching")
+}
+
