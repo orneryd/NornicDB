@@ -4,6 +4,7 @@ package cypher
 import (
 	"container/list"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -275,6 +276,7 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 //	Safe to call concurrently from multiple goroutines.
 func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
 	key := qc.cacheKey(cypher, params)
+	result = cacheOwnedResult(result)
 
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
@@ -291,6 +293,18 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 	}
 
 	qc.moveToFront(key)
+}
+
+// cacheOwnedResult gives a persistent cache its own visible outer row window.
+// The caller may still own a larger allocation, so neither its hidden row
+// headers nor the shared row contents may be cleared during publication.
+func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
+	if result == nil {
+		return nil
+	}
+	owned := *result
+	owned.Rows = slices.Clone(result.Rows)
+	return &owned
 }
 
 // Invalidate clears all cached query results.
@@ -623,6 +637,7 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	result = cacheOwnedResult(result)
 	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
