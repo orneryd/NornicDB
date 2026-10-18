@@ -79,8 +79,13 @@ func Parse(query string) (*ParseResult, error) {
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(errorListener)
 
-	// Parse
+	// Parse, then detach the generation: the tree's contexts keep parser,
+	// which must not keep a retired generation's DFAs reachable.
+	prediction := acquirePrediction()
+	defer prediction.release()
+	usePrediction(parser, prediction)
 	tree := parser.Script()
+	parser.Interpreter = nil
 
 	result := &ParseResult{
 		Tree:   tree,
@@ -109,7 +114,15 @@ func Validate(query string) error {
 
 	v := validatorPool.Get().(*pooledValidator)
 	v.errorListener.reset()
-	defer validatorPool.Put(v)
+	prediction := acquirePrediction()
+	usePrediction(v.parser, prediction)
+	defer func() {
+		// A pooled validator holds no generation: an idle one would keep a
+		// retired generation's DFAs reachable until it is reused.
+		v.parser.Interpreter = nil
+		prediction.release()
+		validatorPool.Put(v)
+	}()
 
 	var input antlr.CharStream
 	if isASCII(query) {
