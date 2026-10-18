@@ -56,6 +56,9 @@ class HookTests(unittest.TestCase):
         self.truncate_commit_once = False
         self.search_pages = None
         self.search_requests = []
+        self.cypher_status = 200
+        self.hit_repo = "test/repo"
+        self.statements = []
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -70,7 +73,7 @@ class HookTests(unittest.TestCase):
                     payload = {"results": [{"node": {"properties": {
                         "id": f"existing-{i}", "label": "existing()", "body": BODY,
                         "source_file": f"existing{i}.py", "source_location": "L1",
-                        "symbol_kind": "function", "repo": "test/repo"}}} for i in range(fixture.hits)]}
+                        "symbol_kind": "function", "repo": fixture.hit_repo}}} for i in range(fixture.hits)]}
                     payload.update(has_more=False, collection_exhausted=True,
                                    completion="eligible_population_exhausted")
                     if data.get("discard"):
@@ -81,6 +84,7 @@ class HookTests(unittest.TestCase):
                 else:
                     statement = data["statements"][0]
                     query = statement["statement"]
+                    fixture.statements.append(query)
                     columns, rows = [], []
                     if "r.last_commit AS commit" in query:
                         columns, rows = ["commit", "main_spec", "max_embed_chars"], [[fixture.stored_commit, "none", 0]]
@@ -90,7 +94,8 @@ class HookTests(unittest.TestCase):
                         fixture.stored_commit = statement["parameters"]["commit"]
                     payload = {"results": [{"columns": columns, "data": [{"row": r} for r in rows]}], "errors": []}
                 raw = json.dumps(payload).encode()
-                self.send_response(payload.get("_http_status", 200) if isinstance(payload, dict) else 200)
+                status = fixture.cypher_status if self.path != "/nornicdb/search" else 200
+                self.send_response(payload.get("_http_status", status) if isinstance(payload, dict) else status)
                 self.send_header("Content-Type", "application/json")
                 truncate = fixture.truncate_commit_once and self.path.endswith("/tx/commit") and "MERGE (r:CodeRepository" in data["statements"][0]["statement"]
                 if truncate:
@@ -227,6 +232,96 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertTrue(self.searches)
         self.assertNotEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
 
+    def unborn(self):
+        self.git("checkout", "--orphan", "first-commit")
+        self.stage()
+
+    def test_first_commit_still_blocks_existing_duplicates(self):
+        self.unborn()
+        self.hits = 1
+        result = self.git("commit", "-m", "initial duplicate", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Commit blocked", result.stderr)
+        self.assertTrue(self.searches)
+        self.assertFalse(any("CREATE DATABASE" in q for q in self.statements))
+
+    def test_first_commit_missing_baseline_stays_blocked(self):
+        self.unborn()
+        self.stored_commit = None
+        result = self.git("commit", "-m", "initial checked source", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Do not override, bypass or disable", result.stderr)
+        self.assertFalse(self.searches)
+        self.assertTrue(self.paths)
+        self.assertEqual(self.auth[-1], "Bearer fixture-token")
+
+    def test_first_commit_without_eligible_functions_still_contacts_database(self):
+        self.unborn()
+        self.stage("# source file without functions\n")
+        self.stored_commit = None
+        result = self.git("commit", "-m", "initial empty source", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("MANDATORY COMMIT CHECK", result.stderr)
+        self.assertTrue(self.paths)
+        self.assertFalse(self.searches)
+
+    def test_first_commit_database_failure_never_counts_as_empty(self):
+        self.unborn()
+        self.stored_commit = None
+        self.cypher_status = 401
+        result = self.git("commit", "-m", "initial unavailable baseline", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.paths)
+        self.assertFalse(self.searches)
+        self.assertNotIn("fixture-token", result.stdout + result.stderr)
+
+    def test_unready_search_is_mandatory_failure(self):
+        self.stage()
+        self.env["CODE_INTEL_DEADLINE_SECONDS"] = "1"
+        self.search_pages = [{"_http_status": 503, "error": "search not ready"}]
+        result = self.git("commit", "-m", "unready search", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Do not override, bypass or disable", result.stderr)
+        self.assertIn("before proceeding", result.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
+        self.assertEqual(set(self.search_databases), {"nornicdbcode"})
+
+    def test_linked_worktree_reuses_primary_repo_identity_for_check_and_ingest(self):
+        del self.env["CODE_INTEL_REPO"]
+        self.hit_repo = "repo"
+        self.git("config", "codeIntelligence.databaseFromRepo", "true")
+        linked = Path(self.temp.name) / "ai-agent-worktree"
+        self.git("worktree", "add", "-b", "agent", str(linked))
+        (linked / "candidate.py").write_text(BODY)
+        self.git("add", "candidate.py", root=linked)
+        self.hits = 1
+        result = self.git("commit", "-m", "divergent worktree copy", root=linked, check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("repository=repo, database=repo", result.stdout + result.stderr)
+        self.assertIn("Commit blocked", result.stderr)
+        self.assertEqual(set(self.search_databases), {"repo"})
+        self.assertFalse(any("CREATE DATABASE" in q for q in self.statements))
+        result = subprocess.run([sys.executable, str(linked / "scripts/code_intelligence.py"),
+                                 "ingest", "--repo-root", str(linked), "--force"],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Updating repo at", result.stdout)
+        self.assertIn("in database repo", result.stdout)
+        self.assertFalse(any("ai-agent-worktree" in path for path in self.paths))
+
+    def test_linked_worktree_preserves_existing_database_override(self):
+        self.git("config", "codeIntelligence.database", "nornicdbcode")
+        linked = Path(self.temp.name) / "another-ai-worktree"
+        self.git("worktree", "add", "-b", "agent", str(linked))
+        (linked / "candidate.py").write_text(BODY)
+        self.git("add", "candidate.py", root=linked)
+        self.hits = 1
+        result = self.git("commit", "-m", "duplicate with shared graph", root=linked, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("database=nornicdbcode", result.stdout + result.stderr)
+        self.assertEqual(set(self.search_databases), {"nornicdbcode"})
+        self.assertFalse(any("CREATE DATABASE" in q for q in self.statements))
+
     def test_missing_configuration_blocks_with_setup_guidance(self):
         self.stage()
         del self.env["NORNICDB_URI"]
@@ -235,6 +330,14 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertIn("Set NORNICDB_URI", result.stderr)
         self.assertNotIn("fixture-token", result.stdout + result.stderr)
         self.assertFalse(self.searches)
+
+    def test_missing_python_blocks_with_mandatory_warning(self):
+        self.stage()
+        self.git("config", "codeIntelligence.python", str(Path(self.temp.name) / "missing-python"))
+        result = self.git("commit", "-m", "missing interpreter", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Do not override, bypass or disable", result.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
 
     def test_missing_ingest_is_incomplete_not_pass(self):
         self.stage()
