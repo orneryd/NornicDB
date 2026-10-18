@@ -1603,7 +1603,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		}
 	}
 
-	node, err := e.storage.GetNode(storage.NodeID(lookupID))
+	node, err := getQueryNode(e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
 		return "", nil
 	}
