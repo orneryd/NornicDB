@@ -29,6 +29,10 @@ func (m replicatedDropManager) DropDatabaseContext(ctx context.Context, name str
 	return m.manager.DropDatabaseContext(ctx, name)
 }
 
+func (m replicatedDropManager) GetStorageForUse(name, token string) (interface{}, error) {
+	return m.manager.GetStorageWithAuth(name, token)
+}
+
 func (b *blockedDropEngine) GetInnerEngine() storage.Engine { return b.Engine }
 func (b *blockedDropEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
 	b.once.Do(func() { close(b.entered) })
