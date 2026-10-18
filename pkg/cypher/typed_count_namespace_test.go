@@ -127,7 +127,7 @@ func TestTypedCountNamespaceLifecycle(t *testing.T) {
 			cmp := f.executor(t, "scope_cmp")
 			for _, shape := range []string{"()-[r:SCOPE]->()", "(:ScopeStart)-[r:SCOPE]->()", "()-[r:SCOPE]->(:ScopeEnd)"} {
 				typedCountWant(t, cmp, "USE scope_cmp.a MATCH "+shape+" RETURN count(r) AS n", 1)
-				typedCountWant(t, cmp, "CALL { USE scope_cmp.a MATCH "+shape+" RETURN count(r) AS n UNION ALL USE scope_cmp.b MATCH "+shape+" RETURN count(r) AS n } RETURN sum(n) AS n", 3)
+				typedCountWant(t, cmp, "CALL { USE scope_cmp.a MATCH "+shape+" RETURN count(r) AS leftCount } CALL { USE scope_cmp.b MATCH "+shape+" RETURN count(r) AS rightCount } RETURN leftCount + rightCount AS n", 3)
 			}
 
 			typedCountRun(t, a, "BEGIN")
