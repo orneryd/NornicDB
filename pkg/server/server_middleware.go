@@ -299,7 +299,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			http.TimeoutHandler(next, embedStatsTimeout, "request timeout: embed stats busy").ServeHTTP(w, r)
 			return
 		case path == "/nornicdb/search":
-			http.TimeoutHandler(next, searchTimeout, "request timeout: search busy").ServeHTTP(w, r)
+			serveSearchWithTimeout(w, r, next, searchTimeout)
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
