@@ -555,7 +555,13 @@ func TestBenchmarkMatchCreateDelete(t *testing.T) {
 		t.Errorf("Expected 0 relationships after all iterations, got %v", countAfter.Rows[0][0])
 	}
 
-	assertMinOpsPerSec(t, "MATCH...CREATE...DELETE (MemoryEngine)", opsPerSec, 1000)
+	// Race instrumentation changes throughput substantially. Keep exercising the
+	// writes and checking their final state, but measure the floor without -race.
+	if cypherRaceEnabled {
+		t.Log("throughput floor requires a run without -race")
+	} else {
+		assertMinOpsPerSec(t, "MATCH...CREATE...DELETE (MemoryEngine)", opsPerSec, 1000)
+	}
 }
 
 // TestBenchmarkMatchCreateDelete_WithBadger tests with BadgerDB for realistic disk I/O
