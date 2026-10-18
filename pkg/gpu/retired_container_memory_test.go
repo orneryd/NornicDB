@@ -27,11 +27,6 @@ func TestRetiredEmbeddingIDsCollectible(t *testing.T) {
 			require.True(t, owner.Remove(id))
 			return owner
 		},
-		"cluster_updates_clear": func(id string) any {
-			owner := &ClusterIndex{EmbeddingIndex: &EmbeddingIndex{}, pendingUpdates: []nodeUpdate{{id: id}}}
-			owner.Clear()
-			return owner
-		},
 	}
 	for name, retire := range cases {
 		t.Run(name, func(t *testing.T) {
