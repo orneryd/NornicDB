@@ -822,10 +822,13 @@ var defaultMethodPermissions = map[string]auth.Permission{
 	"Points/Delete": auth.PermDelete,
 
 	// Snapshots are privileged operations.
-	"Snapshots/Create":  auth.PermAdmin,
-	"Snapshots/List":    auth.PermAdmin,
-	"Snapshots/Delete":  auth.PermAdmin,
-	"Snapshots/Recover": auth.PermAdmin,
+	"Snapshots/Create":     auth.PermAdmin,
+	"Snapshots/CreateFull": auth.PermAdmin,
+	"Snapshots/List":       auth.PermAdmin,
+	"Snapshots/ListFull":   auth.PermAdmin,
+	"Snapshots/Delete":     auth.PermAdmin,
+	"Snapshots/DeleteFull": auth.PermAdmin,
+	"Snapshots/Recover":    auth.PermAdmin,
 
 	// gRPC reflection is useful for debugging but should be gated.
 	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,
