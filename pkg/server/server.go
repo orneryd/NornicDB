@@ -1174,7 +1174,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return s.activeTxReqs.Load() > 0
 	})
 	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase)
-	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(s.db.LifetimeContext())
+	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
 	s.txSessions.SetLifetimeContext(s.requestsCtx)
 	s.txSessions.SetTerminalErrorObserver(func(session *txsession.Session, err error) {
 		s.logMVCCSnapshotExpiration(session, err)
