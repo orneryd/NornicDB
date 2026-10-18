@@ -185,7 +185,8 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 // remain unchanged.
 func (m *DatabaseManager) DropCompositeDatabase(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
+	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	info, exists := m.databases[name]
 	if !exists {
@@ -207,6 +208,8 @@ func (m *DatabaseManager) DropCompositeDatabase(name string) error {
 		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
 
+	m.dropDatabaseStatementCachesLocked(name)
+	changed = true
 	return nil
 }
 
@@ -263,7 +266,8 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 // RemoveConstituent removes a constituent from a composite database.
 func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
+	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	info, exists := m.databases[compositeName]
 	if !exists {
@@ -279,7 +283,12 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 		if ref.Alias == alias {
 			info.Constituents = append(info.Constituents[:i], info.Constituents[i+1:]...)
 			info.UpdatedAt = time.Now()
-			return m.persistMetadata()
+			if err := m.persistMetadata(); err != nil {
+				return err
+			}
+			m.invalidateStatementCacheReferenceLocked(compositeName + "." + alias)
+			changed = true
+			return nil
 		}
 	}
 

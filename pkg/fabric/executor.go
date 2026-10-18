@@ -214,6 +214,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 			return nil, nil, ctx, err
 		}
 	}
+	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
 		participant := participantKeyFromLocation(loc)
 		sub, err := tx.GetOrOpen(participant, f.IsWrite)

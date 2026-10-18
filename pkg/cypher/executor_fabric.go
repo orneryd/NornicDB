@@ -2,10 +2,10 @@ package cypher
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -158,7 +158,12 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
-	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
+	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
+		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
+			return err
+		}
+		return e.recordStatementReference(cypher, database)
+	})
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -198,58 +203,87 @@ type fabricPreparedExec struct {
 	hasRemote bool
 }
 
-// fabricResultCacheKey is the result-cache key of a Fabric read, and
-// whether its result may be served from and stored in the cache: only for a
-// caller the statement is authorized for on every local database it reads,
-// the same permission its execution needs (#729). A caller it isn't
-// authorized for gets no key, so the statement runs and fails as it does
-// uncached. The key carries the databases' combined graph version when
-// they report one.
+// fabricResultCacheKey binds each local target's identity, catalog generation
+// and graph revision in sorted order. Equal numeric revisions on different
+// targets, or on a recreated selection, must never reuse the same result.
 func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fabricPreparedExec, cypher string, params map[string]interface{}) (string, bool) {
-	databases, local := e.fabricLocalDatabases(ctx, prepared)
-	if !local {
+	selections, local := e.fabricLocalSelections(ctx, prepared)
+	if !local || !e.StatementCacheSelectionValid() {
 		return "", false
 	}
-	if len(databases) == 0 {
-		if e.authorizeSelectedDatabase(ctx, "", cypher) != nil {
+	if len(selections) == 0 && e.authorizeSelectedDatabase(ctx, "", cypher) != nil {
+		return "", false
+	}
+	resolver, ok := e.dbManager.(statementCacheScopeResolver)
+	if !ok {
+		return "", false
+	}
+	key := cacheKeyBuilder{}
+	var scratch [binary.MaxVarintLen64 + 1]byte
+	writeCacheKeyString(&key, &scratch, resultCacheEntryKey(cypher, params))
+	key.buf = binary.AppendUvarint(key.buf, e.statementCacheScope.Generation())
+	scopes := make([]*multidb.StatementCacheScope, 0, len(selections))
+	for _, selection := range selections {
+		scope, err := resolver.StatementCacheScope(selection.name)
+		if err != nil || !scope.Valid() {
 			return "", false
 		}
+		engine, err := e.dbManager.GetStorageForUse(selection.database, GetAuthTokenFromContext(ctx))
+		if err != nil {
+			return "", false
+		}
+		provider, ok := engine.(storage.GraphMutationVersionProvider)
+		if !ok {
+			return "", false
+		}
+		revision, supported := provider.GraphMutationVersion()
+		if !supported {
+			return "", false
+		}
+		writeCacheKeyString(&key, &scratch, selection.name)
+		writeCacheKeyString(&key, &scratch, selection.database)
+		key.buf = binary.AppendUvarint(key.buf, scope.Generation())
+		key.buf = binary.AppendUvarint(key.buf, revision)
+		scopes = append(scopes, scope)
 	}
-	key := resultCacheEntryKey(cypher, params)
-	if version, supported := e.fabricGraphMutationVersion(databases, GetAuthTokenFromContext(ctx)); supported {
-		key += ":graph:" + strconv.FormatUint(version, 10)
+	if !e.StatementCacheSelectionValid() || !statementScopesValid(scopes) {
+		return "", false
 	}
-	return key, true
+	return string(key.buf), true
 }
 
-// fabricLocalDatabases lists the local databases a prepared Fabric
-// statement reads, sorted, while checking each fragment's selection and
-// permissions with the execution owner. Dynamic and remote targets execute
-// through dispatch instead of using the local result cache.
-func (e *StorageExecutor) fabricLocalDatabases(ctx context.Context, prepared *fabricPreparedExec) (databases []string, local bool) {
+type fabricLocalSelection struct{ name, database string }
+
+// Authorization and current catalog resolution precede every result lookup.
+// Dynamic and remote targets keep executing through dispatch without caching.
+func (e *StorageExecutor) fabricLocalSelections(ctx context.Context, prepared *fabricPreparedExec) (selections []fabricLocalSelection, local bool) {
 	if prepared == nil || prepared.catalog == nil || prepared.fragment == nil {
 		return nil, false
 	}
-	seen := make(map[string]struct{})
+	seen := make(map[fabricLocalSelection]struct{})
 	var collect func(fabric.Fragment) bool
 	collect = func(fragment fabric.Fragment) bool {
 		switch current := fragment.(type) {
 		case *fabric.FragmentExec:
-			if current.Graph != nil && current.Graph.IsDynamic() ||
-				e.authorizeSelectedDatabase(ctx, current.GraphName, current.Query) != nil {
+			if current.Graph != nil && current.Graph.IsDynamic() || e.authorizeSelectedDatabase(ctx, current.GraphName, current.Query) != nil {
 				return false
 			}
 			location, err := prepared.catalog.Resolve(current.GraphName)
 			if err != nil {
 				return false
 			}
-			local, ok := location.(*fabric.LocationLocal)
+			target, ok := location.(*fabric.LocationLocal)
 			if !ok {
 				return false
 			}
-			if _, listed := seen[local.DBName]; !listed {
-				seen[local.DBName] = struct{}{}
-				databases = append(databases, local.DBName)
+			name := current.GraphName
+			if name == "" {
+				name = target.DBName
+			}
+			selection := fabricLocalSelection{name: name, database: target.DBName}
+			if _, listed := seen[selection]; !listed {
+				seen[selection] = struct{}{}
+				selections = append(selections, selection)
 			}
 			return collect(current.Input)
 		case *fabric.FragmentApply:
@@ -267,35 +301,14 @@ func (e *StorageExecutor) fabricLocalDatabases(ctx context.Context, prepared *fa
 	if !collect(prepared.fragment) {
 		return nil, false
 	}
-	sort.Strings(databases)
-	return databases, true
+	sort.Slice(selections, func(i, j int) bool {
+		if selections[i].name != selections[j].name {
+			return selections[i].name < selections[j].name
+		}
+		return selections[i].database < selections[j].database
+	})
+	return selections, true
 }
-
-// fabricGraphMutationVersion is the combined graph version of databases, or
-// false when one doesn't report one.
-func (e *StorageExecutor) fabricGraphMutationVersion(databases []string, authToken string) (uint64, bool) {
-	if e.dbManager == nil || len(databases) == 0 {
-		return 0, false
-	}
-	var combined uint64
-	for _, database := range databases {
-		engine, err := e.dbManager.GetStorageForUse(database, authToken)
-		if err != nil {
-			return 0, false
-		}
-		provider, ok := engine.(storage.GraphMutationVersionProvider)
-		if !ok {
-			return 0, false
-		}
-		version, supported := provider.GraphMutationVersion()
-		if !supported {
-			return 0, false
-		}
-		combined += version
-	}
-	return combined, true
-}
-
 func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher string) (*fabricPreparedExec, error) {
 	catalog, err := e.buildFabricCatalog()
 	if err != nil {
@@ -642,6 +655,9 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 		return nil, nil, false, nil
 	}
 	executor := c.base.cloneForStorage(c.base.storage)
+	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
+		return nil, nil, true, err
+	}
 	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
 	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
@@ -650,25 +666,27 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
-
-	exec := c.base.cloneForStorage(engine)
-	if len(recordBindings) > 0 {
-		exec.fabricRecordBindings = recordBindings
-		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
-	}
+	base := c.base
 	if !c.autoCommit {
 		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
 			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
 			if err != nil {
 				return nil, nil, err
 			}
-			exec = txExec
-			if len(recordBindings) > 0 {
-				exec.fabricRecordBindings = recordBindings
-			}
+			base = txExec
+			engine = txExec.storage
 		}
 	}
-
+	// A fragment view owns its removable catalog selection while the retained
+	// shard executor keeps the underlying database transaction's lifetime.
+	exec := base.cloneForStorage(engine)
+	if err := exec.bindFabricStatementCacheScope(ctx, dbName); err != nil {
+		return nil, nil, err
+	}
+	if len(recordBindings) > 0 {
+		exec.fabricRecordBindings = recordBindings
+		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
+	}
 	ctx = withExecutionDatabase(ctx, dbName)
 	return c.executeFragmentQuery(ctx, exec, query, params)
 }
@@ -875,6 +893,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}
 
 	txExec := NewStorageExecutor(engine)
+	txExec.ShareStatementCachesFrom(c.base)
 	txExec.deferFlush = c.base.deferFlush
 	txExec.ShareEmbedderFrom(c.base)
 	txExec.searchService = c.base.searchService
@@ -882,6 +901,9 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	txExec.onNodeMutated = c.base.onNodeMutated
 	txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions
 	txExec.dbManager = c.base.dbManager
+	if err := txExec.bindStatementCacheScope(dbName); err != nil {
+		return nil, err
+	}
 	txExec.vectorRegistry = c.base.vectorRegistry
 	txExec.vectorIndexSpaces = c.base.vectorIndexSpaces
 

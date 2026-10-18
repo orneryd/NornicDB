@@ -128,6 +128,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -442,6 +443,10 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
+	statementCacheScope *multidb.StatementCacheScope
+	statementCaches     *StatementCaches
+	statementCachesOnce sync.Once
+
 	// log is the structured logger used for slow-query and operational log
 	// emission. Threaded via SetLogger after construction (D-01 non-breaking
 	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
@@ -495,21 +500,25 @@ type unwindMergeChainPlanCache struct {
 }
 
 type upperQueryCache struct {
-	mu    sync.RWMutex
-	cache map[string]string
-	max   int
+	disposed     atomic.Bool
+	mu           sync.RWMutex
+	cache        map[string]string
+	dependencies map[string][]*multidb.StatementCacheScope
+	max          int
 }
 
 type syntaxValidationCache struct {
-	shards [boundedCacheShardCount]syntaxValidationCacheShard
-	max    int
+	disposed atomic.Bool
+	shards   [boundedCacheShardCount]syntaxValidationCacheShard
+	max      int
 }
 
 type syntaxValidationCacheShard struct {
 	mu sync.RWMutex
 	// cache holds, per statement text, which validators accepted it
 	// (syntaxValidNornic, syntaxValidANTLR).
-	cache map[string]uint8
+	cache        map[string]uint8
+	dependencies map[string][]*multidb.StatementCacheScope
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
@@ -537,7 +546,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCache = txWrapper.txNodeLookupCache
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
-	return &StorageExecutor{
+	cloned := &StorageExecutor{
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
@@ -575,8 +584,6 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		fabricRecordBindings:           e.fabricRecordBindings,
 		hotPathTraceState:              e.hotPathTraceState,
 		unwindMergeChainPlanCache:      e.unwindMergeChainPlanCache,
-		upperQueryCache:                e.upperQueryCache,
-		syntaxValidationCache:          e.syntaxValidationCache,
 		allowLocalAPOCImportFileAccess: e.allowLocalAPOCImportFileAccess,
 		allowLocalAPOCExportFileAccess: e.allowLocalAPOCExportFileAccess,
 		allowRemoteAPOCURLAccess:       e.allowRemoteAPOCURLAccess,
@@ -590,6 +597,9 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		metrics:  e.metrics,
 		database: e.database,
 	}
+	cloned.UseStatementCaches(e.StatementCaches())
+	cloned.statementCacheScope = e.statementCacheScope
+	return cloned
 }
 
 func (e *StorageExecutor) nodeLookupCacheLock() *sync.RWMutex {
@@ -1441,39 +1451,10 @@ func isLikelyPlainASCIICypher(query string) bool {
 func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 	e.upperQueryCacheOnce.Do(func() {
 		if e.upperQueryCache == nil {
-			e.upperQueryCache = &upperQueryCache{
-				cache: make(map[string]string, 1024),
-				max:   4096,
-			}
+			e.upperQueryCache = newUpperQueryCache()
 		}
 	})
 	return e.upperQueryCache
-}
-
-func (e *StorageExecutor) cachedUpperQuery(query string) string {
-	trimmed := strings.TrimSpace(query)
-	if trimmed == "" {
-		return ""
-	}
-	c := e.ensureUpperQueryCache()
-	c.mu.RLock()
-	if upper, ok := c.cache[trimmed]; ok {
-		c.mu.RUnlock()
-		return upper
-	}
-	c.mu.RUnlock()
-
-	upper := upperASCII(trimmed)
-	c.mu.Lock()
-	if len(c.cache) >= c.max {
-		for k := range c.cache {
-			delete(c.cache, k)
-			break
-		}
-	}
-	c.cache[trimmed] = upper
-	c.mu.Unlock()
-	return upper
 }
 
 func cypherSyntaxConfusableReplacement(r rune) (string, bool) {

@@ -59,7 +59,13 @@ type DatabaseManager struct {
 	// Cached database-scoped engines (avoid recreating)
 	engines map[string]storage.Engine
 	// Cached limit checkers share query permits and rate state per database.
-	limitCheckers map[string]*databaseLimitChecker
+	limitCheckers            map[string]*databaseLimitChecker
+	statementCaches          map[string]StatementCacheResource
+	statementCacheScopes     map[string]*StatementCacheScope
+	statementCacheGeneration uint64
+	statementCachesClosed    bool
+	statementCacheIndexID    uint64
+	statementCacheIndexes    map[uint64]func()
 
 	// Factory used to create storage engines for remote constituents.
 	remoteEngineFactory RemoteEngineFactory
@@ -389,7 +395,8 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 // Returns ErrCannotDropSystemDB for system/default databases.
 func (m *DatabaseManager) DropDatabase(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
+	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	// Check if exists
 	info, exists := m.databases[name]
@@ -430,6 +437,8 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
 	delete(m.limitCheckers, name)
+	m.dropDatabaseStatementCachesLocked(name)
+	changed = true
 
 	return nil
 }
@@ -744,11 +753,13 @@ func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	defer m.unlockStatementCacheIndexes(true, true)
 
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
 	m.limitCheckers = make(map[string]*databaseLimitChecker)
+	m.statementCachesClosed = true
+	m.disposeStatementCachesLocked()
 
 	// Close the underlying storage
 	return m.inner.Close()
@@ -850,7 +861,8 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 // DropAlias removes an alias (Neo4j-compatible).
 func (m *DatabaseManager) DropAlias(alias string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
+	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	// Find database with this alias
 	for _, info := range m.databases {
@@ -859,7 +871,12 @@ func (m *DatabaseManager) DropAlias(alias string) error {
 				// Remove alias
 				info.Aliases = append(info.Aliases[:i], info.Aliases[i+1:]...)
 				info.UpdatedAt = time.Now()
-				return m.persistMetadata()
+				if err := m.persistMetadata(); err != nil {
+					return err
+				}
+				m.invalidateStatementCacheReferenceLocked(alias)
+				changed = true
+				return nil
 			}
 		}
 	}
