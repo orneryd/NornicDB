@@ -36,6 +36,16 @@ func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
 	return exec
 }
 
+func fabricCallRowsCompositeExecutor(t testing.TB, exec *StorageExecutor) *StorageExecutor {
+	t.Helper()
+	mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
+	store, err := mgr.GetStorage("comp")
+	require.NoError(t, err)
+	composite := NewStorageExecutor(store)
+	composite.SetDatabaseManager(exec.dbManager)
+	return composite
+}
+
 // These data-independent queries exercise the public composite path. With --ref
 // neo-ref they also run against Neo4j 5.26.30, omitting only the USE selectors:
 // the reference is a single database and the branch bodies do not read storage.
@@ -101,11 +111,7 @@ func TestFabricCallRowStream(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			queryExec := exec
 			if tt.name == "dynamic_outer" {
-				mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
-				store, err := mgr.GetStorage("comp")
-				require.NoError(t, err)
-				queryExec = NewStorageExecutor(store)
-				queryExec.SetDatabaseManager(exec.dbManager)
+				queryExec = fabricCallRowsCompositeExecutor(t, exec)
 			}
 			if driver != nil {
 				query := strings.NewReplacer("USE graph.byName('comp.one') ", "", "USE graph.byName('comp.two') ", "", "USE comp.one ", "", "USE comp.two ", "", "USE comp ", "").Replace(tt.query)
@@ -121,15 +127,17 @@ func TestFabricCallRowStream(t *testing.T) {
 			}
 			for _, mode := range []string{"autocommit", "transaction"} {
 				t.Run(mode, func(t *testing.T) {
+					runExec := queryExec
 					if mode == "transaction" {
-						_, err := queryExec.Execute(ctx, "BEGIN", nil)
+						runExec = fabricCallRowsCompositeExecutor(t, exec)
+						_, err := runExec.Execute(ctx, "BEGIN", nil)
 						require.NoError(t, err)
 						defer func() {
-							_, err := queryExec.Execute(ctx, "ROLLBACK", nil)
+							_, err := runExec.Execute(ctx, "ROLLBACK", nil)
 							require.NoError(t, err)
 						}()
 					}
-					result, err := queryExec.Execute(ctx, tt.query, nil)
+					result, err := runExec.Execute(ctx, tt.query, nil)
 					require.NoError(t, err)
 					rows := append(make([][]interface{}, 0, len(result.Rows)), result.Rows...)
 					encoded, err := json.Marshal(rows)
@@ -169,18 +177,33 @@ func BenchmarkFabricCallRows(b *testing.B) {
 func TestFabricCallRowsConstituentData(t *testing.T) {
 	exec := newFabricCallRowsExecutor(t)
 	ctx := context.Background()
-	for _, explicit := range []bool{false, true} {
-		if explicit {
-			_, err := exec.Execute(ctx, "BEGIN", nil)
-			require.NoError(t, err)
-			defer func() {
-				_, err := exec.Execute(ctx, "ROLLBACK", nil)
-				require.NoError(t, err)
-			}()
-		}
-		result, err := exec.Execute(ctx, "USE comp CALL { USE comp.one MATCH (n:P) RETURN n UNION ALL USE comp.two MATCH (n:P) RETURN n } WITH n ORDER BY n.db RETURN collect(n.db) AS dbs", nil)
-		require.NoError(t, err)
-		require.Equal(t, [][]interface{}{{[]interface{}{"one", "two"}}}, result.Rows)
+	for _, tt := range []struct{ query, want string }{
+		{"USE comp.one MATCH (n:P) RETURN collect(n.db) AS dbs", "[[[\"one\"]]]"},
+		{"USE comp CALL { USE comp.one MATCH (n:P) RETURN n } RETURN collect(n.db) AS dbs", "[[[\"one\"]]]"},
+		{"USE comp CALL { USE comp.one MATCH (n:P) RETURN n UNION ALL USE comp.two MATCH (n:P) RETURN n } RETURN n.db AS db ORDER BY db", "[[\"one\"],[\"two\"]]"},
+		{"USE comp CALL { USE comp.one MATCH (n:P) RETURN n UNION ALL USE comp.two MATCH (n:P) RETURN n } WITH n ORDER BY n.db RETURN collect(n.db) AS dbs", "[[[\"one\",\"two\"]]]"},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			for _, mode := range []string{"autocommit", "transaction"} {
+				t.Run(mode, func(t *testing.T) {
+					runExec := exec
+					if mode == "transaction" {
+						runExec = fabricCallRowsCompositeExecutor(t, exec)
+						_, err := runExec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						defer func() {
+							_, err := runExec.Execute(ctx, "ROLLBACK", nil)
+							require.NoError(t, err)
+						}()
+					}
+					result, err := runExec.Execute(ctx, tt.query, nil)
+					require.NoError(t, err)
+					encoded, err := json.Marshal(result.Rows)
+					require.NoError(t, err)
+					require.JSONEq(t, tt.want, string(encoded))
+				})
+			}
+		})
 	}
 }
 
@@ -199,16 +222,18 @@ func TestFabricCallRowsRemote(t *testing.T) {
 		"USE comp CALL { USE comp.remote RETURN 2 AS k UNION ALL USE comp.two RETURN 1 AS k } WITH k ORDER BY k RETURN collect(k) AS ks",
 	} {
 		t.Run(query, func(t *testing.T) {
+			runExec := exec
 			for _, explicit := range []bool{false, true} {
 				if explicit {
-					_, err := exec.Execute(ctx, "BEGIN", nil)
+					runExec = fabricCallRowsCompositeExecutor(t, exec)
+					_, err := runExec.Execute(ctx, "BEGIN", nil)
 					require.NoError(t, err)
 					defer func() {
-						_, err := exec.Execute(ctx, "ROLLBACK", nil)
+						_, err := runExec.Execute(ctx, "ROLLBACK", nil)
 						require.NoError(t, err)
 					}()
 				}
-				result, err := exec.Execute(ctx, query, nil)
+				result, err := runExec.Execute(ctx, query, nil)
 				require.NoError(t, err)
 				encoded, err := json.Marshal(result.Rows)
 				require.NoError(t, err)
