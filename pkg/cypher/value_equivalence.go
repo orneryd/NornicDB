@@ -208,26 +208,32 @@ func (set *cypherValueSet) add(value interface{}) (existed bool) {
 // addPosition shares first-occurrence lookup with frequencies. Typed temporal
 // keys avoid allocating a serialized key for every scalar item.
 func (set *cypherValueSet) addPosition(value interface{}) (position int, existed bool) {
-	if key, temporal := temporalEqualityParts(value); temporal {
-		if position, existed = set.temporal[key]; existed {
-			return position, true
+	// Ordinary scalars need no temporal extraction or large key return value.
+	switch value.(type) {
+	case nil, string, bool, int64, float64:
+	default:
+		if key, temporal := temporalEqualityParts(value); temporal {
+			if position, existed = set.temporal[key]; existed {
+				return position, true
+			}
+			if set.temporal == nil {
+				set.temporal = make(map[temporalEqualityKey]int)
+			}
+			position = set.count
+			set.temporal[key] = position
+			set.count++
+			return position, false
 		}
-		if set.temporal == nil {
-			set.temporal = make(map[temporalEqualityKey]int)
-		}
-		position = set.count
-		set.temporal[key] = position
-	} else {
-		key := cypherEquivalenceKey(value)
-		if position, existed = set.encoded[key]; existed {
-			return position, true
-		}
-		if set.encoded == nil {
-			set.encoded = make(map[string]int)
-		}
-		position = set.count
-		set.encoded[key] = position
 	}
+	key := cypherEquivalenceKey(value)
+	if position, existed = set.encoded[key]; existed {
+		return position, true
+	}
+	if set.encoded == nil {
+		set.encoded = make(map[string]int)
+	}
+	position = set.count
+	set.encoded[key] = position
 	set.count++
 	return position, false
 }
