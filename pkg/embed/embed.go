@@ -1146,20 +1146,13 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 // Returns an Embedder interface, or an error if the provider is unknown or
 // configuration is invalid (e.g., OpenAI without API key, local without model).
 func NewEmbedder(config *Config) (Embedder, error) {
-	return NewEmbedderContext(context.Background(), config)
-}
-
-// NewEmbedderContext is NewEmbedder for a caller that may stop waiting, such as
-// background initialisation during shutdown: a local model isn't loaded once
-// ctx has ended (see NewLocalGGUFContext).
-func NewEmbedderContext(ctx context.Context, config *Config) (Embedder, error) {
 	config = ResolveProviderConfig(config)
 	if config == nil {
 		return nil, fmt.Errorf("embedding config is required")
 	}
 	switch config.Provider {
 	case "local":
-		return NewLocalGGUFContext(ctx, config)
+		return NewLocalGGUF(config)
 	case "ollama":
 		return NewOllama(config), nil
 	case "openai":
