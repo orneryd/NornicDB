@@ -81,6 +81,9 @@ class HookTests(unittest.TestCase):
                     elif fixture.search_pages is not None:
                         index = int(data.get("qid", "page-0").split("-")[-1])
                         payload = fixture.search_pages[index]
+                    payload.setdefault("mode", "ranked")
+                    for item in payload.get("results", []):
+                        item.setdefault("rrf_score", 0.02)
                 else:
                     statement = data["statements"][0]
                     query = statement["statement"]
@@ -185,7 +188,9 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
 
     def test_duplicate_on_later_cursor_page_blocks_commit(self):
         self.search_pages = [
-            {"results": [], "has_more": True, "qid": "page-1"},
+            {"results": [{"rrf_score": 0.005, "node": {"properties": {
+                "id": "weak-match", "body": BODY, "source_file": "weak.py", "symbol_kind": "function", "repo": "test/repo"}}}],
+             "has_more": True, "qid": "page-1"},
             {"results": [{"node": {"properties": {"id": "later-copy", "body": BODY,
               "source_file": "lib/existing.py", "symbol_kind": "function", "repo": "test/repo"}}}],
              "has_more": False, "collection_exhausted": True, "completion": "eligible_population_exhausted"},
@@ -194,14 +199,40 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         result = self.git("commit", "-m", "later-page duplicate", check=False)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Commit blocked", result.stderr)
-        self.assertEqual(self.search_requests[0]["mode"], "ranked_then_id")
+        self.assertEqual(self.search_requests[0]["mode"], "ranked")
         self.assertEqual(self.search_requests[1]["qid"], "page-1")
         self.assertEqual(self.search_requests[1]["database"], "nornicdbcode")
         self.assertNotIn("/db/nornic/tx/commit", self.paths)
 
+    def test_ranked_matches_respect_score_floor(self):
+        for index, (score, blocked) in enumerate([(0.0099, False), (0.01, True), (0.02, True)]):
+            with self.subTest(score=score):
+                self.stage(BODY.replace("subtotal = 0", f"subtotal = {index + 1}"))
+                self.search_pages = [{"mode": "ranked", "results": [{"rrf_score": score,
+                    "node": {"properties": {"id": "owner", "body": BODY, "source_file": "owner.py",
+                     "symbol_kind": "function", "repo": "test/repo"}}}], "has_more": False,
+                     "collection_exhausted": False, "completion": "candidate_pool_exhausted"}]
+                result = self.git("commit", "-m", "ranked score boundary", check=False)
+                self.assertEqual(result.returncode != 0, blocked, result.stdout + result.stderr)
+                if blocked:
+                    self.assertIn("Commit blocked", result.stderr)
+                self.assertEqual(self.search_requests[-1]["mode"], "ranked")
+                self.assertNotIn("ranked_limit", self.search_requests[-1])
+
+    def test_missing_rank_score_never_passes_mandatory_check(self):
+        self.stage()
+        self.search_pages = [{"results": [{"rrf_score": None, "node": {"properties": {
+            "id": "owner", "body": BODY, "source_file": "owner.py", "symbol_kind": "function", "repo": "test/repo"}}}],
+            "has_more": False, "collection_exhausted": True}]
+        result = self.git("commit", "-m", "unscored results", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("score", result.stderr.lower())
+        self.assertIn("MANDATORY COMMIT CHECK", result.stderr)
+
     def test_incomplete_or_expired_cursor_never_passes_commit(self):
         cases = [
-            [{"results": [], "has_more": False, "collection_exhausted": False, "completion": "candidate_pool_exhausted"}],
+            [{"results": [], "has_more": False, "collection_exhausted": False, "completion": "max_results_reached"}],
+            [{"mode": "ranked_then_id", "results": [], "has_more": False, "collection_exhausted": True}],
             [{"results": [], "has_more": True, "qid": "page-1"},
              {"_http_status": 410, "request_status": "continuation_gone", "results": []}],
             [{"results": [], "has_more": True, "qid": "page-1"},
