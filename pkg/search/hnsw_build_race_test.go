@@ -101,3 +101,32 @@ func TestHNSWBuildLinksVectorTheSourceNoLongerResolves(t *testing.T) {
 		})
 	}
 }
+
+// A removed vector keeps its edges until a rebuild, and nearly collinear
+// vectors form a chain in which a live vector may be linked only through it.
+// Removing any one vector still leaves every other vector reachable.
+func TestHNSWSearchReachesEveryVectorAfterRemovingOne(t *testing.T) {
+	for removed := 0; removed < 6; removed++ {
+		t.Run(fmt.Sprintf("removed=v-%d", removed), func(t *testing.T) {
+			index := NewHNSWIndex(2, DefaultHNSWConfig())
+			want := make([]string, 0, 5)
+			for i := 0; i < 6; i++ {
+				id := fmt.Sprintf("v-%d", i)
+				require.NoError(t, index.Add(id, []float32{1, float32(i) / 10}))
+				if i != removed {
+					want = append(want, id)
+				}
+			}
+			index.Remove(fmt.Sprintf("v-%d", removed))
+
+			results, exhausted, err := index.searchWithEfExhaustion(context.Background(), []float32{1, 0}, 10, -1, 10)
+			require.NoError(t, err)
+			ids := make([]string, 0, len(results))
+			for _, result := range results {
+				ids = append(ids, result.ID)
+			}
+			require.ElementsMatch(t, want, ids)
+			require.True(t, exhausted)
+		})
+	}
+}

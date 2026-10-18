@@ -102,13 +102,16 @@ type searchContinuationState struct {
 	mu                sync.RWMutex
 	results           []SearchResult
 	seen              map[string]struct{}
-	plateau           continuationPlateauTracker
 	searchMethod      string
 	fallbackTriggered bool
 	fallbackReason    SearchFallbackReason
 	maxResultsReached bool
 }
 
+// continuationPlateauTracker ends the ranked phase of a ranked_then_id
+// continuation when deeper searches stop adding results; its catalog phase
+// then enumerates the eligible population exactly, so nothing is lost. A
+// ranked continuation never ends on a plateau.
 type continuationPlateauTracker struct {
 	lastCount  int
 	nonGrowing int
@@ -327,7 +330,6 @@ func (s *Service) SearchTextContinuation(
 		response:          searchResponseMetadata(initial),
 		results:           compactResults,
 		seen:              make(map[string]struct{}, len(initial.Results)),
-		plateau:           newContinuationPlateauTracker(len(initial.Results)),
 		searchMethod:      initial.SearchMethod,
 		fallbackTriggered: initial.FallbackTriggered,
 		fallbackReason:    initial.FallbackReason,
@@ -352,7 +354,14 @@ func (s *Service) SearchTextContinuation(
 		if lastDepth >= depthLimit {
 			return nil, false, fmt.Errorf("continuation retrieval depth limit reached: %w", resultstream.ErrCapacity)
 		}
+		if depth <= lastDepth { // the doubled depth overflowed
+			return nil, false, fmt.Errorf("continuation retrieval depth overflow: %w", resultstream.ErrCapacity)
+		}
 		depth = min(depth, depthLimit)
+		// The previous search was at least as deep as everything this service
+		// indexes, so it returned every candidate it could find.
+		indexed := s.EmbeddingCount() + s.FulltextDocCount()
+		fullDepth := indexed > 0 && lastDepth >= indexed
 		expandedOptions := cloneContinuationSearchOptions(&ownedOptions)
 		expandedOptions.Limit = depth
 		response, expandErr := SearchTextChunksWithErrorPolicy(withRerankMemo(expandCtx, rerankMemo), query, &expandedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
@@ -362,11 +371,13 @@ func (s *Service) SearchTextContinuation(
 		lastDepth = depth
 		state.mu.Lock()
 		defer state.mu.Unlock()
+		// Only a budget the search declares ends the ranked stream early, or a
+		// deeper search that adds nothing once the search already covered every
+		// indexed item. Below that depth a search that adds nothing is no
+		// evidence that the eligible population is exhausted, so deepening
+		// continues.
 		candidateBudgetReached := response.CandidateBudgetReached
-		if state.plateau.budgetReached(response) {
-			response = markContinuationCandidateBudget(response)
-			candidateBudgetReached = true
-		}
+		grew := false
 		state.response = searchResponseMetadata(response)
 		state.searchMethod = response.SearchMethod
 		state.fallbackTriggered = response.FallbackTriggered
@@ -378,7 +389,12 @@ func (s *Service) SearchTextContinuation(
 				continue
 			}
 			state.seen[id] = struct{}{}
+			grew = true
 			state.results = append(state.results, compactContinuationResult(result))
+		}
+		if fullDepth && !grew && !response.RetrievalExhausted {
+			candidateBudgetReached = true
+			state.response = searchResponseMetadata(markContinuationCandidateBudget(response))
 		}
 		if continuationMaxResultsReached(maxResults, len(state.results), response.RetrievalExhausted, candidateBudgetReached) {
 			if len(state.results) > maxResults {

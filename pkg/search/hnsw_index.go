@@ -641,28 +641,19 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
-	ep := h.entryPoint
-
-	for l := h.maxLevel; l > 0; l-- {
-		var err error
-		ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l)
-		if err != nil {
-			return nil, false, err
-		}
+	var (
+		candidates []hnswDistItem
+		err        error
+	)
+	if ef >= h.liveCount {
+		// A beam as wide as the live population must return all of it. The
+		// graph can't promise that (a removed vector or a pruned link can cut
+		// live vectors off), so score every live vector instead: the same
+		// O(n) work the beam would do.
+		candidates, err = h.scanLiveLocked(ctx, normalized)
+	} else {
+		candidates, err = h.searchGraphLocked(ctx, normalized, ef, entryIDs)
 	}
-
-	entryBufAny := h.idsPool.Get()
-	entries := entryBufAny.([]uint32)[:0]
-	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
-	for _, id := range entryIDs {
-		internalID, ok := h.idToInternal[id]
-		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
-			continue
-		}
-		entries = append(entries, internalID)
-	}
-	candidates, err := h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
 	if err != nil {
 		return nil, false, err
 	}
@@ -714,6 +705,71 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		exhausted = liveCandidates == h.liveCount && (len(results) < k || liveCandidates <= k)
 	}
 	return results, exhausted, nil
+}
+
+// searchGraphLocked runs the layer-0 beam from the hierarchical entry point
+// and the given extra entry IDs, closest first. h.mu must be held.
+func (h *HNSWIndex) searchGraphLocked(ctx context.Context, query []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
+	ep := h.entryPoint
+	// The descent can end on a removed vector, which can't seed the layer-0
+	// search; the closest live node it passed seeds it instead.
+	live := ep
+	for l := h.maxLevel; l > 0; l-- {
+		var err error
+		ep, err = h.searchLayerSingleWithContext(ctx, query, ep, l, &live)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if h.deleted[ep] {
+		ep = live
+	}
+
+	entryBufAny := h.idsPool.Get()
+	entries := entryBufAny.([]uint32)[:0]
+	defer h.idsPool.Put(entries[:0])
+	entries = append(entries, ep)
+	for _, id := range entryIDs {
+		internalID, ok := h.idToInternal[id]
+		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		entries = append(entries, internalID)
+	}
+	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, query, entries, ef, 0)
+}
+
+// scanLiveLocked scores every live vector, closest first, in a slice from
+// itemsPool. h.mu must be held.
+func (h *HNSWIndex) scanLiveLocked(ctx context.Context, query []float32) ([]hnswDistItem, error) {
+	items := h.itemsPool.Get().([]hnswDistItem)[:0]
+	for id, deleted := range h.deleted {
+		if id&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				h.itemsPool.Put(items[:0])
+				return nil, err
+			}
+		}
+		if deleted {
+			continue
+		}
+		internalID, ok := util.SafeIntToUint32(id)
+		if !ok {
+			break
+		}
+		vec := h.vectorAtLocked(internalID)
+		if len(vec) != h.dimensions {
+			continue
+		}
+		items = append(items, hnswDistItem{id: internalID, dist: float32(1.0) - vector.DotProductSIMD(query, vec)})
+	}
+	slices.SortFunc(items, func(left, right hnswDistItem) int {
+		if order := cmp.Compare(left.dist, right.dist); order != 0 {
+			return order
+		}
+		return cmp.Compare(left.id, right.id)
+	})
+	return items, nil
 }
 
 // Size returns the number of vectors in the index.
@@ -1141,11 +1197,14 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 }
 
 func (h *HNSWIndex) searchLayerSingle(query []float32, entryID uint32, level int) uint32 {
-	out, _ := h.searchLayerSingleWithContext(context.Background(), query, entryID, level)
+	out, _ := h.searchLayerSingleWithContext(context.Background(), query, entryID, level, nil)
 	return out
 }
 
-func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []float32, entryID uint32, level int) (uint32, error) {
+// searchLayerSingleWithContext descends greedily within one layer. Each live
+// node it moves to is stored in *live (when live is non-nil), so a descent
+// that ends on a removed vector still leaves the closest live node it passed.
+func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []float32, entryID uint32, level int, live *uint32) (uint32, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1183,6 +1242,9 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 
 		if !changed {
 			break
+		}
+		if live != nil && !h.deleted[current] {
+			*live = current
 		}
 	}
 
