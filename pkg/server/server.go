@@ -1186,6 +1186,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return s.activeTxReqs.Load() > 0
 	})
 	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase)
+	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(s.db.LifetimeContext())
+	s.txSessions.SetLifetimeContext(s.requestsCtx)
 	s.txSessions.SetTerminalErrorObserver(func(session *txsession.Session, err error) {
 		s.logMVCCSnapshotExpiration(session, err)
 	})
@@ -1962,7 +1964,6 @@ func (s *Server) Start() error {
 	// re-propagating (T-04-08).
 	instrumented := instrumentedMux(mux, s.httpMetrics)
 
-	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
 	s.httpServer = &http.Server{
 		Handler:      instrumented,
 		ReadTimeout:  s.config.ReadTimeout,
@@ -2043,10 +2044,6 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.rateLimiter.Stop()
 	}
 
-	if s.httpServer == nil {
-		return nil
-	}
-
 	// Cancel the BaseContext handed to all in-flight requests so handlers that
 	// honour ctx (Cypher BFS / shortestPath traversals, etc.) abandon work
 	// and let http.Server.Shutdown drain promptly. Without this, an unbounded
@@ -2054,6 +2051,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	// configured WriteTimeout.
 	if s.cancelRequestsCtx != nil {
 		s.cancelRequestsCtx()
+	}
+	if s.httpServer == nil {
+		return nil
 	}
 
 	// Hard-bound shutdown: even if net/http Shutdown fails to return at ctx deadline

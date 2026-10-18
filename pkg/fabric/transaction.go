@@ -43,12 +43,13 @@ type SubTransaction struct {
 //
 // This mirrors Neo4j's FabricTransaction.java.
 type FabricTransaction struct {
-	subTxns     map[string]*SubTransaction
-	writeShard  string // name of the single shard that has writes, or ""
-	mu          sync.Mutex
-	state       string // "open", "committed", "rolledback"
-	txID        string
-	lifetimeCtx context.Context
+	subTxns        map[string]*SubTransaction
+	writeShard     string // name of the single shard that has writes, or ""
+	mu             sync.Mutex
+	state          string // "open", "committed", "rolledback"
+	txID           string
+	lifetimeCtx    context.Context
+	lifetimeCancel context.CancelFunc
 }
 
 // NewFabricTransaction creates a new distributed transaction.
@@ -61,7 +62,8 @@ func NewFabricTransaction(txID string) *FabricTransaction {
 }
 
 // BindContext anchors participant completion to the transaction owner's
-// lifetime. BEGIN supplies it for explicit transactions; otherwise the root
+// lifetime. Protocols supply their transaction owner independently of BEGIN's
+// request; embedded BEGIN callers supply that owner directly. Otherwise the root
 // Execute binds it before any branch or batch derives a shorter-lived context.
 // Subsequent statements and fragments cannot replace that owner.
 func (t *FabricTransaction) BindContext(ctx context.Context) context.Context {
@@ -71,9 +73,16 @@ func (t *FabricTransaction) BindContext(ctx context.Context) context.Context {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		t.lifetimeCtx = ctx
+		t.lifetimeCtx, t.lifetimeCancel = context.WithCancel(transactionLifetime(ctx))
 	}
 	return t.lifetimeCtx
+}
+
+// cancelLifetime is called with mu held, after participant completion.
+func (t *FabricTransaction) cancelLifetime() {
+	if t.lifetimeCancel != nil {
+		t.lifetimeCancel()
+	}
 }
 
 // TxID returns the transaction identifier.
@@ -199,6 +208,7 @@ type RollbackCallback func(sub *SubTransaction) error
 func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackCallback) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	defer t.cancelLifetime()
 
 	if t.state != "open" {
 		return fmt.Errorf("cannot commit: transaction is %s", t.state)
@@ -259,6 +269,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 func (t *FabricTransaction) Rollback(rollbackFn RollbackCallback) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	defer t.cancelLifetime()
 
 	if t.state != "open" {
 		return fmt.Errorf("cannot rollback: transaction is %s", t.state)
