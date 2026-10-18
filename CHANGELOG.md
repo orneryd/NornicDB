@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Find cgroup memory limits through mountinfo roots and namespaces, including
+  inherited v1 limits, without reading unrelated cgroups (#1390).
 - Derive the Go soft memory limit from the container's cgroup limit by default,
   and clamp configured limits above it with a startup warning (#1369).
 - Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
