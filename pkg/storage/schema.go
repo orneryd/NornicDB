@@ -1253,6 +1253,12 @@ func appendUnique(slice []NodeID, nodeID NodeID) []NodeID {
 func removeNodeID(slice []NodeID, nodeID NodeID) []NodeID {
 	for i, existing := range slice {
 		if existing == nodeID {
+			// Removing the first posting preserves order without copying
+			// the remaining list. Clear its reference before advancing.
+			if i == 0 {
+				slice[0] = ""
+				return slice[1:]
+			}
 			return append(slice[:i], slice[i+1:]...)
 		}
 	}
