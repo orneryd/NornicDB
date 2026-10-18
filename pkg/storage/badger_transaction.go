@@ -1220,7 +1220,15 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 // deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
 func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, deletedNodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
 	var edgeIDs []EdgeID
-	if err := tx.scanCommittedKeysWithPrefixLocked(prefix, func(key []byte) error {
+	var captured map[EdgeID]*Edge
+	if tx.engine.writeBehind != nil {
+		var edges []*Edge
+		var err error
+		if len(prefix) > 0 && prefix[0] == prefixOutgoingIndex { edges, err = tx.engine.GetOutgoingEdges(deletedNodeID) } else { edges, err = tx.engine.GetIncomingEdges(deletedNodeID) }
+		if err != nil { return 0, nil, err }
+		captured = make(map[EdgeID]*Edge, len(edges))
+		for _, edge := range edges { edgeIDs = append(edgeIDs, edge.ID); captured[edge.ID] = edge }
+	} else if err := tx.scanCommittedKeysWithPrefixLocked(prefix, func(key []byte) error {
 		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(key)
 		if !ok {
 			return nil
@@ -1233,20 +1241,6 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		return 0, nil, err
 	}
 
-	// Buffered live edges of the deleted node are invisible to badgerTx and
-	// the committed adjacency index: enumerate them from the write-behind
-	// overlay so DETACH DELETE also removes relationships that exist only in
-	// the buffer (PR #1043 read-overlay parity).
-	if tx.engine.writeBehind != nil {
-		liveOut, _, _ := tx.engine.writeBehind.EdgeAdjacencyOverlay(deletedNodeID, true)
-		for _, e := range liveOut {
-			edgeIDs = append(edgeIDs, e.ID)
-		}
-		liveIn, _, _ := tx.engine.writeBehind.EdgeAdjacencyOverlay(deletedNodeID, false)
-		for _, e := range liveIn {
-			edgeIDs = append(edgeIDs, e.ID)
-		}
-	}
 
 	var deletedCount int64
 	var deletedIDs []EdgeID
@@ -1258,37 +1252,12 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		if _, deleted := tx.deletedEdges[edgeID]; deleted {
 			continue
 		}
-		// With write-behind active, an earlier transaction's acknowledged
-		// delete is also invisible to badgerTx: the record and adjacency
-		// entries live on until the flusher lands the generation. Skipping
-		// them here keeps later batches from deleting (and counting) the
-		// same relationship twice when a wipe spans multiple statements.
-		if tx.engine.writeBehind != nil && tx.engine.writeBehind.EdgeDeleted(edgeID) {
-			continue
-		}
 
 		// Get edge to delete its indexes
 		edgeKey := edgeKey(edgeID)
 		var edge *Edge
 		if tx.engine.writeBehind != nil {
-			// Read-committed: the transaction's pinned Badger snapshot
-			// predates flusher commits that landed after this transaction
-			// began, so badgerTx would still see records a concurrent
-			// replay already tombstoned (and the flusher's deletion would
-			// otherwise be applied twice). Resolve the newest state: the
-			// buffer overlay first, then the engine's latest view.
-			if buffered, ok := tx.engine.writeBehind.LookupEdge(edgeID); ok {
-				edge = copyEdge(buffered)
-			} else {
-				latest, err := tx.engine.GetEdge(edgeID)
-				if errors.Is(err, ErrNotFound) {
-					continue
-				}
-				if err != nil {
-					return 0, nil, err
-				}
-				edge = latest
-			}
+			edge = captured[edgeID]
 		} else {
 			item, err := tx.badgerTx.Get(edgeKey)
 			if err == badger.ErrKeyNotFound {
@@ -2021,16 +1990,7 @@ func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string
 // read: the same write-behind overlay, snapshot caches and MVCC resolution,
 // but decoding only the requested properties and never hydrating embeddings.
 func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, properties []string) (*Node, error) {
-	if tx.engine != nil {
-		if wb := tx.engine.writeBehind; wb != nil {
-			if wb.NodeDeleted(nodeID) {
-				return nil, ErrNotFound
-			}
-			if node, ok := wb.LookupNode(nodeID); ok {
-				return copyNodeProjectedWithoutEmbeddings(node, properties), nil
-			}
-		}
-	}
+	if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetNodeProjected(nodeID, properties) }
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
 	}
@@ -2348,9 +2308,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
 	var overlay []*Node
 	var overlayTouched map[NodeID]bool
-	if !engineOverlaid && tx.engine != nil && tx.engine.writeBehind != nil {
-		overlay, overlayTouched = tx.engine.writeBehind.LabelOverlay(label)
-	}
+
 	emitOverlay := func() error {
 		if engineOverlaid {
 			return nil // the engine stream already merged the overlay
@@ -3268,15 +3226,11 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	}
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
-	if tx.engine != nil {
-		if wb := tx.engine.writeBehind; wb != nil {
-			if wb.NodeDeleted(nodeID) {
-				return nil, ErrNotFound
-			}
-			if node, ok := wb.LookupNode(nodeID); ok {
-				return copyRead(node), nil
-			}
+	if tx.engine != nil && tx.engine.writeBehind != nil {
+		if vectors {
+			return tx.engine.GetNode(nodeID)
 		}
+		return tx.engine.GetQueryNode(nodeID)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyRead(node), nil
@@ -3395,16 +3349,7 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
-	if tx.engine != nil {
-		if wb := tx.engine.writeBehind; wb != nil {
-			if wb.EdgeDeleted(edgeID) {
-				return nil, ErrNotFound
-			}
-			if edge, ok := wb.LookupEdge(edgeID); ok {
-				return copyEdge(edge), nil
-			}
-		}
-	}
+	if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetEdge(edgeID) }
 	if tx.readTS.IsZero() {
 		key := edgeKey(edgeID)
 		item, err := tx.badgerTx.Get(key)
@@ -3479,16 +3424,7 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	// Updating it is therefore not a write-write conflict — it is the same
 	// latest-committed state the update read from (monster retest part 1,
 	// "SET on a buffered relationship fails with a conflict").
-	if tx.engine != nil {
-		if wb := tx.engine.writeBehind; wb != nil {
-			if wb.EdgeDeleted(edgeID) {
-				return nil, ErrNotFound
-			}
-			if edge, ok := wb.LookupEdge(edgeID); ok {
-				return copyEdge(edge), nil
-			}
-		}
-	}
+if tx.engine != nil && tx.engine.writeBehind != nil { return tx.engine.GetEdge(edgeID) }
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
@@ -4156,17 +4092,7 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 // value index, so the cost is the matching nodes, not the label's unflushed
 // rows; a value without an index key falls back to the label's whole overlay.
 // Callers compare the full key / interval themselves.
-func (tx *BadgerTransaction) writeBehindKeyCandidatesLocked(label, property string, value interface{}) []*Node {
-	wb := tx.engine.writeBehind
-	if wb == nil || value == nil {
-		return nil
-	}
-	if valueKey, ok := indexValueKey(value); ok {
-		return wb.KeyCandidates(label, property, valueKey)
-	}
-	nodes, _ := wb.LabelOverlay(label)
-	return nodes
-}
+
 
 // scanForUniqueViolation performs a full database scan to check for UNIQUE violations
 // within a single namespace (database).
@@ -4240,12 +4166,14 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// concurrent commit of the same key is listed or still holds the lock.
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
 		nsPrefix := tx.namespace + ":"
-		for _, id := range idx.LookupFull(values...) {
+		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
+ if err != nil { return err }
+ for _, existing := range candidates {
+ id := existing.ID
 			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
 				continue
 			}
-			existing, err := tx.engine.GetNode(id)
-			if err != nil || existing == nil || !hasLabel(existing.Labels, c.Label) {
+			if existing == nil || !hasLabel(existing.Labels, c.Label) {
 				continue
 			}
 			match := true
@@ -4257,26 +4185,6 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 			}
 			if match {
 				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
-				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
-			}
-		}
-		// Write-behind: acknowledged commits reach the index only when the
-		// background flush applies them, so their nodes are compared here.
-		// Indexed nodes were read through GetNode, which already sees their
-		// buffered versions.
-		for _, buffered := range tx.writeBehindKeyCandidatesLocked(c.Label, c.Properties[0], values[0]) {
-			if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || (tx.namespace != "" && !strings.HasPrefix(string(buffered.ID), nsPrefix)) {
-				continue
-			}
-			match := true
-			for i, prop := range c.Properties {
-				if v, ok := buffered.Properties[prop]; !ok || !compareValues(v, values[i]) {
-					match = false
-					break
-				}
-			}
-			if match {
-				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(buffered.ID))
 				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 			}
 		}
@@ -4412,30 +4320,12 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 			return err
 		}
 		if ok {
-			writeBehind := tx.engine.writeBehind != nil
 			for _, other := range history {
 				if other.ID == node.ID || tx.committedNodeSupersededLocked(other.ID) || !strings.HasPrefix(string(other.ID), nsPrefix) {
 					continue
 				}
-				if writeBehind {
-					// The history index lags the buffer: compare the node's
-					// latest version (GetNode reads through the buffer).
-					latest, err := tx.engine.GetNode(other.ID)
-					if err != nil || latest == nil || !hasLabel(latest.Labels, c.Label) {
-						continue
-					}
-					other = latest
-				}
+
 				if err := collides(other); err != nil {
-					return err
-				}
-			}
-			// Buffered (unflushed) nodes have no history entries yet.
-			for _, buffered := range tx.writeBehindKeyCandidatesLocked(c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]]) {
-				if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || !strings.HasPrefix(string(buffered.ID), nsPrefix) {
-					continue
-				}
-				if err := collides(buffered); err != nil {
 					return err
 				}
 			}
