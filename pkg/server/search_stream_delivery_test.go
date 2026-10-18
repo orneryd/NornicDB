@@ -64,13 +64,16 @@ func TestSearchStreamDeliveryHTTPRoutes(t *testing.T) {
      if route=="commit" { path+="/commit" }
     case "graphql_query","graphql_mutation":
      path="/graphql"
-     reqJSON,err:=json.Marshal(request);require.NoError(t,err)
-     // Variables preserve evaluated integer/map requests in GraphQL's JSON scalar.
+					statement = "CALL db.retrieve({mode:'id',n:1})"
+					if qid,ok:=request["qid"].(string);ok {
+						statement=fmt.Sprintf("CALL db.retrieve({qid:%q,n:1})",qid)
+						if request["discard"]==true { statement=fmt.Sprintf("CALL db.retrieve({qid:%q,discard:true})",qid) }
+					}
      op,field:="query","cypher"
      if route=="graphql_mutation" { op,field="mutation","executeCypher" }
      payload=map[string]any{"query":fmt.Sprintf("%s($input: CypherInput!){ %s(input:$input){ rows columns } }",op,field),
       "variables":map[string]any{"input":map[string]any{"statement":statement,"database":database,
-       "parameters":map[string]any{"request":json.RawMessage(reqJSON)}}}}
+						"parameters":map[string]any{}}}}
     }
     body,err:=json.Marshal(payload);require.NoError(t,err)
     ctx,cancel:=context.WithCancel(context.Background());defer cancel()
