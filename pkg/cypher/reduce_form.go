@@ -72,6 +72,13 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 // (appendListOperand), or null when one is null, so the fold can append
 // the operands to a list it owns instead of copying the whole accumulator
 // at every step, which made reduce quadratic in the list it builds.
+//
+// The owned list is shared with nothing, from the fold's start to its
+// result: no operand names the accumulator (a step like a + [x] + [a]
+// would keep a view of the list the fold goes on appending to, so it has
+// no plan), the predicate's value is read as a truth value and dropped,
+// and the result is handed over as a list of its own length
+// (runReduceForm).
 type reduceAppendPlan struct {
 	terms []string // t1 … tn
 	// bound are the texts of the step's sums: a row binding of the same name
@@ -118,13 +125,27 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 			for i, j := 0, len(terms)-1; i < j; i, j = i+1, j-1 {
 				terms[i], terms[j] = terms[j], terms[i]
 			}
-			plan = &reduceAppendPlan{terms: terms, bound: texts}
+			if !termsNameAccumulator(terms, form.accumulator) {
+				plan = &reduceAppendPlan{terms: terms, bound: texts}
+			}
 			break
 		}
 		node = sum.left
 	}
 	reduceAppendPlans.put(key, plan)
 	return plan
+}
+
+// termsNameAccumulator reports whether an operand refers to the accumulator,
+// as a name (referencesVariable) or quoted (`a`): such an operand can keep
+// the accumulator's value.
+func termsNameAccumulator(terms []string, accumulator string) bool {
+	for _, term := range terms {
+		if referencesVariable(term, accumulator) || strings.Contains(term, "`"+accumulator+"`") {
+			return true
+		}
+	}
+	return false
 }
 
 // usable reports whether the plan applies in a scope: none of the step's
@@ -153,9 +174,10 @@ type reduceAppender struct {
 // step, and the result is false when it is false once, else null when it
 // is null once, else true (an empty list is true). The callbacks get the
 // accumulator and the item to bind. With an appender, a step folding into
-// a list appends its operands to a list the fold owns; the accumulator the
-// callbacks see is that list capped at its length, so nothing else appends
-// into it.
+// a list appends its operands to a list the fold owns; the accumulator
+// bound for the operands and the predicate is that list capped at its
+// length, so nothing else appends into it, and the result is a copy of its
+// own length (reduceAppendPlan).
 //
 // The accumulator counts against the statement's memory limit as it grows
 // (budget, #1343): checked after each step, so a step that takes it over
@@ -236,6 +258,13 @@ func runReduceForm(budget *expressionBudget, form reduceForm, accumulator interf
 	}
 	if form.all {
 		return result, nil
+	}
+	// The fold's list goes to its next owner (a row, a list, a property) as a
+	// list of its own length: that owner counts what it holds, and no spare
+	// capacity of the fold's list stays live behind it.
+	if list, isList := accumulator.([]interface{}); isList && owned != nil && len(list) == len(owned) &&
+		(len(list) == 0 || &list[0] == &owned[0]) && cap(owned) > len(owned) {
+		return append(make([]interface{}, 0, len(owned)), owned...), nil
 	}
 	return accumulator, nil
 }
