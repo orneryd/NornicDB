@@ -3,6 +3,7 @@ package fabric
 import (
 	"iter"
 	"strings"
+	"unicode"
 )
 
 // queryToken is a complete lexical unit with byte offsets in the original
@@ -88,22 +89,27 @@ func ClauseKeywordAt(query string, pos int, keyword string) bool {
 	if pos < 0 || pos >= len(query) || keyword == "" {
 		return false
 	}
-	words := strings.Fields(keyword)
-	if len(words) == 0 {
+	remaining := strings.TrimSpace(keyword)
+	if remaining == "" {
 		return false
 	}
-	matched := 0
+	matched := false
 	for token := range queryTokens(query) {
 		if token.start < pos {
 			continue
 		}
-		if matched == 0 && token.start != pos || !token.is(words[matched]) {
+		end := strings.IndexFunc(remaining, unicode.IsSpace)
+		if end < 0 {
+			end = len(remaining)
+		}
+		if !matched && token.start != pos || !token.is(remaining[:end]) {
 			return false
 		}
-		matched++
-		if matched == len(words) {
+		remaining = strings.TrimSpace(remaining[end:])
+		if remaining == "" {
 			return true
 		}
+		matched = true
 	}
 	return false
 }
