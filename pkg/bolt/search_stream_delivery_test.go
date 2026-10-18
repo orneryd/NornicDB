@@ -9,7 +9,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"io"
-	"strings"
 	"testing"
 )
 
@@ -47,7 +46,7 @@ func newPageDeliverySession(t *testing.T, capacity int) (*Session, *errorConn, *
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {
-		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"large": strings.Repeat("x", 70000)}})
+		_, err := store.CreateNode(&storage.Node{ID: id, Properties: map[string]any{"content": "transport boundary"}})
 		require.NoError(t, err)
 	}
 	svc := search.NewService(store)
