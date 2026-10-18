@@ -538,7 +538,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		if !ok {
 			return nil, c.typeError("sourceNode", "Node")
 		}
-		config.SourceNode = storage.NodeID(source.key)
+		config.SourceNode = storage.NodeID(source.id)
 	}
 	if value := c.value("targetNodes"); value != nil {
 		targets, isList := cypherListValue(value)
@@ -551,7 +551,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 			if !ok {
 				return nil, c.typeError("targetNodes", "List")
 			}
-			config.TargetNodes[storage.NodeID(id.key)] = true
+			config.TargetNodes[storage.NodeID(id.id)] = true
 		}
 	}
 	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {

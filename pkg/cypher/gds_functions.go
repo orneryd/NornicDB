@@ -98,7 +98,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 		return nil, localizedError(localization.CypherGraphProceduresNodePropertyNotInGraph(key), nil)
 	}
 	ref, ok := readGDSNode(values[1], gdsStoredKinds)
-	id := ref.key
+	id := ref.id
 	if !ok {
 		return nil, fmt.Errorf("%s expects a node or node id as argument 2, got %s", name, cypherTypeSystemName(values[1]))
 	}
@@ -401,7 +401,7 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 		return nil
 	}
 	ref, ok := readGDSNode(value, gdsStoredKinds)
-	id := storage.NodeID(ref.key)
+	id := storage.NodeID(ref.id)
 	if !ok {
 		// Preserve asNode's extension: other values may name string IDs.
 		id = storage.NodeID(fmt.Sprint(value))

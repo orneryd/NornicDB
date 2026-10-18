@@ -280,9 +280,9 @@ func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func
 		return "", false
 	}
 	if ref.kind != gdsIDText {
-		return ref.key, true
+		return ref.id, true
 	}
-	node := ref.key
+	node := ref.id
 	if _, projected := proj.nodeIndex[node]; projected {
 		return node, true
 	}
