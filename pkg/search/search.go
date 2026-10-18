@@ -1473,15 +1473,7 @@ func (s *Service) MarkReadyDisabled() {
 // the construction path in getOrCreateSearchService) can observe whether
 // the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
-	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
-	s.orderDimensionChange(func() {
-		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
-		prevVec := s.vectorEnabled.Swap(vectorEnabled)
-		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
-			s.indexChanged()
-		}
-	})
-	return changed
+	return s.orderIndexFlags(bm25Enabled, vectorEnabled)
 }
 
 // IndexRevision is a number that advances whenever what a search can return

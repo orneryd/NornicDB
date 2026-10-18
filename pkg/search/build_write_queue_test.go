@@ -400,7 +400,7 @@ func BenchmarkQueuedNodeCopy(b *testing.B) {
 		EmbedMeta: map[string]any{"embedding_space": "model-1024"}}
 	b.ReportAllocs()
 	for range b.N {
-		if copyQueuedNode(node) == nil {
+		if copied, _ := copyQueuedNode(node); copied == nil {
 			b.Fatal("nil copy")
 		}
 	}
