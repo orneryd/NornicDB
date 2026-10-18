@@ -1,0 +1,23 @@
+tnrun: job j20261018112434-93260-8d6d: wt-cp144-1285@c26247cf, 1 untracked file(s); submitted in 3.1s
+tnrun: running
+tnrun job j20261018112434-93260-8d6d (wt-cp144-1285@c26247cf): worker 18, CPUs 36,37,38,39,100,101,102,103, commit c26247cfc4447fe0468738103ce4bb2db45c2af4, go1.26.9
+untracked files: overlaid j20261018112434-93260-8d6d.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run ./release_1285_probe.go
+warning: You appear to have cloned an empty repository.
+v1.4.3 source: f2ddd27cfae3788076778a0a0d48c827df046a3b
+DOWNGRADE: release write -> v1.4.3 read/update/delete -> release read
+write PASS: body keys=16, transaction keys=16; no 0x27/0x28 keys
+check PASS: body keys=16, transaction keys=16; no 0x27/0x28 keys
+mutate PASS: body keys=0, transaction keys=0; no 0x27/0x28 keys
+check-mutated PASS: body keys=0, transaction keys=0; no 0x27/0x28 keys
+UPGRADE: v1.4.3 write -> release read/update/delete -> v1.4.3 read
+write PASS: body keys=16, transaction keys=16; no 0x27/0x28 keys
+check PASS: body keys=16, transaction keys=16; no 0x27/0x28 keys
+tnrun: job j20261018112434-93260-8d6d: DONE exit 0 (default 0 in 19s); box 21s, total 23s
+mutate PASS: body keys=0, transaction keys=0; no 0x27/0x28 keys
+check-mutated PASS: body keys=0, transaction keys=0; no 0x27/0x28 keys
+BIDIRECTIONAL COMPATIBILITY PASS: separate chunks, sharded vectors, sidecar metadata, transaction writes and Unicode IDs
+=== parser default: exit 0 after 19s

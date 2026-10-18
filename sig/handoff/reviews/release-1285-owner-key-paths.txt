@@ -1,0 +1,42 @@
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:28:// space (prefixEmbedding, 0x08) so no new key prefix or migration arm is
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:35:// embeddingMetaKey creates the key for a node's sidecar embedding metadata
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:37:func embeddingMetaKey(nodeID NodeID) []byte {
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:38:	return embeddingKey(nodeID, reservedEmbeddingMetaChunkIndex)
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:76://   - chunk vectors under embeddingKey (old chunks replaced atomically, #703)
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:131:		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:146:	metaKey := embeddingMetaKey(node.ID)
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:351:	item, err := txn.Get(embeddingMetaKey(nodeID))
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:396:		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEmbedding}))
+wt-cp144-1285/pkg\storage\badger_embedding_sidecar.go:398:		for it.Rewind(); it.ValidForPrefix([]byte{prefixEmbedding}); it.Next() {
+wt-cp144-1285/pkg\storage\badger_embedding_cleanup.go:15:	prefix := embeddingPrefix(id)
+wt-cp144-1285/pkg\storage\badger_backup.go:305:		append([]byte{prefixEmbedding}, prefixBytes...),
+wt-cp144-1285/pkg\storage\badger.go:35:	prefixEmbedding        = byte(0x08) // embedding:nodeID:chunkIndex -> []float32 (separate storage for large embeddings)
+wt-cp144-1285/pkg\storage\badger_helpers.go:780:// embeddingKey creates a key for storing a chunk embedding separately.
+wt-cp144-1285/pkg\storage\badger_helpers.go:782:func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
+wt-cp144-1285/pkg\storage\badger_helpers.go:783:	key := []byte{prefixEmbedding}
+wt-cp144-1285/pkg\storage\badger_helpers.go:791:// embeddingChunkPartKey creates a key for a sharded embedding payload part.
+wt-cp144-1285/pkg\storage\badger_helpers.go:792:// Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
+wt-cp144-1285/pkg\storage\badger_helpers.go:793:func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
+wt-cp144-1285/pkg\storage\badger_helpers.go:794:	base := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg\storage\badger_helpers.go:802:	base := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg\storage\badger_helpers.go:832:func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) ([]embeddingWriteKV, error) {
+wt-cp144-1285/pkg\storage\badger_helpers.go:837:	baseKey := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg\storage\badger_helpers.go:851:			key: embeddingChunkPartKey(nodeID, chunkIndex, part),
+wt-cp144-1285/pkg\storage\badger_helpers.go:867:// embeddingPrefix returns the prefix for scanning all embeddings for a node.
+wt-cp144-1285/pkg\storage\badger_helpers.go:869:func embeddingPrefix(nodeID NodeID) []byte {
+wt-cp144-1285/pkg\storage\badger_helpers.go:870:	key := []byte{prefixEmbedding}
+wt-cp144-1285/pkg\storage\badger_helpers.go:1144:// The worker's embedding sidecar (embeddingMetaKey) takes precedence over
+wt-cp144-1285/pkg\storage\badger_helpers.go:1262:		embKey := embeddingKey(nodeID, i)
+wt-cp144-1285/pkg\storage\badger_helpers.go:1280:				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
+wt-cp144-1285/pkg\storage\buffered_recovery_bodies.go:153:	data, err := read.read(embeddingMetaKey(id), nil)
+wt-cp144-1285/pkg\storage\badger_transaction_snapshot_reads.go:119:	_, err := txn.Get(embeddingMetaKey(nodeID))
+wt-cp144-1285/pkg\storage\badger_transaction.go:757:			kvs, err := buildEmbeddingChunkWriteKVs(node.ID, i, emb)
+wt-cp144-1285/pkg\storage\badger_transaction.go:982:			tx.bufferSet(embeddingMetaKey(node.ID), data)
+wt-cp144-1285/pkg\storage\badger_transaction.go:995:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+wt-cp144-1285/pkg\storage\badger_transaction.go:1060:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+wt-cp144-1285/pkg\storage\badger_serializer_detection.go:46:			{prefixEmbedding},
+wt-cp144-1285/pkg\storage\badger_nodes.go:623:		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
+wt-cp144-1285/pkg\storage\key_families.go:18:	{prefixPendingEmbed, "index"}, {prefixEmbedding, "index"},
+wt-cp144-1285/pkg\storage\key_families.go:53:	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
+wt-cp144-1285/pkg\storage\transaction_sidecar_metadata.go:15:	key := embeddingMetaKey(node.ID)
+wt-cp144-1285/pkg\storage\serializer_migration.go:132:	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEmbedding, "embedding", func(data []byte) (any, error) {

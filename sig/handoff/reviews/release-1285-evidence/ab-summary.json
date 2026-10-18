@@ -1,0 +1,224 @@
+{
+  "rows": [
+    {
+      "name": "BenchmarkDeleteNode_SeparateEmbeddings-4",
+      "unit": "ns/op",
+      "base": 171109,
+      "head": 161747.5,
+      "delta": -5.471073993770048,
+      "p": 0.7337300050490149,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        135522,
+        213247,
+        126751,
+        206866
+      ]
+    },
+    {
+      "name": "BenchmarkDeleteNode_SeparateEmbeddings-4",
+      "unit": "B/op",
+      "base": 235816.5,
+      "head": 256087.5,
+      "delta": 8.59609060434703,
+      "p": 0.24132160959840973,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        179900,
+        281709,
+        175026,
+        383222
+      ]
+    },
+    {
+      "name": "BenchmarkDeleteNode_SeparateEmbeddings-4",
+      "unit": "allocs/op",
+      "base": 508,
+      "head": 508,
+      "delta": 0,
+      "p": 1,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        500,
+        533,
+        502,
+        523
+      ]
+    },
+    {
+      "name": "BenchmarkBadgerEngine_UpdateNode_MVCC-4",
+      "unit": "ns/op",
+      "base": 44144,
+      "head": 46918,
+      "delta": 6.283979702790865,
+      "p": 1,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        40214,
+        49766,
+        38626,
+        65753
+      ]
+    },
+    {
+      "name": "BenchmarkBadgerEngine_UpdateNode_MVCC-4",
+      "unit": "B/op",
+      "base": 10472,
+      "head": 10472,
+      "delta": 0,
+      "p": 0.4253332107821673,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        10471,
+        10473,
+        10471,
+        10473
+      ]
+    },
+    {
+      "name": "BenchmarkBadgerEngine_UpdateNode_MVCC-4",
+      "unit": "allocs/op",
+      "base": 200,
+      "head": 200,
+      "delta": 0,
+      "p": 1,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        200,
+        200,
+        200,
+        200
+      ]
+    },
+    {
+      "name": "BenchmarkUpdateNodeEmbeddingSidecar-4",
+      "unit": "ns/op",
+      "base": 27423.5,
+      "head": 25349.5,
+      "delta": -7.562856674020457,
+      "p": 0.16197241644712482,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        24346,
+        37314,
+        22929,
+        35829
+      ]
+    },
+    {
+      "name": "BenchmarkUpdateNodeEmbeddingSidecar-4",
+      "unit": "B/op",
+      "base": 10930.5,
+      "head": 10509.5,
+      "delta": -3.8516078861900227,
+      "p": 0.07555158097350523,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        10301,
+        11749,
+        10217,
+        11011
+      ]
+    },
+    {
+      "name": "BenchmarkUpdateNodeEmbeddingSidecar-4",
+      "unit": "allocs/op",
+      "base": 132,
+      "head": 129.5,
+      "delta": -1.8939393939393923,
+      "p": 0.000047314076243986264,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        132,
+        132,
+        129,
+        130
+      ]
+    },
+    {
+      "name": "BenchmarkStreamNodes_Full-4",
+      "unit": "ns/op",
+      "base": 4041613.5,
+      "head": 3747280.5,
+      "delta": -7.282561778853913,
+      "p": 0.08897300784507968,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        3747533,
+        5690704,
+        3346492,
+        5192995
+      ]
+    },
+    {
+      "name": "BenchmarkStreamNodes_Full-4",
+      "unit": "B/op",
+      "base": 1133648,
+      "head": 1133625,
+      "delta": -0.0020288484608999013,
+      "p": 0.3639852012025042,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        1133609,
+        1133719,
+        1133613,
+        1133678
+      ]
+    },
+    {
+      "name": "BenchmarkStreamNodes_Full-4",
+      "unit": "allocs/op",
+      "base": 20764,
+      "head": 20764,
+      "delta": 0,
+      "p": 0.36812025600869674,
+      "n": [
+        10,
+        10
+      ],
+      "spread": [
+        20764,
+        20765,
+        20764,
+        20764
+      ]
+    }
+  ],
+  "isolation": {
+    "median": 19.59,
+    "worst": 29.31
+  }
+}

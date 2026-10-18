@@ -1,0 +1,80 @@
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     804	    171272 ns/op	  237714 B/op	     510 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    3368	     49766 ns/op	   10473 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    3829	     26593 ns/op	   11263 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      28	   4230906 ns/op	 1133641 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     912	    138850 ns/op	  194715 B/op	     500 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2919	     48771 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4501	     25726 ns/op	   10616 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      32	   3747533 ns/op	 1133623 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     762	    170714 ns/op	  235529 B/op	     508 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2730	     43569 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4171	     24346 ns/op	   10911 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      32	   3765037 ns/op	 1133651 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     949	    144793 ns/op	  179900 B/op	     508 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2198	     48324 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4683	     26322 ns/op	   10472 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      20	   5125807 ns/op	 1133676 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     861	    135522 ns/op	  193053 B/op	     500 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    3056	     43101 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4131	     30676 ns/op	   10950 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      31	   3852321 ns/op	 1133661 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     660	    184317 ns/op	  215799 B/op	     505 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2946	     42686 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    3498	     32168 ns/op	   11660 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      33	   5445534 ns/op	 1133719 B/op	   20765 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     597	    213247 ns/op	  236104 B/op	     529 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2742	     47297 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    3727	     37314 ns/op	   11377 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      20	   5690704 ns/op	 1133617 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     736	    179970 ns/op	  242727 B/op	     506 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2968	     41597 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    3432	     34569 ns/op	   11749 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      19	   5615559 ns/op	 1133609 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     621	    170946 ns/op	  281709 B/op	     515 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2640	     44719 ns/op	   10471 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4890	     27790 ns/op	   10319 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      32	   3788212 ns/op	 1133645 B/op	   20764 allocs/op
+goos: linux
+goarch: amd64
+pkg: github.com/orneryd/nornicdb/pkg/storage
+cpu: AMD EPYC 7713P 64-Core Processor               
+BenchmarkDeleteNode_SeparateEmbeddings-4   	     936	    183364 ns/op	  246243 B/op	     533 allocs/op
+BenchmarkBadgerEngine_UpdateNode_MVCC-4    	    2719	     40214 ns/op	   10472 B/op	     200 allocs/op
+BenchmarkUpdateNodeEmbeddingSidecar-4      	    4969	     27057 ns/op	   10301 B/op	     132 allocs/op
+BenchmarkStreamNodes_Full-4                	      32	   3811874 ns/op	 1133670 B/op	   20764 allocs/op

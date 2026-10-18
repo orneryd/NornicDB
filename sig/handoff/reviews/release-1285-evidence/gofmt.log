@@ -1,0 +1,10 @@
+tnrun: job i20261018112306-91204-e90b: wt-cp144-1285@c26247cf, bundle 4 commit(s); submitted in 4.2s
+tnrun: running
+tnrun: job i20261018112306-91204-e90b: DONE exit 0 (default 0 in 0s); box 18s, total 24s
+tnrun job i20261018112306-91204-e90b (wt-cp144-1285@c26247cf): worker 5, CPUs 14,15,78,79, commit c26247cfc4447fe0468738103ce4bb2db45c2af4, go1.26.9
+/work/tnrun/in/i20261018112306-91204-e90b.bundle is okay
+prep ui: npm ci && npm run build in 17s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/storage/badger_embedding_cleanup.go pkg/storage/badger_embedding_key_cleanup_test.go pkg/storage/badger_edges.go pkg/storage/badger_nodes.go pkg/storage/badger_embedding_sidecar.go
+=== parser default: exit 0 after 0s

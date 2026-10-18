@@ -1,0 +1,25 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018135234-18328-bba3: wt-release-1285-owner-develop@16923aef; durably submitted in 2.9s; result remains retrievable by id
+tnrun: job i20261018135234-18328-bba3: wt-release-1285-owner-develop@16923aef, 4 untracked file(s); submitted in 3.5s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/storage 0.33 GiB
+tnrun job i20261018135234-18328-bba3 (wt-release-1285-owner-develop@16923aef): worker 15, CPUs 34,35,98,99, commit 16923aef778025fab3490f6a57549763b536f3d5, go1.26.9
+untracked files: overlaid i20261018135234-18328-bba3.tar
+prep ui: npm ci && npm run build in 12s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -race -run TestRelease1285PersistedReplacement -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRelease1285PersistedReplacement
+=== RUN   TestRelease1285PersistedReplacement/sync/created
+=== RUN   TestRelease1285PersistedReplacement/sync/committed
+=== RUN   TestRelease1285PersistedReplacement/buffered/created
+=== RUN   TestRelease1285PersistedReplacement/buffered/committed
+--- PASS: TestRelease1285PersistedReplacement (0.86s)
+    --- PASS: TestRelease1285PersistedReplacement/sync/created (0.17s)
+    --- PASS: TestRelease1285PersistedReplacement/sync/committed (0.32s)
+    --- PASS: TestRelease1285PersistedReplacement/buffered/created (0.15s)
+    --- PASS: TestRelease1285PersistedReplacement/buffered/committed (0.22s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	2.110s
+=== parser default: exit 0 after 71s
+tnrun: job i20261018135234-18328-bba3: DONE exit 0 (default 0 in 71s); box 84s, total 124s; stored for reuse: default

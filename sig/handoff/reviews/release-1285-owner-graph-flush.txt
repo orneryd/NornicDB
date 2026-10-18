@@ -1,0 +1,11 @@
+Node: .flushBufferedWrites()
+  ID:        storage_badgertransaction_flushbufferedwrites
+  Source:    pkg/storage/badger_transaction.go L662
+  Type:      code
+  Community: 
+  Degree:    3
+
+Connections (3):
+  <-- BadgerTransaction [method] [EXTRACTED] pkg/storage/badger_transaction.go:L662
+  --> batchWriter [references] [EXTRACTED] pkg/storage/badger_transaction.go:L662
+  <-- .commit() [calls] [EXTRACTED] pkg/storage/badger_transaction.go:L2949

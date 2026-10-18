@@ -1,0 +1,18 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018112329-88168-b042: wt-release-1285-v143@0971b813, bundle 1 commit(s); submitted in 4.0s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/storage 0.03 GiB
+tnrun job i20261018112329-88168-b042 (wt-release-1285-v143@0971b813): worker 17, CPUs 32,33,34,35,96,97,98,99, commit 0971b813dd8c7b86d16a476adcb5849ee87596d7, go1.26.9
+/work/tnrun/in/i20261018112329-88168-b042.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -run Test(DeleteNode_RemovesEverySeparatelyStoredEmbeddingKey|UpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey)$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestDeleteNode_RemovesEverySeparatelyStoredEmbeddingKey
+--- PASS: TestDeleteNode_RemovesEverySeparatelyStoredEmbeddingKey (0.01s)
+=== RUN   TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey
+--- PASS: TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey (0.01s)
+tnrun: job i20261018112329-88168-b042: DONE exit 0 (default 0 in 35s); box 36s, total 44s; stored for reuse: default
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	0.178s
+=== parser default: exit 0 after 35s

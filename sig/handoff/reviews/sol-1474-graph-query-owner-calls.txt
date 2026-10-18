@@ -1,0 +1,90 @@
+Graph: /tmp/graph-wt-review-1474/graphify-out/graph.json (52501 nodes) | Traversal: BFS depth=2 | Start: ['visitEmbeddingKeys()'] | Context: call (explicit) | 31 nodes found
+
+[i] Complete answer over budget: all 31 nodes and 55 edges shown (~3560 tokens vs the requested ~2000-token budget). Edges are never dropped once every node fits, so this is already the full answer — raising --budget further will not shrink it. Narrow with context_filter=['call'] or use get_node for a specific symbol to reduce size instead.
+
+NODE visitEmbeddingKeys() [src=pkg/storage/badger_embedding_cleanup.go loc=L14 community=]
+NODE badgerPrefixIteratorOptions() [src=pkg/storage/badger_iter_helpers.go loc=L35 community=]
+NODE .visit() [src=pkg/search/serving_publication_test.go loc=L513 community=]
+NODE .UpdateNodeEmbeddingSidecar() [src=pkg/storage/badger_embedding_sidecar.go loc=L90 community=]
+NODE embeddingPrefix() [src=pkg/storage/badger_helpers.go loc=L869 community=]
+NODE .replaceSeparateEmbeddingChunks() [src=pkg/storage/badger_nodes.go loc=L612 community=]
+NODE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() [src=pkg/storage/badger_embedding_key_cleanup_test.go loc=L86 community=]
+NODE deleteEmbeddingKeysInTxn() [src=pkg/storage/badger_embedding_cleanup.go loc=L8 community=]
+NODE NodeID [src=pkg/storage/types.go loc=L108 community=]
+NODE newTestEngine() [src=pkg/storage/badger_access_meta_test.go loc=L10 community=]
+NODE localizedError() [src=pkg/storage/localized_errors.go loc=L9 community=]
+NODE SafePreallocSum() [src=pkg/util/alloc.go loc=L76 community=]
+NODE encodeValue() [src=pkg/storage/badger_serialization.go loc=L99 community=]
+NODE .UpdateNode() [src=pkg/storage/badger_nodes.go loc=L337 community=]
+NODE pendingEmbedKey() [src=pkg/storage/badger_helpers.go loc=L770 community=]
+NODE .CreateNode() [src=pkg/storage/badger_nodes.go loc=L20 community=]
+NODE embeddingMetaKey() [src=pkg/storage/badger_embedding_sidecar.go loc=L37 community=]
+NODE .deleteNodeBuffered() [src=pkg/storage/badger_transaction.go loc=L1056 community=]
+NODE .reconcileManagedEmbeddingsLocked() [src=pkg/storage/badger_transaction.go loc=L949 community=]
+NODE buildEmbeddingChunkWriteKVs() [src=pkg/storage/badger_helpers.go loc=L832 community=]
+NODE TestSeparateEmbeddingChunkHelpers() [src=pkg/storage/storage_gap_extra_test.go loc=L994 community=]
+NODE embeddingChunkPartKey() [src=pkg/storage/badger_helpers.go loc=L793 community=]
+NODE .deleteNodeInTxn() [src=pkg/storage/badger_edges.go loc=L634 community=]
+NODE StorageClientNodeEmbeddingChunkStoreFailed() [src=pkg/localization/messages_storage_client.go loc=L131 community=]
+NODE StorageClientNodeIDNamespaceUnprefixed() [src=pkg/localization/messages_storage_client.go loc=L91 community=]
+NODE countEmbeddingKeys() [src=pkg/storage/badger_embedding_key_cleanup_test.go loc=L24 community=]
+NODE TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails() [src=pkg/storage/badger_embedding_key_cleanup_test.go loc=L74 community=]
+NODE StorageClientNodeEmbeddingChunksDeleteFailed() [src=pkg/localization/messages_storage_client.go loc=L127 community=]
+NODE TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks() [src=pkg/storage/badger_nodes_edges_mvcc_extra_test.go loc=L35 community=]
+NODE TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate() [src=pkg/storage/storage_policy_regression_test.go loc=L13 community=]
+NODE .checkEmbeddingSourceInTxn() [src=pkg/storage/badger_embedding_sidecar.go loc=L206 community=]
+EDGE visitEmbeddingKeys() --calls [INFERRED context=call]--> .visit() at=pkg/storage/badger_embedding_cleanup.go:L21
+EDGE deleteEmbeddingKeysInTxn() --calls [EXTRACTED context=call]--> visitEmbeddingKeys() at=pkg/storage/badger_embedding_cleanup.go:L9
+EDGE visitEmbeddingKeys() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_embedding_cleanup.go:L15
+EDGE visitEmbeddingKeys() --calls [INFERRED context=call]--> badgerPrefixIteratorOptions() at=pkg/storage/badger_embedding_cleanup.go:L16
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [INFERRED context=call]--> visitEmbeddingKeys() at=pkg/storage/badger_embedding_key_cleanup_test.go:L99
+EDGE .UpdateNodeEmbeddingSidecar() --calls [INFERRED context=call]--> visitEmbeddingKeys() at=pkg/storage/badger_embedding_sidecar.go:L159
+EDGE .replaceSeparateEmbeddingChunks() --calls [INFERRED context=call]--> visitEmbeddingKeys() at=pkg/storage/badger_nodes.go:L615
+EDGE .UpdateNodeEmbeddingSidecar() --calls [EXTRACTED context=call]--> StorageClientNodeIDNamespaceUnprefixed() at=pkg/storage/badger_embedding_sidecar.go:L100
+EDGE .UpdateNodeEmbeddingSidecar() --calls [EXTRACTED context=call]--> StorageClientNodeEmbeddingChunkStoreFailed() at=pkg/storage/badger_embedding_sidecar.go:L140
+EDGE .UpdateNodeEmbeddingSidecar() --calls [EXTRACTED context=call]--> embeddingMetaKey() at=pkg/storage/badger_embedding_sidecar.go:L146
+EDGE .UpdateNodeEmbeddingSidecar() --calls [EXTRACTED context=call]--> .checkEmbeddingSourceInTxn() at=pkg/storage/badger_embedding_sidecar.go:L156
+EDGE .UpdateNodeEmbeddingSidecar() --calls [INFERRED context=call]--> localizedError() at=pkg/storage/badger_embedding_sidecar.go:L100
+EDGE .UpdateNodeEmbeddingSidecar() --calls [EXTRACTED context=call]--> SafePreallocSum() at=pkg/storage/badger_embedding_sidecar.go:L106
+EDGE .UpdateNodeEmbeddingSidecar() --calls [INFERRED context=call]--> encodeValue() at=pkg/storage/badger_embedding_sidecar.go:L119
+EDGE .UpdateNodeEmbeddingSidecar() --calls [INFERRED context=call]--> buildEmbeddingChunkWriteKVs() at=pkg/storage/badger_embedding_sidecar.go:L131
+EDGE .UpdateNodeEmbeddingSidecar() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_embedding_sidecar.go:L152
+EDGE .replaceSeparateEmbeddingChunks() --calls [EXTRACTED context=call]--> StorageClientNodeEmbeddingChunksDeleteFailed() at=pkg/storage/badger_nodes.go:L620
+EDGE .replaceSeparateEmbeddingChunks() --calls [EXTRACTED context=call]--> StorageClientNodeEmbeddingChunkStoreFailed() at=pkg/storage/badger_nodes.go:L632
+EDGE .replaceSeparateEmbeddingChunks() --calls [INFERRED context=call]--> buildEmbeddingChunkWriteKVs() at=pkg/storage/badger_nodes.go:L623
+EDGE .CreateNode() --calls [EXTRACTED context=call]--> .replaceSeparateEmbeddingChunks() at=pkg/storage/badger_nodes.go:L144
+EDGE .UpdateNode() --calls [EXTRACTED context=call]--> .replaceSeparateEmbeddingChunks() at=pkg/storage/badger_nodes.go:L568
+EDGE .replaceSeparateEmbeddingChunks() --calls [INFERRED context=call]--> localizedError() at=pkg/storage/badger_nodes.go:L620
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [INFERRED context=call]--> newTestEngine() at=pkg/storage/badger_embedding_key_cleanup_test.go:L87
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [EXTRACTED context=call]--> countEmbeddingKeys() at=pkg/storage/badger_embedding_key_cleanup_test.go:L114
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_embedding_key_cleanup_test.go:L88
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [INFERRED context=call]--> embeddingMetaKey() at=pkg/storage/badger_embedding_key_cleanup_test.go:L111
+EDGE TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards() --calls [INFERRED context=call]--> embeddingChunkPartKey() at=pkg/storage/badger_embedding_key_cleanup_test.go:L112
+EDGE .deleteNodeInTxn() --calls [INFERRED context=call]--> deleteEmbeddingKeysInTxn() at=pkg/storage/badger_edges.go:L639
+EDGE TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails() --calls [INFERRED context=call]--> deleteEmbeddingKeysInTxn() at=pkg/storage/badger_embedding_key_cleanup_test.go:L81
+EDGE .UpdateNode() --calls [INFERRED context=call]--> deleteEmbeddingKeysInTxn() at=pkg/storage/badger_nodes.go:L505
+EDGE countEmbeddingKeys() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_embedding_key_cleanup_test.go:L29
+EDGE TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_nodes_edges_mvcc_extra_test.go:L53
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_transaction.go:L995
+EDGE .deleteNodeBuffered() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_transaction.go:L1060
+EDGE TestSeparateEmbeddingChunkHelpers() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/storage_gap_extra_test.go:L1000
+EDGE TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/storage_policy_regression_test.go:L32
+EDGE .CreateNode() --calls [EXTRACTED context=call]--> StorageClientNodeIDNamespaceUnprefixed() at=pkg/storage/badger_nodes.go:L47
+EDGE .UpdateNode() --calls [EXTRACTED context=call]--> StorageClientNodeIDNamespaceUnprefixed() at=pkg/storage/badger_nodes.go:L360
+EDGE TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails() --calls [INFERRED context=call]--> newTestEngine() at=pkg/storage/badger_embedding_key_cleanup_test.go:L75
+EDGE TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks() --calls [INFERRED context=call]--> newTestEngine() at=pkg/storage/badger_nodes_edges_mvcc_extra_test.go:L36
+EDGE TestEmbeddingKeysCleanedOnDeleteAndInlineUpdate() --calls [INFERRED context=call]--> newTestEngine() at=pkg/storage/storage_policy_regression_test.go:L20
+EDGE TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_embedding_key_cleanup_test.go:L76
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> embeddingMetaKey() at=pkg/storage/badger_transaction.go:L982
+EDGE buildEmbeddingChunkWriteKVs() --calls [EXTRACTED context=call]--> embeddingChunkPartKey() at=pkg/storage/badger_helpers.go:L851
+EDGE buildEmbeddingChunkWriteKVs() --calls [EXTRACTED context=call]--> SafePreallocSum() at=pkg/storage/badger_helpers.go:L842
+EDGE .deleteNodeInTxn() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_edges.go:L648
+EDGE .CreateNode() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_nodes.go:L121
+EDGE .UpdateNode() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_nodes.go:L430
+EDGE .deleteNodeBuffered() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_transaction.go:L1076
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> encodeValue() at=pkg/storage/badger_transaction.go:L978
+EDGE .CreateNode() --calls [INFERRED context=call]--> localizedError() at=pkg/storage/badger_nodes.go:L47
+EDGE .UpdateNode() --calls [INFERRED context=call]--> localizedError() at=pkg/storage/badger_nodes.go:L360
+EDGE TestSeparateEmbeddingChunkHelpers() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/storage_gap_extra_test.go:L1013
+EDGE .deleteNodeInTxn() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_edges.go:L658
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_transaction.go:L1086

@@ -1,0 +1,1 @@
+{"state": "DONE", "exit": 0, "rounds": 10, "worker": "bench", "seconds": 150, "slot": 6, "buildCpus": "40,41,42,43,104,105,106,107", "runCpus": "40,41,42,43", "startedAt": 1792328076, "finishedAt": 1792328226.7004888}

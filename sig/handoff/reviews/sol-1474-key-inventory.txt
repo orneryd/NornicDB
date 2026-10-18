@@ -1,0 +1,46 @@
+pkg\storage\badger_backup.go:305:		append([]byte{prefixEmbedding}, prefixBytes...),
+pkg\storage\badger.go:35:	prefixEmbedding        = byte(0x08) // embedding:nodeID:chunkIndex -> []float32 (separate storage for large embeddings)
+pkg\storage\badger_edges.go:639:	if err := deleteEmbeddingKeysInTxn(txn, id); err != nil {
+pkg\storage\badger_embedding_cleanup.go:8:func deleteEmbeddingKeysInTxn(txn *badger.Txn, id NodeID) error {
+pkg\storage\badger_embedding_cleanup.go:9:	return visitEmbeddingKeys(txn, id, txn.Delete)
+pkg\storage\badger_embedding_cleanup.go:14:func visitEmbeddingKeys(txn *badger.Txn, id NodeID, visit func([]byte) error) error {
+pkg\storage\badger_embedding_cleanup.go:15:	prefix := embeddingPrefix(id)
+pkg\storage\badger_embedding_sidecar.go:28:// space (prefixEmbedding, 0x08) so no new key prefix or migration arm is
+pkg\storage\badger_embedding_sidecar.go:37:func embeddingMetaKey(nodeID NodeID) []byte {
+pkg\storage\badger_embedding_sidecar.go:38:	return embeddingKey(nodeID, reservedEmbeddingMetaChunkIndex)
+pkg\storage\badger_embedding_sidecar.go:131:		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
+pkg\storage\badger_embedding_sidecar.go:146:	metaKey := embeddingMetaKey(node.ID)
+pkg\storage\badger_embedding_sidecar.go:159:			if err := visitEmbeddingKeys(txn, node.ID, func(key []byte) error {
+pkg\storage\badger_embedding_sidecar.go:351:	item, err := txn.Get(embeddingMetaKey(nodeID))
+pkg\storage\badger_embedding_sidecar.go:396:		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEmbedding}))
+pkg\storage\badger_embedding_sidecar.go:398:		for it.Rewind(); it.ValidForPrefix([]byte{prefixEmbedding}); it.Next() {
+pkg\storage\badger_helpers.go:782:func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
+pkg\storage\badger_helpers.go:783:	key := []byte{prefixEmbedding}
+pkg\storage\badger_helpers.go:792:// Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
+pkg\storage\badger_helpers.go:793:func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
+pkg\storage\badger_helpers.go:794:	base := embeddingKey(nodeID, chunkIndex)
+pkg\storage\badger_helpers.go:802:	base := embeddingKey(nodeID, chunkIndex)
+pkg\storage\badger_helpers.go:832:func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) ([]embeddingWriteKV, error) {
+pkg\storage\badger_helpers.go:837:	baseKey := embeddingKey(nodeID, chunkIndex)
+pkg\storage\badger_helpers.go:851:			key: embeddingChunkPartKey(nodeID, chunkIndex, part),
+pkg\storage\badger_helpers.go:869:func embeddingPrefix(nodeID NodeID) []byte {
+pkg\storage\badger_helpers.go:870:	key := []byte{prefixEmbedding}
+pkg\storage\badger_helpers.go:1262:		embKey := embeddingKey(nodeID, i)
+pkg\storage\badger_helpers.go:1280:				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
+pkg\storage\badger_nodes.go:144:		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
+pkg\storage\badger_nodes.go:505:			if err := deleteEmbeddingKeysInTxn(txn, node.ID); err != nil {
+pkg\storage\badger_nodes.go:568:		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
+pkg\storage\badger_nodes.go:612:func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
+pkg\storage\badger_nodes.go:615:		return visitEmbeddingKeys(txn, nodeID, func(key []byte) error {
+pkg\storage\badger_nodes.go:623:		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
+pkg\storage\badger_serializer_detection.go:46:			{prefixEmbedding},
+pkg\storage\badger_transaction.go:757:			kvs, err := buildEmbeddingChunkWriteKVs(node.ID, i, emb)
+pkg\storage\badger_transaction.go:982:			tx.bufferSet(embeddingMetaKey(node.ID), data)
+pkg\storage\badger_transaction.go:995:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+pkg\storage\badger_transaction.go:1060:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+pkg\storage\badger_transaction_snapshot_reads.go:119:	_, err := txn.Get(embeddingMetaKey(nodeID))
+pkg\storage\buffered_recovery_bodies.go:153:	data, err := read.read(embeddingMetaKey(id), nil)
+pkg\storage\key_families.go:18:	{prefixPendingEmbed, "index"}, {prefixEmbedding, "index"},
+pkg\storage\key_families.go:53:	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
+pkg\storage\serializer_migration.go:132:	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEmbedding, "embedding", func(data []byte) (any, error) {
+pkg\storage\transaction_sidecar_metadata.go:15:	key := embeddingMetaKey(node.ID)

@@ -1,0 +1,118 @@
+package main
+
+import (
+    "bytes"
+    "errors"
+    "fmt"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "reflect"
+
+    "github.com/dgraph-io/badger/v4"
+    "github.com/orneryd/nornicdb/pkg/storage"
+)
+
+const oldSHA = "f2ddd27cf"
+var ids = []storage.NodeID{"test:body", "test:shards", "test:sidecar", "test:transaction", "test:émbedding"}
+
+func must(err error) { if err != nil { panic(err) } }
+func chunks(id storage.NodeID) [][]float32 {
+    count, width := 16, 1024
+    if id == "test:shards" { count, width = 1, 32768 }
+    result := make([][]float32, count)
+    for i := range result { result[i] = make([]float32, width); result[i][i+3] = float32(i+17) }
+    return result
+}
+func countKeys(dir string, id storage.NodeID) int {
+    db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil)); must(err)
+    defer db.Close()
+    prefix := append(append([]byte{0x08}, []byte(id)...), 0)
+    count := 0
+    must(db.View(func(txn *badger.Txn) error {
+        opts := badger.DefaultIteratorOptions
+        opts.PrefetchValues = false
+        it := txn.NewIterator(opts); defer it.Close()
+        for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() { count++ }
+        for _, family := range []byte{0x27, 0x28} {
+            it.Seek([]byte{family})
+            if it.ValidForPrefix([]byte{family}) { return fmt.Errorf("unexpected embedding family %#x", family) }
+        }
+        return nil
+    }))
+    return count
+}
+func operation(mode, dir string) {
+    engine, err := storage.NewBadgerEngine(dir); must(err)
+    switch mode {
+    case "write":
+        for _, id := range ids {
+            node := &storage.Node{ID:id, Labels:[]string{"Doc"}, Properties:map[string]any{"k":"before"}, ChunkEmbeddings:chunks(id)}
+            switch id {
+            case "test:sidecar":
+                _, err = engine.CreateNode(&storage.Node{ID:id, Labels:node.Labels, Properties:node.Properties}); must(err)
+                body, e := engine.GetNode(id); must(e)
+                body.ChunkEmbeddings = node.ChunkEmbeddings
+                body.EmbedMeta = map[string]any{"chunk_count":16, "origin":"compat-sidecar"}
+                must(engine.UpdateNodeEmbeddingSidecar(body))
+            case "test:transaction":
+                tx, e := engine.BeginTransaction(); must(e)
+                _, e = tx.CreateNode(node); must(e); must(tx.Commit())
+            default:
+                _, err = engine.CreateNode(node); must(err)
+            }
+        }
+    case "check", "check-mutated":
+        for _, id := range ids {
+            node, e := engine.GetNode(id)
+            if mode == "check-mutated" && id == "test:transaction" {
+                if !errors.Is(e, storage.ErrNotFound) { panic(fmt.Sprintf("deleted node %s: %v", id, e)) }; continue
+            }
+            must(e)
+            wanted := chunks(id)
+            if mode == "check-mutated" && id == "test:body" { wanted = [][]float32{{2,3,5}} }
+            if !reflect.DeepEqual(wanted, node.ChunkEmbeddings) { panic(fmt.Sprintf("embeddings differ for %s", id)) }
+            if id == "test:sidecar" && node.EmbedMeta["origin"] != "compat-sidecar" { panic("sidecar metadata missing") }
+        }
+    case "mutate":
+        must(engine.UpdateNode(&storage.Node{ID:"test:body", Labels:[]string{"Doc"}, Properties:map[string]any{"k":"after"}, ChunkEmbeddings:[][]float32{{2,3,5}}}))
+        must(engine.DeleteNode("test:transaction"))
+    default: panic(mode)
+    }
+    must(engine.Close())
+    body, removed := countKeys(dir, "test:body"), countKeys(dir, "test:transaction")
+    fmt.Printf("%s PASS: body keys=%d, transaction keys=%d; no 0x27/0x28 keys\n", mode, body, removed)
+}
+func command(name string, args ...string) {
+    cmd := exec.Command(name,args...)
+    cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+    must(cmd.Run())
+}
+func main() {
+    if len(os.Args) == 3 { operation(os.Args[1], os.Args[2]); return }
+    root, err := os.MkdirTemp("", "release-1285-compat-"); must(err); defer os.RemoveAll(root)
+    oldRepo := filepath.Join(root,"v143-src")
+    command("git", "clone", "--quiet", "--no-checkout", "--shared", "/work/verify/src.git", oldRepo)
+    command("git", "-C", oldRepo, "checkout", "--quiet", "--detach", oldSHA)
+    var out bytes.Buffer
+    revision := exec.Command("git", "-C", oldRepo, "rev-parse", "HEAD"); revision.Stdout=&out; must(revision.Run())
+    fmt.Printf("v1.4.3 source: %s",out.String())
+    source, err := filepath.Abs("release_1285_probe.go"); must(err)
+    oldExe := filepath.Join(root,"v143-probe")
+    command("go", "-C", oldRepo, "build", "-tags", "noui,nolocalllm", "-o", oldExe, source)
+    newExe, err := os.Executable(); must(err)
+    downgrade := filepath.Join(root,"downgrade-store")
+    fmt.Println("DOWNGRADE: release write -> v1.4.3 read/update/delete -> release read")
+    command(newExe,"write",downgrade)
+    command(oldExe,"check",downgrade)
+    command(oldExe,"mutate",downgrade)
+    command(newExe,"check-mutated",downgrade)
+    upgrade := filepath.Join(root,"upgrade-store")
+    fmt.Println("UPGRADE: v1.4.3 write -> release read/update/delete -> v1.4.3 read")
+    command(oldExe,"write",upgrade)
+    command(newExe,"check",upgrade)
+    command(newExe,"mutate",upgrade)
+    if countKeys(upgrade,"test:body") != 0 || countKeys(upgrade,"test:transaction") != 0 { panic("release cleanup left keys") }
+    command(oldExe,"check-mutated",upgrade)
+    fmt.Println("BIDIRECTIONAL COMPATIBILITY PASS: separate chunks, sharded vectors, sidecar metadata, transaction writes and Unicode IDs")
+}

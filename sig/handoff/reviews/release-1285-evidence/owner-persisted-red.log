@@ -1,0 +1,45 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018135234-8396-e297: wt-release-1285-owner-red@24d08776; durably submitted in 2.5s; result remains retrievable by id
+tnrun: job i20261018135234-8396-e297: wt-release-1285-owner-red@24d08776, 5 untracked file(s); submitted in 3.0s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/storage 0.26 GiB
+tnrun job i20261018135234-8396-e297 (wt-release-1285-owner-red@24d08776): worker 14, CPUs 32,33,96,97, commit 24d08776cdb9cb624da1073007da437306518426, go1.26.9
+untracked files: overlaid i20261018135234-8396-e297.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -race -run TestRelease1285PersistedReplacement -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRelease1285PersistedReplacement
+=== RUN   TestRelease1285PersistedReplacement/sync/created
+    release_1285_persisted_probe_test.go:35: 
+        	Error Trace:	/repo/pkg/storage/release_1285_persisted_probe_test.go:35
+        	Error:      	Should be true
+        	Test:       	TestRelease1285PersistedReplacement/sync/created
+        	Messages:   	the final replacement must survive close/reopen; cached values are insufficient proof
+=== RUN   TestRelease1285PersistedReplacement/sync/committed
+    release_1285_persisted_probe_test.go:35: 
+        	Error Trace:	/repo/pkg/storage/release_1285_persisted_probe_test.go:35
+        	Error:      	Should be true
+        	Test:       	TestRelease1285PersistedReplacement/sync/committed
+        	Messages:   	the final replacement must survive close/reopen; cached values are insufficient proof
+=== RUN   TestRelease1285PersistedReplacement/buffered/created
+    release_1285_persisted_probe_test.go:35: 
+        	Error Trace:	/repo/pkg/storage/release_1285_persisted_probe_test.go:35
+        	Error:      	Should be true
+        	Test:       	TestRelease1285PersistedReplacement/buffered/created
+        	Messages:   	the final replacement must survive close/reopen; cached values are insufficient proof
+=== RUN   TestRelease1285PersistedReplacement/buffered/committed
+    release_1285_persisted_probe_test.go:35: 
+        	Error Trace:	/repo/pkg/storage/release_1285_persisted_probe_test.go:35
+        	Error:      	Should be true
+        	Test:       	TestRelease1285PersistedReplacement/buffered/committed
+        	Messages:   	the final replacement must survive close/reopen; cached values are insufficient proof
+--- FAIL: TestRelease1285PersistedReplacement (0.76s)
+    --- FAIL: TestRelease1285PersistedReplacement/sync/created (0.17s)
+    --- FAIL: TestRelease1285PersistedReplacement/sync/committed (0.25s)
+    --- FAIL: TestRelease1285PersistedReplacement/buffered/created (0.18s)
+    --- FAIL: TestRelease1285PersistedReplacement/buffered/committed (0.16s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	1.047s
+=== parser default: exit 1 after 71s
+tnrun: job i20261018135234-8396-e297: DONE exit 1 (default 1 in 71s); box 71s, total 184s

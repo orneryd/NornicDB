@@ -1,0 +1,21 @@
+PARITY CLEAN: release/v1.4.4@24d08776cdb9 vs develop@16923aef7780; 329 commits; patch=43 trailer=0 port=53 ledger=158 decision=75; classes(a=39,b=1,c=13,d=11); open(a=2,b=2,c=0,d=0); deferred-by-decision=20 groups/75 commits; failures=0; open PR mappings are planned, not shipped
+DEFER #1330 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1331 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1335 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1337 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1345 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1347 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1354 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1356 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1357 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1359 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1350 by user decision 2026-10-18 to 1.5.0; Per-database admission converges with FGAC in 1.5.0; develop continuation #1463/#1467.
+DEFER #1361 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1364 by user decision 2026-10-18 to 1.5.0; Per-database admission converges with FGAC in 1.5.0; develop continuation #1463/#1467.
+DEFER #1376 by user decision 2026-10-18 to 1.5.0; Provider lifecycle through shutdown, shutdown-only, present in 1.4.3; develop fix #1469 ships with 1.5.0.
+DEFER #1394 by user decision 2026-10-18 to 1.5.0; Provider lifecycle through shutdown, shutdown-only, present in 1.4.3; develop fix #1469 ships with 1.5.0.
+DEFER #1380 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1388 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1379 by user decision 2026-10-18 to 1.5.0; Provider lifecycle through shutdown, shutdown-only, present in 1.4.3; develop fix #1469 ships with 1.5.0.
+DEFER #1395 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.
+DEFER #1384 by user decision 2026-10-18 to 1.5.0; The scope/subquery convergence family, tied to #1459/#1468, ships together in 1.5.0.

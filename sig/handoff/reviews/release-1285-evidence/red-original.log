@@ -1,0 +1,26 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018112508-86008-7afc: wt-release-1285-red@2eca49f0, bundle 1 commit(s); submitted in 3.7s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/storage 0.03 GiB
+tnrun job i20261018112508-86008-7afc (wt-release-1285-red@2eca49f0): worker 9, CPUs 22,23,86,87, commit 2eca49f0bda17915a6ebe043c7154b83c72e52bb, go1.26.9
+/work/tnrun/in/i20261018112508-86008-7afc.bundle is okay
+prep ui: npm ci && npm run build in 17s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -run Test(DeleteNode_RemovesEverySeparatelyStoredEmbeddingKey|UpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey)$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestDeleteNode_RemovesEverySeparatelyStoredEmbeddingKey
+    badger_embedding_key_cleanup_test.go:53: 
+        	Error Trace:	/repo/pkg/storage/badger_embedding_key_cleanup_test.go:53
+        	Error:      	Should be zero, but was 14
+tnrun: job i20261018112508-86008-7afc: DONE exit 1 (default 1 in 49s); box 66s, total 75s
+        	Test:       	TestDeleteNode_RemovesEverySeparatelyStoredEmbeddingKey
+--- FAIL: TestDeleteNode_RemovesEverySeparatelyStoredEmbeddingKey (0.01s)
+=== RUN   TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey
+    badger_embedding_key_cleanup_test.go:68: 
+        	Error Trace:	/repo/pkg/storage/badger_embedding_key_cleanup_test.go:68
+        	Error:      	Should be zero, but was 14
+        	Test:       	TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey
+--- FAIL: TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	0.189s
+=== parser default: exit 1 after 49s

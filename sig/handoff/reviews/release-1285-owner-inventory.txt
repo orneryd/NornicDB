@@ -1,0 +1,86 @@
+wt-cp144-1285/pkg/storage\badger_embedding_cleanup.go:8:func deleteEmbeddingKeysInTxn(txn *badger.Txn, id NodeID) error {
+wt-cp144-1285/pkg/storage\badger_embedding_cleanup.go:9:	return visitEmbeddingKeys(txn, id, txn.Delete)
+wt-cp144-1285/pkg/storage\badger_embedding_cleanup.go:14:func visitEmbeddingKeys(txn *badger.Txn, id NodeID, visit func([]byte) error) error {
+wt-cp144-1285/pkg/storage\badger_embedding_cleanup.go:15:	prefix := embeddingPrefix(id)
+wt-cp144-1285/pkg/storage\badger.go:35:	prefixEmbedding        = byte(0x08) // embedding:nodeID:chunkIndex -> []float32 (separate storage for large embeddings)
+wt-cp144-1285/pkg/storage\badger_backup.go:305:		append([]byte{prefixEmbedding}, prefixBytes...),
+wt-cp144-1285/pkg/storage\badger_helpers.go:782:func embeddingKey(nodeID NodeID, chunkIndex int) []byte {
+wt-cp144-1285/pkg/storage\badger_helpers.go:783:	key := []byte{prefixEmbedding}
+wt-cp144-1285/pkg/storage\badger_helpers.go:792:// Format: embeddingKey(nodeID, chunkIndex) + 0x00 + partIndex (2 bytes big-endian)
+wt-cp144-1285/pkg/storage\badger_helpers.go:793:func embeddingChunkPartKey(nodeID NodeID, chunkIndex, partIndex int) []byte {
+wt-cp144-1285/pkg/storage\badger_helpers.go:794:	base := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg/storage\badger_helpers.go:802:	base := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg/storage\badger_helpers.go:832:func buildEmbeddingChunkWriteKVs(nodeID NodeID, chunkIndex int, emb []float32) ([]embeddingWriteKV, error) {
+wt-cp144-1285/pkg/storage\badger_helpers.go:837:	baseKey := embeddingKey(nodeID, chunkIndex)
+wt-cp144-1285/pkg/storage\badger_helpers.go:851:			key: embeddingChunkPartKey(nodeID, chunkIndex, part),
+wt-cp144-1285/pkg/storage\badger_helpers.go:869:func embeddingPrefix(nodeID NodeID) []byte {
+wt-cp144-1285/pkg/storage\badger_helpers.go:870:	key := []byte{prefixEmbedding}
+wt-cp144-1285/pkg/storage\badger_helpers.go:1262:		embKey := embeddingKey(nodeID, i)
+wt-cp144-1285/pkg/storage\badger_helpers.go:1280:				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
+wt-cp144-1285/pkg/storage\badger_edges.go:639:	if err := deleteEmbeddingKeysInTxn(txn, id); err != nil {
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:28:// space (prefixEmbedding, 0x08) so no new key prefix or migration arm is
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:37:func embeddingMetaKey(nodeID NodeID) []byte {
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:38:	return embeddingKey(nodeID, reservedEmbeddingMetaChunkIndex)
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:131:		kvs, err := buildEmbeddingChunkWriteKVs(node.ID, index, emb)
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:146:	metaKey := embeddingMetaKey(node.ID)
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:159:			if err := visitEmbeddingKeys(txn, node.ID, func(key []byte) error {
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:351:	item, err := txn.Get(embeddingMetaKey(nodeID))
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:396:		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEmbedding}))
+wt-cp144-1285/pkg/storage\badger_embedding_sidecar.go:398:		for it.Rewind(); it.ValidForPrefix([]byte{prefixEmbedding}); it.Next() {
+wt-cp144-1285/pkg/storage\badger_nodes.go:144:		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
+wt-cp144-1285/pkg/storage\badger_nodes.go:505:			if err := deleteEmbeddingKeysInTxn(txn, node.ID); err != nil {
+wt-cp144-1285/pkg/storage\badger_nodes.go:568:		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
+wt-cp144-1285/pkg/storage\badger_nodes.go:612:func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
+wt-cp144-1285/pkg/storage\badger_nodes.go:615:		return visitEmbeddingKeys(txn, nodeID, func(key []byte) error {
+wt-cp144-1285/pkg/storage\badger_nodes.go:623:		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
+wt-cp144-1285/pkg/storage\badger_serializer_detection.go:46:			{prefixEmbedding},
+wt-cp144-1285/pkg/storage\badger_transaction.go:88:	// tracked reads; statement-time writes are staged in pendingWrites /
+wt-cp144-1285/pkg/storage\badger_transaction.go:89:	// pendingDeletes instead (see stagedKV), so it stays far below Badger's
+wt-cp144-1285/pkg/storage\badger_transaction.go:184:	pendingWrites  map[string][]byte // key -> value for Set operations
+wt-cp144-1285/pkg/storage\badger_transaction.go:185:	pendingDeletes map[string]bool   // key -> true for Delete operations
+wt-cp144-1285/pkg/storage\badger_transaction.go:303:		pendingWrites:           make(map[string][]byte),
+wt-cp144-1285/pkg/storage\badger_transaction.go:304:		pendingDeletes:          make(map[string]bool),
+wt-cp144-1285/pkg/storage\badger_transaction.go:395:		tx.pendingWrites = nil
+wt-cp144-1285/pkg/storage\badger_transaction.go:396:		tx.pendingDeletes = nil
+wt-cp144-1285/pkg/storage\badger_transaction.go:401:		tx.pendingWrites = make(map[string][]byte)
+wt-cp144-1285/pkg/storage\badger_transaction.go:402:		tx.pendingDeletes = make(map[string]bool)
+wt-cp144-1285/pkg/storage\badger_transaction.go:607:	delete(tx.pendingDeletes, keyStr)
+wt-cp144-1285/pkg/storage\badger_transaction.go:611:	tx.pendingWrites[keyStr] = valueCopy
+wt-cp144-1285/pkg/storage\badger_transaction.go:619:	delete(tx.pendingWrites, keyStr)
+wt-cp144-1285/pkg/storage\badger_transaction.go:621:	tx.pendingDeletes[keyStr] = true
+wt-cp144-1285/pkg/storage\badger_transaction.go:664:	for keyStr := range tx.pendingDeletes {
+wt-cp144-1285/pkg/storage\badger_transaction.go:672:	for keyStr, value := range tx.pendingWrites {
+wt-cp144-1285/pkg/storage\badger_transaction.go:674:		if tx.pendingDeletes[keyStr] {
+wt-cp144-1285/pkg/storage\badger_transaction.go:684:	tx.pendingWrites = make(map[string][]byte)
+wt-cp144-1285/pkg/storage\badger_transaction.go:685:	tx.pendingDeletes = make(map[string]bool)
+wt-cp144-1285/pkg/storage\badger_transaction.go:757:			kvs, err := buildEmbeddingChunkWriteKVs(node.ID, i, emb)
+wt-cp144-1285/pkg/storage\badger_transaction.go:982:			tx.bufferSet(embeddingMetaKey(node.ID), data)
+wt-cp144-1285/pkg/storage\badger_transaction.go:995:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+wt-cp144-1285/pkg/storage\badger_transaction.go:1032:// writes are buffered (pendingWrites / pendingDeletes) and reach badgerTx only
+wt-cp144-1285/pkg/storage\badger_transaction.go:1060:	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+wt-cp144-1285/pkg/storage\badger_transaction.go:2902:	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
+wt-cp144-1285/pkg/storage\badger_transaction.go:4558:	return tx.observed || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 ||
+wt-cp144-1285/pkg/storage\badger_transaction_snapshot_reads.go:119:	_, err := txn.Get(embeddingMetaKey(nodeID))
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:24:// transaction's buffered writes (pendingWrites / pendingDeletes), which
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:108:	delete(tx.pendingDeletes, keyStr)
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:109:	tx.pendingWrites[keyStr] = value
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:141:		return s.pendingDeletes[string(key)]
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:150:		if s.pendingDeletes[string(key)] {
+wt-cp144-1285/pkg/storage\badger_transaction_staging.go:153:		if _, ok := s.pendingWrites[string(key)]; ok {
+wt-cp144-1285/pkg/storage\badger_write_behind.go:67:	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
+wt-cp144-1285/pkg/storage\badger_write_behind.go:86:		writes:    tx.pendingWrites,
+wt-cp144-1285/pkg/storage\badger_write_behind.go:87:		deletes:   tx.pendingDeletes,
+wt-cp144-1285/pkg/storage\buffered_recovery_bodies.go:153:	data, err := read.read(embeddingMetaKey(id), nil)
+wt-cp144-1285/pkg/storage\commit_buffer.go:781:// unlockPendingWrites releases the lock pendingWrites took.
+wt-cp144-1285/pkg/storage\key_families.go:18:	{prefixPendingEmbed, "index"}, {prefixEmbedding, "index"},
+wt-cp144-1285/pkg/storage\key_families.go:53:	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
+wt-cp144-1285/pkg/storage\pending_node_index.go:320:	if current := sm.pendingWrites.Load(); current != nil && current.source == source {
+wt-cp144-1285/pkg/storage\pending_node_index.go:323:	sm.pendingWrites.Store(&pendingWriteAttachment{source: source, namespace: namespace})
+wt-cp144-1285/pkg/storage\pending_node_index.go:331:	attachment := sm.pendingWrites.Load()
+wt-cp144-1285/pkg/storage\pending_node_index.go:358:	attachment := sm.pendingWrites.Load()
+wt-cp144-1285/pkg/storage\schema.go:106:	// pendingWrites is the write cache of an AsyncEngine above the engine that
+wt-cp144-1285/pkg/storage\schema.go:109:	pendingWrites atomic.Pointer[pendingWriteAttachment]
+wt-cp144-1285/pkg/storage\serializer_migration.go:132:	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEmbedding, "embedding", func(data []byte) (any, error) {
+wt-cp144-1285/pkg/storage\transaction_sidecar_metadata.go:15:	key := embeddingMetaKey(node.ID)
+wt-cp144-1285/pkg/storage\transaction_sidecar_metadata.go:20:	if tx.pendingDeletes[string(key)] {
+wt-cp144-1285/pkg/storage\transaction_sidecar_metadata.go:24:	if staged, ok := tx.pendingWrites[string(key)]; ok {

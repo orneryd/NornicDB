@@ -1,0 +1,9 @@
+tnrun: job i20261018112538-52056-825a: wt-cp144-1285@c26247cf; submitted in 2.3s
+tnrun: running
+tnrun: job i20261018112538-52056-825a: DONE exit 0 (default 0 in 45s); box 46s, total 53s
+tnrun job i20261018112538-52056-825a (wt-cp144-1285@c26247cf): worker 4, CPUs 12,13,76,77, commit c26247cfc4447fe0468738103ce4bb2db45c2af4, go1.26.9
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go vet ./pkg/storage ./pkg/multidb
+=== parser default: exit 0 after 45s

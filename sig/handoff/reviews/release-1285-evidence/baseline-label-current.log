@@ -1,0 +1,24 @@
+tnrun: job i20261018120307-98792-bb7e: wt-release-1285-base@7d8b2749, bundle 1 commit(s); submitted in 4.4s
+tnrun: running
+tnrun job i20261018120307-98792-bb7e (wt-release-1285-base@7d8b2749): worker 22, CPUs 44,45,108,109, commit 7d8b274906dde3b6679614f5a60fa9cdf6a97aaa, go1.26.9
+tnrun: peak RSS of test binary (default): pkg/storage 0.39 GiB
+/work/tnrun/in/i20261018120307-98792-bb7e.bundle is okay
+prep ui: npm ci && npm run build in 13s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -run TestScopedLabelIDReadCostIgnoresOtherDatabases -race -count=1 -v -timeout=10m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestScopedLabelIDReadCostIgnoresOtherDatabases
+=== RUN   TestScopedLabelIDReadCostIgnoresOtherDatabases/badger
+    scoped_label_id_cost_test.go:63: ID-only allocation cost: alone=23 foreign-first10000=64
+=== RUN   TestScopedLabelIDReadCostIgnoresOtherDatabases/wal
+    scoped_label_id_cost_test.go:63: ID-only allocation cost: alone=23 foreign-first10000=64
+=== RUN   TestScopedLabelIDReadCostIgnoresOtherDatabases/traced_wal
+    scoped_label_id_cost_test.go:63: ID-only allocation cost: alone=23 foreign-first10000=64
+--- PASS: TestScopedLabelIDReadCostIgnoresOtherDatabases (2.10s)
+    --- PASS: TestScopedLabelIDReadCostIgnoresOtherDatabases/badger (0.00s)
+    --- PASS: TestScopedLabelIDReadCostIgnoresOtherDatabases/wal (0.00s)
+    --- PASS: TestScopedLabelIDReadCostIgnoresOtherDatabases/traced_wal (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	3.339s
+=== parser default: exit 0 after 63s
+tnrun: job i20261018120307-98792-bb7e: DONE exit 0 (default 0 in 63s); box 76s, total 85s; stored for reuse: default

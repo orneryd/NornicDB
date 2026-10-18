@@ -1,0 +1,23 @@
+// TrueNAS result client: use the runner's own A/B analyser and read final job metadata.
+import fs from 'node:fs/promises';
+import { analyse } from '../sig/tnrun-ab.mjs';
+import { SessionClient } from '../sig/tnrun-session.mjs';
+import { downloadBuffer } from '../bench1043/tnverify-api.mjs';
+const id='a20261018112328-105884-3ed8';
+const raw=await fs.readFile(new URL('./ab-result.log',import.meta.url),'utf8');
+const {rows,foreign}=analyse(raw);
+if(rows.length!==12 || rows.some(r=>r.n[0]!==10 || r.n[1]!==10)) throw new Error('Incomplete paired run');
+const sorted=foreign.map(r=>r.pct).sort((a,b)=>a-b);
+const isolation={median:(sorted[9]+sorted[10])/2,worst:Math.max(...sorted)};
+await fs.writeFile(new URL('./ab-summary.json',import.meta.url),JSON.stringify({rows,isolation},null,2));
+await fs.writeFile(new URL('../sig/tnrun-results/ab-'+id+'/summary.json',import.meta.url),JSON.stringify({rows,isolation},null,2));
+for(const row of rows) console.log(JSON.stringify(row));
+console.log(JSON.stringify({isolation}));
+const client=await SessionClient.open(async()=>{throw new Error('Existing broker unavailable');});
+try {
+ const result=await downloadBuffer(client,`/mnt/data/nornic-bench-1043/tnrun/done/${id}/result.json`);
+ await fs.writeFile(new URL('./ab-result.json',import.meta.url),result);
+ console.log(result.toString());
+ const parsed=JSON.parse(result);
+ if(parsed.state!=='DONE'||parsed.exit!==0)throw new Error('A/B job did not pass');
+} finally {client.close();}

@@ -1,0 +1,131 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018134632-10344-ff35: wt-release-1285-owner-develop@16923aef; durably submitted in 2.9s; result remains retrievable by id
+tnrun: job i20261018134632-10344-ff35: wt-release-1285-owner-develop@16923aef, 2 untracked file(s); submitted in 3.6s
+tnrun: queued behind 4 job(s)
+tnrun: peak RSS of test binary (default): pkg/storage 0.38 GiB
+tnrun job i20261018134632-10344-ff35 (wt-release-1285-owner-develop@16923aef): worker 5, CPUs 14,15,78,79, commit 16923aef778025fab3490f6a57549763b536f3d5, go1.26.9
+untracked files: overlaid i20261018134632-10344-ff35.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -race -run TestSol1474|TestRelease1285Owner -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRelease1285OwnerTransitions
+=== RUN   TestRelease1285OwnerTransitions/sync/create-delete
+=== RUN   TestRelease1285OwnerTransitions/sync/create-inline
+=== RUN   TestRelease1285OwnerTransitions/sync/create-replace-large
+=== RUN   TestRelease1285OwnerTransitions/sync/committed-inline
+=== RUN   TestRelease1285OwnerTransitions/sync/committed-replace-large
+=== RUN   TestRelease1285OwnerTransitions/sync/invalidate-source
+=== RUN   TestRelease1285OwnerTransitions/sync/retain-source
+=== RUN   TestRelease1285OwnerTransitions/sync/delete-recreate
+=== RUN   TestRelease1285OwnerTransitions/sync/rollback-create
+=== RUN   TestRelease1285OwnerTransitions/sync/rollback-delete
+=== RUN   TestRelease1285OwnerTransitions/sync/rollback-replace
+=== RUN   TestRelease1285OwnerTransitions/buffered/create-delete
+=== RUN   TestRelease1285OwnerTransitions/buffered/create-inline
+=== RUN   TestRelease1285OwnerTransitions/buffered/create-replace-large
+=== RUN   TestRelease1285OwnerTransitions/buffered/committed-inline
+=== RUN   TestRelease1285OwnerTransitions/buffered/committed-replace-large
+=== RUN   TestRelease1285OwnerTransitions/buffered/invalidate-source
+=== RUN   TestRelease1285OwnerTransitions/buffered/retain-source
+=== RUN   TestRelease1285OwnerTransitions/buffered/delete-recreate
+=== RUN   TestRelease1285OwnerTransitions/buffered/rollback-create
+=== RUN   TestRelease1285OwnerTransitions/buffered/rollback-delete
+=== RUN   TestRelease1285OwnerTransitions/buffered/rollback-replace
+=== RUN   TestRelease1285OwnerTransitions/recovery/create-delete
+=== RUN   TestRelease1285OwnerTransitions/recovery/create-inline
+=== RUN   TestRelease1285OwnerTransitions/recovery/create-replace-large
+=== RUN   TestRelease1285OwnerTransitions/recovery/committed-inline
+=== RUN   TestRelease1285OwnerTransitions/recovery/committed-replace-large
+=== RUN   TestRelease1285OwnerTransitions/recovery/invalidate-source
+=== RUN   TestRelease1285OwnerTransitions/recovery/retain-source
+=== RUN   TestRelease1285OwnerTransitions/recovery/delete-recreate
+=== RUN   TestRelease1285OwnerTransitions/recovery/rollback-create
+=== RUN   TestRelease1285OwnerTransitions/recovery/rollback-delete
+=== RUN   TestRelease1285OwnerTransitions/recovery/rollback-replace
+--- PASS: TestRelease1285OwnerTransitions (5.74s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/create-delete (0.05s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/create-inline (0.06s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/create-replace-large (0.15s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/committed-inline (0.16s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/committed-replace-large (0.18s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/invalidate-source (0.07s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/retain-source (0.14s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/delete-recreate (0.08s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/rollback-create (0.04s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/rollback-delete (0.10s)
+    --- PASS: TestRelease1285OwnerTransitions/sync/rollback-replace (0.09s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/create-delete (0.10s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/create-inline (0.15s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/create-replace-large (0.12s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/committed-inline (0.21s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/committed-replace-large (0.24s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/invalidate-source (0.14s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/retain-source (0.20s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/delete-recreate (0.57s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/rollback-create (0.44s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/rollback-delete (0.14s)
+    --- PASS: TestRelease1285OwnerTransitions/buffered/rollback-replace (0.11s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/create-delete (0.12s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/create-inline (0.17s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/create-replace-large (0.20s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/committed-inline (0.24s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/committed-replace-large (0.30s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/invalidate-source (0.17s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/retain-source (0.31s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/delete-recreate (0.18s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/rollback-create (0.14s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/rollback-delete (0.18s)
+    --- PASS: TestRelease1285OwnerTransitions/recovery/rollback-replace (0.18s)
+=== RUN   TestRelease1285OwnerForms
+=== RUN   TestRelease1285OwnerForms/sharded/delete
+=== RUN   TestRelease1285OwnerForms/sharded/invalidate
+=== RUN   TestRelease1285OwnerForms/sharded/replace
+=== RUN   TestRelease1285OwnerForms/sharded/rollback
+=== RUN   TestRelease1285OwnerForms/sidecar/delete
+=== RUN   TestRelease1285OwnerForms/sidecar/invalidate
+=== RUN   TestRelease1285OwnerForms/sidecar/replace
+=== RUN   TestRelease1285OwnerForms/sidecar/rollback
+=== RUN   TestRelease1285OwnerForms/metadata-only/delete
+=== RUN   TestRelease1285OwnerForms/metadata-only/invalidate
+=== RUN   TestRelease1285OwnerForms/metadata-only/replace
+=== RUN   TestRelease1285OwnerForms/metadata-only/rollback
+--- PASS: TestRelease1285OwnerForms (2.22s)
+    --- PASS: TestRelease1285OwnerForms/sharded/delete (0.44s)
+    --- PASS: TestRelease1285OwnerForms/sharded/invalidate (0.54s)
+    --- PASS: TestRelease1285OwnerForms/sharded/replace (0.50s)
+    --- PASS: TestRelease1285OwnerForms/sharded/rollback (0.36s)
+    --- PASS: TestRelease1285OwnerForms/sidecar/delete (0.07s)
+    --- PASS: TestRelease1285OwnerForms/sidecar/invalidate (0.09s)
+    --- PASS: TestRelease1285OwnerForms/sidecar/replace (0.07s)
+    --- PASS: TestRelease1285OwnerForms/sidecar/rollback (0.08s)
+    --- PASS: TestRelease1285OwnerForms/metadata-only/delete (0.02s)
+    --- PASS: TestRelease1285OwnerForms/metadata-only/invalidate (0.01s)
+    --- PASS: TestRelease1285OwnerForms/metadata-only/replace (0.02s)
+    --- PASS: TestRelease1285OwnerForms/metadata-only/rollback (0.01s)
+=== RUN   TestSol1474TransactionCleanup
+=== RUN   TestSol1474TransactionCleanup/committed-shrink
+=== RUN   TestSol1474TransactionCleanup/create-delete
+=== RUN   TestSol1474TransactionCleanup/create-shrink
+=== RUN   TestSol1474TransactionCleanup/delete-recreate
+=== RUN   TestSol1474TransactionCleanup/rollback-create
+=== RUN   TestSol1474TransactionCleanup/rollback-delete
+=== RUN   TestSol1474TransactionCleanup/committed-delete
+--- PASS: TestSol1474TransactionCleanup (0.42s)
+    --- PASS: TestSol1474TransactionCleanup/committed-shrink (0.08s)
+    --- PASS: TestSol1474TransactionCleanup/create-delete (0.05s)
+    --- PASS: TestSol1474TransactionCleanup/create-shrink (0.03s)
+    --- PASS: TestSol1474TransactionCleanup/delete-recreate (0.06s)
+    --- PASS: TestSol1474TransactionCleanup/rollback-create (0.03s)
+    --- PASS: TestSol1474TransactionCleanup/rollback-delete (0.07s)
+    --- PASS: TestSol1474TransactionCleanup/committed-delete (0.08s)
+=== RUN   TestSol1474DeleteVersusEmbed
+=== RUN   TestSol1474DeleteVersusEmbed/delete
+=== RUN   TestSol1474DeleteVersusEmbed/shrink
+--- PASS: TestSol1474DeleteVersusEmbed (0.07s)
+    --- PASS: TestSol1474DeleteVersusEmbed/delete (0.04s)
+    --- PASS: TestSol1474DeleteVersusEmbed/shrink (0.03s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	9.970s
+=== parser default: exit 0 after 88s
+tnrun: job i20261018134632-10344-ff35: DONE exit 0 (default 0 in 88s); box 89s, total 185s; stored for reuse: default

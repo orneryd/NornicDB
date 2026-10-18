@@ -1,0 +1,47 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018134841-10824-cc63: wt-release-1285-owner-probe@c26247cf; durably submitted in 2.5s; result remains retrievable by id
+tnrun: job i20261018134841-10824-cc63: wt-release-1285-owner-probe@c26247cf, 4 untracked file(s); submitted in 3.1s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/storage 0.25 GiB
+tnrun job i20261018134841-10824-cc63 (wt-release-1285-owner-probe@c26247cf): worker 18, CPUs 40,41,104,105, commit c26247cfc4447fe0468738103ce4bb2db45c2af4, go1.26.9
+untracked files: overlaid i20261018134841-10824-cc63.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/storage -race -run TestRelease1285DirectPublication|TestRelease1285LargeCommitRollback -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRelease1285DirectPublication
+=== RUN   TestRelease1285DirectPublication/create/delete
+    release_1285_publication_probe_test.go:31: 
+        	Error Trace:	/repo/pkg/storage/release_1285_publication_probe_test.go:31
+        	Error:      	Should be zero, but was 16
+        	Test:       	TestRelease1285DirectPublication/create/delete
+        	Messages:   	an earlier body writer must not publish a range after delete/shrink
+=== RUN   TestRelease1285DirectPublication/create/shrink
+    release_1285_publication_probe_test.go:31: 
+        	Error Trace:	/repo/pkg/storage/release_1285_publication_probe_test.go:31
+        	Error:      	Should be zero, but was 16
+        	Test:       	TestRelease1285DirectPublication/create/shrink
+        	Messages:   	an earlier body writer must not publish a range after delete/shrink
+=== RUN   TestRelease1285DirectPublication/update/delete
+    release_1285_publication_probe_test.go:31: 
+        	Error Trace:	/repo/pkg/storage/release_1285_publication_probe_test.go:31
+        	Error:      	Should be zero, but was 16
+        	Test:       	TestRelease1285DirectPublication/update/delete
+        	Messages:   	an earlier body writer must not publish a range after delete/shrink
+=== RUN   TestRelease1285DirectPublication/update/shrink
+    release_1285_publication_probe_test.go:31: 
+        	Error Trace:	/repo/pkg/storage/release_1285_publication_probe_test.go:31
+        	Error:      	Should be zero, but was 16
+        	Test:       	TestRelease1285DirectPublication/update/shrink
+        	Messages:   	an earlier body writer must not publish a range after delete/shrink
+--- FAIL: TestRelease1285DirectPublication (0.24s)
+    --- FAIL: TestRelease1285DirectPublication/create/delete (0.06s)
+    --- FAIL: TestRelease1285DirectPublication/create/shrink (0.05s)
+    --- FAIL: TestRelease1285DirectPublication/update/delete (0.05s)
+    --- FAIL: TestRelease1285DirectPublication/update/shrink (0.08s)
+=== RUN   TestRelease1285LargeCommitRollback
+--- PASS: TestRelease1285LargeCommitRollback (2.14s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/storage	2.825s
+=== parser default: exit 1 after 80s
+tnrun: job i20261018134841-10824-cc63: DONE exit 1 (default 1 in 80s); box 80s, total 124s

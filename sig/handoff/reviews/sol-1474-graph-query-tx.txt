@@ -1,0 +1,149 @@
+Graph: /tmp/graph-wt-review-1474/graphify-out/graph.json (52501 nodes) | Traversal: BFS depth=2 | Start: ['.scanCommittedKeysWithPrefixLocked()'] | Context: call (explicit) | 61 nodes found
+
+[i] Complete answer over budget: all 61 nodes and 84 edges shown (~5449 tokens vs the requested ~2000-token budget). Edges are never dropped once every node fits, so this is already the full answer — raising --budget further will not shrink it. Narrow with context_filter=['call'] or use get_node for a specific symbol to reduce size instead.
+
+NODE .scanCommittedKeysWithPrefixLocked() [src=pkg/storage/badger_transaction.go loc=L1039 community=]
+NODE .visit() [src=pkg/search/serving_publication_test.go loc=L513 community=]
+NODE badgerIteratorOptions() [src=pkg/storage/badger_iter_helpers.go loc=L17 community=]
+NODE .deleteNodeBuffered() [src=pkg/storage/badger_transaction.go loc=L1056 community=]
+NODE .reconcileManagedEmbeddingsLocked() [src=pkg/storage/badger_transaction.go loc=L949 community=]
+NODE .deleteEdgesWithPrefixBuffered() [src=pkg/storage/badger_transaction.go loc=L1221 community=]
+NODE NodeID [src=pkg/storage/types.go loc=L108 community=]
+NODE nodeKey() [src=pkg/storage/badger_helpers.go loc=L17 community=]
+NODE badgerPrefixIteratorOptions() [src=pkg/storage/badger_iter_helpers.go loc=L35 community=]
+NODE edgeKey() [src=pkg/storage/badger_helpers.go loc=L22 community=]
+NODE copyEdge() [src=pkg/storage/transaction.go loc=L202 community=]
+NODE encodeValue() [src=pkg/storage/badger_serialization.go loc=L99 community=]
+NODE .UpdateNode() [src=pkg/storage/badger_transaction.go loc=L804 community=]
+NODE pendingEmbedKey() [src=pkg/storage/badger_helpers.go loc=L770 community=]
+NODE embeddingMetaKey() [src=pkg/storage/badger_embedding_sidecar.go loc=L37 community=]
+NODE .pruneMVCCKeyspaceInTxn() [src=pkg/storage/badger_mvcc.go loc=L2083 community=]
+NODE extractEdgeNumIDFromOutgoingKey() [src=pkg/storage/badger_helpers.go loc=L880 community=]
+NODE .edgesBetweenFromSetIndex() [src=pkg/storage/badger_queries.go loc=L1602 community=]
+NODE migratePrefixToMsgpack() [src=pkg/storage/serializer_migration.go loc=L148 community=]
+NODE .iterateEdgesVisibleAtInTxn() [src=pkg/storage/badger_mvcc.go loc=L1387 community=]
+NODE embeddingPrefix() [src=pkg/storage/badger_helpers.go loc=L869 community=]
+NODE descendingPrefixKeys() [src=pkg/storage/badger_iter_helpers.go loc=L49 community=]
+NODE detectStoredSerializer() [src=pkg/storage/badger_serializer_detection.go loc=L34 community=]
+NODE .temporalAdjacentNodesInTxn() [src=pkg/storage/badger_temporal_index.go loc=L257 community=]
+NODE .bufferDelete() [src=pkg/storage/badger_transaction.go loc=L616 community=]
+NODE .GetEdge() [src=pkg/storage/badger_transaction.go loc=L2117 community=]
+NODE .loadFromBadger() [src=pkg/storage/id_dictionary.go loc=L602 community=]
+NODE .bootstrapEdgeMVCCFromCurrentStateInTxn() [src=pkg/storage/badger_mvcc.go loc=L1983 community=]
+NODE .bootstrapNodeMVCCFromCurrentStateInTxn() [src=pkg/storage/badger_mvcc.go loc=L1946 community=]
+NODE .repairArchivedEdgeAdjacency() [src=pkg/storage/badger_mvcc_edge_adjacency_backfill.go loc=L57 community=]
+NODE .bufferRemoveEdgeBookkeepingBuffered() [src=pkg/storage/badger_transaction.go loc=L1181 community=]
+NODE .ChangeBounds() [src=pkg/storage/change_capture.go loc=L216 community=]
+NODE .IterateMVCCVersions() [src=pkg/storage/badger_lifecycle.go loc=L172 community=]
+NODE .loadPersistedSchemas() [src=pkg/storage/badger_schema.go loc=L15 community=]
+NODE .PruneChangeEvents() [src=pkg/storage/change_capture.go loc=L680 community=]
+NODE .recoverNamespaceMVCCFloor() [src=pkg/storage/badger_mvcc_per_namespace.go loc=L256 community=]
+NODE .bufferSet() [src=pkg/storage/badger_transaction.go loc=L604 community=]
+NODE .checkNodeAdjacencyConflict() [src=pkg/storage/badger_transaction.go loc=L3849 community=]
+NODE sameChunkEmbeddings() [src=pkg/storage/embedding_text_policy.go loc=L156 community=]
+NODE .ChangeEvents() [src=pkg/storage/change_capture.go loc=L242 community=]
+NODE .collectBatch() [src=pkg/storage/migration_v1_to_v2.go loc=L540 community=]
+NODE .collectEdgeBootstrapBatch() [src=pkg/storage/badger_mvcc.go loc=L1877 community=]
+NODE .collectNamespaceEdgeIDs() [src=pkg/storage/badger_decay_reconcile.go loc=L110 community=]
+NODE .collectNamespaceNodeIDs() [src=pkg/storage/badger_decay_reconcile.go loc=L94 community=]
+NODE .collectNodeBootstrapBatch() [src=pkg/storage/badger_mvcc.go loc=L1793 community=]
+NODE .ScanAccessMeta() [src=pkg/storage/badger_access_meta.go loc=L97 community=]
+NODE .popAgedFreelistEntryInTxn() [src=pkg/storage/id_dictionary.go loc=L522 community=]
+NODE .loadFromBadger() [src=pkg/storage/property_key_dictionary.go loc=L444 community=]
+NODE carriesDroppedEmbeddings() [src=pkg/storage/badger_transaction.go loc=L1007 community=]
+NODE TestIDDictionary_FreedStampsMonotonic() [src=pkg/storage/id_dictionary_shard_test.go loc=L140 community=]
+NODE .IterateMVCCHeads() [src=pkg/storage/badger_lifecycle.go loc=L132 community=]
+NODE .migrateV0ToV1() [src=pkg/storage/migration_v0_to_v1.go loc=L43 community=]
+NODE .withViewEdgeMVCCVersionsFromKey() [src=pkg/storage/badger_mvcc.go loc=L1717 community=]
+NODE .withViewNodeMVCCVersionsFromKey() [src=pkg/storage/badger_mvcc.go loc=L1667 community=]
+NODE .deleteNodeLocked() [src=pkg/storage/badger_transaction.go loc=L1393 community=]
+NODE .clearBadgerPrefix() [src=pkg/storage/badger_temporal_index.go loc=L545 community=]
+NODE .isStorageEmpty() [src=pkg/storage/migration_runner.go loc=L15 community=]
+NODE .rebuildUniqueConstraintValues() [src=pkg/storage/badger_schema.go loc=L162 community=]
+NODE .ScanPendingDeindexWorkItems() [src=pkg/storage/badger_deindex_work.go loc=L42 community=]
+NODE .deletePendingEdgesIncidentToBuffered() [src=pkg/storage/badger_transaction.go loc=L1156 community=]
+NODE .freelistStagedCount() [src=pkg/storage/id_dictionary.go loc=L574 community=]
+EDGE .scanCommittedKeysWithPrefixLocked() --calls [INFERRED context=call]--> .visit() at=pkg/storage/badger_transaction.go:L1046
+EDGE .scanCommittedKeysWithPrefixLocked() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_transaction.go:L1041
+EDGE .reconcileManagedEmbeddingsLocked() --calls [EXTRACTED context=call]--> .scanCommittedKeysWithPrefixLocked() at=pkg/storage/badger_transaction.go:L995
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> .scanCommittedKeysWithPrefixLocked() at=pkg/storage/badger_transaction.go:L1060
+EDGE .deleteEdgesWithPrefixBuffered() --calls [EXTRACTED context=call]--> .scanCommittedKeysWithPrefixLocked() at=pkg/storage/badger_transaction.go:L1223
+EDGE .deleteEdgesWithPrefixBuffered() --calls [INFERRED context=call]--> edgeKey() at=pkg/storage/badger_transaction.go:L1271
+EDGE .deleteEdgesWithPrefixBuffered() --calls [INFERRED context=call]--> extractEdgeNumIDFromOutgoingKey() at=pkg/storage/badger_transaction.go:L1224
+EDGE .deleteEdgesWithPrefixBuffered() --calls [EXTRACTED context=call]--> .bufferRemoveEdgeBookkeepingBuffered() at=pkg/storage/badger_transaction.go:L1321
+EDGE .deleteEdgesWithPrefixBuffered() --calls [EXTRACTED context=call]--> .GetEdge() at=pkg/storage/badger_transaction.go:L1283
+EDGE .deleteEdgesWithPrefixBuffered() --calls [INFERRED context=call]--> copyEdge() at=pkg/storage/badger_transaction.go:L1281
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> embeddingMetaKey() at=pkg/storage/badger_transaction.go:L982
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_transaction.go:L995
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> encodeValue() at=pkg/storage/badger_transaction.go:L978
+EDGE .reconcileManagedEmbeddingsLocked() --calls [EXTRACTED context=call]--> .bufferSet() at=pkg/storage/badger_transaction.go:L982
+EDGE .reconcileManagedEmbeddingsLocked() --calls [EXTRACTED context=call]--> .bufferDelete() at=pkg/storage/badger_transaction.go:L996
+EDGE .UpdateNode() --calls [EXTRACTED context=call]--> .reconcileManagedEmbeddingsLocked() at=pkg/storage/badger_transaction.go:L854
+EDGE .reconcileManagedEmbeddingsLocked() --calls [EXTRACTED context=call]--> carriesDroppedEmbeddings() at=pkg/storage/badger_transaction.go:L954
+EDGE .reconcileManagedEmbeddingsLocked() --calls [INFERRED context=call]--> sameChunkEmbeddings() at=pkg/storage/badger_transaction.go:L960
+EDGE .deleteNodeBuffered() --calls [INFERRED context=call]--> nodeKey() at=pkg/storage/badger_transaction.go:L1057
+EDGE .deleteNodeBuffered() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_transaction.go:L1076
+EDGE .deleteNodeBuffered() --calls [INFERRED context=call]--> embeddingPrefix() at=pkg/storage/badger_transaction.go:L1060
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> .bufferDelete() at=pkg/storage/badger_transaction.go:L1061
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_transaction.go:L1086
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> .deletePendingEdgesIncidentToBuffered() at=pkg/storage/badger_transaction.go:L1132
+EDGE .deleteNodeLocked() --calls [EXTRACTED context=call]--> .deleteNodeBuffered() at=pkg/storage/badger_transaction.go:L1394
+EDGE .ScanAccessMeta() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_access_meta.go:L101
+EDGE .collectNamespaceNodeIDs() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_decay_reconcile.go:L98
+EDGE .collectNamespaceEdgeIDs() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_decay_reconcile.go:L114
+EDGE .ScanPendingDeindexWorkItems() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_deindex_work.go:L46
+EDGE badgerPrefixIteratorOptions() --calls [EXTRACTED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_iter_helpers.go:L36
+EDGE descendingPrefixKeys() --calls [EXTRACTED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_iter_helpers.go:L60
+EDGE .IterateMVCCHeads() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_lifecycle.go:L135
+EDGE .IterateMVCCVersions() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_lifecycle.go:L178
+EDGE .iterateEdgesVisibleAtInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1391
+EDGE .withViewNodeMVCCVersionsFromKey() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1671
+EDGE .withViewEdgeMVCCVersionsFromKey() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1721
+EDGE .collectNodeBootstrapBatch() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1798
+EDGE .collectEdgeBootstrapBatch() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1882
+EDGE .bootstrapNodeMVCCFromCurrentStateInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1947
+EDGE .bootstrapEdgeMVCCFromCurrentStateInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L1984
+EDGE .pruneMVCCKeyspaceInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc.go:L2084
+EDGE .repairArchivedEdgeAdjacency() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc_edge_adjacency_backfill.go:L64
+EDGE .recoverNamespaceMVCCFloor() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_mvcc_per_namespace.go:L275
+EDGE .edgesBetweenFromSetIndex() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_queries.go:L1616
+EDGE .loadPersistedSchemas() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_schema.go:L31
+EDGE .rebuildUniqueConstraintValues() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_schema.go:L209
+EDGE detectStoredSerializer() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_serializer_detection.go:L41
+EDGE .temporalAdjacentNodesInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_temporal_index.go:L278
+EDGE .clearBadgerPrefix() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_temporal_index.go:L556
+EDGE .checkNodeAdjacencyConflict() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/badger_transaction.go:L3859
+EDGE .ChangeBounds() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/change_capture.go:L219
+EDGE .ChangeEvents() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/change_capture.go:L247
+EDGE .PruneChangeEvents() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/change_capture.go:L688
+EDGE .popAgedFreelistEntryInTxn() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/id_dictionary.go:L536
+EDGE .freelistStagedCount() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/id_dictionary.go:L578
+EDGE .loadFromBadger() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/id_dictionary.go:L607
+EDGE TestIDDictionary_FreedStampsMonotonic() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/id_dictionary_shard_test.go:L166
+EDGE .isStorageEmpty() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/migration_runner.go:L19
+EDGE .migrateV0ToV1() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/migration_v0_to_v1.go:L73
+EDGE .collectBatch() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/migration_v1_to_v2.go:L543
+EDGE .loadFromBadger() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/property_key_dictionary.go:L448
+EDGE migratePrefixToMsgpack() --calls [INFERRED context=call]--> badgerIteratorOptions() at=pkg/storage/serializer_migration.go:L175
+EDGE .iterateEdgesVisibleAtInTxn() --calls [INFERRED context=call]--> edgeKey() at=pkg/storage/badger_mvcc.go:L1435
+EDGE .bufferRemoveEdgeBookkeepingBuffered() --calls [INFERRED context=call]--> edgeKey() at=pkg/storage/badger_transaction.go:L1182
+EDGE .checkNodeAdjacencyConflict() --calls [INFERRED context=call]--> extractEdgeNumIDFromOutgoingKey() at=pkg/storage/badger_transaction.go:L3863
+EDGE .UpdateNode() --calls [INFERRED context=call]--> nodeKey() at=pkg/storage/badger_transaction.go:L842
+EDGE .UpdateNode() --calls [INFERRED context=call]--> pendingEmbedKey() at=pkg/storage/badger_transaction.go:L911
+EDGE descendingPrefixKeys() --calls [EXTRACTED context=call]--> badgerPrefixIteratorOptions() at=pkg/storage/badger_iter_helpers.go:L50
+EDGE descendingPrefixKeys() --calls [INFERRED context=call]--> .visit() at=pkg/storage/badger_iter_helpers.go:L66
+EDGE .temporalAdjacentNodesInTxn() --calls [INFERRED context=call]--> descendingPrefixKeys() at=pkg/storage/badger_temporal_index.go:L263
+EDGE carriesDroppedEmbeddings() --calls [INFERRED context=call]--> sameChunkEmbeddings() at=pkg/storage/badger_transaction.go:L1011
+EDGE .iterateEdgesVisibleAtInTxn() --calls [INFERRED context=call]--> copyEdge() at=pkg/storage/badger_mvcc.go:L1467
+EDGE .GetEdge() --calls [INFERRED context=call]--> copyEdge() at=pkg/storage/badger_transaction.go:L2132
+EDGE .collectNamespaceNodeIDs() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_decay_reconcile.go:L103
+EDGE .collectNodeBootstrapBatch() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_mvcc.go:L1812
+EDGE .bootstrapNodeMVCCFromCurrentStateInTxn() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/badger_mvcc.go:L1956
+EDGE .loadFromBadger() --calls [EXTRACTED context=call]--> NodeID at=pkg/storage/id_dictionary.go:L616
+EDGE .PruneChangeEvents() --calls [EXTRACTED context=call]--> .ChangeBounds() at=pkg/storage/change_capture.go:L682
+EDGE .loadPersistedSchemas() --calls [EXTRACTED context=call]--> .rebuildUniqueConstraintValues() at=pkg/storage/badger_schema.go:L83
+EDGE .UpdateNode() --calls [EXTRACTED context=call]--> .bufferDelete() at=pkg/storage/badger_transaction.go:L894
+EDGE .bufferRemoveEdgeBookkeepingBuffered() --calls [EXTRACTED context=call]--> .bufferDelete() at=pkg/storage/badger_transaction.go:L1182
+EDGE .deletePendingEdgesIncidentToBuffered() --calls [EXTRACTED context=call]--> .bufferRemoveEdgeBookkeepingBuffered() at=pkg/storage/badger_transaction.go:L1166
+EDGE .UpdateNode() --calls [EXTRACTED context=call]--> .bufferSet() at=pkg/storage/badger_transaction.go:L866
+EDGE .deleteNodeBuffered() --calls [EXTRACTED context=call]--> .deleteEdgesWithPrefixBuffered() at=pkg/storage/badger_transaction.go:L1109

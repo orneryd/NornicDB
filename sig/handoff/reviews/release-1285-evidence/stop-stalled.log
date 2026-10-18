@@ -1,0 +1,1 @@
+{"batch":"b1792325188858","requested":["j20261018112306-52956-b800"],"missing":[],"receipts":[{"batch":"b1792325188858","worker":"w15","jobs":[{"id":"j20261018112306-52956-b800","worker":"w15","signals":[{"pid":209366,"pgid":209366,"signal":"TERM"},{"pid":209672,"pgid":209672,"signal":"TERM"}],"state":"TERM_SENT"}],"workerRestarted":false,"otherJobsUntouched":true}]}

@@ -1,0 +1,46 @@
+wt-cp144-1285/pkg/replication/storage_adapter.go:174:		execErr = a.applyCreateNode(cmd.Data)
+wt-cp144-1285/pkg/replication/storage_adapter.go:176:		execErr = a.applyUpdateNode(cmd.Data)
+wt-cp144-1285/pkg/replication/storage_adapter.go:193:	case CmdBulkCreateNodes:
+wt-cp144-1285/pkg/replication/storage_adapter.go:194:		execErr = a.applyBulkCreateNodes(cmd.Data)
+wt-cp144-1285/pkg/replication/storage_adapter.go:338:func (a *StorageAdapter) applyCreateNode(data []byte) error {
+wt-cp144-1285/pkg/replication/storage_adapter.go:343:	_, err = a.engine.CreateNode(node)
+wt-cp144-1285/pkg/replication/storage_adapter.go:348:func (a *StorageAdapter) applyUpdateNode(data []byte) error {
+wt-cp144-1285/pkg/replication/storage_adapter.go:353:	return a.engine.UpdateNode(node)
+wt-cp144-1285/pkg/replication/storage_adapter.go:416:	return a.engine.UpdateNode(node)
+wt-cp144-1285/pkg/replication/storage_adapter.go:434:		if _, err := a.engine.CreateNode(node); err != nil {
+wt-cp144-1285/pkg/replication/storage_adapter.go:464:func (a *StorageAdapter) applyBulkCreateNodes(data []byte) error {
+wt-cp144-1285/pkg/replication/storage_adapter.go:467:		return localizedError(localization.ReplicationStorageDecodeBulkCreateNodesFailed(err), err)
+wt-cp144-1285/pkg/replication/storage_adapter.go:477:	return a.engine.BulkCreateNodes(nodes)
+wt-cp144-1285/pkg/replication/storage_adapter.go:808:		if _, err := a.engine.CreateNode(node); err != nil {
+wt-cp144-1285/pkg/nornicdb/embed_queue.go:475:		if err := sidecar.UpdateNodeEmbeddingSidecar(node); err != nil {
+wt-cp144-1285/pkg/nornicdb/embed_queue.go:1250:	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
+wt-cp144-1285/pkg/nornicdb/embed_queue.go:1466:	if updateErr := sidecar.UpdateNodeEmbeddingSidecar(node); updateErr != nil {
+wt-cp144-1285/pkg/storage/composite_engine.go:277:func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
+wt-cp144-1285/pkg/storage/composite_engine.go:296:	nodeID, err := engine.CreateNode(node)
+wt-cp144-1285/pkg/storage/composite_engine.go:390:func (c *CompositeEngine) UpdateNode(node *Node) error {
+wt-cp144-1285/pkg/storage/composite_engine.go:403:			return engine.UpdateNode(node)
+wt-cp144-1285/pkg/storage/composite_engine.go:1191:// BulkCreateNodes creates nodes in bulk. Routes nodes to appropriate constituents based on routing rules.
+wt-cp144-1285/pkg/storage/composite_engine.go:1192:func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
+wt-cp144-1285/pkg/storage/composite_engine.go:1214:		if err := engine.BulkCreateNodes(groupNodes); err != nil {
+wt-cp144-1285/pkg/storage/wal_engine.go:582:func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
+wt-cp144-1285/pkg/storage/wal_engine.go:596:	return w.engine.CreateNode(node)
+wt-cp144-1285/pkg/storage/wal_engine.go:600:func (w *WALEngine) UpdateNode(node *Node) error {
+wt-cp144-1285/pkg/storage/wal_engine.go:615:	return w.engine.UpdateNode(node)
+wt-cp144-1285/pkg/storage/wal_engine.go:618:// UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
+wt-cp144-1285/pkg/storage/wal_engine.go:623:func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+wt-cp144-1285/pkg/storage/wal_engine.go:637:	return sidecar.UpdateNodeEmbeddingSidecar(node)
+wt-cp144-1285/pkg/storage/wal_engine.go:721:// BulkCreateNodes logs then executes bulk node creation.
+wt-cp144-1285/pkg/storage/wal_engine.go:722:func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
+wt-cp144-1285/pkg/storage/wal_engine.go:753:	return w.engine.BulkCreateNodes(nodes)
+wt-cp144-1285/pkg/storage/namespaced.go:22://	tenantA.CreateNode(&Node{ID: "123", Labels: []string{"Person"}})
+wt-cp144-1285/pkg/storage/namespaced.go:226:func (n *NamespacedEngine) CreateNode(node *Node) (NodeID, error) {
+wt-cp144-1285/pkg/storage/namespaced.go:237:	actualID, err := n.inner.CreateNode(namespacedNode)
+wt-cp144-1285/pkg/storage/namespaced.go:350:func (n *NamespacedEngine) UpdateNode(node *Node) error {
+wt-cp144-1285/pkg/storage/namespaced.go:361:	return n.inner.UpdateNode(namespacedNode)
+wt-cp144-1285/pkg/storage/namespaced.go:1000:func (n *NamespacedEngine) BulkCreateNodes(nodes []*Node) error {
+wt-cp144-1285/pkg/storage/namespaced.go:1015:	return n.inner.BulkCreateNodes(namespacedNodes)
+wt-cp144-1285/pkg/storage/badger_bulk.go:14:// BulkCreateNodes creates nodes as one transaction (BadgerTransaction): all
+wt-cp144-1285/pkg/storage/badger_bulk.go:19:func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
+wt-cp144-1285/pkg/storage/badger_bulk.go:23:				if _, err := tx.CreateNode(node); err != nil {
+wt-cp144-1285/pkg/storage/badger_bulk.go:51:			if _, err := tx.CreateNode(node); err != nil {
+wt-cp144-1285/pkg/storage/badger_bulk.go:69:	tx, err := b.BeginTransaction()
