@@ -5,13 +5,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"plugin"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/orneryd/nornicdb/internal/plugintest"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/stretchr/testify/require"
 )
@@ -158,13 +158,13 @@ func TestPackageSnowballBuildsPluginAndManifest(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "plugins", "stemmers", "snowball-ukrainian.so")
 
 	err := packageSnowball(packageOptions{
-		Language:   "ukrainian",
-		ID:         "snowball.ukrainian",
-		Version:    "1.0.0",
-		Module:     moduleDir,
-		Source:     filepath.Join(moduleDir, "stemmer.go"),
-		Output:     output,
-		BuildFlags: plugintest.BuildFlags(),
+		Language: "ukrainian",
+		ID:       "snowball.ukrainian",
+		Version:  "1.0.0",
+		Module:   moduleDir,
+		Source:   filepath.Join(moduleDir, "stemmer.go"),
+		Output:   output,
+		Target:   testExecutable(t),
 	})
 	require.NoError(t, err)
 
@@ -207,13 +207,13 @@ func TestPackagedStemmersWithSharedRuntimeLoadTogether(t *testing.T) {
 	for _, id := range []string{"snowball.first", "snowball.second"} {
 		output := filepath.Join(pluginDir, strings.ReplaceAll(id, ".", "-")+".so")
 		require.NoError(t, packageSnowball(packageOptions{
-			Language:   id,
-			ID:         id,
-			Version:    "1.0.0",
-			Module:     moduleDir,
-			Source:     filepath.Join(moduleDir, "stemmer.go"),
-			Output:     output,
-			BuildFlags: plugintest.BuildFlags(),
+			Language: id,
+			ID:       id,
+			Version:  "1.0.0",
+			Module:   moduleDir,
+			Source:   filepath.Join(moduleDir, "stemmer.go"),
+			Output:   output,
+			Target:   testExecutable(t),
 		}))
 	}
 
@@ -229,6 +229,56 @@ func TestPackagedStemmersWithSharedRuntimeLoadTogether(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, "token-stem", registration.Stem("token"))
 	}
+}
+
+func TestPackageRejectsUnreadableTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go buildmode=plugin is not available on Windows")
+	}
+	moduleDir := writeSnowballFixtureModule(t)
+	notABinary := filepath.Join(moduleDir, "stemmer.go")
+	err := packageSnowball(packageOptions{
+		Language: "ukrainian",
+		ID:       "snowball.ukrainian",
+		Version:  "1.0.0",
+		Module:   moduleDir,
+		Source:   notABinary,
+		Output:   filepath.Join(t.TempDir(), "snowball-ukrainian.so"),
+		Target:   notABinary,
+	})
+	require.ErrorContains(t, err, "--target")
+}
+
+func TestRequireTargetGoVersion(t *testing.T) {
+	dir := t.TempDir()
+	out, err := exec.Command("go", "env", "GOVERSION").Output()
+	require.NoError(t, err)
+	have := strings.TrimSpace(string(out))
+	require.NoError(t, requireTargetGoVersion(dir, os.Environ(), "nornicdb", have))
+	require.ErrorContains(t, requireTargetGoVersion(dir, os.Environ(), "nornicdb", "go1.0"), "was built with go1.0, but go is "+have)
+}
+
+func TestParsePackageArgsAcceptsTarget(t *testing.T) {
+	opts, err := parsePackageArgs([]string{
+		"--language", "ukrainian",
+		"--id", "snowball.ukrainian",
+		"--version", "1.0.0",
+		"--module", "./stemmer-module",
+		"--source", "./stemmer-module/stemmer.go",
+		"--output", "./plugins/stemmers/snowball-ukrainian.so",
+		"--target", "./bin/nornicdb",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "./bin/nornicdb", opts.Target)
+}
+
+// testExecutable is the running test binary, the host the package tests load
+// their plugins into.
+func testExecutable(t *testing.T) string {
+	t.Helper()
+	path, err := os.Executable()
+	require.NoError(t, err)
+	return path
 }
 
 func TestPluginIDProducesSafeIsolatedModuleSegment(t *testing.T) {

@@ -26,13 +26,16 @@ The CLI surface is intentionally small. The full set is:
 - `nornicdb shell` — interactive Cypher query shell.
 - `nornicdb decay suppress` — re-evaluate suppression status.
 - `nornicdb decay stats` — print decay statistics.
+- `nornicdb stemmer check <manifest>` — check that a BM25 stemmer plugin loads into this binary, as it would at startup (no data directory or network). On success it also prints a `nornicdb-stemmer-check: {...}` result line (plugin id, version, API version, library SHA-256) for programs that run it.
 
 For migration, backup, and import operations, use the HTTP/Bolt APIs, the runnable scripts under [`scripts/migration/`](https://github.com/orneryd/nornicdb/tree/main/scripts/migration), or the offline admin guide at [admin-tool.md](admin-tool.md). The main `nornicdb` server CLI does not have general-purpose `import` or `export` subcommands; those live under `nornicdb-admin`.
 
 BM25 Snowball stemmer packaging is intentionally separate from both
 `nornicdb` and `nornicdb-admin`. Use the standalone `nornicdb-snowball` helper
 to wrap generated Snowball Go source as a local stemmer plugin; see
-[BM25 Stemmer Plugins](../user-guides/bm25-stemmers.md).
+[BM25 Stemmer Plugins](../user-guides/bm25-stemmers.md). `nornicdb-snowball package --target <nornicdb binary>`
+runs `nornicdb stemmer check` on the result and keeps the plugin only if that
+binary loads it.
 
 ---
 

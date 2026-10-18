@@ -385,3 +385,21 @@
   other: "reading input: {{.Cause}}"
 - id: nornicdbcli.decay.load_nodes_failed
   other: "loading nodes: {{.Cause}}"
+- id: nornicdbcli.stemmer.short
+  description: Stemmer command summary.
+  other: Stemmer plugin operations
+- id: nornicdbcli.stemmer.check.short
+  description: Stemmer check command summary.
+  other: Check that a stemmer plugin loads into this binary, as it would at startup
+- id: nornicdbcli.flag.stemmer_check_timeout
+  description: Stemmer check timeout flag help.
+  other: Maximum time to load the plugin
+- id: nornicdbcli.stemmer.check.ok
+  description: Stemmer check success. ID, Version and Path are untranslated plugin identifiers.
+  other: "Stemmer plugin {{.ID}} {{.Version}} loads: {{.Path}}"
+- id: nornicdbcli.stemmer.check_failed
+  description: Stemmer check failure. Manifest is a path; Cause is an untranslated loader diagnostic.
+  other: "stemmer plugin {{.Manifest}} does not load: {{.Cause}}"
+- id: nornicdbcli.stemmer.check_timed_out
+  description: Stemmer check timeout. Manifest is a path; Timeout is a Go duration.
+  other: "stemmer plugin {{.Manifest}} did not finish loading within {{.Timeout}}"
