@@ -41,7 +41,10 @@ func TestGDSImportLongToDoubleBounds(t *testing.T) {
 					input = []interface{}{1.5, value}
 				}
 				_, _, _, err := gdsConvertPropertyValue(input, target, widen)
-				if value > 1<<53 {
+				// GDS converts a mixed numeric list, and a native
+				// relationship's stored Long, before reading: both round.
+				unbounded := target == "" || (target == "Relationship" && widen)
+				if value > 1<<53 && !unbounded {
 					require.ErrorContains(t, err, "into an double value")
 				} else {
 					require.NoError(t, err)
