@@ -50,11 +50,11 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.True(t, startsWithKeywordAtLocal(" MATCH ", 1, "MATCH"))
 	require.False(t, startsWithKeywordAtLocal("MATCH", -1, "MATCH"))
 
-	// splitCommaTopLevelLocal with nesting/quotes
+	// The shared comma splitter preserves nesting/quotes and trims each field.
 	parts := splitCommaTopLevelLocal("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")
-	require.Equal(t, []string{"a", " apoc.map.fromPairs([[1,2],[3,4]])", " 'x,y'", " `q,r`", " b"}, parts)
+	require.Equal(t, []string{"a", "apoc.map.fromPairs([[1,2],[3,4]])", "'x,y'", "`q,r`", "b"}, parts)
 	parts = splitCommaTopLevelLocal("a, \"x,y\", {k:[1,2,3]}, b")
-	require.Equal(t, []string{"a", " \"x,y\"", " {k:[1,2,3]}", " b"}, parts)
+	require.Equal(t, []string{"a", "\"x,y\"", "{k:[1,2,3]}", "b"}, parts)
 }
 
 func TestFabricHelpers_MoreContextAndWrapperBranches(t *testing.T) {
