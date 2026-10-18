@@ -286,11 +286,11 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 	return w.toUserNode(node), nil
 }
 
-// GetNodeWithoutEmbeddings implements storage.NodeWithoutEmbeddingsReader in
-// the wrapper's namespace (BadgerTransaction.GetNodeWithoutEmbeddings): the
-// node with its embedding metadata, without separately stored vectors.
-func (w *transactionStorageWrapper) GetNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetNodeWithoutEmbeddings(w.prefixNodeID(id))
+// GetQueryNode implements storage.QueryNodeReader in the wrapper's
+// namespace (BadgerTransaction.GetQueryNode): the node with its embedding
+// metadata, without separately stored vectors.
+func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+	node, err := w.tx.GetQueryNode(w.prefixNodeID(id))
 	if err != nil {
 		return nil, err
 	}

@@ -853,6 +853,15 @@ func (w *WALEngine) GetNode(id NodeID) (*Node, error) {
 	return w.engine.GetNode(id)
 }
 
+// GetQueryNode delegates the query-row node read (QueryNodeReader) when the
+// wrapped engine supports it, else reads the full node.
+func (w *WALEngine) GetQueryNode(id NodeID) (*Node, error) {
+	if reader, ok := w.engine.(QueryNodeReader); ok {
+		return reader.GetQueryNode(id)
+	}
+	return w.engine.GetNode(id)
+}
+
 // GetNodeWithoutEmbeddings delegates an embedding-free node read when the
 // wrapped engine supports it. The full read fallback preserves compatibility
 // for engines that do not expose the optional projection contract.

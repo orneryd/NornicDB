@@ -452,13 +452,13 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 		return nil
 	}
 	// Direct NodeID lookup first.
-	if n, err := getQueryNode(e.storage, storage.NodeID(id)); err == nil && n != nil {
+	if n, err := e.getQueryNode(e.storage, storage.NodeID(id)); err == nil && n != nil {
 		return n
 	}
 	// Handle elementId-style values: "<prefix>:<db>:<id>" -> "<id>"
 	if last := strings.LastIndex(id, ":"); last >= 0 && last+1 < len(id) {
 		idTail := id[last+1:]
-		if n, err := getQueryNode(e.storage, storage.NodeID(idTail)); err == nil && n != nil {
+		if n, err := e.getQueryNode(e.storage, storage.NodeID(idTail)); err == nil && n != nil {
 			return n
 		}
 	}
@@ -1443,7 +1443,7 @@ func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, nod
 	if node == nil || !queryStatsMayContainNodeMutation(stats) {
 		return node, nil
 	}
-	current, err := getQueryNode(e.getStorage(ctx), node.ID)
+	current, err := e.getQueryNode(e.getStorage(ctx), node.ID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return node, nil
 	}

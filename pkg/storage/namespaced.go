@@ -282,6 +282,20 @@ func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*No
 	return n.toUserNode(node), nil
 }
 
+// GetQueryNode forwards the query-row node read (QueryNodeReader) with the
+// namespace prefix applied, else reads the full node.
+func (n *NamespacedEngine) GetQueryNode(id NodeID) (*Node, error) {
+	reader, ok := n.inner.(QueryNodeReader)
+	if !ok {
+		return n.GetNode(id)
+	}
+	node, err := reader.GetQueryNode(n.prefixNodeID(id))
+	if err != nil {
+		return nil, err
+	}
+	return n.toUserNode(node), nil
+}
+
 func (n *NamespacedEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 	reader, ok := n.inner.(NodeWithoutEmbeddingsReader)
 	if !ok {

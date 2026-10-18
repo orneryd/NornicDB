@@ -1953,7 +1953,7 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 	return tx.getCommittedNodeLocked(nodeID)
 }
 
-// GetNodeWithoutEmbeddings implements NodeWithoutEmbeddingsReader inside the
+// GetQueryNode implements QueryNodeReader inside the
 // transaction: GetNode's visibility (pending writes, deletes, connected
 // deletes, the MVCC snapshot) and the node's settled embedding metadata, the
 // worker sidecar's included, without reading separately stored chunk
@@ -1962,7 +1962,7 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 // vectors reads with GetNode. Query execution reads nodes this way: rows
 // never carry vectors, and an update reconciles embeddings against the stored
 // node (reconcileManagedEmbeddingsLocked), not the caller's copy.
-func (tx *BadgerTransaction) GetNodeWithoutEmbeddings(nodeID NodeID) (*Node, error) {
+func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
@@ -3259,7 +3259,7 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 }
 
 // getCommittedNodeReadLocked is getCommittedNodeLocked; with vectors false it
-// reads no separately stored embedding vector (GetNodeWithoutEmbeddings), and
+// reads no separately stored embedding vector (GetQueryNode), and
 // a node already held in memory shares its vectors instead of copying them.
 func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors bool) (*Node, error) {
 	copyRead := copyNode
