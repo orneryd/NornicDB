@@ -2094,13 +2094,19 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 	}
 }
 
-func TestExecuteApplyAsPipeline_SimpleImportNotPipelined(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "WITH a MATCH (n) WHERE n.id = a RETURN n"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected simple import WITH to not be pipelined")
+	inner := &FragmentExec{Query: "WITH a ORDER BY a RETURN collect(a) AS values", GraphName: "db1"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
+	if err != nil || !used {
+		t.Fatalf("expected whole-stream continuation: used=%v err=%v", used, err)
+	}
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a "+inner.Query {
+		t.Fatalf("unexpected continuation query: %s", capture.lastQuery)
 	}
 }
 

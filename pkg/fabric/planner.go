@@ -18,38 +18,18 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	parts := make([]string, 0, 2)
 	ops := make([]bool, 0, 1)
 	start := 0
-	inSingleQuote := false
-	inDoubleQuote := false
 	braceDepth := 0
 	parenDepth := 0
+	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
 		ch := query[i]
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
+		if ch == '\'' || ch == '"' || ch == '`' {
+			i = skipQuoted(query, i)
 			continue
 		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-		if inSingleQuote || inDoubleQuote {
+		if ch == '/' && i+1 < len(query) && (query[i+1] == '/' || query[i+1] == '*') {
+			i = skipSpacesAndComments(query, i) - 1
 			continue
 		}
 
@@ -66,8 +46,14 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 			if parenDepth > 0 {
 				parenDepth--
 			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
 		}
-		if braceDepth != 0 || parenDepth != 0 {
+		if braceDepth != 0 || parenDepth != 0 || bracketDepth != 0 {
 			continue
 		}
 
@@ -82,9 +68,7 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 		parts = append(parts, part)
 
 		i += len("UNION")
-		for i < len(query) && isWhitespace(query[i]) {
-			i++
-		}
+		i = skipSpacesAndComments(query, i)
 		distinct := true
 		if keywordAt(query, i, "ALL") {
 			distinct = false
@@ -142,20 +126,25 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	}
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
+	return p.planQuery(trimmed, session, scope, false)
+}
 
-	// Handle top-level UNION / UNION ALL by planning each branch independently.
+// planQuery is the entry for every statement and CALL body. Split UNION before
+// selecting a branch's USE target so one branch cannot absorb another's text or
+// graph scope. CALL import binding remains a per-branch responsibility.
+func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
 	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed)
 	if err != nil {
 		return nil, err
 	}
 	if hasUnion {
-		lhs, err := p.planSingleQuery(parts[0], session, scope, false)
+		lhs, err := p.planQuery(parts[0], current, scope, inSubquery)
 		if err != nil {
 			return nil, err
 		}
 		root := lhs
 		for i := 1; i < len(parts); i++ {
-			rhs, err := p.planSingleQuery(parts[i], session, scope, false)
+			rhs, err := p.planQuery(parts[i], current, scope, inSubquery)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +159,10 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 		return root, nil
 	}
 
-	return p.planSingleQuery(trimmed, session, scope, false)
+	if inSubquery {
+		return p.planCallBranch(trimmed, current, scope)
+	}
+	return p.planSingleQuery(trimmed, current, scope, false)
 }
 
 // planSingleQuery plans one query (no top-level UNION) that runs on
@@ -592,36 +584,10 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
 		}
 
-		subUse, subBody, hasUse, err := parseLeadingUse(block.body, true)
-		if err == nil && !hasUse {
-			subUse, subBody, hasUse, err = parseLeadingWithUse(block.body)
-		}
+		subqueryFragment, err := p.planQuery(block.body, top, scope, true)
 		if err != nil {
-			return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
+			return nil, err
 		}
-
-		var (
-			subqueryFragment Fragment
-			importCols       []string
-		)
-		if hasUse {
-			sub := useTarget(subUse)
-			if err := p.validatePlanTarget(scope, sub); err != nil {
-				return nil, err
-			}
-			subqueryFragment, err = p.planSingleQuery(subBody, sub, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(subBody)
-		} else {
-			subqueryFragment, err = p.planSingleQuery(block.body, top, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(block.body)
-		}
-		subqueryFragment = bindLeadingImportColumns(subqueryFragment, importCols)
 
 		currentInput = &FragmentApply{
 			Input:   currentInput,
@@ -643,6 +609,34 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 	}
 
 	return currentInput, nil
+}
+
+// planCallBranch preserves the existing USE and import handling for one CALL
+// branch. planQuery has already separated any sibling UNION branches.
+func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string) (Fragment, error) {
+	subUse, subBody, hasUse, err := parseLeadingUse(body, true)
+	if err == nil && !hasUse {
+		subUse, subBody, hasUse, err = parseLeadingWithUse(body)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
+	}
+	if hasUse {
+		sub := useTarget(subUse)
+		if err := p.validatePlanTarget(scope, sub); err != nil {
+			return nil, err
+		}
+		fragment, err := p.planSingleQuery(subBody, sub, scope, true)
+		if err != nil {
+			return nil, err
+		}
+		return bindLeadingImportColumns(fragment, extractWithImports(subBody)), nil
+	}
+	fragment, err := p.planSingleQuery(body, top, scope, true)
+	if err != nil {
+		return nil, err
+	}
+	return bindLeadingImportColumns(fragment, extractWithImports(body)), nil
 }
 
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
