@@ -175,7 +175,7 @@ func TestRegistryDoesNotPublishExhaustedFirstPage(t *testing.T) {
 }
 
 func TestRegistryExpiryIsFixedAndRemovesExpiredStream(t *testing.T) {
-	stream, err := NewProgressive([][]any{{0}, {1}, {2}}, true, 3, nil)
+	stream, err := NewProgressive([][]any{{0}, {1}, {2}, {3}}, true, 4, nil)
 	require.NoError(t, err)
 	registry, err := NewRegistry(Config{TTL: time.Second, MaxStreams: 1, MaxPageSize: 1})
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestRegistryCloseReleasesStreamsAndRejectsOperations(t *testing.T) {
 }
 
 func TestRegistryConcurrentReplayIsDeterministic(t *testing.T) {
-	stream, err := NewProgressive([][]any{{0}, {1}, {2}}, true, 3, nil)
+	stream, err := NewProgressive([][]any{{0}, {1}, {2}, {3}}, true, 4, nil)
 	require.NoError(t, err)
 	registry, err := NewRegistry(Config{TTL: time.Minute, MaxStreams: 1, MaxPageSize: 2})
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestRegistryConcurrentReplayIsDeterministic(t *testing.T) {
 		require.NoError(t, <-errs)
 		page := <-pages
 		require.Equal(t, [][]any{{1}, {2}}, page.Rows)
-		require.Empty(t, page.QID)
+		require.NotEmpty(t, page.QID)
 	}
 }
 
