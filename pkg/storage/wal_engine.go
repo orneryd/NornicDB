@@ -1328,10 +1328,7 @@ func (w *WALEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func
 
 // DeleteByPrefix delegates to the underlying engine.
 func (w *WALEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	return w.engine.DeleteByPrefix(prefix)
+	return w.DeleteByPrefixContext(context.Background(), prefix)
 }
 
 // Verify WALEngine implements Engine interface
