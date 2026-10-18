@@ -133,8 +133,9 @@ func (t *TracedEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 	if batcher, ok := t.inner.(DocumentBatchChunkEmbedder); ok {
 		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
 	}
-	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
-		return t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, []providerBatchUsage, error) {
+		vectors, err := t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+		return vectors, nil, err
 	}, t.Model())
 }
 
