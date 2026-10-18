@@ -85,11 +85,11 @@ var clusterOwnerCallers = map[string][]string{
 	"clusterProfileFromTerms":          {"Service.applyClusterAdmission", "Service.publishClusterGeneration"},
 	"newClusterTerms":                  {"Service.deriveClusterTerms", "clusterGeneration.addTerms"},
 	// Admission entries (the admission boundary, indexMu).
-	"Service.admitClusterVectorLocked":     {"Service.indexNodeLocked"},
+	"Service.admitClusterVectorLocked":     {"Service.indexNodeAsLocked"},
 	"Service.admitClusterVectorsLocked":    {"Service.reconcileClusterPopulation"},
-	"Service.retireClusterVectorLocked":    {"Service.RemovePropertyVectorIndex", "Service.removeNodeEntriesLocked"},
-	"Service.beginClusterNodeChangeLocked": {"Service.RemovePropertyVectorIndex", "Service.indexNodeLocked", "Service.removeNodeLocked"},
-	"Service.endClusterNodeChangeLocked":   {"Service.RemovePropertyVectorIndex", "Service.indexNodeLocked", "Service.removeNodeLocked"},
+	"Service.retireClusterVectorLocked":    {"Service.removePropertyVectorIndexOwned", "Service.removeNodeEntriesLocked"},
+	"Service.beginClusterNodeChangeLocked": {"Service.removePropertyVectorIndexOwned", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
+	"Service.endClusterNodeChangeLocked":   {"Service.removePropertyVectorIndexOwned", "Service.indexNodeAsLocked", "Service.removeNodeLocked"},
 	// Generation construction and publication.
 	"newClusterGeneration":             {"Service.buildClusterGeneration"},
 	"Service.openClusterStaging":       {"Service.triggerClustering", "Service.tryRestoreClusteredWarmupFromDisk"},
