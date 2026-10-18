@@ -101,17 +101,17 @@ var nodeAdjacencySites = map[string]string{
 // iteration reads (an ID set or a list they build), so the reads' charges
 // stay while the loop runs, with what they keep.
 var entityReadsKeptAcrossIterations = map[string]string{
-	"tryCollectNodesFromPropertyIndexAnyOf":           "each label's IDs go into the ID set it returns nodes from",
-	"tryCollectNodesFromPropertyIndexInAnyOf":         "each value's IDs go into the ID set it returns nodes from",
-	"tryCollectNodesFromPropertyIndexInLiteralAnyOf":  "each value's IDs go into the ID set it returns nodes from",
-	"tryCollectNodesFromPropertyIndexInOrParam":       "each value's IDs go into the ID set it returns nodes from",
-	"tryCollectNodesFromPropertyIndexOrEquality":      "each branch's IDs go into the ID set it returns nodes from",
-	"tryCollectNodesFromPropertyIndexInCompound":      "returns the first conjunct's seek; the loop stops at it",
+	"tryCollectNodesFromPropertyIndexAnyOf":            "each label's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInAnyOf":          "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInLiteralAnyOf":   "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInOrParam":        "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexOrEquality":       "each branch's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInCompound":       "returns the first conjunct's seek; the loop stops at it",
 	"tryCollectNodesFromPropertyIndexEqualityCompound": "returns the first conjunct's seek; the loop stops at it",
-	"lookupPatternCandidatesUsingPropertyIndex":       "each index's IDs go into the sets it intersects",
-	"mergeNodeIndexedCandidateIDs":                    "returns the first full composite match or keeps the smallest property result; at most one lookup per pattern property",
-	"findMergeNode":                                   "returns at the first match; at most one lookup per index and pattern property",
-	"buildRelationshipBatchNodeMatchIndex":            "each label's matched nodes go into the batch index it returns",
+	"lookupPatternCandidatesUsingPropertyIndex":        "each index's IDs go into the sets it intersects",
+	"mergeNodeIndexedCandidateIDs":                     "returns the first full composite match or keeps the smallest property result; at most one lookup per pattern property",
+	"findMergeNode":                                    "returns at the first match; at most one lookup per index and pattern property",
+	"buildRelationshipBatchNodeMatchIndex":             "each label's matched nodes go into the batch index it returns",
 }
 
 // entityReadsOutsideStatements are functions that read entities in bulk
