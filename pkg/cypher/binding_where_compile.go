@@ -242,6 +242,16 @@ func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause s
 	if predicate, ok := e.tryCompileBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
+	if plan := planRowPredicate(whereClause); plan != nil && plan.complete {
+		// The row plan calls the pattern owner with this executor at runtime.
+		// Keep this adapter local, like every graph-dependent predicate.
+		return func(b binding, params map[string]interface{}) bool {
+			if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
+				return e.evaluateRowPredicatePartScope(withQueryParams(ctx, params), &plan.root, compiledRowScope{nodes: b, parameters: params}, nil)
+			}
+			return e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{nodes: b, parameters: getParamsFromContext(ctx)}, nil)
+		}
+	}
 	clause := strings.TrimSpace(whereClause)
 	return func(b binding, params map[string]interface{}) bool {
 		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)

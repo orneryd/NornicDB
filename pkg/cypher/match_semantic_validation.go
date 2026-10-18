@@ -822,16 +822,10 @@ func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanti
 	if !containsRelationshipPattern(expression) {
 		return nil
 	}
-	for _, variable := range append(extractNodeVariables(expression), extractRelationshipVariables(expression)...) {
-		if _, inScope := scope[variable]; inScope {
-			continue
-		}
-		if _, externallyBound := e.fabricRecordBindings[variable]; externallyBound {
-			continue
-		}
-		return createUndefinedVariableError(variable)
-	}
-	return nil
+	return e.validatePatternPredicateVariables(planPatternPredicate(expression).variables, func(variable string) bool {
+		_, inScope := scope[variable]
+		return inScope
+	})
 }
 
 // maskPatternComprehensions blanks, keeping byte offsets, the inside of every
