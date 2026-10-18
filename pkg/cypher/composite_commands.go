@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 func parseCypherValueToken(tok string) (string, error) {
@@ -498,19 +499,23 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				ref.DatabaseName,
 				ref.Type,
 				ref.AccessMode,
-				ref.URI,
+				observability.RedactURL(ref.URI),
 				ref.SecretRef,
 				ref.AuthMode,
 				ref.User,
 			}
 		} else if m, ok := c.(map[string]interface{}); ok {
 			// Fallback for map format (if returned as map)
+			uri := m["uri"]
+			if value, ok := uri.(string); ok {
+				uri = observability.RedactURL(value)
+			}
 			rows[i] = []interface{}{
 				m["alias"],
 				m["database_name"],
 				m["type"],
 				m["access_mode"],
-				m["uri"],
+				uri,
 				m["secret_ref"],
 				m["auth_mode"],
 				m["user"],

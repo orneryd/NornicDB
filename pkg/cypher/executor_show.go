@@ -14,6 +14,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -70,19 +71,13 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 			value = activeValue
 			startupValue = activeValue
 		}
-		if definition.Redacted {
-			if value != "" {
-				value = "<REDACTED>"
-			}
-			if startupValue != "" {
-				startupValue = "<REDACTED>"
-			}
-		}
+		value = observability.DisplayValue(definition.Name, value)
+		startupValue = observability.DisplayValue(definition.Name, startupValue)
 		rows = append(rows, []interface{}{
 			definition.Name,
 			value,
 			definition.Dynamic,
-			definition.DefaultValue,
+			observability.DisplayValue(definition.Name, definition.DefaultValue),
 			definition.Description,
 			startupValue,
 			explicitlySet,

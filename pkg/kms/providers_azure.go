@@ -2,6 +2,7 @@ package kms
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/observability"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	azurekeyvault "github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2"
@@ -50,7 +51,7 @@ func NewAzureProvider(ctx context.Context, cfg AzureProviderConfig) (*AzureProvi
 		configMap["disallow_env_vars"] = "true"
 	}
 	if _, err := w.SetConfig(ctx, wrapping.WithConfigMap(configMap)); err != nil {
-		return nil, err
+		return nil, observability.RedactError(err, cfg.ClientSecret)
 	}
-	return &AzureProvider{wrappingAdapter: newWrappingAdapter(w)}, nil
+	return &AzureProvider{wrappingAdapter: newWrappingAdapter(w, cfg.ClientSecret)}, nil
 }

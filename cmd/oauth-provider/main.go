@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Configuration
@@ -619,6 +621,7 @@ func main() {
 	clientSecret := flag.String("client-secret", defaultClientSecret, "OAuth client secret")
 	issuer := flag.String("issuer", defaultIssuer, "OAuth issuer URL")
 	redirectURI := flag.String("redirect-uri", defaultRedirectURI, "Exact registered OAuth callback URL")
+	flag.VisitAll(func(f *flag.Flag) { f.DefValue = observability.DisplayValue(f.Name, f.DefValue) })
 	flag.Parse()
 
 	provider, err := NewOAuthProvider(*clientID, *clientSecret, *issuer, *redirectURI)
@@ -664,7 +667,7 @@ func main() {
 %s
 
 ✅ Ready to accept OAuth requests!
-`, addr, *clientID, "<REDACTED>", *issuer, strings.Join(userList, "\n"))
+`, addr, *clientID, observability.RedactedPlaceholder(), observability.RedactURL(*issuer), strings.Join(userList, "\n"))
 
 	fmt.Print(output)
 

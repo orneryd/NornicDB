@@ -264,6 +264,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	decayStatsCmd.Flags().String("data-dir", getEnvStr("NORNICDB_DATA_DIR", "./data"), text(localization.NornicDBCLIFlagDataDir()))
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
+	protectFlagDefaults(rootCmd)
 	return rootCmd
 }
 
@@ -567,7 +568,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingLocal(modelsDir, embeddingModel, embeddingDim, gpuMode))
 	} else {
-		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(embeddingURL))
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(observability.RedactURL(embeddingURL)))
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingModel(embeddingModel, embeddingDim))
 	}
 	if parallelEnabled {
@@ -1828,7 +1829,7 @@ func shellDisplayValue(column string, value interface{}) string {
 	if observability.IsSensitiveFieldName(column) {
 		return observability.RedactedPlaceholder()
 	}
-	return fmt.Sprintf("%v", value)
+	return observability.DisplayValue(column, fmt.Sprintf("%v", value))
 }
 
 func runDecaySuppress(cmd *cobra.Command, args []string) error {

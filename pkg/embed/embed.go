@@ -52,6 +52,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"io"
 	"net/http"
 	"strings"
@@ -538,30 +539,30 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 
 	url := e.config.APIURL + path
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: observability.RedactText(string(bodyBytes), e.config.APIKey, e.config.APIURL)}
 	}
 
 	var ollamaResp ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 	recordEmbeddingUsage(ctx, "ollama", e.Model(), 1, ollamaResp.PromptEvalCount)
 
@@ -977,31 +978,31 @@ func (e *OpenAIEmbedder) embedBatchRequest(ctx context.Context, texts []string) 
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 
 	url := e.config.APIURL + e.config.APIPath
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+e.config.APIKey)
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: provider, StatusCode: resp.StatusCode, Body: string(bodyBytes)}
+		return nil, &ProviderError{Provider: provider, StatusCode: resp.StatusCode, Body: observability.RedactText(string(bodyBytes), e.config.APIKey, e.config.APIURL)}
 	}
 
 	var openaiResp openaiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openaiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, e.config.APIKey, e.config.APIURL))
 	}
 
 	recordEmbeddingUsage(ctx, provider, e.Model(), len(texts), openaiResp.Usage.TotalTokens)

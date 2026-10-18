@@ -2,33 +2,20 @@ package observability
 
 import (
 	"context"
-	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// SensitiveKeys is the set of span attribute keys that must be redacted before
-// export (SEC-01). Shared with pkg/audit via this exported variable so the
-// redaction list has a single source of truth.
-var SensitiveKeys = map[string]bool{
-	"auth.token":         true,
-	"auth.password":      true,
-	"auth.credentials":   true,
-	"db.password":        true,
-	"bolt.auth_token":    true,
-	"http.authorization": true,
-	"user.password":      true,
-	"user.token":         true,
-	"credentials":        true,
-	"password":           true,
-	"secret":             true,
-	"api_key":            true,
-	"access_token":       true,
-	"refresh_token":      true,
-	"session_token":      true,
-	"private_key":        true,
-}
+// SensitiveKeys is a compatibility view of the canonical built-in names.
+// Deprecated: use IsSensitiveFieldName for aliases and compound field names.
+var SensitiveKeys = func() map[string]bool {
+	keys := make(map[string]bool, len(DefaultRedactKeys))
+	for _, key := range DefaultRedactKeys {
+		keys[key] = true
+	}
+	return keys
+}()
 
 // redactingSpanProcessor wraps an inner SpanProcessor and strips sensitive
 // attributes from spans before forwarding to the inner processor.
@@ -64,16 +51,7 @@ func (r *redactingSpanProcessor) ForceFlush(ctx context.Context) error {
 // isSensitiveKey checks whether a key should be redacted. Case-insensitive
 // and also catches keys that contain a sensitive substring.
 func isSensitiveKey(key string) bool {
-	lower := strings.ToLower(key)
-	if SensitiveKeys[lower] {
-		return true
-	}
-	for sensitive := range SensitiveKeys {
-		if strings.Contains(lower, sensitive) {
-			return true
-		}
-	}
-	return false
+	return IsSensitiveFieldName(key)
 }
 
 // needsRedaction scans attributes without allocating. Returns true only if
@@ -81,7 +59,7 @@ func isSensitiveKey(key string) bool {
 // zero allocations.
 func needsRedaction(s sdktrace.ReadOnlySpan) bool {
 	for _, a := range s.Attributes() {
-		if isSensitiveKey(string(a.Key)) {
+		if isSensitiveKey(string(a.Key)) || (a.Value.Type() == attribute.STRING && RedactText(a.Value.AsString()) != a.Value.AsString()) {
 			return true
 		}
 	}
@@ -100,6 +78,8 @@ func newRedactedSpan(s sdktrace.ReadOnlySpan) *redactedSpan {
 	for _, a := range orig {
 		if isSensitiveKey(string(a.Key)) {
 			filtered = append(filtered, attribute.String(string(a.Key), "REDACTED"))
+		} else if a.Value.Type() == attribute.STRING {
+			filtered = append(filtered, attribute.String(string(a.Key), RedactText(a.Value.AsString())))
 		} else {
 			filtered = append(filtered, a)
 		}

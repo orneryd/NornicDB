@@ -1,0 +1,356 @@
+package observability
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/url"
+	"regexp"
+	"strings"
+	"unicode"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+)
+
+type sensitiveNameNode struct {
+	children map[byte]*sensitiveNameNode
+	terminal bool
+}
+
+// Compile the canonical names once. A normal log key usually has no matching
+// first byte, so the hot path avoids word allocations and scanning every alias.
+type sensitiveNames struct {
+	keys  map[string]struct{}
+	roots [256]*sensitiveNameNode
+}
+
+func newSensitiveNames(keys map[string]struct{}) *sensitiveNames {
+	names := &sensitiveNames{keys: keys}
+	for key := range keys {
+		if key == "" {
+			continue
+		}
+		node := names.roots[key[0]]
+		if node == nil {
+			node = &sensitiveNameNode{}
+			names.roots[key[0]] = node
+		}
+		for i := 1; i < len(key); i++ {
+			if node.children == nil {
+				node.children = make(map[byte]*sensitiveNameNode)
+			}
+			child := node.children[key[i]]
+			if child == nil {
+				child = &sensitiveNameNode{}
+				node.children[key[i]] = child
+			}
+			node = child
+		}
+		node.terminal = true
+	}
+	return names
+}
+
+func (names *sensitiveNames) match(name string) (suffix, candidate bool) {
+	for i := 0; i < len(name); i++ {
+		node := names.roots[name[i]]
+		for j := i; node != nil; j++ {
+			if node.terminal {
+				if j == len(name)-1 {
+					return true, true
+				}
+				candidate = true
+			}
+			if j+1 == len(name) {
+				break
+			}
+			node = node.children[name[j+1]]
+		}
+	}
+	return false, candidate
+}
+
+// Most log keys are short ASCII names. Normalize those without allocating word
+// slices; only candidate matches need the word-boundary/metadata checks below.
+func normalizeFieldName(name string) string {
+	var scratch [128]byte
+	if len(name) > len(scratch) {
+		return strings.Join(fieldWords(name), "")
+	}
+	n := 0
+	unchanged := true
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 128 {
+			return strings.Join(fieldWords(name), "")
+		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+			unchanged = false
+		}
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			scratch[n] = c
+			n++
+		} else {
+			unchanged = false
+		}
+	}
+	if unchanged {
+		return name
+	}
+	return string(scratch[:n])
+}
+
+// fieldWords gives flags, environment variables, dotted settings and Go fields
+// the same spelling, including acronym boundaries such as JWTSecret and APIKey.
+func fieldWords(name string) []string {
+	runes := []rune(strings.TrimSpace(name))
+	var b strings.Builder
+	for i, r := range runes {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			b.WriteByte(' ')
+			continue
+		}
+		if i > 0 && unicode.IsUpper(r) && (unicode.IsLower(runes[i-1]) ||
+			(unicode.IsUpper(runes[i-1]) && i+1 < len(runes) && unicode.IsLower(runes[i+1]))) {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return strings.Fields(b.String())
+}
+
+// DisplayValue projects a configuration value for output only. Callers must
+// retain the original value for execution and persistence.
+func DisplayValue(name, value string) string {
+	if IsSensitiveFieldName(name) {
+		return redactedPlaceholder
+	}
+	return RedactText(value)
+}
+
+var credentialURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>\x00]+`)
+
+// RedactURL preserves credential-free URLs byte for byte. Only userinfo and
+// sensitive query values are changed; paths, hosts and ordinary query options
+// remain useful in diagnostics. Invalid credential-bearing URLs fail closed.
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		if strings.Contains(raw, "@") || strings.Contains(raw, "?") {
+			return redactedPlaceholder
+		}
+		return raw
+	}
+	changed := false
+	if u.User != nil {
+		u.User = url.User(redactedPlaceholder)
+		changed = true
+	}
+	query, queryChanged, valid := redactURLQuery(u.RawQuery)
+	if !valid {
+		return redactedPlaceholder
+	}
+	if strings.Contains(u.Fragment, "=") {
+		fragment, fragmentChanged, valid := redactURLQuery(u.Fragment)
+		if !valid {
+			return redactedPlaceholder
+		}
+		if fragmentChanged {
+			u.Fragment = fragment
+			u.RawFragment = ""
+			changed = true
+		}
+	}
+	if !changed && !queryChanged {
+		return raw
+	}
+	u.RawQuery = query
+	return u.String()
+}
+
+func redactURLQuery(query string) (string, bool, bool) {
+	// Preserve the original query spelling/order and non-secret values.
+	changed := false
+	parts := strings.Split(query, "&")
+	for i, part := range parts {
+		key, _, found := strings.Cut(part, "=")
+		decoded, decodeErr := url.QueryUnescape(key)
+		if decodeErr != nil {
+			return "", false, false
+		}
+		if found && IsSensitiveFieldName("url_query_"+decoded) {
+			parts[i] = key + "=" + url.QueryEscape(redactedPlaceholder)
+			changed = true
+		}
+	}
+	return strings.Join(parts, "&"), changed, true
+}
+
+// Error bodies can also carry newly issued credentials, whose values were not
+// in the request. Apply the same field-name policy to structured error data.
+func redactJSON(value any, path string) bool {
+	changed := false
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			name := path + "." + key
+			if IsSensitiveFieldName(name) {
+				value[key] = redactedPlaceholder
+				changed = true
+			} else if redactJSON(child, name) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			changed = redactJSON(child, path) || changed
+		}
+	}
+	return changed
+}
+
+// RedactText removes credentials owned by the caller, including the encodings
+// used by HTTP forms, JSON and Basic authorization. It never reads environment
+// variables or discovers credentials from unrelated clients.
+func RedactText(text string, credentials ...string) string {
+	for _, credential := range credentials {
+		if credential == "" {
+			continue
+		}
+		// A configured URL supplies its userinfo/query credentials too, so a
+		// provider reflecting just a password is covered, not only the full URL.
+		secrets := []string{credential}
+		if scheme, value, ok := strings.Cut(credential, " "); ok {
+			if strings.EqualFold(scheme, "Bearer") {
+				secrets = append(secrets, value)
+			} else if strings.EqualFold(scheme, "Basic") {
+				secrets = append(secrets, value)
+				if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+					secrets = append(secrets, string(decoded))
+					if _, password, ok := strings.Cut(string(decoded), ":"); ok {
+						secrets = append(secrets, password)
+					}
+				}
+			}
+		}
+		if u, err := url.Parse(credential); err == nil && u.Scheme != "" && u.Host != "" {
+			secrets = nil
+			if u.User != nil {
+				secrets = append(secrets, u.User.String())
+				if password, ok := u.User.Password(); ok {
+					secrets = append(secrets, password, u.User.Username()+":"+password)
+				}
+			}
+			for key, values := range u.Query() {
+				if IsSensitiveFieldName(key) {
+					secrets = append(secrets, values...)
+				}
+			}
+		}
+		for _, secret := range secrets {
+			if secret == "" {
+				continue
+			}
+			quoted, _ := json.Marshal(secret)
+			for _, encoded := range []string{string(quoted[1 : len(quoted)-1]), url.QueryEscape(secret), url.PathEscape(secret),
+				base64.StdEncoding.EncodeToString([]byte(secret)), secret} {
+				text = strings.ReplaceAll(text, encoded, redactedPlaceholder)
+			}
+		}
+	}
+	if strings.Contains(text, "://") {
+		text = credentialURL.ReplaceAllStringFunc(text, RedactURL)
+	}
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		var value any
+		if json.Unmarshal([]byte(text), &value) == nil && redactJSON(value, "") {
+			if encoded, err := json.Marshal(value); err == nil {
+				text = string(encoded)
+			}
+		}
+	}
+	return text
+}
+
+type displayError struct {
+	cause     error
+	text      string
+	localized *localization.LocalizedError
+}
+
+func (e *displayError) Error() string { return e.text }
+func (e *displayError) Unwrap() error { return e.cause }
+
+// Renderers use errors.As to recover message identity. Give them a safe copy,
+// while Unwrap still exposes the original cause for Is/As and retry handling.
+func (e *displayError) As(target any) bool {
+	if localized, ok := target.(**localization.LocalizedError); ok && e.localized != nil {
+		*localized = e.localized
+		return true
+	}
+	return false
+}
+
+// RedactError keeps errors.Is/As and transport/retry classification intact.
+// Localized message identity/data is also retained as a safe display copy.
+func RedactError(err error, credentials ...string) error {
+	if err == nil {
+		return nil
+	}
+	text := RedactText(err.Error(), credentials...)
+	var localized *localization.LocalizedError
+	if errors.As(err, &localized) {
+		copy := *localized
+		copy.Message.Fallback = RedactText(copy.Message.Fallback, credentials...)
+		copy.Message.Data = make(map[string]any, len(localized.Message.Data))
+		for key, value := range localized.Message.Data {
+			switch value := value.(type) {
+			case string:
+				copy.Message.Data[key] = RedactText(value, credentials...)
+			case error:
+				copy.Message.Data[key] = RedactError(value, credentials...)
+			default:
+				copy.Message.Data[key] = value
+			}
+		}
+		localized = &copy
+	}
+	if text == err.Error() && localized == nil {
+		return err
+	}
+	return &displayError{cause: err, text: text, localized: localized}
+}
+
+// DisplayArgs is a copy of argv for diagnostic endpoints. It never changes the
+// process arguments or flag getters. Both flag assignment forms are supported.
+func DisplayArgs(args []string) []string {
+	out := make([]string, len(args))
+	secretNext := false
+	for i, arg := range args {
+		if secretNext {
+			out[i] = redactedPlaceholder
+			secretNext = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			name, value, assigned := strings.Cut(arg, "=")
+			if IsSensitiveFieldName(name) {
+				out[i] = name
+				if assigned {
+					out[i] += "=" + redactedPlaceholder
+				} else {
+					secretNext = true
+				}
+				continue
+			}
+			if assigned {
+				out[i] = name + "=" + RedactText(value)
+				continue
+			}
+		}
+		out[i] = RedactText(arg)
+	}
+	return out
+}

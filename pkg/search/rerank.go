@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -204,7 +205,8 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 }
 
 // callRerankAPI calls the cross-encoder service.
-func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) ([]float64, error) {
+func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) (_ []float64, err error) {
+	defer func() { err = observability.RedactError(err, ce.config.APIKey, ce.config.APIURL) }()
 	// Build request body - supports multiple formats
 	// Format 1: Cohere-style
 	// Format 2: HuggingFace TEI-style
