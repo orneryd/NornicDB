@@ -82,11 +82,11 @@ func TestPatternPredicateCompiledMatchesPipeline(t *testing.T) {
 	} {
 		t.Run(tc.pattern, func(t *testing.T) {
 			failureCtx := withExpressionFailureSlot(ctx)
-			matched, err := planPatternPredicate(tc.pattern).evaluate(exec, failureCtx, compiledRowScope{values: &values})
-			require.NoError(t, err)
+			matched, recognized := exec.rowPatternPredicate(failureCtx, tc.pattern, values)
+			require.True(t, recognized)
 			require.NoError(t, getExpressionFailure(failureCtx))
 			require.Equal(t, tc.want, matched)
-			general, err := exec.runCorrelatedSubquery(ctx, rowSubqueryQuery("EXISTS", tc.pattern), values)
+			general, err := exec.runCorrelatedSubquery(ctx, "MATCH "+tc.pattern+" RETURN 1 AS __exists LIMIT 1", values)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, len(general.Rows) > 0)
 		})

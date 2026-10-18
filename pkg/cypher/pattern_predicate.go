@@ -33,7 +33,7 @@ func planPatternPredicate(pattern string) *patternPredicatePlan {
 	// syntax alone. A zero executor ensures the cached plan owns no database or
 	// statement values. Maps (including row-dependent ones) stay with EXISTS.
 	if !strings.ContainsAny(pattern, "{$") && !patternHasInlineWhere(pattern) {
-		if shape := parseBoundChainShape(pattern); shape.ok && shape.where == "" {
+		if isRelationshipPatternOperand(pattern) {
 			var parser StorageExecutor
 			if hop := parser.parseTraversalPattern(context.Background(), pattern); hop != nil && !hop.IsChained && !hop.Relationship.VariableLength && hop.Relationship.MinHops == 1 && hop.Relationship.MaxHops == 1 {
 				plan.hop = hop
@@ -66,10 +66,28 @@ func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Conte
 	}); err != nil {
 		return false, err
 	}
+	// A bound null cannot become a local variable when the general EXISTS
+	// matcher partitions entities out of the row (including typed nils).
+	for _, name := range plan.variables {
+		value, _ := scope.lookup(name)
+		if value == nil {
+			return false, nil
+		}
+		switch entity := value.(type) {
+		case *storage.Node:
+			if entity == nil {
+				return false, nil
+			}
+		case *storage.Edge:
+			if entity == nil {
+				return false, nil
+			}
+		}
+	}
 	values := scope.materialize()
 	if hop := plan.hop; hop != nil && chainVariablesBindEntities(hop, values) {
 		if seed, _ := values[hop.StartNode.variable].(*storage.Node); seed != nil {
-			if count, expanded := e.boundExpandCount(withoutLocalSubqueryScope(ctx), hop, seed, "", values, true); expanded {
+			if count, expanded := e.boundExpandCount(ctx, hop, seed, "", values, true); expanded {
 				return count > 0, getExpressionFailure(ctx)
 			}
 		}
