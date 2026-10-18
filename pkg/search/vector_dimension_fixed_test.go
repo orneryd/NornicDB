@@ -114,3 +114,48 @@ func TestAdoptingCollectionDimensionsUpdatesClusterBackend(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
 }
+
+// AdmitsVectorDimensions answers what IndexNode accepts: a fixed index only
+// its own dimension, an unfixed empty one any dimension (the first vector sets
+// it), an unfixed one holding vectors only theirs, and a service with vector
+// search off every dimension.
+func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
+	fixed := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	fixed.FixVectorDimensions()
+	require.True(t, fixed.AdmitsVectorDimensions(8))
+	require.False(t, fixed.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, fixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+	require.True(t, fixed.AdmitsVectorDimensions(0), "a write without vectors has nothing to reject")
+
+	unfixed := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	require.True(t, unfixed.AdmitsVectorDimensions(4), "the first vector sets an empty index's dimension")
+	require.NoError(t, unfixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}))
+	require.True(t, unfixed.AdmitsVectorDimensions(4))
+	require.False(t, unfixed.AdmitsVectorDimensions(8))
+	require.ErrorIs(t, unfixed.IndexNode(&storage.Node{ID: "eight", NamedEmbeddings: map[string][]float32{"default": make([]float32, 8)}}), ErrDimensionMismatch)
+
+	fixed.SetIndexFlags(true, false)
+	require.True(t, fixed.AdmitsVectorDimensions(4), "vector search off indexes no vectors")
+
+	var none *Service
+	require.True(t, none.AdmitsVectorDimensions(4))
+	fixed.mu.Lock()
+	fixed.vectorIndex = nil
+	fixed.mu.Unlock()
+	fixed.SetIndexFlags(true, true)
+	require.False(t, fixed.AdmitsVectorDimensions(8), "a fixed service without an index indexes nothing")
+
+	// A file-backed store holding vectors decides the dimension, as it does
+	// for IndexNode, even when the in-memory index is empty and unfixed.
+	stored := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vfs.Close() })
+	require.NoError(t, vfs.Add("two", []float32{1, 0}))
+	stored.indexMu.Lock()
+	stored.vectorFileStore = vfs
+	stored.indexMu.Unlock()
+	require.True(t, stored.AdmitsVectorDimensions(2))
+	require.False(t, stored.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, stored.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+}
