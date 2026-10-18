@@ -78,6 +78,36 @@ func TestRelationshipPropertySeekProfileAccounting(t *testing.T) {
 	require.Equal(t, plan.TotalDBHits, plan.Root.DBHits, "ancestors must lose the replaced scan's cumulative work too")
 }
 
+func TestRelationshipPropertySeekExpressionPlans(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, query := range []string{
+		"CREATE (:Probe)-[:KEYED {_ci_key:1}]->(:Probe)",
+		"CREATE RANGE INDEX rel_key FOR ()-[r:KEYED]-() ON (r._ci_key)",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	for _, test := range []struct {
+		expression string
+		key        interface{}
+	}{
+		{"toInteger(k)", int64(1)},
+		{"size(k)", []interface{}{int64(1)}},
+		{"k.value", map[string]interface{}{"value": int64(1)}},
+	} {
+		query := "UNWIND $keys AS k MATCH ()-[r:KEYED]->() WHERE r._ci_key=" + test.expression + " RETURN r._ci_key"
+		params := map[string]interface{}{"keys": []interface{}{test.key}}
+		for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+			result, err := exec.Execute(context.Background(), mode+" "+query, params)
+			require.NoError(t, err)
+			require.Contains(t, planStringFromResult(t, result), "RelationshipIndexSeek", query)
+			if mode == "PROFILE" {
+				require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+			}
+		}
+	}
+}
+
 func TestRelationshipPropertySeekExactVariableOwnership(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	for _, query := range []string{
