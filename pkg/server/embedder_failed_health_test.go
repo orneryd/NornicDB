@@ -48,7 +48,7 @@ func (h *failedHealthWarningHandler) Handle(_ context.Context, r slog.Record) er
 	return nil
 }
 func (h *failedHealthWarningHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *failedHealthWarningHandler) WithGroup(string) slog.Handler     { return h }
+func (h *failedHealthWarningHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestEmbedderFailedHealthClosesBeforeBackoff(t *testing.T) {
 	for _, provider := range []string{"local", "openai"} {
@@ -61,8 +61,8 @@ func TestEmbedderFailedHealthClosesBeforeBackoff(t *testing.T) {
 				s.log = slog.New(&failedHealthWarningHandler{warned: warned})
 				e := &failedHealthOwnedEmbedder{
 					countingEmbedder: countingEmbedder{dims: 4},
-					stop:            make(chan struct{}),
-					done:            make(chan struct{}),
+					stop:             make(chan struct{}),
+					done:             make(chan struct{}),
 				}
 				go func() { defer close(e.done); <-e.stop }()
 				t.Cleanup(func() {
