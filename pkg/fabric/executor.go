@@ -23,9 +23,20 @@ type FabricExecutor struct {
 	catalog *Catalog
 	local   *LocalFragmentExecutor
 	remote  *RemoteFragmentExecutor
+	// Explicit transaction participants share mutable execution state. Query
+	// dispatch is their one execution boundary, including UNION and APPLY fan-out.
+	serializeExec bool
+	execMu        sync.Mutex
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+}
+
+// SetConcurrentExecution configures whether fragments may execute concurrently.
+// Explicit transactions use serial dispatch because their local executors and
+// remote transaction handles are shared by all branches of the statement.
+func (e *FabricExecutor) SetConcurrentExecution(concurrent bool) {
+	e.serializeExec = !concurrent
 }
 
 const (
@@ -83,41 +94,53 @@ func (e *FabricExecutor) executeInit(f *FragmentInit) (*ResultStream, error) {
 
 // executeExec dispatches a bound executable fragment to local or remote.
 func (e *FabricExecutor) executeExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, error) {
+	result, _, err := e.dispatchExec(ctx, tx, f, params, authToken)
+	return result, err
+}
+
+// dispatchExec owns query execution for both materialized and iterator callers.
+// Local and remote row APIs already collect their results before returning an
+// iterator; keeping that dispatch here also keeps transaction state serialized.
+func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, int, error) {
+	if e.serializeExec {
+		e.execMu.Lock()
+		defer e.execMu.Unlock()
+	}
 	loc, execParams, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 
 	switch l := loc.(type) {
 	case *LocationLocal:
 		if e.local == nil {
-			return nil, fmt.Errorf("local executor not configured")
+			return nil, 0, fmt.Errorf("local executor not configured")
 		}
 		res, err := e.local.ExecuteWithRecord(ctx, l, f.Query, execParams, recordBindings)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if res != nil && len(res.Columns) == 0 {
 			res.Columns = inferReturnColumnsFromQuery(f.Query)
 		}
-		return res, nil
+		return res, 256, nil
 
 	case *LocationRemote:
 		if e.remote == nil {
-			return nil, fmt.Errorf("remote executor not configured")
+			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
 		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if res != nil && len(res.Columns) == 0 {
 			res.Columns = inferReturnColumnsFromQuery(f.Query)
 		}
-		return res, nil
+		return res, 128, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported location type: %T", loc)
+		return nil, 0, fmt.Errorf("unsupported location type: %T", loc)
 	}
 }
 
@@ -130,35 +153,14 @@ func (e *FabricExecutor) executeRows(ctx context.Context, tx *FabricTransaction,
 		}
 		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), 128), nil
 	case *FragmentExec:
-		// Stream directly from local/remote executors for FragmentExec to avoid
-		// eager result materialization in operator paths.
-		loc, execParams, execCtx, err := e.prepareExecDispatch(ctx, tx, f, params)
+		res, prefetch, err := e.dispatchExec(ctx, tx, f, params, authToken)
 		if err != nil {
 			return nil, nil, err
 		}
-		switch l := loc.(type) {
-		case *LocationLocal:
-			if e.local == nil {
-				return nil, nil, fmt.Errorf("local executor not configured")
-			}
-			recordBindings, _ := RecordBindingsFromContext(execCtx)
-			cols, it, err := e.local.ExecuteWithRecordRows(execCtx, l, f.Query, execParams, recordBindings)
-			if err != nil {
-				return nil, nil, err
-			}
-			return cols, wrapPipelineIterator(ctx, it, 256), nil
-		case *LocationRemote:
-			if e.remote == nil {
-				return nil, nil, fmt.Errorf("remote executor not configured")
-			}
-			cols, it, err := e.remote.ExecuteRows(execCtx, l, f.Query, execParams, authToken)
-			if err != nil {
-				return nil, nil, err
-			}
-			return cols, wrapPipelineIterator(ctx, it, 128), nil
-		default:
-			return nil, nil, fmt.Errorf("unsupported location type: %T", loc)
+		if res == nil {
+			return nil, wrapPipelineIterator(ctx, NewResultRowIterator(nil), prefetch), nil
 		}
+		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), prefetch), nil
 	case *FragmentUnion:
 		return e.executeUnionRows(ctx, tx, f, params, authToken)
 	default:
