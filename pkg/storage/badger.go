@@ -234,6 +234,10 @@ type BadgerEngine struct {
 	// Dramatically speeds up repeated MATCH lookups
 	nodeCache   map[NodeID]*Node
 	nodeCacheMu sync.RWMutex
+	// queryNodeCache holds nodes as GetQueryNode reads them (no stored
+	// vectors) that nodeCache doesn't hold in full. It is guarded by
+	// nodeCacheMu and invalidated wherever nodeCache is.
+	queryNodeCache map[NodeID]*Node
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).
 	nodeCacheGen       cacheGeneration

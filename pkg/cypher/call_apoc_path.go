@@ -125,7 +125,7 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		}
 		return []*storage.Node{typed}, nil
 	case string:
-		node, err := getQueryNode(e.storage, storage.NodeID(normalizeNodeIDValue(typed).(string)))
+		node, err := e.getQueryNode(e.storage, storage.NodeID(normalizeNodeIDValue(typed).(string)))
 		if err != nil || node == nil {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
@@ -581,7 +581,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 				if !apocUnique(x.uniqueness, step, edge, otherID, globalNodes, globalRelationships) {
 					continue
 				}
-				other, err := getQueryNode(e.storage, otherID)
+				other, err := e.getQueryNode(e.storage, otherID)
 				if err != nil || other == nil {
 					continue
 				}

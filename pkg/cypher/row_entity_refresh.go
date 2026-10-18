@@ -65,7 +65,7 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 	}
 	store := e.getStorage(ctx)
 	for id := range staleNodes {
-		if current, err := getQueryNode(store, id); err == nil && current != nil {
+		if current, err := e.getQueryNode(store, id); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
 			delete(staleNodes, id)
