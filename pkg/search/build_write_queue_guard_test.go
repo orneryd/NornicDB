@@ -24,7 +24,13 @@ import (
 // buildSequenceEntries are the entry points into the build sequence.
 var buildSequenceEntries = map[string]bool{
 	"readLockOrQueue": true, "queueBuildWrite": true, "orderWithBuild": true,
-	"orderWithBuildEnd": true, "orderDimensionChange": true, "orderIndexFlags": true,
+	"orderWithBuildEnd": true, "orderDimensionChange": true, "orderIndexFlags": true, "orderRelationshipUpdate": true,
+}
+
+// buildSequenceCacheWriters write only a re-derivable cache and need no
+// ordering with the sequence; the guard treats them as ordered.
+var buildSequenceCacheWriters = map[string]string{
+	"readChunkSpans": "fills the chunk-span cache of a search hit, under indexMu and only while the index revision is unchanged and the node has no entry; indexing or removing the node replaces or drops the entry, so a write the sequence applies later still decides it",
 }
 
 // buildSequenceExempt are writers that need no ordering with the sequence.
@@ -70,6 +76,7 @@ type buildSequenceFunc struct {
 
 func TestBuildSequenceOrdersEveryIndexWriter(t *testing.T) {
 	funcs := parseBuildSequenceFuncs(t)
+	guard := newSequenceGuard(funcs)
 	var violations []string
 	names := make([]string, 0, len(funcs))
 	for name := range funcs {
@@ -83,12 +90,17 @@ func TestBuildSequenceOrdersEveryIndexWriter(t *testing.T) {
 		if _, ok := buildSequenceExempt[name]; ok {
 			continue
 		}
-		if writers := unorderedBuildSequenceWrites(funcs, funcs[name]); len(writers) > 0 {
+		if writers := guard.unordered(funcs[name]); len(writers) > 0 {
 			violations = append(violations, name+" (writes in "+strings.Join(writers, ", ")+")")
 		}
 	}
 	if len(violations) > 0 {
 		t.Fatalf("exported index writers outside the build sequence (route them through readLockOrQueue/orderWithBuild, or list the reason in buildSequenceExempt): %s", strings.Join(violations, ", "))
+	}
+	for name := range buildSequenceCacheWriters {
+		if funcs[name] == nil {
+			t.Errorf("cache writer %s no longer exists; remove it from the list", name)
+		}
 	}
 	for name := range buildSequenceExempt {
 		if funcs[name] == nil {
@@ -99,122 +111,216 @@ func TestBuildSequenceOrdersEveryIndexWriter(t *testing.T) {
 
 // TestBuildSequenceGuardSeesBypasses: the guard reports a writer that
 // bypasses the sequence through the receiver, through a relationship-search
-// value, or before its entry-point guard.
+// value, before its entry call, in a branch the entry call does not
+// dominate, or in code a goto can reach; it accepts the dominated forms.
 func TestBuildSequenceGuardSeesBypasses(t *testing.T) {
-	for _, src := range []string{
-		"func (s *Service) Bypass(id string) { rs := s.relationshipSearch(); rs.fulltext.Remove(id) }",
-		"func (s *Service) Bypass(id string) { s.mu.Lock(); delete(s.edgePropVector, id); s.mu.Unlock() }",
-		"func (s *Service) Bypass() { s.note(); if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{}); queued { return } }\nfunc (s *Service) note() { delete(s.edgeTypes, \"x\") }",
-	} {
+	analyze := func(src, name string) []string {
+		t.Helper()
 		file, err := parser.ParseFile(token.NewFileSet(), "probe.go", "package search\n"+src, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		funcs := map[string]*buildSequenceFunc{}
 		collectBuildSequenceFuncs(file, funcs)
-		if len(unorderedBuildSequenceWrites(funcs, funcs["Bypass"])) == 0 {
+		return newSequenceGuard(funcs).unordered(funcs[name])
+	}
+	for _, src := range []string{
+		"func (s *Service) Bypass(id string) { rs := s.relationshipSearch(); rs.fulltext.Remove(id) }",
+		"func (s *Service) Bypass(id string) { s.mu.Lock(); delete(s.edgePropVector, id); s.mu.Unlock() }",
+		"func (s *Service) Bypass() { s.note(); if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{}); queued { return } }\nfunc (s *Service) note() { delete(s.edgeTypes, \"x\") }",
+		"func (s *Service) Bypass(flag bool, id string) { if flag { s.queueBuildWrite(deferredIndexWrite{}) } else { delete(s.edgeTypes, id) } }",
+		"func (s *Service) Bypass(k int, id string) { switch k { case 0: s.orderWithBuild(func() {}); case 1: delete(s.edgeTypes, id) } }",
+		"func (s *Service) Bypass(id string) { s.queueBuildWrite(deferredIndexWrite{}); goto done; done: delete(s.edgeTypes, id) }",
+		"func (s *Service) Bypass(id string) { go func() { delete(s.edgeTypes, id) }(); s.queueBuildWrite(deferredIndexWrite{}) }",
+	} {
+		if len(analyze(src, "Bypass")) == 0 {
 			t.Errorf("the guard missed the bypass in %q", src)
 		}
 	}
-	ordered := "func (s *Service) Ordered(id string) { if queued, err := s.readLockOrQueue(deferredIndexWrite{}); queued || err != nil { return }; delete(s.edgeTypes, id) }"
-	file, err := parser.ParseFile(token.NewFileSet(), "probe.go", "package search\n"+ordered, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	funcs := map[string]*buildSequenceFunc{}
-	collectBuildSequenceFuncs(file, funcs)
-	if writers := unorderedBuildSequenceWrites(funcs, funcs["Ordered"]); len(writers) > 0 {
-		t.Errorf("the guard rejected a write after its entry-point guard: %v", writers)
+	for _, src := range []string{
+		"func (s *Service) Ordered(id string) { if queued, err := s.readLockOrQueue(deferredIndexWrite{}); queued || err != nil { return }; delete(s.edgeTypes, id) }",
+		"func (s *Service) Ordered(id string) { queued, _, err := s.queueBuildWrite(deferredIndexWrite{}); if queued || err != nil { return }; delete(s.edgeTypes, id) }",
+		"func (s *Service) Ordered(id string) { s.orderWithBuild(func() { delete(s.edgeTypes, id) }) }",
+		"func (s *Service) Ordered(flag bool, id string) { if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{}); !queued { if flag { delete(s.edgeTypes, id) } } }",
+	} {
+		if writers := analyze(src, "Ordered"); len(writers) > 0 {
+			t.Errorf("the guard rejected a dominated write in %q: %v", src, writers)
+		}
 	}
 }
 
-// unorderedBuildSequenceWrites returns the writers reached by a top-level
-// statement of fn that writes index state before fn has entered the
-// sequence: a statement that reaches no entry point, before any statement
-// that calls an entry point and returns when the call was queued or failed.
-func unorderedBuildSequenceWrites(funcs map[string]*buildSequenceFunc, fn *buildSequenceFunc) []string {
-	for i, stmt := range fn.body.List {
-		if entryGuard(fn.body.List, i, fn.recv) {
-			return nil
-		}
-		summary := summarizeBuildSequence(stmt, fn.recv, fn.rsVars)
-		writes, entered := summary.writes, false
-		writers := []string{}
-		if summary.writes {
-			writers = append(writers, "the method's own statement")
-		}
-		seen := map[string]bool{}
-		var visit func(string)
-		visit = func(n string) {
-			if seen[n] {
-				return
-			}
-			seen[n] = true
-			if buildSequenceEntries[n] {
-				entered = true
-				return // what the sequence installs is ordered by it
-			}
-			callee := funcs[n]
-			if callee == nil {
-				return
-			}
-			if callee.writes {
-				writes = true
-				writers = append(writers, n)
-			}
-			for c := range callee.calls {
-				visit(c)
-			}
-		}
-		for c := range summary.calls {
-			visit(c)
-		}
-		if writes && !entered {
-			sort.Strings(writers)
-			return writers
-		}
-	}
-	return nil
+// sequenceGuard proves, from the source, that every index-state write of a
+// method is dominated by a call to a sequence entry point: on every path
+// through the method, the entry call runs before the write. Go without goto
+// is structured, so dominance follows the statement tree exactly:
+//   - a statement that calls an entry dominates the statements after it in its
+//     block;
+//   - the init and condition of an if, for or switch dominate its bodies and
+//     the statements after it, because they always run; an entry inside one
+//     branch dominates only that branch;
+//   - a closure passed to an entry call runs where the entry runs it, so it is
+//     ordered by that call; any other closure is checked where it appears.
+//
+// A callee is ordered when every write in it is dominated in it. A goto makes
+// the guard fail, since it breaks the structure the proof relies on.
+type sequenceGuard struct {
+	funcs map[string]*buildSequenceFunc
+	memo  map[string]*bool
 }
 
-// entryGuard reports whether stmts[i] calls an entry point directly and the
-// method returns when the call queued the operation or failed: the call in
-// an if statement's init whose body returns, or an assignment of the call's
-// result followed by an if statement whose body returns.
-func entryGuard(stmts []ast.Stmt, i int, recv string) bool {
-	callsEntry := func(n ast.Node) bool {
-		calls := false
-		ast.Inspect(n, func(n ast.Node) bool {
-			if c, ok := n.(*ast.CallExpr); ok {
-				if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
-					if id, ok := sel.X.(*ast.Ident); ok && id.Name == recv && buildSequenceEntries[sel.Sel.Name] {
-						calls = true
+func newSequenceGuard(funcs map[string]*buildSequenceFunc) *sequenceGuard {
+	return &sequenceGuard{funcs: funcs, memo: map[string]*bool{}}
+}
+
+// ordered reports whether every index-state write of name is dominated by an
+// entry call, in name itself or in an ordered callee.
+func (g *sequenceGuard) ordered(name string) bool {
+	if _, cache := buildSequenceCacheWriters[name]; cache || buildSequenceEntries[name] {
+		return true
+	}
+	fn := g.funcs[name]
+	if fn == nil {
+		return true // not a Service method of this package
+	}
+	if v, ok := g.memo[name]; ok {
+		return v == nil || *v // in progress (recursion): its writes are checked where it started
+	}
+	g.memo[name] = nil
+	result := len(g.unordered(fn)) == 0
+	g.memo[name] = &result
+	return result
+}
+
+// unordered returns what fn writes, directly or through an unordered callee,
+// without an entry call dominating it.
+func (g *sequenceGuard) unordered(fn *buildSequenceFunc) []string {
+	var out []string
+	g.block(fn, fn.body.List, false, &out)
+	sort.Strings(out)
+	return out
+}
+
+func (g *sequenceGuard) block(fn *buildSequenceFunc, stmts []ast.Stmt, dominated bool, out *[]string) {
+	for _, stmt := range stmts {
+		dominated = g.stmt(fn, stmt, dominated, out)
+	}
+}
+
+// stmt checks one statement and reports whether an entry call dominates the
+// statements after it.
+func (g *sequenceGuard) stmt(fn *buildSequenceFunc, stmt ast.Stmt, dominated bool, out *[]string) bool {
+	switch x := stmt.(type) {
+	case nil:
+		return dominated
+	case *ast.BranchStmt:
+		if x.Tok == token.GOTO {
+			*out = append(*out, "goto (the dominance proof needs structured code)")
+		}
+		return dominated
+	case *ast.LabeledStmt:
+		return g.stmt(fn, x.Stmt, dominated, out)
+	case *ast.BlockStmt:
+		g.block(fn, x.List, dominated, out)
+		return dominated
+	case *ast.IfStmt:
+		d := g.stmt(fn, x.Init, dominated, out)
+		d = g.simple(fn, x.Cond, d, out)
+		g.block(fn, x.Body.List, d, out)
+		g.stmt(fn, x.Else, d, out)
+		return d
+	case *ast.ForStmt:
+		d := g.stmt(fn, x.Init, dominated, out)
+		if x.Cond != nil {
+			d = g.simple(fn, x.Cond, d, out)
+		}
+		g.stmt(fn, x.Post, d, out)
+		g.block(fn, x.Body.List, d, out)
+		return d
+	case *ast.RangeStmt:
+		d := g.simple(fn, x.X, dominated, out)
+		g.block(fn, x.Body.List, d, out)
+		return d
+	case *ast.SwitchStmt:
+		d := g.stmt(fn, x.Init, dominated, out)
+		if x.Tag != nil {
+			d = g.simple(fn, x.Tag, d, out)
+		}
+		g.clauses(fn, x.Body, d, out)
+		return d
+	case *ast.TypeSwitchStmt:
+		d := g.stmt(fn, x.Init, dominated, out)
+		d = g.stmt(fn, x.Assign, d, out)
+		g.clauses(fn, x.Body, d, out)
+		return d
+	case *ast.SelectStmt:
+		g.clauses(fn, x.Body, dominated, out)
+		return dominated
+	default:
+		return g.simple(fn, stmt, dominated, out)
+	}
+}
+
+func (g *sequenceGuard) clauses(fn *buildSequenceFunc, body *ast.BlockStmt, dominated bool, out *[]string) {
+	for _, clause := range body.List {
+		switch c := clause.(type) {
+		case *ast.CaseClause:
+			d := dominated
+			for _, e := range c.List {
+				d = g.simple(fn, e, d, out)
+			}
+			g.block(fn, c.Body, d, out)
+		case *ast.CommClause:
+			d := g.stmt(fn, c.Comm, dominated, out)
+			g.block(fn, c.Body, d, out)
+		}
+	}
+}
+
+// simple checks a statement or expression with no nested statement list of
+// its own (closures aside) and reports whether it calls an entry.
+func (g *sequenceGuard) simple(fn *buildSequenceFunc, n ast.Node, dominated bool, out *[]string) bool {
+	if n == nil {
+		return dominated
+	}
+	entered := false
+	owned := map[*ast.FuncLit]bool{}
+	var closures []*ast.FuncLit
+	ast.Inspect(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.FuncLit:
+			if !owned[x] {
+				closures = append(closures, x)
+			}
+			return false
+		case *ast.CallExpr:
+			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == fn.recv && buildSequenceEntries[sel.Sel.Name] {
+					entered = true
+					for _, arg := range x.Args {
+						if lit, ok := arg.(*ast.FuncLit); ok {
+							owned[lit] = true
+						}
 					}
 				}
 			}
-			return true
-		})
-		return calls
-	}
-	returns := func(stmt ast.Stmt) bool {
-		ifStmt, ok := stmt.(*ast.IfStmt)
-		if !ok {
-			return false
 		}
-		for _, s := range ifStmt.Body.List {
-			if _, ok := s.(*ast.ReturnStmt); ok {
-				return true
+		return true
+	})
+	if !dominated {
+		summary := summarizeBuildSequenceFlat(n, fn.recv, fn.rsVars)
+		if summary.writes {
+			*out = append(*out, "a direct write")
+		}
+		for callee := range summary.calls {
+			if !g.ordered(callee) {
+				*out = append(*out, callee)
 			}
 		}
-		return false
 	}
-	switch stmt := stmts[i].(type) {
-	case *ast.IfStmt:
-		return stmt.Init != nil && callsEntry(stmt.Init) && returns(stmt)
-	case *ast.AssignStmt:
-		return callsEntry(stmt) && i+1 < len(stmts) && returns(stmts[i+1])
+	for _, closure := range closures {
+		g.block(fn, closure.Body.List, dominated, out)
 	}
-	return false
+	return dominated || entered
 }
 
 func parseBuildSequenceFuncs(t *testing.T) map[string]*buildSequenceFunc {
@@ -289,6 +395,16 @@ func collectBuildSequenceFuncs(file *ast.File, funcs map[string]*buildSequenceFu
 // summarizeBuildSequence collects the receiver methods n calls and whether n
 // writes index state directly.
 func summarizeBuildSequence(n ast.Node, recv string, rsVars map[string]bool) *buildSequenceFunc {
+	return summarizeBuildSequenceAs(n, recv, rsVars, false)
+}
+
+// summarizeBuildSequenceFlat is summarizeBuildSequence without the closures
+// in n, which the guard checks where they run.
+func summarizeBuildSequenceFlat(n ast.Node, recv string, rsVars map[string]bool) *buildSequenceFunc {
+	return summarizeBuildSequenceAs(n, recv, rsVars, true)
+}
+
+func summarizeBuildSequenceAs(n ast.Node, recv string, rsVars map[string]bool, flat bool) *buildSequenceFunc {
 	fn := &buildSequenceFunc{calls: map[string]bool{}}
 	// field returns the receiver field an expression is rooted at, or "rs"
 	// for a field of a relationship-search value.
@@ -318,6 +434,9 @@ func summarizeBuildSequence(n ast.Node, recv string, rsVars map[string]bool) *bu
 	}
 	isState := func(name string) bool { return name == "rs" || buildSequenceState[name] }
 	ast.Inspect(n, func(n ast.Node) bool {
+		if _, isLit := n.(*ast.FuncLit); isLit && flat {
+			return false
+		}
 		switch x := n.(type) {
 		case *ast.AssignStmt:
 			for _, l := range x.Lhs {

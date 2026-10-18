@@ -23,6 +23,16 @@ import (
 // write becomes visible when the build installs it; searches refuse while a
 // build runs.
 //
+// The baseline has one owner: the build reads it through one storage read
+// snapshot (storage.ReadSnapshot), opened after the queue, so every write the
+// queue holds comes after it. Nodes are installed from the snapshot (or from
+// the restored files), then the saved graph, then the relationships streamed
+// from the snapshot; only then are the queued operations installed, once, in
+// order (completeBuildPopulation). Nothing from the baseline is installed
+// after a queued write, so no write can be overtaken by an older copy. An
+// engine without read snapshots gives the build no baseline to order writes
+// against: there, writes wait for the build.
+//
 // Preparing at the call (queueBuildWrite) captures everything the outcome
 // depends on that is not index state: a copy of the caller's data that shares
 // no buffer with it, the temporal decision, and the checks the live path
@@ -34,13 +44,9 @@ import (
 // synchronous caller therefore always gets the dimension error the serial
 // order would give.
 //
-// Installing: node and edge writes are installed where the build already
-// serializes its own work (before each node batch, between streamed edges),
-// and a node or edge one of them set is never replaced by the build's older
-// storage copy. An administrative operation (orderWithBuild: a property-vector
-// index removal, an indexing setting, the dimension mode) changes what the
-// build's own remaining batches would read, so it, and everything queued after
-// it, is installed only once the build's population is complete. A build that
+// Every retained copy is admitted against one memory reservation
+// (queueFitsLocked): the headroom the runtime's soft memory limit leaves when
+// the queue opens. A copy past it waits for the build instead. A build that
 // finishes while another waits for buildMu leaves the rest of the sequence to
 // that build, so nothing is installed between its final save and the next
 // build's restore.
@@ -66,13 +72,12 @@ type deferredIndexWrite struct {
 	atEnd bool
 	// relationship marks edge or edgeID as a relationship-search update
 	// (IndexRelationship, RemoveRelationship). Its text and source depend on
-	// settings ordered in this sequence, so it is ordered here too; it is not
-	// an administrative operation, so writes after it are not held.
+	// settings ordered in this sequence, so it is ordered here too.
 	relationship bool
 	// valid, when set, is checked when the write is installed, before it is
 	// applied: false means a later write superseded it (a refresh whose
-	// reservation is no longer current), so it is skipped and not recorded as
-	// written. It is called with buildMu owned and takes its own lock.
+	// reservation is no longer current), so it is skipped. It is called with
+	// buildMu owned and takes its own lock.
 	valid func() bool
 	// size is the payload the queue retains for the operation.
 	size int
@@ -80,23 +85,25 @@ type deferredIndexWrite struct {
 
 type buildWriteQueue struct {
 	open atomic.Bool // fast path: a build owns or awaits buildMu
-	mu   sync.Mutex
+	// deferring is set while the queue's builds read through a storage
+	// snapshot; without one writes wait for the build.
+	deferring atomic.Bool
+	mu        sync.Mutex
 	// owners counts builds that own or await buildMu. The queue stays open
 	// until the last of them has installed it.
-	owners       int
-	writes       []deferredIndexWrite
-	writtenNodes map[string]struct{}
-	writtenEdges map[string]struct{}
-	// populated is set once the build's population (node batches and the
-	// relationship stream) is complete; from then on every queued operation
-	// may be installed.
+	owners int
+	writes []deferredIndexWrite
+	// populated is set once the build's baseline is installed; from then on
+	// every queued operation may be installed.
 	populated bool
 	// pendingOps counts queued operations that change a setting an entry
 	// decision reads (the dimension mode, the embedding space, the index
 	// flags) and are not installed yet.
 	pendingOps int
-	// bytes is the payload retained by the queued operations.
-	bytes int
+	// bytes is the payload retained by the queued operations; headroom is
+	// what the runtime's soft memory limit left when the queue opened (-1:
+	// no limit is configured).
+	bytes, headroom int
 	// flags, when flagsQueued, are the index flags the queued SetIndexFlags
 	// calls leave (bm25, vector).
 	flags       [2]bool
@@ -104,21 +111,25 @@ type buildWriteQueue struct {
 }
 
 // beginBuildWrites opens the queue for a build about to take buildMu.
-func (s *Service) beginBuildWrites() {
+// deferring reports that the build reads its baseline through a storage
+// snapshot; otherwise writes wait for it.
+func (s *Service) beginBuildWrites(deferring bool) {
 	q := &s.buildWrites
 	q.mu.Lock()
+	if q.owners == 0 {
+		q.headroom = memoryHeadroom()
+		q.deferring.Store(deferring)
+	}
 	q.owners++
 	q.open.Store(true)
 	q.mu.Unlock()
 }
 
 // startBuildWrites starts this build's part of the sequence once it owns
-// buildMu: the IDs written and the dimension choice belong to the build that
-// reads its own storage snapshot.
+// buildMu.
 func (s *Service) startBuildWrites() {
 	q := &s.buildWrites
 	q.mu.Lock()
-	q.writtenNodes, q.writtenEdges = nil, nil
 	q.populated = false
 	q.mu.Unlock()
 }
@@ -136,6 +147,7 @@ func (s *Service) endBuildWrites() {
 		return
 	}
 	q.open.Store(false)
+	q.deferring.Store(false)
 	writes := q.takeLocked(len(q.writes))
 	q.flagsQueued = false
 	q.mu.Unlock()
@@ -144,9 +156,9 @@ func (s *Service) endBuildWrites() {
 	}
 }
 
-// completeBuildPopulation records that the build's population is complete and
-// installs every queued operation, administrative ones included. Caller is the
-// build, before it saves the base indexes.
+// completeBuildPopulation records that the build's baseline is installed and
+// installs every queued operation, administrative ones included, in order.
+// Caller is the build, before it saves the base indexes.
 func (s *Service) completeBuildPopulation() {
 	q := &s.buildWrites
 	q.mu.Lock()
@@ -162,11 +174,10 @@ func (s *Service) completeBuildPopulation() {
 // no setting change is queued. An error from the checks the live path
 // reports is returned and nothing is queued, as a write that waited would
 // have failed. wait reports that the outcome depends on the operations ahead
-// (vectorNeedsOrderedDecision, a queued setting change) or that queuing would
-// pass the runtime's memory limit (queueFitsMemoryLimit): the write waits for
-// the build and the live path decides it in order. Only callers that can wait
-// in order (readLockOrQueue) are refused; administrative operations and
-// relationship-search updates are always queued.
+// (vectorNeedsOrderedDecision, a queued setting change) or that the copy does
+// not fit the queue's memory reservation (queueFitsLocked): the write waits
+// for the build and the live path decides it in order. Administrative
+// operations carry no payload and are always queued.
 func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, err error) {
 	q := &s.buildWrites
 	if !q.open.Load() || !s.buildDefersWrites() {
@@ -194,13 +205,12 @@ func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, 
 	write.node, nodeSize = copyQueuedNode(write.node)
 	write.edge, edgeSize = copyQueuedEdge(write.edge)
 	write.size = max(nodeSize+edgeSize, queuedEntryBytes)
-	holdable := write.apply == nil && !write.relationship
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.owners == 0 {
 		return false, false, nil
 	}
-	if holdable && len(q.writes) > 0 && !queueFitsMemoryLimit(write.size) {
+	if write.apply == nil && !q.fitsLocked(write.size) {
 		return false, true, nil
 	}
 	q.writes = append(q.writes, write)
@@ -211,28 +221,39 @@ func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, 
 	return true, false, nil
 }
 
-// queueFitsMemoryLimit reports whether size more queued bytes keep the live
-// heap within the Go runtime's soft memory limit (memory.runtime_limit,
-// GOMEMLIMIT), the process's configured memory budget. A write that would
-// pass it waits for the build, as every write did before writes were handed
-// to a build, so a long build under a sustained write stream holds at most
-// what the budget leaves. Without a configured limit the queue is not bounded
-// beyond the process's memory, as the runtime is not.
-func queueFitsMemoryLimit(size int) bool {
+// fitsLocked reports whether size more retained bytes fit the queue's
+// reservation. Caller holds q.mu.
+func (q *buildWriteQueue) fitsLocked(size int) bool {
+	return q.headroom < 0 || q.bytes+size <= q.headroom
+}
+
+// memoryHeadroom is what the Go runtime's soft memory limit
+// (memory.runtime_limit, GOMEMLIMIT), the process's configured memory budget,
+// leaves above the live heap: the reservation every copy the queue retains is
+// counted against, so the queue holds at most what the budget leaves and a
+// copy past it waits for the build, as every write did before writes were
+// handed to a build. -1 means no limit is configured: the queue is then not
+// bounded beyond the process's memory, as the runtime is not.
+func memoryHeadroom() int {
 	limit := debug.SetMemoryLimit(-1)
 	if limit == math.MaxInt64 {
-		return true
+		return -1
 	}
 	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
 	metrics.Read(sample)
 	if sample[0].Value.Kind() != metrics.KindUint64 {
-		return true
+		return -1
 	}
-	return sample[0].Value.Uint64()+uint64(size) <= uint64(limit)
+	live := sample[0].Value.Uint64()
+	if live >= uint64(limit) {
+		return 0
+	}
+	return int(uint64(limit) - live)
 }
 
 // orderIndexFlags is SetIndexFlags in the build sequence. changed is decided
-// against the flags the operations ahead leave, as in the serial order.
+// against the flags the operations ahead leave, as in the serial order, in
+// the same section that publishes this call's flags.
 func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
 	set := func() {
 		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
@@ -241,6 +262,7 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 			s.indexChanged()
 		}
 	}
+	next := [2]bool{bm25Enabled, vectorEnabled}
 	q := &s.buildWrites
 	if q.open.Load() && s.buildDefersWrites() {
 		q.mu.Lock()
@@ -249,12 +271,13 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 			if q.flagsQueued {
 				previous = q.flags
 			}
-			q.flags, q.flagsQueued = [2]bool{bm25Enabled, vectorEnabled}, true
+			changed = previous != next
+			q.flags, q.flagsQueued = next, true
 			q.writes = append(q.writes, deferredIndexWrite{apply: set, dims: true, size: queuedEntryBytes})
 			q.bytes += queuedEntryBytes
 			q.pendingOps++
 			q.mu.Unlock()
-			return previous != q.flags
+			return changed
 		}
 		q.mu.Unlock()
 	}
@@ -267,8 +290,8 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 // applies to (a property-vector index removal, an indexing setting, the
 // dimension mode) in the build sequence: while a build owns or awaits buildMu
 // it is installed behind the writes already acknowledged and after the
-// build's population, so the final state equals that of the same calls made
-// one after another; otherwise it runs now.
+// build's baseline, so the final state equals that of the same calls made one
+// after another; otherwise it runs now.
 func (s *Service) orderWithBuild(op func()) {
 	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op}); queued {
 		return
@@ -295,6 +318,21 @@ func (s *Service) orderWithBuildEnd(op func()) {
 		return
 	}
 	op()
+}
+
+// orderRelationshipUpdate runs update, a relationship-search update, in the
+// build sequence: queued with write, or, when its copy does not fit the
+// queue's reservation, after the build; otherwise now.
+func (s *Service) orderRelationshipUpdate(write deferredIndexWrite, update func()) {
+	queued, wait, _ := s.queueBuildWrite(write)
+	if queued {
+		return
+	}
+	if wait {
+		s.buildMu.RLock()
+		defer s.buildMu.RUnlock()
+	}
+	update()
 }
 
 func (q *buildWriteQueue) opApplied() {
@@ -399,17 +437,17 @@ func (s *Service) readLockOrQueue(write deferredIndexWrite) (queued bool, err er
 	}
 }
 
-// buildDefersWrites reports whether live writes are queued during a build (no
-// index memory budget is configured).
+// buildDefersWrites reports whether live writes are queued during a build:
+// the build reads through a storage snapshot and no index memory budget is
+// configured.
 func (s *Service) buildDefersWrites() bool {
-	return s.bm25MemoryMaxBytes <= 0 && s.vectorMemoryMaxBytes <= 0 && s.metadataMemoryMaxBytes <= 0
+	return s.buildWrites.deferring.Load() && s.bm25MemoryMaxBytes <= 0 && s.vectorMemoryMaxBytes <= 0 && s.metadataMemoryMaxBytes <= 0
 }
 
 // drainBuildWrites installs the operations queued so far. Before the build's
-// population is complete it stops at the first administrative operation,
-// which waits, with everything after it, for completeBuildPopulation; an
-// atEnd operation waits for endBuildWrites. Caller owns buildMu (the build)
-// and holds no index lock.
+// baseline is installed it installs nothing; an atEnd operation, and
+// everything after it, waits for endBuildWrites. Caller owns buildMu (the
+// build) and holds no index lock.
 func (s *Service) drainBuildWrites() {
 	q := &s.buildWrites
 	if !q.open.Load() {
@@ -417,8 +455,11 @@ func (s *Service) drainBuildWrites() {
 	}
 	q.mu.Lock()
 	n := len(q.writes)
-	for i, write := range q.writes {
-		if write.apply != nil && (!q.populated || write.atEnd) {
+	if !q.populated {
+		n = 0
+	}
+	for i, write := range q.writes[:n] {
+		if write.atEnd {
 			n = i
 			break
 		}
@@ -443,12 +484,9 @@ func (q *buildWriteQueue) takeLocked(n int) []deferredIndexWrite {
 }
 
 // applyBuildWrites installs operations in arrival order through the same
-// bodies the live entry points run. An ID is recorded as written only once
-// its write was installed: a write that failed leaves the build's storage copy
-// in force, as a failed write that waited would have, and so does a write
-// its valid hook reports superseded. Caller owns buildMu.
+// bodies the live entry points run. A write its valid hook reports superseded
+// is skipped. Caller owns buildMu.
 func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
-	q := &s.buildWrites
 	for _, write := range writes {
 		if write.valid != nil && !write.valid() {
 			continue
@@ -458,19 +496,13 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 		case write.relationship:
 			s.updateRelationshipNow(write)
 		case write.node != nil:
-			if err = s.indexNodeOwned(write.node, &write.current); err == nil {
-				q.markWritten(&q.writtenNodes, string(write.node.ID))
-			}
+			err = s.indexNodeOwned(write.node, &write.current)
 		case write.nodeID != "":
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
-			q.markWritten(&q.writtenNodes, write.nodeID)
 		case write.edge != nil:
-			if err = s.indexEdgeOwned(write.edge); err == nil {
-				q.markWritten(&q.writtenEdges, string(write.edge.ID))
-			}
+			err = s.indexEdgeOwned(write.edge)
 		case write.edgeID != "":
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
-			q.markWritten(&q.writtenEdges, write.edgeID)
 		case write.apply != nil:
 			write.apply()
 			if write.dims {
@@ -482,40 +514,6 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 		}
 	}
 	return len(writes) > 0
-}
-
-func (q *buildWriteQueue) markWritten(set *map[string]struct{}, id string) {
-	q.mu.Lock()
-	if *set == nil {
-		*set = make(map[string]struct{})
-	}
-	(*set)[id] = struct{}{}
-	q.mu.Unlock()
-}
-
-// nodeWritten reports whether a queued write set this node during the current
-// build, so the build's storage copy, read before it or not, must not replace
-// it.
-func (s *Service) nodeWritten(id string) bool {
-	q := &s.buildWrites
-	if !q.open.Load() {
-		return false
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	_, ok := q.writtenNodes[id]
-	return ok
-}
-
-func (s *Service) edgeWritten(id string) bool {
-	q := &s.buildWrites
-	if !q.open.Load() {
-		return false
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	_, ok := q.writtenEdges[id]
-	return ok
 }
 
 // copyQueuedNode makes a queued node independent of its caller, who may reuse
