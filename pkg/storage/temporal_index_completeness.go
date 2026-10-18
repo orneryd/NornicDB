@@ -200,7 +200,9 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 		return nil, false, nil
 	}
 	prefix := temporalHistoryPrefix(target.desc)
-	err = b.withView(func(txn *badger.Txn) error {
+	var overlay []*Node
+ var touched map[NodeID]bool
+ err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(c.Label) }, func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -210,7 +212,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 				}
 			}
 			id := extractNodeIDFromTemporalHistoryKey(it.Item().KeyCopy(nil), len(prefix))
-			if id == "" {
+			if id == "" || touched[id] {
 				continue
 			}
 			stored, err := b.loadNodeForTemporalTxn(txn, id, false)
@@ -223,5 +225,6 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 		}
 		return nil
 	})
-	return nodes, true, err
+	for _, n := range overlay { if namespace == "" || nodeIDInScope(n.ID, namespace+":") { nodes = append(nodes, copyNode(n)) } }
+ return nodes, true, err
 }
