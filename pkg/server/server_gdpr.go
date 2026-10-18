@@ -36,6 +36,13 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 		s.writeGDPROwnDataExportOnly(w, r)
 		return
 	}
+	defaultDatabase := "nornic"
+	if s.dbManager != nil {
+		defaultDatabase = s.dbManager.DefaultDatabaseName()
+	}
+	if !s.authorizeDatabaseRead(w, r, defaultDatabase) {
+		return
+	}
 
 	data, err := s.db.ExportUserData(r.Context(), req.UserID, req.Format)
 	if err != nil {
