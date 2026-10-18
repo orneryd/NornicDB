@@ -852,7 +852,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 
 	dispatcher.mu.Lock()
 	for _, queue := range dispatcher.pluginQueues {
-		close(queue.ch)
+		queue.ch.Close()
 	}
 	dispatcher.mu.Unlock()
 }
