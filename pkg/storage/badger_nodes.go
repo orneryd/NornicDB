@@ -179,7 +179,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	}
 
 	b.nodeCacheMu.RLock()
-	if cached, ok := b.nodeCache[id]; ok {
+	if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		nodeCopy := hitCopy(cached)
@@ -192,8 +192,14 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	atomic.AddInt64(&b.cacheMisses, 1)
 
 	gen := b.nodeCacheGen.current()
+	var state bufferedEntityState
 	var node *Node
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+  if state.found {
+   if state.deleted { return ErrNotFound }
+   node = hitCopy(state.node)
+   return nil
+  }
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -216,7 +222,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
-	if cacheFill != nil {
+	if cacheFill != nil && b.writeBehind == nil {
 		cacheFill(gen, node)
 	}
 	return node, nil
@@ -224,16 +230,6 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
-	// Write-behind overlay: acknowledged buffered writes are visible before
-	// the background flush lands them in Badger.
-	if b.writeBehind != nil {
-		if n, found, deleted := b.writeBehind.GetNode(id); found {
-			if deleted {
-				return nil, ErrNotFound
-			}
-			return CopyNode(n), nil
-		}
-	}
 	return b.getNodeByID(id,
 		func(txn *badger.Txn, val []byte) (*Node, error) {
 			return b.decodeNodeWithEmbeddings(txn, val, id)
@@ -250,15 +246,8 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	if b.writeBehind != nil {
-		if n, found, deleted := b.writeBehind.GetNode(id); found {
-			if deleted {
-				return nil, ErrNotFound
-			}
-			return copyNodeForCaller(n), nil
-		}
-	}
-	if node, ok := b.cacheLoadQueryNode(id); ok {
+
+	if node, ok := b.cacheLoadQueryNode(id); ok && b.writeBehind == nil {
 		atomic.AddInt64(&b.cacheHits, 1)
 		if b.filterNodeByDecay(node, DecayScoringTime()) {
 			return nil, ErrNotFound
@@ -282,18 +271,11 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	if id == "" || b.visibilityFiltered() || b.ensureOpen() != nil {
 		return false, false
 	}
-	// Write-behind overlay: a buffered-but-unflushed node is committed and
-	// therefore a visible traversal endpoint; a buffered delete hides it
-	// (PR #1043 read-overlay parity — anonymous-endpoint traversal must see
-	// buffered nodes, monster retest part 1).
-	if b.writeBehind != nil {
-		if b.writeBehind.NodeDeleted(id) {
-			return false, true
-		}
-		if _, ok := b.writeBehind.LookupNode(id); ok {
-			return true, true
-		}
-	}
+ if b.writeBehind != nil {
+  _, err := b.GetNodeProjected(id, []string{})
+  if err == ErrNotFound { return false, true }
+  return err == nil, err == nil
+ }
 	b.nodeCacheMu.RLock()
 	_, cached := b.nodeCache[id]
 	if !cached {
@@ -320,48 +302,11 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 // back to the full GetNode path; an empty non-nil slice returns no user
 // properties.
 func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	if id == "" {
-		return nil, ErrInvalidID
-	}
-	if properties == nil {
-		return b.GetNode(id)
-	}
-	start := time.Now()
-	defer b.observeStorageOp(start, b.opDurGet)
-	if err := b.ensureOpen(); err != nil {
-		return nil, err
-	}
-
-	include := propertyProjectionSet(properties)
-	var node *Node
-	err := b.withView(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey(id))
-		if err == badger.ErrKeyNotFound {
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			namespace := namespaceForNodeID(id)
-			decoded, decodeErr := b.decodeNodeProjected(namespace, val, include)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			node = decoded
-			return nil
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	if node == nil {
-		return nil, ErrNotFound
-	}
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
-		return nil, ErrNotFound
-	}
-	return node, nil
+ if properties == nil { return b.GetNode(id) }
+ include := propertyProjectionSet(properties)
+ return b.getNodeByID(id, func(txn *badger.Txn, val []byte) (*Node, error) {
+  return b.decodeNodeProjected(namespaceForNodeID(id), val, include)
+ }, func(n *Node) *Node { return projectCachedNodeForRead(n, properties) }, nil)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
