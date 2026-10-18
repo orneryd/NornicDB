@@ -840,6 +840,10 @@ type Service struct {
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu sync.RWMutex
+	// buildWrites holds live writes handed to the build that owns or awaits
+	// buildMu (build_write_queue.go).
+	buildWrites buildWriteQueue
+
 	// buildMu orders live node mutations and derived builds against full
 	// population/checkpoint restoration and vector-source clearing.
 	buildMu        sync.RWMutex
@@ -2882,10 +2886,18 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
-	// Population and checkpoint restoration must finish before a live mutation
-	// can be acknowledged; their snapshots may contain older node state.
-	s.buildMu.RLock()
+	// Population and checkpoint restoration must not be overtaken by a live
+	// mutation; their snapshots may contain older node state. During a build
+	// the write is handed to the build (build_write_queue.go).
+	if s.readLockOrQueue(deferredIndexWrite{node: node}) {
+		return nil
+	}
 	defer s.buildMu.RUnlock()
+	return s.indexNodeOwned(node)
+}
+
+// indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
+func (s *Service) indexNodeOwned(node *storage.Node) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -3461,10 +3473,17 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
-	// Population and checkpoint restoration must finish before a live mutation
-	// can be acknowledged; their snapshots may contain older node state.
-	s.buildMu.RLock()
+	// Like IndexNode: during a build the removal is handed to the build.
+	if s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}) {
+		return nil
+	}
 	defer s.buildMu.RUnlock()
+	s.removeNodeOwned(nodeID)
+	return nil
+}
+
+// removeNodeOwned is RemoveNode for a caller holding buildMu.
+func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -3477,8 +3496,6 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	if !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
-
-	return nil
 }
 
 // IndexEdge adds vector-shaped relationship properties to in-memory search metadata.
@@ -3490,10 +3507,17 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		return nil
 	}
 	// Like node writes: the explicit build's relationship stream applies a
-	// snapshot of stored edges, so a live edge write waits for the build and
-	// lands after it.
-	s.buildMu.RLock()
+	// snapshot of stored edges, so during a build a live edge write is handed
+	// to the build, which applies it after the stream's copy.
+	if s.readLockOrQueue(deferredIndexWrite{edge: edge}) {
+		return nil
+	}
 	defer s.buildMu.RUnlock()
+	return s.indexEdgeOwned(edge)
+}
+
+// indexEdgeOwned is IndexEdge for a caller holding buildMu.
+func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
 	s.IndexRelationship(edge)
 	if !s.vectorEnabled.Load() {
 		return nil
@@ -3584,10 +3608,18 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	// Like node writes (see IndexEdge): a removal waits for the explicit
-	// build, so its relationship stream cannot re-add the edge.
-	s.buildMu.RLock()
+	// Like node writes (see IndexEdge): during a build the removal is handed
+	// to the build, so its relationship stream cannot re-add the edge.
+	if s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}) {
+		return nil
+	}
 	defer s.buildMu.RUnlock()
+	s.removeEdgeOwned(edgeID)
+	return nil
+}
+
+// removeEdgeOwned is RemoveEdge for a caller holding buildMu.
+func (s *Service) removeEdgeOwned(edgeID storage.EdgeID) {
 	s.RemoveRelationship(edgeID)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
@@ -3601,7 +3633,6 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
-	return nil
 }
 
 // HasRelationshipVectorEntries reports whether relationship vector metadata exists
@@ -3702,6 +3733,12 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Writes handed over meanwhile are applied first; an edge one of them
+		// wrote keeps that write rather than this stream's copy.
+		s.drainBuildWrites()
+		if s.edgeWritten(string(edge.ID)) {
+			return nil
+		}
 		s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		_ = s.indexEdgeLocked(edge)
@@ -3744,8 +3781,13 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) error {
+	// Live writes from here until buildMu is released are handed to this
+	// build, which applies them (build_write_queue.go); the last of them
+	// before it releases buildMu.
+	s.beginBuildWrites()
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
+	defer s.endBuildWrites()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -4111,6 +4153,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 		s.warmupVectorPipeline(ctx, nil)
+		// Writes handed over since the last step, including during the
+		// warmup, which reloaded BM25 first, reach the final save.
+		s.drainBuildWrites()
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
 	}
@@ -4140,8 +4185,15 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				return nil
 			}
 			s.adoptFirstVectorDimensions(batch)
+			// Writes handed over since the last batch are applied first; a node
+			// one of them wrote keeps that write, whether this batch read it
+			// before or after it.
+			s.drainBuildWrites()
 			filtered := make([]*storage.Node, 0, len(batch))
 			for _, n := range batch {
+				if s.nodeWritten(string(n.ID)) {
+					continue
+				}
 				shouldIndex, err := s.shouldIndexNode(n)
 				if err != nil {
 					return err
@@ -4256,6 +4308,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
 			return err
 		}
+		// Writes handed over since the last step, including during the
+		// warmup, which reloaded BM25 first, reach the final save.
+		s.drainBuildWrites()
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
 	}
@@ -4267,8 +4322,15 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			return nil
 		}
 		s.adoptFirstVectorDimensions(batch)
+		// Writes handed over since the last batch are applied first; a node
+		// one of them wrote keeps that write, whether this batch read it
+		// before or after it.
+		s.drainBuildWrites()
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
+			if s.nodeWritten(string(n.ID)) {
+				continue
+			}
 			shouldIndex, err := s.shouldIndexNode(n)
 			if err != nil {
 				return err
@@ -4362,6 +4424,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if err := s.warmupDroppingFulltext(ctx, fulltextPath); err != nil {
 		return err
 	}
+	// Writes handed over since the last step, including during the
+	// warmup, which reloaded BM25 first, reach the final save.
+	s.drainBuildWrites()
 	s.finishBuildWithFinalPersist(ctx)
 	return nil
 }
