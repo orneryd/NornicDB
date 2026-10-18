@@ -742,10 +742,10 @@ func TestSearchTextContinuationRankedEndsOnceDepthCoversTheIndex(t *testing.T) {
 	require.Equal(t, []int{25, 50, 100, 200}, requestedLimits)
 }
 
-// Once two deeper searches add nothing, a ranked continuation searches as deep
+// Once a deeper search adds nothing, a ranked continuation searches as deep
 // as everything the service indexes at once, instead of doubling through more
 // searches that the plateau already suggests are empty, and ends there.
-func TestSearchTextContinuationRankedJumpsToIndexDepthAfterTwoEmptyExpansions(t *testing.T) {
+func TestSearchTextContinuationRankedJumpsToIndexDepthAfterAnEmptyExpansion(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -785,7 +785,7 @@ func TestSearchTextContinuationRankedJumpsToIndexDepthAfterTwoEmptyExpansions(t 
 	}
 	require.Equal(t, 5, rows)
 	require.Equal(t, SearchContinuationCandidateComplete, page.Completion)
-	require.Equal(t, []int{10, 20, 40, 1000, 2000}, requestedLimits)
+	require.Equal(t, []int{10, 20, 1000, 2000}, requestedLimits)
 }
 
 func TestSearchTextContinuationNonGrowingExpansionGetsSecondChance(t *testing.T) {
