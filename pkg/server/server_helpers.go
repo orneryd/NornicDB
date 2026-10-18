@@ -159,6 +159,29 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 	return s.GetResolvedAccessForRoles(claims.Roles, dbName)
 }
 
+// databaseReadAccess is the shared decision for HTTP routes that read database
+// data directly instead of executing an authorized Cypher statement.
+func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
+	dataDatabase, accessible := s.graphAccess(s.getDatabaseAccessMode(claims), dbName)
+	if !accessible {
+		return false, false
+	}
+	var resolve func(string) auth.ResolvedAccess
+	if claims != nil {
+		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
+	}
+	_, readable = auth.ResolveDatabaseReadAccess(nil, resolve, dataDatabase)
+	return true, readable
+}
+
+func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, dbName string) bool {
+	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		return false
+	}
+	return true
+}
+
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
