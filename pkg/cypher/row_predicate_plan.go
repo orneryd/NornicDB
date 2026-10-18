@@ -672,10 +672,12 @@ func (e *StorageExecutor) rowPredicateJunctionTruth(ctx context.Context, part *r
 // rowPredicatePartTruth is the truth value of a planned part.
 func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
 	scope.executor = e
-	switch part.kind {
-	case rowPredicatePattern:
+	// Keep graph-pattern dispatch separate from the hot scalar switch.
+	if part.kind == rowPredicatePattern {
 		matched, err := part.pattern.evaluate(e, ctx, scope)
 		return truthOf(matched), err
+	}
+	switch part.kind {
 	case rowPredicateAnd, rowPredicateOr:
 		return e.rowPredicateJunctionTruth(ctx, part, scope, memberships)
 	case rowPredicateComparison:
