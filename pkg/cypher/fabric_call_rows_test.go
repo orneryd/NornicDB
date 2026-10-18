@@ -15,7 +15,14 @@ import (
 
 func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
 	t.Helper()
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	config := multidb.DefaultConfig()
+	config.RemoteEngineFactory = func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
+		return storage.NewRemoteEngine(storage.RemoteEngineConfig{
+			URI: ref.URI, Database: ref.DatabaseName, AuthToken: authToken,
+			User: ref.User, Password: ref.Password,
+		})
+	}
+	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 	for _, db := range []string{"one", "two"} {
