@@ -50,7 +50,9 @@ func TestSearchStreamLifecycleGRPCResponseSendFailure(t *testing.T) {
 	require.Equal(t, codes.ResourceExhausted, status.Code(err))
 	require.Eventually(t, func() bool {
 		page, err := svc.SearchTextContinuation(ctx, "", search.DefaultSearchOptions(), search.SearchContinuationRequest{Owner: "replacement", Database: "nornic", Mode: search.SearchContinuationID, N: 1}, nil, nil, nil, search.ChunkedSearchErrorPolicy{})
-		if err != nil { return false }
+		if err != nil {
+			return false
+		}
 		return registry.Discard(resultstream.Scope{Owner: "replacement", Database: "nornic"}, page.QID) == nil
 	}, time.Second, 10*time.Millisecond, "gRPC send failure must release the only registry slot")
 }
