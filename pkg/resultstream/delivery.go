@@ -12,10 +12,10 @@ type deliveryKey struct{}
 // failed delivery discards them through the registry; success preserves durable
 // cursors across requests and connections. The zero value is ready to use.
 type Delivery struct {
-	mu sync.Mutex
-	failed bool
+	mu       sync.Mutex
+	failed   bool
 	discards []func()
-	pending atomic.Bool
+	pending  atomic.Bool
 }
 
 // WithDelivery attaches transport delivery tracking to stream operations.
@@ -32,9 +32,14 @@ func DeliveryFromContext(ctx context.Context) *Delivery {
 func (d *Delivery) register(discard func()) {
 	d.mu.Lock()
 	failed := d.failed
-	if !failed { d.discards = append(d.discards, discard); d.pending.Store(true) }
+	if !failed {
+		d.discards = append(d.discards, discard)
+		d.pending.Store(true)
+	}
 	d.mu.Unlock()
-	if failed { discard() }
+	if failed {
+		discard()
+	}
 }
 
 // Fail retires every undelivered cursor, including a page produced after failure.
@@ -45,12 +50,16 @@ func (d *Delivery) Fail() {
 	d.discards = nil
 	d.pending.Store(false)
 	d.mu.Unlock()
-	for _, discard := range discards { discard() }
+	for _, discard := range discards {
+		discard()
+	}
 }
 
 // Delivered acknowledges buffered pages. The tracker can serve the next batch.
 func (d *Delivery) Delivered() {
-	if !d.pending.Load() { return }
+	if !d.pending.Load() {
+		return
+	}
 	d.mu.Lock()
 	d.discards = nil
 	d.pending.Store(false)

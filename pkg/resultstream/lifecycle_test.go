@@ -167,7 +167,9 @@ func TestStreamLifecycleDelivery(t *testing.T) {
 			t.Cleanup(r.Close)
 			delivery := &Delivery{}
 			ctx := WithDelivery(context.Background(), delivery)
-			if outcome == "failure_before_publish" { delivery.Fail() }
+			if outcome == "failure_before_publish" {
+				delivery.Fail()
+			}
 			scope := Scope{Owner: "alice", Database: "one"}
 			s := &lifecycleStream{}
 			_, err = r.Start(ctx, scope, s, 1)
