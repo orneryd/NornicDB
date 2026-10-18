@@ -1,7 +1,6 @@
 package search
 
 import (
-	"maps"
 	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -40,7 +39,10 @@ func (s *Service) populationDefersWrites() bool {
 // queueOnPopulation queues write on the running population and reports
 // whether it did. It takes only baseBuildControlMu, never indexMu, so a write
 // never waits for anything the population holds indexMu for. Outside a
-// population it costs one atomic load.
+// population it costs one atomic load. A write is acknowledged only after the
+// checks the live path would report (the temporal-currency read): an error is
+// returned and nothing is queued. The queued copy owns everything the
+// population later reads.
 func (s *Service) queueOnPopulation(write deferredIndexWrite) (bool, error) {
 	if !s.populationRunning.Load() || !s.populationDefersWrites() {
 		return false, nil
@@ -50,14 +52,19 @@ func (s *Service) queueOnPopulation(write deferredIndexWrite) (bool, error) {
 			return false, err
 		}
 	}
+	if write.node != nil {
+		if _, err := s.shouldIndexNode(write.node); err != nil {
+			return false, err
+		}
+	}
+	write.node = copyQueuedNode(write.node)
+	write.edge = copyQueuedEdge(write.edge)
 	s.baseBuildControlMu.Lock()
 	defer s.baseBuildControlMu.Unlock()
 	job := s.nodeAdmission
 	if job == nil || nodeAdmissionClosed(job) || s.baseBuildPaused > 0 {
 		return false, nil
 	}
-	write.node = copyQueuedNode(write.node)
-	write.edge = copyQueuedEdge(write.edge)
 	job.deferred = append(job.deferred, write)
 	job.queued.Store(true)
 	return true, nil
@@ -72,19 +79,32 @@ func (job *nodePopulationAdmission) takeDeferredLocked() []deferredIndexWrite {
 	return writes
 }
 
-// copyQueuedNode keeps a queued node independent of a caller that changes its
-// labels or properties after IndexNode returns. Embedding vectors are shared:
-// callers replace them, never modify them in place.
+// copyQueuedNode makes a queued node independent of its caller, who may reuse
+// any buffer once IndexNode returns: the population reads the queued copy
+// later, as the live path read the caller's node before returning. Every value
+// the index reads by reference is copied: labels, embedding vectors, and the
+// slices and maps inside properties (property vectors) and embedding metadata.
+// The struct copy keeps every other field.
 func copyQueuedNode(node *storage.Node) *storage.Node {
 	if node == nil {
 		return nil
 	}
 	copied := *node
 	copied.Labels = slices.Clone(node.Labels)
-	copied.Properties = maps.Clone(node.Properties)
-	copied.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
-	copied.ChunkEmbeddings = slices.Clone(node.ChunkEmbeddings)
-	copied.EmbedMeta = maps.Clone(node.EmbedMeta)
+	copied.Properties = cloneQueuedMap(node.Properties)
+	copied.EmbedMeta = cloneQueuedMap(node.EmbedMeta)
+	if node.NamedEmbeddings != nil {
+		copied.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
+		for name, embedding := range node.NamedEmbeddings {
+			copied.NamedEmbeddings[name] = slices.Clone(embedding)
+		}
+	}
+	if node.ChunkEmbeddings != nil {
+		copied.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
+		for i, embedding := range node.ChunkEmbeddings {
+			copied.ChunkEmbeddings[i] = slices.Clone(embedding)
+		}
+	}
 	return &copied
 }
 
@@ -93,8 +113,52 @@ func copyQueuedEdge(edge *storage.Edge) *storage.Edge {
 		return nil
 	}
 	copied := *edge
-	copied.Properties = maps.Clone(edge.Properties)
+	copied.Properties = cloneQueuedMap(edge.Properties)
 	return &copied
+}
+
+func cloneQueuedMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	copied := make(map[string]any, len(source))
+	for key, value := range source {
+		copied[key] = cloneQueuedValue(value)
+	}
+	return copied
+}
+
+// cloneQueuedValue copies the mutable containers a property value can hold;
+// scalars and strings are immutable and shared.
+func cloneQueuedValue(value any) any {
+	switch v := value.(type) {
+	case []float32:
+		return slices.Clone(v)
+	case []float64:
+		return slices.Clone(v)
+	case []int:
+		return slices.Clone(v)
+	case []int64:
+		return slices.Clone(v)
+	case []int32:
+		return slices.Clone(v)
+	case []string:
+		return slices.Clone(v)
+	case []bool:
+		return slices.Clone(v)
+	case []byte:
+		return slices.Clone(v)
+	case []any:
+		copied := make([]any, len(v))
+		for i, item := range v {
+			copied[i] = cloneQueuedValue(item)
+		}
+		return copied
+	case map[string]any:
+		return cloneQueuedMap(v)
+	default:
+		return value
+	}
 }
 
 // applyDeferredIndexWrites applies the queued writes. Only the population
@@ -120,32 +184,38 @@ func (s *Service) applyDeferredIndexWrites(job *nodePopulationAdmission) {
 	s.indexMu.Unlock()
 }
 
-// applyDeferredIndexWritesLocked applies queued writes in arrival order and
-// records each ID as written. Caller holds indexMu and is the population.
+// applyDeferredIndexWritesLocked applies queued writes in arrival order. An ID
+// is recorded as written only once its write applied: a write that failed
+// leaves the population's storage copy in force, as a failed write that
+// waited would have. Caller holds indexMu and is the population.
 func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, writes []deferredIndexWrite) {
 	bm25On := s.bm25Enabled.Load()
 	for _, write := range writes {
 		var err error
 		switch {
 		case write.node != nil:
-			job.markNodeWrittenLocked(string(write.node.ID))
 			if err = s.admitNodeWriteLocked(true); err == nil {
 				err = s.indexNodeLocked(write.node, !bm25On)
 			}
+			if err == nil {
+				job.markNodeWrittenLocked(string(write.node.ID))
+			}
 		case write.nodeID != "":
-			job.markNodeWrittenLocked(write.nodeID)
 			if err = s.admitNodeWriteLocked(true); err == nil {
 				s.removeNodeLocked(write.nodeID)
+				job.markNodeWrittenLocked(write.nodeID)
 			}
 		case write.edge != nil:
-			job.markEdgeWrittenLocked(string(write.edge.ID))
 			if err = s.admitNodeWriteLocked(false); err == nil {
 				err = s.indexEdgeLocked(write.edge)
 			}
+			if err == nil {
+				job.markEdgeWrittenLocked(string(write.edge.ID))
+			}
 		case write.edgeID != "":
-			job.markEdgeWrittenLocked(write.edgeID)
 			if err = s.admitNodeWriteLocked(false); err == nil {
 				s.removeEdgeLocked(write.edgeID)
+				job.markEdgeWrittenLocked(write.edgeID)
 			}
 		}
 		if err != nil {

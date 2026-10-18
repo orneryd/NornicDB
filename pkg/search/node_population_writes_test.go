@@ -7,6 +7,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -273,4 +274,91 @@ func TestPopulationBudgetedWritesWaitForTheRealAnswer(t *testing.T) {
 	require.NoError(t, <-buildDone)
 	require.NoError(t, <-writeDone)
 	require.Equal(t, []string{"nornic:b"}, searchIDs(t, svc, "bterm"))
+}
+
+// temporalRejectEngine fails the temporal-currency read for a node whose text
+// is "badterm": a write the live path would reject with that error.
+type temporalRejectEngine struct{ *snapshotGateEngine }
+
+var errTemporalRead = errors.New("temporal read failed")
+
+func (e *temporalRejectEngine) IsCurrentTemporalNode(node *storage.Node, _ time.Time) (bool, error) {
+	if node.Properties["text"] == "badterm" {
+		return false, errTemporalRead
+	}
+	return true, nil
+}
+
+// TestPopulationQueuedWriteIsRejectedLikeALiveWrite: a write the live path
+// rejects is rejected during a population too, with the same error, and the
+// population keeps the stored node instead of dropping it.
+func TestPopulationQueuedWriteIsRejectedLikeALiveWrite(t *testing.T) {
+	servingTestEnv(t)
+	gate := newSnapshotGateEngine(t)
+	engine := &temporalRejectEngine{gate}
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	t.Cleanup(gate.open)
+	svc.FixVectorDimensions()
+	_, err := gate.CreateNode(admissionNode("nornic:keep", "keepterm", []float32{1, 0, 0}, "named"))
+	require.NoError(t, err)
+	buildDone := make(chan error, 1)
+	go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
+	waitClosed(t, gate.entered, "the population's node snapshot")
+	done := make(chan error, 1)
+	go func() { done <- svc.IndexNode(admissionNode("nornic:keep", "badterm", []float32{0, 1, 0}, "named")) }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, errTemporalRead, "a write the live path rejects was acknowledged during the population")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write waited for the population")
+	}
+	gate.open()
+	require.NoError(t, <-buildDone)
+	require.Equal(t, []string{"nornic:keep"}, searchIDs(t, svc, "keepterm"), "the population dropped the stored node")
+	requireVector(t, svc, "nornic:keep-named-v", []float32{1, 0, 0})
+}
+
+// TestPopulationQueuedWriteOwnsItsValues: a caller may reuse its buffers once
+// IndexNode or IndexEdge returns. The population indexes the values the call
+// passed, not what the caller wrote into the buffers afterwards.
+func TestPopulationQueuedWriteOwnsItsValues(t *testing.T) {
+	servingTestEnv(t)
+	engine := newSnapshotGateEngine(t)
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	t.Cleanup(engine.open)
+	svc.FixVectorDimensions()
+	for _, id := range []string{"nornic:s", "nornic:e"} {
+		_, err := engine.CreateNode(admissionNode(id, "node", []float32{1, 0, 0}, "named"))
+		require.NoError(t, err)
+	}
+	buildDone := make(chan error, 1)
+	go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
+	waitClosed(t, engine.entered, "the population's node snapshot")
+	named, chunk, prop, edgeVec := []float32{0, 0, 1}, []float32{0, 1, 0}, []float32{1, 0, 0}, []float32{0, 0, 1}
+	node := &storage.Node{ID: "nornic:buf", Labels: []string{"Doc"}, Properties: map[string]any{"text": "bufterm", "p": prop},
+		NamedEmbeddings: map[string][]float32{"v": named}, ChunkEmbeddings: [][]float32{chunk}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": edgeVec}}
+	require.NoError(t, engine.CreateEdge(storage.CopyEdge(edge)))
+	requireReturnsWhileBlocked(t, "a node write", func() error { return svc.IndexNode(node) })
+	requireReturnsWhileBlocked(t, "an edge write", func() error { return svc.IndexEdge(edge) })
+	// The caller reuses its buffers.
+	for _, buf := range [][]float32{named, chunk, prop, edgeVec} {
+		buf[0], buf[1], buf[2] = 0.5, 0.5, 0.5
+	}
+	node.Properties["text"] = "reusedterm"
+	engine.open()
+	require.NoError(t, <-buildDone)
+	requireVector(t, svc, "nornic:buf-named-v", []float32{0, 0, 1})
+	requireVector(t, svc, "nornic:buf", []float32{0, 1, 0})
+	requireVector(t, svc, "nornic:buf-prop-p", []float32{1, 0, 0})
+	require.Equal(t, []string{"nornic:buf"}, searchIDs(t, svc, "bufterm"))
+	require.Empty(t, searchIDs(t, svc, "reusedterm"))
+	svc.mu.RLock()
+	got := svc.edgePropVector[string(edge.ID)]["v"]
+	svc.mu.RUnlock()
+	require.Equal(t, []float32{0, 0, 1}, got, "the population indexed the caller's reused edge buffer")
 }
