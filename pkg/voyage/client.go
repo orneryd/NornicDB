@@ -425,25 +425,25 @@ func (e apiError) RetryDelay() time.Duration { return e.RetryAfter }
 func (c *Client) postOnce(ctx context.Context, path string, body []byte, response any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create voyage request: %w", observability.RedactError(err, c.apiKey, c.baseURL))
+		return fmt.Errorf("create voyage request: %w", observability.RedactError(err, observability.ClientCredentials(c.baseURL, c.apiKey)...))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("send voyage request: %w", observability.RedactError(err, c.apiKey, c.baseURL))
+		return fmt.Errorf("send voyage request: %w", observability.RedactError(err, observability.ClientCredentials(c.baseURL, c.apiKey)...))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return apiError{
 			StatusCode: resp.StatusCode,
-			Body:       observability.RedactText(strings.TrimSpace(string(raw)), c.apiKey, c.baseURL),
+			Body:       observability.RedactText(strings.TrimSpace(string(raw)), observability.ClientCredentials(c.baseURL, c.apiKey)...),
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
-		return fmt.Errorf("decode voyage response: %w", observability.RedactError(err, c.apiKey, c.baseURL))
+		return fmt.Errorf("decode voyage response: %w", observability.RedactError(err, observability.ClientCredentials(c.baseURL, c.apiKey)...))
 	}
 	return nil
 }

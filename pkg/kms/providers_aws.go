@@ -2,10 +2,10 @@ package kms
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/observability"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	awskms "github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 type AWSProviderConfig struct {
@@ -67,7 +67,7 @@ func NewAWSProvider(ctx context.Context, cfg AWSProviderConfig) (*AWSProvider, e
 		configMap["disallow_env_vars"] = "true"
 	}
 	if _, err := w.SetConfig(ctx, wrapping.WithConfigMap(configMap)); err != nil {
-		return nil, observability.RedactError(err, cfg.AccessKey, cfg.SecretKey, cfg.SessionToken, cfg.Endpoint)
+		return nil, observability.RedactError(err, observability.ClientCredentials(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.SessionToken)...)
 	}
-	return &AWSProvider{wrappingAdapter: newWrappingAdapter(w, cfg.AccessKey, cfg.SecretKey, cfg.SessionToken, cfg.Endpoint)}, nil
+	return &AWSProvider{wrappingAdapter: newWrappingAdapter(w, observability.ClientCredentials(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.SessionToken)...)}, nil
 }

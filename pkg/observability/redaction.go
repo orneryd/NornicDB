@@ -71,7 +71,7 @@ func newRedactingHandler(inner slog.Handler, keys map[string]struct{}) *redactin
 func defaultRedactSet() map[string]struct{} {
 	set := make(map[string]struct{}, len(DefaultRedactKeys))
 	for _, k := range DefaultRedactKeys {
-		set[normalizeFieldName(k)] = struct{}{}
+		set[strings.ToLower(k)] = struct{}{}
 	}
 	return set
 }
@@ -90,7 +90,7 @@ func redactSetFromEnv() map[string]struct{} {
 		if k == "" {
 			continue
 		}
-		set[normalizeFieldName(k)] = struct{}{}
+		set[k] = struct{}{}
 	}
 	return set
 }
@@ -141,11 +141,7 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 }
 
 func isSensitiveKeyName(name string, names *sensitiveNames) bool {
-	normalized := normalizeFieldName(name)
-	if _, sensitive := names.keys[normalized]; sensitive {
-		return true
-	}
-	suffix, candidate := names.match(normalized)
+	suffix, candidate := names.match(name)
 	if suffix {
 		return true
 	}

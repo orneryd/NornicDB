@@ -111,3 +111,28 @@ func TestCLISecretProviderErrors(t *testing.T) {
 		check(t, err)
 	})
 }
+
+func TestCLISecretProviderOpaqueCredential(t *testing.T) {
+	credential := "https://" + cliSecretProbeEnv + ".invalid/key?value=\"&"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+credential {
+			t.Error("runtime credential changed (value withheld)")
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprintf(w, `{"error":%q}`, r.Header.Get("Authorization"))
+	}))
+	defer upstream.Close()
+	for _, provider := range []string{"openai", "voyage"} {
+		t.Run(provider, func(t *testing.T) {
+			client, err := embed.NewEmbedder(&embed.Config{Provider: provider, APIKey: credential, APIURL: upstream.URL, APIPath: "/v1/embeddings", Model: "probe", Dimensions: 3, Timeout: time.Second})
+			if err != nil {
+				t.Fatal("synthetic provider could not initialize")
+			}
+			_, err = client.Embed(context.Background(), "probe")
+			if err == nil {
+				t.Fatal("mock rejection produced no error")
+			}
+			assertCLISecretAbsent(t, "opaque credential error", []byte(err.Error()))
+		})
+	}
+}
