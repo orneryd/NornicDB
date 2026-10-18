@@ -250,6 +250,7 @@ type DB struct {
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
 	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
+	foregroundWg      sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
@@ -976,6 +977,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
 	// The base executor is shared by every embedded caller of DB.Cypher /
 	// ExecuteCypher: a statement must never leave it inside a transaction.
 	// Embedded callers that want explicit transactions create their own
@@ -2343,14 +2345,16 @@ func (db *DB) GetReplicator() replication.Replicator {
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
-	defer db.mu.RUnlock()
-
 	if db.closed {
+		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
+	executor := db.cypherExecutor
+	db.mu.RUnlock()
 
-	// Execute query through Cypher executor
-	result, err := db.cypherExecutor.Execute(ctx, query, params)
+	// The executor's shared lifetime guard joins this statement. Do not hold
+	// mu while it runs: Close needs the lock to cancel a blocked embedding.
+	result, err := executor.Execute(ctx, query, params)
 	if err != nil {
 		return nil, err
 	}

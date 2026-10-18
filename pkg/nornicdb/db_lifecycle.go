@@ -82,8 +82,9 @@ func (db *DB) closeInternal() error {
 		embedQueue.Close()
 	}
 	db.bgWg.Wait()
+	db.foregroundWg.Wait()
 
-	// Queue workers and initializers are now quiescent. Release all provider
+	// Queue workers, initializers and foreground calls are now quiescent. Release all provider
 	// resources through their one owner, including cached/replaced providers.
 	errs := db.closeOwnedEmbedders()
 	// Stop every component that can still mutate graph storage before recording

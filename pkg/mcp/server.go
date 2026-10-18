@@ -1085,6 +1085,11 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 
 	if s.db != nil {
 		dbName := DatabaseFromContext(ctx) // empty = default database
+		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
+		if err != nil {
+			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+		}
+		defer finishProviderUse()
 		engine, err := s.storageForContext(ctx)
 		if err != nil {
 			return nil, err

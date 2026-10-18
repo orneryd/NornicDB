@@ -13,6 +13,23 @@ import (
 type QueryEmbedderBinding struct {
 	current atomic.Pointer[queryEmbedderState]
 	next    atomic.Uint64
+	beginUse func(context.Context) (context.Context, func(), error)
+}
+
+// SetLifetime binds provider users to their database owner. Configure it during
+// construction, before exposing the binding or sharing it with scoped executors.
+func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+	b.beginUse = begin
+}
+
+// BeginUse admits one provider-using operation and returns its cancellation
+// context and release function. A standalone binding has no lifetime owner.
+// Callers must release before returning, including on errors.
+func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+	if b != nil && b.beginUse != nil {
+		return b.beginUse(ctx)
+	}
+	return ctx, func() {}, nil
 }
 
 // Load returns the current provider, or nil while it is unavailable.
