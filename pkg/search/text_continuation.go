@@ -347,6 +347,7 @@ func (s *Service) SearchTextContinuation(
 		depthLimit = int(^uint(0) >> 1)
 	}
 	lastDepth := ownedOptions.Limit
+	nonGrowing := 0
 	expand := func(expandCtx context.Context, depth int) ([][]any, bool, error) {
 		// A candidate budget is not evidence that retrieval is exhausted. Fail
 		// explicitly when no deeper supported request can be made. max_results
@@ -354,14 +355,25 @@ func (s *Service) SearchTextContinuation(
 		if lastDepth >= depthLimit {
 			return nil, false, fmt.Errorf("continuation retrieval depth limit reached: %w", resultstream.ErrCapacity)
 		}
-		if depth <= lastDepth { // the doubled depth overflowed
-			return nil, false, fmt.Errorf("continuation retrieval depth overflow: %w", resultstream.ErrCapacity)
+		if depth <= lastDepth {
+			// The stream asked for less than this continuation already
+			// searched: it doubled past an earlier jump, or overflowed.
+			if lastDepth > int(^uint(0)>>2) {
+				return nil, false, fmt.Errorf("continuation retrieval depth overflow: %w", resultstream.ErrCapacity)
+			}
+			depth = 2 * lastDepth
 		}
 		depth = min(depth, depthLimit)
 		// The previous search was at least as deep as everything this service
 		// indexes, so it returned every candidate it could find.
 		indexed := s.EmbeddingCount() + s.FulltextDocCount()
 		fullDepth := indexed > 0 && lastDepth >= indexed
+		// Two deeper searches added nothing: rather than doubling through
+		// more of them, search as deep as everything indexed at once. That
+		// search finds what remains or settles that nothing does.
+		if nonGrowing >= 2 && indexed > depth {
+			depth = min(indexed, depthLimit)
+		}
 		expandedOptions := cloneContinuationSearchOptions(&ownedOptions)
 		expandedOptions.Limit = depth
 		response, expandErr := SearchTextChunksWithErrorPolicy(withRerankMemo(expandCtx, rerankMemo), query, &expandedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
@@ -391,6 +403,11 @@ func (s *Service) SearchTextContinuation(
 			state.seen[id] = struct{}{}
 			grew = true
 			state.results = append(state.results, compactContinuationResult(result))
+		}
+		if grew {
+			nonGrowing = 0
+		} else {
+			nonGrowing++
 		}
 		if fullDepth && !grew && !response.RetrievalExhausted {
 			candidateBudgetReached = true
