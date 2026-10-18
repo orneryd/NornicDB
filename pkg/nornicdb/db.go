@@ -259,7 +259,7 @@ type DB struct {
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
 	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
-	foregroundWg      sync.WaitGroup      // admission under mu; joined before providers close
+	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
