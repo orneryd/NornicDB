@@ -23,8 +23,8 @@ type FabricExecutor struct {
 	catalog *Catalog
 	local   *LocalFragmentExecutor
 	remote  *RemoteFragmentExecutor
-	// Explicit transaction participants share mutable execution state. Query
-	// dispatch is their one execution boundary, including UNION and APPLY fan-out.
+	// Explicit local participants and all remote transaction handles share mutable
+	// execution state. Dispatch owns that boundary for UNION and APPLY fan-out.
 	serializeExec bool
 	execMu        sync.Mutex
 
@@ -33,8 +33,9 @@ type FabricExecutor struct {
 }
 
 // SetConcurrentExecution configures whether fragments may execute concurrently.
-// Explicit transactions use serial dispatch because their local executors and
-// remote transaction handles are shared by all branches of the statement.
+// Explicit transactions use serial dispatch because their local executors are
+// shared. Remote dispatch always serializes: autocommit statements also share
+// remote transaction handles across their branches.
 func (e *FabricExecutor) SetConcurrentExecution(concurrent bool) {
 	e.serializeExec = !concurrent
 }
@@ -109,6 +110,10 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 	loc, execParams, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
 	if err != nil {
 		return nil, 0, err
+	}
+	if _, remote := loc.(*LocationRemote); remote && !e.serializeExec {
+		e.execMu.Lock()
+		defer e.execMu.Unlock()
 	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 
