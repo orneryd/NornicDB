@@ -495,3 +495,50 @@ func TestHNSWDescentEndingOnRemovedVector(t *testing.T) {
 		requireEveryLiveVectorFound(t, index)
 	})
 }
+
+// A population-wide search resolves each live vector once (a file-backed
+// store copies the coordinates on every lookup) and allocates a fixed
+// amount, not per vector.
+func TestHNSWPopulationWideScanResolvesEachVectorOnceWithoutPerVectorAllocations(t *testing.T) {
+	const n, dims = 1000, 16
+	rng := rand.New(rand.NewSource(5))
+	store := map[string][]float32{}
+	lookups := 0
+	index := NewHNSWIndex(dims, DefaultHNSWConfig())
+	index.vectorLookup = func(id string) ([]float32, bool) {
+		lookups++
+		v, ok := store[id]
+		return v, ok
+	}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("v-%d", i)
+		store[id] = make([]float32, dims)
+		for j := range store[id] {
+			store[id][j] = float32(rng.NormFloat64())
+		}
+		require.NoError(t, index.Add(id, store[id]))
+	}
+	for i := 0; i < n; i += 10 {
+		id := fmt.Sprintf("v-%d", i)
+		index.Remove(id)
+		delete(store, id)
+	}
+	live := index.Size()
+	query := make([]float32, dims)
+	query[0] = 1
+
+	t.Run("one lookup per live vector", func(t *testing.T) {
+		lookups = 0
+		results, exhausted, err := index.searchWithEfExhaustion(context.Background(), query, live, -1, live)
+		require.NoError(t, err)
+		require.Len(t, results, live)
+		require.True(t, exhausted)
+		require.Equal(t, live, lookups, "vector lookups for one population-wide search")
+	})
+	t.Run("no per-vector allocations", func(t *testing.T) {
+		allocs := testing.AllocsPerRun(5, func() {
+			_, _, _ = index.searchWithEfExhaustion(context.Background(), query, 10, -1, live)
+		})
+		require.Less(t, allocs, float64(32), "allocations per population-wide search of %d vectors", live)
+	})
+}
