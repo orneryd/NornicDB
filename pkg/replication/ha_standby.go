@@ -625,6 +625,14 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext carries cancellation through local preparation and the ACK wait.
+func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.closed.Load() {
 		return ErrClosed
 	}
@@ -638,7 +646,7 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
-	if err := r.storage.ApplyCommand(cmd); err != nil {
+	if err := applyStorageContext(ctx, r.storage, cmd); err != nil {
 		return err
 	}
 	applyDur := time.Since(start)
@@ -646,7 +654,7 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	// Honor write-ack mode: optionally wait for standby acknowledgement.
 	walPos, _ := r.storage.GetWALPosition()
 	ackStart := time.Now()
-	ackErr := r.waitForReplicationAck(walPos, timeout)
+	ackErr := r.waitForReplicationAckContext(ctx, walPos, timeout)
 	ackDur := time.Since(ackStart)
 	if traceWrites {
 		r.config.logPrintf(context.Background(), slog.LevelInfo, "[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
@@ -669,6 +677,10 @@ func (r *HAStandbyReplicator) ApplyBatch(cmds []*Command, timeout time.Duration)
 // For async mode, it returns immediately. For quorum mode, it waits until the
 // standby has acknowledged WAL up to the target position or the timeout elapses.
 func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.Duration) error {
+	return r.waitForReplicationAckContext(context.Background(), target, timeout)
+}
+
+func (r *HAStandbyReplicator) waitForReplicationAckContext(ctx context.Context, target uint64, timeout time.Duration) error {
 	mode := r.config.HAStandby.SyncMode
 	if mode == SyncAsync || target == 0 || r.walStreamer == nil {
 		return nil
@@ -690,7 +702,7 @@ func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(10 * time.Millisecond)

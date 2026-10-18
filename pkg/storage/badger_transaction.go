@@ -63,6 +63,8 @@ type BadgerTransaction struct {
 	// created after our begin) bind to sequence 0, which correctly
 	// treats anything committed under them as post-begin.
 	beginSnapshot map[string]MVCCVersion
+	// Capture retirement at BEGIN, not when the namespace is lazily selected.
+	beginNamespaceRevision uint64
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
 
@@ -268,6 +270,7 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 // a transaction that has not yet identified its database has not made
 // any per-database isolation claims.
 func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
+	beginNamespaceRevision := b.namespaceLifetimeRevision()
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -292,6 +295,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		Status:                  TxStatusActive,
 		readTS:                  readTS,
 		beginSnapshot:           beginSnapshot,
+		beginNamespaceRevision:  beginNamespaceRevision,
 		badgerTx:                badgerTx,
 		snapshotTx:              snapshotTx,
 		badgerDB:                badgerDB,
@@ -2864,6 +2868,10 @@ func (tx *BadgerTransaction) Commit() error {
 		return writeErr
 	}
 	tx.commitReleaseWrite = releaseWrite
+	if err := tx.checkNamespaceLifetimeLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)

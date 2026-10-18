@@ -342,6 +342,9 @@ func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string)
 	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
+	if wholeNamespace {
+		defer b.retireNamespace(namespace)
+	}
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
