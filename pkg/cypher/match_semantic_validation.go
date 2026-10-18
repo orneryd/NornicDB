@@ -1334,9 +1334,11 @@ func coalesceSemanticKind(expression string, scope matchSemanticScope) (matchBin
 func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	result := make(map[string]struct{})
 	for open, end := nextRelationshipBracket(pattern, 0); open >= 0; open, end = nextRelationshipBracket(pattern, end+1) {
-		head := strings.TrimSpace(relationshipBracketHead(pattern[open+1 : end]))
-		name, next, ok := scanIdentifierToken(head, 0)
-		if ok && strings.Contains(relationshipRangeText(head)[next:], "*") {
+		declaration := relationshipDeclarationHead(pattern[open+1 : end])
+		if !declaration.hasLength {
+			continue
+		}
+		if name, _, ok := scanIdentifierToken(declaration.variable, 0); ok {
 			result[name] = struct{}{}
 		}
 	}
@@ -1379,22 +1381,10 @@ func invalidRelationshipPattern(pattern string) bool {
 			return true
 		}
 		// Quoted names and values can hold * and .. (#879), and so can
-		// property values and dynamic types.
-		inner := strings.TrimSpace(relationshipRangeText(relationshipBracketHead(pattern[open+1 : end])))
-		star := strings.IndexByte(inner, '*')
-		if strings.Contains(inner, "..") && star < 0 {
+		// property values and dynamic types: the declaration reader skips
+		// them.
+		if relationshipDeclarationHead(pattern[open+1 : end]).lengthInvalid {
 			return true
-		}
-		if star >= 0 {
-			spec := strings.TrimSpace(inner[star+1:])
-			for _, character := range spec {
-				if (character < '0' || character > '9') && character != '.' {
-					return true
-				}
-			}
-			if strings.Count(spec, "..") > 1 || (strings.Contains(spec, ".") && !strings.Contains(spec, "..")) {
-				return true
-			}
 		}
 	}
 	return false
