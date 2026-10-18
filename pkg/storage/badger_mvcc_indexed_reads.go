@@ -44,31 +44,10 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			itemVersion := item.Version()
-			if cached, ok := b.cacheLoadNodeBody(id, itemVersion); ok {
-				cached, loadErr := b.loadNodeEmbeddingState(txn, cached, id, vectors)
-				if loadErr != nil {
-					return nil, loadErr
-				}
-				if b.filterNodeByDecay(cached, DecayScoringTime()) {
-					return nil, ErrNotFound
-				}
-				return cached, nil
-			}
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				decoded, decodeErr := b.decodeNode(namespace, val)
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if decoded == nil {
-					return ErrNotFound
-				}
-				b.cacheStoreNodeBody(id, itemVersion, decoded)
-				node, decodeErr = b.loadNodeEmbeddingState(txn, decoded, id, vectors)
-				return decodeErr
-			}); err != nil {
+			node, err := b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
+				return b.loadNodeEmbeddingState(txn, node, id, vectors)
+			})
+			if err != nil {
 				return nil, err
 			}
 			if b.filterNodeByDecay(node, DecayScoringTime()) {
@@ -343,27 +322,17 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			itemVersion := item.Version()
-			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
-				if properties == nil {
-					return b.loadNodeEmbeddings(txn, cached, nodeID)
-				}
+			if properties == nil {
+				return b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
+			}
+			if cached, ok := b.cacheLoadNodeBody(nodeID, item.Version()); ok {
 				return projectCachedNodeForRead(cached, properties), nil
 			}
 			var node *Node
 			err := item.Value(func(value []byte) error {
-				if properties == nil {
-					decoded, decodeErr := b.decodeNode(namespaceForNodeID(nodeID), value)
-					if decodeErr != nil {
-						return decodeErr
-					}
-					b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
-					node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
-					return decodeErr
-				}
-				var decodeErr error
-				node, decodeErr = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
-				return decodeErr
+				var err error
+				node, err = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+				return err
 			})
 			return node, err
 		}
