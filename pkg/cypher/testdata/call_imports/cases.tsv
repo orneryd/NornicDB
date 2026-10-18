@@ -1,0 +1,51 @@
+D01	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS c
+D02	n	MATCH (n:A)	n.id	MATCH (m:B) RETURN COUNT { (m)-->(n) } AS c
+D03	n	MATCH (n:A)	n.id	MATCH (m:B) RETURN size(COLLECT { MATCH (m)-->(n) RETURN n.id }) AS c
+D04	n	MATCH (n:A)	n.id	MATCH (m:B) RETURN size(COLLECT { MATCH (m)-->(x) RETURN COUNT { (x)<--(n) } AS k }) AS c
+D05	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE m.n IS NULL AND EXISTS { (m)-->(n) } RETURN count(m) AS c
+D06	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE 'n' = 'n' AND EXISTS { (m)-->(n) } RETURN count(m) AS c
+D07	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE {n: 1}.n = 1 AND EXISTS { (m)-->(n) } RETURN count(m) AS c
+D08	n	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (m:B) RETURN size([(m)-->(n) | n]) AS s }[0] AS c
+D09	n	MATCH (n:A)	n.id	RETURN size([n IN [1, 2] | n * 10]) AS c
+D10	n	MATCH (n:A)	n.id	RETURN reduce(s = 0, n IN [1, 2] | s + n) AS c
+D11	n	MATCH (n:A)	n.id	RETURN all(n IN [1, 2] WHERE n > 0) AS c
+D12	n	MATCH (n:A)	n.id	RETURN size(COLLECT { MATCH (n:C) RETURN n.id AS v UNION ALL MATCH (m:B) RETURN 0 AS v }) AS c
+D13	n	MATCH (n:A)	n.id	CALL () { MATCH (n:C) RETURN n.id AS v } RETURN v AS c
+D14	n	MATCH (n:A)	n.id	MATCH (n:C) RETURN n.id AS c
+D15	n	MATCH (n:A)	n.id	UNWIND [5] AS n RETURN n AS c
+D16	n	MATCH (n:A)	n.id	WITH 7 AS n RETURN n AS c
+D17	n	MATCH (n:A)	n.id	MATCH (m:B) RETURN COUNT { MATCH (m) ((x)-[:R]->(n)){1,1} } AS c
+D18	n	MATCH (n:A)	n.id	MATCH (m:B) /* n */ RETURN count(m) AS c
+D19	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE EXISTS { (m)-->(`n`) } RETURN count(m) AS c
+D20	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE NOT EXISTS { (m)-->(:n) } RETURN count(m) AS c
+D21	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE NOT EXISTS { (m)-[:n]->() } RETURN count(m) AS c
+D22	n	MATCH (n:A)	n.id	RETURN COUNT { MATCH (n:C) RETURN 1 AS v UNION MATCH (n:B) RETURN 2 AS v } AS c
+D23	n	MATCH (n:A)	n.id	MATCH (m:B) WHERE EXISTS { MATCH (m)-->(n) WHERE n.id = 9 } RETURN count(m) AS c
+D24	n	MATCH (n:A)	n.id	MATCH (m:B) RETURN size([x IN COLLECT { MATCH (m)-->(n) RETURN n } | x]) AS c
+S01	n	WITH 1 AS n	n	MATCH (m:B) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS c
+S02	n	WITH 1 AS n	n	MATCH (m:B) RETURN COUNT { (m)-->(n) } AS c
+S03	n	WITH 1 AS n	n	MATCH (n:C) RETURN n.id AS c
+S04	n	WITH 'x' AS n	n	RETURN COLLECT { MATCH (m:B)-->(n) RETURN n.id }[0] AS c
+R01	y	MATCH (n:A)	n.id	RETURN n.id AS c
+R02	y	MATCH (n:A)	n.id	RETURN COLLECT { RETURN n.id }[0] AS c
+R03	y	MATCH (n:A)	n.id	MATCH (m:A) WHERE EXISTS { MATCH (m) WHERE m.id = n.id } RETURN count(m) AS c
+R04	y	MATCH (n:A)	n.id	RETURN COUNT { MATCH (m:A) WHERE m.id = n.id } AS c
+R05	y	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (n:C) RETURN 10 AS v UNION ALL MATCH (m:A) WHERE m.id = n.id RETURN m.id AS v }[0] AS c
+R06	y	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (m:A) WHERE m.id = n.id RETURN m.id AS v UNION ALL MATCH (n:C) RETURN 10 AS v }[0] AS c
+R07	y	MATCH (n:A)	n.id	RETURN COUNT { MATCH (n:C) RETURN 1 AS v UNION ALL MATCH (m:A) WHERE m.id = n.id RETURN 1 AS v } AS c
+R08	y	MATCH (n:A)	n.id	RETURN EXISTS { MATCH (n:C) RETURN 1 AS v UNION MATCH (m:A) WHERE m.id = n.id RETURN 1 AS v } AS c
+R09	n	MATCH (n:A)	n.id	RETURN size([(n)-->() | 1]) AS c
+R10	y	MATCH (n:A)	n.id	RETURN [x IN [1] | n.id][0] AS c
+R11	y	MATCH (n:A)	n.id	CALL (n) { RETURN n.id AS v } RETURN v AS c
+R12	y	MATCH (n:A)	n.id	CALL { WITH n RETURN n.id AS v } RETURN v AS c
+R13	y	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (m:A) RETURN COUNT { MATCH (k:A) WHERE k.id = n.id } AS v }[0] AS c
+R14	y	MATCH (n:A)	n.id	MATCH (m:B) WHERE EXISTS { (m)-->(n) } WITH count(m) AS t RETURN t + n.id AS c
+R15	y	MATCH (n:A)	n.id	MATCH (m:A) WHERE EXISTS { (m {id: n.id}) } RETURN count(m) AS c
+R16	y	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (m:A) WHERE m.id = n.id RETURN [n IN [5] | n][0] + m.id AS v }[0] AS c
+R17	y	MATCH (n:A)	n.id	RETURN COLLECT { UNWIND [1] AS k RETURN n.id AS v }[0] AS c
+R18	y	MATCH (n:A)	n.id	RETURN EXISTS { MATCH (m:A) WHERE m.id = n.id } AS c
+R19	y	MATCH (n:A)	n.id	MATCH (m:A) RETURN sum(COUNT { MATCH (m) WHERE m = n }) AS c
+R20	y	MATCH (n:A)	n.id	RETURN COLLECT { MATCH (n:C) RETURN 10 AS v UNION ALL RETURN n.id AS v }[0] AS c
+R21	y	MATCH (n:A)	n.id	MATCH (m:A) WHERE m.id = `n`.id RETURN count(m) AS c
+R22	y	MATCH (n:A)	n.id	RETURN COUNT { MATCH (m:A) WHERE m.id = `n`.id } AS c
+R23	y	MATCH (n:A)	n.id	RETURN COUNT { MATCH (m:A {id: `n`.id}) } AS c

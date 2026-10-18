@@ -480,30 +480,45 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 	if !ok {
 		return nil, nil
 	}
+	// An unscoped body sees what it reads (bodyScopeOf, the gh648 implicit
+	// import): a name it uses only in pattern positions, or declares before
+	// reading, is a new variable of the branch. A leading importing WITH
+	// selects from every outer variable, and its listed names (including *)
+	// follow ordinary WITH scope.
+	var unscoped bodyScope
+	if !scoped {
+		body, _, _, _ := e.parseCallSubquery(callText)
+		var err error
+		if unscoped, err = e.bodyScopeOf(body, nil, cypher25); err != nil {
+			return nil, err
+		}
+	}
 	var returned typeScope
-	for _, branch := range branches {
+	for index, branch := range branches {
 		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		retained := initial
-		importing := false
+		start, retained := initial, initial
 		if !scoped {
-			// Unlisted outer names remain implicit imports under the documented
-			// gh648 extension. A leading importing WITH explicitly projects its
-			// listed names (including *), so those names follow ordinary WITH
-			// scope instead. A branch's own declarations never become imports.
-			retained = maps.Clone(initial)
-			_, importing, _ = branchLeadingWithImport(branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
-			if importing {
+			branchScope := unscoped.Branches[index]
+			if branchScope.Importing != nil {
+				retained = maps.Clone(initial)
 				for name := range projectTypeScope(initial, cypher25, clauses[0].text) {
 					delete(retained, name)
 				}
-			}
-			for name := range retained {
-				if branchDeclaresVariable(branch, name) {
-					delete(retained, name)
+			} else {
+				start = make(typeScope, len(unscoped.Reads))
+				for _, name := range unscoped.Reads {
+					if operand, visible := initial[name]; visible {
+						start[name] = operand
+					}
 				}
+				retained = start
+			}
+			for _, name := range branchScope.Declares {
+				delete(retained, name)
+				delete(start, name)
 			}
 		}
 		// The body records its reads from the enclosing body (reads): CALL
@@ -516,17 +531,8 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		case readCallSubqueryScope(callText).names == nil:
 			branchReads = reads.child(nil)
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained, reads: branchReads})
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(start), cypher25, subqueryScope{visible: retained, reads: branchReads})
 		if err != nil {
-			if !scoped {
-				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
-					return nil, err
-				}
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, nil
-			}
 			return nil, err
 		}
 		last := clauses[len(clauses)-1]

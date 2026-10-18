@@ -3,66 +3,90 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// An unscoped CALL body implicitly imports the outer variables it reads (a
-// NornicDB extension), but a name a nested EXISTS / COUNT / COLLECT declares
-// is a new variable of that subquery, as in Neo4j, so it is not imported
-// (#1317 S08); a name a nested subquery only reads is still imported.
-// Expected values are Neo4j 5.26.30's, except the "extension" cases, which
-// pin the extension (Neo4j rejects the outer reference).
-func TestUnscopedCallImportsIgnoreNestedSubqueryNames(t *testing.T) {
-	ctx := context.Background()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	if _, err := exec.Execute(ctx, "CREATE (:A {id:1}), (:A {id:2}), (:B)-[:R]->(:C)", nil); err != nil {
-		t.Fatal(err)
+// TestUnscopedCallImportsMatchNeo4j: what a CALL body reads from the outer
+// row (bodyScopeOf) gives Neo4j 5.26.30's answer on every route. Each case
+// of testdata/call_imports/cases.tsv is a body, whether it reads n (y / n),
+// the outer query and the key it orders by; expected.tsv holds Neo4j's
+// result for the body as CALL (n) { … } when it reads n and as CALL () { … }
+// when it doesn't (a wrong label makes Neo4j reject CALL ()). NornicDB
+// runs the body unscoped (its implicit import, a NornicDB extension Neo4j
+// rejects), scoped the same way, and as CALL { … } IN TRANSACTIONS, in
+// auto-commit and in an explicit transaction. Cases: names a nested
+// EXISTS / COUNT / COLLECT, a nested UNION branch, a nested CALL or a
+// pattern comprehension declares or reads; property keys, map keys,
+// strings, comments, labels and types named like the variable;
+// comprehension, reduce and quantifier locals; backticked names.
+func TestUnscopedCallImportsMatchNeo4j(t *testing.T) {
+	read := func(name string) [][]string {
+		data, err := os.ReadFile("testdata/call_imports/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows [][]string
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			rows = append(rows, strings.Split(line, "\t"))
+		}
+		return rows
 	}
-	cases := []struct {
-		name  string
-		query string
-		want  []string
-	}{
-		{"S08 name only in a nested EXISTS",
-			"MATCH (n:A) CALL { MATCH (m:B) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS c } RETURN n.id AS id, c ORDER BY id",
-			[]string{"1 1", "2 1"}},
-		{"name only in a nested COUNT",
-			"MATCH (n:A) CALL { MATCH (m:B) RETURN COUNT { (m)-->(n) } AS c } RETURN n.id AS id, c ORDER BY id",
-			[]string{"1 1", "2 1"}},
-		{"name only in a nested COLLECT",
-			"MATCH (n:A) CALL { MATCH (m:B) RETURN COLLECT { MATCH (m)-->(n) RETURN n.id } AS c } RETURN n.id AS id, size(c) AS c ORDER BY id",
-			[]string{"1 1", "2 1"}},
-		{"scoped CALL imports the name for its nested EXISTS",
-			"MATCH (n:A) CALL (n) { MATCH (m:B) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS c } RETURN n.id AS id, c ORDER BY id",
-			[]string{"1 0", "2 0"}},
-		{"name a doubly nested COUNT declares",
-			"MATCH (n:A) CALL { MATCH (m:B) RETURN COLLECT { MATCH (m)-->(x) RETURN COUNT { (x)<--(n) } } AS c } RETURN n.id AS id, c[0] AS c ORDER BY id",
-			[]string{"1 1", "2 1"}},
-		{"extension: a plain reference in the body still imports",
-			"MATCH (n:A) CALL { RETURN n.id AS x } RETURN n.id AS id, x ORDER BY id",
-			[]string{"1 1", "2 2"}},
-		{"extension: a nested COLLECT that only reads the name imports it",
-			"MATCH (n:A) CALL { RETURN COLLECT { RETURN n.id } AS xs } RETURN n.id AS id, xs[0] AS x ORDER BY id",
-			[]string{"1 1", "2 2"}},
-		{"extension: a nested EXISTS whose WHERE reads the name imports it",
-			"MATCH (n:A) CALL { MATCH (m:A) WHERE EXISTS { MATCH (m) WHERE m.id = n.id } RETURN count(m) AS c } RETURN n.id AS id, c ORDER BY id",
-			[]string{"1 1", "2 1"}},
+	expected := map[string]string{}
+	for _, row := range read("expected.tsv") {
+		expected[row[0]] = row[1]
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := exec.Execute(ctx, tc.query, nil)
-			if err != nil {
-				t.Fatalf("%s: %v", tc.query, err)
+	for _, route := range []string{"auto", "explicit"} {
+		ctx := context.Background()
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "imports"+route))
+		if _, err := exec.Execute(ctx, "CREATE (:A {id:1}), (:A {id:2}), (:B)-[:R]->(:C {id:9})", nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range read("cases.tsv") {
+			name, reads, outer, key, body := c[0], c[1], c[2], c[3], c[4]
+			scope := "()"
+			if reads == "y" {
+				scope = "(n)"
 			}
-			got := make([]string, 0, len(result.Rows))
-			for _, row := range result.Rows {
-				got = append(got, fmt.Sprintf("%v %v", row[0], row[1]))
+			forms := map[string]string{"unscoped": "CALL { " + body + " }", "scoped": "CALL " + scope + " { " + body + " }"}
+			if route == "auto" {
+				forms["in transactions"] = "CALL { " + body + " } IN TRANSACTIONS"
 			}
-			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
-				t.Fatalf("%s:\n got %v\nwant %v", tc.query, got, tc.want)
+			for form, call := range forms {
+				query := fmt.Sprintf("%s %s WITH %s AS k, c ORDER BY k RETURN collect(toString(k) + ':' + coalesce(toString(c), 'null')) AS r", outer, call, key)
+				if route == "explicit" {
+					if _, err := exec.Execute(ctx, "BEGIN", nil); err != nil {
+						t.Fatal(err)
+					}
+				}
+				result, err := exec.Execute(ctx, query, nil)
+				if route == "explicit" {
+					_, _ = exec.Execute(ctx, "ROLLBACK", nil)
+				}
+				var got string
+				switch {
+				case err != nil:
+					got = "ERROR"
+					if expected[name] != "ERROR" {
+						got += " " + err.Error()
+					}
+				case len(result.Rows) == 1:
+					items, _ := result.Rows[0][0].([]interface{})
+					quoted := make([]string, len(items))
+					for i, item := range items {
+						quoted[i] = fmt.Sprintf("%q", item)
+					}
+					got = "[" + strings.Join(quoted, ", ") + "]"
+				default:
+					got = fmt.Sprintf("rows %v", result.Rows)
+				}
+				if got != expected[name] {
+					t.Errorf("%s %s %s: got %s, want %s\n%s", name, route, form, got, expected[name], query)
+				}
 			}
-		})
+		}
 	}
 }

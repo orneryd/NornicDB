@@ -625,6 +625,7 @@ func TestGh648_UnscopedBranchDeclaresOuterName(t *testing.T) {
 }
 
 func TestBranchDeclaresVariable(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	for _, testCase := range []struct {
 		branch, variable string
 		declares         bool
@@ -648,9 +649,8 @@ func TestBranchDeclaresVariable(t *testing.T) {
 		{"SET n.p = 1", "n", false},
 		{"MATCH (m) RETURN `n`", "n", false},
 	} {
-		require.Equal(t, testCase.declares, branchDeclaresVariable(testCase.branch, testCase.variable), testCase.branch)
+		scope, err := exec.bodyScopeOf(testCase.branch, nil, false)
+		require.NoError(t, err, testCase.branch)
+		require.Equal(t, testCase.declares, containsString(scope.Branches[0].Declares, testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals("MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
-	require.Equal(t, byte(0), previousNonSpace("  ", 2))
-	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
 }

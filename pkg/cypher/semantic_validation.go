@@ -259,24 +259,22 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 			return err
 		}
 		// An unscoped body's branches (the body, or each UNION branch)
-		// import with their own leading WITH (#907). A branch that imports
-		// nothing still sees the outer variables it reads, a NornicDB
-		// extension over Neo4j 5.26 (which rejects them): only a leading
-		// WITH that reads no outer variable at all is checked here.
+		// import with their own leading WITH (bodyScopeOf, #907). A branch
+		// that imports nothing still sees the outer variables it reads, a
+		// NornicDB extension over Neo4j 5.26 (which rejects them); a name it
+		// imports that the enclosing scope lacks is undefined where the CALL
+		// runs.
 		if !scoped {
-			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
+			bodyScope, err := e.bodyScopeOf(body, nil, cypher25)
+			if err != nil {
+				return err
+			}
 			branches := []string{body}
 			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
 				branches = unionBranches
 			}
 			for index, branch := range branches {
-				// A malformed import is reported where the CALL runs.
-				if _, importing, _ := branchLeadingWithImport(branch, outer, false); !importing {
-					// A leading WITH that imports nothing is the branch's first
-					// clause: any variable it reads is undefined there.
-					if err := leadingWithUndefinedVariable(branch); err != nil {
-						return err
-					}
+				if bodyScope.Branches[index].Importing == nil {
 					continue
 				}
 				// The import form is checked on the first branch only, as
@@ -319,28 +317,6 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		}
 		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// leadingWithUndefinedVariable is "Variable `x` not defined" for a subquery
-// branch whose leading WITH imports nothing but reads a variable
-// (MATCH (:P) CALL { WITH seed RETURN seed }): as its first clause, nothing
-// before it in the branch defines one (#907).
-func leadingWithUndefinedVariable(branch string) error {
-	branch = strings.TrimSpace(branch)
-	if !startsWithKeywordFold(branch, "WITH") {
-		return nil
-	}
-	clause, _ := leadingWithClause(branch)
-	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	for _, item := range splitTopLevelComma(projection) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-		for _, variable := range expressionFreeVariables(expression) {
-			if !isSemanticLiteralWord(variable) {
-				return createUndefinedVariableError(variable)
-			}
 		}
 	}
 	return nil

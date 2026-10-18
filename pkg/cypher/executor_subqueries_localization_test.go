@@ -23,7 +23,7 @@ func requireCypherSubqueriesLocalizedError(t *testing.T, err error, messageID lo
 
 func TestCypherSubqueriesLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	t.Run("subquery parser", func(t *testing.T) {
-		_, _, err := unscopedCallImports("WITH seed", func(name string) bool { return name == "seed" }, false)
+		_, _, err := branchLeadingWithImport("WITH seed", func(name string) bool { return name == "seed" }, false)
 		requireCypherSubqueriesLocalizedError(t, err, localization.MessageCypherSubqueriesWithQueryClauseRequired, "invalid CALL {} subquery: WITH must be followed by a query clause")
 	})
 
