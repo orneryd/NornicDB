@@ -201,8 +201,8 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	}
 	prefix := temporalHistoryPrefix(target.desc)
 	var overlay []*Node
- var touched map[NodeID]bool
- err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(c.Label) }, func(txn *badger.Txn) error {
+	var touched map[NodeID]bool
+	err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(c.Label) }, func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -225,6 +225,10 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 		}
 		return nil
 	})
-	for _, n := range overlay { if namespace == "" || nodeIDInScope(n.ID, namespace+":") { nodes = append(nodes, copyNode(n)) } }
- return nodes, true, err
+	for _, n := range overlay {
+		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {
+			nodes = append(nodes, copyNode(n))
+		}
+	}
+	return nodes, true, err
 }

@@ -77,7 +77,13 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 }
 
 func (tx *BadgerTransaction) committedNodeLabelsLocked(identifier NodeID) ([]string, error) {
- if tx.engine.writeBehind != nil { node, err := tx.engine.GetNodeProjected(identifier, []string{}); if err != nil { return nil, err }; return node.Labels, nil }
+	if tx.engine.writeBehind != nil {
+		node, err := tx.engine.GetNodeProjected(identifier, []string{})
+		if err != nil {
+			return nil, err
+		}
+		return node.Labels, nil
+	}
 	if labels, cached := tx.snapshotNodeLabels[identifier]; cached {
 		return labels, nil
 	}
