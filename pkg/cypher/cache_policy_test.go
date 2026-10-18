@@ -49,9 +49,9 @@ func TestIsCacheableReadQuery_NewPrimitives(t *testing.T) {
 			expect: false,
 		},
 		{
-			name:   "rretrieve cacheable",
+			name:   "rretrieve lifecycle bypasses cache",
 			query:  "CALL db.rretrieve({query: 'alpha', limit: 10})",
-			expect: true,
+			expect: false,
 		},
 		{
 			name:   "rerank cacheable",
