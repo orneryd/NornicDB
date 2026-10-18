@@ -101,6 +101,7 @@ func (collector *queryStatisticsCollector) record(generation uint64, query strin
 	if _, exists := collector.queries[query]; !exists {
 		if len(collector.order) == 1000 {
 			delete(collector.queries, collector.order[0])
+			collector.order[0] = ""
 			collector.order = collector.order[1:]
 		}
 		collector.order = append(collector.order, query)

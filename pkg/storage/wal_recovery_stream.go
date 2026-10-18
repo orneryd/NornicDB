@@ -165,6 +165,7 @@ func (v *recoverySnapshotVisitor) flushNodes() error {
 	if err := v.engine.BulkCreateNodes(v.nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
+	clear(v.nodes)
 	v.nodes = v.nodes[:0]
 	return nil
 }
@@ -176,6 +177,7 @@ func (v *recoverySnapshotVisitor) flushEdges() error {
 	if err := v.engine.BulkCreateEdges(v.edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
+	clear(v.edges)
 	v.edges = v.edges[:0]
 	return nil
 }

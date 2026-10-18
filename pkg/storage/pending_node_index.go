@@ -124,6 +124,7 @@ func (p *pendingNodeIndex) remove(node *Node) {
 				}
 				last := len(valueIDs) - 1
 				valueIDs[index] = valueIDs[last]
+				valueIDs[last] = ""
 				if last == 0 {
 					delete(p.byValue, key)
 				} else {

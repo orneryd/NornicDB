@@ -273,6 +273,8 @@ func (a *StorageAdapter) flushWALBatch() {
 		return
 	}
 	batch := a.walBatch
+	// The batch belongs to this worker through replay and barrier delivery.
+	defer clear(batch)
 	a.walBatch = a.walBatch[:0] // Clear batch
 	a.walBatchMu.Unlock()
 
@@ -750,8 +752,9 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 		return
 	}
 	// Drop prefix in-place to avoid allocating a new backing array.
-	copy(a.memWAL, a.memWAL[lo:])
-	a.memWAL = a.memWAL[:len(a.memWAL)-lo]
+	remaining := copy(a.memWAL, a.memWAL[lo:])
+	clear(a.memWAL[remaining:])
+	a.memWAL = a.memWAL[:remaining]
 }
 
 // WriteSnapshot writes a full snapshot to the given writer.

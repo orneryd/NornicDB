@@ -751,6 +751,7 @@ func (ci *ClusterIndex) Clear() {
 
 	// Reset cluster state
 	ci.routing = nil
+	clear(ci.pendingUpdates)
 	ci.pendingUpdates = ci.pendingUpdates[:0]
 	ci.updatesSinceCluster = 0
 	ci.iterations = 0

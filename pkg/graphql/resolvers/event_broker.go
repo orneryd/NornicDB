@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -382,7 +383,7 @@ func (b *EventBroker) unsubscribeNodeCreated(ch chan *models.Node) {
 
 	for i, sub := range b.nodeCreatedSubs {
 		if subCh, ok := sub.ch.(chan *models.Node); ok && subCh == ch {
-			b.nodeCreatedSubs = append(b.nodeCreatedSubs[:i], b.nodeCreatedSubs[i+1:]...)
+			b.nodeCreatedSubs = slices.Delete(b.nodeCreatedSubs, i, i+1)
 			close(ch)
 			return
 		}
@@ -395,7 +396,7 @@ func (b *EventBroker) unsubscribeNodeUpdated(ch chan *models.Node) {
 
 	for i, sub := range b.nodeUpdatedSubs {
 		if subCh, ok := sub.ch.(chan *models.Node); ok && subCh == ch {
-			b.nodeUpdatedSubs = append(b.nodeUpdatedSubs[:i], b.nodeUpdatedSubs[i+1:]...)
+			b.nodeUpdatedSubs = slices.Delete(b.nodeUpdatedSubs, i, i+1)
 			close(ch)
 			return
 		}
@@ -408,7 +409,7 @@ func (b *EventBroker) unsubscribeNodeDeleted(ch chan string) {
 
 	for i, sub := range b.nodeDeletedSubs {
 		if subCh, ok := sub.ch.(chan string); ok && subCh == ch {
-			b.nodeDeletedSubs = append(b.nodeDeletedSubs[:i], b.nodeDeletedSubs[i+1:]...)
+			b.nodeDeletedSubs = slices.Delete(b.nodeDeletedSubs, i, i+1)
 			close(ch)
 			return
 		}
@@ -421,7 +422,7 @@ func (b *EventBroker) unsubscribeRelationshipCreated(ch chan *models.Relationshi
 
 	for i, sub := range b.relationshipCreatedSubs {
 		if subCh, ok := sub.ch.(chan *models.Relationship); ok && subCh == ch {
-			b.relationshipCreatedSubs = append(b.relationshipCreatedSubs[:i], b.relationshipCreatedSubs[i+1:]...)
+			b.relationshipCreatedSubs = slices.Delete(b.relationshipCreatedSubs, i, i+1)
 			close(ch)
 			return
 		}
@@ -434,7 +435,7 @@ func (b *EventBroker) unsubscribeRelationshipUpdated(ch chan *models.Relationshi
 
 	for i, sub := range b.relationshipUpdatedSubs {
 		if subCh, ok := sub.ch.(chan *models.Relationship); ok && subCh == ch {
-			b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs[:i], b.relationshipUpdatedSubs[i+1:]...)
+			b.relationshipUpdatedSubs = slices.Delete(b.relationshipUpdatedSubs, i, i+1)
 			close(ch)
 			return
 		}
@@ -447,7 +448,7 @@ func (b *EventBroker) unsubscribeRelationshipDeleted(ch chan string) {
 
 	for i, sub := range b.relationshipDeletedSubs {
 		if subCh, ok := sub.ch.(chan string); ok && subCh == ch {
-			b.relationshipDeletedSubs = append(b.relationshipDeletedSubs[:i], b.relationshipDeletedSubs[i+1:]...)
+			b.relationshipDeletedSubs = slices.Delete(b.relationshipDeletedSubs, i, i+1)
 			close(ch)
 			return
 		}
