@@ -470,12 +470,13 @@ func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.
 }
 
 // The upper-layer descent can end on a removed vector, which can't seed the
-// layer-0 search. A narrow search then starts from the closest live node the
-// descent passed and still answers. An insert whose descent ends there gets
-// no layer-0 links (as before), but a population-wide search still finds it.
+// layer-0 search. Its live neighbours seed it instead: a narrow search finds
+// the vectors next to it (E, the last live node the descent passed, links
+// only to the removed vector), and an insert links among them, so a narrow
+// search finds the new vector too.
 func TestHNSWDescentEndingOnRemovedVector(t *testing.T) {
 	nodes := []hnswFixtureNode{
-		{id: "E", vec: []float32{-1, 0}, level: 1, links: [][]string{{"T", "P"}, {"T"}}},
+		{id: "E", vec: []float32{-1, 0}, level: 1, links: [][]string{{"T"}, {"T"}}},
 		{id: "T", vec: []float32{1, 0}, level: 1, links: [][]string{{"P", "Q"}, {"E"}}},
 		{id: "P", vec: []float32{1, 0.1}, links: [][]string{{"T", "Q"}}},
 		{id: "Q", vec: []float32{1, -0.1}, links: [][]string{{"T", "P"}}},
@@ -492,6 +493,19 @@ func TestHNSWDescentEndingOnRemovedVector(t *testing.T) {
 		index := newHNSWFixture(t, 2, 2, "E", nodes)
 		index.Remove("T")
 		require.NoError(t, index.Add("N", []float32{1, 0.05}))
+		index.mu.RLock()
+		neighbors, _ := index.neighborsAtLevelLocked(index.idToInternal["N"], 0)
+		linked := make([]string, 0, len(neighbors))
+		for _, neighbor := range neighbors {
+			linked = append(linked, index.internalToID[neighbor])
+		}
+		index.mu.RUnlock()
+		require.Subset(t, []string{"P", "Q"}, linked)
+		require.NotEmpty(t, linked)
+		results, err := index.SearchWithEf(context.Background(), []float32{1, 0.05}, 1, -1, 2)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.Equal(t, "N", results[0].ID)
 		requireEveryLiveVectorFound(t, index)
 	})
 }

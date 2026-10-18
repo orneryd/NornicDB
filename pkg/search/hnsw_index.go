@@ -425,16 +425,30 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	epLevel := int(h.nodeLevel[ep])
 	neighbors := h.addBestScratch[:0]
 
+	// The descent can end on a removed vector, which can't seed a layer
+	// search; live is the last live node it moved to.
+	live := ep
 	for l := epLevel; l > level; l-- {
-		ep = h.searchLayerSingle(normalized, ep, l)
+		ep, _ = h.searchLayerSingleWithContext(context.Background(), normalized, ep, l, &live)
 	}
 
 	for l := min(level, epLevel); l >= 0; l-- {
 		var candidates []uint32
 		searched := true
+		removedEntry := false
 		if l == 0 && level0Candidates != nil {
 			candidates = level0Candidates
 			searched = false
+		} else if h.deleted[ep] {
+			// The descent ended on a removed vector, which is close to the new
+			// one: its live neighbours are the candidates. That costs a few
+			// distances, where a search from live would cost a full insert.
+			removedEntry = true
+			candidates = h.liveNeighborsLocked(ep, l, h.idsPool.Get().([]uint32)[:0])
+			if len(candidates) == 0 {
+				h.releaseCandidateIDs(candidates)
+				candidates = h.searchLayer(normalized, live, h.config.EfConstruction, l)
+			}
 		} else {
 			candidates = h.searchLayer(normalized, ep, h.config.EfConstruction, l)
 		}
@@ -448,7 +462,10 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			h.insertNeighborAtLevelLocked(neighborID, l, internalID)
 		}
 
-		if len(candidates) > 0 {
+		switch {
+		case removedEntry && len(neighbors) > 0:
+			ep = neighbors[0] // closest selected; the candidates are unordered
+		case len(candidates) > 0:
 			ep = candidates[0]
 		}
 		if searched {
@@ -711,8 +728,6 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 // and the given extra entry IDs, closest first. h.mu must be held.
 func (h *HNSWIndex) searchGraphLocked(ctx context.Context, query []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
 	ep := h.entryPoint
-	// The descent can end on a removed vector, which can't seed the layer-0
-	// search; the closest live node it passed seeds it instead.
 	live := ep
 	for l := h.maxLevel; l > 0; l-- {
 		var err error
@@ -721,14 +736,21 @@ func (h *HNSWIndex) searchGraphLocked(ctx context.Context, query []float32, ef i
 			return nil, err
 		}
 	}
-	if h.deleted[ep] {
-		ep = live
-	}
 
 	entryBufAny := h.idsPool.Get()
 	entries := entryBufAny.([]uint32)[:0]
 	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
+	if h.deleted[ep] {
+		// The descent ended on a removed vector, which can't seed the layer-0
+		// search. Its live neighbours, next to the query, seed it instead;
+		// without any, the last live node the descent passed.
+		entries = h.liveNeighborsLocked(ep, 0, entries)
+		if len(entries) == 0 {
+			entries = append(entries, live)
+		}
+	} else {
+		entries = append(entries, ep)
+	}
 	for _, id := range entryIDs {
 		internalID, ok := h.idToInternal[id]
 		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
@@ -737,6 +759,18 @@ func (h *HNSWIndex) searchGraphLocked(ctx context.Context, query []float32, ef i
 		entries = append(entries, internalID)
 	}
 	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, query, entries, ef, 0)
+}
+
+// liveNeighborsLocked appends node's live neighbours at level to out. h.mu
+// must be held.
+func (h *HNSWIndex) liveNeighborsLocked(node uint32, level int, out []uint32) []uint32 {
+	neighbors, _ := h.neighborsAtLevelLocked(node, level)
+	for _, neighbor := range neighbors {
+		if validHNSWIndex(neighbor, len(h.deleted)) && !h.deleted[neighbor] {
+			out = append(out, neighbor)
+		}
+	}
+	return out
 }
 
 // scanLiveLocked scores every live vector, closest first, in a slice from
