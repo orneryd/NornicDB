@@ -136,6 +136,7 @@ func (s *Session) failClosedTransactionCleanup(_ error) {
 // clearExplicitTransactionState discards pending results and deferred Flush so
 // a completed terminal path cannot persist stale transaction work later.
 func (s *Session) clearExplicitTransactionState() {
+	s.abandonContinuationResults()
 	s.inTransaction = false
 	s.txMetadata = nil
 	s.txDatabase = ""
