@@ -1,0 +1,174 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018035329-95940-22c3: wt-fix-1384-release@568465c8, bundle 2 commit(s); submitted in 4.1s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.22 GiB
+tnrun job i20261018035329-95940-22c3 (wt-fix-1384-release@568465c8): worker 6, CPUs 16,17,80,81, commit 568465c8a6078bb61f978ec0a6eb2dd77f93fc96, go1.26.9
+/work/tnrun/in/i20261018035329-95940-22c3.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestGh728BindingFilterAdmissionAndParameterOwnership
+    binding_where_compile_test.go:345: 
+        	Error Trace:	/repo/pkg/cypher/binding_where_compile_test.go:345
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.33 GiB
+tnrun: job i20261018035329-95940-22c3: DONE exit 1 (default 1 in 45s, antlr 1 in 10s); box 55s, total 64s
+        	Error:      	Expected nil, but got: &cypher.rowPredicatePlan{root:cypher.rowPredicatePart{kind:0x8, text:"(a)-[:LINK]->(b)", left:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, right:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, operator:"", constantNumbers:false, parts:[]cypher.rowPredicatePart(nil), membership:(*cypher.bindingParamMembershipCache)(nil), stringPredicate:(func(string, string) bool)(nil), pattern:(*cypher.patternPredicatePlan)(0x35b59729adb0)}, complete:true}
+        	Test:       	TestGh728BindingFilterAdmissionAndParameterOwnership
+--- FAIL: TestGh728BindingFilterAdmissionAndParameterOwnership (0.01s)
+=== RUN   TestEvaluateWhereForContext_RelationshipAndBooleanBranches
+    match_multi_helpers_aggregation_test.go:808: 
+        	Error Trace:	/repo/pkg/cypher/match_multi_helpers_aggregation_test.go:808
+        	Error:      	Should be true
+        	Test:       	TestEvaluateWhereForContext_RelationshipAndBooleanBranches
+--- FAIL: TestEvaluateWhereForContext_RelationshipAndBooleanBranches (0.01s)
+=== RUN   TestEvaluateWhereForContext_Branches
+    match_multi_where_context_branches_test.go:43: 
+        	Error Trace:	/repo/pkg/cypher/match_multi_where_context_branches_test.go:43
+        	Error:      	Should be true
+        	Test:       	TestEvaluateWhereForContext_Branches
+--- FAIL: TestEvaluateWhereForContext_Branches (0.01s)
+=== RUN   TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns
+    match_where_pattern_predicate_test.go:31: execute pattern predicate query: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns (0.01s)
+=== RUN   TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors
+    match_where_pattern_predicate_test.go:50: query connected graph: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors (0.01s)
+=== RUN   TestWithWhereFiltersWithDisjunctiveRelationshipPatterns
+    match_where_pattern_predicate_test.go:93: execute WITH pattern predicate query: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestWithWhereFiltersWithDisjunctiveRelationshipPatterns (0.01s)
+=== RUN   TestPatternOperandIsAWholeChain
+    pattern_operand_recognition_test.go:28: 
+        	Error Trace:	/repo/pkg/cypher/pattern_operand_recognition_test.go:28
+        	Error:      	Received unexpected error:
+        	            	Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+        	Test:       	TestPatternOperandIsAWholeChain
+        	Messages:   	MATCH (a:ZD {id: 'a'}), (b:ZD {id: 'b'}) WHERE false OR (b)-[:ZR]->(a) RETURN b.id AS v
+--- FAIL: TestPatternOperandIsAWholeChain (0.01s)
+=== RUN   TestPatternPredicateUsesExistsOwner
+=== RUN   TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE
+    pattern_predicate_owner_test.go:58: MATCH (a:A)-[r:R]->(b:B), (c:C) WHERE (c)-[r]->(b) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT
+--- PASS: TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map
+--- PASS: TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match
+--- PASS: TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship
+--- PASS: TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches
+--- PASS: TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding
+    pattern_predicate_owner_test.go:58: MATCH (a)-[r:R]->(b:X) WITH r WHERE ()-[r]->(:X) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match
+    pattern_predicate_owner_test.go:58: MATCH (a)-[r:R]->(b:X) WITH r WHERE ()-[r]->(:B) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_OR
+    pattern_predicate_owner_test.go:58: MATCH (a:A) WHERE (a)-[:R]->(:X) OR a.id = 1 RETURN a.id AS id ORDER BY id: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/pattern_under_OR (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_AND
+    pattern_predicate_owner_test.go:58: MATCH (a:A) WHERE (a)-[:R]->(:X) AND a.id > 2 RETURN a.id AS id ORDER BY id: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/pattern_under_AND (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node
+    pattern_predicate_owner_test.go:58: OPTIONAL MATCH (z:Nope) WITH z MATCH (a:A {id:1}) WHERE (z)-[:R]->() RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node (0.00s)
+--- FAIL: TestPatternPredicateUsesExistsOwner (0.01s)
+=== RUN   TestPatternPredicatesInBooleanPositions
+    pattern_predicate_positions_test.go:33: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_positions_test.go:33
+        	Error:      	Received unexpected error:
+        	            	Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+        	Test:       	TestPatternPredicatesInBooleanPositions
+        	Messages:   	CYPHER 25 MATCH (n:SQ) FILTER n:SQ AND (n)<-[:R]-() RETURN n.v AS v
+--- FAIL: TestPatternPredicatesInBooleanPositions (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.540s
+=== parser default: exit 1 after 45s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestGh728BindingFilterAdmissionAndParameterOwnership
+    binding_where_compile_test.go:345: 
+        	Error Trace:	/repo/pkg/cypher/binding_where_compile_test.go:345
+        	Error:      	Expected nil, but got: &cypher.rowPredicatePlan{root:cypher.rowPredicatePart{kind:0x8, text:"(a)-[:LINK]->(b)", left:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, right:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, operator:"", constantNumbers:false, parts:[]cypher.rowPredicatePart(nil), membership:(*cypher.bindingParamMembershipCache)(nil), stringPredicate:(func(string, string) bool)(nil), pattern:(*cypher.patternPredicatePlan)(0x2303ad8549f0)}, complete:true}
+        	Test:       	TestGh728BindingFilterAdmissionAndParameterOwnership
+--- FAIL: TestGh728BindingFilterAdmissionAndParameterOwnership (0.01s)
+=== RUN   TestEvaluateWhereForContext_RelationshipAndBooleanBranches
+    match_multi_helpers_aggregation_test.go:808: 
+        	Error Trace:	/repo/pkg/cypher/match_multi_helpers_aggregation_test.go:808
+        	Error:      	Should be true
+        	Test:       	TestEvaluateWhereForContext_RelationshipAndBooleanBranches
+--- FAIL: TestEvaluateWhereForContext_RelationshipAndBooleanBranches (0.01s)
+=== RUN   TestEvaluateWhereForContext_Branches
+    match_multi_where_context_branches_test.go:43: 
+        	Error Trace:	/repo/pkg/cypher/match_multi_where_context_branches_test.go:43
+        	Error:      	Should be true
+        	Test:       	TestEvaluateWhereForContext_Branches
+--- FAIL: TestEvaluateWhereForContext_Branches (0.01s)
+=== RUN   TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns
+    match_where_pattern_predicate_test.go:31: execute pattern predicate query: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns (0.09s)
+=== RUN   TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors
+    match_where_pattern_predicate_test.go:50: query connected graph: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors (0.02s)
+=== RUN   TestWithWhereFiltersWithDisjunctiveRelationshipPatterns
+    match_where_pattern_predicate_test.go:93: execute WITH pattern predicate query: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestWithWhereFiltersWithDisjunctiveRelationshipPatterns (0.01s)
+=== RUN   TestPatternOperandIsAWholeChain
+    pattern_operand_recognition_test.go:28: 
+        	Error Trace:	/repo/pkg/cypher/pattern_operand_recognition_test.go:28
+        	Error:      	Received unexpected error:
+        	            	Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+        	Test:       	TestPatternOperandIsAWholeChain
+        	Messages:   	MATCH (a:ZD {id: 'a'}), (b:ZD {id: 'b'}) WHERE false OR ((a)-[:ZR]->(b)) RETURN b.id AS v
+--- FAIL: TestPatternOperandIsAWholeChain (0.12s)
+=== RUN   TestPatternPredicateUsesExistsOwner
+=== RUN   TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE
+    pattern_predicate_owner_test.go:58: MATCH (a:A)-[r:R]->(b:B), (c:C) WHERE (c)-[r]->(b) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT
+--- PASS: TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT (0.01s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map
+--- PASS: TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match
+--- PASS: TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship
+--- PASS: TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship (0.01s)
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches
+--- PASS: TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding
+    pattern_predicate_owner_test.go:58: MATCH (a)-[r:R]->(b:X) WITH r WHERE ()-[r]->(:X) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match
+    pattern_predicate_owner_test.go:58: MATCH (a)-[r:R]->(b:X) WITH r WHERE ()-[r]->(:B) RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_OR
+    pattern_predicate_owner_test.go:58: MATCH (a:A) WHERE (a)-[:R]->(:X) OR a.id = 1 RETURN a.id AS id ORDER BY id: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/pattern_under_OR (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_AND
+    pattern_predicate_owner_test.go:58: MATCH (a:A) WHERE (a)-[:R]->(:X) AND a.id > 2 RETURN a.id AS id ORDER BY id: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/pattern_under_AND (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node
+    pattern_predicate_owner_test.go:58: OPTIONAL MATCH (z:Nope) WITH z MATCH (a:A {id:1}) WHERE (z)-[:R]->() RETURN count(*) AS c: Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+--- FAIL: TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node (0.00s)
+--- FAIL: TestPatternPredicateUsesExistsOwner (0.04s)
+=== RUN   TestPatternPredicatesInBooleanPositions
+    pattern_predicate_positions_test.go:33: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_positions_test.go:33
+        	Error:      	Received unexpected error:
+        	            	Neo.ClientError.Statement.TypeError: Type mismatch: expected Boolean but was cypher.cypherTruth
+        	Test:       	TestPatternPredicatesInBooleanPositions
+        	Messages:   	CYPHER 25 MATCH (n:SQ) FILTER (n)-[:R]->() RETURN count(*) AS c
+--- FAIL: TestPatternPredicatesInBooleanPositions (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	4.488s
+=== parser antlr: exit 1 after 10s

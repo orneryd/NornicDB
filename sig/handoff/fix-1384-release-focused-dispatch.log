@@ -1,0 +1,20 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018045856-23648-9fef: wt-fix-1384-release@4bc18585, bundle 1 commit(s); submitted in 7.7s
+tnrun: queued behind 1 job(s)
+tnrun: peak RSS of test binary (default): pkg/cypher 0.22 GiB
+tnrun job i20261018045856-23648-9fef (wt-fix-1384-release@4bc18585): worker 7, CPUs 18,19,82,83, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+/work/tnrun/in/i20261018045856-23648-9fef.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	1.590s
+=== parser default: exit 0 after 47s
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.34 GiB
+tnrun: job i20261018045856-23648-9fef: DONE exit 0 (default 0 in 47s, antlr 0 in 10s); box 57s, total 799s; stored for reuse: default, antlr
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	4.784s
+=== parser antlr: exit 0 after 10s

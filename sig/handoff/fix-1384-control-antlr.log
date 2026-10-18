@@ -1,0 +1,51 @@
+tnrun ab: job a20261018043115-68584-6652: wt-fix-1384-red@e1381567 vs wt-fix-1384-dev@065bb258, ./pkg/cypher, 10 rounds ABBA on the dedicated bench CPUs; 18 A/B job(s) ahead (one at a time)
+tnrun: queued behind 18 job(s)
+tnrun ab job a20261018043115-68584-6652 (wt-fix-1384-red@e1381567 vs wt-fix-1384-dev@065bb258): lane bench, build CPUs 48,49,50,51,112,113,114,115, round CPUs 48,49,50,51, go1.26.9
+base e138156772abea4912fdea1c3f151ef8065e386b | head 065bb25826e01f31d3965de628126108a8e6892d | ./pkg/cypher | 10 rounds ABBA | parser antlr | -test.run=^$ -test.bench=^BenchmarkBindingWherePipelineHandlers$ -test.benchmem -test.count=1 -test.benchtime=250ms
+built base (e138156772abea4912fdea1c3f151ef8065e386b) in 1s
+built head (065bb25826e01f31d3965de628126108a8e6892d) in 1s
+TNRUN_AB_CPU wall=2.617 own=2.703 pinned_busy=3.100 foreign=0.397 foreign_pct=3.80 foreign_task_pct=3.80 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.41
+TNRUN_AB_CPU wall=2.432 own=2.511 pinned_busy=3.540 foreign=1.029 foreign_pct=10.57 foreign_task_pct=10.57 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=5.45
+TNRUN_AB_CPU wall=2.187 own=2.263 pinned_busy=3.410 foreign=1.147 foreign_pct=13.11 foreign_task_pct=13.11 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=8.59
+TNRUN_AB_CPU wall=2.194 own=2.273 pinned_busy=2.660 foreign=0.387 foreign_pct=4.41 foreign_task_pct=4.41 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=2.00
+TNRUN_AB_CPU wall=2.419 own=2.504 pinned_busy=3.770 foreign=1.266 foreign_pct=13.08 foreign_task_pct=12.98 irq_pct=0.10 steal_pct=0.00 foreign_kernel_pct=1.12
+TNRUN_AB_CPU wall=2.729 own=2.821 pinned_busy=3.380 foreign=0.559 foreign_pct=5.12 foreign_task_pct=5.12 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.79
+TNRUN_AB_CPU wall=2.372 own=2.456 pinned_busy=2.700 foreign=0.244 foreign_pct=2.58 foreign_task_pct=2.47 irq_pct=0.11 steal_pct=0.00 foreign_kernel_pct=1.65
+TNRUN_AB_CPU wall=2.143 own=2.220 pinned_busy=2.590 foreign=0.370 foreign_pct=4.32 foreign_task_pct=4.32 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=3.17
+TNRUN_AB_CPU wall=2.134 own=2.207 pinned_busy=2.430 foreign=0.223 foreign_pct=2.61 foreign_task_pct=2.61 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.41
+TNRUN_AB_CPU wall=2.477 own=2.557 pinned_busy=3.300 foreign=0.743 foreign_pct=7.50 foreign_task_pct=7.30 irq_pct=0.20 steal_pct=0.00 foreign_kernel_pct=2.84
+TNRUN_AB_CPU wall=2.170 own=2.247 pinned_busy=2.870 foreign=0.623 foreign_pct=7.17 foreign_task_pct=7.17 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.75
+TNRUN_AB_CPU wall=2.385 own=2.467 pinned_busy=3.190 foreign=0.723 foreign_pct=7.58 foreign_task_pct=7.58 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.63
+TNRUN_AB_CPU wall=2.147 own=2.221 pinned_busy=2.760 foreign=0.539 foreign_pct=6.27 foreign_task_pct=6.27 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=4.05
+TNRUN_AB_CPU wall=2.157 own=2.227 pinned_busy=2.560 foreign=0.333 foreign_pct=3.86 foreign_task_pct=3.86 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=1.50
+TNRUN_AB_CPU wall=2.163 own=2.235 pinned_busy=2.720 foreign=0.485 foreign_pct=5.60 foreign_task_pct=5.49 irq_pct=0.12 steal_pct=0.00 foreign_kernel_pct=1.76
+TNRUN_AB_CPU wall=2.164 own=2.239 pinned_busy=2.940 foreign=0.701 foreign_pct=8.09 foreign_task_pct=8.09 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=2.22
+TNRUN_AB_CPU wall=2.168 own=2.241 pinned_busy=3.390 foreign=1.149 foreign_pct=13.26 foreign_task_pct=13.26 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=2.39
+TNRUN_AB_CPU wall=2.304 own=2.384 pinned_busy=3.140 foreign=0.756 foreign_pct=8.20 foreign_task_pct=8.09 irq_pct=0.11 steal_pct=0.00 foreign_kernel_pct=2.53
+TNRUN_AB_CPU wall=2.258 own=2.329 pinned_busy=3.440 foreign=1.111 foreign_pct=12.30 foreign_task_pct=12.30 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=5.01
+TNRUN_AB_CPU wall=2.333 own=2.411 pinned_busy=3.320 foreign=0.909 foreign_pct=9.75 foreign_task_pct=9.75 irq_pct=0.00 steal_pct=0.00 foreign_kernel_pct=5.02
+
+
+A/B wt-fix-1384-red@e1381567 vs wt-fix-1384-dev@065bb258  ./pkg/cypher  rounds 10 (ABBA, same CPUs 48,49,50,51)
+benchmark                                                  unit               base         head     delta  p      n     spread base/head
+BenchmarkBindingWherePipelineHandlers/binding/rows=1-4     B/op               8.00         8.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=1-4     allocs/op          1.00         1.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=1-4     ns/op               291          304    +4.31%  0.000 10+10 3.9%/6.8% ▲
+BenchmarkBindingWherePipelineHandlers/binding/rows=1024-4  B/op               9472         9472    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=1024-4  allocs/op          1.00         1.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=1024-4  ns/op            140627       141835    +0.86%  0.734 10+10 19.9%/19.1% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=32-4    B/op                256          256    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=32-4    allocs/op          1.00         1.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/binding/rows=32-4    ns/op              4387         4527    +3.20%  0.054 10+10 6.1%/29.6% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=1-4        B/op               0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=1-4        allocs/op          0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=1-4        ns/op               187          208   +11.32%  0.002 10+10 22.2%/13.4% ▲
+BenchmarkBindingWherePipelineHandlers/with/rows=1024-4     B/op               0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=1024-4     allocs/op          0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=1024-4     ns/op            193972       214102   +10.38%  0.000 10+10 3.5%/17.7% ▲
+BenchmarkBindingWherePipelineHandlers/with/rows=32-4       B/op               0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=32-4       allocs/op          0.00         0.00    +0.00%  1.000 10+10 0.0%/0.0% ~
+BenchmarkBindingWherePipelineHandlers/with/rows=32-4       ns/op              6034         6706   +11.15%  0.001 10+10 14.9%/18.0% ▲
+isolation: foreign CPU share on the pinned CPUs per side-round: median 7.33%, worst 13.26% (rounds over 1%: r1 base 3.8%, r1 head 10.57%, r2 head 13.11%, r2 base 4.41%, r3 base 13.08%, r3 head 5.12%, r4 head 2.58%, r4 base 4.32%, r5 base 2.61%, r5 head 7.5%, r6 head 7.17%, r6 base 7.58%, r7 base 6.27%, r7 head 3.86%, r8 head 5.6%, r8 base 8.09%, r9 base 13.26%, r9 head 8.2%, r10 head 12.3%, r10 base 9.75%)
+(▲/▼ = p < 0.05 by Mann-Whitney U; ~ = no significant difference; n = rounds per side; spread = max-min as % of the side's median. If the spread is too high for a decision, report it: more --rounds is the user's call.) benchstat input: sig\tnrun-results\ab-a20261018043115-68584-6652/base.txt, head.txt
+tnrun ab: job a20261018043115-68584-6652: DONE exit 0; box 51s, total 1547s; 18 benchmark metrics

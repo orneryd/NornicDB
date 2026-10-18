@@ -1,0 +1,126 @@
+package cypher
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// EXISTS imports survive its internal WITH, including a WITH that does not
+// project them. A plain pattern predicate must read those same bindings.
+func TestPatternPredicateImportedBindingsAfterWith(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:ReviewA {id:1})-[:T {w:7}]->(:ReviewB {id:3}), (:ReviewA {id:2})", nil)
+	require.NoError(t, err)
+	for _, with := range []string{
+		"WITH 1 AS k",
+		"WITH *",
+		"WITH a AS retained",
+		"WITH 1 AS k WITH a AS restored",
+		"WITH a AS retained WITH 1 AS k",
+	} {
+		for _, pattern := range []string{
+			"(a)-[:T]->(b)",
+			"(a)-[:T {w:7}]->(b)",
+			"(a)-[:T]->(b:ReviewB {id:3})",
+		} {
+			t.Run(with+"/"+pattern, func(t *testing.T) {
+				query := "MATCH (a:ReviewA) RETURN a.id AS id, EXISTS { " + with + " MATCH (b:ReviewB) WHERE " + pattern + " } AS found ORDER BY id"
+				result, err := exec.Execute(ctx, query, nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1), true}, {int64(2), false}}, result.Rows)
+			})
+		}
+	}
+	// Preserve a bound relationship too, through both the compiled and general
+	// pattern owners. The scalar property value is an imported expression value.
+	for _, pattern := range []string{"(a)-[r]->(b)", "(a)-[r {w:weight}]->(b)"} {
+		result, err := exec.Execute(ctx, "MATCH (a:ReviewA)-[r:T]->(b:ReviewB) WITH a, r, b, 7 AS weight RETURN EXISTS { WITH 1 AS k MATCH (b:ReviewB) WHERE "+pattern+" } AS found", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{true}}, result.Rows)
+	}
+}
+
+// The current row shadows an external binding, including an explicit null.
+func TestPatternPredicateImportedBindingPrecedence(t *testing.T) {
+	exec, ctx := newUnitExecutor(t)
+	_, err := exec.Execute(ctx, "CREATE (:ReviewA)-[:T]->(:ReviewB), (:ReviewOther)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (a:ReviewA), (b:ReviewB), (other:ReviewOther) RETURN a, b, other", nil)
+	require.NoError(t, err)
+	a, b, other := result.Rows[0][0], result.Rows[0][1], result.Rows[0][2]
+	exec.fabricRecordBindings = map[string]interface{}{"a": a, "b": b}
+	for _, tc := range []struct {
+		value interface{}
+		want  bool
+	}{{a, true}, {other, false}, {nil, false}, {(*storage.Node)(nil), false}} {
+		row := map[string]interface{}{"a": tc.value, "b": b}
+		matched, recognized := exec.rowPatternPredicate(ctx, "(a)-[:T]->(b)", row)
+		require.True(t, recognized)
+		require.Equal(t, tc.want, matched, fmt.Sprint(tc.value))
+	}
+}
+
+// Count materialized adjacency on both release and develop, independently of
+// transaction accounting, while retaining the store's optional capabilities.
+type patternPredicateAdjacencyProbe struct {
+	*storage.MemoryEngine
+	largestRead int
+}
+
+func (p *patternPredicateAdjacencyProbe) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	edges, err := p.MemoryEngine.GetOutgoingEdges(id)
+	p.largestRead = max(p.largestRead, len(edges))
+	return edges, err
+}
+
+func (p *patternPredicateAdjacencyProbe) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	edges, err := p.MemoryEngine.GetIncomingEdges(id)
+	p.largestRead = max(p.largestRead, len(edges))
+	return edges, err
+}
+
+func (p *patternPredicateAdjacencyProbe) OutgoingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+	edges, answered, err := p.MemoryEngine.OutgoingEdgeHeaders(id)
+	p.largestRead = max(p.largestRead, len(edges))
+	return edges, answered, err
+}
+
+func (p *patternPredicateAdjacencyProbe) IncomingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+	edges, answered, err := p.MemoryEngine.IncomingEdgeHeaders(id)
+	p.largestRead = max(p.largestRead, len(edges))
+	return edges, answered, err
+}
+
+func newPatternPredicateSkewedExecutor(t *testing.T) (*StorageExecutor, *patternPredicateAdjacencyProbe) {
+	t.Helper()
+	probe := &patternPredicateAdjacencyProbe{MemoryEngine: newTestMemoryEngine(t)}
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(probe, "test"))
+	exec.cache = nil
+	return exec, probe
+}
+
+func TestPatternPredicateSparseBoundEnd(t *testing.T) {
+	exec, probe := newPatternPredicateSkewedExecutor(t)
+	ctx := context.Background()
+	for _, query := range []string{
+		"CREATE (:ReviewHub), (:ReviewTarget), (:ReviewLeaf)",
+		"MATCH (a:ReviewHub), (x:ReviewLeaf) UNWIND range(1, 20000) AS i CREATE (a)-[:R]->(x)",
+		"MATCH (a:ReviewHub), (b:ReviewTarget) CREATE (a)-[:R]->(b)",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+	}
+	for _, pattern := range []string{"(a)-[:R]->(b)", "(b)<-[:R]-(a)", "(a)-[:R]-(b)", "(b)-[:R]-(a)"} {
+		for _, expression := range []string{"EXISTS { " + pattern + " }", "exists(" + pattern + ")"} {
+			probe.largestRead = 0
+			result, err := exec.Execute(ctx, "MATCH (a:ReviewHub), (b:ReviewTarget) RETURN "+expression+" AS found", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{true}}, result.Rows)
+			require.LessOrEqual(t, probe.largestRead, 1, "must read the sparse end: %s", expression)
+		}
+	}
+}

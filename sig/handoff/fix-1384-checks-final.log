@@ -1,0 +1,17 @@
+tnrun: job i20261018035608-62440-cd83: wt-fix-1384-dev@4d406da5; submitted in 1.3s
+tnrun job i20261018035608-62440-cd83 (wt-fix-1384-dev@4d406da5): worker 14, CPUs 32,33,96,97, commit 4d406da5fc616f40371c16566b834b82e47690f2, go1.26.9
+tnrun: job i20261018035608-62440-cd83: DONE exit 0 (default 0 in 0s); box 0s, total 1s
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/pattern_predicate.go pkg/cypher/pattern_predicate_scope_test.go pkg/cypher/row_predicate_plan.go pkg/cypher/binding_where_compile.go pkg/cypher/match_semantic_validation.go pkg/cypher/match_multi_where_context_branches_test.go pkg/cypher/row_expression.go
+=== parser default: exit 0 after 0s
+tnrun: job i20261018035610-53324-506b: wt-fix-1384-release@c37a11cb; submitted in 1.4s
+tnrun: running
+tnrun: job i20261018035610-53324-506b: DONE exit 0 (default 0 in 0s); box 14s, total 21s
+tnrun job i20261018035610-53324-506b (wt-fix-1384-release@c37a11cb): worker 2, CPUs 8,9,72,73, commit c37a11cb4a013a8aea4ddb9b649bd4fb54057109, go1.26.9
+prep ui: npm ci && npm run build in 13s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/pattern_predicate.go pkg/cypher/pattern_predicate_scope_test.go pkg/cypher/row_predicate_plan.go pkg/cypher/binding_where_compile.go pkg/cypher/match_semantic_validation.go pkg/cypher/match_multi_where_context_branches_test.go pkg/cypher/row_expression.go
+=== parser default: exit 0 after 0s

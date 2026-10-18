@@ -1,0 +1,50 @@
+tnrun: job i20261018034844-99732-17bf: wt-fix-1384-dev@e1381567, tracked edits, 2 untracked file(s); submitted in 1.6s
+tnrun: job i20261018034844-99732-17bf: DONE exit 1 (default 1 in 0s); box 0s, total 12s
+tnrun job i20261018034844-99732-17bf (wt-fix-1384-dev@e1381567): worker 14, CPUs 32,33,96,97, commit e138156772abea4912fdea1c3f151ef8065e386b, go1.26.9
+uncommitted tracked edits: applied i20261018034844-99732-17bf.patch
+untracked files: overlaid i20261018034844-99732-17bf.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/pattern_predicate.go pkg/cypher/pattern_predicate_scope_test.go pkg/cypher/row_predicate_plan.go
+pkg/cypher/pattern_predicate.go
+diff pkg/cypher/pattern_predicate.go.orig pkg/cypher/pattern_predicate.go
+--- pkg/cypher/pattern_predicate.go.orig
++++ pkg/cypher/pattern_predicate.go
+@@ -26,7 +26,7 @@
+ 		return plan
+ 	}
+ 	plan := &patternPredicatePlan{
+-		pattern: pattern,
++		pattern:   pattern,
+ 		variables: append(extractNodeVariables(pattern), extractRelationshipVariables(pattern)...),
+ 	}
+ 	// With no maps, parameters or inline predicates the traversal parser reads
+pkg/cypher/pattern_predicate_scope_test.go
+diff pkg/cypher/pattern_predicate_scope_test.go.orig pkg/cypher/pattern_predicate_scope_test.go
+--- pkg/cypher/pattern_predicate_scope_test.go.orig
++++ pkg/cypher/pattern_predicate_scope_test.go
+@@ -60,7 +60,7 @@
+ 	values := map[string]interface{}{"a": row[0], "r": row[1], "b": row[2], "c": row[3], "nm": "x", "z": (*storage.Node)(nil)}
+ 	for _, tc := range []struct {
+ 		pattern string
+-		want bool
++		want    bool
+ 	}{
+ 		{"(a)-[:T]->(b)", true},
+ 		{"(b)<-[:T]-(a)", true},
+pkg/cypher/row_predicate_plan.go
+diff pkg/cypher/row_predicate_plan.go.orig pkg/cypher/row_predicate_plan.go
+--- pkg/cypher/row_predicate_plan.go.orig
++++ pkg/cypher/row_predicate_plan.go
+@@ -297,7 +297,7 @@
+ 	// predicateOnly marks a text part only the predicate evaluator reads (a
+ 	// relationship pattern): it has no value to try first.
+ 	predicateOnly bool
+-	pattern *patternPredicatePlan
++	pattern       *patternPredicatePlan
+ }
+ 
+ // rowPredicatePlan is a planned predicate.
+exit status 1
+=== parser default: exit 1 after 0s

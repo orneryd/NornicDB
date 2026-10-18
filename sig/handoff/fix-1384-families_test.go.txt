@@ -1,0 +1,62 @@
+package tck
+
+import (
+ "context"
+ "encoding/json"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "strings"
+ "testing"
+ "time"
+
+ "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+ "github.com/orneryd/nornicdb/testing/cypher/differential"
+)
+
+// Review-only harness. The generator and both database engines execute on TrueNAS.
+func TestSolReviewDifferentialFamilies(t *testing.T) {
+ uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI")
+ if uri == "" { t.Fatal("live pinned Neo4j reference is required") }
+ out := filepath.Join(t.TempDir(), "sweep.json.gz")
+ generator := exec.Command("python3", "../../../scripts/cypher-tck/differential/gen_sweep.py", out)
+ if output, err := generator.CombinedOutput(); err != nil { t.Fatalf("generate: %v: %s", err, output) }
+ corpus, err := differential.LoadSweep(out)
+ if err != nil { t.Fatal(err) }
+ families := strings.Split(os.Getenv("SOL_REVIEW_FAMILIES"), ",")
+ selected := corpus.Cases[:0]
+ counts := map[string]int{}
+ for _, c := range corpus.Cases {
+  keep := false
+  for _, family := range families {
+   if c.Family == family || (family == "names-case" && c.Family == "names" && c.Position == "case") { keep = true }
+  }
+  if keep { selected = append(selected, c); counts[c.Family]++ }
+ }
+ corpus.Cases = selected
+ if len(selected) == 0 { t.Fatal("empty family selection") }
+ t.Logf("SOL_FAMILIES %v; statements=%d", counts, len(selected))
+ driver, err := neo4j.NewDriverWithContext(uri, neo4j.NoAuth())
+ if err != nil { t.Fatal(err) }
+ defer driver.Close(context.Background())
+ ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+ defer cancel()
+ if err := waitForReference(ctx, driver); err != nil { t.Fatal(err) }
+ ratchet, err := differential.LoadRatchet(filepath.Join(differentialCorpusDir, "known_mismatches.jsonl"))
+ if err != nil { t.Fatal(err) }
+ for _, route := range []struct {name string; mode TransactionMode}{{"bolt-auto", AutocommitMode}, {"bolt-tx", ExplicitTransactionMode}} {
+  t.Run(route.name, func(t *testing.T) {
+   nornic, shutdown := startConformanceServer(t)
+   defer shutdown()
+   pair := &differential.Pair{Neo4j:newBoltDifferentialExecutor(t, driver, "neo4j", route.mode), NornicDB:newBoltDifferentialExecutor(t, nornic, "nornic", route.mode)}
+   options := differential.DefaultOptions
+   options.Workers = 1
+   results, err := differential.RunSweep(ctx, corpus, pair, options)
+   if err != nil { t.Fatal(err) }
+   report := ratchet.Check(route.name, results)
+   for _, r := range results { if !r.Match { b,_ := json.Marshal(r); t.Logf("SOL_DIFF %s %s", route.name, b) } }
+   t.Logf("SOL_REPORT %s compared=%d known=%d unstable=%d new=%d now-match=%d", route.name, report.Compared, report.Known, report.Unstable, len(report.Regressed), len(report.NowMatches))
+   if len(report.Regressed)>0 { t.Errorf("%d differences outside the committed ratchet",len(report.Regressed)) }
+  })
+ }
+}

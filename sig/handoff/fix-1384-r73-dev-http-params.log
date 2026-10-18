@@ -1,0 +1,152 @@
+tnrun: job i20261018112144-50884-e391: wt-fix-1384-r73-dev@fc375efa, 5 untracked file(s); submitted in 3.1s
+tnrun: running
+tnrun job i20261018112144-50884-e391 (wt-fix-1384-r73-dev@fc375efa): worker 5, CPUs 14,15,78,79, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018112144-50884-e391.tar
+prep ui: npm ci && npm run build in 18s
+prep llama v0.4.1: cached
+tnrun: peak RSS of test binary (default): pkg/server 0.12 GiB
+reference neo-ref: waiting for its lock
+tnrun: peak RSS of test binary (antlr): pkg/server 0.22 GiB
+tnrun: job i20261018112144-50884-e391: DONE exit 1 (default 1 in 14s, antlr 1 in 7s); box 72s, total 74s
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 27 {"V01-parameters": 27}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-2467245034 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:22:48 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:22:48 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:22:48 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:22:48 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:22:48 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:22:48 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:22:48 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:22:48 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:22:48 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:22:48 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:22:48 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"8c570cc02bb4cc8b9b3a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"133732e1b23cb5c8389a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"01ebc0b02a6c1192dc64","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a8bd81a29f3239713dc9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"13a514c04bd4ce483214","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"fd06b3ff405573d738d4","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"dc326a96ca6dd20e7647","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"52c3593ac18224094587","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"e4d5432f1814fdd8d4d0","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"81a3fbb15700b23b758e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"97d45015899903992b16","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"6e65a9571e169a2c367a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"4b54feada1400c28ecc9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"d767f084004988517c40","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a5054f10d2f14c4a4b8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a1c1cee5c404ab3b9d31","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"cb5cb26ddd000f9bd574","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R {w:$null}]-\u003e()) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/dynamic-label match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/missing-parameter match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/null-parameter match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=27 match=10 diff=17
+    rule73_pattern_attack_test.go:60: 17 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (1.42s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	1.638s
+=== parser default: exit 1 after 14s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 27 {"V01-parameters": 27}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-2222912760 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:22:55 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:22:55 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:22:55 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:22:55 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:22:55 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:22:55 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:22:55 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:22:55 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:22:55 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:22:55 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:22:55 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"8c570cc02bb4cc8b9b3a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"133732e1b23cb5c8389a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"01ebc0b02a6c1192dc64","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a8bd81a29f3239713dc9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"13a514c04bd4ce483214","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"fd06b3ff405573d738d4","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"dc326a96ca6dd20e7647","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"52c3593ac18224094587","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"e4d5432f1814fdd8d4d0","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"81a3fbb15700b23b758e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"97d45015899903992b16","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"6e65a9571e169a2c367a","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"4b54feada1400c28ecc9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"d767f084004988517c40","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a5054f10d2f14c4a4b8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q {id:$target}) WHERE (a)-[:R {w:$w}]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"a1c1cee5c404ab3b9d31","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local RETURN size([(a)-[:R {w:$w}]-\u003e(b:Q {id:$target}) | 1]) AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[1]],[2,[0]],[3,[0]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[1]],[2,[1]],[3,[1]]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"cb5cb26ddd000f9bd574","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R {w:$null}]-\u003e()) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/drop-readd/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/dynamic-label match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/missing-parameter match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/none/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/null-parameter match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/omit-import/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename-drop/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/EXISTS match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/rename/comprehension match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http V01-parameters/star/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=27 match=10 diff=17
+    rule73_pattern_attack_test.go:60: 17 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (1.53s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	1.725s
+=== parser antlr: exit 1 after 7s

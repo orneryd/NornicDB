@@ -1,0 +1,214 @@
+PR 1330 fix(cypher): procedure YIELD variables are in scope for subqueries in its WHERE
+ pkg/cypher/expression_subquery_scope.go            |  39 +++
+ pkg/cypher/match_semantic_validation.go            |  43 +--
+ .../procedure_yield_search_eligibility_test.go     |  55 ++++
+ pkg/cypher/procedure_yield_subquery_scope_test.go  | 302 +++++++++++++++++++++
+ pkg/cypher/property_access_semantic_validation.go  |   3 +-
+ 5 files changed, 421 insertions(+), 21 deletions(-)
+PR 1331 perf(cypher): scoped CALL DISTINCT keys hold only projected values; shared value-equivalence index
+ pkg/cypher/apoc_collections.go                     |   6 +-
+ pkg/cypher/call_import_carry_test.go               |  12 +-
+ pkg/cypher/clauses.go                              |   6 +-
+ pkg/cypher/coll_functions.go                       |   6 +-
+ pkg/cypher/create_semantic_validation.go           |  14 +-
+ pkg/cypher/cypher_helpers_extra_test.go            |   6 +-
+ pkg/cypher/executor_coverage_test.go               |  18 +-
+ pkg/cypher/executor_misc_test.go                   |  12 +-
+ pkg/cypher/executor_mutations_delete_guard.go      |   5 +-
+ .../executor_mutations_remaining_branches_test.go  |   2 +-
+ pkg/cypher/gh514_incomplete_statements_test.go     |   7 +-
+ pkg/cypher/gh648_call_subquery_writes_test.go      |   1 +
+ pkg/cypher/map_literal_validation_test.go          |   9 +-
+ pkg/cypher/match_semantic_validation.go            |   8 +-
+ pkg/cypher/order_by_scope_test.go                  |   2 +-
+ pkg/cypher/percentile_semantics.go                 |   6 +-
+ pkg/cypher/pipeline_aggregate_stream.go            |  69 ++-----
+ pkg/cypher/pipeline_call_operator.go               |  21 +-
+ pkg/cypher/pipeline_executor.go                    | 120 +----------
+ pkg/cypher/pipeline_imports.go                     |  36 ++++
+ pkg/cypher/pipeline_item_evaluation_test.go        |   2 +-
+ pkg/cypher/pipeline_parameters_test.go             |  37 ++++
+ pkg/cypher/pipeline_projection.go                  |  31 +--
+ pkg/cypher/pipeline_row_stream.go                  |   5 +
+ pkg/cypher/return_order_semantic_validation.go     |   9 +
+ pkg/cypher/scoped_call_distinct_test.go            | 167 +++++++++++++++
+ pkg/cypher/semantic_validation.go                  |  43 +---
+ pkg/cypher/set_semantic_validation.go              |   9 +-
+ pkg/cypher/show_composition_test.go                |   2 +-
+ pkg/cypher/static_type_scope.go                    |  27 ++-
+ pkg/cypher/subquery_test.go                        |   2 +-
+ pkg/cypher/subquery_update_scope_test.go           |  17 +-
+ pkg/cypher/testdata/scoped_call_distinct.zip       | Bin 0 -> 265917 bytes
+ pkg/cypher/value_equivalence.go                    |   8 +-
+ pkg/cypher/value_equivalence_index.go              | 229 +++++++++++++++++++++
+ pkg/cypher/value_equivalence_index_test.go         |  74 +++++++
+ 36 files changed, 721 insertions(+), 307 deletions(-)
+PR 1335 fix(cypher): DISTINCT treats map-wrapped and native paths as the same value
+ pkg/cypher/value_equivalence_index.go      | 10 ++++++-
+ pkg/cypher/value_equivalence_index_test.go | 43 ++++++++++++++++++++++++++++++
+ 2 files changed, 52 insertions(+), 1 deletion(-)
+PR 1337 fix(cypher): CALL (*) is one scope clause for static checks and runtime; rebound imports keep their types
+ pkg/cypher/call_star_scope_test.go      | 225 ++++++++++++++++++++++++++++++++
+ pkg/cypher/executor_subqueries.go       |  58 ++++----
+ pkg/cypher/match_semantic_validation.go |  10 +-
+ pkg/cypher/pipeline_aggregate_stream.go |  17 ++-
+ pkg/cypher/pipeline_call_operator.go    |   6 +-
+ pkg/cypher/pipeline_imports.go          |   7 +
+ pkg/cypher/semantic_validation.go       |  35 ++---
+ pkg/cypher/static_type_scope.go         |  58 +++++++-
+ 8 files changed, 349 insertions(+), 67 deletions(-)
+PR 1345 fix(cypher): an aggregate CALL import keeps its integer exclusion, so an invalid list index is rejected statically
+ pkg/cypher/aggregate_import_noninteger_test.go | 51 ++++++++++++++++++++++++++
+ pkg/cypher/static_type_scope.go                |  9 ++++-
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+PR 1347 fix(cypher): read dotted words, spaced qualified names and comments with the shared lexical readers
+ pkg/cypher/case_expression.go                |  17 +--
+ pkg/cypher/functions_parse.go                |  33 ++----
+ pkg/cypher/keyword_scan.go                   |  31 ++++++
+ pkg/cypher/operators.go                      |  13 ++-
+ pkg/cypher/pattern_parser.go                 |  24 +---
+ pkg/cypher/qualified_comment_readers_test.go |  42 +++++++
+ pkg/cypher/qualified_plugin_followup_test.go | 159 +++++++++++++++++++++++++++
+ pkg/cypher/qualified_plugin_lexical_test.go  |  84 ++++++++++++++
+ pkg/cypher/static_function_argument_types.go |   7 +-
+ pkg/cypher/static_operator_types.go          |   2 +-
+ 10 files changed, 349 insertions(+), 63 deletions(-)
+PR 1354 fix(cypher): CASE result-type unions reject function arguments only when no branch fits
+ pkg/cypher/issue_1226_runtime_regression_test.go | 173 ++++++++++++++++-------
+ pkg/cypher/static_comprehension_types.go         |   2 +-
+ pkg/cypher/static_function_argument_types.go     |  51 +++++--
+ pkg/cypher/static_operator_types.go              |  58 +++++---
+ pkg/cypher/static_type_scope.go                  |  39 ++++-
+ 5 files changed, 240 insertions(+), 83 deletions(-)
+PR 1356 fix(cypher): restore the agreed integer exclusion when joining aggregate import alternatives
+ pkg/cypher/aggregate_import_noninteger_test.go | 51 ++++++++++++++++++++++++++
+ pkg/cypher/static_type_scope.go                |  9 ++++-
+ 2 files changed, 58 insertions(+), 2 deletions(-)
+PR 1357 fix(cypher): keep inner aggregates inside commented COUNT/EXISTS/COLLECT subqueries on develop
+ .../aggregate_subquery_comment_bench_test.go       |  27 +++
+ .../aggregate_subquery_comment_boundary_test.go    | 133 +++++++++++++
+ .../inner_aggregate_develop_dependency_test.go     | 157 +++++++++++++++
+ .../inner_aggregate_ff_body_original_test.go       | 119 ++++++++++++
+ pkg/cypher/map_literal_validation.go               |  15 +-
+ pkg/cypher/optional_match_traversal_agg.go         |  11 +-
+ pkg/cypher/static_operator_types.go                |   5 +
+ pkg/cypher/subquery_value_expression.go            |   8 +-
+ .../testdata/inner_aggregate_subquery_oracle.json  | 216 +++++++++++++++++++++
+ pkg/cypher/where_by_variable.go                    |   5 +
+ 10 files changed, 671 insertions(+), 25 deletions(-)
+PR 1359 fix(cypher): per-row evaluation order, subquery scopes and operation owners on develop (#1214)
+ pkg/cypher/binding_where_compile.go                |  61 +-
+ pkg/cypher/case_evaluation.go                      |  16 +
+ pkg/cypher/case_expression.go                      |  18 +-
+ pkg/cypher/clauses.go                              |   2 +-
+ pkg/cypher/comparison_chain.go                     |  83 ++-
+ pkg/cypher/comparison_chain_test.go                |  30 +-
+ pkg/cypher/cypher_helpers_extra_test.go            |   2 +-
+ pkg/cypher/deleted_entity_projection.go            |   8 +
+ pkg/cypher/executor_mutations_where_eval.go        |   2 +-
+ pkg/cypher/executor_query_routing.go               |   6 -
+ pkg/cypher/expression_failure.go                   | 659 ++++++++++++++++++++-
+ pkg/cypher/fn/builtins_core.go                     |  52 +-
+ pkg/cypher/functions.go                            |   8 +-
+ pkg/cypher/functions_eval_functions.go             | 138 +----
+ .../functions_eval_functions_branches_test.go      |  11 +-
+ pkg/cypher/functions_eval_operators.go             |  28 +-
+ pkg/cypher/functions_eval_props_literals.go        |  14 +-
+ pkg/cypher/functions_test.go                       |  33 +-
+ pkg/cypher/logical_constant_version_test.go        | 127 ++++
+ pkg/cypher/logical_operators.go                    | 384 ++++++++++--
+ pkg/cypher/logical_operators_test.go               |   2 +-
+ pkg/cypher/logical_parenthesized_not_test.go       |  44 ++
+ pkg/cypher/logical_version_neutral_test.go         |  80 +++
+ pkg/cypher/match_with_rel.go                       |   4 +-
+ pkg/cypher/match_with_rel_eval_more_test.go        |   4 +
+ pkg/cypher/operation_owner_round3_test.go          |  50 ++
+ pkg/cypher/operation_owner_test.go                 |  64 ++
+ pkg/cypher/pattern_expression.go                   |  16 +-
+ pkg/cypher/pattern_parser.go                       |  19 +-
+ pkg/cypher/per_row_expression_bench_test.go        |   2 +
+ pkg/cypher/per_row_round4_alloc_test.go            |   8 +-
+ pkg/cypher/per_row_round4_stack_test.go            |  82 +++
+ pkg/cypher/per_row_round5_completion_test.go       | 178 ++++++
+ pkg/cypher/per_row_round5_retained_test.go         |  57 ++
+ pkg/cypher/per_row_round5_stack_test.go            |  46 ++
+ pkg/cypher/per_row_round5_test.go                  | 201 +++++++
+ pkg/cypher/pipeline_executor.go                    |   3 -
+ pkg/cypher/pipeline_row_stream.go                  |  15 +-
+ pkg/cypher/predicate_helpers.go                    |  19 +-
+ pkg/cypher/range_semantics.go                      |  43 --
+ pkg/cypher/range_semantics_test.go                 |  27 +-
+ pkg/cypher/row_collection_expression.go            |   5 +-
+ pkg/cypher/row_expression.go                       | 363 ++++++------
+ pkg/cypher/row_list_loops.go                       |  19 +
+ pkg/cypher/row_operation_values.go                 |  85 +++
+ pkg/cypher/row_predicate_plan.go                   | 183 ++++--
+ pkg/cypher/row_predicate_program.go                |  75 ++-
+ pkg/cypher/row_predicate_scope_alloc_test.go       |  25 +
+ pkg/cypher/row_subscript_validation.go             | 120 +---
+ pkg/cypher/row_subscript_validation_test.go        |   8 +-
+ pkg/cypher/row_value_program.go                    | 101 +++-
+ pkg/cypher/runtime_type_errors.go                  |  25 +-
+ pkg/cypher/size_semantics.go                       |  23 +-
+ pkg/cypher/slice_scalar_test.go                    |   5 +-
+ pkg/cypher/static_operator_types.go                |   2 +-
+ pkg/cypher/subquery_evaluation_order_test.go       | 219 +++++++
+ pkg/cypher/subquery_value_expression.go            |   1 +
+ pkg/cypher/subscript_evaluation.go                 | 119 ++++
+ pkg/cypher/subscript_localization_test.go          |  38 ++
+ 59 files changed, 3164 insertions(+), 898 deletions(-)
+PR 1361 perf(cypher): plan correlated CALL subqueries once per statement
+ pkg/cypher/call_subquery_clause_plan_bench_test.go |  84 +++++
+ pkg/cypher/call_subquery_clause_plan_test.go       | 186 ++++++++++
+ pkg/cypher/executor_entry.go                       |   2 +
+ pkg/cypher/executor_mutations_delete_guard.go      | 100 +++++-
+ pkg/cypher/match_index_seek.go                     |  42 ++-
+ pkg/cypher/optional_match_traversal_general.go     |   7 +-
+ pkg/cypher/pipeline_aggregate_stream.go            |   5 +-
+ pkg/cypher/pipeline_call_operator.go               |  21 +-
+ pkg/cypher/pipeline_clause_plan.go                 | 383 +++++++++++++++++++++
+ pkg/cypher/pipeline_executor.go                    |  58 ++--
+ pkg/cypher/pipeline_pattern_template.go            |   9 +-
+ pkg/cypher/pipeline_row_stream.go                  |  18 +-
+ pkg/cypher/pipeline_traversal_match.go             |  33 +-
+ pkg/cypher/row_value_program.go                    |  30 +-
+ pkg/cypher/set_semantic_validation.go              |   4 +-
+ pkg/cypher/subquery_value_expression.go            | 113 ++++--
+ 16 files changed, 956 insertions(+), 139 deletions(-)
+PR 1380 perf(cypher): finish moving clause-text scanning onto the statement's parse-once plan
+ pkg/cypher/call_subquery_clause_plan_bench_test.go |   4 +
+ pkg/cypher/call_subquery_clause_plan_test.go       |   4 +
+ pkg/cypher/executor_subqueries.go                  |  96 --------------
+ pkg/cypher/expression_failure.go                   |  49 +++++--
+ pkg/cypher/issue_883_star_projection_test.go       |   2 +-
+ pkg/cypher/logical_operators.go                    |   3 +-
+ pkg/cypher/match_index_seek.go                     |  17 +--
+ pkg/cypher/pattern_expression.go                   |   2 +-
+ pkg/cypher/pipeline_clause_plan.go                 | 144 ++++++++++++++++++++-
+ pkg/cypher/pipeline_executor.go                    |  19 ++-
+ pkg/cypher/pipeline_projection.go                  |   9 +-
+ pkg/cypher/result_modifiers.go                     | 121 +++++++++++++++++
+ pkg/cypher/row_expression.go                       |   7 +-
+ 13 files changed, 338 insertions(+), 139 deletions(-)
+PR 1388 perf(cypher): compile map literals in aggregate arguments; at most one row copy per evaluation
+ .../aggregate_compiled_arguments_bench_test.go     |  32 +++
+ pkg/cypher/aggregate_compiled_arguments_test.go    | 265 +++++++++++++++++++++
+ pkg/cypher/gds_cypher_projection.go                |   8 +-
+ pkg/cypher/pattern_expression.go                   | 154 +++++++++++-
+ pkg/cypher/pipeline_aggregate_stream.go            |  51 +++-
+ pkg/cypher/pipeline_projection.go                  |   5 +-
+ pkg/cypher/row_value_program.go                    |  65 ++++-
+ 7 files changed, 553 insertions(+), 27 deletions(-)
+PR 1395 perf(cypher): cheaper correlated EXISTS reads and zero-hop quantified paths
+ pkg/cypher/bound_expand_count_bench_test.go        |  90 ++++++
+ pkg/cypher/bound_expand_count_test.go              | 177 ++++++++++++
+ pkg/cypher/bound_node_lookup_test.go               | 147 ++++++++++
+ pkg/cypher/call_subquery_clause_plan_bench_test.go |   4 +
+ pkg/cypher/call_subquery_clause_plan_test.go       |   4 +
+ pkg/cypher/pipeline_clause_plan.go                 |   2 +
+ pkg/cypher/relationship_equality_pushdown.go       | 126 +++++++++
+ pkg/cypher/relationship_equality_pushdown_test.go  | 102 +++++++
+ pkg/cypher/row_expression.go                       |  36 ++-
+ pkg/cypher/subquery_value_expression.go            | 302 +++++++++++++++++++++
+ pkg/cypher/traversal.go                            |  47 ++--
+ 11 files changed, 1019 insertions(+), 18 deletions(-)

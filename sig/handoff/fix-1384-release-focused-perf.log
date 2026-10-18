@@ -1,0 +1,20 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018041541-94796-579b: wt-fix-1384-release@47ebf05d, bundle 1 commit(s); submitted in 3.0s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.22 GiB
+tnrun job i20261018041541-94796-579b (wt-fix-1384-release@47ebf05d): worker 1, CPUs 6,7,70,71, commit 47ebf05d60ad7fd38c670fccaf7ddecd3c8f0bd9, go1.26.9
+/work/tnrun/in/i20261018041541-94796-579b.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	1.716s
+=== parser default: exit 0 after 44s
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.34 GiB
+tnrun: job i20261018041541-94796-579b: DONE exit 0 (default 0 in 44s, antlr 0 in 10s); box 55s, total 63s; stored for reuse: default, antlr
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	4.518s
+=== parser antlr: exit 0 after 10s

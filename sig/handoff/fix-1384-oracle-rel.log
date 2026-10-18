@@ -1,0 +1,10 @@
+tnrun: running
+tnrun cypher job j20261018034742-91116-11c6 on neo-ref (5.26.30)
+database wiped: nodes, relationships, constraints, indexes
+---
+PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 71 (offset: 70))
+"MATCH (a:PredicateProbe {id:1}), (b:PredicateProbe {id:2}) WHERE (a)-[r:KNOWS]->(b) RETURN count(*) AS unbound_relationship"
+                                                                       ^
+---
+exit 1
+tnrun: job j20261018034742-91116-11c6: exit 1; box 12s, total 20s

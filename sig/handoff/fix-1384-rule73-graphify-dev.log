@@ -1,0 +1,11 @@
+[graphify extract] scanning /tmp/nornic-fix1384-rule73-dev
+[graphify] WARNING: PDF text extraction skipped: 'pypdf' is not installed. Install the pdf extra: uv tool install 'graphifyy[pdf]'
+[graphify extract] --code-only: skipping 640 non-code file(s) (606 docs, 2 papers, 32 images) — no LLM extraction
+[graphify extract] found 3937 code, 0 docs, 0 papers, 0 images
+[graphify extract] 308 file(s) not classified (no supported extension or shebang), skipped: .dockerignore, .gitattributes, .gitignore, Aggregation1.feature, Aggregation2.feature, Aggregation3.feature (+302 more)
+[graphify extract] 2 file(s) skipped as potentially sensitive (rename or move if wrongly flagged): .npmrc, serviceaccount.yaml
+[graphify extract] AST extraction on 3937 code files...
+  AST extraction: 61/61 uncached files (100%) [2 workers]
+  warning: 1 file(s) had syntax errors and may be partially extracted: pkg/simd/neon_simd_arm64.h (first error at line 16, no symbols extracted)
+  warning: 44 code file(s) yielded no symbols (0.22 MB) — a data file, or source this extractor models no symbols for: go.mod, pkg/bolt/performance_norace_test.go, pkg/bolt/performance_race_test.go, pkg/cypher/match_with.go, pkg/cypher/performance_norace_test.go (+39 more)
+[graphify extract] wrote /graphs/nornic-fix1384-rule73-dev/graphify-out/graph.json — 53556 nodes, 1301238 edges (no clustering)

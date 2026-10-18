@@ -1,0 +1,300 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018111427-88564-df00: wt-fix-1384-r73-dev@fc375efa, 5 untracked file(s); submitted in 5.3s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.20 GiB
+tnrun job i20261018111427-88564-df00 (wt-fix-1384-r73-dev@fc375efa): worker 15, CPUs 34,35,98,99, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018111427-88564-df00.tar
+prep ui: npm ci && npm run build in 22s
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73Pattern(Resource|Memory)Attack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternMemoryAttack
+=== RUN   TestRule73PatternMemoryAttack/0
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.19 GiB
+tnrun: job i20261018111427-88564-df00: DONE exit 1 (default 1 in 60s, antlr 1 in 9s); box 93s, total 106s
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/1
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/2
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/3
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/4
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/5
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" budget=65536 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/6
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" budget=65536 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/7
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/8
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/9
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/10
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/11
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/12
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/13
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/14
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/15
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/16
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/17
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/18
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/19
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+--- FAIL: TestRule73PatternMemoryAttack (1.53s)
+    --- FAIL: TestRule73PatternMemoryAttack/0 (0.02s)
+    --- FAIL: TestRule73PatternMemoryAttack/1 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/2 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/3 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/4 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/5 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/6 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/7 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/8 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/9 (0.00s)
+    --- FAIL: TestRule73PatternMemoryAttack/10 (0.12s)
+    --- FAIL: TestRule73PatternMemoryAttack/11 (0.04s)
+    --- PASS: TestRule73PatternMemoryAttack/12 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/13 (0.05s)
+    --- PASS: TestRule73PatternMemoryAttack/14 (0.05s)
+    --- FAIL: TestRule73PatternMemoryAttack/15 (0.02s)
+    --- FAIL: TestRule73PatternMemoryAttack/16 (0.02s)
+    --- FAIL: TestRule73PatternMemoryAttack/17 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/18 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/19 (0.02s)
+=== RUN   TestRule73PatternResourceAttack
+=== RUN   TestRule73PatternResourceAttack/0
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/1
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/2
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/3
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/4
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/5
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/6
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/7
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/8
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/9
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/10
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" max-adjacency=0 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/11
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" max-adjacency=0 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/12
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/13
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/14
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/15
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/16
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/17
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/18
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/19
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+--- FAIL: TestRule73PatternResourceAttack (1.42s)
+    --- FAIL: TestRule73PatternResourceAttack/0 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/1 (0.02s)
+    --- PASS: TestRule73PatternResourceAttack/2 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/3 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/4 (0.02s)
+    --- PASS: TestRule73PatternResourceAttack/5 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/6 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/7 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/8 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/9 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/10 (0.09s)
+    --- PASS: TestRule73PatternResourceAttack/11 (0.05s)
+    --- PASS: TestRule73PatternResourceAttack/12 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/13 (0.03s)
+    --- PASS: TestRule73PatternResourceAttack/14 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/15 (0.05s)
+    --- FAIL: TestRule73PatternResourceAttack/16 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/17 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/18 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/19 (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	3.167s
+=== parser default: exit 1 after 60s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73Pattern(Resource|Memory)Attack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternMemoryAttack
+=== RUN   TestRule73PatternMemoryAttack/0
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/1
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/2
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/3
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/4
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/5
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" budget=65536 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/6
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" budget=65536 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/7
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/8
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/9
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/10
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/11
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 1.2 MiB would use more than the limit 64.0 KiB. Currently using 282 B. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/12
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/13
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/14
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/15
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/16
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/17
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" budget=65536 rows=<nil> error=The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+    rule73_pattern_memory_attack_test.go:19: bound result exceeded 64 KiB: The allocation of an extra 120 B would use more than the limit 64.0 KiB. Currently using 64.0 KiB. db.memory.transaction.max threshold reached
+=== RUN   TestRule73PatternMemoryAttack/18
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" budget=65536 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternMemoryAttack/19
+    rule73_pattern_memory_attack_test.go:18: R73_MEMORY query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" budget=65536 rows=[[1]] error=<nil>
+--- FAIL: TestRule73PatternMemoryAttack (1.41s)
+    --- FAIL: TestRule73PatternMemoryAttack/0 (0.06s)
+    --- FAIL: TestRule73PatternMemoryAttack/1 (0.04s)
+    --- PASS: TestRule73PatternMemoryAttack/2 (0.02s)
+    --- PASS: TestRule73PatternMemoryAttack/3 (0.04s)
+    --- PASS: TestRule73PatternMemoryAttack/4 (0.03s)
+    --- PASS: TestRule73PatternMemoryAttack/5 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/6 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/7 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/8 (0.00s)
+    --- PASS: TestRule73PatternMemoryAttack/9 (0.00s)
+    --- FAIL: TestRule73PatternMemoryAttack/10 (0.07s)
+    --- FAIL: TestRule73PatternMemoryAttack/11 (0.03s)
+    --- PASS: TestRule73PatternMemoryAttack/12 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/13 (0.04s)
+    --- PASS: TestRule73PatternMemoryAttack/14 (0.03s)
+    --- FAIL: TestRule73PatternMemoryAttack/15 (0.01s)
+    --- FAIL: TestRule73PatternMemoryAttack/16 (0.01s)
+    --- FAIL: TestRule73PatternMemoryAttack/17 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/18 (0.01s)
+    --- PASS: TestRule73PatternMemoryAttack/19 (0.01s)
+=== RUN   TestRule73PatternResourceAttack
+=== RUN   TestRule73PatternResourceAttack/0
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/1
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/2
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/3
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/4
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/5
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/6
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/7
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/8
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/9
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/10
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" max-adjacency=0 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/11
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" max-adjacency=0 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/12
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/13
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/14
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" max-adjacency=0 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/15
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/16
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/17
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/18
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/19
+    rule73_pattern_resource_attack_test.go:59: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:61: bound result materialized dense adjacency: 20001
+--- FAIL: TestRule73PatternResourceAttack (1.39s)
+    --- FAIL: TestRule73PatternResourceAttack/0 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/1 (0.02s)
+    --- PASS: TestRule73PatternResourceAttack/2 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/3 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/4 (0.02s)
+    --- PASS: TestRule73PatternResourceAttack/5 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/6 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/7 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/8 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/9 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/10 (0.08s)
+    --- PASS: TestRule73PatternResourceAttack/11 (0.03s)
+    --- PASS: TestRule73PatternResourceAttack/12 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/13 (0.04s)
+    --- PASS: TestRule73PatternResourceAttack/14 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/15 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/16 (0.06s)
+    --- FAIL: TestRule73PatternResourceAttack/17 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/18 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/19 (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	2.979s
+=== parser antlr: exit 1 after 9s

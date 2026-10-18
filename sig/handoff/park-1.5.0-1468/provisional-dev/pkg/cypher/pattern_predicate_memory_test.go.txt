@@ -1,0 +1,30 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPatternPredicateSparseBoundEndMemory(t *testing.T) {
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{})
+	exec, ctx := newUnitExecutor(t)
+	exec.cache = nil
+	for _, query := range []string{
+		"CREATE (:ReviewHub), (:ReviewTarget), (:ReviewLeaf)",
+		"MATCH (a:ReviewHub), (x:ReviewLeaf) UNWIND range(1, 20000) AS i CREATE (a)-[:R]->(x)",
+		"MATCH (a:ReviewHub), (b:ReviewTarget) CREATE (a)-[:R]->(b)",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+	}
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 64 << 10})
+	for _, expression := range []string{"EXISTS { (a)-[:R]->(b) }", "exists((a)-[:R]->(b))"} {
+		result, err := exec.Execute(context.Background(), "MATCH (a:ReviewHub), (b:ReviewTarget) RETURN "+expression+" AS found", nil)
+		require.NoError(t, err, "sparse bound expansion must fit in 64 KiB")
+		require.Equal(t, [][]interface{}{{true}}, result.Rows)
+		requirePoolsEmpty(t, "test")
+	}
+}

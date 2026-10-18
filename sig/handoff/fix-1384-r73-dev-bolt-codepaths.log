@@ -1,0 +1,127 @@
+tnrun: job i20261018115348-88204-e2c0: wt-fix-1384-r73-dev@fc375efa, 8 untracked file(s); submitted in 2.9s
+tnrun job i20261018115348-88204-e2c0 (wt-fix-1384-r73-dev@fc375efa): worker 9, CPUs 22,23,86,87, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.12 GiB
+untracked files: overlaid i20261018115348-88204-e2c0.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 19 {"X01-codepath-bodies": 12, "X02-system-admission": 7}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.13 GiB
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:97: 2 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:97: 2 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (0.81s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (0.31s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (0.38s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	1.007s
+=== parser default: exit 1 after 5s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 19 {"X01-codepath-bodies": 12, "X02-system-admission": 7}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:97: 2 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"1"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+tnrun: job i20261018115348-88204-e2c0: DONE exit 1 (default 1 in 5s, antlr 1 in 4s); box 9s, total 13s
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:97: 2 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (0.90s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (0.54s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (0.25s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	1.063s
+=== parser antlr: exit 1 after 4s

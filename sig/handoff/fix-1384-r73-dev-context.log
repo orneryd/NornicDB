@@ -1,0 +1,68 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018112942-102316-b129: wt-fix-1384-r73-dev@fc375efa, 6 untracked file(s); submitted in 6.0s
+tnrun: queued behind 1 job(s)
+tnrun: peak RSS of test binary (default): pkg/cypher 0.03 GiB
+tnrun job i20261018112942-102316-b129 (wt-fix-1384-r73-dev@fc375efa): worker 4, CPUs 12,13,76,77, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018112942-102316-b129.tar
+prep ui: npm ci && npm run build in 16s
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternContextStateAttack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternContextStateAttack
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="exists((a)-[:R]->(b))" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="EXISTS { (a)-[:R]->(b) }" rows=[[true]] err=<nil>
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.08 GiB
+tnrun: job i20261018112942-102316-b129: DONE exit 0 (default 0 in 51s, antlr 0 in 6s); box 74s, total 87s; stored for reuse: default, antlr
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="exists((a)-[:R]->(b))" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="EXISTS { (a)-[:R]->(b) }" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:30: R73_CONTEXT cancelled error=context canceled
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="exists((a)-[:R]->(b))" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="EXISTS { (a)-[:R]->(b) }" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="exists((a)-[:R]->(b))" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="EXISTS { (a)-[:R]->(b) }" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:30: R73_CONTEXT cancelled error=context canceled
+--- PASS: TestRule73PatternContextStateAttack (0.03s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	0.202s
+=== parser default: exit 0 after 51s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternContextStateAttack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternContextStateAttack
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="exists((a)-[:R]->(b))" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="EXISTS { (a)-[:R]->(b) }" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=false expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="exists((a)-[:R]->(b))" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="EXISTS { (a)-[:R]->(b) }" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=true viewport=true expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[true]] err=<nil>
+    rule73_pattern_context_attack_test.go:30: R73_CONTEXT cancelled error=context canceled
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="exists((a)-[:R]->(b))" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="EXISTS { (a)-[:R]->(b) }" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=false expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="exists((a)-[:R]->(b))" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="EXISTS { (a)-[:R]->(b) }" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="COUNT { (a)-[:R]->(b) } > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 }) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:24: R73_CONTEXT edge=false viewport=true expr="size([(a)-[:R]->(b) | 1]) > 0" rows=[[false]] err=<nil>
+    rule73_pattern_context_attack_test.go:30: R73_CONTEXT cancelled error=context canceled
+--- PASS: TestRule73PatternContextStateAttack (0.21s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	0.374s
+=== parser antlr: exit 0 after 6s

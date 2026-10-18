@@ -1,0 +1,234 @@
+## Bug Description
+Duplicated code paths were compared pairwise across the NornicDB source: two functions that implement the same operation, on different routes. Each difference below was confirmed by an independent read of the code at 38eb1b91. None of them is reproduced as a user-visible bug; those that are have their own issues (the `IN`/`NOT IN` evaluators, `SET` after `CREATE` vs `MATCH`, multi-`CREATE` executors, `SKIP`/`LIMIT`, integer ordering, string escapes, list literals, index DDL, constraint names, knowledge-policy `ALTER`, index drop procedures) and are not repeated here.
+
+The list is for triage: each item is a place where a fix or feature added to one copy won't reach the other.
+
+## Consequence
+**Severity: none confirmed; drift risk.** None of these differences currently has a confirmed user-visible effect. Each is a pair of implementations of the same behaviour that already disagree in edge cases (error class, null handling, validation, cache use, decay filtering). A bug fixed in one copy stays in the other, and a new route that reaches the weaker copy turns the difference into a user-visible bug. Several items (marked "not reproduced") look user-reachable from the code but were not exercised.
+
+## Steps to Reproduce
+None. These are code-level findings; routes are given as `file:line` on 38eb1b91.
+
+## Expected Behavior
+Each pair either shares one implementation, or documents why the copies differ.
+
+## Actual Behavior
+
+### Cypher parser / DDL
+- **`CREATE CONSTRAINT` header grammar is copied into each `parseCreateConstraint*DDL` function** in `pkg/cypher/schema.go`: ForRequire (used by temporal and domain constraints), NodeKey, SimpleProperty, Type, RelationshipKey/CompositeUnique, Cardinality and Policy. That is at least seven copies of the prefix / name / `IF NOT EXISTS` / `FOR` / `REQUIRE` / `OPTIONS` scan. The copies differ:
+  - The legacy `ON … ASSERT` form is accepted by NodeKey, SimpleProperty and Type. ForRequire, RelationshipKey, Cardinality and Policy accept only `FOR … REQUIRE`.
+  - NodeKey, SimpleProperty and Type take the `FOR` branch only if `FOR` appears before any `ON`; ForRequire, Cardinality and Policy search for `FOR` regardless of `ON`. The two groups can disagree on a statement with an `ON` token before `FOR`.
+  - `FOR` pattern errors: ForRequire, SimpleProperty and Type return the raw `parseCreateIndexForPattern` error. NodeKey maps it to `InvalidPattern('NODE KEY')`, RelationshipKey to `'relationship FOR'`, Cardinality to `'cardinality FOR'`, Policy to `'policy FOR'`.
+  - Accepted patterns: NodeKey rejects relationship patterns and RelationshipKey requires one. Cardinality requires an arrow (`parseRelationshipForDirection`), while RelationshipKey ignores direction, so an undirected pattern is accepted only by RelationshipKey.
+  - With neither `FOR` nor `ON`, ForRequire and RelationshipKey return `MissingKeyword('FOR')`, while NodeKey, SimpleProperty and Type return `UnsupportedCreateConstraintShape`. `executeCreateConstraint` mostly discards these errors; among the SimpleProperty/Cardinality pair, only Cardinality's pattern error can reach the user.
+  - Type's `FOR` branch is a verbatim copy of `parseCreateConstraintForRequireDDL` rather than a call to it.
+  - Policy validates the `REQUIRE` expression (`parsePolicyModeRequireExpr`); ForRequire returns it unvalidated.
+  - Cardinality re-parses the `MAX COUNT` tail in its error path to produce `PositiveMaxCountRequired`, duplicating `parseCardinalityRequireExpr`.
+- **Relationship key / uniqueness in a constraint contract vs the standalone statement** (`schema_contracts.go:186, 306` vs `schema.go:415, 1939`): the standalone statement recognises composite `(r.a, r.b) IS UNIQUE`, unparenthesised `r.a IS RELATIONSHIP KEY` and `(r.a) IS UNIQUE`. Inside a `REQUIRE { … }` contract block these fall through to boolean relationship-expression entries instead of compiled key/unique constraints.
+- **`CREATE FULLTEXT INDEX` vs `CREATE [RANGE|VECTOR] INDEX` header** (`parseCreateFulltextIndexDDL` vs `parseCreateIndexDDL`, `schema.go`; `ON EACH` has its own issue):
+  - fulltext requires an index name, while the other parsers allow it empty and the callers generate one;
+  - only fulltext accepts an unparenthesised `n:Label` and `R1|R2` relationship types;
+  - fulltext checks that the tail starts with `OPTIONS` and then discards it (not reproduced: fulltext `OPTIONS` would be ignored), while `parseCreateIndexDDL` returns it;
+  - the error for a missing property list differs (`IndexPropertiesRequired` vs `FulltextPropertiesRequired`).
+- **`ALTER PROMOTION PROFILE … SET OPTIONS` vs `CREATE PROMOTION PROFILE … OPTIONS`** (`knowledgepolicy_ddl.go` → `storage/schema_knowledgepolicy.go`, `applyPromotionProfileUpdates` around line 624). Not reproduced:
+  - `CREATE` matches option keys case-insensitively, while `ALTER` passes the raw key and storage matches exact camelCase, so `scorefloor` is an unknown option;
+  - `scope` is accepted by `CREATE` and is an unknown option on `ALTER`;
+  - `ALTER` parses literal `0`/`1` as booleans, which the float conversion rejects, so the update is skipped and success reported;
+  - wrong-typed values are rejected by `CREATE` and ignored with success by `ALTER`.
+  
+  Range validation runs on both.
+- **`CREATE PROMOTION POLICY` treats `FOR` as optional** (`parseCreatePromotionPolicy`, `knowledgepolicy_ddl.go:951`), so `CREATE PROMOTION POLICY p APPLY {…}` is accepted with no target. The decay-profile binding parser is only entered after its caller has consumed `FOR`.
+- **The three `DROP` knowledge-policy parsers** (`DROP DECAY PROFILE`, `DROP PROMOTION PROFILE`, `DROP PROMOTION POLICY`; `knowledgepolicy_ddl.go:300, 306, 309`) are copies that differ only in the error message for a missing name.
+- **CREATE-target vs SET-target semantic validation** (`semantic_validation.go:93, 102`): the CREATE validator detects its clause with `findKeywordIndexInContext` and skips schema/administration `CREATE` commands; the SET validator detects `SET` with `containsKeywordOutsideStrings`.
+- **Static vs runtime `labels()`/`type()` argument checks** (`match_semantic_validation.go:134` / `semantic_validation.go:83` vs `row_graph_function_validation.go:107`):
+  - the static check also covers `properties()` and `length()`;
+  - it rejects only known incompatible binding kinds, while the runtime check rejects any evaluated value that isn't a node/relationship;
+  - in a list comprehension the static check never binds the comprehension variable;
+  - the static check runs only for `RETURN`, while the runtime check runs for `WITH` and `RETURN`, only on the row-pipeline route and only when rows exist.
+- **Comma splitters** (`splitTopLevelComma`, `call_shared_utils.go:12`; `splitTopLevelCommaKeepEmpty`, `set_merge_strict.go:69`; the property-map splitter in `pattern_parser.go:157`; the `SET` splitter in `set_helpers.go:80`):
+  - the map and `SET` splitters let the nesting counter go negative on an unbalanced closer, while `splitTopLevelComma` floors it at 0;
+  - the map and `SET` splitters drop empty middle segments, while `splitTopLevelComma` keeps them;
+  - none of them treats backticks as quoting.
+- **List-literal parsers** (`parseBindingLiteralList` for compiled `WHERE` and CALL-tail `WHERE`, `binding_where_compile.go:495` / `call.go:2042`, vs `parseLiteralListForPipeline`, `pipeline_executor.go:3692`):
+  - quoted strings: the first strips the outer quotes without an escape check or decoding, while the second requires one whole quoted string and decodes escapes;
+  - floats: the first accepts `inf`/`infinity`/`nan` and keeps `-0.0`, while the second requires `.`/`e`/`E` and turns zero into `+0`;
+  - nested lists/maps: the second parses them, while the first rejects the whole list.
+
+### Pipeline / projection
+- **`SET` after `CREATE` (`executeCreateSet`) vs after `MATCH` (`executeSet`)** (`executor_query_routing.go:361` vs `:381`), beyond the differences that have their own issues:
+  - `SET n += {literal}` is evaluated once with no row scope after `CREATE` (`create.go:2859`), and per row with node/edge scope after `MATCH`;
+  - adding a label invalidates managed embeddings only after `MATCH` (`executor_mutations.go:1198`);
+  - an empty assignment list is an error only after `MATCH`;
+  - the function-name whitelist pre-validation runs only after `CREATE`, so (not reproduced) a function outside the list is rejected in `CREATE … SET` and accepted in `MATCH … SET`;
+  - a map-replace normalisation error is wrapped (`CypherResidualSetEntityAssignmentInvalid`) only after `MATCH`;
+  - after `CREATE … SET`, only `WITH`/`CREATE` continuations are supported; after `MATCH … SET`, `REMOVE`, `UNWIND`, `WITH … RETURN`, a re-`MATCH` and aggregation in `RETURN` are also supported.
+- **MERGE `SET` in `executeMerge` / `executeMergeNodeSegment` vs `executeMergeWithContext` / `pipelineApplySet`** (`merge.go:648, 3250` vs `:1988, 2255`; `pipeline_executor.go:1077`):
+  - `SET n = <node or relationship>` is converted to a property map only in the context variants; in the plain `MERGE` path `toStringAnyMap` accepts only maps and silently skips it (not reproduced);
+  - the plain path retries an unresolved expression with `evaluateSetExpression`, while the context variants store the evaluator result as-is.
+- **`executeCreate` vs `executeCreateWithRefs`** (`executor_query_routing.go:464` vs `create.go:2370, 2480`, `pipeline_executor.go:2501`):
+  - `validateCreatePatternPropertyMap` (strict property-map syntax) and relationship type / relationship property key validation run only in `executeCreate`;
+  - `executeCreateWithRefs` resolves only node variables in its own `RETURN`, so `RETURN r` / `type(r)` would be `nil` there (not reproduced).
+- **`executeMultipleCreates` vs `executeCreateWithRefs`** (`executor_query_routing.go:303` vs `create.go`):
+  - an empty relationship type is an error only in `executeMultipleCreates`, which also treats a colon-less, brace-less relationship body differently;
+  - a chain continues only on `-[`/`<-[` in one and on any remainder in the other;
+  - the empty-node-ID guard exists in one only;
+  - relationship patterns are recognised by `->`, `<-`, `-[` in one and `->`, `<-`, `]-` in the other;
+  - `RETURN` items are matched to created nodes by variable prefix in `executeCreateWithRefs`, so `a` can match `ab`.
+- **Projection for `RETURN` vs `WITH`** (`pipeline_executor.go:504, 615` vs `:464`, `call.go:573`):
+  - `ORDER BY` after aggregation: `WITH` sorts with a scope containing the group's first input row, projected expressions and aliases, while `RETURN` delegates to `applyResultModifiers`, which orders only by result columns;
+  - keyword detection uses `findKeywordIndex` vs `topLevelKeywordIndex`;
+  - `WITH` carries `$`-prefixed parameter bindings into projected rows, while `RETURN` has no equivalent.
+- **Initial-traversal vs chained `MATCH` over pipeline rows** (`pipeline_executor.go:1359` vs `:1365`):
+  - row-bound scalar values in pattern property maps are substituted only by the initial traversal;
+  - path assignment `p = …` is supported only by the initial traversal;
+  - a pattern variable already bound to a different value, including `null` or a scalar, drops the row in the initial traversal and is overwritten in the chained one;
+  - matcher errors are propagated only by the initial traversal.
+- **`kalman.*` functions: context evaluator vs row evaluator** (`functions_eval_functions.go:1975` vs `row_extension_expression.go:313-318`):
+  - the row evaluator requires exactly 2 arguments for `kalman.predict`, `kalman.velocity.process`, `kalman.velocity.predict` and `kalman.adaptive.process`, while the context evaluator accepts 2 or more and ignores the extras;
+  - `kalman.state`/`kalman.reset` require exactly 1 argument in the row evaluator and are not split into arguments in the context evaluator;
+  - an unevaluable argument makes the row path decline (so it can fall back), while the context path passes `nil`/zero.
+- **Binary arithmetic fast path in pattern property maps vs UNWIND batch lookups** (`pattern_parser.go:519` vs `unwind_multi_match_create.go:448`): only the pattern-map path resolves `$param` operands, so `row.x + $offset` is fast-pathed in one and not the other.
+- **`id(n)`/`elementId(n)` seek: literal vs `$param` variant** (`match.go:677` and others vs the parameter variant):
+  - the literal variant also accepts `$name` via `parseValue` from context parameters; an absent parameter leaves the literal text `$name`, finds no node, and reports the seek as used with zero nodes;
+  - a dotted parameter path (`$row.id`) is looked up as a flat key by the parameter variant, which returns "used" with zero nodes, and in `collectOptionalMatchInitialNodes` that variant runs first.
+  
+  Not reproduced.
+- **Property-index `IN` seek, `$param` vs literal list** (`match.go:712`, `clauses.go:3628`, `executor_mutations.go:370`, `match_index_seek.go:526, 541`): for an empty or non-coercible list the parameter parser returns an empty property name with ok = true, and the seek then runs with property `''`.
+- **Index seeding of start nodes** (`traversal.go:301` vs `match.go:732`): the relationship-traversal start-node path uses the compound `IN` seek but only the non-compound equality seek, so an equality conjunct inside `AND` is not seeded from the index there, while a plain node `MATCH` does seed it. This affects performance only.
+
+### CALL tail and procedures
+- **`IN` in CALL-tail `WHERE` vs compiled `MATCH` `WHERE`** (`call.go:1667, 1670` vs `binding_where_compile.go:175, 178`): the left-hand side is resolved only for literal / `$param` / `var.prop` / identifier in the compiled `MATCH` version (otherwise it declines). The CALL-tail version falls back to `evaluateExpressionFromValues` for any expression.
+- **Three CALL-tail traversal fast paths** (branching path count, constrained max depth, frontier reachable; `call.go:2308, 2393, 2351`, reached from `executeCallTailSetBased`) parse `RETURN … ORDER BY … SKIP` with `splitCallTailReturnOptionsRaw` but keep only `LIMIT`. The variable-length sibling honours `ORDER BY` and `SKIP` (not reproduced).
+- **Sequential vs parallel per-row CALL tail** (`call.go:3963, 4206, 605`, `executor_subqueries.go:188` vs `executeCallTailParallel`):
+  - the per-row query construction in the sequential loop is an inline duplicate of the parallel helper;
+  - on failure, the sequential path returns the first failing row's error in seed order, while the parallel path returns whichever error it reads first;
+  - an empty combined result has `expectedCols` as columns on the parallel path and no columns on the sequential one.
+- **`db.create.setNodeVectorProperty` vs `db.create.setRelationshipVectorProperty`** (`call.go:4116, 4118`): the node variant returns the raw node under column `node`; the relationship variant returns `edgeToMap(rel)` under column `relationship`.
+
+### Storage reads (and the related storage write / validation paths)
+- **Label scans.** Four implementations differ:
+  - `BadgerEngine.GetNodesByLabel`;
+  - `BadgerEngine.GetFirstNodeByLabel`;
+  - engine `StreamNodesByLabelProjected`, used by the Cypher label-scan fast paths (`pipeline_executor.go:670`, `match_multi.go:1314`, `executor_match_vector_cosine_fastpath.go:463`);
+  - `BadgerTransaction.StreamNodesByLabelProjected`, which reads from a pinned snapshot (`snapshotTx`) or from MVCC at `readTS` (`badger_transaction.go:1638-1645`).
+
+  The differences:
+  - Only the transaction streams re-check the decoded node's labels. The engine readers trust the label index, so a stale index entry is emitted by them and filtered by the transaction streams.
+  - The transaction streams return non-NotFound `Get` errors and decode errors; the engine readers skip them silently.
+  - Caches: the engine stream reads the unversioned `nodeCache` and never fills it. `GetNodesByLabel` reads and back-fills it. `GetFirstNodeByLabel` uses no cache. The pinned-snapshot stream uses the version-checked node-body cache. With a stale `nodeCache`, these can return different bodies for the same node.
+  - On a cache hit with no projection, the pinned-snapshot stream reloads embeddings (`loadNodeEmbeddings`), while the engine stream returns `copyNode(cached)`.
+  - The engine stream checks `ensureOpen` and records scan metrics; the pinned-snapshot stream does neither.
+  - Decay: the engine readers and the pinned-snapshot stream skip index-tombstoned entries (when decay is enabled and not revealed); the MVCC `readTS` stream has no tombstone check. The engine and pinned-snapshot streams run `filterNodeByDecay` on the projected node, while the MVCC stream scores the full node and then projects. Promotion rules read entity properties, so the results can differ.
+  - The MVCC stream resolves the visible version through the head/record chain and registers an MVCC snapshot read; the pinned-snapshot stream reads the current node key with no head lookup.
+- **`GetEdgeBetween` typed head pointer vs edge-between set index** (`badger_queries.go:954` vs `:929, 965`):
+  - a load failure on the head path returns a wrapped error (logged as Warn before the fallback), while the set path skips the entry;
+  - the head path checks both the head-key and the set-index tombstone, while the set path checks only the set-index key.
+- **Temporal lookups** (`NamespacedEngine.GetTemporalNodeAsOf`, `namespaced.go:766`, used by `call_temporal.go:135`, vs `IsCurrentTemporalNode`, used by `match_multi.go:1249/1291/1342`):
+  - when the index path finds nothing, only `IsCurrentTemporalNode` falls back to a label scan;
+  - the index path loads raw bodies without decay filtering, while that fallback applies it;
+  - `GetTemporalNodeAsOf` requires exactly one matching constraint, while `IsCurrentTemporalNode` requires the node to be current under every temporal constraint on its labels.
+- **Transaction point reads, node vs edge** (`BadgerTransaction.GetNode` / `GetEdge` committed readers):
+  - with no MVCC head, a node falls back to a primary-key read, while an edge returns `ErrNotFound`;
+  - with `readTS` zero, a node is read through the pinned snapshot reader, while an edge is read through the writer transaction.
+- **`StreamNodeChunks` in `AsyncEngine` vs `WALEngine`**. No non-test production caller was found outside the engine decorators.
+  - The WAL layer delegates to `BadgerEngine.StreamNodeChunks`, which doesn't filter decay-suppressed nodes; the Async path goes through `StreamNodes`, which does.
+  - A `chunkSize <= 0` is not defaulted on the Async path or the WAL fallback (a negative value panics in `make`), and is defaulted to 1000 on the delegated path.
+  - `ErrIterationStopped` is re-delivered to the callback on the Async and fallback paths.
+  - Only the Async path checks context cancellation.
+- **Decay visibility, node vs edge** (`filterNodeByDecay` vs `filterEdgeByDecay`): nodes pass `UpdatedAt` as the version anchor, while edges pass `CreatedAt`, so with `ScoreFromVersion` edge decay never re-anchors on update. This matches the Cypher-side edge scoring.
+- **Constraint contracts: validation at contract creation vs at commit** (`storage/constraint_contracts.go:305` → `:334-355` vs `BadgerTransaction.validateConstraintContracts`, `:1266, 1292`):
+  - a missing or decay-hidden endpoint or pattern neighbour makes the creation-time check fail with the raw `GetNode` error, while the commit-time check skips the edge or reports `StorageSchemaMissingRelationshipEndpoint`. The same dangling neighbour can fail contract creation and be ignored at commit;
+  - edges come from the engine adjacency in one and from the transaction overlay in the other.
+- **Relationship creation in a transaction, bulk vs single** (`transaction_storage_wrapper.go:431/441` vs `:151/157`):
+  - a nil edge gives `ErrInvalidData` in the bulk path and `ErrInvalidID` in the single path;
+  - an empty bulk input returns before the lifecycle check;
+  - a failure part-way through a batch leaves the earlier edges buffered.
+- **`BadgerEngine.UpdateNode` insert branch vs `CreateNode`** (`wal_engine.go:585/606`, `async_engine.go:647 → 755/770` vs `wal_engine.go:571`). When the node key is absent, the upsert branch:
+  - doesn't default `CreatedAt`/`UpdatedAt`;
+  - doesn't write the index-entry catalog;
+  - doesn't apply temporal indexes;
+  - returns raw Badger errors instead of localized ones.
+- **`UpdateNode` vs `UpdateNodeEmbedding`** (embed worker, `embed_queue.go`):
+  - the embedding write doesn't take the `beginWrite` close barrier and records no metrics;
+  - the pending-embed index is only deleted when new embeddings are non-empty, and never re-added when they are cleared;
+  - the cache is updated with `cacheOnNodeUpdated` instead of `cacheOnNodeUpdatedWithOldNode`.
+- **MVCC bootstrap, node vs edge page collectors** (`badger_mvcc.go:1795` vs `:1880`): the node collector decodes bodies with embeddings (extra chunk reads) although bootstrap uses only timestamps. This affects cost only.
+- **WAL recovery visitors**: `VisitEdge` flushes buffered nodes before buffering an edge; `VisitNode` doesn't flush buffered edges.
+
+### Search / HNSW
+- **Node vector cosine fast paths: direct `RETURN` vs `WITH … AS score`** (`executor_match_vector_cosine_fastpath.go:826` vs `:829`):
+  - without a cosine vector index, the direct shape declines and the `WITH` shape falls back to an exact label scan;
+  - the choice of exact candidates differs: the `WITH` shape gates on search-service readiness and on `CountPropertyVectorEntries`. With a service that isn't ready, it uses the index window and post-filters, and can return fewer than `LIMIT` rows where the direct shape would not;
+  - the filtered exact scan streams with the compiled pre-`WHERE` and a heap in one, and scans unfiltered and then filters in the other;
+  - the candidate over-fetch flag passed to `chooseVectorCandidateLimit` is computed differently;
+  - the score column is filled at the cosine item only in one, and in every `RETURN` item equal to the score alias in the other.
+- **Relationship vs node variant of the `WITH`-score fast path** (`:835` vs `:829`):
+  - the relationship variant requires `ORDER BY` after `RETURN`;
+  - it declines without an index;
+  - for filtered queries it only enlarges the index window (to `max(200, 20*limit)`, capped at 5000) and post-filters, so it can return fewer than `LIMIT` rows;
+  - endpoint label constraints are enforced after the fetch but not counted as a filter for widening;
+  - it has no `IS NOT NULL` shortcut and no readiness gating;
+  - it rejects inline property maps.
+- **Relationship direct vs `WITH`-score fast path** (`:832` vs `:835`): the score column is filled at the cosine item only in one, and in every `RETURN` item equal to the score alias in the other.
+- **HNSW `Add` vs `addWithLevel0Candidates`** (GPU-assisted build, `hnsw_build_gpu.go:658`): the second is a copy of `Add` that takes externally computed level-0 candidates. Its only caller computes them once per batch, so earlier vectors of the same batch are never level-0 candidates for later ones. `Add` rejects `len(nodeLevel) >= MaxUint32`, while the copy accepts `== MaxUint32`.
+- **HNSW layer search: insertion vs query** (`hnsw_index.go:1239` vs `:708`):
+  - the query search skips out-of-range, deleted, visited and dimension-mismatched entries, while the insertion search pushes its entry unchecked, so a deleted entry can appear in its result (dropped later by `selectNeighborsInto`);
+  - only the query search is context-cancellable.
+- **HNSW build on strategy transition vs lazy build on first vector search** (`search.go:5108` vs `:5515`):
+  - only the lazy build starts HNSW maintenance, and it returns early if an index is installed, so a transition-installed index never gets maintenance through it;
+  - lookup binding, read lease and context source differ;
+  - the missing-input errors differ (`SearchVectorIndexUnavailable` vs `SearchVectorIndexNil`);
+  - only the lazy path installs the index with a lost-race check and logs the build stats.
+- **Pipeline construction: `applyTransitionSwapLocked` vs `buildPipelineForMode`** (`search.go:5118` vs `:5223`):
+  - the transition inlines a copy of the mode switch, ignores an `ensureGPUIndexSynced` error and still builds the GPU brute pipeline, while the brute-switch route aborts;
+  - only the transition resets `hnswRebuildOverlay`.
+- **Result enrichment: vector-only / fulltext-only vs hybrid** (`enrichIndexResults`, `search.go:6638, 6700`, vs `enrichResults`, `:4551`):
+  - the first normalises hit IDs to node IDs and de-duplicates before the limit, while the second uses the RRF ID unchanged;
+  - `Score`, `Similarity` and the rank fields are filled differently.
+- **`IndexNode` vs `IndexEdge`**: `IndexEdge` returns early for a nil edge, while `IndexNode(nil)` dereferences `node.ID` and panics. `IndexNode` is a no-op only when both BM25 and vector are disabled; `IndexEdge` is gated on vector alone.
+- **GPU HNSW-build candidate search, CUDA vs Metal vs Vulkan** (`hnsw_build_cuda.go:153`, `hnsw_build_gpu.go:257`, Vulkan): three copies that differ only in the device-unavailable error (Vulkan also checks `compute`).
+- **Fulltext BM25 document builders: `queryNodes` vs `queryRelationships`** (`call_fulltext.go:175` vs `call_compat.go:208`):
+  - the node extractor formats `nil` values as `<nil>`, which makes the document non-empty, while the edge extractor skips them;
+  - an empty property list means "all properties" for edges, while nodes substitute a default list;
+  - an unknown non-built-in index is an error for nodes and falls back to an unscoped scan for relationships;
+  - the node wildcard skips documents without indexed content, while the edge wildcard returns every edge of the target types.
+- **Search-index event handlers, node upsert vs node delete**: the delete handler doesn't exclude `qdrant:` local IDs (the upsert handler ignores them). The upsert handler creates the search service on demand; the delete handler only uses one that already exists.
+
+### Embed queue
+- **`processNextDocumentBatch` vs `processNextResolvedBatch`** (`nornicdb/embed_queue.go:779-783` vs `processNextBatch`):
+  - only the first checks worker-context cancellation before claiming;
+  - when `waitForProviderRetry` fails, the first re-queues all claimed nodes and returns `false`, while the second re-queues that group, continues with the others and returns `true`;
+  - property-aware batch providers are batched only by the second;
+  - the first is used only when storage implements `EmbeddingIndexManager`;
+  - only the second warns on the first per-node batch error.
+- **`processClaimedNode` vs `processNextDocumentBatch`** (`embed_queue.go:953, 826, 840`):
+  - different embed calls (`EmbedDocumentPropertyChunks`/`embedDocumentWith` vs `EmbedDocumentBatchChunks` with bisection on failure);
+  - different error text for a nil result;
+  - only the per-node path warns on retryable errors;
+  - only `processNextNode` pauses while the foreground-yield hook is active.
+- **`FindNodeNeedingEmbedding` vs `RefreshPendingEmbeddingsIndex`** (Badger): an unexpected `Get` error on the node key keeps the pending entry in the first and deletes it as corrupted in the second. The first ignores cleanup errors; the second logs a warning.
+- **`NamespacedEngine.FindNodeNeedingEmbedding` vs `RefreshPendingEmbeddingsIndex`**:
+  - both use an inline copy of the eligibility rule that is separate from `shouldIndexPendingEmbed` and omits the embeddings-enabled check and the label include/exclude policy. The fallback in `FindNodeNeedingEmbedding` can therefore return a node the policy excludes; `AddToPendingEmbeddings` then declines to index it, but the node has already been returned;
+  - `RefreshPendingEmbeddingsIndex` stores the inner call's return value (entries **added**) as `underlyingRemoved` and returns `underlyingRemoved + removed`, mixing the counts in the result and the log;
+  - it counts every eligible node as added and every embedded node as removed, whether or not an entry existed.
+
+### Bolt / server
+- **Typed query APIs: `cypher.TypedExecute[T]` vs `nornicdb.ExecuteCypherTyped[T]`** (`cypher/typed_results.go:77` vs `nornicdb/db_admin.go:310`):
+  - only the DB-level API unwraps `m['properties']`;
+  - `assignValue` differs: the executor-level one handles `time.Time`, int→bool and element-wise slices, and formats to string first. The DB-level one tries `ConvertibleTo` first, so `int64(65)` becomes `"A"` there and `"65"` in the other, and `[]interface{}` → `[]string` fails there;
+  - the DB-level API calls `NumField()` unconditionally and panics for a non-struct `T` when the value is not a map.
+- **Graph diff endpoint: latest-state baseline vs versioned snapshot** (`server/server_graph.go:318` vs `:227, 292, 303, 320`):
+  - the baseline enumerates edges per node with `GetOutgoingEdges`, while the versioned side scans every edge visible at the version;
+  - the versioned side requires MVCC visibility support (`ErrNotImplemented` otherwise).
+  
+  The diff compares the two, so any rule drift between them would show up as spurious diff entries.
+
+## Additional Context
+Method: graphify clone and call-graph candidates on 38eb1b91 were scored for "same operation" and divergence, then each candidate pair's differences were checked against the source by a separate read. Only differences marked confirmed are listed. Excluded:
+- claims the second read refuted;
+- claims that found no behavioural difference;
+- claims hedged as unverified;
+- differences already reproduced in the separate issues.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+

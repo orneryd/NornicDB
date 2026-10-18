@@ -1,0 +1,10 @@
+tnrun ab: job a20261018034947-21120-a647: wt-fix-1384-base@524b71ba vs wt-fix-1384-dev@92849408, ./pkg/cypher, 10 rounds ABBA on the dedicated bench CPUs; 18 A/B job(s) ahead (one at a time)
+tnrun: queued behind 18 job(s)
+SUPERSEDED by final-head paired jobs; no benchmark verdict.
+
+
+A/B wt-fix-1384-base@524b71ba vs wt-fix-1384-dev@92849408  ./pkg/cypher  rounds 10 (ABBA, same CPUs 48,49,50,51)
+benchmark                                                  unit               base         head     delta  p      n     spread base/head
+isolation: foreign CPU share on the pinned CPUs per side-round: median ?%, worst ?%
+(▲/▼ = p < 0.05 by Mann-Whitney U; ~ = no significant difference; n = rounds per side; spread = max-min as % of the side's median. If the spread is too high for a decision, report it: more --rounds is the user's call.) benchstat input: sig\tnrun-results\ab-a20261018034947-21120-a647/base.txt, head.txt
+tnrun ab: job a20261018034947-21120-a647: SUPERSEDED exit 1; box 0s, total 1284s; 0 benchmark metrics

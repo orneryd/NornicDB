@@ -2,13 +2,10 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -234,10 +231,7 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 // refers to them.
 func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
 	correlated := e.cloneWithStorage(e.getStorage(ctx))
-	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
-	for name, value := range e.fabricRecordBindings {
-		correlated.fabricRecordBindings[name] = value
-	}
+	correlated.fabricRecordBindings = make(map[string]interface{}, len(values))
 	for name, value := range values {
 		if strings.HasPrefix(name, "\x00") {
 			continue // the evaluator's own keys (rowStatementContextKey) aren't variables
@@ -310,60 +304,8 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
-	ctx = withoutLocalSubqueryScope(ctx)
-	// EXISTS is whether the body has a row and COUNT how many: one
-	// evaluation, so a body gives EXISTS and COUNT the same rows.
-	if kind == "EXISTS" || kind == "COUNT" {
-		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
-			return rowCountValue(kind, count), true, nil
-		}
-		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
-			return rowCountValue(kind, count), true, nil
-		}
-		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
-			return rowCountValue(kind, count), true, nil
-		}
-		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
-			// A pattern the kernel can't match goes to the pipeline below:
-			// its failure isn't a count of 0.
-			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
-				return rowCountValue(kind, int64(len(rows))), true, nil
-			}
-		}
-	}
-	if cypherVersionFromContext(ctx) != "25" {
-		grouped, err := cypher5ImportGrouping(body, values)
-		if err != nil {
-			return nil, false, err
-		}
-		body = grouped
-	}
-	query := rowSubqueryQueryFor(ctx, kind, body)
-	result, err := e.runCorrelatedSubquery(ctx, query, values)
-	if err != nil {
-		return nil, false, err
-	}
-	if result == nil {
-		return nil, false, nil
-	}
-	if kind == "EXISTS" || kind == "COUNT" {
-		return rowCountValue(kind, int64(len(result.Rows))), true, nil
-	}
-	// A COLLECT subquery collects one value per row: its RETURN has
-	// exactly one column (Neo4j 5.26 rejects any other RETURN, #907).
-	if len(result.Columns) != 1 {
-		return nil, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery",
-			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
-	}
-	collected := make([]interface{}, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		if len(row) > 0 {
-			collected = append(collected, row[0])
-		}
-	}
-	return collected, true, nil
+ return planGraphExpression(kind, body, "").evaluate(e, ctx, compiledRowScope{values: &values})
 }
-
 // rowCountValue is a subquery's value from its number of rows: EXISTS is
 // whether it has one, COUNT the number.
 func rowCountValue(kind string, rows int64) interface{} {
@@ -399,51 +341,10 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 // relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
 // WITH $p AS v. Row parameters stay available.
 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
-	params := make(map[string]interface{}, len(values))
-	for name, value := range getParamsFromContext(ctx) {
-		params[name] = value
-	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	var prefix strings.Builder
-	carried := make([]string, 0, len(names))
-	for index, name := range names {
-		param := fmt.Sprintf("__subquery_row_%d", index)
-		switch value := values[name].(type) {
-		case *storage.Node:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		case *storage.Edge:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		default:
-			params[param] = value
-			carried = append(carried, "$"+param+" AS "+name)
-		}
-	}
-	if len(carried) > 0 {
-		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
-	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+ frame:=e.resolveGraphExpressionFrame(ctx,compiledRowScope{values:&values})
+ ctx=frame.enter(ctx)
+ return e.correlatedSubqueryExecutor(ctx,frame.values).executeInternal(ctx,query,getParamsFromContext(ctx))
 }
-
 // boundChainCount counts the rows of a body that is one relationship chain,
 // with an optional WHERE, starting at a node bound in values: it traverses
 // from that node and keeps the paths that agree with the row's other nodes
@@ -990,14 +891,10 @@ func chainVariablesBindEntities(matches *TraversalMatch, values map[string]inter
 func entityRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
 	values := pipelineRow(valueBindingsLayer(ctx, len(nodes)+len(rels)))
 	for name, node := range nodes {
-		if node != nil {
-			values[name] = node
-		}
+		if node == nil { values[name] = nil } else { values[name] = node }
 	}
 	for name, relationship := range rels {
-		if relationship != nil {
-			values[name] = relationship
-		}
+		if relationship == nil { values[name] = nil } else { values[name] = relationship }
 	}
 	return values
 }
@@ -1076,13 +973,9 @@ func entityBindings(values map[string]interface{}) (map[string]*storage.Node, ma
 	for name, value := range values {
 		switch entity := value.(type) {
 		case *storage.Node:
-			if entity != nil {
-				nodes[name] = entity
-			}
+			nodes[name] = entity
 		case *storage.Edge:
-			if entity != nil {
-				rels[name] = entity
-			}
+			rels[name] = entity
 		}
 	}
 	return nodes, rels

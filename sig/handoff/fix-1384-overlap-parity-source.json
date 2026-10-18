@@ -1,0 +1,302 @@
+[
+  {
+    "PR": 1330,
+    "Title": "fix(cypher): procedure YIELD variables are in scope for subqueries in its WHERE",
+    "Commits": [
+      "faccc2d2839b0c8e9e8fb625fb64df72f8086471",
+      "d50710a4ad35a6d3ec20e321343aa72bb9afd910",
+      "9dbe5805ff35166d6f9505c53593f6a22d0e0ac3"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Procedure YIELD bindings are rejected inside subqueries in the YIELD WHERE; grouped identity bindings also lose scope.",
+    "DependsOn": [],
+    "Files": [
+      "pkg/cypher/expression_subquery_scope.go",
+      "pkg/cypher/match_semantic_validation.go"
+    ]
+  },
+  {
+    "PR": 1331,
+    "Title": "perf(cypher): scoped CALL DISTINCT keys hold only projected values; shared value-equivalence index",
+    "Commits": [
+      "4a7d86074d508062fa9272e31a35fe462f2ea85a",
+      "bc78fc0aabe8f2639380dd85dbecb023fa8dc537",
+      "15fda39e0d7ffdf679059535d1ad140ca3589e6c",
+      "dd1b957bbfbccd5e51fecdb1e8f76cccf02bb512",
+      "6185f45c5e88498121fbe28baa779afcd668eb5d",
+      "043711b3840d8e8b8dc5da7c8831dd80b131c19a",
+      "d855e89aa79e849cc94593ffb3ff3b13422d5986",
+      "5905b79f8bfa1a61d6a0029c04357678e753f838",
+      "930ffd7e5167341795602e787860da7ec221b64c",
+      "30d27649190f40a1f17010421fdfe87d62d7cb70",
+      "1d8e303154a2e9985475cdd5dfa82b89a8b4f3d2"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Scoped CALL DISTINCT keys include hidden imports; unify value equivalence and retain imports for ordering.",
+    "DependsOn": [
+      1330
+    ],
+    "Files": [
+      "pkg/cypher/apoc_collections.go",
+      "pkg/cypher/clauses.go",
+      "pkg/cypher/pipeline_projection.go",
+      "pkg/cypher/value_equivalence_index.go"
+    ]
+  },
+  {
+    "PR": 1335,
+    "Title": "fix(cypher): DISTINCT treats map-wrapped and native paths as the same value",
+    "Commits": [
+      "26834e037050071bcc6072b1c349dc312a11d469"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "The value-equivalence index must hash native paths and genuine map-wrapped paths identically.",
+    "DependsOn": [
+      1331
+    ],
+    "Files": [
+      "pkg/cypher/value_equivalence_index.go"
+    ]
+  },
+  {
+    "PR": 1337,
+    "Title": "fix(cypher): CALL (*) is one scope clause for static checks and runtime; rebound imports keep their types",
+    "Commits": [
+      "9d186c0a89c0099599669c9765f8288549ccfb95",
+      "889cb7b2a0fb15eea821f00742eeefab08bf8ec5",
+      "887ab01e8568ac26f510664ec5bb71be02fc1837",
+      "55ee32af207ae37872c0b985b113212ec9e654d6",
+      "fc0a4c606d7411fc51223c763b0e6b33cb0f5474"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "CALL (*) static/runtime import readers disagree and rebound/empty-aggregate imports lose type facts.",
+    "DependsOn": [
+      1330,
+      1331
+    ],
+    "Files": [
+      "pkg/cypher/executor_subqueries.go",
+      "pkg/cypher/match_semantic_validation.go",
+      "pkg/cypher/static_type_scope.go"
+    ]
+  },
+  {
+    "PR": 1345,
+    "Title": "fix(cypher): an aggregate CALL import keeps its integer exclusion, so an invalid list index is rejected statically",
+    "Commits": [
+      "3c505e6a542792897e4d57b826df387fd25a43e0",
+      "d8bbff5cb0f4c46c1c817bf18e0880eeee3c3e80"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "A global aggregate CALL import loses agreed nonInteger/predicateDeferred facts and accepts statically invalid list indexes.",
+    "DependsOn": [
+      1337
+    ],
+    "Files": [
+      "pkg/cypher/static_type_scope.go"
+    ]
+  },
+  {
+    "PR": 1347,
+    "Title": "fix(cypher): read dotted words, spaced qualified names and comments with the shared lexical readers",
+    "Commits": [
+      "8cbb763e20f16fd197c01774af75bd17b76f556a",
+      "eec6f0ca125bc14eeab4a8610d232175624454a9"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Spaced qualified calls, dotted keyword properties and comment contents bypass shared lexical readers.",
+    "DependsOn": [
+      1337
+    ],
+    "Files": [
+      "pkg/cypher/case_expression.go",
+      "pkg/cypher/functions_parse.go",
+      "pkg/cypher/keyword_scan.go"
+    ]
+  },
+  {
+    "PR": 1354,
+    "Title": "fix(cypher): CASE result-type unions reject function arguments only when no branch fits",
+    "Commits": [
+      "bcafcd785ef24a787862fb8898a3b63eafabdd8a",
+      "ed593e8953757fbe498957eb859322d176ff421c",
+      "548e07b05f95eee0e92f4936fdc304a00b13e787"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "CASE result types need unions; function signatures may reject only when every alternative is incompatible.",
+    "DependsOn": [
+      1337,
+      1345
+    ],
+    "Files": [
+      "pkg/cypher/static_comprehension_types.go",
+      "pkg/cypher/static_function_argument_types.go",
+      "pkg/cypher/static_type_scope.go"
+    ]
+  },
+  {
+    "PR": 1356,
+    "Title": "fix(cypher): restore the agreed integer exclusion when joining aggregate import alternatives",
+    "Commits": [
+      "a7351dd5427c8744e88d5167b47163aec06f0781"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Restores #1345 facts lost by #1351; port the final joined-operand result once rather than replaying the temporary regression.",
+    "DependsOn": [
+      1345,
+      1354
+    ],
+    "Files": [
+      "pkg/cypher/static_type_scope.go"
+    ]
+  },
+  {
+    "PR": 1357,
+    "Title": "fix(cypher): keep inner aggregates inside commented COUNT/EXISTS/COLLECT subqueries on develop",
+    "Commits": [
+      "2e5dcc87ee805994e05bdc3beae455a47d4ca604",
+      "2ddcce59803cfb3f20a3af802319717e04dcd299",
+      "343bdfc5c328062a19ce813dfe2c291026f66e5f",
+      "7488191e07ddedf0b558b3a647affc4cc133451d",
+      "8f56bcbbd77ef0e3732631e38332731be3506d92",
+      "16b815da7faa5f84af9e56f0c9772805eceda3c4",
+      "da10b157b2d763eb697824fdefb6405b2798f691",
+      "bd054d899f974ff0310b90df346cb092bd64389a",
+      "90764b0826021c6516eb2f27b3adb31b3fb95143"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Comment/form-feed boundaries let inner scalar-subquery aggregates escape and misclassify COUNT as a map projection.",
+    "DependsOn": [
+      1347
+    ],
+    "Files": [
+      "pkg/cypher/map_literal_validation.go",
+      "pkg/cypher/optional_match_traversal_agg.go",
+      "pkg/cypher/subquery_value_expression.go"
+    ]
+  },
+  {
+    "PR": 1359,
+    "Title": "fix(cypher): per-row evaluation order, subquery scopes and operation owners on develop (#1214)",
+    "Commits": [
+      "9f91301af7e0f9d48baf9aa4b10f0496072fab19",
+      "8d669f7e0bb1fb7d13acc98b4cfb248ec96b5e4d",
+      "e61b15039a1cea0420dc819936309f42801e9081",
+      "a942e7d1efc4d71720d7c429bcf0b392360def92",
+      "84d8b1ca4e250048671240feaef4f60ef0ec57a9",
+      "f39de1e3734a09c294e34152db16a8a9ea42f085",
+      "a514c780c78e79cb0fbbac7402cf5dfd21730a34",
+      "7a19f6a5ea0b08824070b61b730317fa2f5eb41e"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Unreached operands can raise errors; subquery evaluation order, null slices, operand error policy and versioned logical folds diverge from Neo4j.",
+    "DependsOn": [
+      1337,
+      1347,
+      1354,
+      1357
+    ],
+    "Files": [
+      "pkg/cypher/binding_where_compile.go",
+      "pkg/cypher/case_evaluation.go",
+      "pkg/cypher/logical_operators.go",
+      "pkg/cypher/subscript_evaluation.go"
+    ]
+  },
+  {
+    "PR": 1361,
+    "Title": "perf(cypher): plan correlated CALL subqueries once per statement",
+    "Commits": [
+      "8e4389271fc2f77b232f432712e5d5e9e9814e0d",
+      "a4caf4147b683b725948fe693019bd66a70e6be9"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Correlated CALL/subquery expressions repeatedly plan clause text for each row; cache a statement-local clause plan.",
+    "DependsOn": [
+      1337,
+      1359
+    ],
+    "Files": [
+      "pkg/cypher/executor_entry.go",
+      "pkg/cypher/executor_mutations_delete_guard.go",
+      "pkg/cypher/pipeline_clause_plan.go"
+    ]
+  },
+  {
+    "PR": 1380,
+    "Title": "perf(cypher): finish moving clause-text scanning onto the statement's parse-once plan",
+    "Commits": [
+      "ff2bf67e1d990f8b152dcf9fe74b334bfc5aa229",
+      "0c87c14b2d602cc8371e524341fa0a2a58985f1f"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Remaining correlated-clause/logical/index-seek/result-modifier scans repeat per row; use the statement-local plan consistently.",
+    "DependsOn": [
+      1361
+    ],
+    "Files": [
+      "pkg/cypher/executor_subqueries.go",
+      "pkg/cypher/expression_failure.go",
+      "pkg/cypher/pipeline_clause_plan.go",
+      "pkg/cypher/result_modifiers.go"
+    ]
+  },
+  {
+    "PR": 1388,
+    "Title": "perf(cypher): compile map literals in aggregate arguments; at most one row copy per evaluation",
+    "Commits": [
+      "1948d3745e72a90c29e73e821d7169e79498bb23",
+      "6b6961fe591703825023db271ade8363965e933e",
+      "41bc243d395b24f196245489ff28daccc1c3170f",
+      "d4222e158ddf9db246abfc6697015ecbedbe3b25",
+      "78fc4d1c5ae60983346e97ed4754f3a0f52e73ae"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Generic map-literal aggregate arguments are reparsed and rows recopied; compile maps and preserve the prepared scope map even without added bindings.",
+    "DependsOn": [
+      1380
+    ],
+    "Files": [
+      "pkg/cypher/gds_cypher_projection.go",
+      "pkg/cypher/pattern_expression.go",
+      "pkg/cypher/pipeline_aggregate_stream.go",
+      "pkg/cypher/row_value_program.go"
+    ]
+  },
+  {
+    "PR": 1395,
+    "Title": "perf(cypher): cheaper correlated EXISTS reads and zero-hop quantified paths",
+    "Commits": [
+      "b540c2e589ea0b57b0a791e9051f98e2d64a4c25",
+      "97d55b569774dfd5f6c166ad1f461e5b435ff74b",
+      "8204455ef1bd4e421d53b8d4cd65382a09de5c47",
+      "3a9e6481ec09322adb7ad36913d9e4ac41eadc26",
+      "91beb316f1a2f50b47e0ec06495d52315ad70cce"
+    ],
+    "Class": "a",
+    "ReleasePR": null,
+    "Reason": "Existing correlated EXISTS/COUNT and single-hop predicates repeatedly load/evaluate full candidates; semi-joins and shared endpoint/equality reads bound that work.",
+    "DependsOn": [
+      1380,
+      1388
+    ],
+    "Files": [
+      "pkg/cypher/pipeline_clause_plan.go",
+      "pkg/cypher/relationship_equality_pushdown.go",
+      "pkg/cypher/subquery_value_expression.go"
+    ]
+  }
+]

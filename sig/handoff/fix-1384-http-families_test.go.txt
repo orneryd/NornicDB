@@ -1,0 +1,54 @@
+package server
+
+import (
+ "context"
+ "encoding/json"
+ "net/http"
+ "net/http/httptest"
+ "os"
+ "os/exec"
+ "path/filepath"
+ "testing"
+ "time"
+
+ "github.com/orneryd/nornicdb/testing/cypher/differential"
+)
+
+// Task-only harness: generator and all database execution run on TrueNAS.
+func TestFix1384HTTPFamilies(t *testing.T) {
+ reference := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
+ if reference == "" { t.Fatal("pinned live Neo4j is required") }
+ output := filepath.Join(t.TempDir(), "sweep.json.gz")
+ generator := exec.Command("python3", "../../scripts/cypher-tck/differential/gen_sweep.py", output)
+ if data, err := generator.CombinedOutput(); err != nil { t.Fatalf("generate: %v: %s", err, data) }
+ corpus, err := differential.LoadSweep(output)
+ if err != nil { t.Fatal(err) }
+ selected := corpus.Cases[:0]
+ counts := map[string]int{}
+ for _, c := range corpus.Cases {
+  if c.Family == "pattern-predicate" || c.Family == "pattern" || c.Family == "pattern-comprehension" { selected=append(selected,c); counts[c.Family]++ }
+ }
+ corpus.Cases=selected
+ if len(selected)==0 { t.Fatal("empty corpus") }
+ t.Logf("FIX1384_HTTP families=%v cases=%d",counts,len(selected))
+ server, authenticator := setupTestServer(t)
+ local := httptest.NewServer(server.buildRouter())
+ defer local.Close()
+ client := &http.Client{Timeout:differential.DefaultOptions.StatementTimeout}
+ pair := &differential.Pair{
+  Neo4j:httpDifferentialExecutor{client:client,endpoint:reference+"/db/neo4j/tx/commit"},
+  NornicDB:httpDifferentialExecutor{client:client,endpoint:local.URL+"/db/nornic/tx/commit",authorization:"Bearer "+getAuthToken(t,authenticator,"admin")},
+ }
+ options:=differential.DefaultOptions
+ options.Workers=1
+ ctx,cancel:=context.WithTimeout(context.Background(),15*time.Minute)
+ defer cancel()
+ results,err:=differential.RunSweep(ctx,corpus,pair,options)
+ if err!=nil { t.Fatal(err) }
+ ratchet,err:=differential.LoadRatchet(filepath.Join("..","..","testing","cypher","tck","testdata","differential","known_mismatches.jsonl"))
+ if err!=nil { t.Fatal(err) }
+ report:=ratchet.Check("http",results)
+ for _,r:=range results { if !r.Match { data,_:=json.Marshal(r); t.Logf("FIX1384_HTTP_DIFF %s",data) } }
+ t.Logf("FIX1384_HTTP_REPORT compared=%d known=%d unstable=%d new=%d",report.Compared,report.Known,report.Unstable,len(report.Regressed))
+ if len(report.Regressed)>0 { t.Errorf("%d differences outside ratchet",len(report.Regressed)) }
+}

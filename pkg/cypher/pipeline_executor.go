@@ -572,7 +572,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	for name, value := range graphScopeImports(ctx, e.fabricRecordBindings) {
 		initialRow[name] = value
 	}
 	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {

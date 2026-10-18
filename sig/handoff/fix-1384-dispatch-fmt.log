@@ -1,0 +1,17 @@
+tnrun: job i20261018050137-96632-a7eb: wt-fix-1384-dev@fc375efa, bundle 1 commit(s); submitted in 6.1s
+tnrun: queued behind 8 job(s)
+tnrun: job i20261018050137-96632-a7eb: DONE exit 0 (default 0 in 1s); box 14s, total 667s
+tnrun job i20261018050137-96632-a7eb (wt-fix-1384-dev@fc375efa): worker 6, CPUs 16,17,80,81, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+prep ui: npm ci && npm run build in 13s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/row_predicate_plan.go
+=== parser default: exit 0 after 1s
+tnrun: job i20261018051245-103012-0345: wt-fix-1384-release@4bc18585; submitted in 4.8s
+tnrun job i20261018051245-103012-0345 (wt-fix-1384-release@4bc18585): worker 14, CPUs 32,33,96,97, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+tnrun: job i20261018051245-103012-0345: DONE exit 0 (default 0 in 0s); box 0s, total 5s
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/row_predicate_plan.go
+=== parser default: exit 0 after 0s

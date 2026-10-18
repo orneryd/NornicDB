@@ -1,0 +1,92 @@
+tnrun: job i20261018112630-41348-2143: wt-fix-1384-r73-release@4bc18585, 4 untracked file(s); submitted in 3.6s
+tnrun: running
+tnrun job i20261018112630-41348-2143 (wt-fix-1384-r73-release@4bc18585): worker 9, CPUs 22,23,86,87, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+untracked files: overlaid i20261018112630-41348-2143.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 15 {"T01-transaction-state": 15}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-2520227399 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+tnrun: peak RSS of test binary (default): pkg/server 0.15 GiB
+tnrun: peak RSS of test binary (antlr): pkg/server 0.22 GiB
+tnrun: job i20261018112630-41348-2143: DONE exit 0 (default 0 in 8s, antlr 0 in 7s); box 33s, total 44s
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:26:52 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:26:52 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:26:52 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:26:52 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:26:52 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:26:52 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:26:52 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:26:52 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:26:52 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:26:52 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:26:52 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=30 match=30 diff=0
+--- PASS: TestRule73PatternFamilyHTTPAttack (2.16s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/server	2.357s
+=== parser default: exit 0 after 8s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 15 {"T01-transaction-state": 15}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-1036225834 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:27:00 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:27:00 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:27:00 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:27:00 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:27:00 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:27:00 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:27:00 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:27:00 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:27:00 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:27:00 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:27:00 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=30 match=30 diff=0
+--- PASS: TestRule73PatternFamilyHTTPAttack (2.87s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/server	3.062s
+=== parser antlr: exit 0 after 7s

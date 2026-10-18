@@ -1,0 +1,100 @@
+tnrun: job i20261018112630-90156-e2d4: wt-fix-1384-r73-release@4bc18585, 4 untracked file(s); submitted in 3.6s
+tnrun: running
+tnrun job i20261018112630-90156-e2d4 (wt-fix-1384-r73-release@4bc18585): worker 10, CPUs 24,25,88,89, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+untracked files: overlaid i20261018112630-90156-e2d4.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 15 {"T01-transaction-state": 15}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/collect match=2 diff=0
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.14 GiB
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.20 GiB
+tnrun: job i20261018112630-90156-e2d4: DONE exit 0 (default 0 in 7s, antlr 0 in 6s); box 46s, total 54s
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=30 match=30 diff=0
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=30 match=30 diff=0
+--- PASS: TestRule73PatternFamilyAttack (3.10s)
+    --- PASS: TestRule73PatternFamilyAttack/bolt-auto (1.61s)
+    --- PASS: TestRule73PatternFamilyAttack/bolt-tx (1.35s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	3.287s
+=== parser default: exit 0 after 7s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 15 {"T01-transaction-state": 15}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=30 match=30 diff=0
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/create/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/delete/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/collect match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/comprehension match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/count match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/exists match=2 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx T01-transaction-state/update/predicate match=2 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=30 match=30 diff=0
+--- PASS: TestRule73PatternFamilyAttack (2.95s)
+    --- PASS: TestRule73PatternFamilyAttack/bolt-auto (1.48s)
+    --- PASS: TestRule73PatternFamilyAttack/bolt-tx (1.35s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	3.136s
+=== parser antlr: exit 0 after 6s

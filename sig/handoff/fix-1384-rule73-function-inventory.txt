@@ -1,0 +1,737 @@
+wt-fix-1384-r73-dev/pkg/cypher\antlr\analyzer.go:268:func (w *queryWalker) EnterCallSubquery(ctx *CallSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:162:func (s *BaseCypherParserListener) EnterExistsSubquery(ctx *ExistsSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:165:func (s *BaseCypherParserListener) ExitExistsSubquery(ctx *ExistsSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:168:func (s *BaseCypherParserListener) EnterCountSubquery(ctx *CountSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:171:func (s *BaseCypherParserListener) ExitCountSubquery(ctx *CountSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:174:func (s *BaseCypherParserListener) EnterCollectSubquery(ctx *CollectSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:177:func (s *BaseCypherParserListener) ExitCollectSubquery(ctx *CollectSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:180:func (s *BaseCypherParserListener) EnterCallSubquery(ctx *CallSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:183:func (s *BaseCypherParserListener) ExitCallSubquery(ctx *CallSubqueryContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:186:func (s *BaseCypherParserListener) EnterSubqueryBody(ctx *SubqueryBodyContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:189:func (s *BaseCypherParserListener) ExitSubqueryBody(ctx *SubqueryBodyContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:428:func (s *BaseCypherParserListener) EnterPatternWhere(ctx *PatternWhereContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:431:func (s *BaseCypherParserListener) ExitPatternWhere(ctx *PatternWhereContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:440:func (s *BaseCypherParserListener) EnterPattern(ctx *PatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:443:func (s *BaseCypherParserListener) ExitPattern(ctx *PatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:580:func (s *BaseCypherParserListener) EnterPatternPart(ctx *PatternPartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:583:func (s *BaseCypherParserListener) ExitPatternPart(ctx *PatternPartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:592:func (s *BaseCypherParserListener) EnterPatternElem(ctx *PatternElemContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:595:func (s *BaseCypherParserListener) ExitPatternElem(ctx *PatternElemContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:598:func (s *BaseCypherParserListener) EnterPatternElemStart(ctx *PatternElemStartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:601:func (s *BaseCypherParserListener) ExitPatternElemStart(ctx *PatternElemStartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:604:func (s *BaseCypherParserListener) EnterPatternElemPart(ctx *PatternElemPartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:607:func (s *BaseCypherParserListener) ExitPatternElemPart(ctx *PatternElemPartContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:616:func (s *BaseCypherParserListener) EnterPatternElemChain(ctx *PatternElemChainContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:619:func (s *BaseCypherParserListener) ExitPatternElemChain(ctx *PatternElemChainContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:634:func (s *BaseCypherParserListener) EnterNodePattern(ctx *NodePatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:637:func (s *BaseCypherParserListener) ExitNodePattern(ctx *NodePatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:664:func (s *BaseCypherParserListener) EnterRelationshipPattern(ctx *RelationshipPatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:667:func (s *BaseCypherParserListener) ExitRelationshipPattern(ctx *RelationshipPatternContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:688:func (s *BaseCypherParserListener) EnterSubqueryExist(ctx *SubqueryExistContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:691:func (s *BaseCypherParserListener) ExitSubqueryExist(ctx *SubqueryExistContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:719:func (s *BaseCypherParserListener) EnterPatternComprehension(ctx *PatternComprehensionContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:722:func (s *BaseCypherParserListener) ExitPatternComprehension(ctx *PatternComprehensionContext) {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:725:func (s *BaseCypherParserListener) EnterRelationshipsChainPattern(ctx *RelationshipsChainPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypherparser_base_listener.go:729:func (s *BaseCypherParserListener) ExitRelationshipsChainPattern(ctx *RelationshipsChainPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\apoc_native_temporal.go:111:func nativeAPOCISOBasePattern(name string) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\apoc_native_temporal.go:131:func nativeAPOCISOFormat(name string, t patternTemporal) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\apoc_native_temporal.go:213:func nativeAPOCDurationFormat(duration *CypherDuration, pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:6667:func (s *SchemaCommandContext) NodePattern() INodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:6683:func (s *SchemaCommandContext) RelationshipsChainPattern() IRelationshipsChainPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9731:func NewEmptyExistsSubqueryContext() *ExistsSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9738:func InitEmptyExistsSubqueryContext(p *ExistsSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9743:func (*ExistsSubqueryContext) IsExistsSubqueryContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9745:func NewExistsSubqueryContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *ExistsSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9756:func (s *ExistsSubqueryContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9758:func (s *ExistsSubqueryContext) EXISTS() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9762:func (s *ExistsSubqueryContext) LBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9766:func (s *ExistsSubqueryContext) RBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9770:func (s *ExistsSubqueryContext) MatchSt() IMatchStContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9786:func (s *ExistsSubqueryContext) SubqueryBody() ISubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9802:func (s *ExistsSubqueryContext) Pattern() IPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9818:func (s *ExistsSubqueryContext) Where() IWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9834:func (s *ExistsSubqueryContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9838:func (s *ExistsSubqueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9842:func (s *ExistsSubqueryContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9848:func (s *ExistsSubqueryContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9854:func (p *CypherParser) ExistsSubquery() (localctx IExistsSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9966:func NewEmptyCountSubqueryContext() *CountSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9973:func InitEmptyCountSubqueryContext(p *CountSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9978:func (*CountSubqueryContext) IsCountSubqueryContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9980:func NewCountSubqueryContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *CountSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9991:func (s *CountSubqueryContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9993:func (s *CountSubqueryContext) COUNT() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:9997:func (s *CountSubqueryContext) LBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10001:func (s *CountSubqueryContext) RBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10005:func (s *CountSubqueryContext) MatchSt() IMatchStContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10021:func (s *CountSubqueryContext) SubqueryBody() ISubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10037:func (s *CountSubqueryContext) Pattern() IPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10053:func (s *CountSubqueryContext) Where() IWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10069:func (s *CountSubqueryContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10073:func (s *CountSubqueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10077:func (s *CountSubqueryContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10083:func (s *CountSubqueryContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10089:func (p *CypherParser) CountSubquery() (localctx ICountSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10198:func NewEmptyCollectSubqueryContext() *CollectSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10205:func InitEmptyCollectSubqueryContext(p *CollectSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10210:func (*CollectSubqueryContext) IsCollectSubqueryContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10212:func NewCollectSubqueryContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *CollectSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10223:func (s *CollectSubqueryContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10225:func (s *CollectSubqueryContext) COLLECT() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10229:func (s *CollectSubqueryContext) LBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10233:func (s *CollectSubqueryContext) RegularQuery() IRegularQueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10249:func (s *CollectSubqueryContext) RBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10253:func (s *CollectSubqueryContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10257:func (s *CollectSubqueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10261:func (s *CollectSubqueryContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10267:func (s *CollectSubqueryContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10273:func (p *CypherParser) CollectSubquery() (localctx ICollectSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10357:func NewEmptyCallSubqueryContext() *CallSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10364:func InitEmptyCallSubqueryContext(p *CallSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10369:func (*CallSubqueryContext) IsCallSubqueryContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10371:func NewCallSubqueryContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *CallSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10382:func (s *CallSubqueryContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10384:func (s *CallSubqueryContext) CALL() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10388:func (s *CallSubqueryContext) LBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10392:func (s *CallSubqueryContext) SubqueryBody() ISubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10408:func (s *CallSubqueryContext) RBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10412:func (s *CallSubqueryContext) OPTIONAL() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10416:func (s *CallSubqueryContext) LPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10420:func (s *CallSubqueryContext) RPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10424:func (s *CallSubqueryContext) IN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10428:func (s *CallSubqueryContext) TRANSACTIONS() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10432:func (s *CallSubqueryContext) MULT() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10436:func (s *CallSubqueryContext) AllSymbol() []ISymbolContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10457:func (s *CallSubqueryContext) Symbol(i int) ISymbolContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10477:func (s *CallSubqueryContext) OF() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10481:func (s *CallSubqueryContext) ROW() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10485:func (s *CallSubqueryContext) ROWS() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10489:func (s *CallSubqueryContext) NumLit() INumLitContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10505:func (s *CallSubqueryContext) Parameter() IParameterContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10521:func (s *CallSubqueryContext) AllCOMMA() []antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10525:func (s *CallSubqueryContext) COMMA(i int) antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10529:func (s *CallSubqueryContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10533:func (s *CallSubqueryContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10537:func (s *CallSubqueryContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10543:func (s *CallSubqueryContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10549:func (p *CypherParser) CallSubquery() (localctx ICallSubqueryContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10804:func NewEmptySubqueryBodyContext() *SubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10811:func InitEmptySubqueryBodyContext(p *SubqueryBodyContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10816:func (*SubqueryBodyContext) IsSubqueryBodyContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10818:func NewSubqueryBodyContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *SubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10829:func (s *SubqueryBodyContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10831:func (s *SubqueryBodyContext) UseClause() IUseClauseContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10847:func (s *SubqueryBodyContext) AllWithSt() []IWithStContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10868:func (s *SubqueryBodyContext) WithSt(i int) IWithStContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10888:func (s *SubqueryBodyContext) AllReadingStatement() []IReadingStatementContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10909:func (s *SubqueryBodyContext) ReadingStatement(i int) IReadingStatementContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10929:func (s *SubqueryBodyContext) AllUpdatingStatement() []IUpdatingStatementContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10950:func (s *SubqueryBodyContext) UpdatingStatement(i int) IUpdatingStatementContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10970:func (s *SubqueryBodyContext) ReturnSt() IReturnStContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10986:func (s *SubqueryBodyContext) FINISH() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10990:func (s *SubqueryBodyContext) UNION() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:10994:func (s *SubqueryBodyContext) SubqueryBody() ISubqueryBodyContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11010:func (s *SubqueryBodyContext) ALL() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11014:func (s *SubqueryBodyContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11018:func (s *SubqueryBodyContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11022:func (s *SubqueryBodyContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11028:func (s *SubqueryBodyContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:11034:func (p *CypherParser) SubqueryBody() (localctx ISubqueryBodyContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:12940:func (s *SinglePartQContext) CallSubquery() ICallSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:13510:func (s *MatchStContext) PatternWhere() IPatternWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:14548:func (s *ReadingStatementContext) CallSubquery() ICallSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:16561:func (s *MergeStContext) PatternPart() IPatternPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18479:func (s *CreateStContext) Pattern() IPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18566:func NewEmptyPatternWhereContext() *PatternWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18573:func InitEmptyPatternWhereContext(p *PatternWhereContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18578:func (*PatternWhereContext) IsPatternWhereContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18580:func NewPatternWhereContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18591:func (s *PatternWhereContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18593:func (s *PatternWhereContext) Pattern() IPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18609:func (s *PatternWhereContext) Where() IWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18625:func (s *PatternWhereContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18629:func (s *PatternWhereContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18633:func (s *PatternWhereContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18639:func (s *PatternWhereContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18645:func (p *CypherParser) PatternWhere() (localctx IPatternWhereContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18824:func NewEmptyPatternContext() *PatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18831:func InitEmptyPatternContext(p *PatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18836:func (*PatternContext) IsPatternContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18838:func NewPatternContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18849:func (s *PatternContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18851:func (s *PatternContext) AllPatternPart() []IPatternPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18872:func (s *PatternContext) PatternPart(i int) IPatternPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18892:func (s *PatternContext) AllCOMMA() []antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18896:func (s *PatternContext) COMMA(i int) antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18900:func (s *PatternContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18904:func (s *PatternContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18908:func (s *PatternContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18914:func (s *PatternContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:18920:func (p *CypherParser) Pattern() (localctx IPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:19580:func (s *NotExpressionContext) ExistsSubquery() IExistsSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23395:func NewEmptyPatternPartContext() *PatternPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23402:func InitEmptyPatternPartContext(p *PatternPartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23407:func (*PatternPartContext) IsPatternPartContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23409:func NewPatternPartContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23420:func (s *PatternPartContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23422:func (s *PatternPartContext) PatternElem() IPatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23438:func (s *PatternPartContext) Symbol() ISymbolContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23454:func (s *PatternPartContext) ASSIGN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23458:func (s *PatternPartContext) PathFunction() IPathFunctionContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23474:func (s *PatternPartContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23478:func (s *PatternPartContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23482:func (s *PatternPartContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23488:func (s *PatternPartContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23494:func (p *CypherParser) PatternPart() (localctx IPatternPartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23634:func (s *PathFunctionContext) PatternElem() IPatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23758:func NewEmptyPatternElemContext() *PatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23765:func InitEmptyPatternElemContext(p *PatternElemContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23770:func (*PatternElemContext) IsPatternElemContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23772:func NewPatternElemContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23783:func (s *PatternElemContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23785:func (s *PatternElemContext) PatternElemStart() IPatternElemStartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23801:func (s *PatternElemContext) AllPatternElemPart() []IPatternElemPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23822:func (s *PatternElemContext) PatternElemPart(i int) IPatternElemPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23842:func (s *PatternElemContext) LPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23846:func (s *PatternElemContext) PatternElem() IPatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23862:func (s *PatternElemContext) RPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23866:func (s *PatternElemContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23870:func (s *PatternElemContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23874:func (s *PatternElemContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23880:func (s *PatternElemContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23886:func (p *CypherParser) PatternElem() (localctx IPatternElemContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23986:func NewEmptyPatternElemStartContext() *PatternElemStartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23993:func InitEmptyPatternElemStartContext(p *PatternElemStartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:23998:func (*PatternElemStartContext) IsPatternElemStartContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24000:func NewPatternElemStartContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternElemStartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24011:func (s *PatternElemStartContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24013:func (s *PatternElemStartContext) NodePattern() INodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24029:func (s *PatternElemStartContext) QuantifiedPath() IQuantifiedPathContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24045:func (s *PatternElemStartContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24049:func (s *PatternElemStartContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24053:func (s *PatternElemStartContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24059:func (s *PatternElemStartContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24065:func (p *CypherParser) PatternElemStart() (localctx IPatternElemStartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24140:func NewEmptyPatternElemPartContext() *PatternElemPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24147:func InitEmptyPatternElemPartContext(p *PatternElemPartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24152:func (*PatternElemPartContext) IsPatternElemPartContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24154:func NewPatternElemPartContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternElemPartContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24165:func (s *PatternElemPartContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24167:func (s *PatternElemPartContext) PatternElemChain() IPatternElemChainContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24183:func (s *PatternElemPartContext) QuantifiedPath() IQuantifiedPathContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24199:func (s *PatternElemPartContext) NodePattern() INodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24215:func (s *PatternElemPartContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24219:func (s *PatternElemPartContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24223:func (s *PatternElemPartContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24229:func (s *PatternElemPartContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24235:func (p *CypherParser) PatternElemPart() (localctx IPatternElemPartContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24344:func (s *QuantifiedPathContext) PatternElem() IPatternElemContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24496:func NewEmptyPatternElemChainContext() *PatternElemChainContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24503:func InitEmptyPatternElemChainContext(p *PatternElemChainContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24508:func (*PatternElemChainContext) IsPatternElemChainContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24510:func NewPatternElemChainContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternElemChainContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24521:func (s *PatternElemChainContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24523:func (s *PatternElemChainContext) RelationshipPattern() IRelationshipPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24539:func (s *PatternElemChainContext) NodePattern() INodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24555:func (s *PatternElemChainContext) RelationshipQuantifier() IRelationshipQuantifierContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24571:func (s *PatternElemChainContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24575:func (s *PatternElemChainContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24579:func (s *PatternElemChainContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24585:func (s *PatternElemChainContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:24591:func (p *CypherParser) PatternElemChain() (localctx IPatternElemChainContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25041:func NewEmptyNodePatternContext() *NodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25048:func InitEmptyNodePatternContext(p *NodePatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25053:func (*NodePatternContext) IsNodePatternContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25055:func NewNodePatternContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *NodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25066:func (s *NodePatternContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25068:func (s *NodePatternContext) LPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25072:func (s *NodePatternContext) RPAREN() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25076:func (s *NodePatternContext) Symbol() ISymbolContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25092:func (s *NodePatternContext) NodeLabels() INodeLabelsContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25108:func (s *NodePatternContext) Properties() IPropertiesContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25124:func (s *NodePatternContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25128:func (s *NodePatternContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25132:func (s *NodePatternContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25138:func (s *NodePatternContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25144:func (p *CypherParser) NodePattern() (localctx INodePatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25395:func (s *AtomContext) CountSubquery() ICountSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25411:func (s *AtomContext) CollectSubquery() ICollectSubqueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25443:func (s *AtomContext) PatternComprehension() IPatternComprehensionContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25475:func (s *AtomContext) RelationshipsChainPattern() IRelationshipsChainPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:25539:func (s *AtomContext) SubqueryExist() ISubqueryExistContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26314:func NewEmptyRelationshipPatternContext() *RelationshipPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26321:func InitEmptyRelationshipPatternContext(p *RelationshipPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26326:func (*RelationshipPatternContext) IsRelationshipPatternContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26328:func NewRelationshipPatternContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *RelationshipPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26339:func (s *RelationshipPatternContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26341:func (s *RelationshipPatternContext) LT() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26345:func (s *RelationshipPatternContext) AllSUB() []antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26349:func (s *RelationshipPatternContext) SUB(i int) antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26353:func (s *RelationshipPatternContext) RelationDetail() IRelationDetailContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26369:func (s *RelationshipPatternContext) GT() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26373:func (s *RelationshipPatternContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26377:func (s *RelationshipPatternContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26381:func (s *RelationshipPatternContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26387:func (s *RelationshipPatternContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:26393:func (p *CypherParser) RelationshipPattern() (localctx IRelationshipPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27062:func NewEmptySubqueryExistContext() *SubqueryExistContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27069:func InitEmptySubqueryExistContext(p *SubqueryExistContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27074:func (*SubqueryExistContext) IsSubqueryExistContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27076:func NewSubqueryExistContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *SubqueryExistContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27087:func (s *SubqueryExistContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27089:func (s *SubqueryExistContext) EXISTS() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27093:func (s *SubqueryExistContext) LBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27097:func (s *SubqueryExistContext) RBRACE() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27101:func (s *SubqueryExistContext) RegularQuery() IRegularQueryContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27117:func (s *SubqueryExistContext) PatternWhere() IPatternWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27133:func (s *SubqueryExistContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27137:func (s *SubqueryExistContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27141:func (s *SubqueryExistContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27147:func (s *SubqueryExistContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:27153:func (p *CypherParser) SubqueryExist() (localctx ISubqueryExistContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28044:func NewEmptyPatternComprehensionContext() *PatternComprehensionContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28051:func InitEmptyPatternComprehensionContext(p *PatternComprehensionContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28056:func (*PatternComprehensionContext) IsPatternComprehensionContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28058:func NewPatternComprehensionContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternComprehensionContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28069:func (s *PatternComprehensionContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28071:func (s *PatternComprehensionContext) LBRACK() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28075:func (s *PatternComprehensionContext) RelationshipsChainPattern() IRelationshipsChainPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28091:func (s *PatternComprehensionContext) STICK() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28095:func (s *PatternComprehensionContext) Expression() IExpressionContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28111:func (s *PatternComprehensionContext) RBRACK() antlr.TerminalNode {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28115:func (s *PatternComprehensionContext) Lhs() ILhsContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28131:func (s *PatternComprehensionContext) Where() IWhereContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28147:func (s *PatternComprehensionContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28151:func (s *PatternComprehensionContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28155:func (s *PatternComprehensionContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28161:func (s *PatternComprehensionContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28167:func (p *CypherParser) PatternComprehension() (localctx IPatternComprehensionContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28269:func NewEmptyRelationshipsChainPatternContext() *RelationshipsChainPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28276:func InitEmptyRelationshipsChainPatternContext(p *RelationshipsChainPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28281:func (*RelationshipsChainPatternContext) IsRelationshipsChainPatternContext() {}
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28283:func NewRelationshipsChainPatternContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *RelationshipsChainPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28294:func (s *RelationshipsChainPatternContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28296:func (s *RelationshipsChainPatternContext) NodePattern() INodePatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28312:func (s *RelationshipsChainPatternContext) AllPatternElemChain() []IPatternElemChainContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28333:func (s *RelationshipsChainPatternContext) PatternElemChain(i int) IPatternElemChainContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28353:func (s *RelationshipsChainPatternContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28357:func (s *RelationshipsChainPatternContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28361:func (s *RelationshipsChainPatternContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28367:func (s *RelationshipsChainPatternContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-r73-dev/pkg/cypher\antlr\cypher_parser.go:28373:func (p *CypherParser) RelationshipsChainPattern() (localctx IRelationshipsChainPatternContext) {
+wt-fix-1384-r73-dev/pkg/cypher\ast_builder.go:840:func (b *ASTBuilder) parsePatterns(text string) []ASTPattern {
+wt-fix-1384-r73-dev/pkg/cypher\call.go:924:func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\call.go:1367:func splitPathAssignment(patternPart string) (string, string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\call_compat.go:910:func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storage.SchemaManager) bool) error {
+wt-fix-1384-r73-dev/pkg/cypher\clauses.go:334:func parseUnwindNodePatternClause(clause string, keyword string) (string, []string, []unwindSimpleSetAssignment, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\clauses.go:339:func parseUnwindNodePatternClauseInternal(clause string, keyword string, allowAlternatives bool) (string, []string, []unwindSimpleSetAssignment, bool, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\clauses.go:862:func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
+wt-fix-1384-r73-dev/pkg/cypher\clauses.go:2006:func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
+wt-fix-1384-r73-dev/pkg/cypher\count_store.go:57:func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatternInfo, item returnItem) (int64, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:120:func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:137:func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:337:func (e *StorageExecutor) planCreateNode(ctx context.Context, pattern string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (*storage.Node, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:401:func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:459:func namedPathAssignmentPrefix(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:490:func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:591:func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:608:func parseCreatePathAssignment(pattern string) (string, string) {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:626:func (e *StorageExecutor) splitCreatePatterns(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:630:func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:749:func (e *StorageExecutor) isSingleNodePattern(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:753:func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\create.go:883:func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\create_pipeline_helpers.go:136:func (e *StorageExecutor) createPatternSplitFor(pattern string) createPatternSplit {
+wt-fix-1384-r73-dev/pkg/cypher\create_pipeline_helpers.go:175:func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create_pipeline_helpers.go:185:func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
+wt-fix-1384-r73-dev/pkg/cypher\create_pipeline_template.go:66:func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:203:func validateCreateRelationshipShape(pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:266:func createNodePatternVariable(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:278:func createNodePatternHasDecoration(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:311:func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:319:func (e *StorageExecutor) validateCreateRelationshipExpressions(scope *semanticBindingScope, pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:330:func createPropertyMapBody(pattern string) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:341:func createRelationshipPropertyMapBodies(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:373:func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+wt-fix-1384-r73-dev/pkg/cypher\create_semantic_validation.go:408:func createSamePatternReferenceError(variable, kind, clause string) error {
+wt-fix-1384-r73-dev/pkg/cypher\dynamic_tokens.go:442:func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error) {
+wt-fix-1384-r73-dev/pkg/cypher\dynamic_tokens.go:513:func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error {
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:147:func hasSubqueryPattern(query string, pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:163:func hasCallSubqueryPattern(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:171:func firstTopLevelCallSubquery(query string) int {
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:194:func callSubqueryAt(query string, i int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:217:func hasNotExistsFollowedByBrace(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_match_limit_fastpath.go:84:func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_match_vector_cosine_fastpath.go:1471:func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (parsedSimpleMatchRelationshipPattern, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_match_vector_cosine_fastpath.go:1512:func (e *StorageExecutor) buildRelationshipContext(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_match_vector_cosine_fastpath.go:1521:func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatchRelationshipPattern, edge *storage.Edge, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:26:func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:265:func wherePartNodePattern(nodePat nodePatternInfo, variable string) nodePatternInfo {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:854:func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:911:func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, pattern, innerWhere string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:945:func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:1099:func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:1130:func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations.go:1161:func (e *StorageExecutor) relationshipExistencePatternDirections(pattern, variable string) (incoming, outgoing bool, relTypes []string) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_delete_guard.go:171:func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_delete_guard.go:185:func (executor *StorageExecutor) pipelinePatternBindingNames(clause, keyword string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_delete_guard.go:195:func (executor *StorageExecutor) eachPipelinePatternBinding(clause, keyword string, visit func(string)) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_delete_guard.go:218:func extractPathAssignmentVariable(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_delete_guard.go:242:func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
+wt-fix-1384-r73-dev/pkg/cypher\executor_mutations_relationship_delete.go:153:func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_query_routing.go:787:func validateLeadingNodePatternTransition(cypher string) error {
+wt-fix-1384-r73-dev/pkg/cypher\executor_use.go:25:func parseUseClause(cypher string, inSubquery bool) (fabric.UseClause, string, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:24:func isCallSubquery(cypher string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:32:func startsWithCallSubquery(cypher string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:36:func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:52:func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, outerPart, seedVar, seedID, importVar string, cache map[string]map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:204:func isCallSubqueryPureReturn(innerBody string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:223:func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:229:func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:470:func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:532:func callSubqueryHasScopeClause(cypher string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:549:func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:606:func callSeedIsFirstNode(pattern, variable string, callImportVars []string, subqueryBody string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:680:func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:707:func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip int) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:811:func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subqueryBody string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:902:func unscopedCallImports(subqueryBody string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1019:func patternPartEnd(clause pipelineClause) int {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1058:func isPatternVariableAt(text string, index, length int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1096:func isPatternClauseKeyword(word string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1130:func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1473:func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1657:func callSubqueryLookupKeyString(v interface{}) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1681:func normalizeCallSubqueryLookupString(s string) string {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1686:func extractCallSubqueryCorrelationWhere(whereClause, importCol string) (matchVar, matchProp, otherWhere string, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1727:func parseCallSubqueryVarProp(expr string) (string, string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1741:func sanitizeCallSubqueryOtherWhere(otherWhere string, importCol string) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1769:func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1784:func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1856:func indexTopLevelKeywordCallSubquery(s string, keyword string) int {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1914:func splitTopLevelResultModifiersCallSubquery(returnPart string) (projection string, modifiers string) {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:1928:func callSubqueryQueryIsWrite(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\executor_subqueries.go:2060:func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\explain.go:556:func containsVariableLengthPathPattern(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:194:func inLocalSubqueryScope(ctx context.Context) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:201:func localSubqueryScope(ctx context.Context, expression string, evaluate func(context.Context) (interface{}, bool, error)) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:212:func withoutLocalSubqueryScope(ctx context.Context) context.Context {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:277:func liftsValueSubquery(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:473:func liftableSubquery(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:487:func subqueryInsideCase(expression string, offset int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_failure.go:753:func relationshipPatternMayFail(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\expression_subquery_scope.go:10:func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqueryScope) error {
+wt-fix-1384-r73-dev/pkg/cypher\expression_validation.go:270:func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\functions_cypher25.go:207:func fnPropertyExists(ctx cypherfn.Context, args []string) (interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\functions_text_locate.go:122:func textLocatePattern(quote string) *regexp.Regexp {
+wt-fix-1384-r73-dev/pkg/cypher\function_aliases.go:100:func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
+wt-fix-1384-r73-dev/pkg/cypher\gds_functions.go:44:func fnGDSGraphExists(ctx cypherfn.Context, args []string) (interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\gds_node_similarity.go:102:func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
+wt-fix-1384-r73-dev/pkg/cypher\gds_node_similarity.go:233:func readGDSNodeFilter(proj *GraphProjection, value interface{}, selectedLabels []string, nodeExists ...func(string) bool) (*gdsNodeFilter, error) {
+wt-fix-1384-r73-dev/pkg/cypher\gds_node_similarity.go:277:func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func(string) bool) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\gds_projection.go:1047:func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\identifier_unquote.go:23:func isPatternVariableName(name string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\keyword_scan.go:1647:func inPatternClause(query string, index int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\knowledgepolicy_ddl.go:852:func kpParseDrop(s string, i int, statement string, isPolicy bool, build func(name string, ifExists bool) interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:85:func (m labelPatternMode) clause() string {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:165:func mayReadPatternInPropertyMap(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:195:func mayUsePatternPredicate(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:558:func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:607:func (r *labelExpressionRewriter) pattern(start, end int, mode labelPatternMode) ([]string, error) {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:615:func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatternMode, predicates *[]string) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:694:func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:781:func (r *labelExpressionRewriter) samePatternMapReads(open, from, close int, variable string, relationship bool, predicates *[]string) {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:841:func (r *labelExpressionRewriter) readsPatternVariable(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:868:func declaredPatternVariables(pattern string) map[string]bool {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:917:func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:964:func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:1048:func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode labelPatternMode) (*labelExpression, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:1414:func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:1456:func (r *labelExpressionRewriter) subquery(start, end int) error {
+wt-fix-1384-r73-dev/pkg/cypher\label_expression_rewrite.go:1605:func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callClose int) error {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:127:func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:134:func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:174:func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:205:func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:328:func newSubqueryBraceScanner(query string, start int) subqueryBraceScanner {
+wt-fix-1384-r73-dev/pkg/cypher\map_literal_validation.go:332:func (scanner *subqueryBraceScanner) at(brace int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:16:func (context *mapPatternContext) insidePatternDelimiter(query string, end int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:65:func mapNodeDelimiter(query string, open, previous, prior int, stack []mapDelimiter, context *mapPatternContext) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:126:func mapPatternClause(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:160:func mapRelationshipDelimiter(query string, open, previous int, context *mapPatternContext) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:179:func mapPatternScope(query string, open int, stack []mapDelimiter, context *mapPatternContext) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:208:func newMapPatternContext(query string) *mapPatternContext {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:255:func (context *mapPatternContext) close(open int) int {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:261:func (context *mapPatternContext) scope(query string, start int) *mapPatternClauseIndex {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:303:func (scope *mapPatternClauseIndex) pattern(position int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:307:func (context *mapPatternContext) selected(query string, open int, stack []mapDelimiter) bool {
+wt-fix-1384-r73-dev/pkg/cypher\map_pattern_context.go:319:func (context *mapPatternContext) existsCall(query string, end int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_order_groups.go:62:func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:113:func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:360:func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:367:func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:1169:func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:1188:func seekCandidateHasLabels(node *storage.Node, patternLabels, anyOf []string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:1974:func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_index_seek.go:2076:func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_multi.go:138:func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:104:func (enclosing subqueryScope) redeclarationError(name string) error {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:123:func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope) (typeScope, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:801:func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanticScope, expression string) error {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:835:func maskPatternComprehensions(expression string) string {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:877:func maskSubqueryBodies(expression string) string {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:911:func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope, text string) error {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:951:func validateExpressionPatternBindings(scope staticTypeScope, text string) error {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1001:func validateBoundPatternKinds(scope matchSemanticScope, pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1325:func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1373:func invalidRelationshipPattern(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1423:func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1494:func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:1549:func withPatternComprehensionBindings(scope staticTypeScope, text string, at int) staticTypeScope {
+wt-fix-1384-r73-dev/pkg/cypher\merge_actions.go:144:func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\merge_actions.go:159:func mergePathSegments(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\merge_actions.go:195:func directedMergePath(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\merge_actions.go:234:func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_context.go:34:func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_context.go:195:func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\merge_context.go:389:func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (string, []string, map[string]interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_context.go:405:func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:118:func addMergePatternBindings(scope *semanticBindingScope, clause string) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:241:func validateMergeRelationshipShape(pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:254:func mergeClausePattern(clause string) string {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:267:func mergePatternUsesParameterPredicate(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:309:func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\merge_semantic_validation.go:333:func validateMergePatternProperties(properties map[string]interface{}, entity string) error {
+wt-fix-1384-r73-dev/pkg/cypher\merge_relationship_pattern.go:52:func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRelationshipShape, error) {
+wt-fix-1384-r73-dev/pkg/cypher\merge_relationship_pattern.go:97:func (e *StorageExecutor) parseMergeRelationshipPattern(
+wt-fix-1384-r73-dev/pkg/cypher\merge_relationship_pattern.go:128:func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) nodePatternInfo {
+wt-fix-1384-r73-dev/pkg/cypher\node_helpers.go:370:func (e *StorageExecutor) extractVarName(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\node_helpers.go:403:func (e *StorageExecutor) extractLabels(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\optimized_executors.go:25:func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (*ExecuteResult, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\optimized_executors.go:67:func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\optimized_executors.go:138:func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\optimized_executors.go:206:func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\optimized_executors.go:282:func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_agg.go:135:func subqueryExpressionEnd(expr string, i int) int {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal.go:138:func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_general.go:33:func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_general.go:68:func firstParenGroup(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_general.go:88:func ensureLeadingNodeNamed(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_general.go:204:func nodePatternPropertyExpressions(group string) map[string]string {
+wt-fix-1384-r73-dev/pkg/cypher\optional_match_traversal_general.go:342:func patternVariableBoundToNull(scope pipelineRow, variables []string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:76:func (p pathPatternPrefix) selective() bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:83:func scanPathPatternPrefix(q string, i, end int) (pathPatternPrefix, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:149:func (prefix pathPatternPrefix) finish(q string, at, end int) (pathPatternPrefix, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:174:func mayUsePathPatternPrefix(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:195:func pathPatternPrefixWord(query string, start, end int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:469:func writePatternSelectorError(q string, clause labelClause) error {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector.go:611:func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_match.go:63:func (e *StorageExecutor) parseSelectedPathMatch(pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_match.go:67:func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:93:func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:97:func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:162:func parsePathPatternNode(text string) (pathPatternItem, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:187:func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:346:func buildPathSearchAutomatonContext(ctx context.Context, items []pathPatternItem) *pathSearchAutomaton {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:381:func itemsMaxLength(items []pathPatternItem) int {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:408:func (a *pathSearchAutomaton) sequence(items []pathPatternItem, group int) (int, int) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:453:func (a *pathSearchAutomaton) transition(item pathPatternItem, to, group int) pathSearchTransition {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:460:func (a *pathSearchAutomaton) repetition(members []pathPatternItem, min, max, group int) (int, int) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:490:func itemsMinLength(items []pathPatternItem) int {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:574:func reversePathPatternItems(items []pathPatternItem) []pathPatternItem {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:639:func compileSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:643:func compileSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:662:func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:666:func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:802:func (plan *selectedPathPlan) compileGroup(group *pathPatternItem, name func() string) {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:847:func readsPatternVariable(term, name string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:955:func errSelectedPathPattern(pattern string) error {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:1137:func selectedEndpointConstrained(item pathPatternItem) bool {
+wt-fix-1384-r73-dev/pkg/cypher\path_selector_search.go:1143:func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelineRow, item pathPatternItem) ([]*storage.Node, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_comprehension_classification.go:7:func singleNodePatternComprehension(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_comprehension_classification.go:15:func classifyPatternComprehensions(query string) (pattern, singleton bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_comprehension_classification.go:70:func mayHavePatternComprehension(query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_comprehension_classification.go:99:func relationshipPatternFollows(cypher string, at int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_bound_node_values.go:19:func validateBoundPatternNodes(rows []pipelineRow, body string) error {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_bound_node_values.go:43:func boundPatternNodeValueError(variable string, value interface{}) error {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:18:func splitPatternComprehension(expr string) (string, string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:78:func rowPatternComprehensionAtom(expr string) (pattern, projection string, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:90:func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:108:func patternComprehensionHead(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:129:func isStandaloneExistsSubquery(expr string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:146:func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:155:func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) []traversalOptRow {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:163:func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:206:func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:222:func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:634:func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_parser.go:91:func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_parser.go:106:func splitNodePatternProperties(pattern string) (head, props string) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_predicate.go:23:func planPatternPredicate(pattern string) *patternPredicatePlan {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_predicate.go:50:func (e *StorageExecutor) validatePatternPredicateVariables(variables []string, bound func(string) bool) error {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_predicate.go:62:func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Context, scope compiledRowScope) (bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_aggregate_stream.go:202:func cartesianAggregateProperty(expression string, patterns []struct {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_aggregate_stream.go:224:func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, patterns []struct {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_call_operator.go:12:func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_call_operator.go:21:func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:252:func matchPatternStructureFor(ctx context.Context, pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:256:func ensureLeadingNodeNamedFor(ctx context.Context, pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:286:func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string) callSubqueryParse {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:300:func callSubqueryQueryIsWriteFor(ctx context.Context, query string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:323:func (e *StorageExecutor) plannedPatternBindings(plan *pipelineClausePlan, clause, keyword string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_clause_plan.go:461:func mayContainSubqueryExpressionFor(ctx context.Context, expr string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:131:func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []string) ([]string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1101:func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1899:func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1927:func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, hint pipelineMatchPhysicalHint, visit func(*storage.Node) error) error {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1947:func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodePattern nodePatternInfo) *storage.Node {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1963:func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (properties map[string]interface{}, streamingWhere string, projection []string) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:2181:func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_imports.go:9:func withPipelineImports(ctx context.Context, imports pipelineRow) context.Context {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_imports.go:16:func pipelineImports(ctx context.Context) pipelineRow {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_imports.go:25:func carryPipelineRowImports(projected, input, imports pipelineRow) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_imports.go:32:func carrySubqueryImports[T any](projected, input, imports map[string]T) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_mutation.go:783:func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows []pipelineRow, clause, pattern string) ([]pipelineRow, *QueryStats, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_mutation.go:806:func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_pattern_template.go:106:func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_pattern_template.go:177:func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_traversal_match.go:164:func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_traversal_match.go:186:func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, pattern string, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_traversal_match.go:225:func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_write_stretch.go:179:func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
+wt-fix-1384-r73-dev/pkg/cypher\property_access_semantic_validation.go:422:func isSubqueryBrace(text string, index int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:64:func hasQuantifiedGroup(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:92:func nextQuantifiedGroup(pattern string, from int) (int, int, relationshipQuantifier, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:101:func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relationshipQuantifier, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:251:func lastNodePatternStart(chain string) int {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:499:func quantifiedGroups(pattern string) []quantifiedGroupSpan {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:531:func elementPredicateSpans(pattern string, from, to int) [][2]int {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:553:func (group quantifiedGroupSpan) predicateTexts(pattern string) []string {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:569:func maskQuantifiedGroupPredicates(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:594:func matchPatternStructure(body string) string {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:616:func quantifiedGroupVariables(pattern string) (map[string]struct{}, map[string]struct{}) {
+wt-fix-1384-r73-dev/pkg/cypher\quantified_path_pattern.go:713:func quantifiedGroupError(q string, open, close, patternEnd int) error {
+wt-fix-1384-r73-dev/pkg/cypher\query_info.go:514:func patternNodeLabels(pattern string) map[string][]string {
+wt-fix-1384-r73-dev/pkg/cypher\query_info.go:530:func eachPatternElement(pattern string, visit func(opener byte, element string)) {
+wt-fix-1384-r73-dev/pkg/cypher\query_info.go:553:func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:48:func (p QueryPattern) String() string {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:79:func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:159:func countRelationshipPatterns(s string) int {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:197:func detectMutualRelationship(ctx context.Context, query string, info *PatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:241:func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:268:func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:339:func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:374:func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:588:func extractRelationshipType(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:613:func extractRelationshipVariable(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:646:func (p PatternInfo) IsOptimizable() bool {
+wt-fix-1384-r73-dev/pkg/cypher\query_patterns.go:651:func (p PatternInfo) NeedsRelationshipTypeScan() bool {
+wt-fix-1384-r73-dev/pkg/cypher\regex_match.go:23:func cypherRegexMatch(text, pattern interface{}) (interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\regex_match.go:47:func anchoredRegexPattern(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\regex_patterns.go:28:func GetCachedRegex(pattern string) (*regexp.Regexp, error) {
+wt-fix-1384-r73-dev/pkg/cypher\relationship_brackets.go:54:func patternHasRelationship(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\relationship_merge_identity.go:228:func relationshipMatchesMergePattern(
+wt-fix-1384-r73-dev/pkg/cypher\relationship_quantifier_rewrite.go:103:func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, quantifier relationshipQuantifier, mode labelPatternMode) error {
+wt-fix-1384-r73-dev/pkg/cypher\relationship_quantifier_rewrite.go:130:func (r *labelExpressionRewriter) quantifiedArrow(start, arrowEnd, at int, quantifier relationshipQuantifier, mode labelPatternMode) error {
+wt-fix-1384-r73-dev/pkg/cypher\rel_existence_pattern.go:5:func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:1996:func isRelationshipPatternOperand(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:2005:func containsRelationshipPattern(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:2057:func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (matched bool, recognized bool) {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:2077:func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:2087:func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists string, values map[string]interface{}) (matched bool, recognized bool) {
+wt-fix-1384-r73-dev/pkg/cypher\row_value_program.go:659:func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:553:func parseDropSchemaName(rest string) (name string, ifExists, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:580:func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:831:func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:1128:func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:1475:func (e *StorageExecutor) parseCreateConstraintForRequireHead(cypher string) (name string, patternSpan string, requireExpr string, err error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:1810:func parseNodeLabelOnlyPattern(inner string) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\schema.go:2149:func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifNotExists bool) error {
+wt-fix-1384-r73-dev/pkg/cypher\schema_contracts.go:158:func (e *StorageExecutor) executeCreateConstraintContract(ctx context.Context, cypher string, ifNotExists bool) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema_contracts.go:166:func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType, body string, ifNotExists bool) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\schema_lookup_index.go:64:func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entityType storage.ConstraintEntityType, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:233:func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:459:func validatePatternExpressionPlacement(cypher string) error {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:490:func containsIllegalProjectedPatternExpression(expression string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:567:func maskPredicatePatterns(expression string) string {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:607:func patternInBooleanPosition(expression string, start, end int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:660:func invalidPatternExpressionPlacementError() error {
+wt-fix-1384-r73-dev/pkg/cypher\semantic_validation.go:668:func validateExistsSubqueryClauseComposition(cypher string) error {
+wt-fix-1384-r73-dev/pkg/cypher\set_semantic_validation.go:29:func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
+wt-fix-1384-r73-dev/pkg/cypher\shortest_path.go:73:func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\shortest_path_match.go:145:func shortestPathPlanContext(ctx context.Context, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, predicate string) (*selectedPathPlan, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\shortest_path_match.go:166:func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatch) error {
+wt-fix-1384-r73-dev/pkg/cypher\shortest_path_match.go:233:func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\show_schema_values.go:53:func schemaPattern(entityType string, labelsOrTypes []string) (string, string) {
+wt-fix-1384-r73-dev/pkg/cypher\static_operator_types.go:838:func staticPatternExpressionType(expression string) staticOperand {
+wt-fix-1384-r73-dev/pkg/cypher\static_type_scope.go:392:func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+wt-fix-1384-r73-dev/pkg/cypher\static_type_scope.go:444:func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\static_type_scope.go:477:func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:34:func mayContainSubqueryExpression(expr string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:48:func findSubqueryExpressions(expr string) []subqueryExpression {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:85:func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:103:func nestedSubqueryExpressions(expr string) []subqueryExpression {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:116:func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:133:func wholeExistsPredicate(predicate string) (negated bool, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:197:func planRowSubqueries(expr string) *rowSubqueryPlan {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:235:func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:253:func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:276:func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:299:func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:312:func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:381:func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:401:func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:877:func patternMapsAreConstant(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:890:func patternMapsAreConstantText(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:1026:func patternHasInlineWhere(text string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:1045:func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:1220:func rowSubqueryQuery(kind, body string) string {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:1237:func rowSubqueryQueryFor(ctx context.Context, kind, body string) string {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_format.go:97:func formatDurationPattern(duration *CypherDuration, pattern string) (string, error) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_format.go:209:func stripDurationQuotes(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_format.go:238:func constructTemporalWithPattern(kind string, input, pattern interface{}) (interface{}, error) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:55:func validPatternLetter(letter byte, count int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:75:func compileTemporalPattern(pattern string) (items []patternItem, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:189:func (item patternItem) numeric() (numericSpec, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:375:func patternTemporalOf(value interface{}) (patternTemporal, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:397:func formatTemporalPattern(items []patternItem, value patternTemporal) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:429:func patternFieldNeeds(letter byte) (date, clock, offset, zone bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:441:func formatPatternField(item patternItem, value patternTemporal) (string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:586:func (value patternTemporal) zoneText(seconds int) string {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:640:func patternOffsetForm(letter byte, count int) (minutes bool, separator, zero string) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:663:func formatPatternOffset(letter byte, count, seconds int) string {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern.go:684:func isPatternLetter(c byte) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:64:func (state *patternParse) set(field patternField, value int64) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:74:func (state *patternParse) parseItems(items []patternItem, pos int) (int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:104:func (state *patternParse) parsePadded(item patternItem, pos int) (int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:122:func (state *patternParse) parseField(item patternItem, pos int) (int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:215:func (state *patternParse) parseText(text string, pos int, field patternField, base int64, names ...string) (int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:228:func (state *patternParse) setOffset(seconds int) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:240:func (state *patternParse) parseZoneID(pos int, names map[string]string) (int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:402:func parsePatternOffset(text string, pos int, letter byte, count int) (int, int, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:474:func (state *patternParse) resolve() (resolvedPattern, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:583:func (state *patternParse) usWeekday() (int, patternField, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:596:func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int, used *[patternFieldCount]bool) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:682:func (state *patternParse) crossCheckDate(date time.Time, used *[patternFieldCount]bool) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:701:func (state *patternParse) crossCheckTime(result resolvedPattern, used *[patternFieldCount]bool) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:717:func (state *patternParse) crossCheck(expected map[patternField]int64, used *[patternFieldCount]bool) bool {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_pattern_parse.go:732:func parseTemporalPattern(kind, text, pattern string) (interface{}, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\temporal_viewport.go:102:func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:188:func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:272:func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:676:func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:895:func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int) (*ExecuteResult, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:929:func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1151:func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1163:func normalizeAnonymousTraversalRelationships(pattern string) string {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1206:func (e *StorageExecutor) isChainedPattern(pattern string) bool {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1220:func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1389:func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1455:func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) nodePatternInfo {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1925:func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern nodePatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1951:func (e *StorageExecutor) newMatchTraversalContext(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch, rel *RelationshipPattern) *TraversalContext {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:1963:func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, startNode *storage.Node, rel *RelationshipPattern) *TraversalContext {
+wt-fix-1384-r73-dev/pkg/cypher\traversal.go:2174:func (e *StorageExecutor) matchesEndPattern(node *storage.Node, pattern *nodePatternInfo) bool {
+wt-fix-1384-r73-dev/pkg/cypher\traversal_relationship_id_seed.go:18:func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
+wt-fix-1384-r73-dev/pkg/cypher\unwind_multi_match_create.go:473:func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\where_by_variable.go:74:func hasPatternOrSubquery(expression string) bool {

@@ -1,0 +1,38 @@
+tnrun: job i20261018035545-31396-5d8b: wt-fix-1384-release@c37a11cb, 1 untracked file(s); submitted in 2.4s
+tnrun: running
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.26 GiB
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.33 GiB
+tnrun: job i20261018035545-31396-5d8b: DONE exit 0 (default 0 in 108s, antlr 0 in 97s); box 205s, total 213s
+tnrun job i20261018035545-31396-5d8b (wt-fix-1384-release@c37a11cb): worker 1, CPUs 6,7,70,71, commit c37a11cb4a013a8aea4ddb9b649bd4fb54057109, go1.26.9
+untracked files: overlaid i20261018035545-31396-5d8b.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestSolReviewDifferentialFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestSolReviewDifferentialFamilies
+    zz_fix1384_families_test.go:38: SOL_FAMILIES map[pattern:2272 pattern-comprehension:878 pattern-predicate:113]; statements=3263
+=== RUN   TestSolReviewDifferentialFamilies/bolt-auto
+    zz_fix1384_families_test.go:58: SOL_REPORT bolt-auto compared=3263 known=0 unstable=0 new=0 now-match=0
+=== RUN   TestSolReviewDifferentialFamilies/bolt-tx
+    zz_fix1384_families_test.go:58: SOL_REPORT bolt-tx compared=3263 known=0 unstable=0 new=0 now-match=0
+--- PASS: TestSolReviewDifferentialFamilies (91.80s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-auto (44.96s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-tx (45.45s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	91.972s
+=== parser default: exit 0 after 108s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestSolReviewDifferentialFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestSolReviewDifferentialFamilies
+    zz_fix1384_families_test.go:38: SOL_FAMILIES map[pattern:2272 pattern-comprehension:878 pattern-predicate:113]; statements=3263
+=== RUN   TestSolReviewDifferentialFamilies/bolt-auto
+    zz_fix1384_families_test.go:58: SOL_REPORT bolt-auto compared=3263 known=0 unstable=0 new=0 now-match=0
+=== RUN   TestSolReviewDifferentialFamilies/bolt-tx
+    zz_fix1384_families_test.go:58: SOL_REPORT bolt-tx compared=3263 known=0 unstable=0 new=0 now-match=0
+--- PASS: TestSolReviewDifferentialFamilies (93.58s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-auto (45.00s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-tx (47.19s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	93.779s
+=== parser antlr: exit 0 after 97s

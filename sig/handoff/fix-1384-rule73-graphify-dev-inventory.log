@@ -1,0 +1,54 @@
+{
+  "root": "/tmp/nornic-fix1384-rule73-dev",
+  "graphNodes": 53556,
+  "graphEdges": 1301238,
+  "astFunctions": 5048,
+  "astCalls": 42069,
+  "astParseErrors": [],
+  "entrypoints": [
+    "pkg/cypher/executor_entry.go:L100"
+  ]
+}
+rowPatternPredicate pkg/cypher/row_expression.go:L2077 callers 2 Execute-static-path NO RESOLVED PATH
+evaluatePatternPredicateValue pkg/cypher/pattern_expression.go:L634 callers 1 Execute-static-path NO RESOLVED PATH
+evaluatePatternComprehensionFromRow pkg/cypher/pattern_expression.go:L222 callers 3 Execute-static-path NO RESOLVED PATH
+evaluateExistsSubqueryValue pkg/cypher/pattern_expression.go:L146 callers 0 Execute-static-path NO RESOLVED PATH
+rowSubqueryValue pkg/cypher/subquery_value_expression.go:L312 callers 2 Execute-static-path NO RESOLVED PATH
+boundDegreeCount pkg/cypher/subquery_value_expression.go:L1177 callers 1 Execute-static-path NO RESOLVED PATH
+boundChainCount pkg/cypher/subquery_value_expression.go:L455 callers 1 Execute-static-path NO RESOLVED PATH
+boundExpandCount pkg/cypher/subquery_value_expression.go:L683 callers 1 Execute-static-path NO RESOLVED PATH
+boundNodeLookupCount pkg/cypher/subquery_value_expression.go:L486 callers 1 Execute-static-path NO RESOLVED PATH
+boundPatternRows pkg/cypher/pattern_expression.go:L163 callers 1 Execute-static-path NO RESOLVED PATH
+executeCorrelatedSubqueryBody pkg/cypher/subquery_value_expression.go:L401 callers 1 Execute-static-path NO RESOLVED PATH
+carrySubqueryImports pkg/cypher/pipeline_imports.go:L32 callers 2 Execute-static-path NO RESOLVED PATH
+evaluateRelationshipPatternInWhere pkg/cypher/executor_mutations.go:L854 callers 0 Execute-static-path NO RESOLVED PATH
+pipelineNodePredicateProperties pkg/cypher/pipeline_executor.go:L1355 callers 2 Execute-static-path NO RESOLVED PATH
+graphReadingExpression pkg/cypher/executor.go:L2154 callers 3 Execute-static-path .Execute() -> statementAccessesGraphText() -> expressionReadsGraphText() -> graphReadingExpression()
+patternPredicate pkg/cypher/label_expression_rewrite.go:L1605 callers 1 Execute-static-path .Execute() -> desugarLabelExpressions() -> .statement() -> .expression() -> .parenthesised() -> .patternPredicate()
+quantifiedGroup pkg/cypher/quantified_path_pattern.go:L642 callers 0 Execute-static-path NO RESOLVED PATH
+executeApply pkg/fabric/executor.go:L441 callers 1 Execute-static-path NO RESOLVED PATH
+ExecuteQueryWithRecord pkg/cypher/executor_fabric.go:L651 callers 1 Execute-static-path NO RESOLVED PATH
+ExecuteQueryWithRecord pkg/fabric/local_executor.go:L17 callers 1 Execute-static-path NO RESOLVED PATH
+ExecuteRecordQuery pkg/cypher/executor_fabric.go:L630 callers 0 Execute-static-path NO RESOLVED PATH
+ExecuteRecordQuery pkg/fabric/local_executor.go:L28 callers 1 Execute-static-path NO RESOLVED PATH
+executeFragmentQuery pkg/cypher/executor_fabric.go:L676 callers 2 Execute-static-path NO RESOLVED PATH
+AST-CANDIDATE pkg/cypher/row_expression.go:2077:rowPatternPredicate Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> evaluateRowValueText -> rowPatternPredicate
+AST-CANDIDATE pkg/cypher/pattern_expression.go:634:evaluatePatternPredicateValue Execute -> executeWithoutTransaction -> executeReturn -> evaluateRowExpressionWithContext -> evaluateRowExpressionShaped -> evaluatePatternPredicateValue
+AST-CANDIDATE pkg/cypher/pattern_expression.go:222:evaluatePatternComprehensionFromRow Execute -> executeWithoutTransaction -> executeReturn -> evaluateRowExpressionWithContext -> evaluateRowExpressionShaped -> evaluatePatternComprehensionFromRow
+AST-CANDIDATE pkg/cypher/pattern_expression.go:146:evaluateExistsSubqueryValue Execute -> executeTransactionScript -> executeCaseRollbackTransactionScript -> evaluateConditionExpression -> evaluateExpressionWithContext -> evaluateExpressionWithContextFull -> evaluateExpressionWithContextFullFunctions -> evaluateExistsSubqueryValue
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:312:rowSubqueryValue Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:1177:boundDegreeCount Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue -> boundDegreeCount
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:455:boundChainCount Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue -> boundChainCount
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:683:boundExpandCount Execute -> Analyze? -> analyzeQuery? -> add? -> addInScope -> evaluate? -> boundExpandCount
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:486:boundNodeLookupCount Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue -> boundNodeLookupCount
+AST-CANDIDATE pkg/cypher/pattern_expression.go:163:boundPatternRows Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue -> boundPatternRows
+AST-CANDIDATE pkg/cypher/subquery_value_expression.go:401:executeCorrelatedSubqueryBody Execute -> validateBoundParameterExpressions -> validateRuntimePaginationExpressions -> evaluateRowValue -> eval? -> rowSubqueryValue -> runCorrelatedSubquery -> executeCorrelatedSubqueryBody
+AST-CANDIDATE pkg/cypher/pipeline_imports.go:32:carrySubqueryImports Execute -> validateSemanticScopes -> validateMatchSemanticScopes -> validateMatchSemanticScopesUncached -> semanticScopeWalk -> carryStaticSubqueryImports -> carrySubqueryImports
+AST-CANDIDATE pkg/cypher/executor_mutations.go:854:evaluateRelationshipPatternInWhere NO RESOLVED PATH
+AST-CANDIDATE pkg/cypher/pipeline_executor.go:1355:pipelineNodePredicateProperties Execute -> executeWithoutTransaction -> executePipeline -> tryExecutePipelineSimpleNodeReadPlan -> tryStreamPipelineFilteredNodeCount -> pipelineNodePredicateProperties
+AST-CANDIDATE pkg/cypher/executor.go:2154:graphReadingExpression Execute -> statementAccessesGraphText -> expressionReadsGraphText -> graphReadingExpression
+AST-CANDIDATE pkg/cypher/label_expression_rewrite.go:1605:patternPredicate Execute -> desugarLabelExpressions -> statement -> expression -> parenthesised -> patternPredicate
+AST-CANDIDATE pkg/cypher/quantified_path_pattern.go:642:quantifiedGroup Execute -> desugarLabelExpressions -> statement -> pattern? -> patternElements -> quantifiedGroup
+AST-CANDIDATE pkg/cypher/executor_fabric.go:651:ExecuteQueryWithRecord NO RESOLVED PATH
+AST-CANDIDATE pkg/cypher/executor_fabric.go:630:ExecuteRecordQuery NO RESOLVED PATH
+AST-CANDIDATE pkg/cypher/executor_fabric.go:676:executeFragmentQuery NO RESOLVED PATH

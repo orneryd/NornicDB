@@ -1,0 +1,170 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018113346-71804-dd9d: wt-fix-1384-r73-dev@fc375efa, 6 untracked file(s); submitted in 4.3s
+tnrun: queued behind 1 job(s)
+tnrun: peak RSS of test binary (default): pkg/cypher 0.17 GiB
+tnrun job i20261018113346-71804-dd9d (wt-fix-1384-r73-dev@fc375efa): worker 7, CPUs 18,19,82,83, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018113346-71804-dd9d.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternResourceAttack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternResourceAttack
+=== RUN   TestRule73PatternResourceAttack/0
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.20 GiB
+tnrun: job i20261018113346-71804-dd9d: DONE exit 1 (default 1 in 55s, antlr 1 in 8s); box 64s, total 95s
+=== RUN   TestRule73PatternResourceAttack/1
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/2
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/3
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/4
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/5
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/6
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/7
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/8
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/9
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/10
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/11
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/12
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/13
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/14
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/15
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/16
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/17
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/18
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/19
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+--- FAIL: TestRule73PatternResourceAttack (1.40s)
+    --- FAIL: TestRule73PatternResourceAttack/0 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/1 (0.03s)
+    --- PASS: TestRule73PatternResourceAttack/2 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/3 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/4 (0.03s)
+    --- PASS: TestRule73PatternResourceAttack/5 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/6 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/7 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/8 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/9 (0.00s)
+    --- FAIL: TestRule73PatternResourceAttack/10 (0.09s)
+    --- FAIL: TestRule73PatternResourceAttack/11 (0.03s)
+    --- PASS: TestRule73PatternResourceAttack/12 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/13 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/14 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/15 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/16 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/17 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/18 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/19 (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.629s
+=== parser default: exit 1 after 55s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternResourceAttack$ -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternResourceAttack
+=== RUN   TestRule73PatternResourceAttack/0
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/1
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/2
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]->(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/3
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/4
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/5
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((b)<-[:R]-(a)) AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/6
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[true]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/7
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (b)<-[:R]-(a) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/8
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (b)<-[:R]-(a) RETURN 1 AS v }) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/9
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(b)<-[:R]-(a) | 1]) AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/10
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R]-(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/11
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R]-(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/12
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R]-(b) } AS found" max-adjacency=1 rows=[[1]] error=<nil>
+=== RUN   TestRule73PatternResourceAttack/13
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R]-(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/14
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R]-(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/15
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN exists((a)-[:R*1..1]->(b)) AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/16
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN EXISTS { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[true]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/17
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN COUNT { (a)-[:R*1..1]->(b) } AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/18
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size(COLLECT { MATCH (a)-[:R*1..1]->(b) RETURN 1 AS v }) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+=== RUN   TestRule73PatternResourceAttack/19
+    rule73_pattern_resource_attack_test.go:62: R73_RESOURCE query="MATCH (a:R73Hub),(b:R73Target) RETURN size([(a)-[:R*1..1]->(b) | 1]) AS found" max-adjacency=20001 rows=[[1]] error=<nil>
+    rule73_pattern_resource_attack_test.go:64: bound result materialized dense adjacency: 20001
+--- FAIL: TestRule73PatternResourceAttack (1.66s)
+    --- FAIL: TestRule73PatternResourceAttack/0 (0.06s)
+    --- FAIL: TestRule73PatternResourceAttack/1 (0.05s)
+    --- PASS: TestRule73PatternResourceAttack/2 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/3 (0.06s)
+    --- FAIL: TestRule73PatternResourceAttack/4 (0.02s)
+    --- PASS: TestRule73PatternResourceAttack/5 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/6 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/7 (0.01s)
+    --- PASS: TestRule73PatternResourceAttack/8 (0.00s)
+    --- PASS: TestRule73PatternResourceAttack/9 (0.00s)
+    --- FAIL: TestRule73PatternResourceAttack/10 (0.08s)
+    --- FAIL: TestRule73PatternResourceAttack/11 (0.04s)
+    --- PASS: TestRule73PatternResourceAttack/12 (0.01s)
+    --- FAIL: TestRule73PatternResourceAttack/13 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/14 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/15 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/16 (0.04s)
+    --- FAIL: TestRule73PatternResourceAttack/17 (0.03s)
+    --- FAIL: TestRule73PatternResourceAttack/18 (0.02s)
+    --- FAIL: TestRule73PatternResourceAttack/19 (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.901s
+=== parser antlr: exit 1 after 8s

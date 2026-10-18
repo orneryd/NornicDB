@@ -1,0 +1,88 @@
+wt-fix-1384-r73-release/pkg/cypher\executor_fabric.go:645:	executor.fabricRecordBindings = recordBindings
+wt-fix-1384-r73-release/pkg/cypher\executor_fabric.go:656:		exec.fabricRecordBindings = recordBindings
+wt-fix-1384-r73-release/pkg/cypher\executor_fabric.go:667:				exec.fabricRecordBindings = recordBindings
+wt-fix-1384-r73-release/pkg/cypher\executor.go:417:	// fabricRecordBindings carries correlated APPLY input bindings for Fabric execution.
+wt-fix-1384-r73-release/pkg/cypher\executor.go:419:	fabricRecordBindings map[string]interface{}
+wt-fix-1384-r73-release/pkg/cypher\executor.go:575:		fabricRecordBindings:           e.fabricRecordBindings,
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2108:// reads the graph (graphReadingExpression). statementAccessesGraphText,
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2112:	return graphReadingExpression(cypher) != ""
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2115:// Kinds of graph-reading expression graphReadingExpression reports.
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2122:// graphReadingExpression is the one reader of the expressions in cypher
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2131:func graphReadingExpression(cypher string) string {
+wt-fix-1384-r73-release/pkg/cypher\executor.go:2201:// graph-reading expression (graphReadingExpression), at any depth. CALL
+wt-fix-1384-r73-release/pkg/cypher\executor_query_routing.go:290:	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
+wt-fix-1384-r73-release/pkg/cypher\executor_query_routing.go:291:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:21:	values := make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:22:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:50:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:71:		for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:199:	if len(e.fabricRecordBindings) > 0 {
+wt-fix-1384-r73-release/pkg/cypher\executor_mutations_where_eval.go:215:			if v, ok := e.fabricRecordBindings[s]; ok {
+wt-fix-1384-r73-release/pkg/cypher\functions.go:143:		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
+wt-fix-1384-r73-release/pkg/cypher\executor_use.go:375:// expression (graphReadingExpression) is Neo4j's SyntaxError for it. On a
+wt-fix-1384-r73-release/pkg/cypher\executor_use.go:398:	switch kind := graphReadingExpression(tail); kind {
+wt-fix-1384-r73-release/pkg/cypher\match_index_seek.go:31:	value, ok = e.evaluateRowExpressionWithContext(ctx, expr, e.fabricRecordBindings)
+wt-fix-1384-r73-release/pkg/cypher\match_semantic_validation.go:34:	cacheable := len(e.fabricRecordBindings) == 0
+wt-fix-1384-r73-release/pkg/cypher\match_semantic_validation.go:75:	types := make(typeScope, len(e.fabricRecordBindings))
+wt-fix-1384-r73-release/pkg/cypher\match_semantic_validation.go:77:	for name := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\match_semantic_validation.go:778:			_, externallyBound := e.fabricRecordBindings[identifier]
+wt-fix-1384-r73-release/pkg/cypher\match_semantic_validation.go:811:				if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
+wt-fix-1384-r73-release/pkg/cypher\merge_context.go:854:	row := make(pipelineRow, len(e.fabricRecordBindings)+len(bindings)+len(nodes)+len(rels))
+wt-fix-1384-r73-release/pkg/cypher\merge_context.go:855:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:98:		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, rowValuesInExpressionContext(ctx, values)), true, nil
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:154:	rows, _ := e.boundPatternRows(ctx, pattern, nodes, rels, values)
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:158:// boundPatternRows is evaluateBoundPatternRows reporting whether the kernel
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:161:func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:204:func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:212:	return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, scope)
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:215:// evaluatePatternComprehensionFromRow evaluates a correlated pattern against
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:220:func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:352:		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:400:		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:494:// evaluatePatternPredicateValue is the value of a pattern predicate in a
+wt-fix-1384-r73-release/pkg/cypher\pattern_expression.go:499:func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
+wt-fix-1384-r73-release/pkg/cypher\pattern_parser.go:433:			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
+wt-fix-1384-r73-release/pkg/cypher\pattern_parser.go:449:	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
+wt-fix-1384-r73-release/pkg/cypher\pattern_parser.go:466:	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
+wt-fix-1384-r73-release/pkg/cypher\pattern_predicate.go:55:		if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
+wt-fix-1384-r73-release/pkg/cypher\pattern_predicate.go:90:			if count, expanded := e.boundExpandCount(ctx, hop, seed, "", values, true); expanded {
+wt-fix-1384-r73-release/pkg/cypher\pattern_predicate.go:95:	value, _, err := e.rowSubqueryValue(ctx, "EXISTS", plan.pattern, values)
+wt-fix-1384-r73-release/pkg/cypher\pipeline_executor.go:571:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\pipeline_mutation.go:381:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\relationship_edges.go:71:		out, in, err := adjacent.GetAdjacentEdges(nodeID)
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:113:		if matched, recognized := e.rowPatternPredicate(rowStatementContextOrBackground(values), expr, values); recognized {
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:246:				matched, recognized := e.rowPatternPredicate(rowStatementContextOrBackground(values), argument, values)
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:1231:// context evaluator (rowSubqueryValue).
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:1655:	if plan := planRowSubqueries(expression); plan != nil && !plan.logical && !plan.wholeExists {
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:1723:	if plan := planRowSubqueries(expression); plan != nil && !plan.wholeExists {
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:1865:		if matched, recognized := e.rowPatternPredicate(ctx, expr, values); recognized {
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:2061:// rowPatternPredicate is a relationship pattern used as a predicate (in
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:2065:func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
+wt-fix-1384-r73-release/pkg/cypher\row_expression.go:2082:	value, ok, err := e.rowSubqueryValue(ctx, "EXISTS", subquery, values)
+wt-fix-1384-r73-release/pkg/cypher\row_predicate_program.go:124:	if plan := planRowSubqueries(expr); plan != nil && !plan.logical && !plan.wholeExists {
+wt-fix-1384-r73-release/pkg/cypher\row_predicate_program.go:152:	if plan := planRowSubqueries(expr); plan != nil && !plan.wholeExists {
+wt-fix-1384-r73-release/pkg/cypher\subquery_bound_expand.go:9:// boundExpandCount is boundChainCount for one relationship of length one,
+wt-fix-1384-r73-release/pkg/cypher\subquery_bound_expand.go:18:func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:191:// planRowSubqueries returns expr's plan when it holds subquery expressions
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:193:func planRowSubqueries(expr string) *rowSubqueryPlan {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:228:// correlatedSubqueryExecutor returns an executor whose pipeline sees the row's
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:229:// values as outer bindings (fabricRecordBindings), for a subquery body that
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:231:func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:233:	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:234:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:235:		correlated.fabricRecordBindings[name] = value
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:241:		correlated.fabricRecordBindings[name] = value
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:281:	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:296:	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:304:// rowSubqueryValue is evaluateRowSubqueryValue returning the subquery's error
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:308:func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:315:		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:321:			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:393:	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:451:// boundChainCount counts the rows of a body that is one relationship chain,
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:459:func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:489:	if count, expanded := e.boundExpandCount(ctx, matches, seed, where, values, first); expanded {
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:546:// ((n {id: 1}), ()-[:R {k: $k}]->()): boundChainCount's traversal matches
+wt-fix-1384-r73-release/pkg/cypher\subquery_value_expression.go:616:// boundChainCount compares the traversal with the row's nodes and
+wt-fix-1384-r73-release/pkg/cypher\unwind_routing.go:191:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-r73-release/pkg/cypher\value_bindings.go:57:	if value, ok := e.fabricRecordBindings[name]; ok {

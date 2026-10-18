@@ -1,0 +1,112 @@
+diff --git a/pkg/cypher/pattern_predicate.go b/pkg/cypher/pattern_predicate.go
+index aba76cbfd..377643351 100644
+--- a/pkg/cypher/pattern_predicate.go
++++ b/pkg/cypher/pattern_predicate.go
+@@ -60,8 +60,22 @@ func (e *StorageExecutor) validatePatternPredicateVariables(variables []string,
+ }
+ 
+ func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Context, scope compiledRowScope) (bool, error) {
++	values := scope.materialize()
++	// Imports remain in scope throughout an expression subquery, even when
++	// its WITH stops projecting them. Resolve them before either matcher or
++	// the null check; the current row (including null) takes precedence.
++	if len(e.fabricRecordBindings) > 0 {
++		row := make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
++		for name, value := range e.fabricRecordBindings {
++			row[name] = value
++		}
++		for name, value := range values {
++			row[name] = value
++		}
++		values = row
++	}
+ 	if err := e.validatePatternPredicateVariables(plan.variables, func(name string) bool {
+-		_, bound := scope.lookup(name)
++		_, bound := values[name]
+ 		return bound
+ 	}); err != nil {
+ 		return false, err
+@@ -69,7 +83,7 @@ func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Conte
+ 	// A bound null cannot become a local variable when the general EXISTS
+ 	// matcher partitions entities out of the row (including typed nils).
+ 	for _, name := range plan.variables {
+-		value, _ := scope.lookup(name)
++		value := values[name]
+ 		if value == nil {
+ 			return false, nil
+ 		}
+@@ -84,7 +98,6 @@ func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Conte
+ 			}
+ 		}
+ 	}
+-	values := scope.materialize()
+ 	if hop := plan.hop; hop != nil && chainVariablesBindEntities(hop, values) {
+ 		if seed, _ := values[hop.StartNode.variable].(*storage.Node); seed != nil {
+ 			if count, expanded := e.boundExpandCount(ctx, hop, seed, "", values, true); expanded {
+diff --git a/pkg/cypher/pipeline_executor.go b/pkg/cypher/pipeline_executor.go
+index 46ea92161..06b2befc7 100644
+--- a/pkg/cypher/pipeline_executor.go
++++ b/pkg/cypher/pipeline_executor.go
+@@ -1417,6 +1417,13 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
+ }
+ 
+ func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
++	// A pattern can inspect this node's inline property map without a v.key
++	// expression. Pass the complete binding to the shared pattern owner.
++	for _, name := range extractNodeVariables(expression) {
++		if normalizeProjectionColumnName(name) == normalizeProjectionColumnName(variable) {
++			return nil
++		}
++	}
+ 	properties := make([]string, 0, len(inline)+2)
+ 	seen := make(map[string]struct{}, len(inline)+2)
+ 	for property := range inline {
+diff --git a/pkg/cypher/subquery_bound_expand.go b/pkg/cypher/subquery_bound_expand.go
+index a6ff742c8..f7b6fd462 100644
+--- a/pkg/cypher/subquery_bound_expand.go
++++ b/pkg/cypher/subquery_bound_expand.go
+@@ -44,16 +44,18 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
+ 			}
+ 		}
+ 	}
+-	// COUNT can amortize choosing the end with fewer relationships. EXISTS
+-	// reads adjacency directly: degree probes scan the storage indexes too,
+-	// and paying for two scans before the first possible match is slower
+-	// than the bound-hop predicate they replace.
++	// Both EXISTS and COUNT must expand the sparse end. Probe the opposite
++	// end first: zero or one relationship is already a bounded expansion,
++	// so a second index scan cannot usefully reduce its working set.
+ 	from, target := seed, storage.NodeID("")
+ 	if end != nil {
+ 		target = end.ID
+ 		reversed := reverseRelationshipDirection(rel.Direction)
+-		if !first && end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
+-			from, target, rel.Direction = end, seed.ID, reversed
++		if end.ID != seed.ID {
++			degree := e.relationshipDegree(end.ID, reversed)
++			if degree <= 1 || degree < e.relationshipDegree(seed.ID, rel.Direction) {
++				from, target, rel.Direction = end, seed.ID, reversed
++			}
+ 		}
+ 	}
+ 	traversal := e.newTraversalContext(ctx, from, &rel)
+diff --git a/scripts/cypher-tck/differential/gen_sweep.py b/scripts/cypher-tck/differential/gen_sweep.py
+index 62c6e23d3..52de5c320 100644
+--- a/scripts/cypher-tck/differential/gen_sweep.py
++++ b/scripts/cypher-tck/differential/gen_sweep.py
+@@ -1048,6 +1048,15 @@ add("pattern-predicate", "path", "MATCH p = (a:Q)-[:R]->(b:Q) WITH nodes(p)[0] A
+ add("pattern-predicate", "null", "OPTIONAL MATCH (z:Nope) RETURN exists((z)-[:R]->()) AS v")
+ add("pattern-predicate", "null", "OPTIONAL MATCH (z:Nope) WITH z MATCH (a:Q {id: 1}) WHERE NOT (z)-[:R]->() RETURN a.id AS id")
+ 
++# Imported expression-subquery bindings survive WITH even if it stops
++# projecting them. Exercise WHERE pattern predicates through the same owner.
++for projection in ["WITH 1 AS k", "WITH *", "WITH a AS retained",
++                   "WITH 1 AS k WITH a AS restored", "WITH a AS retained WITH 1 AS k"]:
++    for pattern in ["(a)-[:R]->(b)", "(a)-[:R {w:1}]->(b)"]:
++        body = f"{projection} MATCH (b:Q) WHERE {pattern}"
++        for kind in ["EXISTS", "COUNT"]:
++            add("pattern-predicate", "imported-with", f"MATCH (a:Q) RETURN a.id AS id, {kind} {{ {body} }} AS v ORDER BY id")
++
+ out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
+ with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
+     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))

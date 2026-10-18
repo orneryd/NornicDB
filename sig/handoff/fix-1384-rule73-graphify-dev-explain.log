@@ -1,0 +1,14 @@
+Node: .rowPatternPredicate()
+  ID:        cypher_storageexecutor_rowpatternpredicate
+  Source:    pkg/cypher/row_expression.go L2077
+  Type:      code
+  Community: 
+  Degree:    6
+
+Connections (6):
+  --> context.Context [references] [EXTRACTED] pkg/cypher/row_expression.go:L2077
+  <-- .evaluateRowValueText() [calls] [EXTRACTED] pkg/cypher/row_expression.go:L112
+  --> recordExpressionFailure() [calls] [INFERRED] pkg/cypher/row_expression.go:L2080
+  <-- StorageExecutor [method] [EXTRACTED] pkg/cypher/row_expression.go:L2077
+  --> planPatternPredicate() [calls] [INFERRED] pkg/cypher/row_expression.go:L2078
+  <-- .rowPredicateOperand() [calls] [EXTRACTED] pkg/cypher/row_expression.go:L1861

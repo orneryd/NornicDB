@@ -1,0 +1,1 @@
+bash sig/tnrun.sh go wt-fix-1384-release --allow-dirty --ref neo-ref --parser both --env SOL_REVIEW_FAMILIES=pattern-predicate,pattern,pattern-comprehension -- ./testing/cypher/tck -run '^TestSolReviewDifferentialFamilies$' -count=1 -timeout 20m -v

@@ -1,0 +1,176 @@
+tnrun: job i20261018111719-91668-90c9: wt-fix-1384-r73-release@4bc18585, 4 untracked file(s); submitted in 3.4s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/server 0.22 GiB
+tnrun: peak RSS of test binary (antlr): pkg/server 0.27 GiB
+tnrun: job i20261018111719-91668-90c9: DONE exit 1 (default 1 in 11s, antlr 1 in 11s); box 23s, total 34s
+tnrun job i20261018111719-91668-90c9 (wt-fix-1384-r73-release@4bc18585): worker 2, CPUs 8,9,72,73, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+untracked files: overlaid i20261018111719-91668-90c9.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 57 {"U01-context-rewrites": 24, "U02-consumers": 7, "U03-nested-errors": 6, "U04-dynamic-tokens": 5, "U05-body-admission": 15}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-3815379856 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:17:27 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:17:27 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:17:27 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:17:27 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:17:27 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:17:27 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:17:27 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:17:27 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:17:27 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:17:27 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:17:27 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8f5044edbc13be0b5720","issue":907,"kind":"statement","query":"UNWIND [1,2,3] AS k MATCH (a:Q {id:k}) RETURN k AS id,EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8ec1a654802cd2c93979","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WITH a,k,EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } AS v WHERE v RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[1],[2]]},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"d9bf9f82c83dc2f05af7","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN count(CASE WHEN EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } THEN 1 END) AS v","neo4j":{"columns":["v"],"rows":[[2]]},"nornicdb":{"columns":["v"],"rows":[[0]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8b2636758b16257a04f1","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id ORDER BY EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) },id","neo4j":{"columns":["id"],"rows":[[3],[1],[2]]},"nornicdb":{"columns":["id"],"rows":[[1],[2],[3]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"f4cc6ab5dee671a7d79e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,{found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }} AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,{"found":true}],[2,{"found":true}],[3,{"found":false}]]},"nornicdb":{"columns":["id","v"],"rows":[[1,{"found":false}],[2,{"found":false}],[3,{"found":false}]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"4f5ee9265e954facb8b2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { MATCH (a)-[:R]-\u003e(b) WHERE EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) } } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"5c45374aadbefee9647c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { MATCH (a)-[:R]-\u003e(b) RETURN COLLECT { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) RETURN c.id ORDER BY c.id } AS v ORDER BY b.id } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[[3]]],[2,[[]]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[[]]],[2,[[]]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"41cc625277575bfd54d7","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) WHERE EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) } | b.id] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"1d02325710e012bbd15e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"e7d9311e432210ab6bd8","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,0]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"4b330ec9cab133609e66","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[3]],[3,[]]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"b350dc67dd6be48d24d6","issue":907,"kind":"statement","query":"MATCH (a:Q) CREATE (out:Gate {key:a.id,found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }}) RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"b350dc67dd6be48d24d6:graph","issue":907,"kind":"graph","query":"MATCH (a:Q) CREATE (out:Gate {key:a.id,found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }}) RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["labels","properties"],"rows":[[["Q"],{"id":1}],[["Q"],{"id":2}],[["Q"],{"id":3}],[["P"],{"id":4}],[["Gate"],{"found":true,"key":1}],[["Gate"],{"found":true,"key":2}],[["Gate"],{"found":false,"key":3}]]},"nornicdb":{"columns":["labels","properties"],"rows":[[["Gate"],{"found":false,"key":1}],[["Q"],{"id":3}],[["P"],{"id":4}],[["Gate"],{"found":false,"key":3}],[["Gate"],{"found":false,"key":2}],[["Q"],{"id":1}],[["Q"],{"id":2}]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"178a156e2d6d9a70c059","issue":907,"kind":"statement","query":"MATCH (a:Q) MERGE (out:Gate {key:a.id}) SET out.found=EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"178a156e2d6d9a70c059:graph","issue":907,"kind":"graph","query":"MATCH (a:Q) MERGE (out:Gate {key:a.id}) SET out.found=EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["labels","properties"],"rows":[[["Q"],{"id":1}],[["Q"],{"id":2}],[["Q"],{"id":3}],[["P"],{"id":4}],[["Gate"],{"found":true,"key":1}],[["Gate"],{"found":true,"key":2}],[["Gate"],{"found":false,"key":3}]]},"nornicdb":{"columns":["labels","properties"],"rows":[[["Gate"],{"found":false,"key":2}],[["Gate"],{"found":false,"key":1}],[["Gate"],{"found":false,"key":3}],[["Q"],{"id":1}],[["P"],{"id":4}],[["Q"],{"id":3}],[["Q"],{"id":2}]]},"match":false}
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/bare-value match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/bare-value/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/case-pattern match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/case-pattern/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/function match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/function/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/not-value match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/not-value/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/aggregate match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/create match=0 diff=2
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/map match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/merge match=0 diff=2
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/order match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/project-filter match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/unwind match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/and-error match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/comprehension-filter match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/nested-collect match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/nested-count match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/or-error match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/short-circuit match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-label match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-predicate match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-type match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/undefined-dynamic match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:56: R73_TOTAL http compared=74 match=59 diff=15
+    rule73_pattern_attack_test.go:57: 15 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (4.21s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	4.494s
+=== parser default: exit 1 after 11s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 57 {"U01-context-rewrites": 24, "U02-consumers": 7, "U03-nested-errors": 6, "U04-dynamic-tokens": 5, "U05-body-admission": 15}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-1725220007 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:17:38 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:17:38 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:17:38 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:17:38 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:17:38 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:17:38 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:17:38 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:17:38 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:17:38 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:17:38 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:17:38 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8f5044edbc13be0b5720","issue":907,"kind":"statement","query":"UNWIND [1,2,3] AS k MATCH (a:Q {id:k}) RETURN k AS id,EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8ec1a654802cd2c93979","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WITH a,k,EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } AS v WHERE v RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[1],[2]]},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"d9bf9f82c83dc2f05af7","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN count(CASE WHEN EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } THEN 1 END) AS v","neo4j":{"columns":["v"],"rows":[[2]]},"nornicdb":{"columns":["v"],"rows":[[0]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"8b2636758b16257a04f1","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id ORDER BY EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) },id","neo4j":{"columns":["id"],"rows":[[3],[1],[2]]},"nornicdb":{"columns":["id"],"rows":[[1],[2],[3]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"f4cc6ab5dee671a7d79e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,{found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }} AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,{"found":true}],[2,{"found":true}],[3,{"found":false}]]},"nornicdb":{"columns":["id","v"],"rows":[[1,{"found":false}],[2,{"found":false}],[3,{"found":false}]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"4f5ee9265e954facb8b2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { MATCH (a)-[:R]-\u003e(b) WHERE EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) } } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,0],[3,0]]},"nornicdb":{"columns":["id","v"],"rows":[[1,0],[2,0],[3,0]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"5c45374aadbefee9647c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { MATCH (a)-[:R]-\u003e(b) RETURN COLLECT { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) RETURN c.id ORDER BY c.id } AS v ORDER BY b.id } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[[3]]],[2,[[]]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[[]]],[2,[[]]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"41cc625277575bfd54d7","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) WHERE EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) } | b.id] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[]],[3,[]]]},"nornicdb":{"columns":["id","v"],"rows":[[1,[]],[2,[]],[3,[]]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"1d02325710e012bbd15e","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,EXISTS { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"e7d9311e432210ab6bd8","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,0]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"4b330ec9cab133609e66","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local CALL (a) { WITH 1 AS nested MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) RETURN b.id AS v } RETURN v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,[2]],[2,[3]],[3,[]]]},"nornicdb":{"code":"Neo.ClientError.Statement.SyntaxError","message":"variable a is not defined"},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"b350dc67dd6be48d24d6","issue":907,"kind":"statement","query":"MATCH (a:Q) CREATE (out:Gate {key:a.id,found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }}) RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"b350dc67dd6be48d24d6:graph","issue":907,"kind":"graph","query":"MATCH (a:Q) CREATE (out:Gate {key:a.id,found:EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) }}) RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["labels","properties"],"rows":[[["Q"],{"id":1}],[["Q"],{"id":2}],[["Q"],{"id":3}],[["P"],{"id":4}],[["Gate"],{"found":true,"key":1}],[["Gate"],{"found":true,"key":2}],[["Gate"],{"found":false,"key":3}]]},"nornicdb":{"columns":["labels","properties"],"rows":[[["Q"],{"id":2}],[["Gate"],{"found":false,"key":2}],[["P"],{"id":4}],[["Gate"],{"found":false,"key":3}],[["Q"],{"id":1}],[["Q"],{"id":3}],[["Gate"],{"found":false,"key":1}]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"178a156e2d6d9a70c059","issue":907,"kind":"statement","query":"MATCH (a:Q) MERGE (out:Gate {key:a.id}) SET out.found=EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,true],[2,true],[3,false]]},"nornicdb":{"columns":["id","v"],"rows":[[1,false],[2,false],[3,false]]},"match":false}
+    rule73_pattern_attack_test.go:49: R73_DIFF http {"id":"178a156e2d6d9a70c059:graph","issue":907,"kind":"graph","query":"MATCH (a:Q) MERGE (out:Gate {key:a.id}) SET out.found=EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN out.key AS id,out.found AS v ORDER BY id","neo4j":{"columns":["labels","properties"],"rows":[[["Q"],{"id":1}],[["Q"],{"id":2}],[["Q"],{"id":3}],[["P"],{"id":4}],[["Gate"],{"found":true,"key":1}],[["Gate"],{"found":true,"key":2}],[["Gate"],{"found":false,"key":3}]]},"nornicdb":{"columns":["labels","properties"],"rows":[[["P"],{"id":4}],[["Gate"],{"found":false,"key":2}],[["Q"],{"id":1}],[["Gate"],{"found":false,"key":3}],[["Q"],{"id":3}],[["Gate"],{"found":false,"key":1}],[["Q"],{"id":2}]]},"match":false}
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/bare-value match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/bare-value/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/case-pattern match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/case-pattern/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/function match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/function/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/not-value match=3 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U01-context-rewrites/not-value/set match=6 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/aggregate match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/create match=0 diff=2
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/map match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/merge match=0 diff=2
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/order match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/project-filter match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U02-consumers/unwind match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/and-error match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/comprehension-filter match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/nested-collect match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/nested-count match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/or-error match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U03-nested-errors/short-circuit match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-label match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-predicate match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/dynamic-type match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U04-dynamic-tokens/undefined-dynamic match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COLLECT/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/COUNT/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/call-after-omit match=0 diff=1
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/call-no-import match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/uncorrelated-union match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/uncorrelated-union-all match=1 diff=0
+    rule73_pattern_attack_test.go:55: R73_CELL http U05-body-admission/EXISTS/write-body match=2 diff=0
+    rule73_pattern_attack_test.go:56: R73_TOTAL http compared=74 match=59 diff=15
+    rule73_pattern_attack_test.go:57: 15 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (3.92s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	4.165s
+=== parser antlr: exit 1 after 11s

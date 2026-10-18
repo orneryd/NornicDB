@@ -1,0 +1,27 @@
+wt-fix-1384-r73-dev/pkg/cypher\executor.go:2154:func graphReadingExpression(cypher string) string {
+wt-fix-1384-r73-dev/pkg/cypher\gds_cypher_projection.go:42:func (e *StorageExecutor) addGDSProjectionRow(ctx context.Context, state *pipelineAggregateState, scope *rowEvaluationScope) bool {
+wt-fix-1384-r73-dev/pkg/cypher\match_semantic_validation.go:123:func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope) (typeScope, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:163:func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:222:func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:502:func newRowEvaluationScope(ctx context.Context) *rowEvaluationScope {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:509:func (scope *rowEvaluationScope) reset(row pipelineRow) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:516:func (scope *rowEvaluationScope) release() {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:526:func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string) (interface{}, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:538:func (scope *rowEvaluationScope) valuesFor(shape *rowContextShape) (pipelineRow, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:563:func (scope *rowEvaluationScope) fill(values pipelineRow) pipelineRow {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_expression.go:634:func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:131:func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInfo, whereClause string, readTail []string) ([]string, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_executor.go:1355:func pipelineNodePredicateProperties(variable, expression string, inline map[string]interface{}) []string {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_aggregate_stream.go:505:func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *StorageExecutor, scope *rowEvaluationScope) bool {
+wt-fix-1384-r73-dev/pkg/cypher\pattern_predicate.go:23:func planPatternPredicate(pattern string) *patternPredicatePlan {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_imports.go:32:func carrySubqueryImports[T any](projected, input, imports map[string]T) {
+wt-fix-1384-r73-dev/pkg/cypher\pipeline_call_operator.go:12:func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\row_expression.go:2077:func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
+wt-fix-1384-r73-dev/pkg/cypher\static_type_scope.go:392:func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:235:func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:312:func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:401:func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:455:func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:486:func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:683:func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+wt-fix-1384-r73-dev/pkg/cypher\subquery_value_expression.go:1177:func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, values map[string]interface{}) (int64, bool) {

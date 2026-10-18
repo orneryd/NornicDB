@@ -1,0 +1,78 @@
+tnrun job i20261018034609-98884-9a07 (wt-fix-1384-dev@e1381567): worker 19, CPUs 40,41,42,43,104,105,106,107, commit e138156772abea4912fdea1c3f151ef8065e386b, go1.26.9
+untracked files: overlaid i20261018034609-98884-9a07.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicateScopeMatchesNeo4j -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestPatternPredicateScopeMatchesNeo4j
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+tnrun: peak RSS of test binary (default): pkg/cypher 0.02 GiB
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.06 GiB
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+    pattern_predicate_scope_test.go:27: 
+        	Error Trace:	/repo/pkg/cypher/pattern_expression_semantic_validation_test.go:77
+        	            				/repo/pkg/cypher/pattern_predicate_scope_test.go:27
+        	Error:      	An error is expected but got nil.
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b) (0.00s)
+    pattern_predicate_scope_test.go:46: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:46
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j (0.02s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.164s
+=== parser default: exit 1 after 36s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicateScopeMatchesNeo4j -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestPatternPredicateScopeMatchesNeo4j
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+    pattern_predicate_scope_test.go:26: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:26
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b) (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+    pattern_predicate_scope_test.go:27: 
+        	Error Trace:	/repo/pkg/cypher/pattern_expression_semantic_validation_test.go:77
+        	            				/repo/pkg/cypher/pattern_predicate_scope_test.go:27
+        	Error:      	An error is expected but got nil.
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b) (0.00s)
+    pattern_predicate_scope_test.go:46: 
+        	Error Trace:	/repo/pkg/cypher/pattern_predicate_scope_test.go:46
+        	Error:      	Should be false
+        	Test:       	TestPatternPredicateScopeMatchesNeo4j
+--- FAIL: TestPatternPredicateScopeMatchesNeo4j (0.10s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.250s
+=== parser antlr: exit 1 after 5s

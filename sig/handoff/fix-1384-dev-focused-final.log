@@ -1,0 +1,34 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: stopping running j20261018035039-25852-cd19 (wt-fix-1384-dev@92849408): wt-fix-1384-dev moved to 7df810ec
+tnrun: stopping running j20261018035041-25852-b783 (wt-fix-1384-dev@92849408): wt-fix-1384-dev moved to 7df810ec
+tnrun: job i20261018035319-100688-c907: wt-fix-1384-dev@7df810ec, bundle 1 commit(s); submitted in 3.2s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.22 GiB
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.35 GiB
+tnrun: job i20261018035319-100688-c907: DONE exit 1 (default 1 in 48s, antlr 1 in 10s); box 58s, total 64s
+tnrun job i20261018035319-100688-c907 (wt-fix-1384-dev@7df810ec): worker 9, CPUs 22,23,86,87, commit 7df810ec67013c4f5d5cc179ab3369dd86919bf5, go1.26.9
+/work/tnrun/in/i20261018035319-100688-c907.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestGh728BindingFilterAdmissionAndParameterOwnership
+    binding_where_compile_test.go:345: 
+        	Error Trace:	/repo/pkg/cypher/binding_where_compile_test.go:345
+        	Error:      	Expected nil, but got: &cypher.rowPredicatePlan{root:cypher.rowPredicatePart{kind:0x8, text:"(a)-[:LINK]->(b)", left:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, right:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, operator:"", op:0x0, constantNumbers:false, parts:[]cypher.rowPredicatePart(nil), membership:(*cypher.bindingParamMembershipCache)(nil), stringPredicate:(func(string, string) bool)(nil), isolation:cypher.operandIsolation{value:false, fallback:false, local:false}, predicateOnly:false, pattern:(*cypher.patternPredicatePlan)(0x86b8a9c5860)}, complete:true}
+        	Test:       	TestGh728BindingFilterAdmissionAndParameterOwnership
+--- FAIL: TestGh728BindingFilterAdmissionAndParameterOwnership (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	1.720s
+=== parser default: exit 1 after 48s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestGh728BindingFilterAdmissionAndParameterOwnership
+    binding_where_compile_test.go:345: 
+        	Error Trace:	/repo/pkg/cypher/binding_where_compile_test.go:345
+        	Error:      	Expected nil, but got: &cypher.rowPredicatePlan{root:cypher.rowPredicatePart{kind:0x8, text:"(a)-[:LINK]->(b)", left:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, right:cypher.rowOperand{kind:0x0, literal:interface {}(nil), variable:"", chain:"", directProperty:false, compiled:(*cypher.compiledRowOperand)(nil)}, operator:"", op:0x0, constantNumbers:false, parts:[]cypher.rowPredicatePart(nil), membership:(*cypher.bindingParamMembershipCache)(nil), stringPredicate:(func(string, string) bool)(nil), isolation:cypher.operandIsolation{value:false, fallback:false, local:false}, predicateOnly:false, pattern:(*cypher.patternPredicatePlan)(0x2091cd746e40)}, complete:true}
+        	Test:       	TestGh728BindingFilterAdmissionAndParameterOwnership
+--- FAIL: TestGh728BindingFilterAdmissionAndParameterOwnership (0.01s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	5.446s
+=== parser antlr: exit 1 after 10s

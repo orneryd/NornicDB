@@ -1,0 +1,1 @@
+bash sig/tnrun.sh go wt-fix-1384-release --parser both -- ./pkg/cypher -run 'TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns' -count=1

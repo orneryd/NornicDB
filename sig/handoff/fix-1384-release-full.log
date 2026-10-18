@@ -1,0 +1,18 @@
+tnrun: job i20261018035043-15400-7d0a: wt-fix-1384-release@9198ff18; submitted in 2.6s
+tnrun: running
+tnrun: test list job i20261018035043-15400-7d0a failed; nothing sharded
+tnrun job i20261018035043-15400-7d0a (wt-fix-1384-release@9198ff18): worker 19, CPUs 40,41,42,43,104,105,106,107, commit 9198ff18e2b2322ff6c37d6d73895efdb202d15e, go1.26.9
+prep ui: npm ci && npm run build in 16s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -list .
+# github.com/orneryd/nornicdb/pkg/cypher [github.com/orneryd/nornicdb/pkg/cypher.test]
+pkg/cypher/pattern_predicate.go:36:15: undefined: parseBoundChainShape
+pkg/cypher/pattern_predicate.go:72:28: e.boundExpandCount undefined (type *StorageExecutor has no field or method boundExpandCount)
+pkg/cypher/pattern_predicate.go:72:45: undefined: withoutLocalSubqueryScope
+pkg/cypher/row_expression.go:2066:90: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:85:105: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:89:52: undefined: rowSubqueryQuery
+FAIL	github.com/orneryd/nornicdb/pkg/cypher [build failed]
+FAIL
+=== parser default: exit 1 after 3s

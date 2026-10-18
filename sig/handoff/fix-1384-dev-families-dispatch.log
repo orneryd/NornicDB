@@ -1,0 +1,38 @@
+tnrun: job i20261018050033-91736-8f6e: wt-fix-1384-dev@fc375efa, bundle 1 commit(s), 2 untracked file(s); submitted in 11.1s
+tnrun: queued behind 6 job(s)
+tnrun job i20261018050033-91736-8f6e (wt-fix-1384-dev@fc375efa): worker 7, CPUs 18,19,82,83, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.26 GiB
+untracked files: overlaid i20261018050033-91736-8f6e.tar
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.24 GiB
+prep ui: npm ci && npm run build in 15s
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestSolReviewDifferentialFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+tnrun: job i20261018050033-91736-8f6e: DONE exit 0 (default 0 in 90s, antlr 0 in 88s); box 450s, total 1153s
+=== RUN   TestSolReviewDifferentialFamilies
+    fix_1384_regression_families_test.go:38: SOL_FAMILIES map[pattern:2272 pattern-comprehension:878 pattern-predicate:113]; statements=3263
+=== RUN   TestSolReviewDifferentialFamilies/bolt-auto
+    fix_1384_regression_families_test.go:58: SOL_REPORT bolt-auto compared=3263 known=0 unstable=0 new=0 now-match=0
+=== RUN   TestSolReviewDifferentialFamilies/bolt-tx
+    fix_1384_regression_families_test.go:58: SOL_REPORT bolt-tx compared=3263 known=0 unstable=0 new=0 now-match=0
+--- PASS: TestSolReviewDifferentialFamilies (85.54s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-auto (41.78s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-tx (42.32s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	85.729s
+=== parser default: exit 0 after 90s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestSolReviewDifferentialFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestSolReviewDifferentialFamilies
+    fix_1384_regression_families_test.go:38: SOL_FAMILIES map[pattern:2272 pattern-comprehension:878 pattern-predicate:113]; statements=3263
+=== RUN   TestSolReviewDifferentialFamilies/bolt-auto
+    fix_1384_regression_families_test.go:58: SOL_REPORT bolt-auto compared=3263 known=0 unstable=0 new=0 now-match=0
+=== RUN   TestSolReviewDifferentialFamilies/bolt-tx
+    fix_1384_regression_families_test.go:58: SOL_REPORT bolt-tx compared=3263 known=0 unstable=0 new=0 now-match=0
+--- PASS: TestSolReviewDifferentialFamilies (85.16s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-auto (41.89s)
+    --- PASS: TestSolReviewDifferentialFamilies/bolt-tx (41.86s)
+PASS
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	85.336s
+=== parser antlr: exit 0 after 88s

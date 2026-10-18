@@ -1,0 +1,29 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018035027-99408-2f0c: wt-fix-1384-release@9198ff18, bundle 1 commit(s); submitted in 3.0s
+tnrun: job i20261018035027-99408-2f0c: DONE exit 1 (default 1 in 5s, antlr 1 in 4s); box 9s, total 13s
+tnrun job i20261018035027-99408-2f0c (wt-fix-1384-release@9198ff18): worker 4, CPUs 12,13,76,77, commit 9198ff18e2b2322ff6c37d6d73895efdb202d15e, go1.26.9
+/work/tnrun/in/i20261018035027-99408-2f0c.bundle is okay
+prep ui: cached
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+# github.com/orneryd/nornicdb/pkg/cypher [github.com/orneryd/nornicdb/pkg/cypher.test]
+pkg/cypher/pattern_predicate.go:36:15: undefined: parseBoundChainShape
+pkg/cypher/pattern_predicate.go:72:28: e.boundExpandCount undefined (type *StorageExecutor has no field or method boundExpandCount)
+pkg/cypher/pattern_predicate.go:72:45: undefined: withoutLocalSubqueryScope
+pkg/cypher/row_expression.go:2066:90: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:85:105: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:89:52: undefined: rowSubqueryQuery
+FAIL	github.com/orneryd/nornicdb/pkg/cypher [build failed]
+=== parser default: exit 1 after 5s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicate|TestPatternOperand|Exists|PatternComprehension|TestWhere|TestCompiledBindingWhere|TestRowValueProgramsMatchNeo4j|TestRowPredicateProgramsMatchNeo4j|TestGh728|TestEvaluateWhereForContext|RelationshipPattern|DisjunctiveRelationshipPatterns -count=1 -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+# github.com/orneryd/nornicdb/pkg/cypher [github.com/orneryd/nornicdb/pkg/cypher.test]
+pkg/cypher/pattern_predicate.go:36:15: undefined: parseBoundChainShape
+pkg/cypher/pattern_predicate.go:72:28: e.boundExpandCount undefined (type *StorageExecutor has no field or method boundExpandCount)
+pkg/cypher/pattern_predicate.go:72:45: undefined: withoutLocalSubqueryScope
+pkg/cypher/row_expression.go:2066:90: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:85:105: cannot use &values (value of type *map[string]interface{}) as map[string]interface{} value in struct literal
+pkg/cypher/pattern_predicate_scope_test.go:89:52: undefined: rowSubqueryQuery
+FAIL	github.com/orneryd/nornicdb/pkg/cypher [build failed]
+=== parser antlr: exit 1 after 4s

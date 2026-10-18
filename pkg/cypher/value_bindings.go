@@ -54,7 +54,7 @@ func (e *StorageExecutor) boundValue(ctx context.Context, name string) (interfac
 			return value, true
 		}
 	}
-	if value, ok := e.fabricRecordBindings[name]; ok {
+	if value, ok := graphScopeImports(ctx, e.fabricRecordBindings)[name]; ok {
 		return value, true
 	}
 	return nil, false

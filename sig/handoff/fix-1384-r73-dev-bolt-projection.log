@@ -1,0 +1,408 @@
+tnrun: job i20261018112307-68812-9867: wt-fix-1384-r73-dev@fc375efa, 5 untracked file(s); submitted in 3.0s
+tnrun: running
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.13 GiB
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.15 GiB
+tnrun job i20261018112307-68812-9867 (wt-fix-1384-r73-dev@fc375efa): worker 13, CPUs 30,31,94,95, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018112307-68812-9867.tar
+prep ui: npm ci && npm run build in 16s
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 77 {"W01-full-comprehension": 59, "W02-kernel-fallback": 12, "W03-other-admission": 6}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"e7763c11f8f617a74224","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"5637fbab09fe24b6932f","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(b)\u003c-[:R]-(a) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"d86d51ef0cf301917f41","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"118c2a51db99ec20a526","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[r]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"051a6cccbec11d275c43","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e() | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"364af5b2530b83a48e7d","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[()-[r]-\u003e(:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"b151fc7cd992de5410a2","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a:Q)-[:R]-\u003e(b:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"cdbdf0a221a93b39904a","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b:Q {id:2}) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"3307370f0d31f2062976","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:1}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"1fafb5a9a66e3d4524dd","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:weight}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"67db1a08e292ff192098","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R*1..2]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"337c07333113845ded22","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R|U]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"bdc92303f615eaa46897","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b WHERE b.id \u003e 1) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"4435c5697643cd4f611c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a,a.id AS k WHERE NOT EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[{"Integer":"3"}]]},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}],[{"Integer":"3"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/b.id match=1 diff=0
+tnrun: job i20261018112307-68812-9867: DONE exit 1 (default 1 in 8s, antlr 1 in 8s); box 33s, total 43s
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/length(p) match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/x.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/{id:x.id,path:length(p)} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/admin-graph-classification match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/implicit-import-grouping match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/scalar-node-lookup match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/scalar-node-no-match match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/where-count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/where-not-exists match=0 diff=1
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=77 match=63 diff=14
+    rule73_pattern_attack_test.go:97: 14 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"e7763c11f8f617a74224","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"5637fbab09fe24b6932f","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(b)\u003c-[:R]-(a) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"d86d51ef0cf301917f41","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"118c2a51db99ec20a526","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[r]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"051a6cccbec11d275c43","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e() | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"364af5b2530b83a48e7d","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[()-[r]-\u003e(:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"b151fc7cd992de5410a2","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a:Q)-[:R]-\u003e(b:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"cdbdf0a221a93b39904a","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b:Q {id:2}) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"3307370f0d31f2062976","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:1}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"1fafb5a9a66e3d4524dd","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:weight}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"67db1a08e292ff192098","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R*1..2]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"337c07333113845ded22","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R|U]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"bdc92303f615eaa46897","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b WHERE b.id \u003e 1) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"4435c5697643cd4f611c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a,a.id AS k WHERE NOT EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[{"Integer":"3"}]]},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}],[{"Integer":"3"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/length(p) match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/x.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/{id:x.id,path:length(p)} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/admin-graph-classification match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/implicit-import-grouping match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/scalar-node-lookup match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/scalar-node-no-match match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/where-count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/where-not-exists match=0 diff=1
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=77 match=63 diff=14
+    rule73_pattern_attack_test.go:97: 14 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (4.07s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (1.94s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (2.00s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	4.270s
+=== parser default: exit 1 after 8s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 77 {"W01-full-comprehension": 59, "W02-kernel-fallback": 12, "W03-other-admission": 6}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"e7763c11f8f617a74224","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"5637fbab09fe24b6932f","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(b)\u003c-[:R]-(a) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"d86d51ef0cf301917f41","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"118c2a51db99ec20a526","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[r]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"051a6cccbec11d275c43","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e() | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"364af5b2530b83a48e7d","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[()-[r]-\u003e(:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"b151fc7cd992de5410a2","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a:Q)-[:R]-\u003e(b:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"cdbdf0a221a93b39904a","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b:Q {id:2}) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"3307370f0d31f2062976","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:1}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"1fafb5a9a66e3d4524dd","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:weight}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"67db1a08e292ff192098","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R*1..2]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"337c07333113845ded22","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R|U]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"bdc92303f615eaa46897","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b WHERE b.id \u003e 1) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"4435c5697643cd4f611c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a,a.id AS k WHERE NOT EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[{"Integer":"3"}]]},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}],[{"Integer":"3"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/anonymous-end/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-hop/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/bound-rel/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/chain/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/incoming/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/inline-where/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/labels/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/node-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/length(p) match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/x.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/path-shadow/{id:x.id,path:length(p)} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/rel-only/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/row-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/type-alternative/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/undirected/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W01-full-comprehension/var-length/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COLLECT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/COUNT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W02-kernel-fallback/EXISTS/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/admin-graph-classification match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/implicit-import-grouping match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/scalar-node-lookup match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/scalar-node-no-match match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/where-count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto W03-other-admission/where-not-exists match=0 diff=1
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=77 match=63 diff=14
+    rule73_pattern_attack_test.go:97: 14 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"e7763c11f8f617a74224","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"5637fbab09fe24b6932f","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(b)\u003c-[:R]-(a) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"d86d51ef0cf301917f41","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"118c2a51db99ec20a526","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[r]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"051a6cccbec11d275c43","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e() | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"364af5b2530b83a48e7d","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[()-[r]-\u003e(:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"b151fc7cd992de5410a2","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a:Q)-[:R]-\u003e(b:Q) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"cdbdf0a221a93b39904a","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b:Q {id:2}) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"3307370f0d31f2062976","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:1}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"1fafb5a9a66e3d4524dd","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R {w:weight}]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"67db1a08e292ff192098","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R*1..2]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"337c07333113845ded22","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R|U]-\u003e(b) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"bdc92303f615eaa46897","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,[(a)-[:R]-\u003e(b WHERE b.id \u003e 1) | EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]-\u003e(c) }] AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[true]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[false]],[{"Integer":"2"},[false]],[{"Integer":"3"},[]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"4435c5697643cd4f611c","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a,a.id AS k WHERE NOT EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]-\u003e(b) } RETURN k AS id ORDER BY id","neo4j":{"columns":["id"],"rows":[[{"Integer":"3"}]]},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}],[{"Integer":"3"}]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/anonymous-end/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-hop/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/bound-rel/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/chain/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/incoming/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/inline-where/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/labels/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/node-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/length(p) match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/x.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/path-shadow/{id:x.id,path:length(p)} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/rel-only/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/row-map/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/type-alternative/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/undirected/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/EXISTS { WITH 1 AS local MATCH (c:Q) WHERE (b)-[:R]->(c) } match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/b.id match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/r.w match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W01-full-comprehension/var-length/{id:b.id,w:r.w} match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COLLECT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/COUNT/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/correlated-filter match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/correlated-node-map match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/pattern-list match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W02-kernel-fallback/EXISTS/returned-rel-properties match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/admin-graph-classification match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/implicit-import-grouping match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/scalar-node-lookup match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/scalar-node-no-match match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/where-count match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx W03-other-admission/where-not-exists match=0 diff=1
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=77 match=63 diff=14
+    rule73_pattern_attack_test.go:97: 14 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (4.78s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (2.43s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (2.17s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	4.976s
+=== parser antlr: exit 1 after 8s

@@ -1,0 +1,106 @@
+tnrun: job i20261018115357-105844-255f: wt-fix-1384-r73-dev@fc375efa, 8 untracked file(s); submitted in 2.0s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/server 0.18 GiB
+tnrun: peak RSS of test binary (antlr): pkg/server 0.22 GiB
+tnrun job i20261018115357-105844-255f (wt-fix-1384-r73-dev@fc375efa): worker 9, CPUs 22,23,86,87, commit fc375efa4ba55253cc8a775172fd4933856f00ea, go1.26.9
+untracked files: overlaid i20261018115357-105844-255f.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 19 {"X01-codepath-bodies": 12, "X02-system-admission": 7}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-453628233 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:54:04 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:54:04 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:54:04 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:54:04 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:54:04 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:54:04 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:54:04 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:54:04 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:54:04 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:54:04 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:54:04 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,1]]},"nornicdb":{"columns":["id","v"],"rows":[[1,2],[2,2],[3,2]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,1]]},"nornicdb":{"columns":["id","v"],"rows":[[1,2],[2,2],[3,2]]},"match":false}
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:60: 2 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (1.03s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	1.218s
+=== parser default: exit 1 after 7s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestRule73PatternFamilyHTTPAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyHTTPAttack
+    rule73_pattern_attack_test.go:26: R73_GENERATED 19 {"X01-codepath-bodies": 12, "X02-system-admission": 7}
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-643960093 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 11:54:09 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 11:54:09 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 11:54:09 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 11:54:09 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 11:54:09 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 11:54:09 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 11:54:09 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 11:54:09 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 11:54:09 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 11:54:09 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 11:54:09 ✅ BM25 + vector search indexes ready (default database)
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"accb5a19275a7575bae6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,1]]},"nornicdb":{"columns":["id","v"],"rows":[[1,2],[2,2],[3,2]]},"match":false}
+    rule73_pattern_attack_test.go:52: R73_DIFF http {"id":"42d5ec4291b4b9e448e6","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,size(COLLECT { WITH 1 AS local OPTIONAL MATCH (a)-[:R]-\u003e(b) RETURN b.id AS v }) AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[1,1],[2,1],[3,1]]},"nornicdb":{"columns":["id","v"],"rows":[[1,2],[2,2],[3,2]]},"match":false}
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COLLECT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/optional match=0 diff=1
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/COUNT/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/optional match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/procedure-labels match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/procedure-types match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X01-codepath-bodies/EXISTS/unwind-body match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/bare-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/collect match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/count match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/exists match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/function-pattern match=1 diff=0
+    rule73_pattern_attack_test.go:58: R73_CELL http X02-system-admission/single-node-comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:59: R73_TOTAL http compared=19 match=17 diff=2
+    rule73_pattern_attack_test.go:60: 2 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyHTTPAttack (1.11s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	1.298s
+=== parser antlr: exit 1 after 5s
+tnrun: job i20261018115357-105844-255f: DONE exit 1 (default 1 in 7s, antlr 1 in 5s); box 14s, total 22s

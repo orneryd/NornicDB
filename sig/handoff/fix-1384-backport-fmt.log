@@ -1,0 +1,26 @@
+tnrun: job i20261018040036-74892-5ac8: wt-fix-1384-release@c37a11cb; submitted in 1.7s
+tnrun: job i20261018040036-74892-5ac8: DONE exit 1 (default 1 in 0s); box 0s, total 2s
+tnrun job i20261018040036-74892-5ac8 (wt-fix-1384-release@c37a11cb): worker 12, CPUs 28,29,92,93, commit c37a11cb4a013a8aea4ddb9b649bd4fb54057109, go1.26.9
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/subquery_bound_expand.go pkg/cypher/binding_where_compile_test.go pkg/cypher/subquery_value_expression.go
+pkg/cypher/subquery_bound_expand.go
+diff pkg/cypher/subquery_bound_expand.go.orig pkg/cypher/subquery_bound_expand.go
+--- pkg/cypher/subquery_bound_expand.go.orig
++++ pkg/cypher/subquery_bound_expand.go
+@@ -160,4 +160,3 @@
+ 	}
+ 	return e.storage.GetOutDegree(id) + e.storage.GetInDegree(id)
+ }
+-
+exit status 1
+=== parser default: exit 1 after 0s
+tnrun: job i20261018040039-64276-7755: wt-fix-1384-dev@4d406da5; submitted in 1.4s
+tnrun: job i20261018040039-64276-7755: DONE exit 0 (default 0 in 0s); box 1s, total 2s
+tnrun job i20261018040039-64276-7755 (wt-fix-1384-dev@4d406da5): worker 4, CPUs 12,13,76,77, commit 4d406da5fc616f40371c16566b834b82e47690f2, go1.26.9
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/binding_where_compile_test.go
+=== parser default: exit 0 after 0s

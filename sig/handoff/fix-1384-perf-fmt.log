@@ -1,0 +1,18 @@
+tnrun: job i20261018041801-42716-4fb9: wt-fix-1384-dev@065bb258; submitted in 2.9s
+tnrun: running
+tnrun: job i20261018041801-42716-4fb9: DONE exit 0 (default 0 in 0s); box 17s, total 23s
+tnrun job i20261018041801-42716-4fb9 (wt-fix-1384-dev@065bb258): worker 11, CPUs 26,27,90,91, commit 065bb25826e01f31d3965de628126108a8e6892d, go1.26.9
+prep ui: npm ci && npm run build in 16s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/subquery_value_expression.go
+=== parser default: exit 0 after 0s
+tnrun: job i20261018041825-46872-d787: wt-fix-1384-release@47ebf05d; submitted in 2.7s
+tnrun: running
+tnrun job i20261018041825-46872-d787 (wt-fix-1384-release@47ebf05d): worker 11, CPUs 26,27,90,91, commit 47ebf05d60ad7fd38c670fccaf7ddecd3c8f0bd9, go1.26.9
+prep ui: npm ci && npm run build in 15s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go run cmd/gofmt -l -d pkg/cypher/subquery_bound_expand.go
+=== parser default: exit 0 after 0s
+tnrun: job i20261018041825-46872-d787: DONE exit 0 (default 0 in 0s); box 16s, total 23s

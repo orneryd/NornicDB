@@ -1,0 +1,25 @@
+package cypher
+
+import (
+	"testing"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func TestFix1384R3Debug(t *testing.T) {
+	e, ctx := newUnitExecutor(t)
+	e.Execute(ctx, "CREATE (:ReviewA {id:1})-[:T {w:7}]->(:ReviewB {id:3})", nil)
+	r, err := e.Execute(ctx, "MATCH (a:ReviewA), (b:ReviewB) RETURN a,b", nil)
+	if err != nil { t.Fatal(err) }
+	a,b := r.Rows[0][0].(*storage.Node),r.Rows[0][1].(*storage.Node)
+	t.Logf("a=%#v b=%#v",a,b)
+	v := map[string]interface{}{"a":a,"b":b}
+	p := e.parseTraversalPattern(ctx, "(a)-[:T]->(b:ReviewB {id:3})")
+	t.Logf("parsed=%#v end=%#v matches=%v",p,p.EndNode,e.matchesEndPattern(b,&p.EndNode))
+	found,ok,err := e.rowSubqueryValue(ctx,"EXISTS","(a)-[:T]->(b:ReviewB {id:3})",v)
+	t.Logf("direct found=%v ok=%v err=%v",found,ok,err)
+	for _,q := range []string{
+		"MATCH (a:ReviewA), (b:ReviewB) RETURN exists((a)-[:T]->(b:ReviewB {id:3}))",
+		"MATCH (a:ReviewA) RETURN EXISTS { WITH * MATCH (b:ReviewB) WHERE (a)-[:T]->(b:ReviewB {id:3}) }",
+		"MATCH (a:ReviewA) RETURN EXISTS { WITH * MATCH (b:ReviewB) WHERE (a)-[:T]->(b:ReviewB {id:3}) RETURN b }",
+	} { r,err:=e.Execute(ctx,q,nil); t.Logf("query=%s result=%#v err=%v",q,r,err) }
+}

@@ -1,0 +1,147 @@
+{
+  "authorized": "Parent-thread release-priority decision: 1.4.4 before queued develop work; final regression jobs next; never preempt running job",
+  "ids": [
+    "a20261018043103-39980-bd08",
+    "a20261018043115-68584-6652"
+  ],
+  "running_before": [
+    "a20261018011038-97756-129f"
+  ],
+  "held": [
+    {
+      "name": "a20261018011353-51860-d2de.json",
+      "sha256": "8c8a1c497a148540299d433c1570d3875784e9a4f1e82b7694e2ddc61ad40e59"
+    },
+    {
+      "name": "a20261018011849-46428-e18e.json",
+      "sha256": "5c38fb2a34bb7263b8a3864312f2b994ba8ee9e41967625bdd690b4e6525c9aa"
+    },
+    {
+      "name": "a20261018011853-90756-ace0.json",
+      "sha256": "cf8040415cd4f9cffcbe0d4190632e8a8b63ab36fbb934ea1fbbb3da107976e8"
+    },
+    {
+      "name": "a20261018011858-79476-08c2.json",
+      "sha256": "5d4c6505b7f0576957b8b71fd740fc86752627249cd905a2d99e964ba0ab6de9"
+    },
+    {
+      "name": "a20261018011904-44528-4e61.json",
+      "sha256": "442aeef4794cdc2993cdaa05478dc808c728fb7805257a8b9db03c9c3c6e2b90"
+    },
+    {
+      "name": "a20261018011909-49760-a6f8.json",
+      "sha256": "71407809d79f521f802939232a00436a67fe20b97d139035ea8bed6e14cecea0"
+    },
+    {
+      "name": "a20261018012017-14324-90fd.json",
+      "sha256": "f352de5d41ab01c6e23ab093876814e8e0ab81dd1140a677de9cf2c699bd16c9"
+    },
+    {
+      "name": "a20261018012018-26944-1d66.json",
+      "sha256": "c448c0181065aa20c952fe9823a6c14540bb4ab7bc80314db1a8b5f5daf3f65b"
+    },
+    {
+      "name": "a20261018012252-46156-1c6a.json",
+      "sha256": "19675318382939eece6c974a499a8c3101cba05f593bf6d7cf67bf286bcf7480"
+    },
+    {
+      "name": "a20261018012252-90792-0953.json",
+      "sha256": "c5e887dcc83b2fb7fac384f1b4cfefe3867c509385c678890a59aaaf44298d87"
+    },
+    {
+      "name": "a20261018021457-83480-ca8d.json",
+      "sha256": "aca634b5aedf5002a7b56407cc2183e0c9e91eef242cd43dfce7cd00b681499f"
+    },
+    {
+      "name": "a20261018022618-5644-fbd4.json",
+      "sha256": "6470c4edff7565ab4d4bffc2c4f47f8aeab89cdec9ac86c0bcb92e724566e6b3"
+    },
+    {
+      "name": "a20261018025841-55728-9b31.json",
+      "sha256": "825e18f9d1fece11c1e281cac36e199983be63acdd50f2578e8ac20b08e07e92"
+    },
+    {
+      "name": "a20261018030338-41564-3550.json",
+      "sha256": "6228d14f4512c65116881e9e3b8dfa2ed754d5be3efa53ee0b571a483f8a61e0"
+    },
+    {
+      "name": "a20261018032940-79772-5d22.json",
+      "sha256": "1c7d37e5e4be537e056481cd7ea3716691c8f0c6543b70f00ebd9e955ed0f6c0"
+    },
+    {
+      "name": "a20261018032941-1916-d4b1.json",
+      "sha256": "4193319e01feea2776504abc33aebc6902d6e6bc294d64b70cf6b7bbb20f8845"
+    },
+    {
+      "name": "a20261018041406-98140-f190.json",
+      "sha256": "bd8b2b30358e4fc341902eb9a6b3409dc69e24311a91d20b090a17a1e9d14e1f"
+    },
+    {
+      "name": "a20261018043116-30372-6f60.json",
+      "sha256": "bcc8666edeaf8a165fec1675b4c96458aef4f3c1a88bca5892c79b6adb070bb2"
+    },
+    {
+      "name": "a20261018043116-42236-143d.json",
+      "sha256": "f194b5eacb09ad3c1e36f1e4671b61b0308148b2ea8f587ca5e7261016c1cbc3"
+    },
+    {
+      "name": "a20261018043555-36468-be54.json",
+      "sha256": "c9e74531411257f4a7349c66ed62560a3684c882b568a90d6c5e96ed6460351b"
+    },
+    {
+      "name": "a20261018043555-57060-fe94.json",
+      "sha256": "83c10c594cedefc62f69797f6f9f5229224e0b8adda9dda756863b5ccf1259e7"
+    },
+    {
+      "name": "a20261018043555-36468-be54.json",
+      "sha256": "c9e74531411257f4a7349c66ed62560a3684c882b568a90d6c5e96ed6460351b"
+    },
+    {
+      "name": "a20261018043555-57060-fe94.json",
+      "sha256": "83c10c594cedefc62f69797f6f9f5229224e0b8adda9dda756863b5ccf1259e7"
+    },
+    {
+      "name": "a20261018044055-74716-a5f7.json",
+      "sha256": "8a45fc0ad04b64864c28bffc3ba2bd6d86c7da7b34007f5975133cca9f00e26d"
+    },
+    {
+      "name": "a20261018044055-77896-97c7.json",
+      "sha256": "a740f1309e05fc2b9b3f3d6dc51f9a05d41e47a7b00e51b55d0e887e46c3e16d"
+    }
+  ],
+  "restored": [
+    "a20261018011353-51860-d2de.json",
+    "a20261018011849-46428-e18e.json",
+    "a20261018011853-90756-ace0.json",
+    "a20261018011858-79476-08c2.json",
+    "a20261018011904-44528-4e61.json",
+    "a20261018011909-49760-a6f8.json",
+    "a20261018012017-14324-90fd.json",
+    "a20261018012018-26944-1d66.json",
+    "a20261018012252-46156-1c6a.json",
+    "a20261018012252-90792-0953.json",
+    "a20261018021457-83480-ca8d.json",
+    "a20261018022618-5644-fbd4.json",
+    "a20261018025841-55728-9b31.json",
+    "a20261018030338-41564-3550.json",
+    "a20261018032940-79772-5d22.json",
+    "a20261018032941-1916-d4b1.json",
+    "a20261018041406-98140-f190.json",
+    "a20261018044055-74716-a5f7.json",
+    "a20261018044055-77896-97c7.json"
+  ],
+  "workers_signalled": false,
+  "apps_restarted": false,
+  "started": 1792297906.408787,
+  "both_final_jobs_claimed": 1792299370.7189338,
+  "already_executed": [],
+  "restore_errors": [
+    "Held job changed or disappeared: a20261018043116-30372-6f60.json",
+    "Held job changed or disappeared: a20261018043116-42236-143d.json",
+    "Held job changed or disappeared: a20261018043555-36468-be54.json",
+    "Held job changed or disappeared: a20261018043555-57060-fe94.json",
+    "Held job changed or disappeared: a20261018043555-36468-be54.json",
+    "Held job changed or disappeared: a20261018043555-57060-fe94.json"
+  ],
+  "restored_at": 1792299370.7252872
+}

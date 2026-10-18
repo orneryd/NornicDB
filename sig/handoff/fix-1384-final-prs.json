@@ -1,0 +1,55 @@
+{
+  "develop": {
+    "baseRefName": "develop",
+    "headRefOid": "fc375efa4ba55253cc8a775172fd4933856f00ea",
+    "isDraft": false,
+    "labels": [
+      {
+        "id": "LA_kwDOQjyHhc8AAAACRwtdgw",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "mergeable": "MERGEABLE",
+    "milestone": {
+      "number": 7,
+      "title": "v1.4.4",
+      "description": "",
+      "dueOn": null
+    },
+    "number": 1468,
+    "state": "OPEN",
+    "statusCheckRollup": [],
+    "title": "fix(cypher): keep the compiled bound-hop path in the pattern-predicate owner"
+  },
+  "release": {
+    "baseRefName": "release/v1.4.4",
+    "headRefOid": "4bc1858580e9c30c383af4ac8763226be1ea5163",
+    "isDraft": false,
+    "labels": [
+      {
+        "id": "LA_kwDOQjyHhc8AAAACRwtdgw",
+        "name": "bug",
+        "description": "Something isn't working",
+        "color": "d73a4a"
+      }
+    ],
+    "mergeable": "MERGEABLE",
+    "milestone": {
+      "number": 7,
+      "title": "v1.4.4",
+      "description": "",
+      "dueOn": null
+    },
+    "number": 1459,
+    "state": "OPEN",
+    "statusCheckRollup": [],
+    "title": "fix(cypher): one owner for pattern predicates (#1317 slice 1) [1.4.4 cherry-pick]"
+  },
+  "linksVerified": {
+    "current": true,
+    "parent": "075cf8e3-9632-45e4-a74b-ecbe4e778f84"
+  },
+  "currentThreadWatching": false
+}

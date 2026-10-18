@@ -220,6 +220,14 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
 func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+	value, _, err := planGraphExpression(graphPatternComprehension, pattern, projection).evaluate(e, ctx, compiledRowScope{values: &outer})
+	if err != nil { recordExpressionFailure(ctx, err); return nil }
+	values, _ := value.([]interface{})
+	return values
+}
+
+func (plan *graphExpressionPlan) comprehensionValue(e *StorageExecutor, ctx context.Context, outer pipelineRow) []interface{} {
+	pattern, projection := plan.body, plan.projection
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
@@ -639,7 +647,7 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
+		matched, _ := e.rowPatternPredicate(ctx, trimmed, values)
 		return matched, true, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpressionInContext(ctx, trimmed, func(operand string, position foldPosition) (interface{}, bool, error) {

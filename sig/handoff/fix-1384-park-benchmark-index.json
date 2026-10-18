@@ -1,0 +1,66 @@
+[
+  {
+    "ID": "a20261018034947-79736-cd94",
+    "State": "SUPERSEDED; retired without measurement",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018034947-21120-a647",
+    "State": "SUPERSEDED; retired without measurement",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018035659-106084-a21f",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018035659-55204-f3be",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018041540-652-4067",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018041540-94980-7563",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018043103-39980-bd08",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018043115-68584-6652",
+    "State": "DONE exit 0; measured regression/iteration, see archived history",
+    "Evidence": "fix-1384-regression-ready-r2-history.md"
+  },
+  {
+    "ID": "a20261018045918-48476-6ade",
+    "Execution": "a00000000000001-1384-default",
+    "State": "{\"state\":\"DONE\",\"exit\":0,\"rounds\":10,\"worker\":\"bench\",\"seconds\":138}",
+    "Evidence": "fix-1384-final-jobs-receipt.json"
+  },
+  {
+    "ID": "a20261018045918-61784-2d57",
+    "Execution": "a00000000000002-1384-control-default",
+    "State": "{\"state\":\"DONE\",\"exit\":0,\"rounds\":10,\"worker\":\"bench\",\"seconds\":59}",
+    "Evidence": "fix-1384-final-jobs-receipt.json"
+  },
+  {
+    "ID": "a20261018045918-84716-05d2",
+    "Execution": "a00000000000003-1384-control-antlr",
+    "State": "{\"state\":\"DONE\",\"exit\":0,\"rounds\":10,\"worker\":\"bench\",\"seconds\":50}",
+    "Evidence": "fix-1384-final-jobs-receipt.json"
+  },
+  {
+    "ID": "a20261018045919-67144-d619",
+    "Execution": "a00000000000004-1384-antlr",
+    "State": "{\"state\":\"DONE\",\"exit\":0,\"rounds\":10,\"worker\":\"bench\",\"seconds\":91}",
+    "Evidence": "fix-1384-final-jobs-receipt.json"
+  }
+]

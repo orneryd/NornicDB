@@ -1,0 +1,62 @@
+tnrun: job i20261018040820-25908-6363: wt-fix-1384-release@aabaefc8, 2 untracked file(s); submitted in 3.2s
+tnrun: running
+tnrun job i20261018040820-25908-6363 (wt-fix-1384-release@aabaefc8): worker 18, CPUs 36,37,38,39,100,101,102,103, commit aabaefc8becc648b858ba267a35e96c96f9d5131, go1.26.9
+untracked files: overlaid i20261018040820-25908-6363.tar
+prep ui: npm ci && npm run build in 14s
+prep llama v0.4.1: cached
+tnrun: peak RSS of test binary (default): pkg/server 0.25 GiB
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestFix1384HTTPFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestFix1384HTTPFamilies
+    zz_fix1384_http_families_test.go:33: FIX1384_HTTP families=map[pattern:2272 pattern-comprehension:878 pattern-predicate:113] cases=3263
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+tnrun: peak RSS of test binary (antlr): pkg/server 0.33 GiB
+tnrun: job i20261018040820-25908-6363: DONE exit 0 (default 0 in 52s, antlr 0 in 50s); box 297s, total 304s
+📂 Using persistent storage at /tmp/nornicdb-server-test-3272161139 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 04:11:43 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 04:11:43 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 04:11:43 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 04:11:43 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 04:11:43 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 04:11:43 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 04:11:43 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 04:11:43 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 04:11:43 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 04:11:43 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 04:11:43 ✅ BM25 + vector search indexes ready (default database)
+    zz_fix1384_http_families_test.go:52: FIX1384_HTTP_REPORT compared=3263 known=0 unstable=0 new=0
+--- PASS: TestFix1384HTTPFamilies (46.68s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/server	46.871s
+=== parser default: exit 0 after 52s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/server -run ^TestFix1384HTTPFamilies$ -count=1 -timeout 20m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestFix1384HTTPFamilies
+    zz_fix1384_http_families_test.go:33: FIX1384_HTTP families=map[pattern:2272 pattern-comprehension:878 pattern-predicate:113] cases=3263
+🗜️  WAL auto-compaction enabled (snapshot interval: 5m0s)
+📂 Using persistent storage at /tmp/nornicdb-server-test-3486045146 (WAL enabled, batch sync: 100ms)
+⚡ Write-behind buffer: OFF (durable synchronous commits)
+📦 Wrapped storage with namespace 'nornic' (all operations are namespaced)
+   [Plugin Debug] Loading plugins from: /repo/pkg/server/plugins (resolved from ./plugins)
+   [Plugin Debug] Directory does not exist: /repo/pkg/server/plugins
+2026/10/18 04:12:34 🔍 Search services enabled (per-database init, 1024-dimension vector index)
+2026/10/18 04:12:34 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/18 04:12:34 🕰️ Rebuilding temporal indexes before serving traffic...
+2026/10/18 04:12:34 🧾 Rebuilding MVCC heads before serving traffic...
+2026/10/18 04:12:34 🔄 MVCC lifecycle manager enabled (cycle=30s)
+2026/10/18 04:12:34 🔍 Building BM25 + vector indexes for database nornic (bm25=true vector=true)...
+2026/10/18 04:12:34 INFO 📇 BuildIndexes: building from storage (vector index in memory) event_id=search.operator.d3969b1fbdb9749b component=search message_template="📇 BuildIndexes: building from storage (vector index in memory)"
+2026/10/18 04:12:34 INFO 📊 Indexed 0 total nodes event_id=search.operator.4ee13fb5f957c6ee component=search message_template="📊 Indexed %d total nodes" arg_0=0
+2026/10/18 04:12:34 INFO 📇 BuildIndexes: base index iteration complete (processed=0) event_id=search.operator.abfc7c66aa1aeeea component=search message_template="📇 BuildIndexes: base index iteration complete (processed=%d)" arg_0=0
+2026/10/18 04:12:34 INFO 📇 BuildIndexes: starting vector pipeline warmup (k-means may run)... event_id=search.operator.e5845b37ccd75386 component=search message_template="📇 BuildIndexes: starting vector pipeline warmup (k-means may run)..."
+2026/10/18 04:12:34 ✅ BM25 + vector search indexes ready (default database)
+    zz_fix1384_http_families_test.go:52: FIX1384_HTTP_REPORT compared=3263 known=0 unstable=0 new=0
+--- PASS: TestFix1384HTTPFamilies (45.24s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/server	45.445s
+=== parser antlr: exit 0 after 50s

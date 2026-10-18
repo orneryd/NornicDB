@@ -1,0 +1,8 @@
+tnrun: snapshot unavailable; using direct read (incorrect header check)
+tnrun self-check FAILED (fix before any tnrun call; run: node sig/tnrun-selfcheck.mjs):
+  - shared API read cache: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+2 !== 1
+
+    at Module.checkReadCache (file:///C:/Users/mm0ns/claude/nornic-pr387-test/sig/tnrun-read-cache-tests.mjs:28:61)
+    at async file:///C:/Users/mm0ns/claude/nornic-pr387-test/sig/tnrun-selfcheck.mjs:31:7

@@ -1,0 +1,7 @@
+tnrun self-check FAILED (fix before any tnrun call; run: node sig/tnrun-selfcheck.mjs):
+  - watchdog policy: AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+null !== 0
+
+    at Module.checkWatchdog (file:///mnt/c/Users/mm0ns/claude/nornic-pr387-test/sig/tnrun-watchdog-tests.mjs:36:24)
+    at async file:///mnt/c/Users/mm0ns/claude/nornic-pr387-test/sig/tnrun-selfcheck.mjs:30:7

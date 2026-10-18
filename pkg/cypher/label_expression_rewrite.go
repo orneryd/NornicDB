@@ -25,8 +25,8 @@ import (
 //
 // Patterns outside MATCH get the same treatment: a pattern-only EXISTS,
 // COUNT or COLLECT body becomes a MATCH (EXISTS { (n)-->(:A|B) } is
-// EXISTS { MATCH (n)-->(x) WHERE x:A|B }), a pattern predicate becomes an
-// EXISTS subquery, and a pattern comprehension gets the predicate in its
+// EXISTS { MATCH (n)-->(x) WHERE x:A|B }); a pattern predicate keeps its
+// original form for the graph-expression plan, and a comprehension gets the predicate in its
 // WHERE. In expressions, n IS A becomes the colon test n:A.
 //
 // The statements Neo4j rejects are rejected with its messages: label
@@ -1599,23 +1599,11 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 	return chainStart + chain.end, true, nil
 }
 
-// patternPredicate rewrites the pattern predicate query[start:end]. When its
-// label expressions add predicates it becomes EXISTS { MATCH … WHERE … }; a
-// call exists(…) around it (query[callStart:callClose+1]) is replaced.
+// patternPredicate preserves the original form. Its graph-expression plan
+// normalises a MATCH body only after resolving the predicate's scope. Turning
+// it into EXISTS here would permit unbound named endpoints as existential
+// locals, losing the plain predicate's established SyntaxError contract.
 func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callClose int) error {
-	mark := len(r.edits)
-	predicates, err := r.pattern(start, end, labelPatternMatch)
-	if err != nil || len(predicates) == 0 {
-		return err
-	}
-	open := labelRewriteEdit{start: start, end: start, text: "EXISTS { MATCH "}
-	closing := labelRewriteEdit{start: end, end: end, text: " WHERE " + strings.Join(predicates, " AND ") + " }"}
-	if callStart >= 0 {
-		open = labelRewriteEdit{start: callStart, end: start, text: "EXISTS { MATCH "}
-		closing = labelRewriteEdit{start: end, end: callClose + 1, text: closing.text}
-	}
-	r.edits = append(r.edits[:mark], append([]labelRewriteEdit{open}, r.edits[mark:]...)...)
-	r.edits = append(r.edits, closing)
 	return nil
 }
 

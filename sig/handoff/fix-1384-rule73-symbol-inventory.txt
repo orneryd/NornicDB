@@ -1,0 +1,272 @@
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:25239:	PatternComprehension() IPatternComprehensionContext
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:25443:func (s *AtomContext) PatternComprehension() IPatternComprehensionContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:25446:		if _, ok := ctx.(IPatternComprehensionContext); ok {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:25456:	return t.(IPatternComprehensionContext)
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:25659:			p.PatternComprehension()
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28019:// IPatternComprehensionContext is an interface to support dynamic dispatch.
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28020:type IPatternComprehensionContext interface {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28035:	// IsPatternComprehensionContext differentiates from other interfaces.
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28036:	IsPatternComprehensionContext()
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28039:type PatternComprehensionContext struct {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28044:func NewEmptyPatternComprehensionContext() *PatternComprehensionContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28045:	var p = new(PatternComprehensionContext)
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28051:func InitEmptyPatternComprehensionContext(p *PatternComprehensionContext) {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28056:func (*PatternComprehensionContext) IsPatternComprehensionContext() {}
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28058:func NewPatternComprehensionContext(parser antlr.Parser, parent antlr.ParserRuleContext, invokingState int) *PatternComprehensionContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28059:	var p = new(PatternComprehensionContext)
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28069:func (s *PatternComprehensionContext) GetParser() antlr.Parser { return s.parser }
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28071:func (s *PatternComprehensionContext) LBRACK() antlr.TerminalNode {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28075:func (s *PatternComprehensionContext) RelationshipsChainPattern() IRelationshipsChainPatternContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28091:func (s *PatternComprehensionContext) STICK() antlr.TerminalNode {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28095:func (s *PatternComprehensionContext) Expression() IExpressionContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28111:func (s *PatternComprehensionContext) RBRACK() antlr.TerminalNode {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28115:func (s *PatternComprehensionContext) Lhs() ILhsContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28131:func (s *PatternComprehensionContext) Where() IWhereContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28147:func (s *PatternComprehensionContext) GetRuleContext() antlr.RuleContext {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28151:func (s *PatternComprehensionContext) ToStringTree(ruleNames []string, recog antlr.Recognizer) string {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28155:func (s *PatternComprehensionContext) EnterRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28157:		listenerT.EnterPatternComprehension(s)
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28161:func (s *PatternComprehensionContext) ExitRule(listener antlr.ParseTreeListener) {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28163:		listenerT.ExitPatternComprehension(s)
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28167:func (p *CypherParser) PatternComprehension() (localctx IPatternComprehensionContext) {
+wt-fix-1384-dev/pkg/cypher\antlr\cypher_parser.go:28168:	localctx = NewPatternComprehensionContext(p, p.GetParserRuleContext(), p.GetState())
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_listener.go:355:	// EnterPatternComprehension is called when entering the patternComprehension production.
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_listener.go:356:	EnterPatternComprehension(c *PatternComprehensionContext)
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_listener.go:769:	// ExitPatternComprehension is called when exiting the patternComprehension production.
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_listener.go:770:	ExitPatternComprehension(c *PatternComprehensionContext)
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_base_listener.go:718:// EnterPatternComprehension is called when production patternComprehension is entered.
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_base_listener.go:719:func (s *BaseCypherParserListener) EnterPatternComprehension(ctx *PatternComprehensionContext) {}
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_base_listener.go:721:// ExitPatternComprehension is called when production patternComprehension is exited.
+wt-fix-1384-dev/pkg/cypher\antlr\cypherparser_base_listener.go:722:func (s *BaseCypherParserListener) ExitPatternComprehension(ctx *PatternComprehensionContext) {}
+wt-fix-1384-dev/pkg/cypher\case_expression.go:701:		return localSubqueryScope(ctx, text, func(ctx context.Context) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\case_evaluation.go:7:// scope (localSubqueryScope), for any row adapter. Only an expression with a
+wt-fix-1384-dev/pkg/cypher\case_evaluation.go:11:	return localSubqueryScope(ctx, expression, func(scoped context.Context) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\comparison_chain.go:103:	if scan.count > 1 && mayContainSubqueryExpression(expression) && !inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:23:	shards [boundedCacheShardCount]boundedCacheShard[K, V]
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:28:// boundedCacheShardCount is the number of independently locked shards.
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:29:const boundedCacheShardCount = 64
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:41:	return int(maphash.String(cacheKeyHashSeed, s) % boundedCacheShardCount)
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:48:	return int(h % boundedCacheShardCount)
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:56:	shardLimit := limit / boundedCacheShardCount
+wt-fix-1384-dev/pkg/cypher\bounded_cache.go:75:	shardLimit := c.limit / boundedCacheShardCount
+wt-fix-1384-dev/pkg/cypher\executor.go:427:	// fabricRecordBindings carries correlated APPLY input bindings for Fabric execution.
+wt-fix-1384-dev/pkg/cypher\executor.go:429:	fabricRecordBindings map[string]interface{}
+wt-fix-1384-dev/pkg/cypher\executor.go:514:	shards [boundedCacheShardCount]syntaxValidationCacheShard
+wt-fix-1384-dev/pkg/cypher\executor.go:586:		fabricRecordBindings:           e.fabricRecordBindings,
+wt-fix-1384-dev/pkg/cypher\executor.go:2140:	graphReadingPatternComprehension = "pattern comprehension"
+wt-fix-1384-dev/pkg/cypher\executor.go:2150:// graphReadingPatternComprehension; EXISTS((a)-->()) and shortestPath /
+wt-fix-1384-dev/pkg/cypher\executor.go:2195:	if comprehension, _ := classifyPatternComprehensions(cypher); comprehension {
+wt-fix-1384-dev/pkg/cypher\executor.go:2196:		return graphReadingPatternComprehension
+wt-fix-1384-dev/pkg/cypher\executor_fabric.go:645:	executor.fabricRecordBindings = recordBindings
+wt-fix-1384-dev/pkg/cypher\executor_fabric.go:656:		exec.fabricRecordBindings = recordBindings
+wt-fix-1384-dev/pkg/cypher\executor_fabric.go:667:				exec.fabricRecordBindings = recordBindings
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:21:	values := make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:22:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:50:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:71:		for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:199:	if len(e.fabricRecordBindings) > 0 {
+wt-fix-1384-dev/pkg/cypher\executor_mutations_where_eval.go:215:			if v, ok := e.fabricRecordBindings[s]; ok {
+wt-fix-1384-dev/pkg/cypher\executor_query_routing.go:290:	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
+wt-fix-1384-dev/pkg/cypher\executor_query_routing.go:291:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\executor_query_routing.go:477:	if singleNodePatternComprehension(cypher) {
+wt-fix-1384-dev/pkg/cypher\executor_query_routing.go:853:				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
+wt-fix-1384-dev/pkg/cypher\executor_query_routing.go:932:		if _, cached := sh.cache[key]; !cached && len(sh.cache) >= c.max/boundedCacheShardCount {
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:533:	return readCallSubqueryScope(cypher).scoped
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:536:type callSubqueryScopeClause struct {
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:544:// readCallSubqueryScope is the shared static/runtime owner of CALL's scope
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:549:func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:552:		return callSubqueryScopeClause{}
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:556:	scope := callSubqueryScopeClause{bodyOffset: offset + idx}
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:1755:		if isCallSubqueryImportNotNullGuardTerm(term, importCol) {
+wt-fix-1384-dev/pkg/cypher\executor_subqueries.go:1769:func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
+wt-fix-1384-dev/pkg/cypher\executor_use.go:404:	case graphReadingPatternComprehension:
+wt-fix-1384-dev/pkg/cypher\executor_use.go:406:			localization.CypherAdminShowPatternComprehensionInvalid())
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:170:	// (localSubqueryScope): a false decides, and it discards a subquery's
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:185:type localSubqueryScopeKey struct{}
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:188:	if position == foldAnd && inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:194:func inLocalSubqueryScope(ctx context.Context) bool {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:195:	return ctx.Value(localSubqueryScopeKey{}) != nil
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:198:// localSubqueryScope evaluates expression in a local subquery scope, with
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:201:func localSubqueryScope(ctx context.Context, expression string, evaluate func(context.Context) (interface{}, bool, error)) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:205:	ctx = context.WithValue(ctx, localSubqueryScopeKey{}, true)
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:209:// withoutLocalSubqueryScope is ctx for running a subquery's body: Neo4j plans
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:212:func withoutLocalSubqueryScope(ctx context.Context) context.Context {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:213:	if inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:214:		return context.WithValue(ctx, localSubqueryScopeKey{}, nil)
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:373:	if !mayContainSubqueryExpressionFor(ctx, expression) || inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:535:				if _, _, pattern := splitPatternComprehension(expression[i : closing+1]); pattern {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:576:	if len(indexes) == 0 || inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:643:// returns its errors (evaluateRowPatternComprehensionAtom).
+wt-fix-1384-dev/pkg/cypher\expression_failure.go:709:	if isolation.local && inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\functions.go:144:	if pattern, projection, ok := splitPatternComprehension(expr); ok {
+wt-fix-1384-dev/pkg/cypher\functions.go:145:		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
+wt-fix-1384-dev/pkg/cypher\label_expression_rewrite.go:1527:			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
+wt-fix-1384-dev/pkg/cypher\label_expression_rewrite.go:1548:				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
+wt-fix-1384-dev/pkg/cypher\label_expression_rewrite.go:1602:// patternPredicate rewrites the pattern predicate query[start:end]. When its
+wt-fix-1384-dev/pkg/cypher\label_expression_rewrite.go:1605:func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callClose int) error {
+wt-fix-1384-dev/pkg/cypher\match_index_seek.go:31:	value, ok = e.evaluateRowExpressionWithContext(ctx, expr, e.fabricRecordBindings)
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:34:	cacheable := len(e.fabricRecordBindings) == 0
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:75:	types := make(typeScope, len(e.fabricRecordBindings))
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:77:	for name := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:356:			carryStaticSubqueryImports(projectedTypes, types, enclosing.visible, projectionBody)
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:775:			_, externallyBound := e.fabricRecordBindings[identifier]
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:808:				if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:821:	expression = maskPatternComprehensions(expression)
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:831:// maskPatternComprehensions blanks, keeping byte offsets, the inside of every
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:835:func maskPatternComprehensions(expression string) string {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:856:		if _, _, comprehension := splitPatternComprehension(expression[index : close+1]); comprehension {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:919:		local := withPatternComprehensionBindings(withLocalTypes(scope, text, subquery.start), text, subquery.start)
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:966:		return withPatternComprehensionBindings(withLocalTypes(scope, text, at), text, at)
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:978:			if pattern, _, comprehension := splitPatternComprehension(structure[index : close+1]); comprehension {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:1545:// withPatternComprehensionBindings is scope with the variables of every
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:1549:func withPatternComprehensionBindings(scope staticTypeScope, text string, at int) staticTypeScope {
+wt-fix-1384-dev/pkg/cypher\match_semantic_validation.go:1564:		pattern, _, comprehension := splitPatternComprehension(text[open : close+1])
+wt-fix-1384-dev/pkg/cypher\merge_context.go:854:	row := make(pipelineRow, len(e.fabricRecordBindings)+len(bindings)+len(nodes)+len(rels))
+wt-fix-1384-dev/pkg/cypher\merge_context.go:855:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\merge_semantic_validation.go:14:	shards [boundedCacheShardCount]semanticValidationCacheShard
+wt-fix-1384-dev/pkg/cypher\merge_semantic_validation.go:25:	shardLimit := max / boundedCacheShardCount
+wt-fix-1384-dev/pkg/cypher\merge_semantic_validation.go:49:	if len(sh.entries) >= cache.max/boundedCacheShardCount {
+wt-fix-1384-dev/pkg/cypher\pattern_bound_node_values.go:31:				if err := boundPatternNodeValueError(variable, value); err != nil {
+wt-fix-1384-dev/pkg/cypher\pattern_bound_node_values.go:40:// boundPatternNodeValueError is the TypeError for a pattern's node variable
+wt-fix-1384-dev/pkg/cypher\pattern_bound_node_values.go:43:func boundPatternNodeValueError(variable string, value interface{}) error {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:13:// splitPatternComprehension splits a pattern comprehension
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:18:func splitPatternComprehension(expr string) (string, string, bool) {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:75:// rowPatternComprehensionAtom reads an expression that is one pattern
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:77:// evaluateRowPatternComprehensionAtom and the compiled row programs.
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:78:func rowPatternComprehensionAtom(expr string) (pattern, projection string, ok bool) {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:82:	return splitPatternComprehension(expr)
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:85:// evaluateRowPatternComprehensionAtom evaluates an expression that is one
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:90:func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:91:	pattern, projection, comprehension := rowPatternComprehensionAtom(expr)
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:100:		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, rowValuesInExpressionContext(ctx, values)), true, nil
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:156:	rows, _ := e.boundPatternRows(ctx, pattern, nodes, rels, values)
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:160:// boundPatternRows is evaluateBoundPatternRows reporting whether the kernel
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:163:func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:206:func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:214:	return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, scope)
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:217:// evaluatePatternComprehensionFromRow evaluates a correlated pattern against
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:222:func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:351:	shape.pattern2, shape.projection, shape.comprehension = splitPatternComprehension(expr)
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:423:		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
+wt-fix-1384-dev/pkg/cypher\pattern_expression.go:672:	if pattern, _, ok := splitPatternComprehension(strings.TrimSpace(argument)); ok {
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:5:// singleNodePatternComprehension rejects node-only comprehensions. Both parser
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:7:func singleNodePatternComprehension(query string) bool {
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:8:	_, singleton := classifyPatternComprehensions(query)
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:12:// classifyPatternComprehensions shares one balanced scan between graph-read
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:15:func classifyPatternComprehensions(query string) (pattern, singleton bool) {
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:16:	if !mayHavePatternComprehension(query) {
+wt-fix-1384-dev/pkg/cypher\pattern_comprehension_classification.go:70:func mayHavePatternComprehension(query string) bool {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:10:// patternPredicatePlan owns a pattern predicate's scope and evaluation. Its
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:15:type patternPredicatePlan struct {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:21:var patternPredicatePlans = newBoundedCache[string, *patternPredicatePlan](1024, boundedCacheStringShardIndex)
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:23:func planPatternPredicate(pattern string) *patternPredicatePlan {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:25:	if plan, cached := patternPredicatePlans.get(pattern); cached {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:28:	plan := &patternPredicatePlan{
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:43:	patternPredicatePlans.put(pattern, plan)
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:55:		if _, externallyBound := e.fabricRecordBindings[variable]; !externallyBound {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:62:func (plan *patternPredicatePlan) evaluate(e *StorageExecutor, ctx context.Context, scope compiledRowScope) (bool, error) {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:67:	if len(e.fabricRecordBindings) > 0 {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:68:		row := make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:69:		for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:103:			if count, expanded := e.boundExpandCount(ctx, hop, seed, "", values, true); expanded {
+wt-fix-1384-dev/pkg/cypher\pattern_predicate.go:108:	value, _, err := e.rowSubqueryValue(ctx, "EXISTS", plan.pattern, values)
+wt-fix-1384-dev/pkg/cypher\pattern_parser.go:433:			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
+wt-fix-1384-dev/pkg/cypher\pattern_parser.go:449:	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
+wt-fix-1384-dev/pkg/cypher\pattern_parser.go:466:	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
+wt-fix-1384-dev/pkg/cypher\pipeline_clause_plan.go:290:		callScope := readCallSubqueryScope(clause)
+wt-fix-1384-dev/pkg/cypher\pipeline_executor.go:575:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\pipeline_executor.go:1098:// (fabricRecordBindings) or an enclosing value scope. Parameters are not
+wt-fix-1384-dev/pkg/cypher\pipeline_executor.go:1113:	for name := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\pipeline_imports.go:26:	carrySubqueryImports(projected, input, imports)
+wt-fix-1384-dev/pkg/cypher\pipeline_imports.go:29:// carrySubqueryImports applies the same retention rule to runtime values and
+wt-fix-1384-dev/pkg/cypher\pipeline_imports.go:32:func carrySubqueryImports[T any](projected, input, imports map[string]T) {
+wt-fix-1384-dev/pkg/cypher\pipeline_mutation.go:381:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\pipeline_row_stream.go:414:						if err := boundPatternNodeValueError(pattern.variable, value); err != nil {
+wt-fix-1384-dev/pkg/cypher\property_access_semantic_validation.go:323:			if pattern, projection, isPattern := splitPatternComprehension(text[index : end+1]); isPattern {
+wt-fix-1384-dev/pkg/cypher\row_list_loops.go:14:// reached, so the scope is a local subquery scope (localSubqueryScope).
+wt-fix-1384-dev/pkg/cypher\row_list_loops.go:21:		if ctx := rowStatementContext(values); ctx != nil && !inLocalSubqueryScope(ctx) {
+wt-fix-1384-dev/pkg/cypher\row_list_loops.go:22:			scope[rowStatementContextKey] = context.WithValue(ctx, localSubqueryScopeKey{}, true)
+wt-fix-1384-dev/pkg/cypher\row_expression.go:141:	if value, matched, err := e.evaluateRowPatternComprehensionAtom(expr, values); matched {
+wt-fix-1384-dev/pkg/cypher\row_expression.go:1206:// context evaluator (rowSubqueryValue).
+wt-fix-1384-dev/pkg/cypher\row_expression.go:1491:			local := context.WithValue(ctx, localSubqueryScopeKey{}, true)
+wt-fix-1384-dev/pkg/cypher\row_expression.go:1943:// endpoints many times (an EXISTS body's WHERE, boundExpandCount), the
+wt-fix-1384-dev/pkg/cypher\row_expression.go:2094:	value, ok, err := e.rowSubqueryValue(ctx, "EXISTS", subquery, values)
+wt-fix-1384-dev/pkg/cypher\row_predicate_plan.go:300:	pattern       *patternPredicatePlan
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:250:	if kind, open, subquery := rowSubqueryAtom(expr); subquery {
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:251:		return bound(expr, &rowSubqueryNode{text: expr, kind: kind, body: strings.TrimSpace(expr[open+1 : len(expr)-1])}, impureRowValue())
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:253:	if _, _, comprehension := rowPatternComprehensionAtom(expr); comprehension {
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:648:// rowSubqueryNode is an EXISTS / COUNT / COLLECT { … } subquery read once:
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:653:type rowSubqueryNode struct {
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:659:func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\row_value_program.go:664:	value, resolved, err := e.rowSubqueryValue(ctx, n.kind, n.body, values)
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:51:	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:225:// validateCallSubqueryScopes applies the update-clause scope check
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:233:func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:238:		scope := readCallSubqueryScope(cypher[position:])
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:320:		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
+wt-fix-1384-dev/pkg/cypher\semantic_validation.go:509:		if _, _, patternComprehension := splitPatternComprehension(candidate); !patternComprehension {
+wt-fix-1384-dev/pkg/cypher\set_semantic_validation.go:325:				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:141:// rowSubqueryPlan is the shape of a predicate holding subquery expressions,
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:147:type rowSubqueryPlan struct {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:190:// rowSubqueryPlans caches row subquery plans by expression text: an
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:193:var rowSubqueryPlans = newBoundedCache[string, *rowSubqueryPlan](1024, boundedCacheStringShardIndex)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:197:func planRowSubqueries(expr string) *rowSubqueryPlan {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:201:	plan, cached := rowSubqueryPlans.get(expr)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:206:		plan = &rowSubqueryPlan{found: found, names: make([]string, len(found))}
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:228:	rowSubqueryPlans.put(expr, plan)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:233:// values as outer bindings (fabricRecordBindings), for a subquery body that
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:237:	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:238:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:239:		correlated.fabricRecordBindings[name] = value
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:245:		correlated.fabricRecordBindings[name] = value
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:250:// rowSubqueryAtom reads an expression that is one EXISTS / COUNT / COLLECT
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:253:func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:277:	kind, open, ok := rowSubqueryAtom(expr)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:285:	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:300:	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:308:// rowSubqueryValue is evaluateRowSubqueryValue returning the subquery's error
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:312:func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:313:	ctx = withoutLocalSubqueryScope(ctx)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:317:		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:320:		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:323:		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:326:		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:329:			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:341:	query := rowSubqueryQueryFor(ctx, kind, body)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:447:// boundChainCount counts the rows of a body that is one relationship chain,
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:455:func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:469:	if count, expanded := e.boundExpandCount(ctx, matches, seed, where, values, first); expanded {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:472:	return e.boundTraversalCount(ctx, matches, seed, where, values, first), true
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:475:// boundNodeLookupCount counts the rows of a body that is one labelled node
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:486:func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:556:// boundNodeShape is the text part of boundNodeLookupCount: the node
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:618:// boundTraversalCount is boundChainCount for any chain: the paths the
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:621:func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:674:// boundExpandCount is boundChainCount for one relationship of length one,
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:683:func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:837:// boundChainShape is the text part of boundChainCount: a body that is one
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:876:// ((n {id: 1}), ()-[:R {k: $k}]->()): boundChainCount's traversal matches
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:946:// boundChainCount compares the traversal with the row's nodes and
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1019:// boundPatternCountBindings reports whether a COUNT { body } is one pattern
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1047:func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1117:// relationship variable is bound in the row (boundDegreeCount).
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1175:// boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1179:func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, values map[string]interface{}) (int64, bool) {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1219:// rowSubqueryQuery is the query a subquery body runs as: a body that is
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1222:func rowSubqueryQuery(kind, body string) string {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1238:// rowSubqueryQueryFor is rowSubqueryQuery from body's plan in ctx.
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1239:func rowSubqueryQueryFor(ctx context.Context, kind, body string) string {
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1248:		return rowSubqueryQuery(kind, body)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1252:		return rowSubqueryQuery(kind, body)
+wt-fix-1384-dev/pkg/cypher\subquery_value_expression.go:1254:	return plannedAnalysis(plan, analysis, body, func(body string) string { return rowSubqueryQuery(kind, body) })
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:386:// carryStaticSubqueryImports models both possible global-aggregate rows. A
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:392:func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:396:		carrySubqueryImports(empty, nil, imports)
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:398:	carrySubqueryImports(projected, input, imports)
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:440:// callSubqueryImports is the scope a CALL subquery's body starts from: CALL
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:444:func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:452:	scope := readCallSubqueryScope(callText)
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:470:// the variables it imports (callSubqueryImports), and returns the static
+wt-fix-1384-dev/pkg/cypher\static_type_scope.go:478:	initial, scoped, ok := callSubqueryImports(callText, outer)
+wt-fix-1384-dev/pkg/cypher\unwind_routing.go:191:	for name, value := range e.fabricRecordBindings {
+wt-fix-1384-dev/pkg/cypher\value_bindings.go:57:	if value, ok := e.fabricRecordBindings[name]; ok {

@@ -1,0 +1,42 @@
+wt-fix-1384-r73-dev/pkg\cypher\authorization.go:95:// YIELD, in a CALL { } / EXISTS { } / COUNT { } subquery, ...). CALL inside
+wt-fix-1384-r73-dev/pkg\cypher\aggregate_functions.go:29:// (EXISTS { … }): only a word starting with one of them can begin an
+wt-fix-1384-r73-dev/pkg\cypher\executor.go:2110:// (`[(n)-->(m) | …]`) and pattern subqueries (`COUNT { }`, `EXISTS { }`,
+wt-fix-1384-r73-dev/pkg\cypher\executor.go:2148:// EXISTS { } or COLLECT { } subquery is "COUNT", "EXISTS" or "COLLECT"; a
+wt-fix-1384-r73-dev/pkg\cypher\expression_failure.go:221:// (RETURN x <> 0 AND NOT EXISTS {...} raises the subquery's error): one with
+wt-fix-1384-r73-dev/pkg\cypher\expression_failure.go:228:// an anti-semi-apply when negated: a whole EXISTS { … }, or a COUNT { … }
+wt-fix-1384-r73-dev/pkg\cypher\expression_failure.go:233:// subquery (COUNT { … } >= 1, COLLECT { … } = [], EXISTS { … } = true) is a
+wt-fix-1384-r73-dev/pkg\cypher\expression_validation.go:458:// (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
+wt-fix-1384-r73-dev/pkg\cypher\functions_eval_functions.go:208:	// the pattern matches, as EXISTS { pattern } (#907)
+wt-fix-1384-r73-dev/pkg\cypher\functions_eval_functions.go:213:				return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels)
+wt-fix-1384-r73-dev/pkg\storage\constraint_contracts.go:725:// parseNotExistsPatternExpression: NOT EXISTS { [MATCH] pattern }
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:27:// COUNT or COLLECT body becomes a MATCH (EXISTS { (n)-->(:A|B) } is
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:28:// EXISTS { MATCH (n)-->(x) WHERE x:A|B }), a pattern predicate becomes an
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:1412:// EXISTS {, COUNT {, COLLECT {, CALL { or CALL (…) {. The word may be the
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:1454:// pattern with an optional WHERE (EXISTS { (n)-->(m) WHERE … }), which
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:1603:// label expressions add predicates it becomes EXISTS { MATCH … WHERE … }; a
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:1611:	open := labelRewriteEdit{start: start, end: start, text: "EXISTS { MATCH "}
+wt-fix-1384-r73-dev/pkg\cypher\label_expression_rewrite.go:1614:		open = labelRewriteEdit{start: callStart, end: start, text: "EXISTS { MATCH "}
+wt-fix-1384-r73-dev/pkg\cypher\map_literal_validation.go:105:// opens a brace-bodied subquery expression (EXISTS {, COUNT {, COLLECT {, or
+wt-fix-1384-r73-dev/pkg\cypher\map_literal_validation.go:124://     what distinguishes `(EXISTS { MATCH ... })` (a grouped subquery
+wt-fix-1384-r73-dev/pkg\cypher\match_semantic_validation.go:1547:// in [(n)-->(x) WHERE EXISTS { … x … } | x] the subquery sees x. A name
+wt-fix-1384-r73-dev/pkg\cypher\pattern_expression.go:125:// EXISTS { ... } subquery expression, with nothing before EXISTS and nothing
+wt-fix-1384-r73-dev/pkg\cypher\pattern_expression.go:140:// evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
+wt-fix-1384-r73-dev/pkg\cypher\pattern_expression.go:631:// matches, as EXISTS { pattern }; NOT, AND, OR and XOR over operands that
+wt-fix-1384-r73-dev/pkg\cypher\pattern_expression.go:642:		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
+wt-fix-1384-r73-dev/pkg\cypher\pipeline_executor.go:438:// EXISTS { MATCH ... } belongs to the predicate and must never become a new
+wt-fix-1384-r73-dev/pkg\cypher\pipeline_write_stretch.go:242:// for a pattern predicate or a subquery (EXISTS { … }, COUNT { … },
+wt-fix-1384-r73-dev/pkg\cypher\property_access_semantic_validation.go:421:// (EXISTS { … }, COUNT { … }, COLLECT { … }, CALL { … }) rather than a map.
+wt-fix-1384-r73-dev/pkg\cypher\query_patterns.go:539:// (EXISTS { … } AND …) is not a node.
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:1570:// EXISTS { … } predicate, which the predicate evaluator runs with its context
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:1594:	// `(EXISTS { ... })`, `(a.x = 1 OR EXISTS { ... })` — must be unwrapped
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:1650:	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:2056:// [NOT] EXISTS { } predicate; recognized is false otherwise.
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:2059:	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:2085:// rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the
+wt-fix-1384-r73-dev/pkg\cypher\row_expression.go:2086:// whole EXISTS { } text; recognized is false for an empty body.
+wt-fix-1384-r73-dev/pkg\cypher\subquery_value_expression.go:15:// A subquery expression (EXISTS { … }, COUNT { … }, COLLECT { … }) is a value
+wt-fix-1384-r73-dev/pkg\cypher\subquery_value_expression.go:129:// EXISTS { … } or NOT EXISTS { … }, and which. Only such a predicate is a
+wt-fix-1384-r73-dev/pkg\cypher\subquery_value_expression.go:131:// (EXISTS { … } = false) is an expression with the subquery as one of its
+wt-fix-1384-r73-dev/pkg\cypher\subquery_value_expression.go:152:	// wholeExists is set for a predicate that is exactly NOT EXISTS { … },
+wt-fix-1384-r73-dev/pkg\cypher\static_operator_types.go:832:// and EXISTS { }.
+wt-fix-1384-r73-dev/pkg\cypher\where_by_variable.go:72:// or a braced subquery (EXISTS { … }, COUNT { … }, COLLECT { … }). It errs

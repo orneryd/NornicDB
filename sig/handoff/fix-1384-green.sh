@@ -1,0 +1,1 @@
+bash sig/tnrun.sh go wt-fix-1384-dev --allow-dirty --parser both -- ./pkg/cypher -run 'TestPatternPredicateScopeMatchesNeo4j|TestEvaluateWhereForContext_Branches|TestPatternPredicateUsesExistsOwner|TestPatternPredicatesRequireExistingBindings|TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors|TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns' -count=1 -v

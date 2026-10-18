@@ -1,0 +1,6 @@
+Affected nodes for .evaluatePatternPredicateValue()
+Relations: calls
+Depth: 2
+- .evaluateRowExpressionShaped() [calls] pkg/cypher/pattern_expression.go:L371
+- .evaluateRowExpressionWithContext() [calls] pkg/cypher/pattern_expression.go:L362
+- .evaluate() [calls] pkg/cypher/pattern_expression.go:L532

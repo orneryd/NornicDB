@@ -1,0 +1,19 @@
+83:    : USE (symbol (DOT symbol)* | functionInvocation)
+142:    | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
+181:existsSubquery
+182:    : EXISTS LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
+185:countSubquery
+186:    : COUNT LBRACE (matchSt | subqueryBody | pattern where?) RBRACE
+189:collectSubquery
+194:    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+198:subqueryBody
+199:    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+406:    | NOT* existsSubquery
+551:    | countSubquery
+552:    | collectSubquery
+554:    | patternComprehension
+558:    | functionInvocation
+560:    | subqueryExist
+594:subqueryExist
+602:functionInvocation
+615:patternComprehension

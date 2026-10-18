@@ -1,0 +1,113 @@
+tnrun: no -timeout given; added -timeout 110m
+tnrun: job i20261018034733-37404-faab: wt-fix-1384-dev@e1381567, tracked edits, 2 untracked file(s); submitted in 2.6s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.11 GiB
+tnrun job i20261018034733-37404-faab (wt-fix-1384-dev@e1381567): worker 14, CPUs 32,33,96,97, commit e138156772abea4912fdea1c3f151ef8065e386b, go1.26.9
+uncommitted tracked edits: applied i20261018034733-37404-faab.patch
+untracked files: overlaid i20261018034733-37404-faab.tar
+prep ui: npm ci && npm run build in 14s
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicateScopeMatchesNeo4j|TestEvaluateWhereForContext_Branches|TestPatternPredicateUsesExistsOwner|TestPatternPredicatesRequireExistingBindings|TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors|TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestEvaluateWhereForContext_Branches
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.13 GiB
+tnrun: job i20261018034733-37404-faab: DONE exit 0 (default 0 in 43s, antlr 0 in 6s); box 63s, total 73s; stored for reuse: default, antlr
+--- PASS: TestEvaluateWhereForContext_Branches (0.03s)
+=== RUN   TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns
+--- PASS: TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns (0.01s)
+=== RUN   TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors
+--- PASS: TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors (0.03s)
+=== RUN   TestPatternPredicatesRequireExistingBindings
+--- PASS: TestPatternPredicatesRequireExistingBindings (0.00s)
+=== RUN   TestPatternPredicateUsesExistsOwner
+=== RUN   TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE
+=== RUN   TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT
+=== RUN   TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map
+=== RUN   TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match
+=== RUN   TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches
+=== RUN   TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding
+=== RUN   TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_OR
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_AND
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner (0.01s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/pattern_under_OR (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/pattern_under_AND (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+--- PASS: TestPatternPredicateScopeMatchesNeo4j (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b) (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	0.441s
+=== parser default: exit 0 after 43s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run TestPatternPredicateScopeMatchesNeo4j|TestEvaluateWhereForContext_Branches|TestPatternPredicateUsesExistsOwner|TestPatternPredicatesRequireExistingBindings|TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors|TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns -count=1 -v -timeout 110m -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestEvaluateWhereForContext_Branches
+--- PASS: TestEvaluateWhereForContext_Branches (0.01s)
+=== RUN   TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns
+--- PASS: TestMultiMatchFiltersWithDisjunctiveRelationshipPatterns (0.18s)
+=== RUN   TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors
+--- PASS: TestRelationshipPatternPredicatesRemainIsolatedBetweenExecutors (0.04s)
+=== RUN   TestPatternPredicatesRequireExistingBindings
+--- PASS: TestPatternPredicatesRequireExistingBindings (0.01s)
+=== RUN   TestPatternPredicateUsesExistsOwner
+=== RUN   TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE
+=== RUN   TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT
+=== RUN   TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map
+=== RUN   TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match
+=== RUN   TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches
+=== RUN   TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding
+=== RUN   TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_OR
+=== RUN   TestPatternPredicateUsesExistsOwner/pattern_under_AND
+=== RUN   TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node
+=== RUN   TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node
+--- PASS: TestPatternPredicateUsesExistsOwner (0.10s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S04_bound_relationship_in_WHERE (0.01s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/bound_relationship_under_NOT (0.01s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S05_row_value_in_a_property_map (0.01s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/row_value_in_a_property_map,_no_match (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S06_exists()_with_a_bound_relationship (0.02s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/exists()_with_a_bound_relationship_that_matches (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/S07_row_with_no_node_binding (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/row_with_no_node_binding,_no_match (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/pattern_under_OR (0.02s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/pattern_under_AND (0.01s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/exists()_over_a_null_node (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/WHERE_pattern_over_a_null_node (0.00s)
+    --- PASS: TestPatternPredicateUsesExistsOwner/WHERE_NOT_pattern_over_a_null_node (0.00s)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b)
+=== RUN   TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b)
+--- PASS: TestPatternPredicateScopeMatchesNeo4j (0.01s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[missing]->(b) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(c)-[:KNOWS]->(b) (0.00s)
+    --- PASS: TestPatternPredicateScopeMatchesNeo4j/(a)-[:KNOWS]->(c)-[:KNOWS]->(b) (0.00s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	0.707s
+=== parser antlr: exit 0 after 6s

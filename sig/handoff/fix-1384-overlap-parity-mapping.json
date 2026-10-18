@@ -1,0 +1,166 @@
+[
+  {
+    "developPR": 1330,
+    "disposition": "prerequisite-static",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The #1385 static owner must include procedure-YIELD subquery visibility and grouped identity/redeclaration rules; runtime must consume its metadata.",
+    "dependencies": [],
+    "notes": "Shared static owner / its release delivery; not a separate walk in #1459.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1331,
+    "disposition": "partial-subsumption",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The runtime frame subsumes hidden-import retention, projection-only DISTINCT/grouping keys and ORDER BY access. The general value-equivalence index and APOC/collection consumers remain an independent port.",
+    "dependencies": [
+      "shared-static-owner"
+    ],
+    "notes": "Retain release cypherEquivalenceKey; no second equivalence implementation and no claim to the whole PR.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1335,
+    "disposition": "independent",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "This fixes path hashing in #1331's new value-equivalence index, which release lacks. The frame can use release's existing canonical equivalence and does not require that index.",
+    "dependencies": [],
+    "notes": "Port with the independent #1331 value-index remainder, not as frame code.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1337,
+    "disposition": "split-prerequisite-and-subsumption",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The #1385 owner supplies CALL (*)/()/named import metadata and static retention. This runtime change consumes it and replaces carried/WITH-rewrite decisions; no parallel import reader.",
+    "dependencies": [
+      "shared-static-owner"
+    ],
+    "notes": "Static API on release is a prerequisite; runtime carrier portion is subsumed.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1345,
+    "disposition": "prerequisite-type-facts",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Supply the final canonical joined-operand facts, with #1354/#1356, so the frame carries nonInteger/predicateDeferred facts without a new type join.",
+    "dependencies": [
+      1354,
+      1356
+    ],
+    "notes": "One final-state type-fact port; do not replay the temporary #1351 revert.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1347,
+    "disposition": "prerequisite-lexical",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The shared lexical/qualified-call readers must distinguish comments and dotted words before the original graph-expression form and body scope are compiled.",
+    "dependencies": [],
+    "notes": "Use the existing lexer owner, coordinated with #1472; no frame-local scanner.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1354,
+    "disposition": "prerequisite-type-facts",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Provide canonical CASE/type-union joins and function-argument compatibility, including the final #1345/#1356 facts; runtime scope must carry the owner's operand state.",
+    "dependencies": [
+      1345,
+      1356
+    ],
+    "notes": "One type-fact service port; static horizon integration belongs to the #1385 owner.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1356,
+    "disposition": "prerequisite-type-facts",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The final canonical joined operand must retain integer exclusion and deferred-predicate facts from #1345 after the #1354 type-union work.",
+    "dependencies": [
+      1345,
+      1354
+    ],
+    "notes": "Combined final-state port with #1345/#1354, not three serial fixes.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1357,
+    "disposition": "subsumed",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Graph-expression keyword/body recognition and consumer classification, including comments/form feed and inner aggregates, belong to the compiled form plan shared by static and runtime consumers.",
+    "dependencies": [
+      1347
+    ],
+    "notes": "Fold the native boundary fixes and regression/oracle families into the integrated plan.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1359,
+    "disposition": "prerequisite-evaluation",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "The scalar operation/error owner supplies logical folding, operand isolation and deferred subquery errors used by both compiled and generic graph-expression adapters.",
+    "dependencies": [
+      1347,
+      1354
+    ],
+    "notes": "Port the native operation/error policy; adapt its graph/subquery scope entry to the shared owner instead of introducing another frame.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1361,
+    "disposition": "partial-subsumption",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Compile/cache each graph-expression body once using the statement's clause-plan contract shared with #1385. General DELETE/index-seek/traversal planning changes remain a separate port.",
+    "dependencies": [
+      "shared-static-owner"
+    ],
+    "notes": "One shared body-plan cache; do not wholesale backport unrelated pipeline consumers.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1380,
+    "disposition": "partial-subsumption",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Graph-body UNION/grouping/reference/result-tail facts use the same compiled body contract. General result-modifier relocation and unrelated repeated scans remain separate.",
+    "dependencies": [
+      1361
+    ],
+    "notes": "Keep live release parseIntModifier/order helpers until all release callers are independently ported.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1388,
+    "disposition": "partial-subsumption",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Prepared/unprepared graph-expression rows converge on the runtime frame without losing already-bound context values. Generic aggregate map compilation and unrelated aggregate adapters remain separate.",
+    "dependencies": [],
+    "notes": "No GDS feature backport; no second prepared-row merge.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  },
+  {
+    "developPR": 1395,
+    "disposition": "subsumed-native",
+    "status": "planned-not-implemented",
+    "proposedReleasePR": 1459,
+    "scope": "Native EXISTS/COUNT one-hop/node/chain selection, sparse endpoint choice, endpoint/equality reads and zero-hop matching are execution strategies beneath the graph-expression owner.",
+    "dependencies": [
+      1361
+    ],
+    "notes": "Fold native kernels and tests; do not import the separate #1381 memory framework or develop-only GDS features.",
+    "evidence": "sig/handoff/fix-1384-overlap-parity.md"
+  }
+]

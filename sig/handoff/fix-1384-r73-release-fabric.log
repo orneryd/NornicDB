@@ -1,0 +1,95 @@
+tnrun: job i20261018120543-26432-12a9: wt-fix-1384-r73-release@4bc18585, 8 untracked file(s); submitted in 5.2s
+tnrun: running
+tnrun: peak RSS of test binary (default): pkg/cypher 0.03 GiB
+tnrun job i20261018120543-26432-12a9 (wt-fix-1384-r73-release@4bc18585): worker 16, CPUs 36,37,100,101, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+untracked files: overlaid i20261018120543-26432-12a9.tar
+prep ui: npm ci && npm run build in 14s
+prep llama v0.4.1: cached
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternFabricStateAttack$ -count=1 -timeout 15m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFabricStateAttack
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="EXISTS {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="EXISTS {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="COUNT {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="COUNT {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="size(COLLECT {  MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="size(COLLECT {  MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="EXISTS { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="EXISTS { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="COUNT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="COUNT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="size(COLLECT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="size(COLLECT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 false] [2 false] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 false] [2 false] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="size(COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="size(COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+--- FAIL: TestRule73PatternFabricStateAttack (0.04s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.194s
+=== parser default: exit 1 after 44s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./pkg/cypher -run ^TestRule73PatternFabricStateAttack$ -count=1 -timeout 15m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFabricStateAttack
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="EXISTS {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="EXISTS {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="COUNT {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="COUNT {  MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="size(COLLECT {  MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="size(COLLECT {  MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="EXISTS { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="EXISTS { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="COUNT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="COUNT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="size(COLLECT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="size(COLLECT { WITH * MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH *" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH *" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="exists((a)-[:R]->(b))" rows=[[1 true] [2 true] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 false] [2 false] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="EXISTS { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 false] [2 false] [3 false]] err=<nil> want=[[1 true] [2 true] [3 false]]
+tnrun: peak RSS of test binary (antlr): pkg/cypher 0.08 GiB
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) }" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="size(COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+tnrun: job i20261018120543-26432-12a9: DONE exit 1 (default 1 in 44s, antlr 1 in 7s); box 65s, total 75s
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="size(COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a)-[:R]->(b) RETURN b.id })" rows=[[1 0] [2 0] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:33: routed inner graph-expression result differs
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=use horizon="WITH 1 AS local" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+    rule73_pattern_fabric_attack_test.go:32: R73_FABRIC route=call-use horizon="WITH 1 AS local" expression="size([(a)-[:R]->(b) | 1])" rows=[[1 1] [2 1] [3 0]] err=<nil> want=[[1 1] [2 1] [3 0]]
+--- FAIL: TestRule73PatternFabricStateAttack (0.42s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/cypher	0.645s
+=== parser antlr: exit 1 after 7s

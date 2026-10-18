@@ -1,0 +1,117 @@
+{
+  "job": "a20261018011000-25632-758b",
+  "head": "cc453b3862902611f18d658e0d3acd53bea94d63",
+  "authorization": "User explicitly approved stopping this superseded job",
+  "signals": [
+    {
+      "pid": 49028,
+      "pgid": 49028,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49047,
+      "pgid": 49047,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49051,
+      "pgid": 49051,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49055,
+      "pgid": 49055,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49059,
+      "pgid": 49059,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49063,
+      "pgid": 49063,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49067,
+      "pgid": 49067,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49071,
+      "pgid": 49071,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49075,
+      "pgid": 49075,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49079,
+      "pgid": 49079,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49083,
+      "pgid": 49083,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49087,
+      "pgid": 49087,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49091,
+      "pgid": 49091,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49095,
+      "pgid": 49095,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49099,
+      "pgid": 49099,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49103,
+      "pgid": 49103,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49107,
+      "pgid": 49107,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49111,
+      "pgid": 49111,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49115,
+      "pgid": 49115,
+      "signal": "TERM"
+    },
+    {
+      "pid": 49119,
+      "pgid": 49119,
+      "signal": "TERM"
+    }
+  ],
+  "workerRestarted": false,
+  "otherJobsUntouched": true,
+  "stopped": true,
+  "workerResult": {
+    "state": "DONE",
+    "exit": 143,
+    "rounds": 10,
+    "worker": "bench",
+    "seconds": 629
+  }
+}

@@ -68,6 +68,7 @@ const (
 	clauseAnalysisSkipModifier
 	clauseAnalysisBoundNode
 	clauseAnalysisRelationshipEqualities
+	clauseAnalysisGraphExpressionBody
 	clauseAnalysisCount
 )
 

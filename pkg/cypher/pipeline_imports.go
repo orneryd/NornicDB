@@ -2,20 +2,14 @@ package cypher
 
 import "context"
 
-type pipelineImportsKey struct{}
-
 // withPipelineImports starts one CALL body's import scope. An empty scope
 // masks the enclosing CALL's imports, including for legacy importing WITH.
 func withPipelineImports(ctx context.Context, imports pipelineRow) context.Context {
-	if len(imports) == 0 && ctx.Value(pipelineImportsKey{}) == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, pipelineImportsKey{}, imports)
+	return withGraphScopeImports(ctx, imports)
 }
 
 func pipelineImports(ctx context.Context) pipelineRow {
-	imports, _ := ctx.Value(pipelineImportsKey{}).(pipelineRow)
-	return imports
+	return graphScopeImports(ctx, nil)
 }
 
 // carryPipelineRowImports keeps explicit CALL imports available alongside a

@@ -1,0 +1,2 @@
+Shortest path (2 hops):
+  .rowSubqueryValue() --calls [EXTRACTED]--> .boundChainCount() --calls [EXTRACTED]--> .boundExpandCount()

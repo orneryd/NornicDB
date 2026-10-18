@@ -1,0 +1,51 @@
+Follows #908 (closed). Several #907 findings fixed this week failed because one behaviour is implemented in several places and a statement reached a copy that lacked what the owner does. The fixes made the behaviour match Neo4j inside the existing structure: #1050, #1051, #1053. This issue tracks converging each area to one owner.
+
+Each area starts with a generated differential sweep: a family in `scripts/cypher-tck/differential/gen_sweep.py`, so the ratchet keeps it. Then the duplicates are removed.
+
+## 1. Subquery expressions are evaluated by four mechanisms
+
+**Where an `EXISTS` / `COUNT` / `COLLECT` subquery is evaluated today:**
+- **The row evaluator** (`evaluateRowValue`). It takes no context and can't run a subquery; it returns "not evaluated", and the caller falls back.
+- **The context evaluator** over nodes and relationships (`evaluateExpressionWithContext`). It pre-evaluates every subquery nested in a larger expression once per row (`planRowSubqueries` / `materializeRowSubqueries`), then evaluates the rewritten text on the row evaluator.
+- **Scopes as special cases.** Because of that pre-pass, a construct that binds a variable its subquery reads must be special-cased as a unit: list comprehensions (`COMPREHENSION`), and since #1050 quantifiers and `reduce` (`QUANTIFIER`, `REDUCE`). Any construct not on that list evaluates its subquery before its variable exists. For example, `any(v IN l WHERE EXISTS { … v … })` was always false.
+- **Inside `rowExistsSubqueryMatches`, two matchers chosen by text heuristics:**
+  - the path matcher (`pathSubqueryMatches`), which sees only node and relationship bindings and literal property maps;
+  - the correlated pipeline (`existsFromRows`), which sees every row value.
+
+  The routing tests whether the body names a scalar row value (`subqueryReadsScalarRowValue`) or reads a row value in a pattern property map (`subqueryPropertyMapReadsRowValue`, added by #1050), and whether it mentions `shortestPath` or `REPEATABLE ELEMENTS`. A body the heuristics misroute gets the path matcher's answer.
+
+**Converged:** one evaluator for expressions that contain subqueries. It sees the whole row through the context, so neither the pre-pass, nor the scope special cases, nor the routing heuristics are needed. The path matcher stays only as an optimisation that is proven equivalent for the shapes it accepts.
+
+**Sweep:** every subquery kind × every enclosing construct (comprehension, quantifier, reduce, CASE, map and list literals, function arguments, OR / AND / NOT operands) × every clause position (RETURN, WITH, WHERE, ORDER BY, SET, a quantified path's element `WHERE`), with the subquery reading:
+- an entity;
+- a scalar;
+- a quantifier variable;
+- a property-map value;
+- a path variable.
+
+## 2. Two static type systems
+
+- **The match validator's binding kinds.** `matchSemanticScope` holds `matchBindingKind`: Node, Relationship, NodeList, RelationshipList, Path, Value, Unknown. It decides whether a variable can be used in a pattern.
+- **The static type scope.** `staticTypeScope` (kinds + `values` type names + parameters) decides function-argument and operator types.
+- **How they meet:** #1051 had the validator ask the static type scope for an expression's type and map the answer back to a binding kind (`projectedExpressionSemanticKind`). Before that, every projected expression that wasn't a bare variable was typed "Value", so `WITH x.node AS m MATCH (m)` was a SyntaxError.
+
+**Converged:** one static type per variable and expression. The validator reads the binding kind from it instead of keeping its own inference for WITH, LET, UNWIND, `collect`, `coalesce` and list literals.
+
+**Sweep:** every projection shape (WITH, LET, UNWIND, CALL … YIELD, CALL subquery RETURN) of every expression kind, followed by a use that needs a type (node pattern, relationship pattern, property access, function argument, operator).
+
+## 3. The function catalog and the evaluators' dispatch are separate lists
+
+- **Two lists.** The unknown-function check reads the function catalog. The evaluators dispatch on function names in their own `switch` statements and maps.
+- **How they drift.** #1053 added 60 names the evaluators implement but the catalog didn't know (`apoc.convert.fromJsonList`, `apoc.text.join`, `date.year`, …), copied from the dispatch by hand. A function added to an evaluator and not to the catalog is "unknown function" on a server without the APOC plugin.
+
+**Converged:** one registry that both the dispatch and the catalog read. A function is known exactly when an evaluator implements it.
+
+**Sweep:** every name the registry holds, called with valid arguments, on a server without plugins.
+
+## Not a convergence item: keywords used as names
+
+A map key or property named `end` broke `CASE`. Its scanners now share one rule in #1052 (`caseKeywordAt`, for `CASE`, `WHEN`, `THEN`, `ELSE` and `END`). The `key-names` sweep family added in #1052 covers 1,136 statements: every keyword as a map key, a property and a label, in CASE (both forms), WHERE and comprehensions. All of them match Neo4j 5.26.30 on the three routes, so that area is converged in #1052 and isn't tracked here.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+

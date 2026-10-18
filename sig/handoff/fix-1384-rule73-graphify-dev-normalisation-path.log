@@ -1,0 +1,2 @@
+Shortest path (4 hops):
+  .Execute() --calls [INFERRED]--> desugarLabelExpressions() <--contains [EXTRACTED]-- label_expression_rewrite.go --contains [EXTRACTED]--> labelExpressionRewriter --method [EXTRACTED]--> .patternPredicate()

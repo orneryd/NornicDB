@@ -1,0 +1,49 @@
+tnrun: running
+tnrun: job j20261018111815-46536-e6c3: exit 0; box 11s, total 20s
+tnrun cypher job j20261018111815-46536-e6c3 on neo-ref (5.26.30)
+database wiped: nodes, relationships, constraints, indexes
+---
+version
+"5.26.30"
+found
+TRUE
+found
+TRUE
+found
+1
+found
+1
+found
+1
+found
+TRUE
+found
+TRUE
+found
+1
+found
+1
+found
+1
+found
+TRUE
+found
+TRUE
+found
+1
+found
+1
+found
+1
+found
+TRUE
+found
+TRUE
+found
+1
+found
+1
+found
+1
+---
+exit 0

@@ -1,0 +1,114 @@
+
+Head    Parser  Route     Member                     Match   Diff
+----    ------  -----     ------                     -----   ----
+dev     default bolt-auto B01-union                  12.00  24.00
+release default bolt-auto B01-union                  12.00  24.00
+dev     default bolt-auto B02-call                   84.00  30.00
+release default bolt-auto B02-call                   66.00  48.00
+dev     default bolt-auto G01-general-body            0.00   6.00
+release default bolt-auto G01-general-body            0.00   6.00
+dev     default bolt-auto G02-other-consumers         4.00   2.00
+release default bolt-auto G02-other-consumers         4.00   2.00
+dev     default bolt-auto N01-nesting                 5.00  15.00
+release default bolt-auto N01-nesting                 5.00  15.00
+dev     default bolt-auto N02-quoted                  2.00   0.00
+release default bolt-auto N02-quoted                  2.00   0.00
+dev     default bolt-auto N03-path                    1.00   0.00
+release default bolt-auto N03-path                    1.00   0.00
+dev     default bolt-auto N04-no-escape               4.00   0.00
+release default bolt-auto N04-no-escape               4.00   0.00
+dev     default bolt-auto P01-predicate              65.00   5.00
+release default bolt-auto P01-predicate              65.00   5.00
+dev     default bolt-auto P02-compiled-with          65.00   5.00
+release default bolt-auto P02-compiled-with          65.00   5.00
+dev     default bolt-auto P03-exists-function        13.00   1.00
+release default bolt-auto P03-exists-function        13.00   1.00
+dev     default bolt-auto P04-comprehension          14.00   0.00
+release default bolt-auto P04-comprehension          12.00   2.00
+dev     default bolt-auto S01-local-admission        45.00   0.00
+release default bolt-auto S01-local-admission        45.00   0.00
+dev     default bolt-auto S02-expression-imports    188.00 196.00
+release default bolt-auto S02-expression-imports    188.00 196.00
+dev     default bolt-auto S03-comprehension-imports  24.00  40.00
+release default bolt-auto S03-comprehension-imports  18.00  46.00
+dev     default bolt-auto S04-scope-errors           15.00   0.00
+release default bolt-auto S04-scope-errors           15.00   0.00
+dev     default bolt-auto T01-transaction-state      30.00   0.00
+release default bolt-auto T01-transaction-state      30.00   0.00
+dev     default bolt-auto U01-context-rewrites       36.00   0.00
+release default bolt-auto U01-context-rewrites       36.00   0.00
+dev     default bolt-auto U02-consumers               0.00   9.00
+release default bolt-auto U02-consumers               0.00   9.00
+dev     default bolt-auto U03-nested-errors           3.00   3.00
+release default bolt-auto U03-nested-errors           3.00   3.00
+dev     default bolt-auto U04-dynamic-tokens          5.00   0.00
+release default bolt-auto U04-dynamic-tokens          5.00   0.00
+dev     default bolt-auto U05-body-admission         15.00   3.00
+release default bolt-auto U05-body-admission         15.00   3.00
+dev     default bolt-auto V01-parameters             10.00  17.00
+release default bolt-auto V01-parameters             10.00  17.00
+dev     default bolt-auto W01-full-comprehension     46.00  13.00
+release default bolt-auto W01-full-comprehension     46.00  13.00
+dev     default bolt-auto W02-kernel-fallback        12.00   0.00
+release default bolt-auto W02-kernel-fallback        12.00   0.00
+dev     default bolt-auto W03-other-admission         5.00   1.00
+release default bolt-auto W03-other-admission         5.00   1.00
+dev     default bolt-auto X01-codepath-bodies        10.00   2.00
+release default bolt-auto X01-codepath-bodies        10.00   2.00
+dev     default bolt-auto X02-system-admission        7.00   0.00
+release default bolt-auto X02-system-admission        7.00   0.00
+dev     default bolt-auto Y01-normalisation         134.00  10.00
+release default bolt-auto Y01-normalisation         134.00  10.00
+dev     default bolt-auto Y02-normalised-imports     10.00   8.00
+release default bolt-auto Y02-normalised-imports     10.00   8.00
+
+Totals per head / parser / route:
+
+Key                         Compared  Match   Diff
+---                         --------  -----   ----
+dev, antlr, bolt-auto        1254.00 864.00 390.00
+dev, antlr, bolt-tx          1254.00 864.00 390.00
+dev, antlr, http             1254.00 864.00 390.00
+dev, default, bolt-auto      1254.00 864.00 390.00
+dev, default, bolt-tx        1254.00 864.00 390.00
+dev, default, http           1254.00 864.00 390.00
+release, antlr, bolt-auto    1254.00 838.00 416.00
+release, antlr, bolt-tx      1254.00 838.00 416.00
+release, antlr, http         1254.00 838.00 416.00
+release, default, bolt-auto  1254.00 838.00 416.00
+release, default, bolt-tx    1254.00 838.00 416.00
+release, default, http       1254.00 838.00 416.00
+
+Current owned jobs:
+
+File                                     Id                          Exit
+----                                     --                          ----
+fix-1384-r73-dev-bolt-codepaths.log      i20261018115348-88204-e2c0     1
+fix-1384-r73-dev-bolt-extra.log          i20261018111637-13424-06a5     1
+fix-1384-r73-dev-bolt-params.log         i20261018112102-59456-7eda     1
+fix-1384-r73-dev-bolt-projection.log     i20261018112307-68812-9867     1
+fix-1384-r73-dev-bolt-rewrites.log       i20261018120024-42960-fbe1     1
+fix-1384-r73-dev-bolt-tx.log             i20261018112514-50148-feea     0
+fix-1384-r73-dev-bolt.log                i20261018111037-53712-fb91     1
+fix-1384-r73-dev-http-codepaths.log      i20261018115357-105844-255f    1
+fix-1384-r73-dev-http-extra.log          i20261018111719-85124-b22a     1
+fix-1384-r73-dev-http-params.log         i20261018112144-50884-e391     1
+fix-1384-r73-dev-http-projection.log     i20261018112344-87952-8917     1
+fix-1384-r73-dev-http-rewrites.log       i20261018120024-68012-9766     1
+fix-1384-r73-dev-http-tx.log             i20261018112629-78784-748a     0
+fix-1384-r73-dev-http.log                i20261018111115-21276-6fc0     1
+fix-1384-r73-release-bolt-codepaths.log  i20261018115408-88808-7f1f     1
+fix-1384-r73-release-bolt-extra.log      i20261018111720-5964-fff9      1
+fix-1384-r73-release-bolt-params.log     i20261018112144-96496-7b21     1
+fix-1384-r73-release-bolt-projection.log i20261018112344-87872-a5ee     1
+fix-1384-r73-release-bolt-rewrites.log   i20261018120024-84132-e68b     1
+fix-1384-r73-release-bolt-tx.log         i20261018112630-90156-e2d4     0
+fix-1384-r73-release-bolt.log            i20261018111115-44052-cca8     1
+fix-1384-r73-release-http-codepaths.log  i20261018115418-98216-67f8     1
+fix-1384-r73-release-http-extra.log      i20261018111719-91668-90c9     1
+fix-1384-r73-release-http-params.log     i20261018112144-55572-ca75     1
+fix-1384-r73-release-http-projection.log i20261018112344-14676-d4a0     1
+fix-1384-r73-release-http-rewrites.log   i20261018120024-94172-e0c7     1
+fix-1384-r73-release-http-tx.log         i20261018112630-41348-2143     0
+fix-1384-r73-release-http.log            i20261018111115-77372-5f1a     1
+

@@ -1,0 +1,63 @@
+{
+  "jobs": [
+    {
+      "request": "a20261018045918-48476-6ade",
+      "execution": "a00000000000001-1384-default",
+      "base": "524b71ba3365be6f453a107d77c0816b7396b41a",
+      "head": "fc375efa4ba55253cc8a775172fd4933856f00ea",
+      "result": {
+        "state": "DONE",
+        "exit": 0,
+        "rounds": 10,
+        "worker": "bench",
+        "seconds": 138
+      },
+      "aliasVerified": true
+    },
+    {
+      "request": "a20261018045918-61784-2d57",
+      "execution": "a00000000000002-1384-control-default",
+      "base": "e138156772abea4912fdea1c3f151ef8065e386b",
+      "head": "fc375efa4ba55253cc8a775172fd4933856f00ea",
+      "result": {
+        "state": "DONE",
+        "exit": 0,
+        "rounds": 10,
+        "worker": "bench",
+        "seconds": 59
+      },
+      "aliasVerified": true
+    },
+    {
+      "request": "a20261018045918-84716-05d2",
+      "execution": "a00000000000003-1384-control-antlr",
+      "base": "e138156772abea4912fdea1c3f151ef8065e386b",
+      "head": "fc375efa4ba55253cc8a775172fd4933856f00ea",
+      "result": {
+        "state": "DONE",
+        "exit": 0,
+        "rounds": 10,
+        "worker": "bench",
+        "seconds": 50
+      },
+      "aliasVerified": true
+    },
+    {
+      "request": "a20261018045919-67144-d619",
+      "execution": "a00000000000004-1384-antlr",
+      "base": "524b71ba3365be6f453a107d77c0816b7396b41a",
+      "head": "fc375efa4ba55253cc8a775172fd4933856f00ea",
+      "result": {
+        "state": "DONE",
+        "exit": 0,
+        "rounds": 10,
+        "worker": "bench",
+        "seconds": 91
+      },
+      "aliasVerified": true
+    }
+  ],
+  "heldDirectoryEmpty": true,
+  "temporaryAppRemoved": true,
+  "allOwnedJobsComplete": true
+}

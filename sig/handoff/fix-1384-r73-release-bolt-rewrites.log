@@ -1,0 +1,764 @@
+tnrun: job i20261018120024-84132-e68b: wt-fix-1384-r73-release@4bc18585, 7 untracked file(s); submitted in 6.8s
+tnrun: running
+tnrun: peak RSS of test binary (default): testing/cypher/tck 0.16 GiB
+tnrun job i20261018120024-84132-e68b (wt-fix-1384-r73-release@4bc18585): worker 4, CPUs 12,13,76,77, commit 4bc1858580e9c30c383af4ac8763226be1ea5163, go1.26.9
+untracked files: overlaid i20261018120024-84132-e68b.tar
+prep ui: cached
+prep llama v0.4.1: cached
+reference neo-ref: waiting for its lock
+
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 162 {"Y01-normalisation": 144, "Y02-normalised-imports": 18}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"51f5fcd87a653c87b371","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 118 (offset: 117))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                                                      ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"57a31df0d02786ac63e5","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 102 (offset: 101))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                                                      ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"77825bf8e0291c0490a2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 82 (offset: 81))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id\"\n                                                                                  ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+tnrun: peak RSS of test binary (antlr): testing/cypher/tck 0.16 GiB
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"bdce0002f06bfa9aa5a9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 66 (offset: 65))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                  ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"d891cd311da288cc2f8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 80 (offset: 79))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id\"\n                                                                                ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"56d1b2ea8eee40e77123","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 64 (offset: 63))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"60e544ae2bf2fb4461b5","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 71 (offset: 70))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                       ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"3b67a5a0bf5427d52ea3","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 55 (offset: 54))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                       ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a75e817a266506c77173","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 95 (offset: 94))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                               ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"0"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"aefa7f7325da087bc4dc","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 79 (offset: 78))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                               ^"},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"777bbe526bda6675f926","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"e9a707875f5cace70c24","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"4617cf40099ec7f25bae","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"f267ff0d2048aa41fedf","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"dfbf0430efad6dc2bb43","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a0a8a4613565a4f17aa2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"078d1b5fed9ea83cce11","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a92a778a10b6edd3baec","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=162 match=144 diff=18
+    rule73_pattern_attack_test.go:97: 18 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"51f5fcd87a653c87b371","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 118 (offset: 117))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                                                      ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"57a31df0d02786ac63e5","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 102 (offset: 101))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                                                      ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"77825bf8e0291c0490a2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 82 (offset: 81))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id\"\n                                                                                  ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"bdce0002f06bfa9aa5a9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 66 (offset: 65))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                  ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"d891cd311da288cc2f8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 80 (offset: 79))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id\"\n                                                                                ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"56d1b2ea8eee40e77123","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 64 (offset: 63))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"60e544ae2bf2fb4461b5","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 71 (offset: 70))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                       ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"3b67a5a0bf5427d52ea3","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 55 (offset: 54))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                       ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a75e817a266506c77173","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 95 (offset: 94))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                               ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"0"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"aefa7f7325da087bc4dc","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 79 (offset: 78))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                               ^"},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"777bbe526bda6675f926","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"e9a707875f5cace70c24","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"4617cf40099ec7f25bae","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"f267ff0d2048aa41fedf","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"dfbf0430efad6dc2bb43","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a0a8a4613565a4f17aa2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"078d1b5fed9ea83cce11","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a92a778a10b6edd3baec","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=162 match=144 diff=18
+    rule73_pattern_attack_test.go:97: 18 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (3.84s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (1.80s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (1.92s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	4.024s
+=== parser default: exit 1 after 7s
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test ./testing/cypher/tck -run ^TestRule73PatternFamilyAttack$ -count=1 -timeout 30m -v -json -exec python3 -c "import resource,subprocess,sys;c=subprocess.call(sys.argv[1:]);sys.stdout.flush();print('TNRUN_RSS_KB',resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,flush=True);sys.exit(c if c>=0 else 128-c)"
+=== RUN   TestRule73PatternFamilyAttack
+    rule73_pattern_attack_test.go:24: R73_GENERATED 162 {"Y01-normalisation": 144, "Y02-normalised-imports": 18}
+    rule73_pattern_attack_test.go:39: R73_ORACLE Neo4j 5.26.30
+=== RUN   TestRule73PatternFamilyAttack/bolt-auto
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"51f5fcd87a653c87b371","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 118 (offset: 117))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                                                      ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"57a31df0d02786ac63e5","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 102 (offset: 101))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                                                      ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"77825bf8e0291c0490a2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 82 (offset: 81))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id\"\n                                                                                  ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"bdce0002f06bfa9aa5a9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 66 (offset: 65))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                  ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"d891cd311da288cc2f8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 80 (offset: 79))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id\"\n                                                                                ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"56d1b2ea8eee40e77123","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 64 (offset: 63))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"60e544ae2bf2fb4461b5","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 71 (offset: 70))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                       ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"3b67a5a0bf5427d52ea3","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 55 (offset: 54))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                       ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a75e817a266506c77173","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 95 (offset: 94))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                               ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"0"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"aefa7f7325da087bc4dc","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 79 (offset: 78))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                               ^"},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"777bbe526bda6675f926","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"e9a707875f5cace70c24","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"4617cf40099ec7f25bae","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"f267ff0d2048aa41fedf","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"dfbf0430efad6dc2bb43","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a0a8a4613565a4f17aa2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"078d1b5fed9ea83cce11","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-auto {"id":"a92a778a10b6edd3baec","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/bound/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/node-label-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/relationship-type-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/missing-end/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y01-normalisation/null/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/drop-readd/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/omit-import/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename-drop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/rename/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-auto Y02-normalised-imports/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-auto compared=162 match=144 diff=18
+    rule73_pattern_attack_test.go:97: 18 current-head differences from Neo4j; attack evidence, no product changes
+=== RUN   TestRule73PatternFamilyAttack/bolt-tx
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"51f5fcd87a653c87b371","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 118 (offset: 117))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                                                      ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"57a31df0d02786ac63e5","issue":907,"kind":"statement","query":"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 102 (offset: 101))\n\"MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]-\u003e(b:Q) WITH a,r,b,a.id AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                                                      ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"77825bf8e0291c0490a2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 82 (offset: 81))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a:Q\u0026!P)-[:R]-\u003e(b)) AS v ORDER BY id\"\n                                                                                  ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"bdce0002f06bfa9aa5a9","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 66 (offset: 65))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                  ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"d891cd311da288cc2f8b","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 80 (offset: 79))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[:R\u0026!U]-\u003e(b)) AS v ORDER BY id\"\n                                                                                ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},true],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"56d1b2ea8eee40e77123","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'b'. (line 1, column 64 (offset: 63))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[:R\u0026!U]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}],[{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"60e544ae2bf2fb4461b5","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 71 (offset: 70))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                       ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},true],[{"Integer":"2"},false],[{"Integer":"3"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"3b67a5a0bf5427d52ea3","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"PatternExpressions are not allowed to introduce new variables: 'r'. (line 1, column 55 (offset: 54))\n\"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                       ^"},"nornicdb":{"columns":["id"],"rows":[[{"Integer":"1"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a75e817a266506c77173","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 95 (offset: 94))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight RETURN k AS id,exists((a)-[r:R WHERE r.w=1]-\u003e(b)) AS v ORDER BY id\"\n                                                                                               ^"},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"0"},false]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"aefa7f7325da087bc4dc","issue":907,"kind":"statement","query":"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id","neo4j":{"code":"Neo.ClientError.Statement.SyntaxError","message":"Relationship pattern predicates are not allowed in an expression, but only in a MATCH clause or inside a pattern comprehension (line 1, column 79 (offset: 78))\n\"WITH null AS a,null AS b,null AS r,0 AS k,1 AS weight WHERE (a)-[r:R WHERE r.w=1]-\u003e(b) RETURN k AS id ORDER BY id\"\n                                                                               ^"},"nornicdb":{"columns":["id"]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"777bbe526bda6675f926","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"e9a707875f5cace70c24","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"4617cf40099ec7f25bae","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"f267ff0d2048aa41fedf","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"dfbf0430efad6dc2bb43","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a0a8a4613565a4f17aa2","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH 1 AS local WITH a AS restored MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"078d1b5fed9ea83cce11","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COUNT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"1"}],[{"Integer":"2"},{"Integer":"1"}],[{"Integer":"3"},{"Integer":"0"}]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},{"Integer":"2"}],[{"Integer":"2"},{"Integer":"2"}],[{"Integer":"3"},{"Integer":"2"}]]},"match":false}
+    rule73_pattern_attack_test.go:89: R73_DIFF bolt-tx {"id":"a92a778a10b6edd3baec","issue":907,"kind":"statement","query":"MATCH (a:Q) WITH a, a.id AS k, 1 AS weight RETURN k AS id,COLLECT { WITH a AS renamed WITH 1 AS local MATCH (b:Q) WHERE (a:Q\u0026!P)-[:R]-\u003e(b) RETURN b.id AS v ORDER BY v } AS v ORDER BY id","neo4j":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"}]],[{"Integer":"2"},[{"Integer":"3"}]],[{"Integer":"3"},[]]]},"nornicdb":{"columns":["id","v"],"rows":[[{"Integer":"1"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"2"},[{"Integer":"2"},{"Integer":"3"}]],[{"Integer":"3"},[{"Integer":"2"},{"Integer":"3"}]]]},"match":false}
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/bound/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/node-label-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/relationship-type-expression/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/missing-end/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/abbreviated-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/node-label-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/quantified-group/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/function match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-inline-where/where match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-quantifier/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/relationship-type-expression/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/same-pattern-map/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/comprehension match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/function match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y01-normalisation/null/zero-hop/where match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/drop-readd/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/none/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/omit-import/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename-drop/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/COLLECT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/COUNT match=0 diff=1
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/rename/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/COLLECT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/COUNT match=1 diff=0
+    rule73_pattern_attack_test.go:95: R73_CELL bolt-tx Y02-normalised-imports/star/EXISTS match=1 diff=0
+    rule73_pattern_attack_test.go:96: R73_TOTAL bolt-tx compared=162 match=144 diff=18
+    rule73_pattern_attack_test.go:97: 18 current-head differences from Neo4j; attack evidence, no product changes
+--- FAIL: TestRule73PatternFamilyAttack (4.40s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-auto (2.32s)
+    --- FAIL: TestRule73PatternFamilyAttack/bolt-tx (1.93s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/testing/cypher/tck	4.571s
+=== parser antlr: exit 1 after 7s
+tnrun: job i20261018120024-84132-e68b: DONE exit 1 (default 1 in 7s, antlr 1 in 7s); box 47s, total 57s
