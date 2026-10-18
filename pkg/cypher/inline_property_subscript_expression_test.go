@@ -189,3 +189,67 @@ func TestDynamicRelationshipTypeExpressionKeepsItsRange(t *testing.T) {
 		map[string]struct{}{"r": {}},
 		variableLengthRelationshipVariableSet("(a)-[r:$({k: t}.k)*1..2]->(b)-[s:$(t * 2)]->(c)"))
 }
+
+// TestDynamicRelationshipTypeExpressionInWrites pins CREATE and MERGE (with
+// ON CREATE / ON MATCH) of a relationship whose dynamic type holds a '*', a
+// map literal or a slice ($(['X', 'DZ'][i * 1]), $({k: t}.k),
+// $(ts[0..1][0])): the relationship declaration reader takes none of them for
+// a variable length or the property map. The expected results are Neo4j
+// 5.26.30's.
+func TestDynamicRelationshipTypeExpressionInWrites(t *testing.T) {
+	statements := []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"WITH 1 AS i CREATE ()-[r:$(['X','DZ'][i * 1])]->() RETURN type(r) AS t", [][]interface{}{{"DZ"}}},
+		{"WITH 'DZ' AS t CREATE (:W)-[r:$({k: t}.k)]->(:W) RETURN type(r) AS t", [][]interface{}{{"DZ"}}},
+		{"WITH ['DZ', 'X'] AS ts CREATE (:W)-[r:$(ts[0..1][0])]->(:W) RETURN type(r) AS t", [][]interface{}{{"DZ"}}},
+		{"WITH 'DZ' AS t CREATE (:W)-[r:$({k: t}.k) {w: 1}]->(:W) RETURN type(r) AS t, r.w AS w", [][]interface{}{{"DZ", int64(1)}}},
+		{"WITH 1 AS i MERGE (a:M {id: 1})-[r:$(['X','DM'][i * 1]) {w: 1}]->(b:M {id: 2}) ON CREATE SET r.c = 'created' ON MATCH SET r.m = 'matched' RETURN type(r) AS t, r.c AS c, r.m AS m", [][]interface{}{{"DM", "created", nil}}},
+		{"WITH 'DM' AS t MERGE (a:M {id: 1})-[r:$({k: t}.k) {w: 1}]->(b:M {id: 2}) ON CREATE SET r.c = 'again' ON MATCH SET r.m = 'matched' RETURN type(r) AS t, r.c AS c, r.m AS m", [][]interface{}{{"DM", "created", "matched"}}},
+		{"WITH ['DM'] AS ts MERGE (a:M {id: 1})-[r:$(ts[0..1][0])]->(b:M {id: 2}) RETURN type(r) AS t, r.m AS m", [][]interface{}{{"DM", "matched"}}},
+		{"MATCH (a:M {id: 1}), (b:M {id: 2}) WITH a, b, 1 AS i MERGE (a)-[r:$(['X','DM'][i * 1])]->(b) ON MATCH SET r.n = 'bound' RETURN type(r) AS t, r.n AS n", [][]interface{}{{"DM", "bound"}}},
+		{"MATCH (:M)-[r]->(:M) RETURN count(r) AS rels", [][]interface{}{{int64(1)}}},
+		{"MATCH ()-[r:DZ]->() RETURN count(r) AS dz", [][]interface{}{{int64(4)}}},
+	}
+	for _, explicit := range []bool{false, true} {
+		name := "autocommit"
+		if explicit {
+			name = "explicit transaction"
+		}
+		t.Run(name, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dynamic_type_writes"))
+			ctx := context.Background()
+			if explicit {
+				_, err := exec.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+			}
+			for _, tc := range statements {
+				result, err := exec.Execute(ctx, tc.query, nil)
+				if assert.NoError(t, err, tc.query) {
+					assert.Equal(t, tc.want, result.Rows, tc.query)
+				}
+			}
+			if explicit {
+				_, err := exec.Execute(ctx, "COMMIT", nil)
+				require.NoError(t, err)
+			}
+		})
+	}
+
+	type declared struct {
+		variable, typeText, length, properties string
+		hasLength                              bool
+	}
+	for inner, want := range map[string]declared{
+		"r:$(['X','DZ'][i * 1])":     {variable: "r", typeText: "$(['X','DZ'][i * 1])"},
+		"r:$({k: t}.k)":              {variable: "r", typeText: "$({k: t}.k)"},
+		"r:$(ts[0..1][0])":           {variable: "r", typeText: "$(ts[0..1][0])"},
+		"r:$({k: t}.k) {w: 1}":       {variable: "r", typeText: "$({k: t}.k)", properties: "{w: 1}"},
+		"r:$({k: t}.k)*1..2":         {variable: "r", typeText: "$({k: t}.k)", hasLength: true, length: "1..2"},
+		"r:$(t * 2)*2 {w: $ws[i*2]}": {variable: "r", typeText: "$(t * 2)", hasLength: true, length: "2", properties: "{w: $ws[i*2]}"},
+	} {
+		got := relationshipDeclarationOf(inner)
+		assert.Equal(t, want, declared{got.variable, got.typeText, got.length, got.properties, got.hasLength}, inner)
+	}
+}
