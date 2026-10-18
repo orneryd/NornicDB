@@ -42,7 +42,9 @@ func TestProviderHTTPDocumentPartitionUsage(t *testing.T) {
 				for i, result := range results {
 					require.Equal(t, [][]float32{{float32(i), 1}}, result.Embeddings)
 					want := 0
-					if i == 1000 { want = 7 }
+					if i == 1000 {
+						want = 7
+					}
 					require.Equal(t, want, result.TotalTokens, "document %d", i)
 				}
 			})
@@ -51,7 +53,11 @@ func TestProviderHTTPDocumentPartitionUsage(t *testing.T) {
 }
 
 func TestProviderHTTPTokenBudgetPartitionUsage(t *testing.T) {
-	for _, tc := range []struct { mode string; docs int; sizes []int }{
+	for _, tc := range []struct {
+		mode  string
+		docs  int
+		sizes []int
+	}{
 		{"text", 4, []int{3, 1}},
 		{"contextualized", 4, []int{3, 1}},
 		{"multimodal", 11, []int{10, 1}},
@@ -60,13 +66,17 @@ func TestProviderHTTPTokenBudgetPartitionUsage(t *testing.T) {
 			mock := &batchHTTPMock{}
 			e := embed.NewTracedEmbedder(embed.NewCachedEmbedder(newBatchProvider(t, "voyage", tc.mode, mock), 32))
 			texts := make([]string, tc.docs)
-			for i := range texts { texts[i] = strings.Repeat("x", 30000) }
+			for i := range texts {
+				texts[i] = strings.Repeat("x", 30000)
+			}
 			results, err := e.EmbedDocumentBatchChunks(context.Background(), texts, 0, 0)
 			require.NoError(t, err)
 			require.Equal(t, tc.sizes, mock.sizes)
 			for i, result := range results {
 				want := 0
-				if i == len(results)-1 { want = 7 }
+				if i == len(results)-1 {
+					want = 7
+				}
 				require.Equal(t, want, result.TotalTokens, "document %d", i)
 			}
 		})
@@ -75,7 +85,11 @@ func TestProviderHTTPTokenBudgetPartitionUsage(t *testing.T) {
 
 func TestProviderHTTPChunkPartitionUsage(t *testing.T) {
 	for _, mode := range []string{"text", "multimodal"} {
-		for _, tc := range []struct { name string; texts []string; sizes, tokens []int }{
+		for _, tc := range []struct {
+			name          string
+			texts         []string
+			sizes, tokens []int
+		}{
 			{"one-document", []string{strings.Repeat("x ", 1001)}, []int{1000, 1}, []int{7007}},
 			{"pure-and-shared", []string{strings.Repeat("x ", 1001), "1"}, []int{1000, 2}, []int{7000, 0}},
 		} {
@@ -85,7 +99,9 @@ func TestProviderHTTPChunkPartitionUsage(t *testing.T) {
 				results, err := e.EmbedDocumentBatchChunks(context.Background(), tc.texts, 1, 0)
 				require.NoError(t, err)
 				require.Equal(t, tc.sizes, mock.sizes)
-				for i, result := range results { require.Equal(t, tc.tokens[i], result.TotalTokens) }
+				for i, result := range results {
+					require.Equal(t, tc.tokens[i], result.TotalTokens)
+				}
 			})
 		}
 	}

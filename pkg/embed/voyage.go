@@ -173,9 +173,9 @@ func (e *VoyageEmbedder) EmbedBatchWithInputType(ctx context.Context, texts []st
 	return vectors, err
 }
 
-func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string, inputType string) ([][]float32, int, error) {
+func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string, inputType string) ([][]float32, []providerBatchUsage, error) {
 	if len(texts) == 0 {
-		return nil, 0, nil
+		return nil, nil, nil
 	}
 	if e.mode == VoyageModeMultimodal {
 		inputs := make([]any, len(texts))
@@ -191,8 +191,8 @@ func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string
 	case "voyage-4", "voyage-3.5", "voyage-2":
 		budget = 320000
 	}
-	results := make([][]float32, len(texts))
-	totalTokens := 0
+	var results [][]float32
+	var usage []providerBatchUsage
 	err := forProviderBatches(ctx, len(texts), 1000, budget, func(i int) int {
 		// The retrieval instruction is prepended by Voyage. Reserve 64 bytes
 		// per input as well as the input's conservative token upper bound.
@@ -206,23 +206,23 @@ func (e *VoyageEmbedder) embedBatchWithUsage(ctx context.Context, texts []string
 			return err
 		}
 		recordEmbeddingUsage(ctx, "voyage", e.textModel, end-start, resp.Usage.TotalTokens)
-		totalTokens += resp.Usage.TotalTokens
+		usage = append(usage, providerBatchUsage{start, end, resp.Usage.TotalTokens})
 		vectors := orderedVoyageEmbeddings(resp, end-start)
 		if err := CheckEmbeddings(vectors, end-start, e.Dimensions()); err != nil {
 			return err
 		}
-		copy(results[start:end], vectors)
+		results = mergeProviderBatch(results, vectors, start, len(texts))
 		return nil
 	})
 	if err != nil {
-		return nil, totalTokens, err
+		return nil, usage, err
 	}
-	return results, totalTokens, nil
+	return results, usage, nil
 }
 
-func (e *VoyageEmbedder) embedMultimodalBatch(ctx context.Context, inputs []any, inputType string) ([][]float32, int, error) {
-	results := make([][]float32, len(inputs))
-	totalTokens := 0
+func (e *VoyageEmbedder) embedMultimodalBatch(ctx context.Context, inputs []any, inputType string) ([][]float32, []providerBatchUsage, error) {
+	var results [][]float32
+	var usage []providerBatchUsage
 	err := forProviderBatches(ctx, len(inputs), voyageapi.MultimodalMaxInputs, 320000, func(i int) int {
 		input := inputs[i].(voyageapi.MultimodalInput)
 		bytes := 64
@@ -243,18 +243,18 @@ func (e *VoyageEmbedder) embedMultimodalBatch(ctx context.Context, inputs []any,
 			return err
 		}
 		recordEmbeddingUsage(ctx, "voyage", e.Model(), end-start, resp.Usage.TotalTokens)
-		totalTokens += resp.Usage.TotalTokens
+		usage = append(usage, providerBatchUsage{start, end, resp.Usage.TotalTokens})
 		vectors := orderedVoyageEmbeddings(resp, end-start)
 		if err := CheckEmbeddings(vectors, end-start, e.Dimensions()); err != nil {
 			return err
 		}
-		copy(results[start:end], vectors)
+		results = mergeProviderBatch(results, vectors, start, len(inputs))
 		return nil
 	})
 	if err != nil {
-		return nil, totalTokens, err
+		return nil, usage, err
 	}
-	return results, totalTokens, nil
+	return results, usage, nil
 }
 
 func orderedVoyageEmbeddings(resp *voyageapi.EmbeddingResponse, count int) [][]float32 {
@@ -322,7 +322,7 @@ func (e *VoyageEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	if len(inputs) == 0 {
 		return []*DocumentChunkResult{}, nil
 	}
-	embeddings, totalTokens, err := e.embedMultimodalBatch(ctx, inputs, InputTypeDocument)
+	embeddings, usage, err := e.embedMultimodalBatch(ctx, inputs, InputTypeDocument)
 	if err != nil {
 		return nil, err
 	}
@@ -330,9 +330,7 @@ func (e *VoyageEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	for index := range inputs {
 		results[index] = &DocumentChunkResult{Chunks: textChunks[index], Embeddings: [][]float32{embeddings[index]}, Model: e.Model()}
 	}
-	if len(results) == 1 {
-		results[0].TotalTokens = totalTokens
-	}
+	attributeDocumentUsage(results, usage)
 	return results, nil
 }
 
@@ -375,19 +373,9 @@ func (e *VoyageEmbedder) EmbedDocumentBatchChunks(ctx context.Context, texts []s
 		return results, nil
 	}
 	if e.mode != VoyageModeContextualized {
-		totalTokens := 0
-		results, err := embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, e.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
-			vectors, usage, err := e.embedBatchWithUsage(ctx, chunks, InputTypeDocument)
-			totalTokens += usage
-			return vectors, err
+		return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, e.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, []providerBatchUsage, error) {
+			return e.embedBatchWithUsage(ctx, chunks, InputTypeDocument)
 		}, e.Model())
-		if err != nil {
-			return nil, err
-		}
-		if len(results) == 1 {
-			results[0].TotalTokens = totalTokens
-		}
-		return results, nil
 	}
 
 	shortTexts := make([]string, 0, min(len(texts), VoyageContextualizedMaxInputs))
