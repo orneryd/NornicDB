@@ -99,6 +99,14 @@ func TestFabricCallRowStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			queryExec := exec
+			if tt.name == "dynamic_outer" {
+				mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
+				store, err := mgr.GetStorage("comp")
+				require.NoError(t, err)
+				queryExec = NewStorageExecutor(store)
+				queryExec.SetDatabaseManager(exec.dbManager)
+			}
 			if driver != nil {
 				query := strings.NewReplacer("USE graph.byName('comp.one') ", "", "USE graph.byName('comp.two') ", "", "USE comp.one ", "", "USE comp.two ", "", "USE comp ", "").Replace(tt.query)
 				ref, err := neo4j.ExecuteQuery(ctx, driver, query, nil, neo4j.EagerResultTransformer)
@@ -114,14 +122,14 @@ func TestFabricCallRowStream(t *testing.T) {
 			for _, mode := range []string{"autocommit", "transaction"} {
 				t.Run(mode, func(t *testing.T) {
 					if mode == "transaction" {
-						_, err := exec.Execute(ctx, "BEGIN", nil)
+						_, err := queryExec.Execute(ctx, "BEGIN", nil)
 						require.NoError(t, err)
 						defer func() {
-							_, err := exec.Execute(ctx, "ROLLBACK", nil)
+							_, err := queryExec.Execute(ctx, "ROLLBACK", nil)
 							require.NoError(t, err)
 						}()
 					}
-					result, err := exec.Execute(ctx, tt.query, nil)
+					result, err := queryExec.Execute(ctx, tt.query, nil)
 					require.NoError(t, err)
 					rows := append(make([][]interface{}, 0, len(result.Rows)), result.Rows...)
 					encoded, err := json.Marshal(rows)
