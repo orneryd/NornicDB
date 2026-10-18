@@ -1079,6 +1079,56 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 	return nil, false, nil
 }
 
+// pipelineReadsImportedBinding reports whether the clauses read a variable
+// the pipeline's first row imports: a correlated subquery body's outer row
+// (fabricRecordBindings) or an enclosing value scope. Parameters are not
+// imports. The body's reads and declarations are the body's scope
+// (bodyScopeOf); a name the body uses in a pattern position, or declares
+// again, counts as read, so a body that only names its own variables keeps
+// the shortcuts.
+func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+	values := valueBindingsFromContext(ctx)
+	if len(clauses) > 0 && clauses[0].kind == pipelineClauseCallSubquery {
+		values = nil
+	}
+	if len(e.fabricRecordBindings) == 0 && len(values) == 0 {
+		return false
+	}
+	bound := func(name string) bool {
+		if strings.HasPrefix(name, "$") {
+			return false
+		}
+		if _, ok := e.fabricRecordBindings[name]; ok {
+			return true
+		}
+		_, ok := values[name]
+		return ok
+	}
+	texts := make([]string, len(clauses))
+	for index, clause := range clauses {
+		texts[index] = clause.text
+	}
+	scope, err := e.bodyScopeOf(strings.Join(texts, " "), nil, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		// A body the static walk rejects runs on the row pipeline, which
+		// reports its error.
+		return true
+	}
+	for _, name := range scope.Reads {
+		if bound(name) {
+			return true
+		}
+	}
+	for _, branch := range scope.Branches {
+		for _, name := range branch.Declares {
+			if bound(name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of
 // the pipeline's MATCH -> count reduction for relationship patterns (issue
 // #638). Without it, the row pipeline binds the relationship variable for

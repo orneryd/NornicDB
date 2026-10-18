@@ -30,19 +30,19 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
 	}
-	// An unscoped body imports through its branches' leading WITHs
-	// (unscopedCallImports, #907).
+	// What an unscoped body reads, declares and imports through its
+	// branches' leading WITHs is the body's scope (bodyScopeOf, #907, #1317).
 	scoped := parsed.scoped
+	cypher25 := cypherVersionFromContext(ctx) == "25"
 	if metadata != nil {
 		declared := parsed.scopedImports
 		if declared == nil && !scoped {
-			var importErr error
-			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
-				_, exists := metadata.scope[name]
-				return exists
-			}, true)
-			if importErr != nil {
-				return nil, nil, true, importErr
+			bodyScope, err := e.bodyScopeOf(body, nil, cypher25)
+			if err != nil {
+				return nil, nil, true, err
+			}
+			for _, branch := range bodyScope.Branches {
+				declared = append(declared, branch.Importing...)
 			}
 		}
 		for _, name := range declared {
@@ -79,60 +79,62 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	scopedImports := parsed.scopedImports
-	hasLegacyImports := false
-	if !scoped {
-		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
-			_, exists := rows[0][name]
-			return exists && !strings.HasPrefix(name, "$")
-		}, false)
-		if importErr != nil {
-			return nil, nil, true, importErr
-		}
-	}
+	unionBranches, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
 	// CALL (*) imports every outer variable, including for WITH/RETURN *.
 	// An unscoped body without an importing WITH implicitly imports the
-	// outer variables it reads: a NornicDB extension.
-	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
-	// defined"); NornicDB keeps running such statements as before, since
-	// the import is unambiguous (#907, kept at the owner's direction).
-	// A name a nested EXISTS / COUNT / COLLECT declares is a new variable of
-	// that subquery, as in Neo4j, not a read (unscopedBodyReadsVariable,
-	// #1317 S08).
+	// outer variables it reads (bodyScopeOf): a NornicDB extension. Neo4j
+	// 5.26 rejects the outer variable there ("Variable `n` not defined");
+	// NornicDB keeps running such statements, since the import is
+	// unambiguous (#907, kept at the owner's direction). A name the body
+	// uses only in pattern positions (a nested EXISTS { (m)-->(n) }) is a
+	// new variable, as in Neo4j (#1317 S08). A branch that declares an outer
+	// variable's name itself (MATCH (n)-->(m)) gets a new variable there,
+	// not the imported value (branchLocals).
+	hasLegacyImports := false
 	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || unscopedBodyReadsVariable(body, name)) {
-				imports = append(imports, name)
+	var branchLocals map[string][]string
+	if scoped {
+		if scopedImports == nil {
+			for name := range rows[0] {
+				if !strings.HasPrefix(name, "$") {
+					imports = append(imports, name)
+				}
+			}
+		}
+	} else {
+		bodyScope, err := e.bodyScopeOf(body, nil, cypher25)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		for _, branch := range bodyScope.Branches {
+			hasLegacyImports = hasLegacyImports || branch.Importing != nil
+		}
+		outer := func(name string) bool {
+			_, exists := rows[0][name]
+			return exists && !strings.HasPrefix(name, "$")
+		}
+		if !hasLegacyImports {
+			for _, name := range bodyScope.Reads {
+				if outer(name) {
+					imports = append(imports, name)
+				}
+			}
+		}
+		branches := []string{body}
+		if isUnion {
+			branches = unionBranches
+		}
+		branchLocals = make(map[string][]string, len(branches))
+		for index, branch := range branches {
+			for _, name := range bodyScope.Branches[index].Declares {
+				if outer(name) {
+					branchLocals[strings.TrimSpace(branch)] = append(branchLocals[strings.TrimSpace(branch)], name)
+				}
 			}
 		}
 	}
 	write := callSubqueryQueryIsWriteFor(ctx, body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	unionBranches, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
-
-	// A branch of an unscoped body that declares an outer variable's name
-	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
-	// implicitly imported outer value (unscopedBranchLocals, #907).
-	var branchLocals map[string][]string
-	if !scoped && len(rows) > 0 {
-		var outerNames []string
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") {
-				outerNames = append(outerNames, name)
-			}
-		}
-		branchLocals = map[string][]string{}
-		branches := []string{body}
-		if isUnion {
-			branches = unionBranches
-		}
-		for _, branch := range branches {
-			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
-			}
-		}
-	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
 		clauses, ok := pipelineClausesFor(body)

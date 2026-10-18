@@ -320,3 +320,23 @@ func (context *mapPatternContext) existsCall(query string, end int) bool {
 	word := wordBefore(query, end)
 	return equalFoldASCII(word, "EXISTS") && !context.qualified[end-len(word)]
 }
+
+// wordBefore is the identifier that ends right before index (spaces
+// skipped), "" when another character comes first.
+func wordBefore(text string, index int) string {
+	end := index
+	for end > 0 && isASCIISpace(text[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentByte(text[start-1]) {
+		start--
+	}
+	return text[start:end]
+}
+
+// isPatternClauseKeyword reports whether word is a keyword a pattern
+// follows: MATCH, CREATE, MERGE.
+func isPatternClauseKeyword(word string) bool {
+	return equalFoldASCII(word, "MATCH") || equalFoldASCII(word, "CREATE") || equalFoldASCII(word, "MERGE")
+}
