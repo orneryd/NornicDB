@@ -1125,6 +1125,24 @@ for match, ret in [("MATCH (a:Q)", "RETURN count(a) AS c"),
     add("correlated-body", "where", f"{CORRELATED_OUTER} WHERE COUNT {{ {match} }} > 0 RETURN k AS id ORDER BY id")
     add("correlated-body", "call", f"{CORRELATED_OUTER} CALL (a, k) {{ {match} {ret} }} RETURN k AS id, c AS v ORDER BY id, v")
 
+# CALL imports (#1317 slice 8): which outer names a CALL body sees, scoped,
+# (*) and unscoped (with an importing WITH), against a name used only in a
+# nested EXISTS / COUNT / COLLECT or nested CALL, and shadowed by MATCH,
+# UNWIND or WITH inside the body.
+CALL_OUTER = "MATCH (n:Q) WITH n, n.id AS k"
+for scope in ["()", "(n)", "(n, k)", "(*)", ""]:
+    for body in ["MATCH (m:Q) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS c",
+                 "MATCH (m:Q) RETURN COUNT { (m)-->(n) } AS c",
+                 "MATCH (m:Q) RETURN size(COLLECT { MATCH (m)-->(n) RETURN n.id }) AS c",
+                 "MATCH (n:Q) RETURN count(n) AS c",
+                 "UNWIND [1, 2] AS k RETURN sum(k) AS c",
+                 "WITH 5 AS k RETURN k AS c",
+                 "CALL () { MATCH (m:Q) WHERE EXISTS { (m)-->(n) } RETURN count(m) AS d } RETURN d AS c"]:
+        add("call-imports", "body", f"{CALL_OUTER} CALL {scope} {{ {body} }} RETURN k AS id, c ORDER BY id")
+    if scope in ("(n)", "(n, k)", "(*)"):
+        add("call-imports", "reads", f"{CALL_OUTER} CALL {scope} {{ MATCH (n)-->(m) RETURN count(m) AS c }} RETURN k AS id, c ORDER BY id")
+add("call-imports", "with-import", f"{CALL_OUTER} CALL {{ WITH n MATCH (m:Q) WHERE EXISTS {{ (m)-->(n) }} RETURN count(m) AS c }} RETURN k AS id, c ORDER BY id")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))
