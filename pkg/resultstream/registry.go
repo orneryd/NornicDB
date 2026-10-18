@@ -28,6 +28,7 @@ var (
 type Scope struct {
 	Owner    string
 	Database string
+	databaseEpoch *databaseEpoch
 }
 
 // Observer receives bounded cursor lifecycle and aggregate usage signals.
@@ -81,6 +82,8 @@ type Registry struct {
 	scopeMAC    sync.Pool
 	scopeInput  sync.Pool
 	admissionMu sync.Mutex
+	databaseMu sync.RWMutex
+	databases map[string]*databaseEpoch
 	owners      map[[32]byte]ownerUsage
 	observer    atomic.Pointer[observerHolder]
 	stop        chan struct{}
@@ -150,6 +153,11 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 		r.observeError(err)
 		return nil, err
 	}
+	scope = r.BindScope(scope)
+	if !r.validDatabaseScope(scope) {
+		_ = stream.Close()
+		return nil, ErrInvalidated
+	}
 	page, err := stream.Pull(ctx, 0, n)
 	if err == nil {
 		err = ctx.Err()
@@ -157,6 +165,10 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 	if err != nil {
 		_ = stream.Close()
 		return nil, err
+	}
+	if !r.validDatabaseScope(scope) {
+		_ = stream.Close()
+		return nil, ErrInvalidated
 	}
 	if !page.HasMore {
 		_ = stream.Close()
@@ -189,6 +201,12 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 		stream:    stream,
 	}
 	entry.retainedBytes.Store(retainedBytes)
+	r.databaseMu.RLock()
+	if r.databases[scope.Database] != scope.databaseEpoch {
+		r.databaseMu.RUnlock()
+		r.release(entry)
+		return nil, ErrInvalidated
+	}
 	var streamID [16]byte
 	inserted := false
 	for attempt := 0; attempt < 4; attempt++ {
@@ -206,6 +224,7 @@ func (r *Registry) Start(ctx context.Context, scope Scope, stream Stream, n int)
 			break
 		}
 	}
+	r.databaseMu.RUnlock()
 	if !inserted {
 		r.release(entry)
 		if r.closed.Load() {
@@ -333,7 +352,7 @@ func (r *Registry) Discard(scope Scope, qid string) error {
 		r.observe("disabled")
 		return ErrDisabled
 	}
-	if scope.Owner == "" || scope.Database == "" {
+	if scope.Owner == "" || scope.Database == "" || len(scope.Database) > maxTokenDatabaseBytes {
 		return ErrInvalidScope
 	}
 	token, err := decodeToken(r.secret, r.instance, qid)
@@ -386,7 +405,7 @@ func (r *Registry) validate(scope Scope, n int) error {
 	if r.closed.Load() {
 		return ErrClosed
 	}
-	if scope.Owner == "" || scope.Database == "" {
+	if scope.Owner == "" || scope.Database == "" || len(scope.Database) > maxTokenDatabaseBytes {
 		return ErrInvalidScope
 	}
 	if n <= 0 || n > r.config.MaxPageSize {
@@ -562,9 +581,11 @@ func (r *Registry) sweepExpired(now int64) {
 // DiscardDatabase releases all cursors belonging to a reset or dropped database.
 // Other databases using the shared registry are unaffected.
 func (r *Registry) DiscardDatabase(database string) {
+	r.databaseMu.Lock()
+	delete(r.databases, database)
+	var removed []*registryEntry
 	for index := range r.shards {
 		shard := &r.shards[index]
-		var removed []*registryEntry
 		shard.mu.Lock()
 		for id, entry := range shard.entries {
 			if entry.database == database {
@@ -573,10 +594,9 @@ func (r *Registry) DiscardDatabase(database string) {
 			}
 		}
 		shard.mu.Unlock()
-		for _, entry := range removed {
-			r.release(entry)
-		}
 	}
+	r.databaseMu.Unlock()
+	for _, entry := range removed { r.release(entry) }
 }
 
 // Close releases every retained stream and rejects future operations.
