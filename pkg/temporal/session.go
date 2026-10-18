@@ -314,6 +314,7 @@ func (sd *SessionDetector) endSession(nodeID string, data *nodeSessionData, endT
 	history = append(history, data.currentSession)
 	// Keep last 50 sessions
 	if len(history) > 50 {
+		history[0] = nil
 		history = history[1:]
 	}
 	sd.sessionHistory[nodeID] = history

@@ -338,6 +338,7 @@ func (s *pathSearch) begin(source *storage.Node) {
 	if s.ctx.Err() != nil {
 		return
 	}
+	clear(s.levels)
 	s.levels = append(s.levels[:0], level)
 }
 
