@@ -22,8 +22,8 @@ import (
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// The nodes count while the algorithm runs over them (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, "apoc.algo.louvain", args)
 	if err != nil {
 		return nil, err
@@ -103,8 +103,8 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// The nodes count while the algorithm runs over them (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, "apoc.algo.labelPropagation", args)
 	if err != nil {
 		return nil, err
@@ -189,8 +189,8 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// The nodes count while the algorithm runs over them (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, "apoc.algo.wcc", args)
 	if err != nil {
 		return nil, err

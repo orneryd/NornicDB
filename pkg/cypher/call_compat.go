@@ -275,8 +275,8 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(queryCtx context
 	}
 
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(queryCtx)
-	defer held.release()
+	held := holdEntities(queryCtx)
+	defer held.drop()
 	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
@@ -651,8 +651,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 
 	// Get all edges and filter to those with embeddings, held while they
 	// are scored (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err

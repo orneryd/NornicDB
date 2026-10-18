@@ -97,8 +97,8 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	store := e.getStorage(ctx)
 
 	// The candidates count while they are deleted (#1343).
-	owner := trackedRetention(ctx)
-	defer owner.release()
+	owner := holdEntities(ctx)
+	defer owner.drop()
 	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, owner, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
 	if err != nil {
 		return nil, true, err
@@ -139,7 +139,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 }
 
 // collectDeleteWithLimitCandidates holds the candidates in owner (#1343).
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, owner *memoryRetention, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, owner *entityHolder, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	matchIdx := findKeywordIndex(baseMatch, "MATCH")
 	if matchIdx < 0 {
 		return nil, false, nil

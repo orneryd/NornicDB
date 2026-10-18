@@ -198,8 +198,8 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 // findMergeNode holds the candidates it reads while it looks for the node
 // (#1343).
 func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	if len(props) == 0 {
 		var candidates []*storage.Node
 		var err error
@@ -346,7 +346,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 // index) could return carries the label, so a scan that found none means
 // there is none. An index answer is not; findMergeNode tries further
 // sources after it. The candidates are held in owner (#1343).
-func (e *StorageExecutor) findMergeNodesScanned(owner *memoryRetention, store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
+func (e *StorageExecutor) findMergeNodesScanned(owner *entityHolder, store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
 	ids, indexed, err := e.mergeNodeIndexedCandidateIDs(owner, store, labels, props)
 	if err != nil {
 		return nil, false, err
@@ -390,7 +390,7 @@ func (e *StorageExecutor) findMergeNodesScanned(owner *memoryRetention, store st
 // pattern is among the candidates, so findMergeNodes needs no label scan
 // (#640, #694). It answers nothing for a pattern without labels or properties.
 // The IDs are held in owner (#1343).
-func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(owner *memoryRetention, store storage.Engine, labels []string, props map[string]interface{}) ([]storage.NodeID, bool, error) {
+func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(owner *entityHolder, store storage.Engine, labels []string, props map[string]interface{}) ([]storage.NodeID, bool, error) {
 	if len(labels) == 0 || len(props) == 0 {
 		return nil, false, nil
 	}

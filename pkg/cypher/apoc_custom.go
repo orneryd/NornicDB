@@ -218,8 +218,8 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel))
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)

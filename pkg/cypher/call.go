@@ -1576,8 +1576,8 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 func (e *StorageExecutor) callDbLabels(ctx context.Context) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if err != nil {
 		return nil, err
@@ -1614,8 +1614,8 @@ func sortedStringSet(set map[string]bool) []string {
 
 func (e *StorageExecutor) callDbRelationshipTypes(ctx context.Context) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return nil, err
@@ -1791,8 +1791,8 @@ func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult
 
 func (e *StorageExecutor) countLabels(ctx context.Context) int {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if err != nil {
 		return 0
@@ -1808,8 +1808,8 @@ func (e *StorageExecutor) countLabels(ctx context.Context) int {
 
 func (e *StorageExecutor) countRelTypes(ctx context.Context) int {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	edges, err := held.heldEdges(e.storage.AllEdges())
 	if err != nil {
 		return 0
@@ -1879,8 +1879,8 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 
 func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if held.failed() {
 		return nil, err
@@ -1915,8 +1915,8 @@ func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*Exec
 
 func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	edges, err := held.heldEdges(e.storage.AllEdges())
 	if held.failed() {
 		return nil, err
@@ -1949,13 +1949,16 @@ func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*Execu
 
 func (e *StorageExecutor) callDbPropertyKeys(ctx context.Context) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(e.storage.AllNodes())
 	if held.failed() {
 		return nil, err
 	}
-	edges, err := held.heldEdges(e.storage.AllEdges())
+	// The relationships are a second structure, held beside the nodes.
+	edgesHeld := held.sibling()
+	defer edgesHeld.drop()
+	edges, err := edgesHeld.heldEdges(e.storage.AllEdges())
 	if held.failed() {
 		return nil, err
 	}

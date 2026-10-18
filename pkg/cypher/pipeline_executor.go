@@ -1208,8 +1208,8 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 
 	// The candidates count while the read holds them (#1343).
-	owner := trackedRetention(ctx)
-	defer owner.release()
+	owner := holdEntities(ctx)
+	defer owner.drop()
 	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, owner, nodePattern, whereClause, params)
 	if err != nil {
 		return nil, true, err
@@ -1330,8 +1330,8 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	// A lookup an index can narrow is counted from the same seed the row
 	// read uses (#820); only otherwise is the label streamed.
 	// The seek's candidates count while they are counted (#1343).
-	owner := trackedRetention(ctx)
-	defer owner.release()
+	owner := holdEntities(ctx)
+	defer owner.drop()
 	candidates, whereApplied, indexed, err := e.collectPipelineIndexedNodeCandidates(ctx, owner, nodePattern, whereClause, pipelineMatchPhysicalHint{})
 	if err != nil {
 		return nil, true, err
@@ -1710,14 +1710,14 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	candidateCache := make(map[string]initialCandidates)
 	// The cached candidates count until the match is done, a row's own
 	// while its row is matched (#1343).
-	cachedCandidates := trackedRetention(ctx)
-	defer cachedCandidates.release()
-	rowCandidates := trackedRetention(ctx)
-	defer rowCandidates.release()
+	cachedCandidates := holdEntities(ctx)
+	defer cachedCandidates.drop()
+	rowCandidates := holdEntities(ctx)
+	defer rowCandidates.drop()
 	template := e.pipelineNodeMatchTemplateFor(clause)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCandidates.release()
+		rowCandidates.drop()
 		materializedWhere := whereClause
 		// The pattern parsed once and its properties evaluated for the row;
 		// the text route for a row the template can't evaluate.
@@ -1920,7 +1920,7 @@ type pipelinePrefetchedNodeCandidatesKey struct{}
 // indexed seed or the label scan (above). They are held in owner as they are
 // read (#1343): the caller gives owner's reservation back (release) once it
 // drops them. owner is nil while no limit is configured (trackedRetention).
-func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, owner *entityHolder, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
 	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}
@@ -1952,8 +1952,8 @@ func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context
 	// A streamed MATCH is the statement's first clause, over one row, so
 	// no batch prefetch applies to it (prefetchedPipelineCandidate). An
 	// indexed seed's nodes are held while they are visited (#1343).
-	seed := trackedRetention(ctx)
-	defer seed.release()
+	seed := holdEntities(ctx)
+	defer seed.drop()
 	nodes, _, used, err := e.collectPipelineIndexedNodeCandidates(ctx, seed, nodePattern, "", hint)
 	if err != nil {
 		return err

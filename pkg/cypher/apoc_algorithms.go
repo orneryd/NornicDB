@@ -277,8 +277,8 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, procedure, args)
 	if err != nil {
 		return nil, err
@@ -344,8 +344,8 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, "apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
@@ -418,8 +418,8 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := e.algorithmNodes(held, "apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
@@ -684,7 +684,7 @@ func algorithmConfig(args []interface{}) map[string]interface{} {
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
 // The nodes are held in owner (#1343).
-func (e *StorageExecutor) algorithmNodes(owner *memoryRetention, procedure string, args []interface{}) ([]*storage.Node, error) {
+func (e *StorageExecutor) algorithmNodes(owner *entityHolder, procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {
 		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))

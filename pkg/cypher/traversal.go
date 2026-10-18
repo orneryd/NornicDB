@@ -329,8 +329,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
 	if whereClause == "" && pathVariable == "" {
 		// What the aggregation reads counts while it aggregates (#1343).
-		aggregated := trackedRetention(ctx)
-		defer aggregated.release()
+		aggregated := holdEntities(ctx)
+		defer aggregated.drop()
 		if rows, ok, err := e.tryFastRelationshipAggregations(aggregated, matches, returnItems); ok {
 			if err != nil {
 				return nil, err
@@ -345,8 +345,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// The start nodes count while the traversal runs from them (#1343): a
 	// caller's seeds where the caller holds them, a seek's or a scan's here,
 	// as they are read.
-	starts := trackedRetention(ctx)
-	defer starts.release()
+	starts := holdEntities(ctx)
+	defer starts.drop()
 	var optimizedStartNodes []*storage.Node
 	usedPropertyIndex := false
 	if len(seedNodes) > 0 {
@@ -713,8 +713,8 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 
 	seedLimit := topKSeedLimit(limit)
 	// The end seeds count while the traversal runs to them (#1343).
-	seeds := trackedRetention(ctx)
-	defer seeds.release()
+	seeds := holdEntities(ctx)
+	defer seeds.drop()
 	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, seeds, matches.EndNode, seedWhere, orderExpr, seedLimit)
 	if err != nil {
 		return nil, true, err
@@ -884,7 +884,7 @@ func topKSeedLimit(limit int) int {
 
 func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
@@ -922,8 +922,8 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 	}
 
 	// The start seeds count while the traversal runs from them (#1343).
-	seeds := trackedRetention(ctx)
-	defer seeds.release()
+	seeds := holdEntities(ctx)
+	defer seeds.drop()
 	seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, seeds, matches.StartNode, whereClause, orderExpr, limit)
 	if err != nil {
 		return nil, true, err
@@ -947,7 +947,7 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 //   - <startVar>.<prop> IS NOT NULL
 //
 // The candidates are held in owner, which the caller releases.
-func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, owner *entityHolder, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
 	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
@@ -1487,8 +1487,8 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	}
 
 	// The start nodes count while the traversal runs from them (#1343).
-	starts := trackedRetention(ctx)
-	defer starts.release()
+	starts := holdEntities(ctx)
+	defer starts.drop()
 	startNodes, seeded, err := e.relationshipTypeSeedNodes(ctx, starts, match)
 	if !seeded && err == nil {
 		startNodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, starts, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
@@ -1530,7 +1530,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // The traversal still checks the whole pattern from each start node. The
 // nodes found are held in owner; each type's relationships count only while
 // they are read (visitEdgesOfTypes, #1343).
-func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *memoryRetention, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *entityHolder, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
 		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
@@ -1538,7 +1538,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *
 	}
 	store := e.getStorage(ctx)
 	seen := make(map[storage.NodeID]bool)
-	found := heldNodeList{owner: owner}
+	found := heldNodeList{holder: owner}
 	add := func(id storage.NodeID) error {
 		if seen[id] {
 			return nil
@@ -1574,10 +1574,10 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *
 // list at a time: a type's list counts while it is visited and is given back
 // before the next type's is read (#1343). What visit keeps, it holds itself.
 func visitEdgesOfTypes(ctx context.Context, store storage.Engine, types []string, visit func(*storage.Edge) error) error {
-	read := trackedRetention(ctx)
-	defer read.release()
+	read := holdEntities(ctx)
+	defer read.drop()
 	for _, relationshipType := range types {
-		read.release()
+		read.drop()
 		edges, err := read.heldEdges(store.GetEdgesByType(relationshipType))
 		if err != nil {
 			return err

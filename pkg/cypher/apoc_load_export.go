@@ -479,13 +479,16 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 	}
 
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodeSlice(e.storage.GetAllNodes())
 	if err != nil {
 		return nil, err
 	}
-	edges, err := held.heldEdges(e.storage.AllEdges())
+	// The relationships are a second structure, held beside the nodes.
+	edgesHeld := held.sibling()
+	defer edgesHeld.drop()
+	edges, err := edgesHeld.heldEdges(e.storage.AllEdges())
 	if held.failed() {
 		return nil, err
 	}
@@ -599,13 +602,16 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	}
 
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodeSlice(e.storage.GetAllNodes())
 	if err != nil {
 		return nil, err
 	}
-	edges, err := held.heldEdges(e.storage.AllEdges())
+	// The relationships are a second structure, held beside the nodes.
+	edgesHeld := held.sibling()
+	defer edgesHeld.drop()
+	edges, err := edgesHeld.heldEdges(e.storage.AllEdges())
 	if held.failed() {
 		return nil, err
 	}

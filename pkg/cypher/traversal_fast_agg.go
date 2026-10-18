@@ -13,7 +13,7 @@ import (
 // This is primarily a performance optimization for patterns that can be answered in a single pass
 // over typed edge indexes (GetEdgesByType) with minimal node lookups.
 // What the aggregations read is held in owner (#1343).
-func (e *StorageExecutor) tryFastRelationshipAggregations(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastRelationshipAggregations(owner *entityHolder, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle fixed 1-hop segments (no variable-length expansions).
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
@@ -48,7 +48,7 @@ func (exprMatcher) key(expr string) string {
 	return string(b)
 }
 
-func (e *StorageExecutor) tryFastSingleHopAgg(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastSingleHopAgg(owner *entityHolder, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle typed 1-hop patterns with no properties/filters.
 	if len(matches.Relationship.Types) != 1 {
 		return nil, false, nil
@@ -543,7 +543,7 @@ func appendUniqueNodeID(ids []storage.NodeID, seen map[storage.NodeID]struct{}, 
 	return append(ids, id)
 }
 
-func (e *StorageExecutor) tryFastChainedRelationshipAggregation(owner *memoryRetention, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastChainedRelationshipAggregation(owner *entityHolder, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	plan, ok := buildChainedAggregationPlan(matches, returnItems)
 	if !ok {
 		return nil, false, nil

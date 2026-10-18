@@ -75,8 +75,8 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 
 	// The source nodes and the relationships to delete count while they
 	// are collected and deleted (#1343).
-	owner := trackedRetention(ctx)
-	defer owner.release()
+	owner := holdEntities(ctx)
+	defer owner.drop()
 	sources, err := e.collectBoundRelationshipDeleteSources(ctx, owner, sourcePattern, inTransactionWrapper)
 	if err != nil {
 		return nil, true, err
@@ -159,7 +159,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 }
 
 // collectBoundRelationshipDeleteSources holds the sources in owner (#1343).
-func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, owner *memoryRetention, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
+func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, owner *entityHolder, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
 	if !inTransactionWrapper {
 		return e.collectNodesWithStreaming(ctx, owner, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}

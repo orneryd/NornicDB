@@ -149,8 +149,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 		}
 	}
 
-	patternNodes := trackedRetention(ctx)
-	defer patternNodes.release()
+	patternNodes := holdEntities(ctx)
+	defer patternNodes.drop()
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
 		if idx < len(existingRelBindings) {
@@ -217,7 +217,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			// The pattern's nodes count while this binding's rows are built
 			// from them (#1343).
-			patternNodes.release()
+			patternNodes.drop()
 			nodes, _ := e.loadPatternNodes(ctx, patternNodes, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
@@ -555,7 +555,7 @@ func isNumericLiteral(s string) bool {
 // Returns collected nodes or error, held in owner (#1343).
 func (e *StorageExecutor) collectNodesWithStreaming(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
@@ -572,7 +572,7 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 // collects them (#1343).
 func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	labels []string,
 	properties map[string]interface{},
 	whereVariable string,
@@ -584,7 +584,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	if limit > 0 {
 		capacity = limit
 	}
-	collected := heldNodeList{owner: owner, nodes: make([]*storage.Node, 0, capacity)}
+	collected := heldNodeList{holder: owner, nodes: make([]*storage.Node, 0, capacity)}
 	if err := e.visitNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
 		return nil, err
 	}
@@ -680,8 +680,8 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// streaming. This still avoids a full graph scan for bounded simple reads.
 	// What a materialized read returns is held while the scan filters it
 	// (#1343).
-	read := trackedRetention(ctx)
-	defer read.release()
+	read := holdEntities(ctx)
+	defer read.drop()
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
 		ids, err := read.heldNodeIDs(storage.NodeIDsByLabel(store, labels[0], limit))
 		if err != nil {

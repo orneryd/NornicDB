@@ -62,8 +62,8 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 	}
 
 	// The nodes count while their rows are built (#1343).
-	owner := trackedRetention(ctx)
-	defer owner.release()
+	owner := holdEntities(ctx)
+	defer owner.drop()
 	nodes, err := e.collectNodesWithStreaming(ctx, owner, labels, nil, varName, "", limit)
 	if err != nil {
 		return nil, false

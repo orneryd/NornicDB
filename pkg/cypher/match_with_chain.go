@@ -74,7 +74,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 }
 
 // evaluateMatchClauseNodes holds the clause's nodes in owner (#1343).
-func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, owner *memoryRetention, clause string) ([]*storage.Node, string, error) {
+func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, owner *entityHolder, clause string) ([]*storage.Node, string, error) {
 	trimmed := strings.TrimSpace(clause)
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	patternPart := trimmed

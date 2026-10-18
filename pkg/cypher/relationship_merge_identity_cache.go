@@ -31,7 +31,7 @@ var mergeIdentityCacheDisabled = false
 // entries outlive each row, so they count as long as they are kept.
 type relationshipMergeIdentityCache struct {
 	entries map[string]*relationshipMergeIdentityEntry
-	owner   *memoryRetention
+	owner   *entityHolder
 }
 
 type relationshipMergeIdentityEntry struct {
@@ -39,7 +39,7 @@ type relationshipMergeIdentityEntry struct {
 	byKey map[string][]*storage.Edge
 }
 
-func newRelationshipMergeIdentityCache(owner *memoryRetention) *relationshipMergeIdentityCache {
+func newRelationshipMergeIdentityCache(owner *entityHolder) *relationshipMergeIdentityCache {
 	return &relationshipMergeIdentityCache{entries: map[string]*relationshipMergeIdentityEntry{}, owner: owner}
 }
 

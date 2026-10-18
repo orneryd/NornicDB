@@ -265,7 +265,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 // execution pipeline (instead of manual scan/filter) so index/hot-path optimizations
 // apply before correlated CALL {} expansion. The seeds are held in owner
 // (#1343).
-func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, owner *memoryRetention, outerPart, variable string) ([]*storage.Node, error) {
+func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, owner *entityHolder, outerPart, variable string) ([]*storage.Node, error) {
 	variable = strings.TrimSpace(variable)
 	if variable == "" {
 		return nil, localizedError(localization.CypherSubqueriesCorrelatedVariableEmpty(), nil)

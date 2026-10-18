@@ -25,7 +25,7 @@ func (e *StorageExecutor) prefixNodeIDIfNeeded(id storage.NodeID, idPrefix strin
 }
 
 // getEdgesByTypeFast holds the relationships in owner (#1343).
-func (e *StorageExecutor) getEdgesByTypeFast(owner *memoryRetention, edgeType string) ([]*storage.Edge, string, error) {
+func (e *StorageExecutor) getEdgesByTypeFast(owner *entityHolder, edgeType string) ([]*storage.Edge, string, error) {
 	engine, idPrefix := e.storageFast()
 	edges, err := owner.heldEdges(engine.GetEdgesByType(edgeType))
 	if err != nil {
@@ -48,7 +48,7 @@ func (e *StorageExecutor) getEdgesByTypeFast(owner *memoryRetention, edgeType st
 }
 
 // batchGetNodesFast holds the nodes in owner (#1343).
-func (e *StorageExecutor) batchGetNodesFast(owner *memoryRetention, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, string, error) {
+func (e *StorageExecutor) batchGetNodesFast(owner *entityHolder, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, string, error) {
 	engine, idPrefix := e.storageFast()
 	nodes, err := owner.heldNodeMap(engine.BatchGetNodes(ids))
 	if err != nil {

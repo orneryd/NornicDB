@@ -31,7 +31,7 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(owner *memoryRetention, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(owner *entityHolder, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
 	if len(nodeInfo.properties) == 0 {
 		return nil, false, nil
 	}

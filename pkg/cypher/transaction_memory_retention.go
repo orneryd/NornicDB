@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"reflect"
+	"runtime"
 	"strings"
 	"unsafe"
 
@@ -330,161 +331,247 @@ func (r *memoryRetention) reserveTraversalRow(row traversalOptRow) error {
 	return r.account.grow(size)
 }
 
-// reserveCandidates reserves the n candidate nodes of a MATCH an operator
-// holds while it matches them: an index seek's, a label scan's, or seed
-// nodes from anywhere else. Rows built from them count the nodes they bind;
-// the candidates count while the operator holds them, also when the rows it
-// builds from them don't stay (RETURN count(*)).
-// collectPipelineInitialNodeCandidates reserves what it returns into the
-// owner its caller passes, which gives it back (release) once it drops them.
-func (r *memoryRetention) reserveCandidates(n int) error {
-	if r == nil || r.account.scope == nil || n <= 0 {
-		return nil
-	}
-	return r.account.grow(sliceHeaderBytes + saturatingProduct(int64(n), entityReferenceBytes))
+// entityHolder is the charge of one data structure that keeps nodes,
+// relationships or their IDs (#1343): a list, a cache, a prefetch buffer. The
+// charge belongs to the structure, not to the code that read what it holds:
+// it starts when the structure starts holding, follows what it holds now,
+// and is given back exactly once when the structure stops holding (drop).
+//
+//   - Reading into the structure sets its charge to what it holds now (the
+//     held methods): a list read again replaces the last one's charge, and a
+//     list built from another (IDs, then the nodes read from them; committed
+//     IDs, then the transaction's merge of them) counts once.
+//   - A structure that grows (a cache, a list a visitor appends to) grows its
+//     charge (grow, heldNodeList).
+//   - drop gives the charge back; a dropped holder holds nothing, so a second
+//     drop gives back nothing.
+//
+// One holder per structure: a function's holder binds one variable, a
+// function that returns what it read fills its caller's holder, and a type
+// that keeps entities in a field keeps the holder beside it
+// (TestEntityHoldersOwnTheirStructures). An entity counts as a reference
+// (entityReferenceBytes), as the row estimator counts it. With no limit
+// configured holdEntities returns nil and every method is a nil check.
+type entityHolder struct {
+	scope *memoryScope
+	count int   // the entities the structure holds
+	bytes int64 // what they are charged
 }
 
-// The entities a statement reads from storage in bulk are held by their
-// owner from the moment they are read (#1343): a scan's or a seek's nodes, a
-// type's or a node's relationships, an index's node IDs, a batch get. Every
-// such read is passed straight to one of the held methods below, of the
-// owner that keeps the list, and counts there until the owner is released;
-// a function that only returns what it read passes it on to its caller,
-// which holds it (TestEntityReadsHaveAnOwner). An ID list and the nodes read
-// from it count once, as entity references. A list that replaces the last
-// one (a node's relationships, read per node) is held by an owner released
-// before each read. A failed reservation returns the limit's error and no
-// list.
+// holdEntities is a holder for one structure of the statement ctx runs, nil
+// while no limit is configured.
+func holdEntities(ctx context.Context) *entityHolder {
+	if !transactionMemoryTracking() {
+		return nil
+	}
+	scope := memoryScopeFromContext(ctx)
+	if scope == nil {
+		return nil
+	}
+	return &entityHolder{scope: scope}
+}
 
-// heldNodes holds nodes read from storage.
-func (r *memoryRetention) heldNodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {
-	if err != nil || r == nil || r.account.scope == nil {
+// entityHolderObserver, set by tests, sees the function that changed a
+// holder's charge.
+var entityHolderObserver func(function string)
+
+// set makes the structure's charge that of n entities: grown, or given back.
+// Over a limit it fails the statement with the limit's error.
+func (h *entityHolder) set(n int) error {
+	if h == nil || h.scope == nil {
+		return nil
+	}
+	if entityHolderObserver != nil {
+		observeEntityHolder()
+	}
+	var want int64
+	if n > 0 {
+		want = sliceHeaderBytes + saturatingProduct(int64(n), entityReferenceBytes)
+	}
+	switch {
+	case want > h.bytes:
+		if err := h.scope.grow(want - h.bytes); err != nil {
+			return err
+		}
+	case want < h.bytes:
+		h.scope.give(h.bytes - want)
+	}
+	h.count, h.bytes = n, want
+	return nil
+}
+
+// grow adds n entities to what the structure holds.
+func (h *entityHolder) grow(n int) error {
+	if h == nil || h.scope == nil || n <= 0 {
+		return nil
+	}
+	return h.set(h.count + n)
+}
+
+// drop gives back the structure's charge: it holds nothing any more.
+func (h *entityHolder) drop() {
+	if h != nil && h.bytes > 0 {
+		h.scope.give(h.bytes)
+		h.count, h.bytes = 0, 0
+	}
+}
+
+// sibling is a holder for another structure of h's statement, nil when h
+// is: a function that keeps several structures at once gives each its own.
+func (h *entityHolder) sibling() *entityHolder {
+	if h == nil {
+		return nil
+	}
+	return &entityHolder{scope: h.scope}
+}
+
+// giveTo hands what the structure holds to into, which keeps it from now on
+// (a cache keeping a list it read, a working set adding a read): into grows
+// by it, and h holds nothing. The charge moves; it is never counted twice.
+func (h *entityHolder) giveTo(into *entityHolder) error {
+	if h == nil || h.count == 0 {
+		return nil
+	}
+	count := h.count
+	h.drop()
+	return into.grow(count)
+}
+
+// follow charges a structure that grows one entity at a time, holding n
+// now, in steps of entityHoldStep; set charges it exactly once it is built.
+func (h *entityHolder) follow(n int) error {
+	if h == nil || n-h.count < entityHoldStep {
+		return nil
+	}
+	return h.set(n)
+}
+
+// failed reports whether the holder's statement failed over a memory limit:
+// an operator that would otherwise fall back to another plan stops instead.
+func (h *entityHolder) failed() bool {
+	return h != nil && h.scope != nil && h.scope.tracker.err() != nil
+}
+
+// heldNodes makes nodes, read from storage, what the structure holds.
+func (h *entityHolder) heldNodes(nodes []*storage.Node, err error) ([]*storage.Node, error) {
+	if err != nil {
 		return nodes, err
 	}
-	if err := r.reserveCandidates(len(nodes)); err != nil {
+	if err := h.set(len(nodes)); err != nil {
 		return nil, err
 	}
 	return nodes, nil
 }
 
-// heldNodeSlice holds nodes read from storage by a read that can't fail.
-func (r *memoryRetention) heldNodeSlice(nodes []*storage.Node) ([]*storage.Node, error) {
-	return r.heldNodes(nodes, nil)
+// heldNodeSlice is heldNodes of a read that can't fail.
+func (h *entityHolder) heldNodeSlice(nodes []*storage.Node) ([]*storage.Node, error) {
+	return h.heldNodes(nodes, nil)
 }
 
-// heldEdges holds relationships read from storage.
-func (r *memoryRetention) heldEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
-	if err != nil || r == nil || r.account.scope == nil {
+// heldEdges makes edges, read from storage, what the structure holds.
+func (h *entityHolder) heldEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
+	if err != nil {
 		return edges, err
 	}
-	if err := r.reserveCandidates(len(edges)); err != nil {
+	if err := h.set(len(edges)); err != nil {
 		return nil, err
 	}
 	return edges, nil
 }
 
-// heldEdgeHeaders holds relationships read from storage by a reader that
-// reports whether it could answer.
-func (r *memoryRetention) heldEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
-	edges, err = r.heldEdges(edges, err)
+// heldEdgeHeaders is heldEdges of a reader that reports whether it could
+// answer.
+func (h *entityHolder) heldEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
+	edges, err = h.heldEdges(edges, err)
 	return edges, answered && err == nil, err
 }
 
-// heldAdjacentEdges holds a node's outgoing and incoming relationships, read
-// together.
-func (r *memoryRetention) heldAdjacentEdges(outgoing, incoming []*storage.Edge, err error) ([]*storage.Edge, []*storage.Edge, error) {
-	if err != nil || r == nil || r.account.scope == nil {
+// heldAdjacentEdges makes a node's outgoing and incoming relationships, read
+// together, what the structure holds.
+func (h *entityHolder) heldAdjacentEdges(outgoing, incoming []*storage.Edge, err error) ([]*storage.Edge, []*storage.Edge, error) {
+	if err != nil {
 		return outgoing, incoming, err
 	}
-	if err := r.reserveCandidates(len(outgoing) + len(incoming)); err != nil {
+	if err := h.set(len(outgoing) + len(incoming)); err != nil {
 		return nil, nil, err
 	}
 	return outgoing, incoming, nil
 }
 
-// holdAppended holds the entities a storage visitor appended to a list the
-// owner keeps: length is the list's length now, and held how many of them
-// the owner holds, which it updates. It reserves them in steps of
-// entityHoldStep as the list grows, and the rest once done.
-func (r *memoryRetention) holdAppended(held *int, length int, done bool) error {
-	if r == nil || r.account.scope == nil {
-		return nil
-	}
-	if n := length - *held; n > 0 && (done || n >= entityHoldStep) {
-		*held = length
-		return r.reserveSlots(n, entityReferenceBytes)
-	}
-	return nil
-}
-
-// entityHoldStep is how many entities a visitor appends between reservations.
-const entityHoldStep = 1024
-
-// heldNodeList is a node list a storage visitor appends to, held in owner as
-// it grows (holdAppended).
-type heldNodeList struct {
-	owner *memoryRetention
-	nodes []*storage.Node
-	held  int
-}
-
-// add appends nodes to the list.
-func (l *heldNodeList) add(nodes ...*storage.Node) error {
-	l.nodes = append(l.nodes, nodes...)
-	return l.owner.holdAppended(&l.held, len(l.nodes), false)
-}
-
-// done holds the nodes added since the last step.
-func (l *heldNodeList) done() error {
-	return l.owner.holdAppended(&l.held, len(l.nodes), true)
-}
-
-// heldNodeIDs holds node IDs read from storage.
-func (r *memoryRetention) heldNodeIDs(ids []storage.NodeID, err error) ([]storage.NodeID, error) {
-	if err != nil || r == nil || r.account.scope == nil {
+// heldNodeIDs makes ids, read from storage, what the structure holds.
+func (h *entityHolder) heldNodeIDs(ids []storage.NodeID, err error) ([]storage.NodeID, error) {
+	if err != nil {
 		return ids, err
 	}
-	if err := r.reserveCandidates(len(ids)); err != nil {
+	if err := h.set(len(ids)); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
-// heldMergedIDs holds the IDs a transaction's pending writes merged into
-// committed, which the owner holds already (MergePendingPropertyMatches): only
-// what the merge added. A read-only transaction gets committed back, which
-// counts once (#1343).
-func (r *memoryRetention) heldMergedIDs(committed, merged []storage.NodeID) ([]storage.NodeID, error) {
-	if r == nil || r.account.scope == nil || len(merged) <= len(committed) {
-		return merged, nil
-	}
-	if err := r.reserveSlots(len(merged)-len(committed), entityReferenceBytes); err != nil {
-		return nil, err
-	}
-	return merged, nil
+// heldIndexIDs is heldNodeIDs of an index lookup.
+func (h *entityHolder) heldIndexIDs(ids []storage.NodeID) ([]storage.NodeID, error) {
+	return h.heldNodeIDs(ids, nil)
 }
 
-// heldIndexIDs holds the node IDs an index lookup found.
-func (r *memoryRetention) heldIndexIDs(ids []storage.NodeID) ([]storage.NodeID, error) {
-	return r.heldNodeIDs(ids, nil)
-}
-
-// heldIndexRange holds the node IDs an index range found (ok: the index
-// answered).
-func (r *memoryRetention) heldIndexRange(ids []storage.NodeID, ok bool) ([]storage.NodeID, bool, error) {
-	ids, err := r.heldNodeIDs(ids, nil)
+// heldIndexRange is heldNodeIDs of an index range (ok: the index answered).
+func (h *entityHolder) heldIndexRange(ids []storage.NodeID, ok bool) ([]storage.NodeID, bool, error) {
+	ids, err := h.heldNodeIDs(ids, nil)
 	return ids, ok && err == nil, err
 }
 
-// heldNodeMap holds nodes a batch get read, by ID.
-func (r *memoryRetention) heldNodeMap(nodes map[storage.NodeID]*storage.Node, err error) (map[storage.NodeID]*storage.Node, error) {
-	if err != nil || r == nil || r.account.scope == nil {
+// heldNodeMap makes nodes a batch get read, by ID, what the structure holds.
+func (h *entityHolder) heldNodeMap(nodes map[storage.NodeID]*storage.Node, err error) (map[storage.NodeID]*storage.Node, error) {
+	if err != nil {
 		return nodes, err
 	}
-	if err := r.reserveCandidates(len(nodes)); err != nil {
+	if err := h.set(len(nodes)); err != nil {
 		return nil, err
 	}
 	return nodes, nil
+}
+
+// heldNodeList is a node list a storage visitor appends to: its holder grows
+// with it in steps of entityHoldStep, and once done.
+type heldNodeList struct {
+	holder *entityHolder
+	nodes  []*storage.Node
+}
+
+// entityHoldStep is how many entities a visitor appends between charges.
+const entityHoldStep = 1024
+
+// add appends nodes to the list.
+func (l *heldNodeList) add(nodes ...*storage.Node) error {
+	l.nodes = append(l.nodes, nodes...)
+	return l.holder.follow(len(l.nodes))
+}
+
+// done charges what the list holds.
+func (l *heldNodeList) done() error {
+	return l.holder.set(len(l.nodes))
+}
+
+// observeEntityHolder tells entityHolderObserver which function, outside
+// this file, changed a holder's charge (its closures named as it is).
+func observeEntityHolder() {
+	pcs := make([]uintptr, 16)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
+	for {
+		frame, more := frames.Next()
+		if !strings.HasSuffix(frame.File, "transaction_memory_retention.go") {
+			function := frame.Function[strings.LastIndex(frame.Function, "/")+1:]
+			// A closure (f.func1, f.func2.1) is named as its function.
+			if index := strings.Index(function, ".func"); index >= 0 {
+				function = function[:index]
+			}
+			entityHolderObserver(function[strings.LastIndex(function, ".")+1:])
+			return
+		}
+		if !more {
+			return
+		}
+	}
 }
 
 // failed reports whether the owner's statement failed over a memory limit:

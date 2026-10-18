@@ -164,8 +164,8 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		}
 		// The prefetched nodes count until the rows that read them are done
 		// (#1343).
-		prefetchOwner := trackedRetention(ctx)
-		defer prefetchOwner.release()
+		prefetchOwner := holdEntities(ctx)
+		defer prefetchOwner.drop()
 		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, prefetchOwner, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err

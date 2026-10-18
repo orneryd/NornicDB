@@ -156,8 +156,8 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 func countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, bool, error) {
 	// The relationships count while they are counted, one type's at a
 	// time, and the IDs it has counted while it counts (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	var count int64
 	countEdge := func(edge *storage.Edge) {
 		count++

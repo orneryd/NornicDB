@@ -522,14 +522,14 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	}
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
-	mergeCandidates := trackedRetention(ctx)
-	defer mergeCandidates.release()
+	mergeCandidates := holdEntities(ctx)
+	defer mergeCandidates.drop()
 	// The relationship lookups of this MERGE over its rows share one read
 	// per endpoint pair (relationshipMergeIdentityCache); one row looks up
 	// directly.
 	// What it keeps counts until it drops it or the MERGE is done (#1343).
-	identityOwner := trackedRetention(ctx)
-	defer identityOwner.release()
+	identityOwner := holdEntities(ctx)
+	defer identityOwner.drop()
 	var identities *relationshipMergeIdentityCache
 	if len(rows) > 1 {
 		identities = newRelationshipMergeIdentityCache(identityOwner)
@@ -642,7 +642,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					}
 					// The candidates count while the row's MERGE matches them
 					// (#1343).
-					mergeCandidates.release()
+					mergeCandidates.drop()
 					matches, scanned, findErr := e.findMergeNodesScanned(mergeCandidates, e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr

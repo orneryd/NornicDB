@@ -247,13 +247,16 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	nodes, err := held.heldNodes(store.AllNodes())
 	if err != nil {
 		return nil, err
 	}
-	edges, err := held.heldEdges(store.AllEdges())
+	// The relationships are a second structure, held beside the nodes.
+	edgesHeld := held.sibling()
+	defer edgesHeld.drop()
+	edges, err := edgesHeld.heldEdges(store.AllEdges())
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,7 @@ import (
 // lose their committed entries (#809). The lookup stays an index lookup: a
 // transaction that reads by an indexed property doesn't scan the label.
 // The IDs, and the nodes read from them, are held in owner (#1343).
-func propertyIndexLookup(owner *memoryRetention, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+func propertyIndexLookup(owner *entityHolder, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
 	ids, err := owner.heldIndexIDs(schema.PropertyIndexLookup(label, property, value))
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func propertyIndexLookup(owner *memoryRetention, engine storage.Engine, schema *
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
-func compositeIndexLookup(owner *memoryRetention, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+func compositeIndexLookup(owner *entityHolder, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
 	var ids []storage.NodeID
 	var err error
 	if full {

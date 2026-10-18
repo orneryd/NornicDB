@@ -59,7 +59,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // only the best limit nodes are retained while every boundary tie is examined.
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
 // match. The window is held in owner as it fills (#1343).
-func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, owner *memoryRetention, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, owner *entityHolder, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil

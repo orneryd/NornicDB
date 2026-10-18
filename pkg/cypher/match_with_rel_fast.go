@@ -7,7 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) tryFastRevenueByProduct(owner *memoryRetention, matches *TraversalMatch, withClause string, returnClause string, orderByClause string, skipVal int, limitVal int) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) tryFastRevenueByProduct(owner *entityHolder, matches *TraversalMatch, withClause string, returnClause string, orderByClause string, skipVal int, limitVal int) (*ExecuteResult, bool, error) {
 	// MATCH (p:Product)<-[r:ORDERS]-(:Order)
 	// WITH p, sum(p.unitPrice * r.quantity) as revenue
 	// RETURN p.productName, revenue

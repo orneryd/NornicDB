@@ -58,8 +58,8 @@ func requireFulltextIndex(indexName string, declared bool) error {
 
 func (e *StorageExecutor) callDbIndexFulltextQueryNodes(queryCtx context.Context, args []interface{}) (*ExecuteResult, error) {
 	// The nodes it reads count while it scores them (#1343).
-	held := trackedRetention(queryCtx)
-	defer held.release()
+	held := holdEntities(queryCtx)
+	defer held.drop()
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},

@@ -152,8 +152,8 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 	propertyExpressions := nodePatternPropertyExpressions(group)
 
 	// The candidates count while every row is matched against them (#1343).
-	candidateNodes := trackedRetention(ctx)
-	defer candidateNodes.release()
+	candidateNodes := holdEntities(ctx)
+	defer candidateNodes.drop()
 	candidates, err := e.loadNodesWithTemporalViewport(ctx, candidateNodes, np.labels)
 	if err != nil {
 		return nil, err

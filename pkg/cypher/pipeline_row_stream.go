@@ -356,10 +356,10 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		// The cached candidates count until the source is done (consumed,
 		// stopped or cancelled), an input row's own while it is matched
 		// (#1343).
-		cachedCandidates := trackedRetention(ctx)
-		defer cachedCandidates.release()
-		rowCandidates := trackedRetention(ctx)
-		defer rowCandidates.release()
+		cachedCandidates := holdEntities(ctx)
+		defer cachedCandidates.drop()
+		rowCandidates := holdEntities(ctx)
+		defer rowCandidates.drop()
 		// A source run again keeps what an earlier run cached.
 		for index := range caches {
 			cache := &caches[index]
@@ -373,7 +373,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 			}
 		}
 		completed := inputSource(func(input pipelineRow) bool {
-			rowCandidates.release()
+			rowCandidates.drop()
 			clear(current)
 			for name, value := range input {
 				current[name] = value

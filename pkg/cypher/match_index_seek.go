@@ -357,14 +357,14 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 //
 // It returns (nodes, true, nil) when index planning was used (including empty matches),
 // and (nil, false, nil) when the predicate is not eligible for index lookup.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, owner *entityHolder, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
 	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, owner, nodePattern, whereClause, nil)
 }
 
 // tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
 // for a node that must carry one of anyOf (a WHERE label disjunction, #858;
 // nil when there is none): see seekCandidateLabels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, owner *entityHolder, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
 	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
@@ -430,7 +430,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 // where $param is a list value from params. This path is used heavily by Fabric
 // batched correlated APPLY lookups.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -441,7 +441,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 // tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
 // for a node that must carry one of anyOf (see seekCandidateLabels).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -502,7 +502,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 //	<var>.<prop> IN ['a', 'b', ...]
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
@@ -514,7 +514,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 // anyOf (see seekCandidateLabels).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	anyOf []string,
@@ -586,7 +586,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 // top-level AND conjunct.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -644,7 +644,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 // first (the simple form), then each top-level AND conjunct in order.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
@@ -689,7 +689,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 // otherwise full-scan labels.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -797,7 +797,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 // dual-key lookup workloads.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -1016,7 +1016,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 // complete primary-key groups and all keys select the retained top-K window.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
@@ -1071,7 +1071,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 // using the property index directly (top-K by indexed key) without label scan.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 	ctx context.Context,
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	orderExpr string,
@@ -1115,7 +1115,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 //
 // from schema index entries, avoiding label scans.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
-	owner *memoryRetention,
+	owner *entityHolder,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
@@ -2013,7 +2013,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 // number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
 // p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
 // caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(owner *memoryRetention, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(owner *entityHolder, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -2114,7 +2114,7 @@ func mirroredComparison(operator string) string {
 // reads and the filtered count (tryStreamPipelineFilteredNodeCount) both seed
 // from it, so a lookup that uses an index for rows uses it for count(*) too
 // (#820).
-func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, owner *memoryRetention, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, owner *entityHolder, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
 	params := getParamsFromContext(ctx)
 	if hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){

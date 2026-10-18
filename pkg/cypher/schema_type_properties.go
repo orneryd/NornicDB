@@ -89,8 +89,8 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		return found
 	}
 	// What it reads counts while it reads it (#1343).
-	held := trackedRetention(ctx)
-	defer held.release()
+	held := holdEntities(ctx)
+	defer held.drop()
 	if nodes {
 		all, err := held.heldNodes(e.storage.AllNodes())
 		if err != nil {
