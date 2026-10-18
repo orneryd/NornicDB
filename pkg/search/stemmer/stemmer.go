@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -289,7 +290,7 @@ func loadDir(dir string, continueOnPluginError bool) ([]error, error) {
 	slices.Sort(matches)
 	var diagnostics []error
 	for _, manifestPath := range matches {
-		if err := loadManifest(manifestPath); err != nil {
+		if _, err := LoadManifest(manifestPath); err != nil {
 			diagnostic := fmt.Errorf("%s: %w", filepath.Base(manifestPath), err)
 			if !continueOnPluginError {
 				return diagnostics, diagnostic
@@ -300,20 +301,22 @@ func loadDir(dir string, continueOnPluginError bool) ([]error, error) {
 	return diagnostics, nil
 }
 
-func loadManifest(manifestPath string) error {
+// LoadManifest is the per-plugin step of LoadDir: it validates one manifest,
+// verifies its adjacent library, opens the Go plugin and registers it.
+func LoadManifest(manifestPath string) (Registration, error) {
 	manifest, err := ReadManifest(manifestPath)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
 	libraryPath, err := VerifyLibrary(manifestPath, manifest)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
 	pluginImpl, err := openPlugin(libraryPath, manifest.Entrypoint)
 	if err != nil {
-		return err
+		return Registration{}, err
 	}
-	return Register(Registration{
+	if err := Register(Registration{
 		APIVersion: manifest.APIVersion,
 		ID:         manifest.ID,
 		Version:    manifest.Version,
@@ -322,7 +325,86 @@ func loadManifest(manifestPath string) error {
 		Path:       libraryPath,
 		Stem:       pluginImpl.Stem,
 		StemTokens: batchStemFunc(pluginImpl),
+	}); err != nil {
+		return Registration{}, err
+	}
+	registration, _ := Lookup(manifest.ID)
+	return registration, nil
+}
+
+// ErrCheckTimedOut is returned by CheckManifest when loading does not finish
+// within its timeout.
+var ErrCheckTimedOut = errors.New("stemmer plugin check timed out")
+
+// CheckManifest loads one plugin exactly as server startup does (LoadManifest)
+// and returns its registration, or ErrCheckTimedOut if loading, including the
+// plugin's init functions, takes longer than timeout. It backs
+// `nornicdb stemmer check`, which nornicdb-snowball runs against the target
+// server binary before it reports a packaged plugin as usable.
+func CheckManifest(manifestPath string, timeout time.Duration) (Registration, error) {
+	type result struct {
+		registration Registration
+		err          error
+	}
+	done := make(chan result, 1)
+	go func() {
+		registration, err := LoadManifest(manifestPath)
+		done <- result{registration, err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.registration, r.err
+	case <-timer.C:
+		return Registration{}, ErrCheckTimedOut
+	}
+}
+
+// CheckResultPrefix starts the line `nornicdb stemmer check` prints once
+// loading has finished. A zero exit status alone does not prove that: a
+// plugin init function that calls os.Exit(0) ends the check inside
+// plugin.Open, before the interface check and registration. Programs that run
+// the check (nornicdb-snowball) therefore require this line as well.
+const CheckResultPrefix = "nornicdb-stemmer-check: "
+
+// CheckResult is the machine-readable result of a finished check: the
+// plugin that loaded and registered.
+type CheckResult struct {
+	ID         string `json:"id"`
+	Version    string `json:"version"`
+	APIVersion int    `json:"api_version"`
+	SHA256     string `json:"sha256"`
+}
+
+// CheckResultLine formats the result line for a registration returned by
+// CheckManifest.
+func CheckResultLine(registration Registration) string {
+	raw, _ := json.Marshal(CheckResult{
+		ID:         registration.ID,
+		Version:    registration.Version,
+		APIVersion: registration.APIVersion,
+		SHA256:     registration.Digest,
 	})
+	return CheckResultPrefix + string(raw)
+}
+
+// ParseCheckResult returns the last result line in a check's output, and
+// false if there is none.
+func ParseCheckResult(output string) (CheckResult, bool) {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		raw, ok := strings.CutPrefix(strings.TrimSpace(lines[i]), CheckResultPrefix)
+		if !ok {
+			continue
+		}
+		var result CheckResult
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			return CheckResult{}, false
+		}
+		return result, true
+	}
+	return CheckResult{}, false
 }
 
 type batchPlugin interface {
