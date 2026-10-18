@@ -199,17 +199,14 @@ func newRelKeyCheck(c Constraint) relEdgeCheck {
 	}
 }
 
-// temporalCompositeKey builds a composite key string from multiple key property values on an edge.
-func temporalCompositeKey(edge *Edge, keyProps []string) (string, error) {
-	parts := make([]string, len(keyProps))
-	for i, prop := range keyProps {
-		val := edge.Properties[prop]
-		if val == nil {
-			return "", localizedError(localization.StorageValidationEdgeKeyNull(string(edge.ID), prop), nil)
-		}
-		parts[i] = fmt.Sprint(val)
+// temporalCompositeKey extracts the raw grouping value using the shared key spec.
+func temporalCompositeKey(edge *Edge, keyProps []string) (interface{}, error) {
+	spec := temporalKeySpec{keyProps: keyProps}
+	key, missing := spec.keyValue(edge.Properties)
+	if missing != "" {
+		return nil, localizedError(localization.StorageValidationEdgeKeyNull(string(edge.ID), missing), nil)
 	}
-	return strings.Join(parts, "\x00"), nil
+	return key, nil
 }
 
 // newRelTemporalCheck checks temporal no-overlap for relationship properties.
@@ -221,15 +218,17 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 	if len(c.Properties) < 3 {
 		return relEdgeCheck{}, localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
-	keyProps := c.Properties[:len(c.Properties)-2]
-	startProp := c.Properties[len(c.Properties)-2]
-	endProp := c.Properties[len(c.Properties)-1]
+	spec, _ := splitTemporalKeySpec(c.Properties)
+	keyProps := spec.keyProps
+	startProp := spec.startProp
+	endProp := spec.endProp
 
 	type edgeInterval struct {
 		temporalInterval
 		edgeID EdgeID
 	}
-	byKey := make(map[string][]edgeInterval)
+	groups := temporalCreationGroups{spec: spec}
+	byKey := make(map[int][]edgeInterval)
 	visit := ofType(c.Label, func(edge *Edge) error {
 		key, err := temporalCompositeKey(edge, keyProps)
 		if err != nil {
@@ -242,7 +241,8 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 		}
 		end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
-		byKey[key] = append(byKey[key], edgeInterval{
+		group := groups.groupFor(key)
+		byKey[group] = append(byKey[group], edgeInterval{
 			temporalInterval: temporalInterval{start: start, end: end, hasEnd: hasEnd},
 			edgeID:           edge.ID,
 		})
