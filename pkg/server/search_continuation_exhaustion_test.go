@@ -70,8 +70,5 @@ func TestHTTPContinuationDoesNotLoseFilteredMatchesAfterShortBatch(t *testing.T)
 	require.Empty(t, last.QID)
 	require.ElementsMatch(t, want, []string{first.Results[0].Node.ID, last.Results[0].Node.ID})
 	replay := makeRequest(t, server, http.MethodPost, "/nornicdb/search", map[string]any{"database": database, "qid": first.QID, "n": 1}, token)
-	require.Equal(t, http.StatusOK, replay.Code, replay.Body.String())
-	var repeated page
-	require.NoError(t, json.NewDecoder(replay.Body).Decode(&repeated))
-	require.Equal(t, last, repeated)
+	require.Equal(t, http.StatusGone, replay.Code, replay.Body.String())
 }

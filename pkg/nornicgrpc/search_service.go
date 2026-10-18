@@ -58,6 +58,7 @@ type Service struct {
 	allowDatabase    func(context.Context, string) error
 	resolveDatabase  func(context.Context, string) (DatabaseDependencies, error)
 	resolveQID       func(owner, qid, requestedDatabase string) (string, error)
+	discardQID       func(owner, qid, database string) error
 
 	prepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 }
@@ -80,6 +81,8 @@ type Config struct {
 	PrepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 	// ResolveContinuationDatabase validates a qid and returns its database binding.
 	ResolveContinuationDatabase func(owner, qid, requestedDatabase string) (string, error)
+	// DiscardContinuation releases a cursor without reopening a dropped database.
+	DiscardContinuation func(owner, qid, database string) error
 }
 
 // NewService creates a NornicDB-native search service.
@@ -113,6 +116,7 @@ func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc
 		allowDatabase:    cfg.AllowDatabase,
 		resolveDatabase:  cfg.ResolveDatabase,
 		resolveQID:       cfg.ResolveContinuationDatabase,
+		discardQID:       cfg.DiscardContinuation,
 
 		prepareQueryEmbedding: cfg.PrepareQueryEmbedding,
 	}, nil
@@ -147,6 +151,12 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if err := s.allowDatabase(ctx, database); err != nil {
 			return nil, err
 		}
+	}
+	if req.Discard && req.Qid != "" && s.discardQID != nil {
+		if err := s.discardQID(owner, req.Qid, database); err != nil {
+			return nil, s.continuationStatus(ctx, err)
+		}
+		return grpcContinuationResponse(&search.SearchContinuationPage{Released: true}, time.Since(start)), nil
 	}
 	dependencies := DatabaseDependencies{Searcher: s.searcher, EmbedQuery: s.embedQuery, ChunkQuery: s.chunkQuery}
 	if s.resolveDatabase != nil {

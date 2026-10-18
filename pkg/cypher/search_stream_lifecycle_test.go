@@ -29,7 +29,7 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 				exec := NewStorageExecutor(store)
 				exec.SetSearchService(svc)
 				for i := 0; i < 4; i++ {
-					request := map[string]any{"mode": mode, "query": "transcript", "limit": int64(3), "n": int64(1)}
+					request := map[string]any{"mode": mode, "query": "transcript", "limit": int64(3), "n": int64(1), "repetition": int64(i)}
 					count := 0
 					for {
 						result, err := exec.Execute(context.Background(), "CALL "+procedure+"($request)", map[string]any{"request": request})
