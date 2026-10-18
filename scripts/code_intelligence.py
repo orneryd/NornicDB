@@ -15,6 +15,9 @@ from urllib.parse import urlsplit
 SETUP = ("Set NORNICDB_URI and either NORNICDB_TOKEN or both NORNICDB_USER and "
          "NORNICDB_PASSWORD in the environment of your terminal/IDE. "
          "See docs/user-guides/graphify-local.md#setup. No credentials belong in Git.")
+MANDATORY = ("MANDATORY COMMIT CHECK: Do not override, bypass or disable this hook. "
+             "Fix the reported database, ingestion, search-readiness or duplicate-code problem "
+             "before proceeding. This prevents duplicate, divergent code from being checked in.")
 CODE_SUFFIXES = set(".go .py .js .jsx .ts .tsx .java .rb .rs .c .h .cpp .cc .hpp .cs .swift .kt .kts .php .scala .sh .bash .zsh .lua .ex .exs .sql .m .mm .vue .svelte".split())
 
 
@@ -47,8 +50,7 @@ def connection():
 
 def identity(root):
     import graphify_local as gi
-    remote = gi.git_output(root, "remote", "get-url", "origin")
-    repo = os.environ.get("CODE_INTEL_REPO") or (gi.repo_from_git(root) if remote else root.name)
+    repo = os.environ.get("CODE_INTEL_REPO") or gi.repo_from_git(root)
     per_repo = gi.git_output(root, "config", "--get", "codeIntelligence.database")
     global_mode = gi.git_output(root, "config", "--bool", "--get", "codeIntelligence.databaseFromRepo") == "true"
     database = per_repo or os.environ.get("NORNICDB_DATABASE") or (repo.rsplit("/", 1)[-1] if global_mode else gi.DEFAULT_DATABASE)
@@ -123,7 +125,13 @@ def check_staged(root):
         return
     uri, user, password, token = connection()
     repo, database = identity(root)
-    head = git(root, "rev-parse", "HEAD")
+    print(f"Mandatory duplicate check: repository={repo}, database={database}, "
+          f"endpoint={urlsplit(uri)._replace(query='', fragment='').geturl()}", flush=True)
+    revision = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", "HEAD"],
+                              capture_output=True, text=True)
+    if revision.returncode not in (0, 1):
+        raise CheckError(f"git rev-parse failed: {revision.stderr.strip()}")
+    head = revision.stdout.strip() if revision.returncode == 0 else ""
     staged = git(root, "write-tree")
     with tempfile.TemporaryDirectory(prefix="nornic-staged-") as temp:
         directory = Path(temp)
@@ -170,17 +178,18 @@ def main(argv=None):
     except ImportError:
         print("code-intelligence: Python dependencies are missing. Install "
               "scripts/requirements-code-intelligence.txt into the configured Python environment.", file=sys.stderr)
-        return 1
     except (CheckError, OSError, ValueError, RuntimeError) as error:
         print(f"code-intelligence: {error}", file=sys.stderr)
-        return 1
     except Exception as error:
         # HTTP client and extraction dependencies have their own exception types.
         # Never treat an unavailable/failed check as a successful commit check.
         print(f"code-intelligence: {type(error).__name__}: analysis/ingestion failed. "
               "Verify NORNICDB_URI, credentials and service readiness; see the local Graphify guide.", file=sys.stderr)
-        return 1
-    return 0
+    else:
+        return 0
+    if args.command == "check-staged":
+        print(MANDATORY, file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

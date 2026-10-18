@@ -196,18 +196,42 @@ Keep that override in NornicDB to reuse its established graph. In global mode, t
 main entry point is auto-selected; configure `codeIntelligence.main` or
 `CODE_INTEL_MAIN` when an explicit entry point is needed.
 
-Every repository needs an initial successful ingest before source commits can pass.
+Repositories with committed source need a successful baseline ingest before
+qualifying source commits can pass.
 Run the installed runner from that checkout:
 
 ```sh
 "$HOME/.local/share/nornicdb-code-intelligence/venv/bin/python" "$HOME/.local/share/nornicdb-code-intelligence/runtime/code_intelligence.py" ingest
 ```
 
-For a new repository without a first commit, create an explicitly unchecked initial
-baseline, then ingest it before enabling source enforcement there. Global hooks
-still require URL/credentials in the Git process environment; installation stores
-no credentials. To disable the check in one repo, set
-`git config --local codeIntelligence.enabled false`.
+Linked worktrees share the primary repository's identity and ingestion database.
+The origin supplies `owner/repository`; without an origin, the primary checkout's
+folder name is used, never a linked worktree's folder. The same resolver serves
+ingestion and duplicate checking. Repository database overrides are shared too,
+so NornicDB worktrees reuse `nornicdbcode`. The commit check never creates a database.
+
+An unborn branch can be checked against an existing ingested graph without a Git
+`HEAD`. A missing database or ingest record still blocks source commits. An empty
+database is never accepted as a substitute for the intended graph. Search must be
+ready and continuation must completely exhaust the eligible functions. Failed
+authentication, unavailable service, timeouts and incomplete searches block commits.
+
+**Mandatory check:** Do not override, bypass or disable the hook to get a commit
+through. Fix the database selection, baseline ingestion, search readiness or
+duplicate/divergent code before proceeding. Failures include this warning and
+identify the repository and target database so configuration can be repaired.
+
+Live regression evidence (2026-10-17): from the `NornicDB-1406` linked worktree,
+the installed global hook searched `orneryd/NornicDB` in `nornicdbcode`. A staged
+copy of `scripts/graphify_local.py:comments_for_node()` renamed the function and
+changed its empty-result behavior instead of reusing the owner. The real commit
+was rejected with a reuse finding at 99% similarity and the mandatory warning.
+`HEAD` and the staged tree stayed unchanged; the staged probe was then removed.
+Test and production sources remain separate comparison populations, as requested.
+
+Global hooks require URL/credentials in the Git process environment; installation
+stores no credentials. Export them in your shell startup configuration and ensure
+your IDE's Git process inherits them. Missing configuration produces setup guidance.
 
 Continuation must be enabled on the server with a positive
 `NORNICDB_SEARCH_CURSOR_MAX` (or `memory.search_cursor_max`). For example, a local
