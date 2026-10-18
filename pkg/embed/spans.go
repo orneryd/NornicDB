@@ -118,7 +118,7 @@ func (t *TracedEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	if provider, ok := t.inner.(DocumentPropertyBatchChunkEmbedder); ok && provider.UsesDocumentProperties() {
 		results, err = provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
 	} else {
-		results, err = embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, t.EmbedDocumentPropertyChunks)
+		results, err = embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, t, t.EmbedDocumentBatchChunks)
 	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
