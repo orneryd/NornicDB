@@ -41,15 +41,21 @@ const (
 	gdsNodeValueKinds = gdsLocalNode
 )
 
-// gdsRemoteKey prefixes a remote node's elementId in a key, so a remote node
-// never shares a key with a local id, even when the texts are equal.
-const gdsRemoteKey = "\x00remote\x00"
+// A node's key in a rows procedure's maps, where local and remote nodes
+// meet: a remote node's elementId after gdsRemoteKey, a local id that starts
+// with NUL after gdsLocalKey, and any other id as it is. Keys of the two
+// kinds never collide, whatever bytes a stored id holds, and the common id
+// needs no copy.
+const (
+	gdsRemoteKey = "\x00R"
+	gdsLocalKey  = "\x00L"
+)
 
-// gdsNodeRef is a node an input named: its key and the kind it was given
-// as. The key is a stored id, an id's text, or gdsRemoteKey and an
-// elementId.
+// gdsNodeRef is a node an input named: its id as given (a stored id, an
+// id's text, an INTEGER id's digits, or a remote node's elementId) and the
+// kind it was given as.
 type gdsNodeRef struct {
-	key  string
+	id   string
 	kind gdsNodeKind
 }
 
@@ -62,33 +68,44 @@ func readGDSNode(value interface{}, accepted gdsNodeKind) (gdsNodeRef, bool) {
 		if node == nil {
 			return ref, false
 		}
-		ref = gdsNodeRef{key: string(node.ID), kind: gdsLocalNode}
+		ref = gdsNodeRef{id: string(node.ID), kind: gdsLocalNode}
 	case storage.RemoteEntityValue:
 		id, ok := node["elementId"].(string)
 		if node == nil || cypherValueKindOf(node) != valueKindNode || !ok || id == "" {
 			return ref, false
 		}
-		ref = gdsNodeRef{key: gdsRemoteKey + id, kind: gdsRemoteNode}
+		ref = gdsNodeRef{id: id, kind: gdsRemoteNode}
 	case string:
-		ref = gdsNodeRef{key: node, kind: gdsIDText}
+		ref = gdsNodeRef{id: node, kind: gdsIDText}
 	default:
 		if !isIntegerProcedureValue(value) {
 			return ref, false
 		}
-		ref = gdsNodeRef{key: fmt.Sprint(value), kind: gdsIntegerID}
+		ref = gdsNodeRef{id: fmt.Sprint(value), kind: gdsIntegerID}
 	}
 	return ref, accepted&ref.kind != 0
+}
+
+// key is ref's key in a rows procedure's maps.
+func (ref gdsNodeRef) key() string {
+	if ref.kind == gdsRemoteNode {
+		return gdsRemoteKey + ref.id
+	}
+	if strings.HasPrefix(ref.id, "\x00") {
+		return gdsLocalKey + ref.id
+	}
+	return ref.id
 }
 
 // find is the key ref names among the keys has holds: its own, or, for an
 // id string only, a remote node with that elementId. A node value names
 // only a node of its own kind.
 func (ref gdsNodeRef) find(has func(key string) bool) (string, bool) {
-	if has(ref.key) {
-		return ref.key, true
+	if key := ref.key(); has(key) {
+		return key, true
 	}
-	if ref.kind == gdsIDText && has(gdsRemoteKey+ref.key) {
-		return gdsRemoteKey + ref.key, true
+	if ref.kind == gdsIDText && has(gdsRemoteKey+ref.id) {
+		return gdsRemoteKey + ref.id, true
 	}
 	return "", false
 }
@@ -98,10 +115,12 @@ func (ref gdsNodeRef) isNode() bool {
 	return ref.kind&(gdsLocalNode|gdsRemoteNode) != 0
 }
 
-// gdsShownKey is a key as output shows it: a remote node's elementId, else
-// the id.
+// gdsShownKey is a key as output shows it: the id it holds.
 func gdsShownKey(key string) string {
-	return strings.TrimPrefix(key, gdsRemoteKey)
+	if strings.HasPrefix(key, gdsRemoteKey) || strings.HasPrefix(key, gdsLocalKey) {
+		return key[2:]
+	}
+	return key
 }
 
 // gdsShownBefore orders two keys by the ids output shows, then by key: a

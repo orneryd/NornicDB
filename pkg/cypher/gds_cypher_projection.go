@@ -289,7 +289,7 @@ func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
 	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
 	if ref, ok := readGDSNode(value, gdsAggregationKinds); ok {
 		if ref.kind != gdsIntegerID {
-			return ref.key, false, nil
+			return ref.id, false, nil
 		}
 		number := gdsInteger(value)
 		if number < 0 {

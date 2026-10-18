@@ -167,8 +167,8 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 	incidence := &similarityIncidence{things: make(map[string]map[string]*similarityWeight), nodes: make(map[string]interface{})}
 	remember := func(ref gdsNodeRef, value interface{}) {
 		if ref.isNode() {
-			if _, seen := incidence.nodes[ref.key]; !seen {
-				incidence.nodes[ref.key] = value
+			if _, seen := incidence.nodes[ref.key()]; !seen {
+				incidence.nodes[ref.key()] = value
 			}
 		}
 	}
@@ -188,7 +188,7 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "source", gdsJavaType(row["source"])), nil)
 		}
 		remember(sourceRef, row["source"])
-		source := sourceRef.key
+		source := sourceRef.key()
 		things, seen := incidence.things[source]
 		if !seen {
 			things = make(map[string]*similarityWeight)
@@ -209,7 +209,7 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "thing", gdsJavaType(row["thing"])), nil)
 		}
 		remember(thingRef, row["thing"])
-		thing := thingRef.key
+		thing := thingRef.key()
 		number, isNumber := gdsScalarNumber(value)
 		switch {
 		case !hasWeight:
@@ -380,11 +380,11 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 		scored = scored[:config.topK]
 	}
 	// Keys here; renderGDSRowKeys shows them.
-	var node1 interface{} = config.sources[0].key
+	var node1 interface{} = config.sources[0].key()
 	if config.group {
 		ids := make([]string, len(config.sources))
 		for i, ref := range config.sources {
-			ids[i] = ref.key
+			ids[i] = ref.key()
 		}
 		sort.Slice(ids, func(i, j int) bool { return gdsShownBefore(ids[i], ids[j]) })
 		list := make([]interface{}, len(ids))

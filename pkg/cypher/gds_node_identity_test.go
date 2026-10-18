@@ -428,3 +428,46 @@ func gdsNodeIDColumnValue(value interface{}) (interface{}, bool) {
 	}
 	return nil, false
 }
+
+// TestGDSNodeKeysKeepLocalAndRemoteApart: a stored id may hold any bytes,
+// NUL included, so no stored id shares a key with a remote node: a stored
+// node whose id looks like a remote node's key is still its own source and
+// thing, and it is shown with its own id (the review finding on #1408).
+func TestGDSNodeKeysKeepLocalAndRemoteApart(t *testing.T) {
+	remote := storage.RemoteEntityValue{"elementId": "x", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{}}
+	scores := func(rows []interface{}, sourceNode interface{}) [][]interface{} {
+		t.Helper()
+		result, err := callNornicSimilarityStream([]interface{}{rows, map[string]interface{}{"sourceNode": sourceNode}})
+		require.NoError(t, err)
+		return result.Rows
+	}
+	for _, id := range []string{"\x00remote\x00x", "\x00Rx", "\x00Lx", "\x00L\x00Rx", "\x00"} {
+		local := &storage.Node{ID: storage.NodeID(id)}
+		// As sources: the stored node holds t, the remote node u.
+		sources := []interface{}{
+			map[string]interface{}{"source": local, "thing": "t"}, map[string]interface{}{"source": remote, "thing": "u"},
+			map[string]interface{}{"source": "b", "thing": "t"}, map[string]interface{}{"source": "c", "thing": "u"},
+		}
+		for _, start := range []interface{}{local, id} {
+			rows := scores(sources, start)
+			require.Len(t, rows, 1, "%q", id)
+			require.Equal(t, id, rows[0][0], "%q", id)
+			require.Equal(t, "b", rows[0][1], "%q", id)
+		}
+		rows := scores(sources, remote)
+		require.Len(t, rows, 1, "%q", id)
+		require.Equal(t, "x", rows[0][0], "%q", id)
+		require.Equal(t, "c", rows[0][1], "%q", id)
+		// As things: p and r hold the stored node, q the remote one.
+		things := []interface{}{
+			map[string]interface{}{"source": "p", "thing": local}, map[string]interface{}{"source": "q", "thing": remote},
+			map[string]interface{}{"source": "r", "thing": local},
+		}
+		rows = scores(things, "p")
+		require.Len(t, rows, 1, "%q", id)
+		require.Equal(t, "r", rows[0][1], "%q", id)
+		shared := rows[0][3].([]interface{})
+		require.Len(t, shared, 1, "%q", id)
+		require.Equal(t, id, shared[0].(map[string]interface{})["nodeId"], "%q", id)
+	}
+}

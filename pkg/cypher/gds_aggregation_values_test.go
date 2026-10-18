@@ -166,7 +166,7 @@ func TestGDSSharedNodeIDPolicy(t *testing.T) {
 		stored, ok := readGDSNode(tc.value, gdsStoredKinds)
 		require.Equal(t, tc.storedID, ok)
 		if ok {
-			require.Equal(t, tc.want, stored.key)
+			require.Equal(t, tc.want, stored.id)
 		}
 	}
 }
