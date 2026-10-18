@@ -1,8 +1,10 @@
 package gpu
 
 import (
+	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +71,65 @@ func TestCentroidReadersHoldTheClusteringLockDuringUpdates(t *testing.T) {
 	}()
 	close(start)
 	wg.Wait()
+}
+
+// Centroid batch updates and clustering publication (PublishClustering, and
+// RestoreClusteringState through it) take the index's locks in one order, so
+// running them concurrently always completes.
+func TestCentroidBatchAndPublicationDoNotDeadlock(t *testing.T) {
+	ci := NewClusterIndex(testManager(), embConfig(64), &KMeansConfig{NumClusters: 2, MaxIterations: 2})
+	ids, vectors := generateTestEmbeddings(32, 64)
+	for i, v := range vectors {
+		require.NoError(t, ci.Add(ids[i], v))
+	}
+	require.NoError(t, ci.Cluster())
+	published := ci.PublishedClustering()
+	centroids := ci.GetCentroids()
+	assignments := make(map[string]int, len(ids))
+	for i, id := range ids {
+		assignments[id] = i % 2
+	}
+
+	const iterations = 2000
+	start := make(chan struct{})
+	done := make(chan struct{}, 3)
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := ci.OnNodeUpdate(ids[0], vectors[i%len(vectors)]); err != nil {
+				t.Error(err)
+				break
+			}
+			ci.UpdateCentroidsBatch()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			ci.PublishClustering(published)
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := ci.RestoreClusteringState(centroids, assignments); err != nil {
+				t.Error(err)
+				break
+			}
+		}
+		done <- struct{}{}
+	}()
+	close(start)
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-done:
+		case <-deadline.C:
+			buf := make([]byte, 1<<20)
+			t.Fatalf("centroid batch and publication did not complete; goroutines:\n%s", buf[:runtime.Stack(buf, true)])
+		}
+	}
 }
