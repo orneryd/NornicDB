@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +27,44 @@ func TestRelationshipPropertySeekExplainDoesNotExecute(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 }
 
+func TestRelationshipPropertySeekFabricScopePlans(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("seek_part"))
+	store, err := manager.GetStorage("seek_part")
+	require.NoError(t, err)
+	setup := NewStorageExecutor(store)
+	for _, query := range []string{"CREATE ()-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
+		_, err := setup.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, manager.CreateCompositeDatabase("seek_fabric", []multidb.ConstituentRef{{Alias: "part", DatabaseName: "seek_part", Type: "local", AccessMode: "read_write"}}))
+	store, err = manager.GetStorage(manager.DefaultDatabaseName())
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	query := "USE seek_fabric WITH $x AS k CALL (k) { USE seek_fabric.part MATCH ()-[r:T]->() WHERE r.p=k RETURN r.p AS v } RETURN v"
+	params := map[string]interface{}{"x": "x"}
+	ctx := withRelationshipSeekProfile(context.WithValue(context.Background(), profileExecutionKey{}, true))
+	actual, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"x"}}, actual.Rows)
+	executed := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).seeks["r\x00rel_p"]
+	require.NotNil(t, executed)
+	for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+		result, err := exec.Execute(context.Background(), mode+" "+query, params)
+		require.NoError(t, err, mode)
+		seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
+		require.NotNil(t, seek, mode+" must use the selected constituent's planner")
+		require.Equal(t, "rel_p", seek.Arguments["index"])
+		if mode == "PROFILE" {
+			require.Equal(t, actual.Rows, result.Rows)
+			require.Equal(t, executed.lookups, seek.Arguments["indexLookups"])
+		}
+	}
+}
+
 // Unsupported statement forms remain semantic errors. The relationship planner
 // must not invent scope support in order to explain an otherwise invalid query.
 func TestRelationshipPropertySeekRejectedBoundaries(t *testing.T) {
@@ -35,10 +74,57 @@ func TestRelationshipPropertySeekRejectedBoundaries(t *testing.T) {
 		"WITH 1 AS v CALL db.labels() YIELD * RETURN v",
 		"FOREACH (k IN ['x'] | MATCH ()-[r:T]->() WHERE r.p=k RETURN r)",
 		"MERGE (n:Output {v:COUNT { MATCH ()-[r:T]->() RETURN r }}) RETURN n",
+		"LOAD CSV FROM 'file:///unused.csv' AS row MATCH ()-[r:T]->() WHERE r.p=row[0] RETURN r.p",
 	} {
 		_, err := exec.Execute(context.Background(), query, nil)
 		require.Error(t, err, query)
 	}
+}
+
+// A seek can finish just before its index disappears. PROFILE must report the
+// actual decision, rather than asking a later schema view whether it could seek.
+type relationshipSeekChangedSchema struct {
+	storage.Engine
+	after   *storage.SchemaManager
+	changed bool
+}
+
+func (s *relationshipSeekChangedSchema) GetSchema() *storage.SchemaManager {
+	if s.changed {
+		return s.after
+	}
+	return s.Engine.GetSchema()
+}
+func (s *relationshipSeekChangedSchema) RelationshipPropertySeeksAvailable() bool {
+	return s.Engine.(storage.RelationshipPropertySeeker).RelationshipPropertySeeksAvailable()
+}
+func (s *relationshipSeekChangedSchema) SeekRelationships(ctx context.Context, typ string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
+	edges, answered, err := s.Engine.(storage.RelationshipPropertySeeker).SeekRelationships(ctx, typ, properties, values)
+	if answered && err == nil {
+		s.changed = true
+	}
+	return edges, answered, err
+}
+
+func TestRelationshipPropertySeekProfileUsesExecutedView(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "executed_view")
+	setup := NewStorageExecutor(store)
+	for _, query := range []string{"CREATE ()-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
+		_, err := setup.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	view := &relationshipSeekChangedSchema{Engine: store, after: storage.NewSchemaManager()}
+	exec := NewStorageExecutor(view)
+	result, err := exec.Execute(context.Background(), "PROFILE WITH 'x' AS k RETURN COUNT { MATCH ()-[r:T]->() WHERE r.p=k }", nil)
+	require.NoError(t, err)
+	require.True(t, view.changed)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
+	require.NotNil(t, seek, "a later schema cannot erase the executed operator")
+	require.Equal(t, "rel_p", seek.Arguments["index"])
+	require.Equal(t, int64(1), seek.Arguments["indexLookups"])
+	require.Equal(t, int64(1), seek.Arguments["relationshipCandidates"])
+	require.Equal(t, int64(10), seek.EstimatedRows)
 }
 
 func TestRelationshipPropertySeekConditionalBranches(t *testing.T) {

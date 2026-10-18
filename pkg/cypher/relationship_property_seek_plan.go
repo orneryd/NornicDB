@@ -13,6 +13,8 @@ type relationshipSeekProfile struct {
 	seeks     map[string]*relationshipSeekStats // aggregate compatibility counters
 	sites     map[string]*relationshipSeekStats
 	fallbacks map[string]int64
+	templates map[string]*relationshipAccessSite
+	order     []string
 }
 type relationshipSeekStats struct {
 	seek                      relationshipSeek
@@ -21,7 +23,21 @@ type relationshipSeekStats struct {
 }
 
 func withRelationshipSeekProfile(ctx context.Context) context.Context {
-	return context.WithValue(ctx, relationshipSeekProfileKey{}, &relationshipSeekProfile{seeks: make(map[string]*relationshipSeekStats), sites: make(map[string]*relationshipSeekStats), fallbacks: make(map[string]int64)})
+	return context.WithValue(ctx, relationshipSeekProfileKey{}, &relationshipSeekProfile{seeks: make(map[string]*relationshipSeekStats), sites: make(map[string]*relationshipSeekStats), fallbacks: make(map[string]int64), templates: make(map[string]*relationshipAccessSite)})
+}
+
+// Called under mu. PROFILE retains the actual planner descriptors and access
+// order, including the scan branch. It never re-plans against a later schema or
+// the enclosing executor's database instead of the view that actually ran.
+func (profile *relationshipSeekProfile) accessSite(id, variable string) *relationshipAccessSite {
+	site := profile.templates[id]
+	if site == nil {
+		site = &relationshipAccessSite{id: id, access: &relationshipAccess{variable: variable}}
+		profile.templates[id] = site
+		profile.order = append(profile.order, id)
+	}
+	site.occurrences++
+	return site
 }
 
 // Generated endpoint names do not change a relationship access template.
@@ -39,7 +55,11 @@ func recordRelationshipSeekFallback(ctx context.Context, pattern, where, variabl
 	}
 	profile.mu.Lock()
 	defer profile.mu.Unlock()
-	profile.fallbacks[relationshipAccessID(pattern, where)]++
+	id := relationshipAccessID(pattern, where)
+	database := GetUseDatabaseFromContext(ctx)
+	id = database + "\x00" + id
+	profile.accessSite(id, variable).graph = database
+	profile.fallbacks[id]++
 }
 
 func recordRelationshipSeek(ctx context.Context, pattern, where, variable string, seek relationshipSeek, candidates, rows int64) {
@@ -50,6 +70,14 @@ func recordRelationshipSeek(ctx context.Context, pattern, where, variable string
 	profile.mu.Lock()
 	defer profile.mu.Unlock()
 	seek.values = nil
+	id := relationshipAccessID(pattern, where)
+	database := GetUseDatabaseFromContext(ctx)
+	id = database + "\x00" + id
+	site := profile.accessSite(id, variable)
+	site.graph = database
+	if profile.sites[id+"\x00"+seek.name] == nil {
+		site.access.alternatives = append(site.access.alternatives, seek)
+	}
 	add := func(table map[string]*relationshipSeekStats, key string) {
 		stats := table[key]
 		if stats == nil {
@@ -61,13 +89,15 @@ func recordRelationshipSeek(ctx context.Context, pattern, where, variable string
 		stats.rows += rows
 	}
 	add(profile.seeks, variable+"\x00"+seek.name)
-	add(profile.sites, relationshipAccessID(pattern, where)+"\x00"+seek.name)
+	add(profile.sites, id+"\x00"+seek.name)
 }
 
 type relationshipAccessSite struct {
 	id          string
 	access      *relationshipAccess
 	occurrences int64
+	graph       string
+	deferred    string
 }
 
 func relationshipAccessMatchWhere(text string) (split struct{ pattern, where string }) {
@@ -85,6 +115,13 @@ func relationshipAccessMatchWhere(text string) (split struct{ pattern, where str
 // execution's existing row owner resolves a key. Nested expression delimiters
 // cover local binders without reproducing any binder's alias/import semantics.
 func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
+	if e.shouldUseFabricPlanner(query) {
+		return e.relationshipFabricAccessSites(ctx, query)
+	}
+	return e.relationshipLocalAccessSites(ctx, query)
+}
+
+func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
 	var sites []*relationshipAccessSite
 	seen := make(map[string]*relationshipAccessSite)
 	add := func(pattern, where string) {
@@ -159,6 +196,14 @@ func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query str
 		}
 	}
 	statement = func(text string) {
+		// Scoped CALL bodies can retain their own USE inside a local Fabric
+		// fragment. Send that statement back to the existing graph planner,
+		// which strips USE and selects its storage; do not inherit the parent
+		// composite's schema or reconstruct the imported row.
+		if _, _, hasUse, err := parseUseClause(text, true); hasUse && err == nil && e.dbManager != nil {
+			sites = append(sites, e.relationshipFabricAccessSites(ctx, text)...)
+			return
+		}
 		if branches, _, _, ok := parseTopLevelUnionBranches(text); ok && len(branches) > 1 {
 			for _, branch := range branches {
 				statement(branch)
@@ -208,17 +253,26 @@ func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query str
 }
 
 func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, query string, plan *ExecutionPlan) {
-	sites := e.relationshipAccessSites(ctx, query)
+	var sites []*relationshipAccessSite
+	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	if plan.Mode == ModeProfile && profile != nil {
+		profile.mu.Lock()
+		defer profile.mu.Unlock()
+		for _, id := range profile.order {
+			sites = append(sites, profile.templates[id])
+		}
+	} else if plan.Mode != ModeProfile {
+		sites = e.relationshipAccessSites(ctx, query)
+	}
 	if len(sites) == 0 {
 		return
 	}
-	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
-	if profile != nil {
-		profile.mu.Lock()
-		defer profile.mu.Unlock()
-	}
 	var operators []*PlanOperator
 	for _, site := range sites {
+		if site.deferred != "" {
+			operators = append(operators, &PlanOperator{OperatorType: site.deferred, Description: "Access planning belongs to the selected graph executor", EstimatedRows: 100, Arguments: map[string]interface{}{"graph": site.graph, "relationshipAccessPlanning": "deferred"}})
+			continue
+		}
 		access := site.access
 		fallbacks := int64(0)
 		if plan.Mode == ModeProfile && profile != nil {
@@ -246,11 +300,17 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			} else if plan.Mode == ModeProfile {
 				op.Arguments["executed"] = false
 			}
+			if plan.Mode == ModeProfile {
+				delete(op.Arguments, "accessOccurrences")
+				op.Arguments["accessAttempts"] = site.occurrences
+			}
 			alternatives = append(alternatives, op)
 		}
 		if len(alternatives) == 0 || fallbacks > 0 {
 			scan := &PlanOperator{OperatorType: "Expand", Description: "Relationship scan", Identifiers: []string{access.variable}, EstimatedRows: 100, Arguments: map[string]interface{}{"accessOccurrences": site.occurrences}}
 			if fallbacks > 0 {
+				delete(scan.Arguments, "accessOccurrences")
+				scan.Arguments["accessAttempts"] = site.occurrences
 				scan.Arguments["scanFallbacks"] = fallbacks
 				scan.Arguments["dbHitsAccounting"] = "scan hits are not instrumented"
 			}
@@ -260,6 +320,9 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			operators = append(operators, alternatives[0])
 		} else {
 			choice := &PlanOperator{OperatorType: "RelationshipAccessChoice", Description: "Ordered key alternatives; scan fallback if no supported key", Children: alternatives}
+			if plan.Mode == ModeProfile {
+				choice.Description = "Executed relationship access alternatives"
+			}
 			for _, op := range alternatives {
 				choice.DBHits += op.DBHits
 				if op.EstimatedRows > choice.EstimatedRows {
@@ -267,6 +330,11 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 				}
 			}
 			operators = append(operators, choice)
+		}
+		if site.graph != "" {
+			for _, op := range alternatives {
+				op.Arguments["database"] = site.graph
+			}
 		}
 	}
 	var replacement *PlanOperator

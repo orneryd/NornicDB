@@ -33,6 +33,7 @@ func TestRelationshipPropertySeekConstructPlans(t *testing.T) {
 		{"call_nested_star", "CALL { CALL { WITH $x AS k RETURN * } RETURN * } " + graph + "RETURN r.p", "x"},
 		{"call_union", "CALL { WITH $x AS k RETURN k UNION WITH 'missing' AS k RETURN k } " + graph + "RETURN r.p", "x"},
 		{"call_import", "WITH $x AS k CALL (k) { " + graph + "RETURN r.p AS v } RETURN v", "x"},
+		{"optional_call", "WITH $x AS k OPTIONAL CALL (k) { " + graph + "RETURN r.p AS v } RETURN v", "x"},
 		{"call_star_import", "WITH $x AS k CALL (*) { " + graph + "RETURN r.p AS v } RETURN v", "x"},
 		{"call_legacy", "WITH $x AS k CALL { WITH k " + graph + "RETURN r.p AS v } RETURN v", "x"},
 		{"yield", "CALL db.labels() YIELD label AS k " + graph + "RETURN r.p", "x"},
@@ -97,7 +98,22 @@ func TestRelationshipPropertySeekConstructPlans(t *testing.T) {
 				require.Equal(t, int64(10), seek.EstimatedRows)
 				if mode == "PROFILE" {
 					require.Equal(t, actual.Rows, result.Rows)
-					require.Positive(t, seek.Arguments["indexLookups"])
+					var lookups, candidates, rows int64
+					var collectStats func(*PlanOperator)
+					collectStats = func(op *PlanOperator) {
+						if op.OperatorType == "RelationshipIndexSeek" && op.Arguments["index"] == "rel_p" {
+							lookups += op.Arguments["indexLookups"].(int64)
+							candidates += op.Arguments["relationshipCandidates"].(int64)
+							rows += op.ActualRows
+						}
+						for _, child := range op.Children {
+							collectStats(child)
+						}
+					}
+					collectStats(plan.Root)
+					require.Equal(t, executed.lookups, lookups)
+					require.Equal(t, executed.candidates, candidates)
+					require.Equal(t, executed.rows, rows)
 					require.Equal(t, plan.TotalDBHits, plan.Root.DBHits)
 				} else {
 					require.Empty(t, result.Rows)
