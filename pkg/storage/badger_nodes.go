@@ -158,7 +158,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 // miss decode via decode, decay filter and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), readCache bool) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -169,7 +169,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	}
 
 	b.nodeCacheMu.RLock()
-	if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
+	if cached, ok := b.nodeCache[id]; ok && readCache && b.writeBehind == nil {
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		nodeCopy := hitCopy(cached)
@@ -199,11 +199,8 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 		if err != nil {
 			return err
 		}
-		return item.Value(func(val []byte) error {
-			var decodeErr error
-			node, decodeErr = decode(txn, val)
-			return decodeErr
-		})
+		node, err = decode(txn, item)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -222,13 +219,9 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
-	return b.getNodeByID(id,
-		func(txn *badger.Txn, val []byte) (*Node, error) {
-			return b.decodeNodeWithEmbeddings(txn, val, id)
-		},
-		copyNode,
-		b.cacheFillNode,
-	)
+	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
+	}, copyNode, b.cacheFillNode, true)
 }
 
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
@@ -271,8 +264,18 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 		return false, false
 	}
 	if b.writeBehind != nil {
-		_, err := b.GetNodeProjected(id, []string{})
-		if err == ErrNotFound {
+		var state bufferedEntityState
+		err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+			if state.found {
+				if state.deleted {
+					return ErrNotFound
+				}
+				return nil
+			}
+			_, err := txn.Get(nodeKey(id))
+			return err
+		})
+		if err == ErrNotFound || err == badger.ErrKeyNotFound {
 			return false, true
 		}
 		return err == nil, err == nil
@@ -307,9 +310,15 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 		return b.GetNode(id)
 	}
 	include := propertyProjectionSet(properties)
-	return b.getNodeByID(id, func(txn *badger.Txn, val []byte) (*Node, error) {
-		return b.decodeNodeProjected(namespaceForNodeID(id), val, include)
-	}, func(n *Node) *Node { return projectCachedNodeForRead(n, properties) }, nil)
+	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+		var node *Node
+		err := item.Value(func(value []byte) error {
+			var err error
+			node, err = b.decodeNodeProjected(namespaceForNodeID(id), value, include)
+			return err
+		})
+		return node, err
+	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, false)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
@@ -317,13 +326,9 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 // The decoded node is not cached, so an embedding-free read can never poison
 // the cache for later full reads.
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	return b.getNodeByID(id,
-		func(_ *badger.Txn, val []byte) (*Node, error) {
-			return b.decodeNode(namespaceForNodeID(id), val)
-		},
-		copyNodeWithoutEmbeddings,
-		nil,
-	)
+	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+		return b.readNodeItemInTxn(txn, item, id, nil)
+	}, copyNodeWithoutEmbeddings, nil, true)
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
