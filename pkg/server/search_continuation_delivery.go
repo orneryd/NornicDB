@@ -11,7 +11,7 @@ import (
 
 type searchDeliveryWriter struct {
 	http.ResponseWriter
-	delivery *resultstream.Delivery
+	delivery  *resultstream.Delivery
 	wrotePage bool
 }
 
@@ -59,9 +59,11 @@ func continuationDeliveryMiddleware(next http.Handler) http.Handler {
 			delivery.Fail()
 		}()
 		r = r.WithContext(resultstream.WithDelivery(r.Context(), delivery))
-		writer := &searchDeliveryWriter{ResponseWriter:w, delivery:delivery}
+		writer := &searchDeliveryWriter{ResponseWriter: w, delivery: delivery}
 		next.ServeHTTP(writer, r)
-		if writer.wrotePage && delivery.Pending() { _ = writer.FlushError() }
+		if writer.wrotePage && delivery.Pending() {
+			_ = writer.FlushError()
+		}
 		stopped = stop()
 		if !stopped {
 			<-failed
