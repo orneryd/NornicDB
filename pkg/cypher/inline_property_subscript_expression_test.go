@@ -211,6 +211,12 @@ func TestDynamicRelationshipTypeExpressionInWrites(t *testing.T) {
 		{"MATCH (a:M {id: 1}), (b:M {id: 2}) WITH a, b, 1 AS i MERGE (a)-[r:$(['X','DM'][i * 1])]->(b) ON MATCH SET r.n = 'bound' RETURN type(r) AS t, r.n AS n", [][]interface{}{{"DM", "bound"}}},
 		{"MATCH (:M)-[r]->(:M) RETURN count(r) AS rels", [][]interface{}{{int64(1)}}},
 		{"MATCH ()-[r:DZ]->() RETURN count(r) AS dz", [][]interface{}{{int64(4)}}},
+		// UNWIND ... MERGE between bound nodes, and to a new node.
+		{"UNWIND ['DU', 'DU'] AS t MATCH (a:M {id: 1}), (b:M {id: 2}) MERGE (a)-[r:$({k: t}.k)]->(b) RETURN type(r) AS t", [][]interface{}{{"DU"}, {"DU"}}},
+		{"UNWIND [1, 1] AS i MATCH (a:M {id: 1}), (b:M {id: 2}) MERGE (a)-[r:$(['X', 'DV'][i * 1]) {w: i}]->(b) ON CREATE SET r.c = 1 ON MATCH SET r.c = r.c + 1 RETURN type(r) AS t", [][]interface{}{{"DV"}, {"DV"}}},
+		{"MATCH ()-[r:DV]->() RETURN r.c AS c", [][]interface{}{{int64(2)}}},
+		{"UNWIND ['DW'] AS t MATCH (a:M {id: 1}) MERGE (a)-[r:$({k: t}.k)]->(b:M {id: 3}) RETURN type(r) AS t", [][]interface{}{{"DW"}}},
+		{"MATCH (:M)-[r]->(:M) RETURN type(r) AS t, count(r) AS n ORDER BY t", [][]interface{}{{"DM", int64(1)}, {"DU", int64(1)}, {"DV", int64(1)}, {"DW", int64(1)}}},
 	}
 	for _, explicit := range []bool{false, true} {
 		name := "autocommit"
