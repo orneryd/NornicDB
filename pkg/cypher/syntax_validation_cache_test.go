@@ -53,8 +53,8 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 	entries := func() int {
 		total := 0
 		for i := range cache.shards {
-			require.LessOrEqual(t, len(cache.shards[i].cache), 3)
-			total += len(cache.shards[i].cache)
+			require.LessOrEqual(t, cache.shards[i].cache.Len(), 3)
+			total += cache.shards[i].cache.Len()
 		}
 		return total
 	}

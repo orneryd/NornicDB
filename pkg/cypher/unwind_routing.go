@@ -62,10 +62,17 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	} else {
 		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
 	}
+	if err := getExpressionFailure(ctx); err != nil {
+		return topLevelUnwindPlan{}, err
+	}
 
 	// The one UNWIND coercion (#693): null is no rows, a list its elements,
 	// any other value one row.
-	plan.items = coerceToUnwindItems(list)
+	probe := parameterCancellationForContext(ctx)
+	plan.items = coerceToUnwindItemsWithCancellation(list, probe)
+	if probe != nil && probe.err != nil {
+		return topLevelUnwindPlan{}, probe.err
+	}
 	if plan.items == nil {
 		plan.items = []interface{}{}
 	}

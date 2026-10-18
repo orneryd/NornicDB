@@ -143,9 +143,9 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	configuration := map[string]interface{}{}
 	if len(arguments) > 1 {
 		var valid bool
-		configuration, valid = toStringAnyMap(arguments[1])
+		configuration, valid = toStringAnyMapWithCancellation(arguments[1], contextPipelineProbe(ctx))
 		if expression, raw := arguments[1].(string); raw {
-			configuration, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+			configuration, valid = toStringAnyMapWithCancellation(e.evaluateExpressionWithContext(ctx, expression, nil, nil), contextPipelineProbe(ctx))
 		}
 		if !valid {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "statistics configuration must be a MAP")

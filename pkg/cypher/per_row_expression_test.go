@@ -186,7 +186,7 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
 			root, _ := compiler.compile(expr)
-			got, gotOK, gotErr := root.eval(exec, row, nil)
+			got, gotOK, gotErr := root.eval(exec, row, nil, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
 			}
@@ -396,7 +396,7 @@ func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
 		shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
 		longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
 		evaluate := func(row map[string]interface{}) {
-			if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
+			if _, ok, err := root.eval(exec, row, nil, nil); !ok || err != nil {
 				t.Fatalf("%s: unresolved or %v", expr, err)
 			}
 		}

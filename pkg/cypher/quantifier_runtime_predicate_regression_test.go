@@ -41,7 +41,7 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 			// which tests ran before.
 			root, _ := (&rowValueCompiler{}).compile(expression)
 			require.Empty(t, firstRowTextNode(root), "the quantifier must not be read from the text")
-			_, _, err := root.eval(exec, values, nil)
+			_, _, err := root.eval(exec, values, nil, nil)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/context", func(t *testing.T) {

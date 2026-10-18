@@ -31,6 +31,7 @@
 package cypher
 
 import (
+	"context"
 	"runtime"
 	"sync"
 
@@ -97,9 +98,15 @@ type FilterFunc func(node *storage.Node) bool
 // Returns:
 //   - Slice of nodes that passed the filter
 func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.Node {
+	return parallelFilterNodesWithCancellation(context.Background(), nodes, func(context.Context) FilterFunc { return filterFn })
+}
+
+func parallelFilterNodesWithCancellation(ctx context.Context, nodes []*storage.Node, filterForContext func(context.Context) FilterFunc) []*storage.Node {
+	ctx = withPipelineCancellation(ctx)
+	probe := parameterCancellationForContext(ctx)
 	if !parallelConfig.Enabled || len(nodes) < parallelConfig.MinBatchSize || len(nodes) < 4*parallelConfig.MinBatchSize {
 		// Sequential fallback for small datasets
-		return sequentialFilterNodes(nodes, filterFn)
+		return sequentialFilterNodesWithCancellation(nodes, filterForContext(ctx), probe)
 	}
 
 	numWorkers := parallelConfig.MaxWorkers
@@ -112,7 +119,7 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 		numWorkers = len(nodes)
 	}
 	if numWorkers <= 1 {
-		return sequentialFilterNodes(nodes, filterFn)
+		return sequentialFilterNodesWithCancellation(nodes, filterForContext(ctx), probe)
 	}
 
 	chunkSize := (len(nodes) + numWorkers - 1) / numWorkers
@@ -133,10 +140,20 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 		wg.Add(1)
 		go func(workerID int, chunk []*storage.Node) {
 			defer wg.Done()
-			filtered := make([]*storage.Node, 0, len(chunk)/4) // Estimate 25% pass rate
+			workerCtx := pipelineWorkerContext(ctx)
+			defer recoverWorkerPanic(workerCtx)
+			workerProbe := parameterCancellationForContext(workerCtx)
+			filterFn := filterForContext(workerCtx)
+			filtered := make([]*storage.Node, 0, pipelineInitialCapacity(len(chunk)/4, workerProbe))
 			for _, node := range chunk {
+				if workerProbe != nil && !workerProbe.check() {
+					return
+				}
 				if filterFn(node) {
-					filtered = append(filtered, node)
+					filtered = appendPipelineItem(filtered, node, workerProbe)
+					if workerProbe != nil && workerProbe.err != nil {
+						return
+					}
 				}
 			}
 			results[workerID] = filtered
@@ -144,6 +161,9 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 	}
 
 	wg.Wait()
+	if probe != nil && !probe.poll() {
+		return nil
+	}
 
 	// Merge results
 	totalSize := 0
@@ -151,9 +171,12 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 		totalSize += len(r)
 	}
 
-	merged := make([]*storage.Node, 0, totalSize)
+	merged := make([]*storage.Node, 0, pipelineInitialCapacity(totalSize, probe))
 	for _, r := range results {
-		merged = append(merged, r...)
+		merged = appendPipelineItems(merged, r, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 
 	return merged
@@ -161,10 +184,20 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 
 // sequentialFilterNodes filters nodes sequentially (fallback for small datasets).
 func sequentialFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.Node {
-	result := make([]*storage.Node, 0, len(nodes)/4)
+	return sequentialFilterNodesWithCancellation(nodes, filterFn, nil)
+}
+
+func sequentialFilterNodesWithCancellation(nodes []*storage.Node, filterFn FilterFunc, probe *pipelineCancellation) []*storage.Node {
+	result := make([]*storage.Node, 0, pipelineInitialCapacity(len(nodes)/4, probe))
 	for _, node := range nodes {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		if filterFn(node) {
-			result = append(result, node)
+			result = appendPipelineItem(result, node, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 		}
 	}
 	return result

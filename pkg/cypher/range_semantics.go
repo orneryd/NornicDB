@@ -12,6 +12,10 @@ import (
 // (budget, #1343); it is given back once built, and the row or list that
 // keeps it counts it there.
 func evaluateCypherRange(budget *expressionBudget, arguments []interface{}) ([]interface{}, error) {
+	return evaluateCypherRangeWithCancellation(budget, arguments, nil)
+}
+
+func evaluateCypherRangeWithCancellation(budget *expressionBudget, arguments []interface{}, probe *pipelineCancellation) ([]interface{}, error) {
 	sequence, err := newCypherRange(arguments)
 	if err != nil {
 		return nil, err
@@ -25,6 +29,9 @@ func evaluateCypherRange(budget *expressionBudget, arguments []interface{}) ([]i
 	}
 	values := make([]interface{}, 0)
 	for value := range sequence.values() {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
 		values = append(values, value)
 	}
 	return values, nil

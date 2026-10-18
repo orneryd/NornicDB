@@ -52,3 +52,5 @@
   other: "[!! database manager not available - SHOW ALIASES requires multi-database support !!]"
 - id: cypherresidual.show_aliases_syntax_invalid
   other: "[!! invalid SHOW ALIASES syntax !!]"
+- id: cypherresidual.statement_worker_failed
+  other: "[!! internal error in a statement worker: {{.Cause}} !!]"

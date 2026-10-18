@@ -78,7 +78,7 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				if tc.name == "entity" {
 					raw, err := be.GetNode("testns:doc")
 					require.NoError(t, err)
-					projected := exec.projectVisiblePipelineNodeRead([]*storage.Node{raw}, []returnItem{{expr: "d", alias: "d"}, {expr: "d.body", alias: "body"}}, "d")
+					projected := exec.projectVisiblePipelineNodeRead(context.Background(), []*storage.Node{raw}, []returnItem{{expr: "d", alias: "d"}, {expr: "d.body", alias: "body"}}, "d")
 					require.NotContains(t, projected.Rows[0][0].(*storage.Node).Properties, "body")
 					require.Nil(t, projected.Rows[0][1])
 					require.Equal(t, "hidden", raw.Properties["body"])
@@ -184,6 +184,6 @@ func TestReleasePropertyProjectionMissingValues(t *testing.T) {
 	require.NotSame(t, edge, got[0])
 	require.Nil(t, exec.queryEntityProperties(42))
 	node := &storage.Node{ID: "n", Properties: map[string]interface{}{"visible": true}}
-	result := exec.projectVisiblePipelineNodeRead([]*storage.Node{node}, []returnItem{{expr: "n", alias: "n"}}, "n")
+	result := exec.projectVisiblePipelineNodeRead(context.Background(), []*storage.Node{node}, []returnItem{{expr: "n", alias: "n"}}, "n")
 	require.Same(t, node, result.Rows[0][0])
 }

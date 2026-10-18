@@ -435,13 +435,21 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 
 // tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
 // for a node that must carry one of anyOf (see seekCandidateLabels).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}, anyOf []string) ([]*storage.Node, bool, error) {
+	return e.tryCollectNodesFromPropertyIndexInAnyOfWithCancellation(nodePattern, whereClause, params, anyOf, nil)
+}
+
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOfWithCancellation(
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
 	anyOf []string,
+	probe *pipelineCancellation,
 ) ([]*storage.Node, bool, error) {
-	property, listValues, ok := e.parseSimpleIndexedInParam(nodePattern.variable, whereClause, params)
+	property, listValues, ok := e.parseSimpleIndexedInParamWithCancellation(nodePattern.variable, whereClause, params, probe)
+	if probe != nil && probe.err != nil {
+		return nil, true, probe.err
+	}
 	if !ok {
 		return nil, false, nil
 	}
@@ -455,35 +463,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 		return nil, false, nil
 	}
 
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range labels {
-		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		ids = append(ids, string(id))
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	return nodes, true, nil
+	return e.collectIndexedPropertyValues(nodePattern, anyOf, schema, []indexedPropertyValues{{labels, property, listValues}}, probe)
 }
 
 // tryCollectNodesFromPropertyIndexInLiteral attempts to satisfy simple IN-list
@@ -521,35 +501,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 		return nil, false, nil
 	}
 
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range labels {
-		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		ids = append(ids, string(id))
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	return nodes, true, nil
+	return e.collectIndexedPropertyValues(nodePattern, anyOf, schema, []indexedPropertyValues{{labels, property, listValues}}, pipelineCancellationForContext(ctx))
 }
 
 // tryCollectNodesFromPropertyIndexInCompound attempts to satisfy an IN-list
@@ -574,13 +526,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	ctx = withPipelineCancellation(ctx)
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
 		return nil, false, nil
 	}
 
 	// 1) Simple clause (param or literal list).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOfWithCancellation(nodePattern, clause, params, nil, pipelineCancellationForContext(ctx)); used || err != nil {
 		return nodes, used, err
 	}
 	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
@@ -599,7 +552,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, term, params, anyOf); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOfWithCancellation(nodePattern, term, params, anyOf, pipelineCancellationForContext(ctx)); used || err != nil {
 				return nodes, used, err
 			}
 			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
@@ -674,6 +627,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
+	probe *pipelineCancellation,
 ) ([]*storage.Node, bool, error) {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" || params == nil {
@@ -689,8 +643,11 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		return nil, false, nil
 	}
 
-	lprop, lvals, lok := e.parseSimpleIndexedInParam(nodePattern.variable, left, params)
-	rprop, rvals, rok := e.parseSimpleIndexedInParam(nodePattern.variable, right, params)
+	lprop, lvals, lok := e.parseSimpleIndexedInParamWithCancellation(nodePattern.variable, left, params, probe)
+	rprop, rvals, rok := e.parseSimpleIndexedInParamWithCancellation(nodePattern.variable, right, params, probe)
+	if probe != nil && probe.err != nil {
+		return nil, true, probe.err
+	}
 	if !lok || !rok {
 		return nil, false, nil
 	}
@@ -698,18 +655,23 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	// Merge values (keep deterministic and duplicate-free).
 	merged := make([]interface{}, 0, util.SafePreallocSum(len(lvals), len(rvals)))
 	seenVals := make(map[string]struct{}, util.SafePreallocSum(len(lvals), len(rvals)))
-	for _, v := range append(lvals, rvals...) {
-		if v == nil {
-			continue
+	for _, values := range [][]interface{}{lvals, rvals} {
+		for _, v := range values {
+			if probe != nil && !probe.check() {
+				return nil, true, probe.err
+			}
+			if v == nil {
+				continue
+			}
+			k := fmt.Sprintf("%T:%v", v, v)
+			if _, ok := seenVals[k]; ok {
+				continue
+			}
+			seenVals[k] = struct{}{}
+			merged = append(merged, v)
 		}
-		k := fmt.Sprintf("%T:%v", v, v)
-		if _, ok := seenVals[k]; ok {
-			continue
-		}
-		seenVals[k] = struct{}{}
-		merged = append(merged, v)
-	}
 
+	}
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, false, nil
@@ -721,42 +683,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		return nil, false, nil
 	}
 
-	idSet := make(map[storage.NodeID]struct{}, 256)
-	for _, label := range leftLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, v) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	for _, label := range rightLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, v) {
-				idSet[id] = struct{}{}
-			}
-		}
-	}
-	if len(idSet) == 0 {
-		return []*storage.Node{}, true, nil
-	}
-
-	nodes := make([]*storage.Node, 0, len(idSet))
-	ids := make([]string, 0, len(idSet))
-	for id := range idSet {
-		ids = append(ids, string(id))
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
-		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		nodes = append(nodes, node)
-	}
-	return nodes, true, nil
+	return e.collectIndexedPropertyValues(nodePattern, nil, schema, []indexedPropertyValues{{leftLabels, lprop, merged}, {rightLabels, rprop, merged}}, probe)
 }
 
 // tryCollectNodesFromPropertyIndexOrEquality attempts to satisfy OR-combined
@@ -904,14 +831,14 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if !ok {
 			return []*storage.Node{}, true, nil
 		}
-		list = toAnySlice(raw)
+		list = toAnySliceWithCancellation(raw, contextPipelineProbe(ctx))
 	} else {
 		value, constant := e.indexSeekConstant(ctx, right)
 		if !constant {
 			return nil, false, nil
 		}
 		if value != nil {
-			if list = toAnySlice(value); list == nil {
+			if list = toAnySliceWithCancellation(value, contextPipelineProbe(ctx)); list == nil {
 				return nil, false, nil
 			}
 		}
@@ -1306,6 +1233,10 @@ func parseSimpleIndexedEqualityShape(variable, whereClause string) simpleIndexed
 }
 
 func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string, params map[string]interface{}) (property string, values []interface{}, ok bool) {
+	return e.parseSimpleIndexedInParamWithCancellation(variable, whereClause, params, nil)
+}
+
+func (e *StorageExecutor) parseSimpleIndexedInParamWithCancellation(variable, whereClause string, params map[string]interface{}, probe *pipelineCancellation) (property string, values []interface{}, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1342,13 +1273,22 @@ func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string
 	if !exists || raw == nil {
 		return "", nil, false
 	}
-	list := coerceInterfaceList(raw)
+	list, _ := cypherListValueWithCancellation(raw, probe)
+	if probe != nil && probe.err != nil {
+		return "", nil, false
+	}
 	if len(list) == 0 {
 		return "", []interface{}{}, true
 	}
 	out := make([]interface{}, 0, len(list))
 	seen := make(map[string]struct{}, len(list))
 	for _, v := range list {
+		if probe != nil && !probe.check() {
+			return "", nil, false
+		}
+		if probe != nil && !boundedPipelineIndexValue(v) {
+			return "", nil, false
+		}
 		if v == nil {
 			continue
 		}
@@ -2074,6 +2014,7 @@ func mirroredComparison(operator string) string {
 // from it, so a lookup that uses an index for rows uses it for count(*) too
 // (#820).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+	ctx = withPipelineCancellation(ctx)
 	params := getParamsFromContext(ctx)
 	if hint.limit > 0 && hint.orderExpr != "" {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
@@ -2122,7 +2063,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		inList  bool
 	}{
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params, pipelineCancellationForContext(ctx))
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)

@@ -515,7 +515,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
 					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -587,7 +587,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
 					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -1044,7 +1044,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 	if inner == "*" {
 		return int64(len(paths))
 	}
-	inner, distinct := cutDistinctArgument(inner)
+	inner, distinct := cutDistinctArgumentWithCancellation(inner, contextPipelineProbe(ctx))
 	seen := make(map[string]struct{}, len(paths))
 	var count int64
 	for _, path := range paths {
@@ -1068,7 +1068,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
 	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
 	if distinct {
-		inner, _ = cutDistinctArgument(inner)
+		inner, _ = cutDistinctArgumentWithCancellation(inner, contextPipelineProbe(ctx))
 	}
 
 	collected := make([]interface{}, 0, len(paths))
@@ -1687,10 +1687,16 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 		wg.Add(1)
 		go func(workerNodes []*storage.Node) {
 			defer wg.Done()
+			// Each worker has its own probe for the statement (pipelineWorkerContext).
+			workerCtx := ctx
+			if workerCtx != nil {
+				workerCtx = pipelineWorkerContext(workerCtx)
+				defer recoverWorkerPanic(workerCtx)
+			}
 
 			var workerPaths []PathResult
 			for _, startNode := range workerNodes {
-				if ctx != nil && ctx.Err() != nil {
+				if workerCtx != nil && workerCtx.Err() != nil {
 					break
 				}
 				// Each goroutine gets its own traversal state (no shared state)
@@ -1707,8 +1713,8 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					nodeCache:                    make(map[storage.NodeID]*storage.Node),
 					temporalViewport:             viewport,
 					temporalChecker:              checker,
-					cancelCtx:                    ctx,
-					repeatable:                   repeatableElements(ctx),
+					cancelCtx:                    workerCtx,
+					repeatable:                   repeatableElements(workerCtx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
 					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
@@ -2087,7 +2093,11 @@ func (e *StorageExecutor) findPaths(
 		edges = e.traversalEdges(ctx, currentNode.ID, false)
 	case "both":
 		var err error
-		edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
+		if ctx.cancelCtx != nil {
+			edges, err = undirectedIncidentEdgesContext(ctx.cancelCtx, e.storage, currentNode.ID)
+		} else {
+			edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
+		}
 		if err != nil && ctx.cancelCtx != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return results

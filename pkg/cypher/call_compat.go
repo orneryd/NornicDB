@@ -201,7 +201,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -245,7 +245,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 			return result, nil
 		}
 		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+		err := storage.StreamEdgesWithFallback(statementCtx, e.storage, 1024, func(edge *storage.Edge) error {
 			if !matchesRelationshipTypes(edge, targetTypes) {
 				return nil
 			}
@@ -1091,9 +1091,9 @@ func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, argume
 		return nil, localizedError(localization.CypherProceduresMetadataObjectRequired(), nil)
 	}
 
-	metadata, valid := toStringAnyMap(arguments[0])
+	metadata, valid := toStringAnyMapWithCancellation(arguments[0], contextPipelineProbe(ctx))
 	if expression, raw := arguments[0].(string); raw {
-		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+		metadata, valid = toStringAnyMapWithCancellation(e.evaluateExpressionWithContext(ctx, expression, nil, nil), contextPipelineProbe(ctx))
 	}
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -33,6 +32,8 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		numeric  float64
 		original interface{}
 	}
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	// The sort buffer and the DISTINCT index count against the statement's
 	// memory limit before they grow, and go back when the percentile is
 	// computed (#1343).
@@ -42,8 +43,11 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		return nil, false
 	}
 	values := make([]percentileValue, 0, len(rows))
-	var seen cypherValueIndex
+	seen := cypherValueIndex{probe: probe}
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, false
+		}
 		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
 		if !resolved {
 			return nil, false
@@ -73,9 +77,11 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	}
 	// Ordered as ORDER BY orders numbers (compareValuesForSort): NaN after
 	// every number, -0.0 before 0.0, integers and floats exactly (#907).
-	sort.SliceStable(values, func(left, right int) bool {
-		return compareValuesForSort(values[left].original, values[right].original) < 0
-	})
+	if !probe.sort(values, func(left, right int) bool {
+		return compareValuesForSortWithCancellation(values[left].original, values[right].original, probe) < 0
+	}, true) {
+		return nil, false
+	}
 
 	if name == "percentiledisc" {
 		index := int(math.Ceil(percentile*float64(len(values)))) - 1

@@ -393,6 +393,12 @@ type statementContext struct {
 	failure       expressionFailure
 	failureActive atomic.Bool
 
+	// probe is the statement's cancellation probe once adoptProbe made it
+	// the one its readers find: it reads this context, so TERMINATE stops
+	// them, and needs no allocation of its own.
+	probe       pipelineCancellation
+	probeActive atomic.Bool
+
 	mu   sync.Mutex
 	done chan struct{} // made by Done
 	err  error         // set by cancel
@@ -410,6 +416,10 @@ func (c *statementContext) Value(key any) any {
 	case expressionFailureKey:
 		if c.failureActive.Load() {
 			return &c.failure
+		}
+	case pipelineCancellationKey:
+		if c.probeActive.Load() {
+			return &c.probe
 		}
 	case memoryScopeKey:
 		if c.tx != nil {
@@ -583,7 +593,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 		}
 		return []interface{}{nil}, true, nil
 	}
-	items, isList := cypherListValue(value)
+	items, isList := cypherListValueWithCancellation(value, contextPipelineProbe(ctx))
 	if !isList {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))
@@ -785,4 +795,12 @@ func invalidTransactionIDError(message localization.Message) error {
 func durationFromGo(d time.Duration) *CypherDuration {
 	seconds := int64(d / time.Second)
 	return &CypherDuration{Seconds: seconds, Nanos: int64(d % time.Second)}
+}
+
+// adoptProbe makes the statement's own probe the one its readers find,
+// reporting to parent (the probe the statement was prepared under).
+func (c *statementContext) adoptProbe(parent *pipelineCancellation) {
+	c.probe.ctx = c
+	c.probe.parent = parent
+	c.probeActive.Store(true)
 }

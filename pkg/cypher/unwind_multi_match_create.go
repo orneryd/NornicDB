@@ -148,7 +148,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	}
 	rows := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
-		row, ok := toStringAnyMap(item)
+		row, ok := toStringAnyMapWithCancellation(item, contextPipelineProbe(ctx))
 		if !ok {
 			rows = nil
 			break

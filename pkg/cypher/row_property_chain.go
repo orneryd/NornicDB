@@ -46,10 +46,16 @@ func literalKeywordValue(name string) (interface{}, bool) {
 // it. Anything else (literals, backticks, calls, operators, spaces) is not,
 // nor is a chain on a literal word (true, false, null, NaN, Infinity), which
 // reads the literal (isLiteralKeyword).
-func rowPropertyChainShape(expr string) (variable, chain string, ok bool) {
+func rowPropertyChainShape(expr string) (string, string, bool) {
+	return rowPropertyChainShapeWithCancellation(expr, nil)
+}
+func rowPropertyChainShapeWithCancellation(expr string, probe *pipelineCancellation) (variable, chain string, ok bool) {
 	dot := -1
 	start := true
 	for i := 0; i < len(expr); i++ {
+		if probe != nil && !probe.check() {
+			return "", "", false
+		}
 		c := expr[i]
 		switch {
 		case c == '.':

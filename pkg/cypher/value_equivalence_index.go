@@ -20,8 +20,21 @@ type cypherEntityKey struct {
 // copying strings. Containers use structural hashing below. Uncommon scalar
 // values retain the canonical type/value encoding.
 func cypherComparableKey(value interface{}) (interface{}, bool) {
+	return cypherComparableKeyWithCancellation(value, nil)
+}
+
+// cypherComparableKeyWithCancellation is cypherComparableKey whose encoded
+// keys stop when probe is cancelled; the result is then unused.
+func cypherComparableKeyWithCancellation(value interface{}, probe *pipelineCancellation) (interface{}, bool) {
 	switch value := value.(type) {
-	case nil, string, bool, int64:
+	case nil, bool, int64:
+		return value, true
+	case string:
+		// The key's native hash and equality scan the whole string: its
+		// length is charged to the probe, and the caller stops on probe.err.
+		if probe != nil {
+			probe.chargeText(len(value))
+		}
 		return value, true
 	case *storage.Node:
 		if value == nil {
@@ -37,18 +50,18 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		if value == nil {
 			return nil, true
 		}
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCancellation(value, probe)), true
 	case storage.RemotePathValue:
 		if value == nil {
 			return nil, true
 		}
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCancellation(value, probe)), true
 	case map[string]interface{}:
 		// A genuine path wrapper keys by its ordered entities, as a native
 		// path does; any other map, including a forged _pathResult, is
 		// structural.
 		if cypherValueKindOf(value) == valueKindPath {
-			return cypherEncodedKey(cypherEquivalenceKey(value)), true
+			return cypherEncodedKey(cypherEquivalenceKeyWithCancellation(value, probe)), true
 		}
 		return nil, false
 	case []byte, []interface{}:
@@ -80,15 +93,15 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		return number, true
 	}
 	if cypherValueKindOf(value) == valueKindPath {
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCancellation(value, probe)), true
 	}
-	if _, list := cypherListValue(value); list {
+	if _, list := cypherListValueWithCancellation(value, probe); list {
 		return nil, false
 	}
-	if _, fields := toStringAnyMap(value); fields {
+	if _, fields := toStringAnyMapWithCancellation(value, probe); fields {
 		return nil, false
 	}
-	return cypherEncodedKey(cypherEquivalenceKey(value)), true
+	return cypherEncodedKey(cypherEquivalenceKeyWithCancellation(value, probe)), true
 }
 
 var cypherTupleHashSeed = maphash.MakeSeed()
@@ -101,23 +114,38 @@ func mixCypherHash(hash, value uint64) uint64 {
 // combined commutatively, independently of insertion/iteration order. A hash
 // only selects a bucket; cypherValuesEquivalent checks collisions.
 func cypherEquivalenceHash(value interface{}) uint64 {
-	if key, scalar := cypherComparableKey(value); scalar {
+	return cypherEquivalenceHashWithCancellation(value, nil)
+}
+
+// cypherEquivalenceHashWithCancellation checks probe once per contained
+// value; a cancelled hash is unused.
+func cypherEquivalenceHashWithCancellation(value interface{}, probe *pipelineCancellation) uint64 {
+	if probe != nil && !probe.check() {
+		return 0
+	}
+	if key, scalar := cypherComparableKeyWithCancellation(value, probe); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
 	if value, bytes := value.([]byte); bytes {
 		return mixCypherHash('X', maphash.Bytes(cypherTupleHashSeed, value))
 	}
-	if list, ok := cypherListValue(value); ok {
+	if list, ok := cypherListValueWithCancellation(value, probe); ok {
 		hash := mixCypherHash('L', uint64(len(list)))
 		for _, item := range list {
-			hash = mixCypherHash(hash, cypherEquivalenceHash(item))
+			if probe != nil && probe.err != nil {
+				return 0
+			}
+			hash = mixCypherHash(hash, cypherEquivalenceHashWithCancellation(item, probe))
 		}
 		return hash
 	}
-	fields, _ := toStringAnyMap(value)
+	fields, _ := toStringAnyMapWithCancellation(value, probe)
 	hash := mixCypherHash('M', uint64(len(fields)))
 	for name, item := range fields {
-		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherEquivalenceHash(item))
+		if probe != nil && probe.err != nil {
+			return 0
+		}
+		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherEquivalenceHashWithCancellation(item, probe))
 	}
 	return hash
 }
@@ -125,8 +153,17 @@ func cypherEquivalenceHash(value interface{}) uint64 {
 // cypherValuesEquivalent is DISTINCT's structural equality: null equals
 // null, numbers compare exactly across types, and each NaN remains separate.
 func cypherValuesEquivalent(left, right interface{}) bool {
-	leftKey, leftScalar := cypherComparableKey(left)
-	rightKey, rightScalar := cypherComparableKey(right)
+	return cypherValuesEquivalentWithCancellation(left, right, nil)
+}
+
+// cypherValuesEquivalentWithCancellation checks probe once per compared
+// value; a cancelled comparison is false and unused.
+func cypherValuesEquivalentWithCancellation(left, right interface{}, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+	leftKey, leftScalar := cypherComparableKeyWithCancellation(left, probe)
+	rightKey, rightScalar := cypherComparableKeyWithCancellation(right, probe)
 	if leftScalar || rightScalar {
 		return leftScalar && rightScalar && leftKey == rightKey
 	}
@@ -135,27 +172,27 @@ func cypherValuesEquivalent(left, right interface{}) bool {
 	if leftIsBytes || rightIsBytes {
 		return leftIsBytes && rightIsBytes && bytes.Equal(leftBytes, rightBytes)
 	}
-	leftList, leftIsList := cypherListValue(left)
-	rightList, rightIsList := cypherListValue(right)
+	leftList, leftIsList := cypherListValueWithCancellation(left, probe)
+	rightList, rightIsList := cypherListValueWithCancellation(right, probe)
 	if leftIsList || rightIsList {
 		if !leftIsList || !rightIsList || len(leftList) != len(rightList) {
 			return false
 		}
 		for i, item := range leftList {
-			if !cypherValuesEquivalent(item, rightList[i]) {
+			if !cypherValuesEquivalentWithCancellation(item, rightList[i], probe) {
 				return false
 			}
 		}
 		return true
 	}
-	leftMap, _ := toStringAnyMap(left)
-	rightMap, _ := toStringAnyMap(right)
+	leftMap, _ := toStringAnyMapWithCancellation(left, probe)
+	rightMap, _ := toStringAnyMapWithCancellation(right, probe)
 	if len(leftMap) != len(rightMap) {
 		return false
 	}
 	for name, item := range leftMap {
 		other, exists := rightMap[name]
-		if !exists || !cypherValuesEquivalent(item, other) {
+		if !exists || !cypherValuesEquivalentWithCancellation(item, other, probe) {
 			return false
 		}
 	}
@@ -174,12 +211,19 @@ type cypherValueIndex struct {
 	single map[interface{}]int
 	tuples map[uint64][]cypherTupleEntry
 	count  int
+	// probe, when set, is checked while values are hashed and compared; a
+	// cancelled add stores nothing and reports a new position the caller
+	// never uses, because it stops on probe.err.
+	probe *pipelineCancellation
 }
 
 func (index *cypherValueIndex) add(value interface{}) (position int, existed bool) {
-	key, scalar := cypherComparableKey(value)
+	key, scalar := cypherComparableKeyWithCancellation(value, index.probe)
+	if index.cancelled() {
+		return index.count, false
+	}
 	if !scalar {
-		return index.addTupleValues(cypherEquivalenceHash(value), []interface{}{value})
+		return index.addTupleValues(cypherEquivalenceHashWithCancellation(value, index.probe), []interface{}{value})
 	}
 	return index.addComparable(key)
 }
@@ -206,22 +250,31 @@ func (index *cypherValueIndex) addTuple(values []interface{}) (int, bool) {
 	}
 	hash := uint64(len(values))
 	for _, value := range values {
-		hash = mixCypherHash(hash, cypherEquivalenceHash(value))
+		hash = mixCypherHash(hash, cypherEquivalenceHashWithCancellation(value, index.probe))
+		if index.cancelled() {
+			return index.count, false
+		}
 	}
 	return index.addTupleValues(hash, values)
 }
 
 func (index *cypherValueIndex) addTupleValues(hash uint64, values []interface{}) (int, bool) {
+	if index.cancelled() {
+		return index.count, false
+	}
 	for _, candidate := range index.tuples[hash] {
 		if len(candidate.values) != len(values) {
 			continue
 		}
 		equal := true
 		for i, value := range values {
-			if !cypherValuesEquivalent(value, candidate.values[i]) {
+			if !cypherValuesEquivalentWithCancellation(value, candidate.values[i], index.probe) {
 				equal = false
 				break
 			}
+		}
+		if index.cancelled() {
+			return index.count, false
 		}
 		if equal {
 			return candidate.position, true
@@ -234,4 +287,8 @@ func (index *cypherValueIndex) addTupleValues(hash uint64, values []interface{})
 	index.tuples[hash] = append(index.tuples[hash], cypherTupleEntry{append([]interface{}(nil), values...), position})
 	index.count++
 	return position, false
+}
+
+func (index *cypherValueIndex) cancelled() bool {
+	return index.probe != nil && index.probe.err != nil
 }

@@ -15,8 +15,6 @@ import (
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -58,8 +56,8 @@ func init() {
 	cypherfn.Register("isnan", fnIsNaN)
 	cypherfn.Register("char_length", fnCharLength)
 	cypherfn.Register("character_length", fnCharLength)
-	cypherfn.Register("upper", fnStringCase(func(text string) string { return cases.Upper(language.Und).String(text) }, "upper"))
-	cypherfn.Register("lower", fnStringCase(func(text string) string { return cases.Lower(language.Und).String(text) }, "lower"))
+	cypherfn.Register("upper", fnStringCase("upper"))
+	cypherfn.Register("lower", fnStringCase("lower"))
 	cypherfn.Register("btrim", fnTrimFunction("btrim", true, true))
 	cypherfn.Register("ltrim", fnTrimFunction("ltrim", true, false))
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
@@ -299,11 +297,19 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	// A value that isn't a list has no tail: Neo4j gives [] (tail(n.age)); a
 	// node or other non-list literal is the static check's SyntaxError.
-	items, _ := cypherListValue(value)
+	probe := functionPipelineProbe(ctx)
+	items, _ := cypherListValueWithCancellation(value, probe)
+	if probe != nil && probe.err != nil {
+		return nil, probe.err
+	}
 	if len(items) < 2 {
 		return []interface{}{}, nil
 	}
-	return append([]interface{}{}, items[1:]...), nil
+	items = appendPipelineValues([]interface{}{}, items[1:], probe)
+	if probe != nil {
+		return items, probe.err
+	}
+	return items, nil
 }
 
 func fnStringOperation(name string) cypherfn.Func {
@@ -368,14 +374,20 @@ func fnStringOperation(name string) cypherfn.Func {
 		if position < 0 {
 			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
+		finish := func(value string, completed bool) (interface{}, error) {
+			if !completed {
+				return nil, ctx.Cancellation.Err()
+			}
+			return value, nil
+		}
 		switch name {
 		case "left":
-			return cyphertext.Left(text, position), nil
+			return finish(cyphertext.LeftWithWork(text, position, ctx.Cancellation))
 		case "right":
-			return cyphertext.Right(text, position), nil
+			return finish(cyphertext.RightWithWork(text, position, ctx.Cancellation))
 		}
 		if len(values) == 2 {
-			return cyphertext.From(text, position), nil
+			return finish(cyphertext.FromWithWork(text, position, ctx.Cancellation))
 		}
 		length, ok := toInt(values[2])
 		if !ok {
@@ -384,7 +396,7 @@ func fnStringOperation(name string) cypherfn.Func {
 		if length < 0 {
 			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
-		return cyphertext.Substring(text, position, length), nil
+		return finish(cyphertext.SubstringWithWork(text, position, length, ctx.Cancellation))
 	}
 }
 
@@ -562,10 +574,11 @@ func fnCharLength(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
-	return int64(utf8.RuneCountInString(text)), nil
+	length, countErr := cypherfn.CharacterCount(text, ctx.Cancellation)
+	return int64(length), countErr
 }
 
-func fnStringCase(convert func(string) string, name string) cypherfn.Func {
+func fnStringCase(name string) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -578,13 +591,20 @@ func fnStringCase(convert func(string) string, name string) cypherfn.Func {
 		if err != nil || !ok {
 			return nil, err
 		}
-		return convert(text), nil
+		return cypherfn.MapStringCase(text, name == "upper", ctx.Cancellation)
 	}
 }
 
 // trimCharacters trims the characters of cutset (whitespace when cutset is
 // "") from the start and/or end of text.
 func trimCharacters(text, cutset string, leading, trailing bool) string {
+	return trimCharactersWithCancellation(text, cutset, leading, trailing, nil)
+}
+
+func trimCharactersWithCancellation(text, cutset string, leading, trailing bool, probe *pipelineCancellation) string {
+	if probe != nil {
+		return trimPipelineCharacters(text, cutset, leading, trailing, probe)
+	}
 	if cutset == "" {
 		if leading {
 			text = strings.TrimLeftFunc(text, unicode.IsSpace)
@@ -625,7 +645,11 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 			}
 			cutset = characters
 		}
-		trimmed := trimCharacters(text, cutset, leading, trailing)
+		probe := functionPipelineProbe(ctx)
+		trimmed := trimCharactersWithCancellation(text, cutset, leading, trailing, probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
 		if name == "rtrim" && cutset != "" && trimmed == "" && text != "" {
 			// Neo4j's rtrim with characters never removes a first character
 			// of one byte: rtrim('xx', 'x') is 'x', rtrim('ab', 'ab') is 'a'
@@ -674,13 +698,20 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 		if err != nil {
 			return nil, err
 		}
-		if utf8.RuneCountInString(character) != 1 {
+		length, countErr := cypherfn.CharacterCount(character, ctx.Cancellation)
+		if countErr != nil {
+			return nil, countErr
+		}
+		if length != 1 {
 			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
 				localization.CypherCoreTrimCharacterLength())
 		}
 		cutset = character
 	}
 	if ctx.Cypher25 {
+		if len(specification) > 32 {
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", localization.CypherCoreTrimSpecificationUnknown())
+		}
 		switch specification = strings.ToUpper(specification); specification {
 		case "LEADING", "TRAILING", "BOTH":
 		default:
@@ -688,7 +719,12 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 				localization.CypherCoreTrimSpecificationUnknown())
 		}
 	}
-	return trimCharacters(text, cutset, specification != "TRAILING", specification != "LEADING"), nil
+	probe := functionPipelineProbe(ctx)
+	trimmed := trimCharactersWithCancellation(text, cutset, specification != "TRAILING", specification != "LEADING", probe)
+	if probe != nil {
+		return trimmed, probe.err
+	}
+	return trimmed, nil
 }
 
 func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
@@ -730,7 +766,11 @@ func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if !isString {
 			return nil, &cypherfn.TypeMismatchError{Function: "trim", Expected: "String", Value: character}
 		}
-		if utf8.RuneCountInString(value) != 1 {
+		length, countErr := cypherfn.CharacterCount(value, ctx.Cancellation)
+		if countErr != nil {
+			return nil, countErr
+		}
+		if length != 1 {
 			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
 				localization.CypherCoreTrimCharacterLength())
 		}
@@ -743,7 +783,12 @@ func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if !isString {
 		return nil, &cypherfn.TypeMismatchError{Function: "trim", Expected: "String", Value: text}
 	}
-	return trimCharacters(value, cutset, leading, trailing), nil
+	probe := functionPipelineProbe(ctx)
+	trimmed := trimCharactersWithCancellation(value, cutset, leading, trailing, probe)
+	if probe != nil {
+		return trimmed, probe.err
+	}
+	return trimmed, nil
 }
 
 // unicodeNormalForm is the normal form a keyword names (NFC, NFD, NFKC or
@@ -785,6 +830,9 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
+	if ctx.Cancellation != nil {
+		return cypherfn.TransformString(text, form, ctx.Cancellation)
+	}
 	return form.String(text), nil
 }
 
@@ -799,18 +847,32 @@ func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
 		if err != nil || values[0] == nil {
 			return nil, err
 		}
-		items, isList := cypherListValue(values[0])
+		probe := functionPipelineProbe(ctx)
+		items, isList := cypherListValueWithCancellation(values[0], probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
 		if vector, isVector := values[0].(CypherVector); isVector && (name == "toIntegerList" || name == "toFloatList") {
 			// A vector's coordinates convert as a list's items would; Neo4j
 			// takes a vector in toIntegerList and toFloatList only.
-			items, isList = vector.coordinates(), true
+			items, isList = vector.coordinatesWithCancellation(probe), true
+			if probe != nil && probe.err != nil {
+				return nil, probe.err
+			}
 		}
 		if !isList {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "List<T>", Value: values[0]}
 		}
-		converted := make([]interface{}, len(items))
-		for i, item := range items {
-			converted[i] = convert(item, ctx.Cypher25)
+		converted := make([]interface{}, 0, pipelineInitialCapacity(len(items), probe))
+		for _, item := range items {
+			if probe != nil && !probe.check() {
+				return nil, probe.err
+			}
+			converted = appendPipelineItem(converted, convert(item, ctx.Cypher25), probe)
+			if probe != nil && probe.err != nil {
+				return nil, probe.err
+			}
+
 		}
 		return converted, nil
 	}
@@ -920,7 +982,12 @@ func fnNullIf(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if equal, _ := cypherEquality(values[0], values[1]).(bool); equal {
+	probe := functionPipelineProbe(ctx)
+	equal, _ := cypherEqualityWithCancellation(values[0], values[1], probe).(bool)
+	if probe != nil && probe.err != nil {
+		return nil, probe.err
+	}
+	if equal {
 		return nil, nil
 	}
 	return values[0], nil

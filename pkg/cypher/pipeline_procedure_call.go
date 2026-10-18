@@ -120,6 +120,8 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	defer retention.close()
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, true, err
@@ -157,6 +159,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		}
 		extended := make([]pipelineRow, 0, len(result.Rows))
 		for _, record := range result.Rows {
+			if !probe.check() {
+				return nil, nil, true, probe.err
+			}
 			// The record's values counted when the call returned it.
 			if err := retention.reserveExtendedRow(row, result.Columns, nil); err != nil {
 				return nil, nil, true, err

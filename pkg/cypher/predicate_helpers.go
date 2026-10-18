@@ -43,13 +43,25 @@ func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {
 }
 
 func buildComparableMembershipIndex(items []interface{}) (map[interface{}]struct{}, []interface{}) {
+	return buildComparableMembershipIndexWithCancellation(items, nil)
+}
+
+func buildComparableMembershipIndexWithCancellation(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}) {
 	comparableSet := make(map[interface{}]struct{}, len(items))
 	nonComparable := make([]interface{}, 0)
 	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil, nil
+		}
 		if item == nil {
 			continue
 		}
 		if isComparableValue(item) {
+			// A string's native hash scans all of it: its length is charged
+			// to the probe (chargeText).
+			if text, ok := item.(string); ok && probe != nil && !probe.chargeText(len(text)) {
+				return nil, nil
+			}
 			comparableSet[membershipKey(item)] = struct{}{}
 			continue
 		}

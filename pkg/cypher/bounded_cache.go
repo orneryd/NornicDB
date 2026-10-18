@@ -38,7 +38,11 @@ var cacheKeyHashSeed = maphash.MakeSeed()
 // boundedCacheStringShardIndex picks a shard for a string key without any
 // allocation.
 func boundedCacheStringShardIndex(s string) int {
-	return int(maphash.String(cacheKeyHashSeed, s) % boundedCacheShardCount)
+	return boundedCacheStringShardIndexWithCancellation(s, nil)
+}
+
+func boundedCacheStringShardIndexWithCancellation(s string, probe *pipelineCancellation) int {
+	return int(hashPipelineString(s, cacheKeyHashSeed, probe) % boundedCacheShardCount)
 }
 
 // keywordIndexCacheKeyShardIndex picks a shard for a keyword index cache key
