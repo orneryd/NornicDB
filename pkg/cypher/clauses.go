@@ -675,18 +675,23 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	openBracket := strings.Index(afterFrom, "[")
-	closeBracket := strings.Index(afterFrom, "]")
+	if openBracket < 0 {
+		return unwindMergeChainRelationshipPlan{}, false
+	}
+	closeBracket := findMatchingDelimiter(afterFrom, openBracket, '[', ']')
 	if openBracket < 0 || closeBracket <= openBracket {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
-	relInner := strings.TrimSpace(afterFrom[openBracket+1 : closeBracket])
+	declaration := relationshipDeclarationOf(afterFrom[openBracket+1 : closeBracket])
+	if declaration.hasLength || declaration.lengthInvalid || declaration.invalidType != "" || len(declaration.types) != 1 || hasDynamicToken(declaration.typeText) {
+		return unwindMergeChainRelationshipPlan{}, false
+	}
 	var matchAssignments []unwindSimpleSetAssignment
-	if propsStart := strings.Index(relInner, "{"); propsStart >= 0 {
-		propsEnd := strings.LastIndex(relInner, "}")
-		if propsEnd <= propsStart || strings.TrimSpace(relInner[propsEnd+1:]) != "" {
+	if properties := declaration.properties; properties != "" {
+		if len(properties) < 2 || properties[0] != '{' || findMatchingDelimiter(properties, 0, '{', '}') != len(properties)-1 {
 			return unwindMergeChainRelationshipPlan{}, false
 		}
-		matchProperties := strings.TrimSpace(relInner[propsStart+1 : propsEnd])
+		matchProperties := strings.TrimSpace(properties[1 : len(properties)-1])
 		if matchProperties != "" {
 			var ok bool
 			matchAssignments, ok = parseUnwindSimpleMergeMatchAssignments(matchProperties)
@@ -694,25 +699,9 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 				return unwindMergeChainRelationshipPlan{}, false
 			}
 		}
-		relInner = strings.TrimSpace(relInner[:propsStart])
 	}
-	var relVar string
-	var relType string
-	switch {
-	case strings.HasPrefix(relInner, ":"):
-		relType = strings.TrimSpace(relInner[1:])
-	default:
-		colonIdx := strings.Index(relInner, ":")
-		if colonIdx <= 0 || colonIdx == len(relInner)-1 {
-			return unwindMergeChainRelationshipPlan{}, false
-		}
-		relVar = strings.TrimSpace(relInner[:colonIdx])
-		relType = strings.TrimSpace(relInner[colonIdx+1:])
-		if !isSimpleIdentifier(relVar) {
-			return unwindMergeChainRelationshipPlan{}, false
-		}
-	}
-	if relType == "" {
+	relVar, relType := declaration.variable, declaration.typeText
+	if relVar != "" && !isSimpleIdentifier(relVar) {
 		return unwindMergeChainRelationshipPlan{}, false
 	}
 	afterRel := strings.TrimSpace(afterFrom[closeBracket+1:])

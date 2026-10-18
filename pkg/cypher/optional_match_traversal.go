@@ -161,22 +161,8 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 		} else {
 			eps.direction = "both"
 		}
-		relStr := rest[relOpen+1 : relClose]
-		if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-			eps.relVar = strings.TrimSpace(relStr[:colonIdx])
-			relType := strings.TrimSpace(relStr[colonIdx+1:])
-			if propIdx := strings.Index(relType, "{"); propIdx >= 0 {
-				relType = strings.TrimSpace(relType[:propIdx])
-			}
-			if starIdx := strings.Index(relType, "*"); starIdx >= 0 {
-				relType = strings.TrimSpace(relType[:starIdx])
-			}
-			eps.relType = relType
-		} else if starIdx := strings.Index(relStr, "*"); starIdx >= 0 {
-			eps.relVar = strings.TrimSpace(relStr[:starIdx])
-		} else {
-			eps.relVar = strings.TrimSpace(relStr)
-		}
+		declaration := relationshipDeclarationOf(rest[relOpen+1 : relClose])
+		eps.relVar, eps.relType = declaration.variable, declaration.typeText
 		rest = rest[relClose+1:]
 	}
 	tOpen := strings.Index(rest, "(")
