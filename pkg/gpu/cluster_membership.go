@@ -71,7 +71,7 @@ func (m *clusterMembership) ids(cluster int) []string {
 // derives before publishing.
 type Clustering struct {
 	centroids  [][]float32
-	mu         sync.RWMutex // guards membership; innermost lock
+	mu         sync.RWMutex // guards membership and centroid coordinates; innermost lock
 	membership clusterMembership
 	computed   bool // k-means ran; restored state keeps the previous run's stats
 	iterations int
@@ -121,6 +121,31 @@ func (c *Clustering) Remove(id string) (int, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.membership.remove(id)
+}
+
+// Centroids returns a copy of the generation's centroids, nil when it has
+// none. The copy is taken under the generation's lock, which
+// UpdateCentroidsBatch holds while it rewrites coordinates, so it is never a
+// mix of two updates.
+func (c *Clustering) Centroids() [][]float32 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.centroids) == 0 {
+		return nil
+	}
+	out := make([][]float32, len(c.centroids))
+	for i, vec := range c.centroids {
+		out[i] = append([]float32(nil), vec...)
+	}
+	return out
+}
+
+// NearestCentroid returns the cluster whose centroid is nearest embedding, or
+// -1 when the generation has no centroids.
+func (c *Clustering) NearestCentroid(embedding []float32) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return nearestCentroidFromList(embedding, c.centroids)
 }
 
 // NearestClusters returns the k populated clusters whose centroids are
@@ -189,7 +214,9 @@ func (ci *ClusterIndex) nearestCentroidForIDLocked(id string, centroids [][]floa
 // and ok=false when the index has no embedding for id.
 func (ci *ClusterIndex) AssignToClustering(c *Clustering, id string) (previous int, wasMember bool, cluster int, ok bool) {
 	ci.mu.RLock()
+	c.mu.RLock()
 	cluster, ok = ci.nearestCentroidForIDLocked(id, c.centroids)
+	c.mu.RUnlock()
 	ci.mu.RUnlock()
 	if !ok {
 		return 0, false, 0, false
