@@ -58,11 +58,7 @@ func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 			select {
 			case event := <-created:
 				require.NotContains(t, event.Properties, hidden)
-				expectedID := string(id)
-				if namespace == "foreign" {
-					expectedID = namespace + ":" + expectedID
-				}
-				require.Equal(t, expectedID, event.ID)
+				require.Equal(t, string(id), event.ID)
 				require.Equal(t, props[retained], event.Properties[retained])
 				require.Equal(t, "visible", event.Properties["public"])
 			case <-time.After(time.Second):
