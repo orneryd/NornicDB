@@ -830,7 +830,9 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 		dropPool.enqueue(postExecuteJob{pluginName: "drop", hook: hook, ctx: &PostExecuteContext{Action: "drop"}})
 	})
 
-	dispatcher := &dbEventDispatcher{pluginQueues: make(map[string]*pluginEventQueue)}
+	dispatcher := &dbEventDispatcher{}
+	dispatcher.start()
+	t.Cleanup(dispatcher.stop)
 	dispatcher.ensurePluginQueueForPlugin(nil)
 	dispatcher.ensurePluginQueueForPlugin(&LoadedHeimdallPlugin{Plugin: newCoverageMinimalPlugin("plain")})
 	require.Empty(t, dispatcher.pluginQueues)
@@ -850,11 +852,7 @@ func TestHeimdallCoverage_PostExecuteAndEventQueueBranches(t *testing.T) {
 		}
 	}, time.Second, 10*time.Millisecond)
 
-	dispatcher.mu.Lock()
-	for _, queue := range dispatcher.pluginQueues {
-		queue.ch.Close()
-	}
-	dispatcher.mu.Unlock()
+	dispatcher.stop()
 }
 
 func TestHeimdallCoverage_BifrostConfirmationNoClients(t *testing.T) {

@@ -6,11 +6,8 @@ import (
 )
 
 func TestEventQueue_PublishAfterSnapshotClosed(t *testing.T) {
-	dispatcher := &dbEventDispatcher{
-		running:      true,
-		done:         make(chan struct{}),
-		pluginQueues: make(map[string]*pluginEventQueue),
-	}
+	dispatcher := &dbEventDispatcher{}
+	dispatcher.start()
 	t.Cleanup(dispatcher.stop)
 	hook := &coverageEventPlugin{
 		coverageMinimalPlugin: newCoverageMinimalPlugin("snapshot-close"),
