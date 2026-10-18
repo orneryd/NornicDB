@@ -57,7 +57,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 	require.NoError(t, err)
 	defer view.Close()
 	node.ChunkEmbeddings = [][]float32{{1, 2}}
-	node.EmbedMeta = map[string]any{"status": "new"}
+	node.EmbedMeta = map[string]any{"status": "new", "chunk_count": 1}
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
 	current, err := b.GetNode("test:a")
 	require.NoError(t, err)
@@ -84,10 +84,13 @@ func TestSnapshotOverlayProjectionDoesNotHydrateCachedVectors(t *testing.T) {
 	b.nodeCacheMu.Lock()
 	delete(b.nodeCache, "test:vector")
 	b.nodeCacheMu.Unlock()
+	light, err := b.GetNodeWithoutEmbeddings("test:vector")
+	require.NoError(t, err)
+	require.True(t, light.EmbeddingsStoredSeparately)
 	full, err := b.GetNode("test:vector")
 	require.NoError(t, err)
 	require.NotEmpty(t, full.ChunkEmbeddings)
-	require.True(t, full.EmbeddingsStoredSeparately)
+	require.False(t, full.EmbeddingsStoredSeparately)
 	projected, err := b.GetNodeProjected("test:vector", []string{"v"})
 	require.NoError(t, err)
 	require.Empty(t, projected.ChunkEmbeddings)
