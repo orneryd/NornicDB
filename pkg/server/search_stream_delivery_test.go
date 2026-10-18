@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,33 +23,45 @@ type pageDeliveryFaultWriter struct {
 }
 
 func TestSearchStreamDeliveryGraphQLOwner(t *testing.T) {
- s,users:=setupTestServer(t)
- alice:="Bearer "+getAuthToken(t,users,"admin")
- _,err:=users.CreateUser("delivery-other","password123",[]auth.Role{auth.RoleAdmin});require.NoError(t,err)
- bob:="Bearer "+getAuthToken(t,users,"delivery-other")
- database:=s.dbManager.DefaultDatabaseName()
- store,err:=s.dbManager.GetStorage(database);require.NoError(t,err)
- for _,id:=range []storage.NodeID{"a","b","c"} { _,err=store.CreateNode(&storage.Node{ID:id});require.NoError(t,err) }
- run:=func(token,statement string)map[string]any{
-  payload:=map[string]any{"query":"query($statement:String!){ cypher(input:{statement:$statement}){ rows } }",
-   "variables":map[string]any{"statement":statement}}
-  response:=makeRequest(t,s,http.MethodPost,"/graphql",payload,token)
-  var value map[string]any;require.NoError(t,json.Unmarshal(response.Body.Bytes(),&value),response.Body.String())
-  return value
- }
- started:=run(alice,"CALL db.retrieve({mode:'id',n:1})")
- require.Empty(t,started["errors"],started)
- qid:=findDeliveredSearchQID(started);require.NotEmpty(t,qid)
- wrong:=run(bob,fmt.Sprintf("CALL db.retrieve({qid:%q,n:1})",qid))
- require.NotEmpty(t,wrong["errors"],"shared registry retains authenticated owner binding")
- // HTTP transactions and GraphQL use the same database registry and owner.
- response:=makeRequest(t,s,http.MethodPost,"/db/"+database+"/tx/commit",
-  map[string]any{"statements":[]any{map[string]any{"statement":"CALL db.retrieve($request)","parameters":map[string]any{"request":map[string]any{"qid":qid,"n":1}}}}},alice)
- var pulled TransactionResponse;require.NoError(t,json.Unmarshal(response.Body.Bytes(),&pulled));require.Empty(t,pulled.Errors,response.Body.String())
- last:=run(alice,fmt.Sprintf("CALL db.retrieve({qid:%q,n:1})",qid));require.Empty(t,last["errors"],last)
- for i:=0;i<2;i++ { ended:=run(alice,fmt.Sprintf("CALL db.retrieve({qid:%q,discard:true})",qid));require.Empty(t,ended["errors"],ended) }
+	s, users := setupTestServer(t)
+	alice := "Bearer " + getAuthToken(t, users, "admin")
+	_, err := users.CreateUser("delivery-other", "password123", []auth.Role{auth.RoleAdmin})
+	require.NoError(t, err)
+	bob := "Bearer " + getAuthToken(t, users, "delivery-other")
+	database := s.dbManager.DefaultDatabaseName()
+	store, err := s.dbManager.GetStorage(database)
+	require.NoError(t, err)
+	for _, id := range []storage.NodeID{"a", "b", "c"} {
+		_, err = store.CreateNode(&storage.Node{ID: id})
+		require.NoError(t, err)
+	}
+	run := func(token, statement string) map[string]any {
+		payload := map[string]any{"query": "query($statement:String!){ cypher(input:{statement:$statement}){ rows } }",
+			"variables": map[string]any{"statement": statement}}
+		response := makeRequest(t, s, http.MethodPost, "/graphql", payload, token)
+		var value map[string]any
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &value), response.Body.String())
+		return value
+	}
+	started := run(alice, "CALL db.retrieve({mode:'id',n:1})")
+	require.Empty(t, started["errors"], started)
+	qid := findDeliveredSearchQID(started)
+	require.NotEmpty(t, qid)
+	wrong := run(bob, fmt.Sprintf("CALL db.retrieve({qid:%q,n:1})", qid))
+	require.NotEmpty(t, wrong["errors"], "shared registry retains authenticated owner binding")
+	// HTTP transactions and GraphQL use the same database registry and owner.
+	response := makeRequest(t, s, http.MethodPost, "/db/"+database+"/tx/commit",
+		map[string]any{"statements": []any{map[string]any{"statement": "CALL db.retrieve($request)", "parameters": map[string]any{"request": map[string]any{"qid": qid, "n": 1}}}}}, alice)
+	var pulled TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &pulled))
+	require.Empty(t, pulled.Errors, response.Body.String())
+	last := run(alice, fmt.Sprintf("CALL db.retrieve({qid:%q,n:1})", qid))
+	require.Empty(t, last["errors"], last)
+	for i := 0; i < 2; i++ {
+		ended := run(alice, fmt.Sprintf("CALL db.retrieve({qid:%q,discard:true})", qid))
+		require.Empty(t, ended["errors"], ended)
+	}
 }
-
 
 func (w pageDeliveryFaultWriter) WriteHeader(status int) {
 	w.ResponseRecorder.WriteHeader(status)
