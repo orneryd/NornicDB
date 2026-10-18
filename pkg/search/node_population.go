@@ -106,23 +106,24 @@ func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
 // nodePopulationAdmission is the NODE phase of the existing base operation,
 // not another worker or ANN job. baseBuildControlMu protects publication; err
 // is immutable after done closes. A caller waiting for NODE never waits for ANN.
-// baseBuildControlMu protects the queued live writes and indexMu the IDs
-// they wrote (node_population_writes.go); queued is set while any write is
-// queued.
+// baseBuildControlMu protects the queued live writes
+// (node_population_writes.go);
+// queued is set while any write is queued.
 type nodePopulationAdmission struct {
-	done         chan struct{}
-	err          error
-	deferred     []deferredIndexWrite
-	queued       atomic.Bool
-	writtenNodes map[string]struct{}
-	writtenEdges map[string]struct{}
+	done     chan struct{}
+	err      error
+	deferred []deferredIndexWrite
+	queued   atomic.Bool
 	// pendingOps counts queued operations that change a setting an entry
 	// decision reads (the dimension mode, the embedding space, the index
 	// flags) and are not applied yet; populated is set once its batches and
-	// stream are complete; bytes is the payload the queued operations retain.
+	// stream are complete; bytes is the payload the queued operations retain,
+	// headroom what the runtime's soft memory limit left when the job was
+	// claimed (-1: no limit is configured).
 	pendingOps int
 	populated  bool
 	bytes      int
+	headroom   int
 	// flags, when flagsQueued, are the index flags the queued SetIndexFlags
 	// calls leave (bm25, vector).
 	flags       [2]bool
@@ -144,7 +145,11 @@ func (s *Service) claimNodeAdmission() *nodePopulationAdmission {
 			return job
 		}
 	}
-	job := &nodePopulationAdmission{done: make(chan struct{})}
+	// The population reads its baseline through one storage snapshot, opened
+	// after this claim opens the queue (openPopulationSnapshot). On an engine
+	// without read snapshots writes wait for the population instead.
+	job := &nodePopulationAdmission{done: make(chan struct{}), headroom: memoryHeadroom()}
+	s.populationDeferring.Store(storage.SupportsReadSnapshot(context.Background(), s.engine))
 	s.nodeAdmission = job
 	s.populationRunning.Store(true)
 	return job
@@ -447,9 +452,11 @@ type nodePopulationPlan struct {
 	skipIteration    bool
 	forceHNSWRebuild bool
 	vectorCount      int
-	// relationships are the stored relationships an explicit build read where
-	// it reads its nodes (readStoredRelationships).
-	relationships []*storage.Edge
+	// snapshot is the storage snapshot the population reads its baseline
+	// through (nil without one); closeSnapshot closes it once the baseline is
+	// installed.
+	snapshot      storage.ReadSnapshotView
+	closeSnapshot func()
 }
 
 // completeNodePopulation publishes NODE before ANN. Initial live mutations use
@@ -460,7 +467,9 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.applyDeferredIndexWrites(job)
+	// Queued writes wait until the whole baseline is installed (the saved
+	// graph included): applying one before a restore would let the restore
+	// overwrite it.
 	s.indexMu.Lock()
 	if err := ctx.Err(); err != nil {
 		s.indexMu.Unlock()
@@ -483,6 +492,7 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	}
 	s.indexMu.Unlock()
 	if !explicit {
+		plan.closeBaseline()
 		s.completePopulationSequence(job)
 		s.finishNodeAdmission(job, nil)
 		return nil
@@ -496,11 +506,13 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// The explicit build applies stored edges from a snapshot stream. Live
-	// edge writes meanwhile are queued, and an edge one of them wrote is never
-	// replaced by the stream's older copy.
+	// The explicit build streams the stored edges from its snapshot. Live
+	// edge writes meanwhile are queued and applied after it, so none is
+	// overtaken by the stream's older copy.
 	s.setBuildPhase("iterating_relationship_vectors")
-	if err := s.buildRelationshipVectorIndexes(ctx, job, plan.relationships); err != nil {
+	err := s.buildRelationshipVectorIndexes(ctx, job, plan.snapshot)
+	plan.closeBaseline()
+	if err != nil {
 		// The node population is complete; a relationship failure does
 		// not undo it, so a retry keeps skipping the node iteration.
 		s.finishNodeAdmission(job, nil)
@@ -577,5 +589,13 @@ func (s *Service) nodePopulationForPersist(ctx context.Context) bool {
 		return s.nodePopulationCanPersist()
 	default:
 		return false
+	}
+}
+
+// closeBaseline closes the population's storage snapshot once its baseline
+// is installed, before the queued writes are applied.
+func (plan nodePopulationPlan) closeBaseline() {
+	if plan.closeSnapshot != nil {
+		plan.closeSnapshot()
 	}
 }

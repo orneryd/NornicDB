@@ -39,6 +39,15 @@ func (e *countingStoreEngine) AllNodes() ([]*storage.Node, error) {
 	return e.BadgerEngine.AllNodes()
 }
 
+// OpenReadSnapshot counts a node read through the population's snapshot too.
+func (e *countingStoreEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.BadgerEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error { e.iterations.Add(1); return nil }}, nil
+}
+
 func compatStoreService(engine storage.Engine, dir string) *Service {
 	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
 	svc.FixVectorDimensions()

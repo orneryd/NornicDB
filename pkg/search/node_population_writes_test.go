@@ -43,6 +43,49 @@ func (e *snapshotGateEngine) open() {
 	}
 }
 
+// OpenReadSnapshot gates the population's node read through its snapshot, as
+// IterateNodes gates a read of the engine itself.
+func (e *snapshotGateEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.MemoryEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error {
+		if callerOnStack("runBasePopulationAttempt") {
+			e.once.Do(func() { close(e.entered) })
+			<-e.release
+		}
+		return nil
+	}}, nil
+}
+
+// hookedReadSnapshot runs a test engine's hook before the population reads
+// through its snapshot, as the engine's own scans run it. The snapshot's
+// content is fixed when it opens, so a hook that parks lets the test change
+// storage after the population's read point.
+type hookedReadSnapshot struct {
+	storage.ReadSnapshotView
+	beforeNodes, beforeEdges func() error
+}
+
+func (s *hookedReadSnapshot) IterateNodes(fn func(*storage.Node) bool) error {
+	if s.beforeNodes != nil {
+		if err := s.beforeNodes(); err != nil {
+			return err
+		}
+	}
+	return s.ReadSnapshotView.IterateNodes(fn)
+}
+
+func (s *hookedReadSnapshot) StreamEdges(ctx context.Context, fn func(*storage.Edge) error) error {
+	if s.beforeEdges != nil {
+		if err := s.beforeEdges(); err != nil {
+			return err
+		}
+	}
+	return s.ReadSnapshotView.StreamEdges(ctx, fn)
+}
+
 func (e *snapshotGateEngine) IterateNodes(fn func(*storage.Node) bool) error {
 	var snapshot []*storage.Node
 	if err := e.MemoryEngine.IterateNodes(func(node *storage.Node) bool {

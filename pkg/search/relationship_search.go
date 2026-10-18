@@ -191,13 +191,12 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 
 // IndexRelationship indexes or re-indexes a relationship for relationship
 // search; a no-op when it is off. During a population it is ordered with the
-// population sequence (queueOnPopulation).
+// population sequence (orderRelationshipUpdate).
 func (s *Service) IndexRelationship(edge *storage.Edge) {
 	if rs := s.relationshipSearch(); rs != nil && edge != nil && edge.ID != "" {
-		write := deferredIndexWrite{edge: edge, relationship: true}
-		if queued, _, _ := s.queueOnPopulation(write); !queued {
+		s.orderRelationshipUpdate(deferredIndexWrite{edge: edge, relationship: true}, func() {
 			s.indexRelationship(rs, edge, nil, false)
-		}
+		})
 	}
 }
 
@@ -264,15 +263,15 @@ func (s *Service) WakeRelationshipEmbedding() {
 
 // RemoveRelationship drops a relationship from relationship search; a no-op
 // when it is off. During a population it is ordered with the population
-// sequence (queueOnPopulation).
+// sequence (orderRelationshipUpdate).
 func (s *Service) RemoveRelationship(id storage.EdgeID) {
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return
 	}
-	if queued, _, _ := s.queueOnPopulation(deferredIndexWrite{edgeID: string(id), relationship: true}); !queued {
+	s.orderRelationshipUpdate(deferredIndexWrite{edgeID: string(id), relationship: true}, func() {
 		s.removeRelationship(rs, id)
-	}
+	})
 }
 
 func (s *Service) removeRelationship(rs *relationshipSearch, id storage.EdgeID) {

@@ -26,6 +26,22 @@ func (e *authoritativeSourceEngine) IterateNodes(fn func(*storage.Node) bool) er
 	return e.MemoryEngine.IterateNodes(fn)
 }
 
+// OpenReadSnapshot counts and denies a node read through the snapshot, as
+// IterateNodes does for a read of the engine itself.
+func (e *authoritativeSourceEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.MemoryEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error {
+		e.nodeReads++
+		if e.denyNodeRead {
+			return errors.New("valid fresh artifacts must skip node traversal")
+		}
+		return nil
+	}}, nil
+}
+
 func (e *authoritativeSourceEngine) AllNodes() ([]*storage.Node, error) {
 	e.nodeReads++
 	if e.denyNodeRead {

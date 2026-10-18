@@ -54,9 +54,10 @@ type deferredIndexWrite struct {
 }
 
 // populationDefersWrites reports whether live writes are queued during a
-// population (no index memory budget is configured).
+// population: the population reads through a storage snapshot and no index
+// memory budget is configured.
 func (s *Service) populationDefersWrites() bool {
-	return s.bm25MemoryMaxBytes <= 0 && s.vectorMemoryMaxBytes <= 0 && s.metadataMemoryMaxBytes <= 0
+	return s.populationDeferring.Load() && s.bm25MemoryMaxBytes <= 0 && s.vectorMemoryMaxBytes <= 0 && s.metadataMemoryMaxBytes <= 0
 }
 
 // queueOnPopulation prepares write for the running population and reports
@@ -68,11 +69,11 @@ func (s *Service) populationDefersWrites() bool {
 // change is queued. An error from the checks the live path reports is
 // returned and nothing is queued. wait reports that the outcome depends on
 // the operations ahead (vectorNeedsOrderedDecision, a queued setting change)
-// or that queuing would pass the runtime's memory limit
-// (queueFitsMemoryLimit): the write waits for the population and the live
+// or that the copy does not fit the queue's memory reservation
+// (fitsLocked): the write waits for the population and the live
 // path decides it in order. Only callers that can wait in order
-// (lockNodeMutation) are refused; administrative operations and
-// relationship-search updates are always queued.
+// (lockNodeMutation, orderRelationshipUpdate) are refused; administrative
+// operations carry no payload and are always queued.
 func (s *Service) queueOnPopulation(write deferredIndexWrite) (queued, wait bool, err error) {
 	if !s.populationRunning.Load() || !s.populationDefersWrites() {
 		return false, false, nil
@@ -112,14 +113,13 @@ func (s *Service) queueOnPopulation(write deferredIndexWrite) (queued, wait bool
 	write.node, nodeSize = copyQueuedNode(write.node)
 	write.edge, edgeSize = copyQueuedEdge(write.edge)
 	write.size = max(nodeSize+edgeSize, queuedEntryBytes)
-	holdable := write.apply == nil && !write.relationship
 	s.baseBuildControlMu.Lock()
 	defer s.baseBuildControlMu.Unlock()
 	job := s.nodeAdmission
 	if job == nil || nodeAdmissionClosed(job) || s.baseBuildPaused > 0 {
 		return false, false, nil
 	}
-	if holdable && len(job.deferred) > 0 && !queueFitsMemoryLimit(write.size) {
+	if write.apply == nil && !job.fitsLocked(write.size) {
 		return false, true, nil
 	}
 	job.deferred = append(job.deferred, write)
@@ -131,29 +131,39 @@ func (s *Service) queueOnPopulation(write deferredIndexWrite) (queued, wait bool
 	return true, false, nil
 }
 
-// queueFitsMemoryLimit reports whether size more queued bytes keep the live
-// heap within the Go runtime's soft memory limit (memory.runtime_limit,
-// GOMEMLIMIT), the process's configured memory budget. A write that would
-// pass it waits for the population, as every write did before writes were
-// queued on it, so a long population under a sustained write stream holds at
-// most what the budget leaves. Without a configured limit the queue is not
+// fitsLocked reports whether size more retained bytes fit the job's
+// reservation. Caller holds baseBuildControlMu.
+func (job *nodePopulationAdmission) fitsLocked(size int) bool {
+	return job.headroom < 0 || job.bytes+size <= job.headroom
+}
+
+// memoryHeadroom is what the Go runtime's soft memory limit
+// (memory.runtime_limit, GOMEMLIMIT), the process's configured memory budget,
+// leaves above the live heap: the reservation every copy the queue retains is
+// counted against, so the queue holds at most what the budget leaves and a
+// copy past it waits for the population, as every write did before writes
+// were queued on it. -1 means no limit is configured: the queue is then not
 // bounded beyond the process's memory, as the runtime is not.
-func queueFitsMemoryLimit(size int) bool {
+func memoryHeadroom() int {
 	limit := debug.SetMemoryLimit(-1)
 	if limit == math.MaxInt64 {
-		return true
+		return -1
 	}
 	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
 	metrics.Read(sample)
 	if sample[0].Value.Kind() != metrics.KindUint64 {
-		return true
+		return -1
 	}
-	return sample[0].Value.Uint64()+uint64(size) <= uint64(limit)
+	live := sample[0].Value.Uint64()
+	if live >= uint64(limit) {
+		return 0
+	}
+	return int(uint64(limit) - live)
 }
 
 // orderIndexFlags is SetIndexFlags in the population sequence. changed is
 // decided against the flags the operations ahead leave, as in the serial
-// order.
+// order, in the same section that publishes this call's flags.
 func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
 	set := func() {
 		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
@@ -162,6 +172,7 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 			s.indexChanged()
 		}
 	}
+	next := [2]bool{bm25Enabled, vectorEnabled}
 	if s.populationRunning.Load() && s.populationDefersWrites() {
 		s.baseBuildControlMu.Lock()
 		job := s.nodeAdmission
@@ -170,13 +181,14 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 			if job.flagsQueued {
 				previous = job.flags
 			}
-			job.flags, job.flagsQueued = [2]bool{bm25Enabled, vectorEnabled}, true
+			changed = previous != next
+			job.flags, job.flagsQueued = next, true
 			job.deferred = append(job.deferred, deferredIndexWrite{apply: set, dims: true, size: queuedEntryBytes})
 			job.bytes += queuedEntryBytes
 			job.pendingOps++
 			job.queued.Store(true)
 			s.baseBuildControlMu.Unlock()
-			return previous != job.flags
+			return changed
 		}
 		s.baseBuildControlMu.Unlock()
 	}
@@ -185,6 +197,25 @@ func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool
 	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
 	set()
 	return changed
+}
+
+// orderRelationshipUpdate runs update, a relationship-search update, in the
+// population sequence: queued with write, or, when its copy does not fit the
+// queue's reservation, after the population; otherwise now.
+func (s *Service) orderRelationshipUpdate(write deferredIndexWrite, update func()) {
+	queued, wait, _ := s.queueOnPopulation(write)
+	if queued {
+		return
+	}
+	if wait {
+		s.baseBuildControlMu.Lock()
+		job := s.nodeAdmission
+		s.baseBuildControlMu.Unlock()
+		if job != nil {
+			_ = s.awaitNodeAdmission(job)
+		}
+	}
+	update()
 }
 
 // vectorNeedsOrderedDecision is the one owner of the dimension decision for an
@@ -501,12 +532,11 @@ func (s *Service) applyDeferredIndexWrites(job *nodePopulationAdmission) {
 	s.baseBuildControlMu.Unlock()
 }
 
-// applyDeferredIndexWritesLocked applies queued writes in arrival order. An ID
-// is recorded as written only once its write applied: a write that failed
-// leaves the population's storage copy in force, as a failed write that
-// waited would have, and so does a write its valid hook reports superseded.
-// Each write reads the settings of its own turn (an earlier operation in the
-// same batch may change them). Caller holds indexMu and is the population.
+// applyDeferredIndexWritesLocked applies queued writes in arrival order, after
+// the population's baseline: nothing from the baseline is applied after them.
+// A write its valid hook reports superseded is skipped. Each write reads the
+// settings of its own turn (an earlier operation in the same batch may change
+// them). Caller holds indexMu and is the population.
 func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, writes []deferredIndexWrite) (ops int) {
 	for _, write := range writes {
 		if write.valid != nil && !write.valid() {
@@ -522,25 +552,17 @@ func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, w
 			if err = s.admitNodeWriteLocked(true); err == nil {
 				err = s.indexNodeAsLocked(write.node, !s.bm25Enabled.Load(), write.current)
 			}
-			if err == nil {
-				job.markNodeWrittenLocked(string(write.node.ID))
-			}
 		case write.nodeID != "":
 			if err = s.admitNodeWriteLocked(true); err == nil {
 				s.removeNodeLocked(write.nodeID)
-				job.markNodeWrittenLocked(write.nodeID)
 			}
 		case write.edge != nil:
 			if err = s.admitNodeWriteLocked(false); err == nil {
 				err = s.indexEdgeLocked(write.edge)
 			}
-			if err == nil {
-				job.markEdgeWrittenLocked(string(write.edge.ID))
-			}
 		case write.edgeID != "":
 			if err = s.admitNodeWriteLocked(false); err == nil {
 				s.removeEdgeLocked(write.edgeID)
-				job.markEdgeWrittenLocked(write.edgeID)
 			}
 		case write.apply != nil:
 			write.apply()
@@ -553,37 +575,4 @@ func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, w
 		}
 	}
 	return ops
-}
-
-func (job *nodePopulationAdmission) markNodeWrittenLocked(id string) {
-	if job.writtenNodes == nil {
-		job.writtenNodes = make(map[string]struct{})
-	}
-	job.writtenNodes[id] = struct{}{}
-}
-
-func (job *nodePopulationAdmission) markEdgeWrittenLocked(id string) {
-	if job.writtenEdges == nil {
-		job.writtenEdges = make(map[string]struct{})
-	}
-	job.writtenEdges[id] = struct{}{}
-}
-
-// nodeWrittenLocked reports whether a queued write set this node, so the
-// population's storage copy, read before it or not, must not replace it.
-// Caller holds indexMu.
-func (job *nodePopulationAdmission) nodeWrittenLocked(id string) bool {
-	if job == nil {
-		return false
-	}
-	_, ok := job.writtenNodes[id]
-	return ok
-}
-
-func (job *nodePopulationAdmission) edgeWrittenLocked(id string) bool {
-	if job == nil {
-		return false
-	}
-	_, ok := job.writtenEdges[id]
-	return ok
 }

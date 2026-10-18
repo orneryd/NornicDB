@@ -800,6 +800,10 @@ type Service struct {
 	// outside a population skips the queue with one atomic load.
 	populationRunning atomic.Bool
 
+	// populationDeferring is set when the running population reads its
+	// baseline through a storage snapshot; without one writes wait for it.
+	populationDeferring atomic.Bool
+
 	// indexMu protects which complete source owns live membership, including
 	// an empty source after clear or a persistence-off interval.
 	nodeSources            nodeSourceRecord
@@ -3947,64 +3951,56 @@ func (s *Service) removePropertyVectorIndexLocked(propertyKey string) {
 	}
 }
 
-// readStoredRelationships reads the stored relationships for the build's
-// relationship phase at the point where the build reads its node snapshot, so
-// both phases see storage at one point and every write handed over after it
-// (IndexEdge, RemoveEdge, an index-flag change, a refresh) is installed after
-// it, in order, as for nodes. It keeps what the phase reads: each edge's ID,
-// type and endpoints, and its vector-shaped properties; no other property
-// value is retained.
-func (s *Service) readStoredRelationships(ctx context.Context) ([]*storage.Edge, error) {
-	if s == nil || !s.vectorEnabled.Load() {
-		return nil, nil
+// openPopulationSnapshot opens the storage snapshot the population reads its
+// baseline through, when its writes are queued (the engine supports
+// snapshots). The returned close is idempotent; the population closes the
+// snapshot once its baseline is installed, before queued writes are applied.
+func (s *Service) openPopulationSnapshot(ctx context.Context) (storage.ReadSnapshotView, func(), error) {
+	if !s.populationDeferring.Load() {
+		return nil, func() {}, nil
 	}
-	var edges []*storage.Edge
-	err := storage.StreamEdgesWithFallback(ctx, s.engine, 1000, func(edge *storage.Edge) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		kept := &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
-		if edge.Properties != nil {
-			kept.Properties = make(map[string]any)
-			for key, value := range edge.Properties {
-				// Kept as the index stores it, converted once.
-				if vec := toFloat32SliceAny(value); len(vec) > 0 {
-					kept.Properties[key] = vec
-				}
-			}
-		}
-		edges = append(edges, kept)
-		return nil
-	})
-	return edges, err
+	snapshot, err := storage.OpenReadSnapshot(ctx, s.engine)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	var once sync.Once
+	return snapshot, func() { once.Do(snapshot.Close) }, nil
 }
 
-// buildRelationshipVectorIndexes applies, for the population job, the stored
-// relationships the build read with its node snapshot
-// (readStoredRelationships). Live writes queued on it are applied between
-// edges, and an edge one of them wrote keeps that write rather than this copy.
-func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodePopulationAdmission, edges []*storage.Edge) error {
+// populationNodeIterator is the node source of the population: its
+// snapshot, or the engine's own iterator when it has none.
+func (s *Service) populationNodeIterator(snapshot storage.ReadSnapshotView) NodeIterator {
+	if snapshot != nil {
+		return snapshot
+	}
+	if iterator, ok := s.engine.(NodeIterator); ok {
+		return iterator
+	}
+	return nil
+}
+
+// buildRelationshipVectorIndexes installs the stored relationships' vectors
+// for the population job, streamed from its snapshot (the engine itself when
+// it has none). Live writes queued meanwhile are applied after the baseline
+// (completePopulationSequence), so none is overtaken by this stream's copy.
+func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodePopulationAdmission, snapshot storage.ReadSnapshotView) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
 	}
-	for i, edge := range edges {
+	install := func(edge *storage.Edge) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		edges[i] = nil // released as the phase goes
-		s.applyDeferredIndexWrites(job)
 		s.adoptPopulationDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		var err error
-		if !job.edgeWrittenLocked(string(edge.ID)) {
-			err = s.indexEdgeLocked(edge)
-		}
+		err := s.indexEdgeLocked(edge)
 		s.indexMu.Unlock()
-		if err != nil {
-			return err
-		}
+		return err
 	}
-	return nil
+	if snapshot != nil {
+		return snapshot.StreamEdges(ctx, install)
+	}
+	return storage.StreamEdgesWithFallback(ctx, s.engine, 1000, install)
 }
 
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
@@ -4079,6 +4075,16 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 	if explicit {
 		s.buildAttempted.Store(true)
 	}
+	// The population reads its baseline (nodes, relationships) through one
+	// storage snapshot, opened after the queue (claimNodeAdmission): a write
+	// whose search call ran live before the queue opened committed before the
+	// snapshot, which therefore holds it. Queued writes are applied after the
+	// baseline, in order (completePopulationSequence).
+	snapshot, closeSnapshot, snapErr := s.openPopulationSnapshot(ctx)
+	if snapErr != nil {
+		return snapErr
+	}
+	defer closeSnapshot()
 	// A checkpoint parked by an earlier attempt that could not restore it is
 	// restored now; a retired one leaves the text source incomplete, so this
 	// population rebuilds BM25 from storage.
@@ -4386,17 +4392,8 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 		fulltextPath = ""
 	}
 
-	// An explicit build's relationship phase reads storage where the node
-	// phase does, before any queued write is applied (readStoredRelationships).
-	var relationships []*storage.Edge
-	if explicit {
-		var readErr error
-		if relationships, readErr = s.readStoredRelationships(ctx); readErr != nil {
-			return readErr
-		}
-	}
 	if skipIteration {
-		return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, skipIteration: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: vectorCount, relationships: relationships}, explicit)
+		return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, skipIteration: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: vectorCount, snapshot: snapshot, closeSnapshot: closeSnapshot}, explicit)
 	}
 
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
@@ -4428,19 +4425,9 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 		if count == 0 && len(batch) > 0 {
 			s.adoptPopulationDimensions(firstVectorDimensions(batch[0]))
 		}
-		// Live writes queued since the last batch are applied first; a node
-		// one of them wrote keeps that write, whether this batch read the
-		// node before or after it.
-		s.applyDeferredIndexWrites(job)
-		filtered := make([]*storage.Node, 0, len(batch))
-		s.indexMu.RLock()
-		for _, n := range batch {
-			if job.nodeWrittenLocked(string(n.ID)) {
-				continue
-			}
-			filtered = append(filtered, n)
-		}
-		s.indexMu.RUnlock()
+		// Live writes queued meanwhile wait for the whole baseline
+		// (completePopulationSequence), so this batch is the snapshot's copy.
+		filtered := append(make([]*storage.Node, 0, len(batch)), batch...)
 		kept := filtered[:0]
 		for _, n := range filtered {
 			shouldIndex, err := s.shouldIndexNode(n)
@@ -4530,7 +4517,7 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 		return nil
 	}
 	var iterationErr, callbackErr error
-	if iterator, ok := s.engine.(NodeIterator); ok {
+	if iterator := s.populationNodeIterator(snapshot); iterator != nil {
 		iterationErr = iterator.IterateNodes(func(node *storage.Node) bool {
 			callbackErr = acceptNode(node)
 			return callbackErr == nil
@@ -4555,7 +4542,7 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 	}
 	s.logPrintf("📊 Indexed %d total nodes", count)
 	s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
-	return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, nodesRebuilt: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: s.EmbeddingCount(), relationships: relationships}, explicit)
+	return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, nodesRebuilt: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: s.EmbeddingCount(), snapshot: snapshot, closeSnapshot: closeSnapshot}, explicit)
 }
 
 // completeBaseIndexBuild is shared by restored and rebuilt node sources. Node

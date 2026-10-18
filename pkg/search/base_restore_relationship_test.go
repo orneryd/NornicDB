@@ -38,6 +38,26 @@ func (e *relationshipRestoreTraversalGuard) StreamEdges(ctx context.Context, fn 
 	return e.NamespacedEngine.StreamEdges(ctx, fn)
 }
 
+// OpenReadSnapshot counts the reads through the snapshot and fails them as
+// the engine's own IterateNodes and StreamEdges do.
+func (e *relationshipRestoreTraversalGuard) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.NamespacedEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error {
+		e.nodeTraversals++
+		return errors.New("restored node artifacts must skip node traversal")
+	}, beforeEdges: func() error {
+		e.edgeStreams++
+		return e.edgeErr
+	}}, nil
+}
+
+// relationshipRestoreWithoutSnapshot hides the guard's streaming and read
+// snapshots, like an engine that has neither.
+type relationshipRestoreWithoutSnapshot struct{ storage.Engine }
+
 func (e *relationshipRestoreTraversalGuard) AllEdges() ([]*storage.Edge, error) {
 	e.edgeFallbacks++
 	if e.edgeErr != nil {
@@ -48,9 +68,9 @@ func (e *relationshipRestoreTraversalGuard) AllEdges() ([]*storage.Edge, error) 
 
 func TestBaseRestoreLoadsCompleteRelationshipPopulation(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
-		for _, traced := range []bool{false, true} {
+		for _, wrapper := range []string{"none", "traced", "snapshotless"} {
 			for _, kind := range []string{"oversized_payload", "aggregate_payload", "oversized_metadata", "aggregate_metadata", "existing_edge_headroom", "traversal_error", "within_budget", "unlimited"} {
-				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/%s/%s", backend, wrapper, kind), func(t *testing.T) {
 					ctx := context.Background()
 					base := storage.NewMemoryEngine()
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
@@ -87,11 +107,17 @@ func TestBaseRestoreLoadsCompleteRelationshipPopulation(t *testing.T) {
 					require.NoError(t, first.Close())
 					guard := &relationshipRestoreTraversalGuard{NamespacedEngine: engine}
 					var source storage.Engine = guard
-					if traced {
+					switch wrapper {
+					case "traced":
+						// No StreamEdges of its own; it forwards the read snapshot.
 						source = storage.NewTracedEngine(guard)
+					case "snapshotless":
+						// Neither: relationships are read through the AllEdges fallback.
+						source = relationshipRestoreWithoutSnapshot{guard}
 					}
 					_, streaming := source.(storage.StreamingEngine)
-					require.Equal(t, !traced, streaming)
+					require.Equal(t, wrapper == "none", streaming)
+					require.Equal(t, wrapper != "snapshotless", storage.SupportsReadSnapshot(ctx, source))
 					options := &ServiceOptions{}
 					wantEdges, wantResident, reject := 1, int64(12), true
 					wantError := ErrIndexMemoryBudgetExceeded
@@ -135,10 +161,10 @@ func TestBaseRestoreLoadsCompleteRelationshipPopulation(t *testing.T) {
 							assert.True(t, svc.IsReady())
 						}
 						assert.Zero(t, guard.nodeTraversals, "valid artifacts must retain the node-skip optimization")
-						if traced {
+						if wrapper == "snapshotless" {
 							assert.Greater(t, guard.edgeFallbacks, pass, "restoration must populate relationships through fallback")
 						} else {
-							assert.Greater(t, guard.edgeStreams, pass, "restoration must populate relationships through streaming")
+							assert.Greater(t, guard.edgeStreams, pass, "restoration must populate relationships through its read snapshot")
 						}
 						assert.Len(t, svc.edgePropVector, wantEdges)
 						assert.Len(t, svc.edgeTypes, wantEdges)
