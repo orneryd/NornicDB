@@ -39,3 +39,31 @@ func TestResolvedAccess(t *testing.T) {
 		t.Errorf("ResolvedAccess: got Read=%v Write=%v", ra.Read, ra.Write)
 	}
 }
+
+func TestResolveDatabaseReadAccess(t *testing.T) {
+	access := map[string]ResolvedAccess{
+		"nornic":     {Read: true},
+		"named":      {Read: true},
+		"write_only": {Write: true},
+	}
+	resolve := func(database string) ResolvedAccess { return access[database] }
+
+	for _, database := range []string{"nornic", "named"} {
+		accessible, readable := ResolveDatabaseReadAccess(FullDatabaseAccessMode, resolve, database)
+		if !accessible || !readable {
+			t.Fatalf("%s: got accessible=%v readable=%v", database, accessible, readable)
+		}
+	}
+	accessible, readable := ResolveDatabaseReadAccess(FullDatabaseAccessMode, resolve, "write_only")
+	if !accessible || readable {
+		t.Fatalf("write_only: got accessible=%v readable=%v", accessible, readable)
+	}
+	accessible, readable = ResolveDatabaseReadAccess(DenyAllDatabaseAccessMode, resolve, "nornic")
+	if accessible || readable {
+		t.Fatalf("deny-all: got accessible=%v readable=%v", accessible, readable)
+	}
+	accessible, readable = ResolveDatabaseReadAccess(nil, nil, "nornic")
+	if !accessible || !readable {
+		t.Fatalf("authorization disabled: got accessible=%v readable=%v", accessible, readable)
+	}
+}

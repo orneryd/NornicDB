@@ -86,7 +86,10 @@ func (r *queryResolver) queryNodeCount(ctx context.Context, label *string) (int,
 		}
 		return len(nodes), nil
 	}
-	stats := r.stats()
+	_, stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.NodeCount), nil
 }
 
@@ -166,7 +169,10 @@ func (r *queryResolver) queryRelationshipCount(ctx context.Context, typeArg *str
 		}
 		return len(edges), nil
 	}
-	stats := r.stats()
+	_, stats, err := r.stats(ctx)
+	if err != nil {
+		return 0, err
+	}
 	return util.ClampInt64ToInt(stats.EdgeCount), nil
 }
 
@@ -314,9 +320,15 @@ func (r *queryResolver) queryCypher(ctx context.Context, input models.CypherInpu
 
 // QueryStats returns database statistics
 func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, error) {
-	stats := r.stats()
+	database, stats, err := r.stats(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	labels, _ := r.getLabels(ctx)
+	labels, err := r.getLabels(ctx)
+	if err != nil {
+		return nil, err
+	}
 	labelStats := make([]*models.LabelStats, 0, len(labels))
 	for _, label := range labels {
 		// Use Cypher COUNT for accurate label counts
@@ -332,7 +344,10 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		labelStats = append(labelStats, &models.LabelStats{Label: label, Count: count})
 	}
 
-	relTypes, _ := r.getRelationshipTypes(ctx)
+	relTypes, err := r.getRelationshipTypes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	typeStats := make([]*models.RelationshipTypeStats, 0, len(relTypes))
 	for _, typ := range relTypes {
 		// Use Cypher COUNT for accurate relationship counts
@@ -348,11 +363,7 @@ func (r *queryResolver) queryStats(ctx context.Context) (*models.DatabaseStats, 
 		typeStats = append(typeStats, &models.RelationshipTypeStats{Type: typ, Count: count})
 	}
 
-	searchStats := r.DB.GetSearchStats()
-	embeddedCount := 0
-	if searchStats != nil {
-		embeddedCount = searchStats.EmbeddingCount
-	}
+	embeddedCount, _, _ := r.DB.GetDatabaseManagedEmbeddingStats(database)
 
 	return &models.DatabaseStats{
 		NodeCount:         util.ClampInt64ToInt(stats.NodeCount),
