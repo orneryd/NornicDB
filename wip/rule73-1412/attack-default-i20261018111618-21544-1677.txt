@@ -1,0 +1,44 @@
+tnrun: job i20261018111618-21544-1677: wt-fmem1412-test@7f42f0ff, 2 untracked file(s); submitted in 2.8s
+tnrun: running
+tnrun job i20261018111618-21544-1677 (wt-fmem1412-test@7f42f0ff): worker 1, CPUs 6,7,70,71, commit 7f42f0ffa2bdd707dfa0dc6ce2d16c5130b37118, go1.26.9
+untracked files: overlaid i20261018111618-21544-1677.tar
+prep ui: npm ci && npm run build in 14s
+prep llama v0.4.1: cached
+
+=== parser default: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test -race -count=1 -v -timeout 90m -run ^TestZZRule73Attack$ ./pkg/cypher
+=== RUN   TestZZRule73Attack
+    zz_rule73_attack_test.go:200: R73	S/P pipeline label scan candidates (collectNodesWithStreamingProjection, heldNodeList)	over=FAIL(other error: The allocation of an extra 64.0 KiB would use more than the limit 625.0 KiB. Currently using 576.1 KiB. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P index seek candidates + ID sets (lookupPatternCandidatesUsingPropertyIndex)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 105 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P index seek, WHERE equality (tryCollectNodesFromPropertyIndexAnyOf)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P index seek IN list (tryCollectNodesFromPropertyIndexIn*)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P index seek, explicit transaction (propertyIndexLookup merge)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P label scan, explicit transaction (transactionStorageWrapper reads)	over=FAIL(other error: The allocation of an extra 64.0 KiB would use more than the limit 625.0 KiB. Currently using 576.1 KiB. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P MERGE label-scan candidates (findMergeNodesScanned)	over=FAIL(other error: The allocation of an extra 2.4 MiB would use more than the limit 1.2 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	S MERGE relationship identity cache (relationshipMergeIdentityCache.entries)	over=FAIL(other error: The allocation of an extra 1.2 MiB would use more than the limit 625.0 KiB. Currently using 1.1 KiB. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P DELETE … LIMIT candidates (collectDeleteWithLimitCandidates)	over=FAIL(no error at 1280000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	S deleted-entity sets (deletedEntities) + DETACH DELETE	over=FAIL(other error: The allocation of an extra 64.0 KiB would use more than the limit 1.2 MiB. Currently using 1.2 MiB. db.memory.transaction.max threshold reached) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	P relationship-type seeds (relationshipTypeSeedNodes)	over=FAIL(other error: The allocation of an extra 625.0 KiB would use more than the limit 312.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P undirected type count (countUndirectedRelationshipMatches)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=FAIL(3334144 bytes: The allocation of an extra 64.0 KiB would use more than the limit 3.2 MiB. Currently using 3.1 MiB. db.memory.transaction.max threshold reached) zero=ok
+    zz_rule73_attack_test.go:200: R73	P fast single-hop aggregation (getEdgesByTypeFast, batchGetNodesFast)	over=FAIL(other error: The allocation of an extra 120 B would use more than the limit 1.8 MiB. Currently using 1.8 MiB. db.memory.transaction.max threshold reached) near=FAIL(6406144 bytes: The allocation of an extra 8.1 MiB would use more than the limit 6.1 MiB. Currently using 5.0 MiB. db.memory.transaction.max threshold reached) zero=ok
+    zz_rule73_attack_test.go:200: R73	S traversal paths/nodeCache (TraversalContext) one hop from a hub	over=FAIL(no error at 960000 bytes) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	S path search adjacency cache + frontier (pathSearch.edges, pathSearchWalkSide)	over=FAIL(no error at 960000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	R reviewed one-node read: existence check on a hub (evaluateRelationshipPatternInWhere / traversalEdges)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	R reviewed one-node read: degree count (nodeDegreeCount)	over=FAIL(no error at 960000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	S pattern comprehension over a hub	over=FAIL(other error: The allocation of an extra 120 B would use more than the limit 937.5 KiB. Currently using 937.5 KiB. db.memory.transaction.max threshold reached) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	S quantified path state (quantifiedPathState) from a hub	over=FAIL(other error: The allocation of an extra 120 B would use more than the limit 937.5 KiB. Currently using 937.5 KiB. db.memory.transaction.max threshold reached) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	P temporal viewport loader (loadNodesWithTemporalViewport) via OPTIONAL MATCH	over=FAIL(no error at 1280000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P db.labels (AllNodes)	over=FAIL(other error: The allocation of an extra 11.0 MiB would use more than the limit 4.0 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P db.relationshipTypes (AllEdges)	over=FAIL(other error: The allocation of an extra 4.3 MiB would use more than the limit 2.1 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P db.propertyKeys (AllNodes + AllEdges)	over=FAIL(other error: The allocation of an extra 11.0 MiB would use more than the limit 6.1 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P db.schema.nodeTypeProperties	over=FAIL(other error: The allocation of an extra 11.0 MiB would use more than the limit 4.0 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P db.stats.retrieve GRAPH COUNTS	over=FAIL(other error: The allocation of an extra 11.0 MiB would use more than the limit 6.1 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=ok zero=ok
+    zz_rule73_attack_test.go:200: R73	P fulltext queryNodes scan	over=FAIL(other error: The allocation of an extra 11.0 MiB would use more than the limit 4.0 MiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	P APOC algorithm input (algorithmNodes, wcc)	over=FAIL(other error: The allocation of an extra 1.8 MiB would use more than the limit 937.5 KiB. Currently using 0 B. db.memory.transaction.max threshold reached) near=n/a zero=ok
+    zz_rule73_attack_test.go:200: R73	S APOC path expansion from a hub (apocExpansion)	over=FAIL(other error: The allocation of an extra 1.1 KiB would use more than the limit 937.5 KiB. Currently using 937.5 KiB. db.memory.transaction.max threshold reached) near=n/a zero=ok
+Terminated
+=== parser default: exit 143 after 3538s
+
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test -race -count=1 -v -timeout 90m -run ^TestZZRule73Attack$ ./pkg/cypher
+Terminated
+=== parser antlr: exit 143 after 0s
+tnrun: job i20261018111618-21544-1677: DONE exit 143 (default 143 in 3538s, antlr 143 in 0s); box 3553s, total 3558s

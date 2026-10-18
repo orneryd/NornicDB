@@ -1,0 +1,29 @@
+tnrun: job i20261018121658-15188-132e: wt-fmem1412-test@7f42f0ff, 2 untracked file(s); submitted in 7.2s
+tnrun: running
+tnrun job i20261018121658-15188-132e (wt-fmem1412-test@7f42f0ff): worker 4, CPUs 12,13,76,77, commit 7f42f0ffa2bdd707dfa0dc6ce2d16c5130b37118, go1.26.9
+untracked files: overlaid i20261018121658-15188-132e.tar
+prep ui: cached
+prep llama v0.4.1: cached
+
+=== parser antlr: GOFLAGS='-p=4 -tags=noui,nolocalllm' go test -race -count=1 -v -timeout 58m -run ^TestZZRule73Attack$ ./pkg/cypher
+=== RUN   TestZZRule73Attack
+    zz_rule73_attack_test.go:205: R73	S/P pipeline label scan candidates (collectNodesWithStreamingProjection, heldNodeList)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P index seek candidates + ID sets (lookupPatternCandidatesUsingPropertyIndex)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P index seek, WHERE equality (tryCollectNodesFromPropertyIndexAnyOf)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P index seek IN list (tryCollectNodesFromPropertyIndexIn*)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P index seek, explicit transaction (propertyIndexLookup merge)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P label scan, explicit transaction (transactionStorageWrapper reads)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P MERGE label-scan candidates (findMergeNodesScanned)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	S MERGE relationship identity cache (relationshipMergeIdentityCache.entries)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P DELETE … LIMIT candidates (collectDeleteWithLimitCandidates)	over=FAIL(no error at 1280000 bytes) near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	S deleted-entity sets (deletedEntities) + DETACH DELETE	over=ok near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	P relationship-type seeds (relationshipTypeSeedNodes)	over=ok near=ok zero=ok
+    zz_rule73_attack_test.go:205: R73	P undirected type count (countUndirectedRelationshipMatches)	over=ok near=FAIL(3334144 bytes: The allocation of an extra 64.0 KiB would use more than the limit 3.2 MiB. Currently using 3.1 MiB. db.memory.transaction.max threshold reached) zero=ok
+    zz_rule73_attack_test.go:205: R73	P fast single-hop aggregation (getEdgesByTypeFast, batchGetNodesFast)	over=ok near=FAIL(6406144 bytes: The allocation of an extra 8.1 MiB would use more than the limit 6.1 MiB. Currently using 5.0 MiB. db.memory.transaction.max threshold reached) zero=ok
+    zz_rule73_attack_test.go:205: R73	S traversal paths/nodeCache (TraversalContext) one hop from a hub	over=FAIL(no error at 960000 bytes) near=n/a zero=ok
+    zz_rule73_attack_test.go:205: R73	S path search adjacency cache + frontier (pathSearch.edges, pathSearchWalkSide)	over=FAIL(no error at 960000 bytes) near=ok zero=ok
+--- PASS: TestZZRule73Attack (452.56s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	453.824s
+=== parser antlr: exit 0 after 535s
+tnrun: job i20261018121658-15188-132e: DONE exit 0 (antlr 0 in 535s); box 535s, total 549s
