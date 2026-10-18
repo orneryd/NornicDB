@@ -20,6 +20,8 @@ const (
 	MessageNornicDBCLIParallelEnabled           MessageID = "nornicdbcli.serve.parallel_enabled"
 	MessageNornicDBCLIParallelDisabled          MessageID = "nornicdbcli.serve.parallel_disabled"
 	MessageNornicDBCLIMemoryLimit               MessageID = "nornicdbcli.serve.memory_limit"
+	MessageNornicDBCLIMemoryLimitFromCgroup     MessageID = "nornicdbcli.serve.memory_limit_cgroup"
+	MessageNornicDBCLIMemoryLimitClamped        MessageID = "nornicdbcli.serve.memory_limit_clamped"
 	MessageNornicDBCLIMemoryUnlimited           MessageID = "nornicdbcli.serve.memory_unlimited"
 	MessageNornicDBCLIGCPercent                 MessageID = "nornicdbcli.serve.gc_percent"
 	MessageNornicDBCLIObjectPooling             MessageID = "nornicdbcli.serve.object_pooling"
@@ -137,6 +139,12 @@ func NornicDBCLIParallelDisabled() Message {
 }
 func NornicDBCLIMemoryLimit(value string) Message {
 	return cliOutput(MessageNornicDBCLIMemoryLimit, "   Memory limit:    "+value, map[string]any{"Value": value})
+}
+func NornicDBCLIMemoryLimitFromCgroup(value, cgroup string, percent int) Message {
+	return cliOutput(MessageNornicDBCLIMemoryLimitFromCgroup, fmt.Sprintf("   Memory limit:    %s (%d%% of the container limit %s)", value, percent, cgroup), map[string]any{"Value": value, "Cgroup": cgroup, "Percent": percent})
+}
+func NornicDBCLIMemoryLimitClamped(configured, cgroup, value string) Message {
+	return cliOutput(MessageNornicDBCLIMemoryLimitClamped, "⚠️  Warning: memory limit "+configured+" is above the container's memory limit "+cgroup+" and could not prevent an OOM kill; using "+value, map[string]any{"Configured": configured, "Cgroup": cgroup, "Value": value})
 }
 func NornicDBCLIMemoryUnlimited() Message {
 	return cliOutput(MessageNornicDBCLIMemoryUnlimited, "   Memory limit:    unlimited", nil)

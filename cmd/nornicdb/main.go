@@ -516,7 +516,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Override with CLI flags if provided
 	if memoryLimit != "" {
-		runtimeLimit, err := config.ParseMemoryLimitMB(memoryLimit)
+		runtimeLimit, err := config.ParseRuntimeLimit(memoryLimit)
 		if err != nil {
 			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, err), err)
 		}
@@ -532,6 +532,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if queryCacheTTL > 0 {
 		cfg.Memory.QueryCacheTTL = time.Duration(queryCacheTTL) * time.Millisecond
 	}
+	// A soft limit above the container's hard limit protects nothing:
+	// derive it from the cgroup limit, or clamp it to that.
+	memoryResolution := cfg.Memory.ResolveRuntimeLimit()
 	cfg.Memory.ApplyRuntimeMemory()
 
 	// Configure object pooling
@@ -578,7 +581,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	// Memory management info
 	if cfg.Memory.RuntimeLimit > 0 {
-		commandPrintln(cmd, localization.NornicDBCLIMemoryLimit(config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		switch {
+		case memoryResolution.Clamped:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimitClamped(config.FormatMemorySize(memoryResolution.Configured), config.FormatMemorySize(memoryResolution.CgroupLimit), config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		case memoryResolution.Derived:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimitFromCgroup(config.FormatMemorySize(cfg.Memory.RuntimeLimit), config.FormatMemorySize(memoryResolution.CgroupLimit), config.RuntimeLimitCgroupPercent))
+		default:
+			commandPrintln(cmd, localization.NornicDBCLIMemoryLimit(config.FormatMemorySize(cfg.Memory.RuntimeLimit)))
+		}
 	} else {
 		commandPrintln(cmd, localization.NornicDBCLIMemoryUnlimited())
 	}
