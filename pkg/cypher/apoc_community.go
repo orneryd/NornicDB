@@ -3,8 +3,8 @@ package cypher
 
 import (
 	"context"
-	"sort"
 
+	"github.com/orneryd/nornicdb/pkg/louvain"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -42,12 +42,12 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 
 // computeLouvain is Louvain community detection (#1184), as GDS's
 // gds.louvain computes it over an undirected graph: the relationships
-// between the given nodes, parallel ones adding their weights (weightProp's
+// between the given nodes, preserving parallel arcs (weightProp's
 // value, 1 without it). Each level moves nodes, in the given order, to the
 // neighbouring community with the best modularity gain until no move
-// helps (at most louvainMaxIterations passes), then merges each community
-// into one node; levels repeat until a level moves nothing (at most
-// louvainMaxLevels). Communities are numbered by their first node.
+// helps, then merges each community into one node; levels repeat until a
+// level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
+// numbered by their first node.
 func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
@@ -60,190 +60,31 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 			unique = append(unique, node)
 		}
 	}
-	graph := newLouvainGraph(len(unique))
-	for i, node := range unique {
-		for _, edge := range e.getNodeEdges(node.ID) {
-			// Each relationship once: from its start node.
-			if edge.StartNode != node.ID {
-				continue
-			}
-			j, ok := index[edge.EndNode]
-			if !ok {
-				continue
-			}
-			weight := 1.0
-			if weightProp != "" {
-				if w, ok := toFloat64(edge.Properties[weightProp]); ok {
-					weight = w
-				}
-			}
-			graph.link(i, j, weight)
-		}
+	var relationships []*storage.Edge
+	for _, node := range unique {
+		// Enumerate physical relationships once. Undirected expansion and
+		// degree/weight accounting belong to louvain.RunUndirected;
+		// outgoing+incoming incidence lists repeat a physical self-loop.
+		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		relationships = append(relationships, edges...)
 	}
-
-	// membership[i] is node i's community at the current level.
-	membership := make([]int, len(unique))
-	for i := range membership {
-		membership[i] = i
-	}
-	for level := 0; level < louvainMaxLevels; level++ {
-		communities, moved := graph.moveNodes()
-		if !moved {
-			break
+	membership := louvain.Final(louvain.RunUndirected(len(unique), len(relationships), func(i int) (int, int, float64, bool) {
+		edge := relationships[i]
+		source, sourceFound := index[edge.StartNode]
+		target, targetFound := index[edge.EndNode]
+		weight := 1.0
+		if weightProp != "" {
+			if w, ok := toFloat64(edge.Properties[weightProp]); ok {
+				weight = w
+			}
 		}
-		count := renumberLouvainCommunities(communities)
-		for i := range membership {
-			membership[i] = communities[membership[i]]
-		}
-		graph = graph.aggregate(communities, count)
-	}
-
+		return source, target, weight, sourceFound && targetFound
+	}, louvain.DefaultOptions()))
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
 		result[node.ID] = membership[i]
 	}
-	return renumberInNodeOrder(unique, result)
-}
-
-const (
-	louvainMaxLevels     = 10 // GDS's maxLevels default
-	louvainMaxIterations = 10 // GDS's maxIterations default
-)
-
-// louvainGraph is one Louvain level's undirected weighted graph. weights[i]
-// maps each neighbour j to the weight between i and j; a self-loop is
-// counted twice (weights[i][i] = 2w), so degree[i] is the sum of weights[i]
-// and total, the sum of the degrees, is twice the graph's weight.
-type louvainGraph struct {
-	weights []map[int]float64
-	degree  []float64
-	total   float64
-}
-
-func newLouvainGraph(size int) *louvainGraph {
-	g := &louvainGraph{weights: make([]map[int]float64, size), degree: make([]float64, size)}
-	for i := range g.weights {
-		g.weights[i] = make(map[int]float64)
-	}
-	return g
-}
-
-// link adds a relationship of weight w between i and j.
-func (g *louvainGraph) link(i, j int, w float64) {
-	if i == j {
-		g.weights[i][i] += 2 * w
-		g.degree[i] += 2 * w
-	} else {
-		g.weights[i][j] += w
-		g.weights[j][i] += w
-		g.degree[i] += w
-		g.degree[j] += w
-	}
-	g.total += 2 * w
-}
-
-// moveNodes is a level's local moving phase: each node in turn joins the
-// neighbouring community with the largest modularity gain, kept by its own
-// community on a tie and by the smaller community between others, until a
-// pass moves nothing. It reports each node's community and whether any
-// node moved.
-func (g *louvainGraph) moveNodes() ([]int, bool) {
-	size := len(g.weights)
-	community := make([]int, size)
-	communityDegree := make([]float64, size)
-	for i := range community {
-		community[i] = i
-		communityDegree[i] = g.degree[i]
-	}
-	if g.total == 0 {
-		return community, false
-	}
-	neighbours := g.neighbours()
-	moved := false
-	for iteration := 0; iteration < louvainMaxIterations; iteration++ {
-		moves := 0
-		for i := 0; i < size; i++ {
-			current := community[i]
-			communityDegree[current] -= g.degree[i]
-			// The weight from i to each neighbouring community.
-			links := make(map[int]float64)
-			for _, j := range neighbours[i] {
-				if j != i {
-					links[community[j]] += g.weights[i][j]
-				}
-			}
-			candidates := make([]int, 0, len(links))
-			for c := range links {
-				candidates = append(candidates, c)
-			}
-			sort.Ints(candidates)
-			// The gain of i joining c, up to a constant factor:
-			// k_i,in(c) - Σtot(c)·k_i / 2m.
-			gain := func(c int) float64 {
-				return links[c] - communityDegree[c]*g.degree[i]/g.total
-			}
-			best, bestGain := current, gain(current)
-			for _, c := range candidates {
-				if candidateGain := gain(c); candidateGain > bestGain {
-					best, bestGain = c, candidateGain
-				}
-			}
-			communityDegree[best] += g.degree[i]
-			if best != current {
-				community[i] = best
-				moves++
-			}
-		}
-		if moves == 0 {
-			break
-		}
-		moved = true
-	}
-	return community, moved
-}
-
-// neighbours lists each node's neighbours in order, so sums over them don't
-// depend on map order.
-func (g *louvainGraph) neighbours() [][]int {
-	lists := make([][]int, len(g.weights))
-	for i, weights := range g.weights {
-		lists[i] = make([]int, 0, len(weights))
-		for j := range weights {
-			lists[i] = append(lists[i], j)
-		}
-		sort.Ints(lists[i])
-	}
-	return lists
-}
-
-// renumberLouvainCommunities numbers communities 0, 1, … by their first
-// node, in place, and returns how many there are.
-func renumberLouvainCommunities(community []int) int {
-	numbers := make(map[int]int)
-	for i, c := range community {
-		number, ok := numbers[c]
-		if !ok {
-			number = len(numbers)
-			numbers[c] = number
-		}
-		community[i] = number
-	}
-	return len(numbers)
-}
-
-// aggregate is the next level's graph: one node per community, the weights
-// between communities summed, and a community's inner weight its
-// self-loop.
-func (g *louvainGraph) aggregate(community []int, count int) *louvainGraph {
-	next := newLouvainGraph(count)
-	for i, neighbours := range g.neighbours() {
-		for _, j := range neighbours {
-			next.weights[community[i]][community[j]] += g.weights[i][j]
-		}
-		next.degree[community[i]] += g.degree[i]
-	}
-	next.total = g.total
-	return next
+	return result
 }
 
 // =============================================================================
