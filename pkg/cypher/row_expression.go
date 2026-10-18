@@ -1450,7 +1450,7 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 // findMatchingDelimiter (quoted text, escaped quotes and comments skipped).
 // For '[' it is isListLiteral.
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
-	if len(expr) < 2 || expr[0] != open || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
+	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
 		return "", false
 	}
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
