@@ -473,14 +473,24 @@ func (h *HNSWIndex) scanLiveLocked(ctx context.Context, normalized []float32) ([
 		if deleted {
 			continue
 		}
-		internalID, ok := util.SafeIntToUint32(id)
-		if !ok {
+		// Allocation-free bounds check (util.SafeIntToUint32 formats and
+		// parses the number: about five allocations per vector here).
+		if uint64(id) > uint64(^uint32(0)) {
 			break
 		}
-		if scorer == nil && len(h.vectorAtLocked(internalID)) != h.dimensions {
-			continue
+		internalID := uint32(id)
+		var dist float32
+		if scorer != nil {
+			dist = 1 - scorer.dot(internalID)
+		} else {
+			// Resolve once: a file-backed store copies the vector per lookup.
+			vec := h.vectorAtLocked(internalID)
+			if len(vec) != h.dimensions {
+				continue
+			}
+			dist = 1 - vector.DotProductSIMD(normalized, vec)
 		}
-		items = append(items, hnswDistItem{id: internalID, dist: h.graphDistanceLocked(normalized, internalID, scorer)})
+		items = append(items, hnswDistItem{id: internalID, dist: dist})
 	}
 	slices.SortFunc(items, func(left, right hnswDistItem) int {
 		if order := cmp.Compare(left.dist, right.dist); order != 0 {
@@ -1354,10 +1364,12 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	)
 
 	for id := range h.nodeLevel {
-		internalID, ok := util.SafeIntToUint32(id)
-		if !ok {
-			continue
+		// Allocation-free bounds check: this loop visits every node on each
+		// removal of the entry point or of a top-level node.
+		if uint64(id) > uint64(^uint32(0)) {
+			break
 		}
+		internalID := uint32(id)
 		if validHNSWIndex(internalID, len(h.deleted)) && h.deleted[internalID] {
 			continue
 		}
