@@ -8,13 +8,15 @@ The user explicitly stopped 1.5.0 implementation so the lab serves 1.4.4. The pa
 | --- | --- |
 | [Develop #1468](https://github.com/orneryd/NornicDB/pull/1468) | Draft, milestone **v1.5.0**; PR head stays `fc375efa4ba55253cc8a775172fd4933856f00ea` on `fix/pattern-predicate-compiled-owner`. Do not move it to unfinished code. |
 | [Release #1459](https://github.com/orneryd/NornicDB/pull/1459) | Closed by the user; last head `4bc1858580e9c30c383af4ac8763226be1ea5163`. No release implementation or acceptance obligation remains. |
-| Saved WIP branch | `wip/1.5.0-1468-graph-expression-owner`, on the PR's `origin` remote (`orneryd/NornicDB`). |
+| Saved WIP branch | `wip-1.5.0-1468-graph-expression-owner`, on the PR's `origin` remote (`orneryd/NornicDB`). |
 | Code/evidence snapshot commit | `a590653545c39e417ab583aa46847ca055d57233` — `wip(cypher): park graph-expression runtime owner and Rule 73 evidence`. The following parking-record commit adds this handoff and the final parking status; it does not continue implementation. |
 | Active WIP worktree | `C:/Users/mm0ns/claude/nornic-pr387-test/wt-fix-1384-integrated-dev`; renamed its implementation branch to the WIP branch. |
 
 The WIP commit preserves 361 files: integrated production scaffolding, executable gate probes at their real test locations, the generator, matrix CSV/JSON reports, raw logs, graphify/AST inventories, review evidence, instructions, priority comparison, and full snapshots/patches of the earlier provisional work. Its working tree is clean after the parking record is committed. **This code is unfinished, unformatted and untested; it is not buildable until the external static API is integrated, and it is not a verified correction.** No green result from an earlier head applies to it.
 
 The provisional edits in `wt-fix-1384-dev` are all saved under `sig/handoff/park-1.5.0-1468/provisional-dev/`: production source snapshots, `tracked-changes.patch`, the `gen_sweep.py` edits, `pattern_predicate_imports_test.go`, and the memory probe. The superseded release provisional edits are also preserved under `provisional-release/` solely as history. Neither set was overlaid onto the integrated implementation. Original worktrees and their dirty files remain untouched. Archived Go sources use `.go.txt` so ordinary Go package discovery cannot run historical packages; remove the final `.txt` only when restoring a chosen snapshot. The archive README explains this.
+
+**Branch-name exception:** the protocol names `wip/1.5.0-1468-<slug>`, but origin already has branch `wip` at `bd089c10b99576cd197687020c26ea644f82a66b`. Git rejected the slash-prefixed branch with a directory/file conflict. The saved branch uses `wip-1.5.0-1468-graph-expression-owner`, matching the other parked 1.5.0 branches. The existing `wip` branch was not changed. An earlier upload also hit a transient remote unpack error; the final push and remote-head verification determine preservation, not those failed attempts.
 
 ## Approved gate and plan
 
