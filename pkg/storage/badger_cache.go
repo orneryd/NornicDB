@@ -90,6 +90,43 @@ func (b *BadgerEngine) putNodeLocked(node *Node) {
 	cached := copyNode(node)
 	normalizePropertyMapShapes(cached.Properties)
 	b.nodeCache[node.ID] = cached
+	delete(b.queryNodeCache, node.ID)
+}
+
+// cacheLoadQueryNode returns a copy of id's GetQueryNode entry, sharing its
+// in-memory vectors.
+func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
+	b.nodeCacheMu.RLock()
+	defer b.nodeCacheMu.RUnlock()
+	cached, ok := b.queryNodeCache[id]
+	if !ok {
+		return nil, false
+	}
+	return copyNodeForCaller(cached), true
+}
+
+// cacheFillQueryNode caches node as GetQueryNode read it, under
+// cacheFillNode's rule (no write since the read captured gen), unless
+// nodeCache holds the full node.
+func (b *BadgerEngine) cacheFillQueryNode(gen uint64, node *Node) {
+	if node == nil {
+		return
+	}
+	b.nodeCacheMu.Lock()
+	defer b.nodeCacheMu.Unlock()
+	if b.nodeCacheGen.current() != gen {
+		return
+	}
+	if _, full := b.nodeCache[node.ID]; full {
+		return
+	}
+	// Bounded like nodeCache: cleared when full.
+	if b.queryNodeCache == nil || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) > b.nodeCacheMaxEntries) {
+		b.queryNodeCache = make(map[NodeID]*Node)
+	}
+	cached := copyNodeForCaller(node)
+	normalizePropertyMapShapes(cached.Properties)
+	b.queryNodeCache[node.ID] = cached
 }
 
 func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, bool) {
@@ -452,6 +489,7 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
 	b.nodeCacheMu.Lock()
 	b.nodeCacheGen.advance()
 	delete(b.nodeCache, id)
+	delete(b.queryNodeCache, id)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNodeBody(id)
 }

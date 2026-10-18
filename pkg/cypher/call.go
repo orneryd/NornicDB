@@ -804,7 +804,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if node := nodes[id]; node != nil {
 			return node, nil
 		}
-		node, err := getQueryNode(e.storage, id)
+		node, err := e.getQueryNode(e.storage, id)
 		if err == nil && node != nil {
 			nodes[id] = node
 		}

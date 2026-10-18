@@ -283,6 +283,7 @@ func (b *BadgerEngine) Close() error {
 func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.db = nil
 	b.nodeCache = nil
+	b.queryNodeCache = nil
 	b.nodeBodyCache = nil
 	b.nodeBodyCacheLRU.Init()
 	b.nodeBodyCacheBytes = 0
