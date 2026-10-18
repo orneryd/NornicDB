@@ -185,11 +185,13 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	var state bufferedEntityState
 	var node *Node
 	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
-  if state.found {
-   if state.deleted { return ErrNotFound }
-   node = hitCopy(state.node)
-   return nil
-  }
+		if state.found {
+			if state.deleted {
+				return ErrNotFound
+			}
+			node = hitCopy(state.node)
+			return nil
+		}
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -272,11 +274,13 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	if id == "" || b.visibilityFiltered() || b.ensureOpen() != nil {
 		return false, false
 	}
- if b.writeBehind != nil {
-  _, err := b.GetNodeProjected(id, []string{})
-  if err == ErrNotFound { return false, true }
-  return err == nil, err == nil
- }
+	if b.writeBehind != nil {
+		_, err := b.GetNodeProjected(id, []string{})
+		if err == ErrNotFound {
+			return false, true
+		}
+		return err == nil, err == nil
+	}
 	b.nodeCacheMu.RLock()
 	_, cached := b.nodeCache[id]
 	if !cached {
@@ -303,11 +307,13 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 // back to the full GetNode path; an empty non-nil slice returns no user
 // properties.
 func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
- if properties == nil { return b.GetNode(id) }
- include := propertyProjectionSet(properties)
- return b.getNodeByID(id, func(txn *badger.Txn, val []byte) (*Node, error) {
-  return b.decodeNodeProjected(namespaceForNodeID(id), val, include)
- }, func(n *Node) *Node { return projectCachedNodeForRead(n, properties) }, nil)
+	if properties == nil {
+		return b.GetNode(id)
+	}
+	include := propertyProjectionSet(properties)
+	return b.getNodeByID(id, func(txn *badger.Txn, val []byte) (*Node, error) {
+		return b.decodeNodeProjected(namespaceForNodeID(id), val, include)
+	}, func(n *Node) *Node { return projectCachedNodeForRead(n, properties) }, nil)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
