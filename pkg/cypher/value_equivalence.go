@@ -138,7 +138,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		// The equality owner discards incidental Go representations (pointers,
 		// clock/date fields a type does not use, and duration unit choices).
 		// Reuse it for scalar keys and every recursively nested collection key.
-		fmt.Fprintf(key, "T%s:%#v", kind, parts)
+		key.WriteString(fmt.Sprintf("T%s:%#v", kind, parts))
 		return
 	}
 	key.WriteByte('T')
