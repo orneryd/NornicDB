@@ -185,8 +185,12 @@ func TestContinuationShortExpansionDoesNotEndSearch(t *testing.T) {
 		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
 		require.NoError(t, err)
 		replay, err := service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-		require.NoError(t, err)
-		require.Equal(t, page.Results, replay.Results)
+		if page.HasMore {
+			require.NoError(t, err)
+			require.Equal(t, page.Results, replay.Results)
+		} else {
+			require.ErrorIs(t, err, resultstream.ErrGoneQID)
+		}
 	}
 	require.Equal(t, []string{"doc-0", "doc-1", "doc-2", "doc-3", "doc-4", "doc-5", "doc-6"}, ids)
 }

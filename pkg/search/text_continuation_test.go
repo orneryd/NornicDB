@@ -915,9 +915,8 @@ func TestSearchTextContinuationRankedStopsAtDeclaredCandidateBudget(t *testing.T
 	require.False(t, page.RankedPoolExhausted)
 
 	request.N = 25
-	replay, err := service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
-	require.NoError(t, err)
-	require.Equal(t, page.Results, replay.Results)
+	_, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+	require.ErrorIs(t, err, resultstream.ErrGoneQID)
 	require.Equal(t, []int{1, 2, 4, 8, 16, 32, 64, 128}, requestedLimits)
 }
 
