@@ -17,6 +17,16 @@ func clusteredRouteFixture(t *testing.T, clusters int) *Service {
 	query := make([]float32, 16)
 	query[0] = 1
 	require.NoError(t, svc.clusterIndex.Add("a", query))
+	// Members along one axis per cluster, so every cluster the tests route to
+	// is populated, as in a real clustered index.
+	for c := 0; c < clusters; c++ {
+		for i := 0; i < 20; i++ {
+			member := make([]float32, 16)
+			member[c%16] = 1
+			member[15] = float32(i) / 100
+			require.NoError(t, svc.clusterIndex.Add(fmt.Sprintf("member-%d-%d", c, i), member))
+		}
+	}
 	require.NoError(t, svc.clusterIndex.Cluster())
 	return svc
 }

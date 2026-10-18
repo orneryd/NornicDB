@@ -257,3 +257,17 @@ func (ci *ClusterIndex) NodeIDs() []string {
 	defer ci.mu.RUnlock()
 	return append([]string(nil), ci.nodeIDs...)
 }
+
+// PopulatedClusters returns the IDs of every cluster that has members, in
+// ascending order: the clusters a search must cover to be complete.
+func (c *Clustering) PopulatedClusters() []int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]int, 0, len(c.centroids))
+	for cluster := range c.centroids {
+		if len(c.membership.members[cluster]) > 0 {
+			out = append(out, cluster)
+		}
+	}
+	return out
+}

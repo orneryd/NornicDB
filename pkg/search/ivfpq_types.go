@@ -120,3 +120,20 @@ func (i *IVFPQIndex) compatibleProfile(want IVFPQProfile) bool {
 		have.KMeansMaxIterations == want.KMeansMaxIterations &&
 		have.OverflowMax == want.OverflowMax
 }
+
+// listCount is the number of inverted lists; probing that many searches all.
+func (i *IVFPQIndex) listCount() int {
+	if i == nil {
+		return 0
+	}
+	return len(i.lists)
+}
+
+// population is every vector SearchApprox can return: the lists' vectors
+// and the overflow vectors it merges into every search.
+func (i *IVFPQIndex) population() int {
+	if i == nil {
+		return 0
+	}
+	return i.Count() + len(i.overflow)
+}
