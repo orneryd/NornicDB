@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -218,6 +219,12 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 // with the node/edge ID (label and edge-type indexes) are cleaned up by scanning
 // those index keyspaces and deleting entries whose suffix IDs match the prefix.
 func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
+	return b.DeleteByPrefixContext(context.Background(), prefix)
+}
+
+// DeleteByPrefixContext permits cancellation while preparing namespace
+// retirement. Once physical deletion starts, its existing cleanup completes.
+func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	if prefix == "" {
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
@@ -225,25 +232,11 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
-	// An acknowledged generation must land before its namespace is removed:
-	// otherwise the overlay survives DROP and replay resurrects its records
-	// and derived counts after recreation. Replay can call listeners, so drain
-	// outside the exclusive barrier, then recheck for an ACK that raced it.
-	for {
-		if err := b.FlushWriteBehind(); err != nil {
-			return 0, 0, err
-		}
-		release, err := b.beginSchemaWrite()
-		if err != nil {
-			return 0, 0, err
-		}
-		if b.writeBehind != nil && b.writeBehind.PendingOps() != 0 {
-			release()
-			continue
-		}
-		defer release()
-		break
+	release, err := b.beginPrefixDeletion(ctx, prefix)
+	if err != nil {
+		return 0, 0, err
 	}
+	defer release()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -258,6 +251,11 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 			defer it.Close()
 
 			for it.Rewind(); it.ValidForPrefix(keyPrefix); it.Next() {
+				if count%256 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
 				count++
 			}
 			return nil
@@ -341,6 +339,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}

@@ -336,7 +336,11 @@ func (a *databaseManagerAdapter) DatabaseIdentity(name string) (string, time.Tim
 }
 
 func (a *databaseManagerAdapter) DropDatabase(name string) error {
-	if err := a.manager.DropDatabase(name); err != nil {
+	return a.DropDatabaseContext(context.Background(), name)
+}
+
+func (a *databaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	if err := a.manager.DropDatabaseContext(ctx, name); err != nil {
 		return err
 	}
 	if a.db != nil {

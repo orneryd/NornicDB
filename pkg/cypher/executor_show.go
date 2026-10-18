@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -1413,20 +1414,26 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
-	// Check if exists
-	if !e.dbManager.Exists(dbName) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Context-aware managers perform the existence check under their cancellable
+	// metadata lease; a preliminary Exists call would itself wait without context.
+	if manager, ok := e.dbManager.(interface {
+		DropDatabaseContext(context.Context, string) error
+	}); ok {
+		err = manager.DropDatabaseContext(ctx, dbName)
+	} else if !e.dbManager.Exists(dbName) {
+		err = multidb.ErrDatabaseNotFound
+	} else {
+		err = e.dbManager.DropDatabase(dbName)
+	}
+	if errors.Is(err, multidb.ErrDatabaseNotFound) {
 		if ifExistsIdx >= 0 {
-			// IF EXISTS - return success with no error
-			return &ExecuteResult{
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{},
-			}, nil
+			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{}}, nil
 		}
 		return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(dbName), nil)
 	}
-
-	// Drop database
-	err = e.dbManager.DropDatabase(dbName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 	}
