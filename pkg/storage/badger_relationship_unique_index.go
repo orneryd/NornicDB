@@ -11,8 +11,8 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// Relationship constraint indexes are derived equality indexes, maintained
-// by the same committed-edge hooks as the query caches. They reuse the node
+// Relationship property and constraint indexes share this derived equality owner,
+// maintained by the same committed-edge hooks as the query caches. They reuse the node
 // equality index's canonical values; NodeID below is an internal index slot,
 // not an entity conversion. Only matching edge IDs are read back and checked.
 // The bounded entry count prevents historical schema names retaining indexes.
@@ -166,10 +166,16 @@ func (b *BadgerEngine) relationshipEqualityCandidates(ctx context.Context, key r
 			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
 		}
 		if len(set.entries) >= relationshipUniqueIndexLimit {
+			// Prefer retiring an immutable reader view to a live maintained
+			// definition, so short transactions don't repeatedly cool the latter.
+			var victim relationshipUniqueIndexKey
 			for old := range set.entries {
-				delete(set.entries, old)
-				break
+				victim = old
+				if old.readTimestamp != 0 {
+					break
+				}
 			}
+			delete(set.entries, victim)
 		}
 		set.entries[key] = idx
 	}
