@@ -26,6 +26,9 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+
+	// imports reads what a correlated body reads (ImportReader).
+	imports ImportReader
 }
 
 const (
@@ -514,6 +517,11 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	for inputIter.Next() {
 		inputRow := inputIter.Row()
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
+		if f.SelectsImports {
+			// The body sees only what it imports: a name it uses only in a
+			// pattern of its own is a new variable there.
+			mergedBind = selectBindings(mergedBind, f.Imports)
+		}
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
 		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && execFrag.Graph == nil {
@@ -607,7 +615,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, importCol)
+	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, importCol, e.expressionReads)
 	if !ok {
 		return nil, false, nil
 	}
@@ -839,7 +847,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol, e.expressionReads)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1032,7 +1040,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol, e.expressionReads)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1269,7 +1277,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol, e.expressionReads)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1833,7 +1841,7 @@ func extractApplyCorrelationWhere(whereClause string, importCol string) (matchVa
 	return matchVar, matchProp, strings.Join(remaining, " AND "), true
 }
 
-func sanitizeOtherWhereForImportColumn(otherWhere string, importCol string) (string, bool) {
+func sanitizeOtherWhereForImportColumn(otherWhere string, importCol string, reads func(expression, variable string) bool) (string, bool) {
 	if strings.TrimSpace(otherWhere) == "" {
 		return "", true
 	}
@@ -1850,7 +1858,7 @@ func sanitizeOtherWhereForImportColumn(otherWhere string, importCol string) (str
 		if isImportNotNullGuardTerm(term, importCol) {
 			continue
 		}
-		if containsStandaloneIdentifier(term, importCol) {
+		if reads(term, importCol) {
 			return "", false
 		}
 		kept = append(kept, term)
@@ -2029,55 +2037,6 @@ func parseFabricVarProp(expr string) (varName, prop string, ok bool) {
 		return "", "", false
 	}
 	return lhs, rhs, true
-}
-
-func containsStandaloneIdentifier(s, ident string) bool {
-	if ident == "" || len(s) < len(ident) {
-		return false
-	}
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i+len(ident) <= len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
-			continue
-		}
-		if s[i:i+len(ident)] != ident {
-			continue
-		}
-		prevOK := i == 0 || !isIdentChar(s[i-1])
-		next := i + len(ident)
-		nextOK := next >= len(s) || !isIdentChar(s[next])
-		if prevOK && nextOK {
-			return true
-		}
-	}
-	return false
 }
 
 func synthesizeEmptyCollectOnlyReturn(query string) ([]string, []interface{}, bool) {
@@ -3030,92 +2989,6 @@ func quoteCypherIdentifier(identifier string) string {
 	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
 }
 
-func rewriteFragmentWithImports(fragment Fragment) Fragment {
-	if fragment == nil {
-		return nil
-	}
-
-	switch f := fragment.(type) {
-	case *FragmentExec:
-		importCols := importColumnsFromFragment(f.Input)
-		if rewritten := rewriteLeadingWithImports(f.Query, importCols); rewritten != f.Query {
-			copied := *f
-			copied.Query = rewritten
-			return &copied
-		}
-		return fragment
-	case *FragmentApply:
-		copied := *f
-		copied.Input = rewriteFragmentWithImports(copied.Input)
-		copied.Inner = rewriteFragmentWithImports(copied.Inner)
-		return &copied
-	case *FragmentUnion:
-		copied := *f
-		copied.LHS = rewriteFragmentWithImports(copied.LHS)
-		copied.RHS = rewriteFragmentWithImports(copied.RHS)
-		return &copied
-	default:
-		return fragment
-	}
-}
-
-func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) Fragment {
-	if fragment == nil {
-		return nil
-	}
-	switch f := fragment.(type) {
-	case *FragmentExec:
-		importCols := importColumnsFromFragment(f.Input)
-		merged := mergeImportColumns(runtimeCols, importCols)
-		if rewritten := rewriteLeadingWithImports(f.Query, merged); rewritten != f.Query {
-			copied := *f
-			copied.Query = rewritten
-			return &copied
-		}
-		return fragment
-	case *FragmentApply:
-		copied := *f
-		copied.Input = rewriteFragmentWithRuntimeImports(copied.Input, runtimeCols)
-		copied.Inner = rewriteFragmentWithRuntimeImports(copied.Inner, runtimeCols)
-		return &copied
-	case *FragmentUnion:
-		copied := *f
-		copied.LHS = rewriteFragmentWithRuntimeImports(copied.LHS, runtimeCols)
-		copied.RHS = rewriteFragmentWithRuntimeImports(copied.RHS, runtimeCols)
-		return &copied
-	default:
-		return fragment
-	}
-}
-
-func mergeImportColumns(a, b []string) []string {
-	seen := make(map[string]struct{}, len(a)+len(b))
-	out := make([]string, 0, len(a)+len(b))
-	for _, col := range a {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		if _, ok := seen[col]; ok {
-			continue
-		}
-		seen[col] = struct{}{}
-		out = append(out, col)
-	}
-	for _, col := range b {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		if _, ok := seen[col]; ok {
-			continue
-		}
-		seen[col] = struct{}{}
-		out = append(out, col)
-	}
-	return out
-}
-
 func fragmentHasStaticImports(fragment Fragment) bool {
 	switch f := fragment.(type) {
 	case *FragmentExec:
@@ -3127,50 +3000,6 @@ func fragmentHasStaticImports(fragment Fragment) bool {
 	default:
 		return false
 	}
-}
-
-func rewriteLeadingWithImports(query string, importCols []string) string {
-	if len(importCols) == 0 {
-		return query
-	}
-	assignments := make([]string, 0, len(importCols))
-	for _, col := range importCols {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		assignments = append(assignments, "$"+col+" AS "+col)
-	}
-	if len(assignments) == 0 {
-		return query
-	}
-
-	trimmed := strings.TrimSpace(query)
-	if !startsWithFold(trimmed, "WITH ") {
-		// For projection-only fragments produced by planner (e.g. trailing
-		// RETURN after APPLY), import outer variables explicitly.
-		if startsWithFold(trimmed, "RETURN ") {
-			return "WITH " + strings.Join(assignments, ", ") + " " + trimmed
-		}
-		return query
-	}
-
-	withEnd, ok := findLeadingWithClauseEnd(trimmed)
-	if !ok || withEnd <= 0 {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[:withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return "WITH " + strings.Join(assignments, ", ")
-	}
-	// Keep correlated semantics for simple import-only WITH clauses by
-	// substituting imported vars directly into MATCH predicates.
-	if (startsWithFold(rest, "MATCH ") || startsWithFold(rest, "OPTIONAL MATCH ")) &&
-		isSimpleWithImportClause(withClause, importCols) {
-		return substituteVarsWithParams(rest, importCols)
-	}
-	return "WITH " + strings.Join(assignments, ", ") + " " + rest
 }
 
 func isSimpleWithImportClause(withClause string, importCols []string) bool {
