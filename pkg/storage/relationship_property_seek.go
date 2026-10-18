@@ -117,17 +117,34 @@ func (b *BadgerEngine) SeekRelationshipsInNamespace(ctx context.Context, namespa
 	if !ok {
 		return nil, false, nil
 	}
-	key := relationshipUniqueIndexKey{namespace: namespace, relType: relType, properties: relationshipPropertyKey(properties)}
-	ids, err := b.relationshipEqualityCandidates(ctx, key, properties, canonical, func(visit func(*Edge) error) error {
-		return b.StreamEdgesByTypeInScope(ctx, namespace+":", relType, visit)
-	})
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, true, err
 	}
+	// Writers retain this existing lease through derived-index publication.
+	// Drain their publication tails, pin the body view and copy its matching
+	// candidates before another commit can move a value between relationships.
+	b.writeBarrier.Lock()
+	publicationHeld := true
+	defer func() {
+		if publicationHeld {
+			b.writeBarrier.Unlock()
+		}
+	}()
+	key := relationshipUniqueIndexKey{namespace: namespace, relType: relType, properties: relationshipPropertyKey(properties)}
 	var edges []*Edge
 	// Point reads bypass body caches: equality publication must not depend on a
 	// cache notification from an overlapping writer arriving in commit order.
-	err = b.withView(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
+		ids, err := b.relationshipEqualityCandidates(ctx, key, properties, canonical, func(visit func(*Edge) error) error {
+			return b.StreamEdgesByTypeInScope(ctx, namespace+":", relType, visit)
+		})
+		if err != nil {
+			return err
+		}
+		// The physical view keeps these bodies immutable. Release writers now,
+		// rather than excluding them for every candidate's body/decode work.
+		b.writeBarrier.Unlock()
+		publicationHeld = false
 		for _, id := range ids {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -197,8 +214,11 @@ func (tx *BadgerTransaction) SeekRelationships(ctx context.Context, relType stri
 	if !ok {
 		return nil, false, nil
 	}
-	key := relationshipUniqueIndexKey{namespace: tx.namespace, relType: relType, properties: relationshipPropertyKey(properties), readTimestamp: tx.badgerReadTs, version: tx.readTS}
-	ids, err := tx.engine.relationshipEqualityCandidates(ctx, key, properties, canonical, func(visit func(*Edge) error) error {
+	if tx.relationshipSeekIndexes == nil {
+		tx.relationshipSeekIndexes = &relationshipUniqueIndexSet{}
+	}
+	key := relationshipUniqueIndexKey{namespace: tx.namespace, relType: relType, properties: relationshipPropertyKey(properties)}
+	ids, err := tx.engine.relationshipEqualityCandidatesInSet(ctx, tx.relationshipSeekIndexes, key, properties, canonical, func(visit func(*Edge) error) error {
 		return tx.engine.streamEdgesByTypeVisibleAtSnapshotWithView(ctx, tx.labelScanScopeLocked(), relType, tx.readTS, tx.withSnapshotViewLocked, visit)
 	})
 	if err != nil {

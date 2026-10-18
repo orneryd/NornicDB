@@ -20,9 +20,6 @@ const relationshipUniqueIndexLimit = 16
 
 type relationshipUniqueIndexKey struct {
 	namespace, relType, properties string
-	// A nonzero physical timestamp identifies an immutable transaction view.
-	readTimestamp uint64
-	version       MVCCVersion
 }
 type relationshipUniqueIndex struct {
 	key        relationshipUniqueIndexKey
@@ -122,7 +119,12 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 // write notification. Reading the record, rather than a notification's payload,
 // keeps overlapping writers' publication order from restoring an older value.
 func (b *BadgerEngine) relationshipEqualityCandidates(ctx context.Context, key relationshipUniqueIndexKey, properties []string, values []interface{}, populate func(func(*Edge) error) error) ([]NodeID, error) {
-	set := &b.relationshipUniqueIndexes
+	return b.relationshipEqualityCandidatesInSet(ctx, &b.relationshipUniqueIndexes, key, properties, values, populate)
+}
+
+// The read-view owner supplies its index set: maintained engine state for live
+// access, or immutable state owned and released by one pinned transaction.
+func (b *BadgerEngine) relationshipEqualityCandidatesInSet(ctx context.Context, set *relationshipUniqueIndexSet, key relationshipUniqueIndexKey, properties []string, values []interface{}, populate func(func(*Edge) error) error) ([]NodeID, error) {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -139,9 +141,6 @@ func (b *BadgerEngine) relationshipEqualityCandidates(ctx context.Context, key r
 					return err
 				}
 				for _, idx := range set.entries {
-					if idx.key.readTimestamp != 0 {
-						continue
-					}
 					idx.remove(id)
 					if edge != nil {
 						idx.put(edge)
@@ -166,16 +165,10 @@ func (b *BadgerEngine) relationshipEqualityCandidates(ctx context.Context, key r
 			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
 		}
 		if len(set.entries) >= relationshipUniqueIndexLimit {
-			// Prefer retiring an immutable reader view to a live maintained
-			// definition, so short transactions don't repeatedly cool the latter.
-			var victim relationshipUniqueIndexKey
 			for old := range set.entries {
-				victim = old
-				if old.readTimestamp != 0 {
-					break
-				}
+				delete(set.entries, old)
+				break
 			}
-			delete(set.entries, victim)
 		}
 		set.entries[key] = idx
 	}
@@ -189,9 +182,6 @@ func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	for _, idx := range set.entries {
-		if idx.key.readTimestamp != 0 {
-			continue
-		}
 		_, previous := idx.keys[edge.ID]
 		if !previous && (edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":")) {
 			continue
@@ -212,9 +202,6 @@ func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
 	defer set.mu.Unlock()
 	for _, id := range ids {
 		for _, idx := range set.entries {
-			if idx.key.readTimestamp != 0 {
-				continue
-			}
 			if _, present := idx.keys[id]; present {
 				if set.dirty == nil {
 					set.dirty = make(map[EdgeID]struct{})
