@@ -46,7 +46,7 @@ func (e *shutdownOwnedEmbedder) Close() error {
 	return nil
 }
 
-func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int) {
+func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int, stopFirst bool) {
 	t.Helper()
 	s, _ := setupTestServer(t)
 	s.embedderRetryInitialBackoff = time.Hour
@@ -55,10 +55,10 @@ func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int) {
 	s.log = slog.New(&failedHealthWarningHandler{warned: warned})
 	e := &shutdownOwnedEmbedder{
 		countingEmbedder: countingEmbedder{dims: 4},
-		state:           state,
-		entered:         make(chan struct{}),
-		stop:            make(chan struct{}),
-		done:            make(chan struct{}),
+		state:            state,
+		entered:          make(chan struct{}),
+		stop:             make(chan struct{}),
+		done:             make(chan struct{}),
 	}
 	go func() { defer close(e.done); <-e.stop }()
 	t.Cleanup(func() {
@@ -104,7 +104,10 @@ func checkEmbedderShutdownOwner(t *testing.T, state string, cacheSize int) {
 			t.Error("failed provider remains alive during retry backoff")
 		}
 	}
-	// DB.Close alone owns shutdown, including an initializer not stopped by HTTP.
+	if stopFirst {
+		require.NoError(t, s.Stop(context.Background()))
+	}
+	// DB.Close owns shutdown, including an initializer not stopped by HTTP.
 	require.NoError(t, s.db.Close())
 	select {
 	case <-s.embedderInitDone:
@@ -126,9 +129,17 @@ func TestEmbedderShutdownOwnsEveryState(t *testing.T) {
 	for _, state := range []string{"healthy", "failed health", "health pending", "constructor pending"} {
 		for _, cacheSize := range []int{0, 16} {
 			t.Run(fmt.Sprintf("%s/cache%d", state, cacheSize), func(t *testing.T) {
-				checkEmbedderShutdownOwner(t, state, cacheSize)
+				checkEmbedderShutdownOwner(t, state, cacheSize, false)
 			})
 		}
+	}
+}
+
+func TestEmbedderShutdownAfterServerStop(t *testing.T) {
+	for _, cacheSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("cache%d", cacheSize), func(t *testing.T) {
+			checkEmbedderShutdownOwner(t, "healthy", cacheSize, true)
+		})
 	}
 }
 
@@ -148,10 +159,10 @@ func shutdownGoroutines() map[uint64]string {
 func TestEmbedderShutdownLeavesNoGoroutines(t *testing.T) {
 	// Warm global storage singletons before the census, including the real model
 	// worker surrogate. Do not use Eventually: its predicate is a new goroutine.
-	checkEmbedderShutdownOwner(t, "healthy", 16)
+	checkEmbedderShutdownOwner(t, "healthy", 16, false)
 	before := shutdownGoroutines()
 	for _, state := range []string{"healthy", "failed health", "health pending", "constructor pending"} {
-		checkEmbedderShutdownOwner(t, state, 16)
+		checkEmbedderShutdownOwner(t, state, 16, false)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {

@@ -250,7 +250,7 @@ type DB struct {
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
 	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
-	defaultEmbedKey    string // key for the embedder set via SetEmbedder (global default)
+	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
 	embedderFactory func(cfg *embed.Config) (embed.Embedder, error)
