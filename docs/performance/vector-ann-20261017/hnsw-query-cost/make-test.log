@@ -1,0 +1,105 @@
+lint-slog: PASS (LOG-09 + LOG-01 gates clean)
+lint-cardinality: PASS (MET-04 helper-only registration enforced)
+# pipefail propagates `go test`'s real exit through the grep filter,
+# so a test failure still fails the make target even though grep
+# strips most of the noise. `go test ./...` always emits at least one
+# `ok` or `FAIL` line per package, so grep never returns 1 in
+# practice — pipefail's status is `go test`'s status.
+ok  	github.com/orneryd/nornicdb/apoc	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/atomic	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/bitwise	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/coll	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/community	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/date	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/diff	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/hashing	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/json	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/refactor	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/warmup	(cached)
+ok  	github.com/orneryd/nornicdb/apoc/xml	(cached)
+ok  	github.com/orneryd/nornicdb/cmd/metrics-doc-gen	(cached)
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb	11.082s
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb-admin	2.331s
+ok  	github.com/orneryd/nornicdb/cmd/nornicdb-snowball	(cached)
+ok  	github.com/orneryd/nornicdb/cmd/oauth-provider	(cached)
+ok  	github.com/orneryd/nornicdb/cmd/recall-bench	0.732s
+ok  	github.com/orneryd/nornicdb/cmd/swagger-ui	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/adminimport	1.496s
+ok  	github.com/orneryd/nornicdb/pkg/audit	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/auth	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/bolt	48.100s
+ok  	github.com/orneryd/nornicdb/pkg/buildinfo	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/cache	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/compliance	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/config	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/config/dbconfig	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/convert	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/cypher	113.353s
+ok  	github.com/orneryd/nornicdb/pkg/cypher/antlr	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/cypher/fn	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/cypher/internal/text	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/cypher/testutil	1.697s
+ok  	github.com/orneryd/nornicdb/pkg/embed	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/embeddingutil	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/encryption	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/envutil	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/errors	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/eval	2.242s
+ok  	github.com/orneryd/nornicdb/pkg/eval/ir	2.791s
+ok  	github.com/orneryd/nornicdb/pkg/fabric	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/filter	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/gpu	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/gpu/cuda	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/gpu/metal	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/gpu/opencl	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/gpu/vulkan	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/graphql	4.681s
+ok  	github.com/orneryd/nornicdb/pkg/graphql/models	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/graphql/resolvers	8.475s
+ok  	github.com/orneryd/nornicdb/pkg/heimdall	25.924s
+ok  	github.com/orneryd/nornicdb/pkg/indexing	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/inference	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/internal/plugintest	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/kms	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/knowledgepolicy	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/lifecycle	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/linkpredict	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/localization	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/localization/internal/oslocale	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/localllm	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/math/angle	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/math/libm	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/math/vector	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/mcp	8.575s
+ok  	github.com/orneryd/nornicdb/pkg/multidb	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/nornicdb	114.008s
+ok  	github.com/orneryd/nornicdb/pkg/nornicgrpc	9.444s
+ok  	github.com/orneryd/nornicdb/pkg/observability	11.812s
+ok  	github.com/orneryd/nornicdb/pkg/pool	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/qdrantgrpc	10.014s
+ok  	github.com/orneryd/nornicdb/pkg/replication	100.165s
+ok  	github.com/orneryd/nornicdb/pkg/resultstream	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/retention	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/search	202.632s
+ok  	github.com/orneryd/nornicdb/pkg/search/stemmer	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/security	(cached)
+--- FAIL: TestQdrantRecommendKeepsProviderSnapshot (1.68s)
+FAIL
+FAIL	github.com/orneryd/nornicdb/pkg/server	202.867s
+ok  	github.com/orneryd/nornicdb/pkg/simd	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/storage	118.688s
+ok  	github.com/orneryd/nornicdb/pkg/storage/lifecycle	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/temporal	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/textchunk	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/txsession	7.784s
+ok  	github.com/orneryd/nornicdb/pkg/util	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/vectorspace	(cached)
+ok  	github.com/orneryd/nornicdb/pkg/voyage	(cached)
+ok  	github.com/orneryd/nornicdb/plugins/heimdall	6.950s
+ok  	github.com/orneryd/nornicdb/scripts/localization_inventory	(cached)
+ok  	github.com/orneryd/nornicdb/testing	8.774s
+ok  	github.com/orneryd/nornicdb/testing/benchmarks/northwind_power	6.365s
+ok  	github.com/orneryd/nornicdb/testing/cypher/differential	(cached)
+ok  	github.com/orneryd/nornicdb/testing/cypher/tck	6.107s
+FAIL
+make: *** [test] Error 1

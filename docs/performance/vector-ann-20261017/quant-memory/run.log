@@ -1,0 +1,17 @@
+== nornicdb / sq-int8: HNSW + scalar int8 quantization (rescore)
+Memory snapshot bench-data/vector_ann/profiling/quant-memory-current/case-1 {'pid': 93305, 'params': 'hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 1\n}\n', 'rss_before_gc': 3381854208, 'instrumented': True, 'rss_after_gc': 3383508992, 'vmmap-summary.txt_exit': 0, 'vmmap-resident.txt_exit': 0}
+   preset beam      recall@10 0.9959  p50   0.462 ms  p95   0.531 ms    9245.6 qps
+   load 13.3s (6628/s), index ready 34.8s, disk 1629 MB, RSS 3375 MB, strategy: HNSW scalar int8 (90623340 encoded bytes)
+== nornicdb / bq-asym4: HNSW + binary storage, int4 query (rescore, 2x oversampling)
+Memory snapshot bench-data/vector_ann/profiling/quant-memory-current/case-2 {'pid': 94608, 'params': 'hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 2\n}\n', 'rss_before_gc': 2573959168, 'instrumented': True, 'rss_after_gc': 2575597568, 'vmmap-summary.txt_exit': 0, 'vmmap-resident.txt_exit': 0}
+   preset beam      recall@10 0.9925  p50   0.483 ms  p95   0.583 ms    7034.6 qps
+   load 13.2s (6677/s), index ready 37.6s, disk 1629 MB, RSS 2573 MB, strategy: HNSW binary query int4 (11283840 encoded bytes)
+== nornicdb / bq-asym8: HNSW + binary storage, int8 query (rescore, 2x oversampling)
+Memory snapshot bench-data/vector_ann/profiling/quant-memory-current/case-3 {'pid': 96148, 'params': 'hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 2\n}\n', 'rss_before_gc': 3471179776, 'instrumented': True, 'rss_after_gc': 3472736256, 'vmmap-summary.txt_exit': 0, 'vmmap-resident.txt_exit': 0}
+   preset beam      recall@10 0.9939  p50   0.528 ms  p95   0.613 ms    8860.8 qps
+   load 13.4s (6564/s), index ready 38.3s, disk 1631 MB, RSS 3473 MB, strategy: HNSW binary query int8 (11283840 encoded bytes)
+== nornicdb / pq-x4: HNSW + product quantization x4 (rescore)
+Memory snapshot bench-data/vector_ann/profiling/quant-memory-current/case-4 {'pid': 97431, 'params': 'hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 1\n}\n', 'rss_before_gc': 3407544320, 'instrumented': True, 'rss_after_gc': 3409281024, 'vmmap-summary.txt_exit': 0, 'vmmap-resident.txt_exit': 0}
+   preset beam      recall@10 0.9958  p50   1.704 ms  p95   2.089 ms    3780.8 qps
+   load 13.9s (6360/s), index ready 46.6s, disk 1631 MB, RSS 3409 MB, strategy: HNSW PQ x4 (91319296 encoded bytes)
+== nornicdb / pq-x64: HNSW + product quantization x64 (rescore)

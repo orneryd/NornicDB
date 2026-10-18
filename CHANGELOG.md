@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
+  tests retain their assertions and debug information (#1366).
+- Enforce database node, relationship, byte and write-rate quotas when committing
+  implicit and explicit transactions, including HTTP and Bolt. Reject an entire
+  over-quota transaction before publication and keep cached byte usage in sync
+  with committed updates and cascading deletes. Release admission/accounting
+  before ordered synchronous listener delivery, allow concurrent unlimited
+  transactions, honor cancellation while waiting, and preserve explicit quota
+  statuses and Bolt connection reuse after rejection (#1366). Preserve the
+  managed system-database owner for routed administration commits and canonical
+  byte accounting across propertyless staged/point/stream representations.
+### Added
+
+- Default application HNSW traversal to scalar int8 with original-vector rescoring;
+  `NORNICDB_VECTOR_HNSW_QUANTIZATION=none` retains full-precision traversal.
+- Add HNSW scalar int8, product (4×–64×), and binary coordinate compression
+  (with binary or 4/8-bit scalar queries),
+  preserving original-vector construction, lexical hints, exact rescoring and checkpoints.
+  Persist Qdrant collection quantization policies and honor request ignore/rescore/oversampling.
+  Extend the full-corpus ANN benchmark to exercise the same compressed modes on both engines.
+
+### Fixed
+
+- Use store-owned read-only mappings for file-backed query rescoring and final
+  vector selection, avoiding repeated file reads and internal vector copies.
+  Keep public owning-copy semantics and retire mappings on growth, reload,
+  compaction and close. The portable ReadAt path remains available (`nommap` build tag).
+
+- Separate cached search responses by effective quantization ignore/rescore/oversampling
+  and HNSW beam settings; retire cached responses when compression policy changes.
+  Drop/recreate clears collection-owned compression overrides while embedding regeneration
+  preserves them, so reused services return to their configured defaults.
+
+- Build IVF-HNSW graphs for every nonempty cluster, retire minimum-size/maximum-count
+  build filters, and return an error for missing routed graphs instead of exact scans.
+- Search selected IVF-HNSW cluster graphs concurrently with at most four workers per
+  query, retaining full per-cluster candidate budgets and merging in route order.
+
+- Resolve named/property/chunk lexical HNSW seeds using indexed identities while preserving
+  direct document anchors in insertion order.
+  Train PQ codebooks with the same squared-distance assignments used by encoding, retaining
+  subvector magnitudes; coarse IVF routing keeps cosine training. Pool CPU build scratch and
+  encode HNSW coordinates while construction can borrow the existing mapped read lease.
+
+- Honor the configured logger for unary/streaming gRPC request completion: successful requests log at debug,
+  client failures at warning, and internal/service failures at error. Suppressed requests avoid log formatting/output.
+
+- Accelerate ARM64 CPU dot-product scoring with independent NEON fused multiply-add accumulators,
+  preserving block/tail handling and normalized signed-vector accuracy.
+
+- Admit managed model-space chunks before dimension validation and restrict persisted exact queries to admitted
+  vector identities. Retire fulltext and capacity accounting through both default Qdrant server constructors on drop.
+  Serialize the first GPU brute-force snapshot/upload/publication with live index mutations before pipeline locking.
+  Successful compressed pipelines avoid an unused flat GPU copy; compressed fallback uploads only after selection.
+
+- Preserve global IVF-HNSW candidate budgets when nearest neighbours concentrate in one cluster, and retain lexical
+  cluster selection when a small list falls back to exact scoring. Resolve BM25 document hints to named, property and
+  chunk embedding IDs consistently for HNSW construction, k-means/PQ seeds and cluster lexical profiles.
+- Complete Qdrant shared-index lifecycle handling: warm lazy reads, reject incomplete builds and provider failures,
+  order acknowledged mutations after population/checkpoint restoration, retain Dot/Euclid magnitudes with file-backed
+  vectors, and purge memory and persisted ANN state when an embedded server drops a collection.
+- Delete Qdrant storage before final shared-index removal, so population cannot restore a point while its durable
+  deletion is in flight.
+- Honor Qdrant `params.exact`, forward `Query` search parameters, and report configured HNSW collection settings.
+- Retain inserted HNSW build vectors on CUDA and Vulkan devices as well as Metal. Shared shard ordering and top-K
+  merging reuse the existing kernels. Graph search explores the retained beam completely instead of truncating it
+  at a round cap; the candidate-depth setting remains effective above the construction-quality floor.
+- Recreate the cluster backend when an unfixed collection adopts a new vector dimension, retaining its k-means policy.
+- Support `--gpu-backend cpu` / `NORNICDB_GPU_BACKEND=cpu` to disable all GPU-manager paths, including clustering.
+- Replace a full HNSW result beam's worst heap member with one sift rather than a push/pop pair.
+
+- Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
+  `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
+  (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
+  request's HNSW beam, and a search without it uses the configured preset's `efSearch`, as Qdrant does. Selective payload filters widen the search instead of returning short. Points stay searchable
+  across a restart. A database with vector search disabled returns no hits. Vectors are no longer indexed twice (#1370).
+- Rebuild a search index from storage with the dimension of the first stored vector, not of the first stored node, when
+  the dimension isn't fixed by an embedder, so a database storing its own vectors (such as a Qdrant collection) keeps
+  them searchable after a restart.
+- Drop a Qdrant collection's search index with the collection, as Cypher's `DROP DATABASE` does.
+- Fix the GPU-assisted HNSW build (on by default on macOS) building a poor graph: on 88k 1024-d vectors recall@10 fell
+  to 0.60. Every query of a GPU graph search started from the global entry point and searched two hops inside one
+  4,096-node set shared by 512 queries. Each vector's search now starts at its own level-0 entry point (the upper-layer
+  descent an insert makes), adds inserted vectors sharing a BM25 lexical signature band as seeds when hints exist,
+  expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
+  distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
+  scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
+- Use resident inserted vectors for native GPU HNSW construction. Metal scores its contiguous buffer with Metal
+  Performance Shaders; CUDA and Vulkan score immutable device shards with their existing kernels. Their graph-search
+  implementations remain available. Construction time and recall are workload/hardware measurements, not a universal
+  speedup guarantee; see the vector ANN benchmark and hardware handoff.
+- Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
+  search), then vectors are linked in order. Construction regressions compare recall with one-at-a-time inserts.
+- Keep exact-search results in a bounded heap and score in parallel instead of sorting the complete scored population.
+- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200. This reduces
+  exact rescoring work and can affect recall; compare explicit depths on the same corpus before choosing the tradeoff.
+- Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
+  (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
+- Cluster a database with k-means soon after a bulk load finishes instead of at the next
+  `NORNICDB_KMEANS_CLUSTER_INTERVAL` tick (15 minutes by default): a check every 10 seconds clusters a database whose
+  vectors grew by a fifth since its last clustering and then stopped changing. `NORNICDB_KMEANS_GROWTH_RATIO` (0
+  disables) and `NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL` tune it.
+- Build the GPU brute-force copy of the vectors only when a search first chooses GPU brute force. Attaching the GPU
+  built it for every database, which held every vector again in host and GPU memory (about 690 MB for 88k 1024-d
+  vectors) even when the vector count was outside the GPU brute-force range and it was never searched.
+- Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
+  strategy transitions still only move between brute force and HNSW.
+- Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
+  integer type that fits (`int8` for 4 dimensions), which the collection reader rejected once roughly 10,000 points had
+  pushed the metadata out of the node cache: the collection then reported "not found", or a Dot/Euclid collection fell
+  back to Cosine. `convert.ToInt64` now accepts `int8`, `int16`, `uint8` and `uint16`.
+- A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
+  limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
+  `Neo.ClientError.Statement.SyntaxError` (#1339).
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed

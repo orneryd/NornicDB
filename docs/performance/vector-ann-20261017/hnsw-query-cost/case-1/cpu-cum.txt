@@ -1,0 +1,33 @@
+File: nornicdb-hnsw-profile
+Type: cpu
+Time: 2026-10-17 06:56:38 MST
+Duration: 30.13s, Total samples = 26.72s (88.68%)
+Showing nodes accounting for 13.27s, 49.66% of 26.72s total
+Dropped 212 nodes (cum <= 0.13s)
+Showing top 25 nodes out of 121
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     13.86s 51.87%  runtime.systemstack
+         0     0%     0%     13.27s 49.66%  runtime.notewakeup
+    13.27s 49.66% 49.66%     13.27s 49.66%  runtime.pthread_cond_signal
+         0     0% 49.66%     13.27s 49.66%  runtime.semawakeup
+         0     0% 49.66%     13.23s 49.51%  runtime.startm
+         0     0% 49.66%     13.23s 49.51%  runtime.wakep
+         0     0% 49.66%     13.08s 48.95%  runtime.ready
+         0     0% 49.66%     13.08s 48.95%  runtime.send.goready.func1
+         0     0% 49.66%     10.20s 38.17%  google.golang.org/grpc.(*Server).handleStream
+         0     0% 49.66%     10.20s 38.17%  google.golang.org/grpc.(*Server).processUnaryRPC
+         0     0% 49.66%     10.20s 38.17%  google.golang.org/grpc.(*Server).serveStreams.func2.1
+         0     0% 49.66%     10.16s 38.02%  github.com/qdrant/go-client/qdrant._Points_Search_Handler
+         0     0% 49.66%     10.15s 37.99%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*Server).unaryLoggingInterceptor
+         0     0% 49.66%     10.14s 37.95%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.(*PointsService).Search
+         0     0% 49.66%     10.14s 37.95%  github.com/qdrant/go-client/qdrant._Points_Search_Handler.func1
+         0     0% 49.66%      9.71s 36.34%  github.com/orneryd/nornicdb/pkg/qdrantgrpc.searchCollection
+         0     0% 49.66%      9.69s 36.26%  github.com/orneryd/nornicdb/pkg/search.(*Service).VectorQueryNodesWithOptions (inline)
+         0     0% 49.66%      9.69s 36.26%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodes
+         0     0% 49.66%      9.69s 36.26%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexed
+         0     0% 49.66%      9.69s 36.26%  github.com/orneryd/nornicdb/pkg/search.(*Service).vectorQueryNodesIndexedWithOptions
+         0     0% 49.66%      9.67s 36.19%  github.com/orneryd/nornicdb/pkg/search.(*Service).adaptiveVectorSearch
+         0     0% 49.66%      9.16s 34.28%  github.com/orneryd/nornicdb/pkg/search.(*VectorSearchPipeline).searchWithExhaustionFromEntries
+         0     0% 49.66%      8.76s 32.78%  github.com/orneryd/nornicdb/pkg/search.(*HNSWCandidateGen).searchCandidatesWithExhaustion
+         0     0% 49.66%      8.76s 32.78%  github.com/orneryd/nornicdb/pkg/search.(*HNSWCandidateGen).searchCandidatesWithLexicalEntries
+         0     0% 49.66%      8.70s 32.56%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchWithEfExhaustionFromEntries

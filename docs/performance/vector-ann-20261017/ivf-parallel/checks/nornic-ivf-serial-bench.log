@@ -1,0 +1,29 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 05:51:26 🔬 K-means iteration 1 complete (reassignments: 0)
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 05:51:26 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:26 🔬 K-means iteration 1 complete (reassignments: 0)
+    6824	    351696 ns/op	   30042 B/op	      46 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 05:51:29 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:29 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:30 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:31 🔬 K-means iteration 1 complete (reassignments: 0)
+    7044	    342461 ns/op	   29974 B/op	      46 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 05:51:34 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:34 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:35 🔬 K-means iteration 1 complete (reassignments: 0)
+    6832	    341077 ns/op	   29966 B/op	      46 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 05:51:37 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:37 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:38 🔬 K-means iteration 1 complete (reassignments: 0)
+    6942	    343854 ns/op	   29982 B/op	      46 allocs/op
+BenchmarkIVFHNSWMultiCluster-12    	2026/10/17 05:51:40 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:41 🔬 K-means iteration 1 complete (reassignments: 0)
+2026/10/17 05:51:41 🔬 K-means iteration 1 complete (reassignments: 0)
+    6988	    341872 ns/op	   29968 B/op	      46 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	17.988s

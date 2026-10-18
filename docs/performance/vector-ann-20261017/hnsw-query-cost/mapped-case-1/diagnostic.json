@@ -1,0 +1,6 @@
+{
+  "requests": 66578,
+  "wall_s": 31.017802457790822,
+  "params": "hnsw_ef: 50\nquantization {\n  rescore: true\n  oversampling: 1\n}\n",
+  "instrumented": true
+}

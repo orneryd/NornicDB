@@ -222,7 +222,7 @@ func TestInMemoryHNSWReusesVectorIndexStorage(t *testing.T) {
 		require.NoError(t, svc.vectorIndex.Add(id, vec))
 	}
 
-	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 3, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx.vectorLookup)
 	require.Empty(t, idx.vectors, "HNSW graph must resolve vectors from the in-memory vector index")
@@ -421,14 +421,17 @@ func TestServicePersistenceAndTimingHelpers(t *testing.T) {
 	_, err = os.Stat(hnswPath)
 	require.NoError(t, err)
 
-	// persistIVFHNSWBackground writes per-cluster files when cluster map exists.
+	// persistIVFHNSWBackground writes the published generation's graphs.
 	clusterIdx := NewHNSWIndex(3, HNSWConfigFromEnv())
 	require.NoError(t, clusterIdx.Add("c-1", []float32{1, 0, 0}))
-	svc.clusterHNSWMu.Lock()
-	svc.clusterHNSW = map[int]*HNSWIndex{0: clusterIdx}
-	svc.clusterHNSWMu.Unlock()
+	svc.clusterStateMu.Lock()
+	svc.clusterGen = &clusterGeneration{graphs: map[int]*HNSWIndex{0: clusterIdx}}
+	svc.clusterStateMu.Unlock()
 	svc.persistIVFHNSWBackground(context.Background(), hnswPath)
-	_, err = os.Stat(filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf", "0"))
+	manifest, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	require.NoError(t, err)
+	require.NotNil(t, manifest)
+	_, err = os.Stat(manifest.clusterPath(0))
 	require.NoError(t, err)
 
 	// runPersist + PersistIndexesToDisk execute without panic on configured paths.
@@ -498,7 +501,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 
 	// No embeddings: warmup is a no-op.
 	var nilCtx context.Context
-	svc.warmupVectorPipeline(nilCtx)
+	svc.warmupVectorPipeline(nilCtx, nil)
 	svc.pipelineMu.RLock()
 	require.Nil(t, svc.vectorPipeline)
 	svc.pipelineMu.RUnlock()
@@ -513,7 +516,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
 	// Embeddings present: warmup builds a ready pipeline.
-	svc.warmupVectorPipeline(context.Background())
+	svc.warmupVectorPipeline(context.Background(), nil)
 	svc.pipelineMu.RLock()
 	require.NotNil(t, svc.vectorPipeline)
 	svc.pipelineMu.RUnlock()
@@ -1346,14 +1349,15 @@ func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T
 	svc2.SetHNSWIndexPath(hnswPath)
 
 	// Pre-populate fields that forced rebuild paths should clear.
-	svc2.clusterLexicalProfiles = map[int]map[string]float64{
+	svc2.clusterGen = &clusterGeneration{profiles: map[int]map[string]float64{
 		1: {"alpha": 1},
-	}
+	}}
 	svc2.ivfpqMu.Lock()
 	svc2.ivfpqIndex = &IVFPQIndex{}
 	svc2.ivfpqMu.Unlock()
 
 	require.NoError(t, svc2.BuildIndexes(context.Background()))
+	require.Nil(t, svc2.clusterGen, "a routing rebuild retires the cluster generation")
 	require.True(t, svc2.IsReady())
 	require.GreaterOrEqual(t, svc2.fulltext().Count(), 1)
 	require.GreaterOrEqual(t, svc2.EmbeddingCount(), 1)
@@ -2421,7 +2425,7 @@ func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
 	require.NotEmpty(t, hits)
 	assert.Equal(t, "named_exact", hits[0].ID)
 
-	hits, err = svc.vectorQueryNodesExact(context.Background(), []float32{1, 0}, VectorQuerySpec{Limit: 5}, "default", "dot")
+	hits, err = svc.vectorQueryNodesExact(context.Background(), []float32{1, 0}, VectorQuerySpec{Limit: 5}, "default", "dot", nil)
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 }
@@ -2701,8 +2705,8 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 	s := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 
 	// Restore shortcut branches.
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, ""))
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope"))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "", nil))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope", nil))
 
 	// maybeRebuild: no index and min-interval path should no-op.
 	require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.1, 1.1, time.Second))
@@ -2731,15 +2735,15 @@ func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
 	// Force lagging cluster state so backfill branch executes from in-memory vectors.
 	svc.clusterIndex.Clear()
 	require.Equal(t, 0, svc.clusterIndex.Count())
-	svc.ensureClusterIndexBackfilled(2)
+	svc.reconcileClusterPopulation(2)
 	require.GreaterOrEqual(t, svc.clusterIndex.Count(), 2)
 
 	// Invalid/missing IVF-HNSW path should deterministically return false (no panic).
 	svc.hnswIndexPath = filepath.Join(t.TempDir(), "missing_hnsw")
-	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath))
+	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath, nil))
 
 	// With clustering enabled and enough vectors, warmup should run clustering path.
-	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2))
+	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2, nil))
 	require.True(t, svc.clusterIndex.IsClustered())
 }
 
@@ -2826,7 +2830,7 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	svc.vectorIndex = nil
 	svc.vectorFileStore = nil
 	svc.mu.Unlock()
-	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.Error(t, err)
 
 	// Context-canceled branch during in-memory build.
@@ -2837,14 +2841,14 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	require.NoError(t, svc.vectorIndex.Add("n2", []float32{0, 1}))
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = svc.getOrCreateHNSWIndex(cancelled, 2)
+	_, err = svc.getOrCreateHNSWIndex(cancelled, 2, svc.pipelineBuildSeeds().hnswHints)
 	require.ErrorIs(t, err, context.Canceled)
 
 	// Successful build + existing-index fast path.
-	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx)
-	idx2, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx2, err := svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.Same(t, idx, idx2)
 
@@ -2868,7 +2872,7 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 	svc.hnswIndex = nil
 	svc.hnswMu.Unlock()
 
-	idx, err = svc.getOrCreateHNSWIndex(context.Background(), 2)
+	idx, err = svc.getOrCreateHNSWIndex(context.Background(), 2, svc.pipelineBuildSeeds().hnswHints)
 	require.NoError(t, err)
 	require.NotNil(t, idx)
 	require.Equal(t, 2, idx.Size())
@@ -3029,7 +3033,7 @@ func TestSearchHelpers_TryRestoreClusteredWarmupFromDisk_Success(t *testing.T) {
 		1: cluster1,
 	}))
 
-	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath)
+	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath, nil)
 	require.True(t, restored)
 	require.True(t, svc.clusterIndex.IsClustered())
 	require.Equal(t, 2, svc.clusterIndex.NumClusters())

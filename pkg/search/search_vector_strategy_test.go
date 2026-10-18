@@ -15,7 +15,7 @@ func TestResolveCompressedVectorStrategy_FallsBackWhenNotReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
 
-	strategy, err := svc.resolveVectorStrategy(context.Background(), 8000, 16, nil)
+	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 8000, 16, nil)
 	require.NoError(t, err)
 	require.Contains(t, strategy.name, "compressed-disabled")
 }
@@ -44,7 +44,7 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 	svc.hnswIndexPath = fmt.Sprintf("%s/hnsw", dir)
 	svc.mu.Unlock()
 
-	strategy, err := svc.resolveVectorStrategy(context.Background(), 1500, 16, vfs)
+	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 1500, 16, vfs)
 	require.NoError(t, err)
 	require.IsType(t, &IVFPQCandidateGen{}, strategy.candidateGen)
 }
@@ -70,7 +70,7 @@ func TestResolveCompressedVectorStrategy_FallbackOnLoadError(t *testing.T) {
 	svc.hnswIndexPath = fmt.Sprintf("%s/hnsw", dir)
 	svc.mu.Unlock()
 
-	strategy, err := svc.resolveCompressedVectorStrategy(context.Background(), 1500, 16, vfs)
+	strategy, err := svc.resolveCompressedVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 1500, 16, vfs)
 	require.NoError(t, err)
 	require.Contains(t, strategy.name, "compressed-fallback")
 }

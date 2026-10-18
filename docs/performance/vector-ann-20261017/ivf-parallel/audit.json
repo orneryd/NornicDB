@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "phase": "serial",
+      "revision": "7c201376d1203a651fc625869fb98df7be746ac4",
+      "vectors": 88155,
+      "queries": 1000,
+      "cluster_graphs": 193,
+      "recall@10": 0.9734,
+      "p50_ms": 7.159061962738633,
+      "p95_ms": 20.636735064908862,
+      "qps": 556.7559706673262
+    },
+    {
+      "phase": "current",
+      "revision": "c5ef90e3825d2871f7df772a293b09237c00c2a8",
+      "vectors": 88155,
+      "queries": 1000,
+      "cluster_graphs": 209,
+      "recall@10": 0.9737,
+      "p50_ms": 2.362750004976988,
+      "p95_ms": 2.691081236116588,
+      "qps": 737.9600884489168
+    }
+  ]
+}

@@ -22,6 +22,7 @@ package search
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -30,8 +31,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
-	"strconv"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -49,6 +48,9 @@ func validHNSWIndex(index uint32, length int) bool {
 
 // HNSWConfig contains configuration parameters for the HNSW index.
 type HNSWConfig struct {
+	// Quantization controls coordinate compression independently of graph quality.
+	Quantization HNSWQuantizationConfig
+
 	M                         int     // Max connections per node per layer (default: 16)
 	EfConstruction            int     // Candidate list size during construction (default: 200)
 	EfSearch                  int     // Candidate list size during search (default: 100)
@@ -56,7 +58,7 @@ type HNSWConfig struct {
 	LevelMultiplier           float64 // Level multiplier = 1/ln(M)
 	UseGPUBuild               bool    // Attempt GPU-assisted construction when available
 	GPUBuildBatchSize         int     // Number of vectors per GPU construction batch
-	GPUBuildCandidateK        int     // Number of GPU nearest-neighbor candidates per vector
+	GPUBuildCandidateK        int     // Minimum GPU candidate depth (at least M and EfConstruction)
 	GPUBuildDistancePrecision string  // Distance precision for GPU build kernels (currently fp32)
 }
 
@@ -113,7 +115,11 @@ type HNSWIndex struct {
 	internalToID []string
 	deleted      []bool
 	liveCount    int
+	// fingerprints, when non-nil (cluster graphs), holds the coordinate
+	// fingerprint each node was inserted with, by internal ID (hnsw_fingerprint.go).
+	fingerprints []uint64
 	vectors      []float32
+	quantized    *hnswQuantizedVectors
 
 	// When set, vectors are resolved by ID at search/build time instead of from h.vectors.
 	// vecOff will be -1 for nodes that use the lookup (saves one full vector copy in RAM).
@@ -296,6 +302,10 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			dst := h.vectors[off : off+h.dimensions]
 			copy(dst, vec)
 			vector.NormalizeInPlace(dst)
+			if h.quantized != nil {
+				h.quantized.set(internalID, dst)
+			}
+			h.recordFingerprintLocked(internalID, vec)
 			return nil
 		}
 
@@ -363,7 +373,11 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.internalToID = append(h.internalToID, id)
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
+	h.recordFingerprintLocked(internalID, vec)
 	h.liveCount++
+	if h.quantized != nil {
+		h.quantized.set(internalID, normalized)
+	}
 
 	if !h.hasEntryPoint {
 		h.entryPoint = internalID
@@ -415,6 +429,85 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.addBestScratch = neighbors[:0]
 
 	return nil
+}
+
+// levelZeroSearchLocked is the level-0 beam search a query or an insert of
+// normalized makes: the greedy descent through the upper layers from the entry
+// point, then a beam of width ef at level 0 from the reached node and the live
+// nodes of entryIDs (lexical seeds). It returns the candidates closest first in
+// a slice from h.itemsPool, which the caller returns. Caller holds h.mu for
+// reading.
+func (h *HNSWIndex) levelZeroSearchLocked(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
+	ep, err := h.descendLocked(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	entryBufAny := h.idsPool.Get()
+	entries := entryBufAny.([]uint32)[:0]
+	defer h.idsPool.Put(entries[:0])
+	entries = append(entries, ep)
+	for _, id := range entryIDs {
+		internalID, ok := h.idToInternal[id]
+		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		entries = append(entries, internalID)
+	}
+	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+}
+
+// descendLocked is the greedy descent through the upper layers from the entry
+// point that a query or an insert of normalized makes before its level-0
+// search. Caller holds h.mu for reading and checked h.hasEntryPoint.
+func (h *HNSWIndex) descendLocked(ctx context.Context, normalized []float32) (uint32, error) {
+	ep := h.entryPoint
+	for l := h.maxLevel; l > 0; l-- {
+		var err error
+		if ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l); err != nil {
+			return 0, err
+		}
+	}
+	return ep, nil
+}
+
+// levelZeroEntry is where an insert of normalized starts its level-0 search
+// (descendLocked): a GPU build seeds the vector's graph search there.
+func (h *HNSWIndex) levelZeroEntry(ctx context.Context, normalized []float32) (uint32, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return 0, false
+	}
+	ep, err := h.descendLocked(ctx, normalized)
+	return ep, err == nil
+}
+
+// buildLevelZeroCandidates is an insert's level-0 candidate search for a
+// vector not in the index yet (levelZeroSearchLocked at width ef), run under
+// the read lock so a build batch's searches run in parallel. It returns the
+// live candidates' internal IDs and distances, closest first.
+func (h *HNSWIndex) buildLevelZeroCandidates(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]uint32, []float32, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return nil, nil, nil
+	}
+	items, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer h.itemsPool.Put(items[:0])
+	ids := make([]uint32, 0, len(items))
+	dists := make([]float32, 0, len(items))
+	for _, item := range items {
+		if !validHNSWIndex(item.id, len(h.deleted)) || h.deleted[item.id] {
+			continue
+		}
+		ids = append(ids, item.id)
+		dists = append(dists, item.dist)
+	}
+	return ids, dists, nil
 }
 
 func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Candidates []uint32) error {
@@ -479,6 +572,7 @@ func (h *HNSWIndex) Clear() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.quantized = nil
 	// Reset all internal state
 	h.nodeLevel = make([]uint16, 0, 1024)
 	h.vecOff = make([]int32, 0, 1024)
@@ -490,6 +584,9 @@ func (h *HNSWIndex) Clear() {
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
 	h.liveCount = 0
+	if h.fingerprints != nil {
+		h.fingerprints = h.fingerprints[:0]
+	}
 	h.vectors = make([]float32, 0, util.SafePreallocProduct(1024, h.dimensions))
 	h.entryPoint = 0
 	h.hasEntryPoint = false
@@ -546,6 +643,9 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	if err := h.prepareQuantizationReadLocked(ctx); err != nil {
+		return nil, false, err
+	}
 
 	if !h.hasEntryPoint || len(h.nodeLevel) == 0 {
 		return []ANNResult{}, true, nil
@@ -586,28 +686,13 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
-	ep := h.entryPoint
-
-	for l := h.maxLevel; l > 0; l-- {
-		var err error
-		ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l)
-		if err != nil {
-			return nil, false, err
-		}
+	if h.quantized != nil && !quantizationOptions(ctx).ignore {
+		scorer := h.quantized.query(normalized)
+		defer scorer.release()
+		ctx = context.WithValue(ctx, hnswQuantizedQueryKey{}, scorer)
+		minSim32 = float32(math.Inf(-1))
 	}
-
-	entryBufAny := h.idsPool.Get()
-	entries := entryBufAny.([]uint32)[:0]
-	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
-	for _, id := range entryIDs {
-		internalID, ok := h.idToInternal[id]
-		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
-			continue
-		}
-		entries = append(entries, internalID)
-	}
-	candidates, err := h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+	candidates, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
 	if err != nil {
 		return nil, false, err
 	}
@@ -701,6 +786,7 @@ const (
 // hnswIndexSnapshot is the serializable form of the HNSW index for persistence.
 // Vectors and VecOff are omitted; they are reconstructed on load from the vector index.
 type hnswIndexSnapshot struct {
+	Quantization      *hnswQuantizationSnapshot
 	Version           string
 	Config            HNSWConfig
 	Dimensions        int
@@ -713,6 +799,7 @@ type hnswIndexSnapshot struct {
 	IDToInternal      map[string]uint32
 	InternalToID      []string
 	Deleted           []bool
+	Fingerprints      []uint64 `msgpack:",omitempty"`
 	LiveCount         int
 	Vectors           []float32
 	EntryPoint        uint32
@@ -720,30 +807,56 @@ type hnswIndexSnapshot struct {
 	MaxLevel          int
 }
 
-// Save writes the HNSW index to path (msgpack format) as graph-only: graph structure and IDs only, no vector data.
-// Vectors are always loaded from the vector index (vectors) on load, so the file stays small.
+// Save writes graph structure, IDs and any compressed model to path (msgpack).
+// Original vectors remain in their canonical vector store and are resolved on load.
 // Dir is created if needed. Copies index data under a short read lock so I/O does not block Search/Add/Remove.
 func (h *HNSWIndex) Save(path string) error {
+	return saveHNSWSnapshot(path, h.snapshot())
+}
+
+// snapshot copies the graph's persisted form under a short read lock.
+func (h *HNSWIndex) snapshot() *hnswIndexSnapshot {
 	h.mu.RLock()
-	config := h.config
-	dimensions := h.dimensions
-	nodeLevel := append([]uint16(nil), h.nodeLevel...)
-	neighborsArena := append([]uint32(nil), h.neighborsArena...)
-	neighborsOff := append([]int32(nil), h.neighborsOff...)
-	neighborCountsArena := append([]uint16(nil), h.neighborCountsArena...)
-	neighborCountsOff := append([]int32(nil), h.neighborCountsOff...)
+	defer h.mu.RUnlock()
 	idToInternal := make(map[string]uint32, len(h.idToInternal))
 	for k, v := range h.idToInternal {
 		idToInternal[k] = v
 	}
-	internalToID := append([]string(nil), h.internalToID...)
-	deleted := append([]bool(nil), h.deleted...)
-	liveCount := h.liveCount
-	entryPoint := h.entryPoint
-	hasEntryPoint := h.hasEntryPoint
-	maxLevel := h.maxLevel
-	h.mu.RUnlock()
+	return &hnswIndexSnapshot{
+		Quantization:      h.quantized.snapshot(),
+		Version:           hnswIndexFormatVersionGraphOnly,
+		Config:            h.config,
+		Dimensions:        h.dimensions,
+		NodeLevel:         append([]uint16(nil), h.nodeLevel...),
+		NeighborsArena:    append([]uint32(nil), h.neighborsArena...),
+		NeighborsOff:      append([]int32(nil), h.neighborsOff...),
+		NeighborCountsAr:  append([]uint16(nil), h.neighborCountsArena...),
+		NeighborCountsOff: append([]int32(nil), h.neighborCountsOff...),
+		IDToInternal:      idToInternal,
+		InternalToID:      append([]string(nil), h.internalToID...),
+		Deleted:           append([]bool(nil), h.deleted...),
+		Fingerprints:      append([]uint64(nil), h.fingerprints...),
+		LiveCount:         h.liveCount,
+		EntryPoint:        h.entryPoint,
+		HasEntryPoint:     h.hasEntryPoint,
+		MaxLevel:          h.maxLevel,
+	}
+}
 
+// liveIDs are the IDs of the snapshot's live (not deleted) entries.
+func (snap *hnswIndexSnapshot) liveIDs() []string {
+	ids := make([]string, 0, snap.LiveCount)
+	for internal, id := range snap.InternalToID {
+		if internal < len(snap.Deleted) && snap.Deleted[internal] {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// saveHNSWSnapshot writes snap to path (msgpack) atomically.
+func saveHNSWSnapshot(path string, snap *hnswIndexSnapshot) error {
 	if err := security.EnsureRootedParent(path, 0o755); err != nil {
 		return err
 	}
@@ -759,26 +872,7 @@ func (h *HNSWIndex) Save(path string) error {
 		_ = security.RemoveRootedPath(tmpPath)
 	}()
 
-	snap := hnswIndexSnapshot{
-		Version:           hnswIndexFormatVersionGraphOnly,
-		Config:            config,
-		Dimensions:        dimensions,
-		NodeLevel:         nodeLevel,
-		VecOff:            nil,
-		NeighborsArena:    neighborsArena,
-		NeighborsOff:      neighborsOff,
-		NeighborCountsAr:  neighborCountsArena,
-		NeighborCountsOff: neighborCountsOff,
-		IDToInternal:      idToInternal,
-		InternalToID:      internalToID,
-		Deleted:           deleted,
-		LiveCount:         liveCount,
-		Vectors:           nil,
-		EntryPoint:        entryPoint,
-		HasEntryPoint:     hasEntryPoint,
-		MaxLevel:          maxLevel,
-	}
-	if err := encodeMsgpackBuffered(tmpFile, &snap); err != nil {
+	if err := encodeMsgpackBuffered(tmpFile, snap); err != nil {
 		return err
 	}
 	if err := tmpFile.Sync(); err != nil {
@@ -823,12 +917,17 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 		return nil, nil
 	}
 
+	quantized, validQuantization := restoreHNSWQuantization(snap.Quantization, snap.Dimensions, len(snap.InternalToID))
+	if !validQuantization {
+		return nil, nil
+	}
 	config := snap.Config
 	if config.M == 0 {
 		config = DefaultHNSWConfig()
 	}
 	h := NewHNSWIndex(snap.Dimensions, config)
 	h.mu.Lock()
+	h.quantized = quantized
 	h.nodeLevel = snap.NodeLevel
 	h.neighborsArena = snap.NeighborsArena
 	h.neighborsOff = snap.NeighborsOff
@@ -837,6 +936,9 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	h.idToInternal = snap.IDToInternal
 	h.internalToID = snap.InternalToID
 	h.deleted = snap.Deleted
+	if len(snap.Fingerprints) == len(snap.InternalToID) {
+		h.fingerprints = snap.Fingerprints
+	}
 	h.liveCount = snap.LiveCount
 	h.entryPoint = snap.EntryPoint
 	h.hasEntryPoint = snap.HasEntryPoint
@@ -860,62 +962,215 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	return h, nil
 }
 
-// SaveIVFHNSW persists per-cluster HNSW indexes to disk under hnsw_ivf/ alongside hnsw.
-// hnswPath is the full path to the single HNSW file (e.g. data/search/dbname/hnsw); per-cluster
-// files are written to hnsw_ivf/0, 1, 2, ... (no extension). Each cluster is saved as graph-only.
-func SaveIVFHNSW(hnswPath string, clusterHNSW map[int]*HNSWIndex) error {
-	return SaveIVFHNSWWithContext(context.Background(), hnswPath, clusterHNSW)
+// ivfHNSWManifestName names the file that makes a saved IVF-HNSW generation
+// current. Cluster files are written first under names unique to the
+// generation (g<seq>-<cid>); the manifest is written last (temp file,
+// rename), so a restore reads either the previous complete generation or the
+// new one, never a mix. Files the manifest does not name are deleted after it
+// is written (older generations, clusters beyond K, legacy numeric files).
+const ivfHNSWManifestName = "MANIFEST"
+
+// ivfHNSWManifest describes one persisted IVF-HNSW generation.
+type ivfHNSWManifest struct {
+	Seq        uint64   `json:"seq"`
+	Dimensions int      `json:"dimensions"`
+	Files      []string `json:"files"` // Files[cid] is cluster cid's graph file; "" when not saved
+	// Settings are the build settings the generation was built with
+	// (ivfHNSWGenerationSettings); restore requires the current ones.
+	Settings string `json:"settings"`
+	dir      string
 }
 
-func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, clusterHNSW map[int]*HNSWIndex) error {
+func ivfHNSWDir(hnswPath string) string {
+	return filepath.Join(filepath.Dir(hnswPath), "hnsw_ivf")
+}
+
+// readIVFHNSWManifest reads the current generation's manifest; (nil, nil)
+// when none was written.
+func readIVFHNSWManifest(ivfDir string) (*ivfHNSWManifest, error) {
+	file, err := security.OpenRootedFile(filepath.Join(ivfDir, ivfHNSWManifestName), os.O_RDONLY, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+	var m ivfHNSWManifest
+	if err := json.NewDecoder(file.File).Decode(&m); err != nil {
+		return nil, fmt.Errorf("IVF-HNSW manifest: %w", err)
+	}
+	for _, name := range m.Files {
+		if name != "" && (filepath.Base(name) != name || name == ivfHNSWManifestName) {
+			return nil, fmt.Errorf("IVF-HNSW manifest: invalid cluster file %q", name)
+		}
+	}
+	m.dir = ivfDir
+	return &m, nil
+}
+
+// clusterPath returns the file holding cluster cid's graph, or "".
+func (m *ivfHNSWManifest) clusterPath(cid int) string {
+	if m == nil || cid < 0 || cid >= len(m.Files) || m.Files[cid] == "" {
+		return ""
+	}
+	return filepath.Join(m.dir, m.Files[cid])
+}
+
+// loadCluster loads cluster cid's graph of this generation in lookup mode;
+// (nil, nil) when the generation has no file for it.
+func (m *ivfHNSWManifest) loadCluster(cid int, vectorLookup VectorLookup) (*HNSWIndex, error) {
+	path := m.clusterPath(cid)
+	if path == "" || vectorLookup == nil {
+		return nil, nil
+	}
+	return LoadHNSWIndex(path, vectorLookup)
+}
+
+// SaveIVFHNSW persists one generation of per-cluster HNSW indexes to disk
+// under hnsw_ivf/ alongside hnsw, graph-only, described by a manifest written
+// last. hnswPath is the full path to the single HNSW file (e.g.
+// data/search/dbname/hnsw).
+func SaveIVFHNSW(hnswPath string, graphs map[int]*HNSWIndex) error {
+	return SaveIVFHNSWWithContext(context.Background(), hnswPath, graphs)
+}
+
+// SaveIVFHNSWWithContext captures every graph before writing any file, so
+// the generation saved is the graphs as they were at the call; callers that
+// change the graphs concurrently capture them under their own exclusion
+// (Service persistence: snapshotClusterGenerationLocked).
+func SaveIVFHNSWWithContext(ctx context.Context, hnswPath string, graphs map[int]*HNSWIndex) error {
+	snaps := make(map[int]*hnswIndexSnapshot, len(graphs))
+	for cid, graph := range graphs {
+		if graph != nil {
+			snaps[cid] = graph.snapshot()
+		}
+	}
+	return saveIVFHNSWSnapshots(ctx, hnswPath, snaps)
+}
+
+// saveIVFHNSWSnapshots writes captured cluster graphs as one generation:
+// cluster files under names unique to the generation, then the manifest
+// (with the current build settings), then the prune.
+func saveIVFHNSWSnapshots(ctx context.Context, hnswPath string, graphs map[int]*hnswIndexSnapshot) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if hnswPath == "" || len(clusterHNSW) == 0 {
+	if hnswPath == "" || len(graphs) == 0 {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	baseDir := filepath.Dir(hnswPath)
-	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ".cluster"), 0o755); err != nil {
+	ivfDir := ivfHNSWDir(hnswPath)
+	if err := security.EnsureRootedParent(filepath.Join(ivfDir, ivfHNSWManifestName), 0o755); err != nil {
 		return err
 	}
-	for cid, idx := range clusterHNSW {
+	m := ivfHNSWManifest{Seq: 1, Settings: ivfHNSWGenerationSettings(), dir: ivfDir}
+	if prev, _ := readIVFHNSWManifest(ivfDir); prev != nil {
+		m.Seq = prev.Seq + 1
+	}
+	numClusters := 0
+	for cid := range graphs {
+		if cid >= numClusters {
+			numClusters = cid + 1
+		}
+	}
+	m.Files = make([]string, numClusters)
+	for cid := 0; cid < numClusters; cid++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if idx == nil {
+		snap := graphs[cid]
+		if snap == nil {
 			continue
 		}
-		path := filepath.Join(ivfDir, fmt.Sprintf("%d", cid))
-		if err := idx.Save(path); err != nil {
+		name := fmt.Sprintf("g%d-%d", m.Seq, cid)
+		if err := saveHNSWSnapshot(filepath.Join(ivfDir, name), snap); err != nil {
 			return fmt.Errorf("cluster %d: %w", cid, err)
 		}
+		m.Files[cid] = name
+		if m.Dimensions == 0 {
+			m.Dimensions = snap.Dimensions
+		}
 	}
+	if m.Dimensions == 0 {
+		return nil
+	}
+	if err := writeIVFHNSWManifest(&m); err != nil {
+		return err
+	}
+	pruneIVFHNSWFiles(&m)
 	return nil
 }
 
-// LoadIVFHNSWCluster loads one cluster's HNSW index from hnsw_ivf/cid in lookup mode
-// (no vector copy in HNSW RAM). Returns (nil, nil) if the file is missing or invalid (caller can build).
-// hnswPath is the full path to the single HNSW file (e.g. data/search/dbname/hnsw).
+func writeIVFHNSWManifest(m *ivfHNSWManifest) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(m.dir, ivfHNSWManifestName)
+	tmpPath := path + ".tmp"
+	tmpFile, err := security.CreateRootedFile(tmpPath, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tmpFile.Close()
+		_ = security.RemoveRootedPath(tmpPath)
+	}()
+	if _, err := tmpFile.Write(data); err != nil {
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	return security.RenameRootedFile(tmpPath, path)
+}
+
+// pruneIVFHNSWFiles deletes every file in the generation's directory that
+// its manifest does not name.
+func pruneIVFHNSWFiles(m *ivfHNSWManifest) {
+	keep := map[string]bool{ivfHNSWManifestName: true}
+	for _, name := range m.Files {
+		keep[name] = true
+	}
+	entries, err := security.ReadRootedDir(m.dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || keep[e.Name()] {
+			continue
+		}
+		_ = security.RemoveRootedPath(filepath.Join(m.dir, e.Name()))
+	}
+}
+
+// LoadIVFHNSWCluster loads one cluster's HNSW index of the persisted
+// generation in lookup mode (no vector copy in HNSW RAM). Returns (nil, nil)
+// if there is no generation, no file for the cluster, or it is invalid
+// (caller can build). hnswPath is the full path to the single HNSW file.
 func LoadIVFHNSWCluster(hnswPath string, clusterID int, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	if hnswPath == "" || vectorLookup == nil {
 		return nil, nil
 	}
-	baseDir := filepath.Dir(hnswPath)
-	path := filepath.Join(baseDir, "hnsw_ivf", fmt.Sprintf("%d", clusterID))
-	return LoadHNSWIndex(path, vectorLookup)
-}
-
-// loadIVFClusterMemberIDs decodes a cluster's msgpack file and returns the member IDs (InternalToID) without loading vectors.
-// ivfDir is the hnsw_ivf directory (prefer absolute path so cwd does not affect resolution).
-func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
-	if ivfDir == "" {
+	m, err := readIVFHNSWManifest(ivfHNSWDir(hnswPath))
+	if err != nil || m == nil {
 		return nil, nil
 	}
-	path := filepath.Join(ivfDir, fmt.Sprintf("%d", clusterID))
+	return m.loadCluster(clusterID, vectorLookup)
+}
+
+// loadIVFClusterMemberIDs decodes a cluster file and returns its live member
+// IDs (deleted slots excluded) without loading vectors.
+func loadIVFClusterMemberIDs(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
@@ -928,54 +1183,54 @@ func loadIVFClusterMemberIDs(ivfDir string, clusterID int) ([]string, error) {
 	if snap.InternalToID == nil {
 		return nil, nil
 	}
-	return snap.InternalToID, nil
+	return snap.liveIDs(), nil
 }
 
-// DeriveIVFCentroidsFromClusters builds centroids and idToCluster from existing hnsw_ivf/ cluster files
-// (numeric names 0, 1, 2, ...) and vectors from the vector index. No separate centroid file.
-// Returns (nil, nil, nil) if no cluster files exist or derivation fails.
+// DeriveIVFCentroidsFromClusters builds centroids and idToCluster from the
+// persisted generation's cluster files and vectors from the vector index. No
+// separate centroid file. Returns (nil, nil, nil) if no generation was
+// persisted or derivation fails.
 func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) (centroids [][]float32, idToCluster map[string]int, err error) {
 	if hnswPath == "" || vectorLookup == nil {
 		return nil, nil, nil
 	}
-	baseDir := filepath.Dir(hnswPath)
-	ivfDir := filepath.Join(baseDir, "hnsw_ivf")
-	entries, err := security.ReadRootedDir(ivfDir)
-	if err != nil {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: ReadDir %q: %v (k-means will run)", ivfDir, err)
+	ivfDir := ivfHNSWDir(hnswPath)
+	m, mErr := readIVFHNSWManifest(ivfDir)
+	if mErr != nil || m == nil {
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no persisted generation in %q (%v); k-means will run", ivfDir, mErr)
 		return nil, nil, nil
 	}
-	var clusterIDs []int
-	var seenNames []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		seenNames = append(seenNames, name)
-		// Cluster files are numeric names (0, 1, 2, ...); skip e.g. centroids.gob
-		if cid, sErr := strconv.Atoi(name); sErr == nil && cid >= 0 {
-			clusterIDs = append(clusterIDs, cid)
-		}
-	}
-	if len(clusterIDs) == 0 {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no cluster files in %q (saw %d entries: %v); k-means will run", ivfDir, len(seenNames), seenNames)
-		return nil, nil, nil
-	}
-	sort.Ints(clusterIDs)
-	maxCID := clusterIDs[len(clusterIDs)-1]
+	return deriveIVFCentroidsFromManifest(m, vectorLookup)
+}
 
+// deriveIVFCentroidsFromManifest derives the centroids (indexed by cluster ID,
+// one per manifest entry) and membership of one persisted generation, from
+// its graphs' live members. A generation whose named files cannot be read,
+// or that holds a live member in more than one cluster, is not one
+// population and is rejected.
+func deriveIVFCentroidsFromManifest(m *ivfHNSWManifest, vectorLookup VectorLookup) (centroids [][]float32, idToCluster map[string]int, err error) {
+	numClusters := len(m.Files)
+	if numClusters == 0 {
+		return nil, nil, nil
+	}
 	idToCluster = make(map[string]int)
 	dims := 0
-	centroidSums := make([][]float64, maxCID+1)
-	centroidCounts := make([]int, maxCID+1)
+	centroidSums := make([][]float64, numClusters)
+	centroidCounts := make([]int, numClusters)
 
-	for _, cid := range clusterIDs {
-		memberIDs, err := loadIVFClusterMemberIDs(ivfDir, cid)
-		if err != nil || len(memberIDs) == 0 {
+	for cid := 0; cid < numClusters; cid++ {
+		path := m.clusterPath(cid)
+		if path == "" {
 			continue
 		}
+		memberIDs, err := loadIVFClusterMemberIDs(path)
+		if err != nil {
+			return nil, nil, fmt.Errorf("IVF-HNSW generation %d: cluster %d: %w", m.Seq, cid, err)
+		}
 		for _, id := range memberIDs {
+			if prev, dup := idToCluster[id]; dup {
+				return nil, nil, fmt.Errorf("IVF-HNSW generation %d: %q is a live member of clusters %d and %d", m.Seq, id, prev, cid)
+			}
 			idToCluster[id] = cid
 		}
 		vecs := make([][]float32, 0, len(memberIDs))
@@ -995,9 +1250,6 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 		if len(vecs) == 0 {
 			continue
 		}
-		if dims == 0 {
-			dims = len(vecs[0])
-		}
 		centroidSums[cid] = make([]float64, dims)
 		for _, v := range vecs {
 			for d := 0; d < dims; d++ {
@@ -1008,12 +1260,12 @@ func DeriveIVFCentroidsFromClusters(hnswPath string, vectorLookup VectorLookup) 
 	}
 
 	if dims == 0 {
-		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", ivfDir)
+		logSearchPrintf("[IVF-HNSW] ⚠️ DeriveIVFCentroidsFromClusters: no vectors found for any cluster in %q (vectorLookup returned nothing for cluster member IDs); k-means will run", m.dir)
 		return nil, nil, nil
 	}
 	// Dense slice so centroid index matches cluster IDs (0, 1, 2, ...); RestoreClusteringState expects cid < len(centroids).
-	centroids = make([][]float32, maxCID+1)
-	for cid := 0; cid <= maxCID; cid++ {
+	centroids = make([][]float32, numClusters)
+	for cid := 0; cid < numClusters; cid++ {
 		centroids[cid] = make([]float32, dims)
 		if centroidCounts[cid] > 0 {
 			for d := 0; d < dims; d++ {
@@ -1095,7 +1347,8 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 		ctx = context.Background()
 	}
 	current := entryID
-	currentDist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(current))
+	scorer, _ := ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	currentDist := h.graphDistanceLocked(query, current, scorer)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1118,7 +1371,7 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 			if !validHNSWIndex(neighborID, len(h.nodeLevel)) {
 				continue
 			}
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+			dist := h.graphDistanceLocked(query, neighborID, scorer)
 			if dist < currentDist {
 				current = neighborID
 				currentDist = dist
@@ -1202,6 +1455,10 @@ func (layerWithCtx) neighborProbe(ctx context.Context) error { return ctx.Err() 
 // entry IDs.
 func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, query []float32, entryID uint32, extraEntries []uint32, ef int, level int, wantIDs bool) (ids []uint32, items []hnswDistItem, err error) {
 	var mode M
+	var scorer *hnswQuantizedQuery
+	if ctx != nil {
+		scorer, _ = ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	}
 	visited := h.visitedPool.Get().(*visitedGenState)
 	defer h.visitedPool.Put(visited)
 	if len(visited.gen) < len(h.nodeLevel) {
@@ -1230,9 +1487,9 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	results.Reset(true, ef*2)
 	defer h.heapPool.Put(results)
 
-	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID)
+	h.seedLayerEntry(candidates, results, visited, curGen, query, ef, entryID, scorer)
 	for _, id := range extraEntries {
-		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id)
+		h.seedLayerEntry(candidates, results, visited, curGen, query, ef, id, scorer)
 	}
 
 	for candidates.Len() > 0 {
@@ -1273,14 +1530,17 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 			}
 			visited.gen[neighborID] = curGen
 
-			dist := float32(1.0) - vector.DotProductSIMD(query, h.vectorAtLocked(neighborID))
+			dist := h.graphDistanceLocked(query, neighborID, scorer)
 
 			if results.Len() < ef || dist < results.Peek().dist {
 				candidates.Push(hnswDistItem{id: neighborID, dist: dist})
-				results.Push(hnswDistItem{id: neighborID, dist: dist})
-
-				if results.Len() > ef {
-					_ = results.Pop()
+				if results.Len() < ef {
+					results.Push(hnswDistItem{id: neighborID, dist: dist})
+				} else {
+					// A full beam admits only a closer item. Replace its worst
+					// member with one downward sift instead of push then pop.
+					results.items[0] = hnswDistItem{id: neighborID, dist: dist}
+					results.siftDown(0)
 				}
 			}
 		}
@@ -1318,16 +1578,21 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 // seedLayerEntry validates and seeds one entry point into the candidate and
 // result heaps. It is a small helper (one call per entry point, not per
 // neighbor) shared by the single- and multi-entry instantiations.
-func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32) {
+func (h *HNSWIndex) seedLayerEntry(candidates, results *distHeap, visited *visitedGenState, curGen uint16, query []float32, ef int, entryID uint32, scorer *hnswQuantizedQuery) {
 	if !validHNSWIndex(entryID, len(h.nodeLevel)) || h.deleted[entryID] || visited.gen[entryID] == curGen {
 		return
 	}
-	entryVector := h.vectorAtLocked(entryID)
-	if len(entryVector) != h.dimensions {
-		return
+	var entryDist float32
+	if scorer != nil {
+		entryDist = 1 - scorer.dot(entryID)
+	} else {
+		entryVector := h.vectorAtLocked(entryID)
+		if len(entryVector) != h.dimensions {
+			return
+		}
+		entryDist = 1 - vector.DotProductSIMD(query, entryVector)
 	}
 	visited.gen[entryID] = curGen
-	entryDist := float32(1.0) - vector.DotProductSIMD(query, entryVector)
 	item := hnswDistItem{id: entryID, dist: entryDist}
 	candidates.Push(item)
 	results.Push(item)

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -22,6 +23,7 @@ type GPUKMeansCandidateGen struct {
 	clusterIndex        *gpu.ClusterIndex
 	numClustersToSearch int
 	clusterSelector     func(ctx context.Context, query []float32, defaultN int) []int
+	serving             *clusterServing // when set: the published generation, per query
 }
 
 func NewGPUKMeansCandidateGen(clusterIndex *gpu.ClusterIndex, numClustersToSearch int) *GPUKMeansCandidateGen {
@@ -40,28 +42,40 @@ func (g *GPUKMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, 
 	return g
 }
 
+// SetServing makes the generator serve each query from the cluster
+// generation the query holds (see clusterServing); the selector is then
+// called with lock held.
+func (g *GPUKMeansCandidateGen) SetServing(lock sync.Locker, view func(context.Context) (context.Context, clusterView, func())) *GPUKMeansCandidateGen {
+	g.serving = &clusterServing{lock: lock, view: view}
+	return g
+}
+
 func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
-	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
+	// The routing and the routed members come from the query's cluster
+	// generation; scoring follows on its population, which stays held (and
+	// its GPU buffers unreleased) until done.
+	ctx, view, unlock, done := g.serving.open(ctx, ownClusterView(g.clusterIndex, g.numClustersToSearch, nil))
+	defer done()
+	defer unlock()
+	if view.routing == nil {
+		unlock()
 		return nil, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
 	}
 
 	clusterIDs := []int(nil)
 	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+		clusterIDs = g.clusterSelector(ctx, query, view.probes)
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+		clusterIDs = view.routing.NearestClusters(query, view.probes)
 	}
-	if len(clusterIDs) == 0 {
-		return []Candidate{}, nil
-	}
-
-	ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
+	ids := view.routing.MemberIDsOf(clusterIDs)
+	unlock()
 	if len(ids) == 0 {
 		return []Candidate{}, nil
 	}
 
-	results, err := g.clusterIndex.ScoreSubset(query, ids)
+	results, err := view.index.ScoreSubset(query, ids)
 	if err != nil {
 		return nil, err
 	}

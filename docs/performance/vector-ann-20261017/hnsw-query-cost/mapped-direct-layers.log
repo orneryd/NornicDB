@@ -1,0 +1,19 @@
+# github.com/orneryd/nornicdb/pkg/search.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+2026/10/17 07:10:10 INFO 📇 Search: BM25 engine selected: v2 event_id=search.bm25_engine.selected component=search bm25_engine=v2
+2026/10/17 07:10:11 INFO 🔍 Vector search strategy: HNSW scalar int8 (90623340 encoded bytes) (N=88155 vectors) event_id=search.operator.f7bec3cb91638398 component=search message_template="🔍 Vector search strategy: %s (N=%d vectors)" arg_0="HNSW scalar int8 (90623340 encoded bytes)" arg_1=88155
+goos: darwin
+goarch: arm64
+pkg: github.com/orneryd/nornicdb/pkg/search
+cpu: Apple M2 Max
+BenchmarkANNProfileLayers/graph-12         	    5793	    190406 ns/op	    1759 B/op	       5 allocs/op
+BenchmarkANNProfileLayers/graph-12         	    5930	    193930 ns/op	    1724 B/op	       5 allocs/op
+BenchmarkANNProfileLayers/graph-12         	    6160	    191743 ns/op	    1722 B/op	       5 allocs/op
+BenchmarkANNProfileLayers/pipeline-12      	    5011	    239001 ns/op	    7914 B/op	      12 allocs/op
+BenchmarkANNProfileLayers/pipeline-12      	    4950	    229571 ns/op	    7982 B/op	      12 allocs/op
+BenchmarkANNProfileLayers/pipeline-12      	    4683	    220325 ns/op	    7975 B/op	      12 allocs/op
+BenchmarkANNProfileLayers/public-12        	     435	   2665078 ns/op	 1041782 B/op	     844 allocs/op
+BenchmarkANNProfileLayers/public-12        	     447	   2689841 ns/op	 1041243 B/op	     844 allocs/op
+BenchmarkANNProfileLayers/public-12        	     441	   2656771 ns/op	 1041800 B/op	     844 allocs/op
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/search	15.640s

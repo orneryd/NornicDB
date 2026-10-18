@@ -39,7 +39,29 @@ type VectorQuerySpec struct {
 
 	// Limit is the maximum number of results to return (top-K).
 	Limit int
+
+	// ScoreScale is the scale of each hit's Score: Neo4j's (the zero value, for
+	// Cypher) or the raw similarity (for the Qdrant API).
+	ScoreScale VectorScoreScale
+
+	// Exact evaluates every indexed node instead of an approximate candidate set.
+	Exact bool
 }
+
+// VectorScoreScale is the scale a vector query reports its scores on. It never
+// changes which nodes are returned or their order.
+type VectorScoreScale int
+
+const (
+	// VectorScoreNeo4j is Neo4j's scale for its vector indexes (#907): cosine
+	// max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both in [0, 1]; dot is
+	// the dot product.
+	VectorScoreNeo4j VectorScoreScale = iota
+	// VectorScoreSimilarity is the raw similarity, as Qdrant reports it: the
+	// cosine similarity in [-1, 1], the dot product, and for euclidean
+	// 1 / (1 + d) (vector.EuclideanSimilarity).
+	VectorScoreSimilarity
+)
 
 // VectorQueryHit is a lightweight result row for Cypher-compatible vector queries.
 // ID is the node ID (not a chunk/named vector ID).
@@ -82,13 +104,40 @@ type RelationshipVectorQueryHit struct {
 //  3. Fallback to ChunkEmbeddings[0..N] (best score across chunks)
 //
 // For performance, cosine-similarity queries are executed against the in-memory
-// vector index (unified pipeline) rather than scanning storage.
+// vector index (unified pipeline) rather than scanning storage. This legacy
+// entry point preserves live-indexed Cypher reads before full warmup; use
+// VectorQueryNodesWithOptions for reads requiring warming/readiness.
 //
-// Scores are on Neo4j's scale for its vector indexes (#907): cosine
-// max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both in [0, 1]
-// (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity); dot, a
-// NornicDB similarity, is the dot product.
+// Scores are on spec.ScoreScale; the zero value is Neo4j's scale for its vector
+// indexes (#907): cosine max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both
+// in [0, 1] (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity);
+// dot, a NornicDB similarity, is the dot product.
 func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec) ([]VectorQueryHit, error) {
+	return s.vectorQueryNodes(ctx, queryEmbedding, spec, nil, false)
+}
+
+// VectorQueryNodesWithOptions is VectorQueryNodes for a caller with its own
+// search options. Of opts it reads HNSWEf, the query's own HNSW beam width, and
+// Where, which admits candidate nodes before the top-K cut, as a Cypher WHERE
+// on the node does; nil opts uses default options. It is the vector query the
+// Qdrant API's Search runs, on the same index and strategy as Cypher's.
+// Unlike the legacy scalar-vector API, this optioned entry point warms a lazy
+// service and rejects an incomplete build before returning any results.
+//
+// Example:
+//
+//	hits, err := svc.VectorQueryNodesWithOptions(ctx, query, search.VectorQuerySpec{
+//		Label: "QdrantPoint", Property: "default", Similarity: "cosine",
+//		Limit: 10, ScoreScale: search.VectorScoreSimilarity,
+//	}, &search.SearchOptions{HNSWEf: 128, Where: func(n *storage.Node) bool { return n.Properties["tag"] == "a" }})
+func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions) ([]VectorQueryHit, error) {
+	return s.vectorQueryNodes(ctx, queryEmbedding, spec, opts, true)
+}
+
+// vectorQueryNodes shares vector semantics across the two public contracts.
+// Cypher's established scalar fast path can use live indexed vectors during
+// warming; optioned reads (Qdrant) require the configured population to finish.
+func (s *Service) vectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions, requireReady bool) ([]VectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
@@ -97,6 +146,11 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if requireReady {
+		if err := s.prepareSearchRead(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if spec.Limit <= 0 {
 		spec.Limit = 10
@@ -111,6 +165,10 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 		similarity = "cosine"
 	}
 
+	if !s.vectorEnabled.Load() {
+		return nil, nil
+	}
+
 	// If the query dimensions don't match the configured index dimensions, Cypher expects
 	// an empty result set (not an error). The active vector backing may be either the
 	// in-memory VectorIndex or the file-backed VectorFileStore.
@@ -119,17 +177,19 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 	}
 
 	// Fast path: cosine queries can use the indexed vector pipeline.
-	if strings.EqualFold(similarity, "cosine") {
-		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName)
-		for i := range hits {
-			hits[i].Score = neo4jCosineScore(hits[i].Score)
+	if strings.EqualFold(similarity, "cosine") && !spec.Exact {
+		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName, opts)
+		if spec.ScoreScale == VectorScoreNeo4j {
+			for i := range hits {
+				hits[i].Score = neo4jCosineScore(hits[i].Score)
+			}
 		}
 		return hits, err
 	}
 
 	// Exact (index-backed) path for dot/euclidean: compute per-node scores from in-memory vectors
 	// without scanning storage.
-	return s.vectorQueryNodesExact(ctx, queryEmbedding, spec, vectorName, strings.ToLower(similarity))
+	return s.vectorQueryNodesExact(ctx, queryEmbedding, spec, vectorName, strings.ToLower(similarity), opts)
 }
 
 // VectorQueryRelationships executes a Cypher-style relationship vector query using
@@ -225,10 +285,17 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	return out, nil
 }
 
-func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string) ([]VectorQueryHit, error) {
+func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, caller *SearchOptions) ([]VectorQueryHit, error) {
 	opts := DefaultSearchOptions()
 	opts.Limit = spec.Limit
 	opts.CandidateTarget = spec.Limit
+	if caller != nil {
+		opts.HNSWEf = caller.HNSWEf
+		opts.QuantizationIgnore = caller.QuantizationIgnore
+		opts.QuantizationRescore = caller.QuantizationRescore
+		opts.QuantizationOversampling = caller.QuantizationOversampling
+		opts.Where = caller.Where
+	}
 	return s.vectorQueryNodesIndexedWithOptions(ctx, queryEmbedding, spec, vectorName, opts)
 }
 
@@ -237,7 +304,8 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 		return nil, nil
 	}
 
-	pipeline, err := s.getOrCreateVectorPipeline(ctx)
+	ctx, pipeline, releaseCluster, err := s.vectorPipelineForQuery(ctx)
+	defer releaseCluster()
 	if err != nil {
 		return nil, err
 	}
@@ -255,23 +323,38 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	minSimilarity := -1.0
 	resolved.MinSimilarity = &minSimilarity
 	normalizedQuery := vector.Normalize(queryEmbedding)
-
-	var supplement []vectorQueryScoredNode
-	if spec.Property != "" {
-		supplement, err = s.exactPropertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property)
-		if err != nil {
-			return nil, err
-		}
+	ctx, err = withQuantizationOptions(ctx, resolved)
+	if err != nil {
+		return nil, err
+	}
+	var quantizedIndex *HNSWIndex
+	if h, ok := pipeline.candidateGen.(*HNSWCandidateGen); ok && h.quantizationActive(ctx) && !quantizationOptions(ctx).rescore {
+		quantizedIndex = h.hnswIndex
 	}
 
+	var supplement []vectorQueryScoredNode
+	supplementReady := false
+
 	var postProcessErr error
+	seenOrphans := make(map[string]bool)
 	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) []indexResult {
 		if postProcessErr != nil {
 			return nil
 		}
-		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement)
+		// Candidate discovery activates a pending PQ model after collection
+		// growth. Score supplements afterwards, once, using that same policy.
+		if !supplementReady && spec.Property != "" {
+			supplement, postProcessErr = s.propertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property, quantizedIndex)
+			if postProcessErr != nil {
+				return nil
+			}
+			supplementReady = true
+		}
+		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement, quantizedIndex)
 		postProcessErr = processErr
-		return processed
+		// Filtering here, inside the widening loop, lets a selective Where
+		// widen the search until it has the top K it admits.
+		return s.filterByTypeAndProperties(ctx, processed, resolved, seenOrphans)
 	})
 	if err != nil {
 		if errors.Is(err, ErrDimensionMismatch) {
@@ -293,14 +376,16 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	return hits, nil
 }
 
-func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode) ([]indexResult, error) {
+func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuery []float32, spec VectorQuerySpec, vectorName string, candidates []indexResult, supplement []vectorQueryScoredNode, quantizedIndex *HNSWIndex) ([]indexResult, error) {
 	candidateNodes := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		candidateNodes[normalizeVectorResultIDToNodeID(candidate.ID)] = struct{}{}
+		candidateNodes[decodeVectorKey(candidate.ID).node] = struct{}{}
 	}
 
 	out := make([]vectorQueryScoredNode, 0, min(len(candidateNodes), util.SafePreallocProduct(spec.Limit, 2)))
 	meta := s.snapshotVectorQueryCandidateMeta(candidateNodes)
+	scoreVector, release := s.vectorQueryScoreReader(normalizedQuery, quantizedIndex)
+	defer release()
 
 	for nodeID := range candidateNodes {
 		select {
@@ -331,7 +416,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 
 		if named := nodeMeta.named; named != nil {
 			if vecID, ok := named[vectorName]; ok {
-				if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+				if score, ok := scoreVector(vecID); ok {
 					bestScore = score
 				}
 			}
@@ -339,7 +424,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 			// fall through to managed named embeddings (any key) before chunk fallback.
 			if bestScore < -1.0 && spec.Property == "" {
 				for _, vecID := range named {
-					if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+					if score, ok := scoreVector(vecID); ok {
 						if score > bestScore {
 							bestScore = score
 						}
@@ -351,7 +436,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 		if bestScore < -1.0 && spec.Property != "" {
 			if props := nodeMeta.props; props != nil {
 				if vecID, ok := props[spec.Property]; ok {
-					if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+					if score, ok := scoreVector(vecID); ok {
 						bestScore = score
 					}
 				}
@@ -360,7 +445,7 @@ func (s *Service) scoreVectorQueryCandidates(ctx context.Context, normalizedQuer
 
 		if bestScore < -1.0 {
 			for _, vecID := range nodeMeta.chunks {
-				if score, ok := s.scoreVectorIDDot(normalizedQuery, vecID); ok {
+				if score, ok := scoreVector(vecID); ok {
 					if score > bestScore {
 						bestScore = score
 					}
@@ -407,7 +492,7 @@ func collapseScoredNodesByID(nodes []vectorQueryScoredNode) []vectorQueryScoredN
 	return out
 }
 
-func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQuery []float32, label, property string) ([]vectorQueryScoredNode, error) {
+func (s *Service) propertyVectorNodeScores(ctx context.Context, normalizedQuery []float32, label, property string, quantizedIndex *HNSWIndex) ([]vectorQueryScoredNode, error) {
 	type candidate struct {
 		nodeID string
 		vecID  string
@@ -439,6 +524,11 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 	s.mu.RUnlock()
 	s.indexMu.RUnlock()
 
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	scoreVector, release := s.vectorQueryScoreReader(normalizedQuery, quantizedIndex)
+	defer release()
 	out := make([]vectorQueryScoredNode, 0, len(candidates))
 	for _, cand := range candidates {
 		select {
@@ -446,7 +536,7 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 			return nil, ctx.Err()
 		default:
 		}
-		score, ok := s.scoreVectorIDDot(normalizedQuery, cand.vecID)
+		score, ok := scoreVector(cand.vecID)
 		if !ok {
 			continue
 		}
@@ -493,8 +583,8 @@ func (s *Service) scoreVectorIDDot(normalizedQuery []float32, vecID string) (flo
 
 	var vec []float32
 	if vfs != nil {
-		if stored, ok := vfs.GetVector(vecID); ok {
-			vec = stored
+		if score, ok := vfs.scoreVectorDot(normalizedQuery, vecID); ok {
+			return clampCosine(score), true
 		}
 	}
 	if len(vec) == 0 && vi != nil {
@@ -531,7 +621,7 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return out
 }
 
-func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, similarity string) ([]VectorQueryHit, error) {
+func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, similarity string, opts *SearchOptions) ([]VectorQueryHit, error) {
 	if s.EmbeddingCount() == 0 {
 		return nil, nil
 	}
@@ -539,53 +629,75 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		return nil, nil
 	}
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
+	prepared.scale = spec.ScoreScale
 
-	type scoredNode struct {
-		id    string
-		score float64
-	}
-	scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
+	// scoreAll scores every node under the metadata read locks; the Where
+	// filter below reads storage, so it runs after they are released.
+	scoreAll := func() ([]vectorQueryScoredNode, error) {
+		scored := make([]vectorQueryScoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
-	// The node and relationship metadata is written under indexMu (index
-	// writes): lock order indexMu -> mu.
-	s.indexMu.RLock()
-	defer s.indexMu.RUnlock()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+		// The node and relationship metadata is written under indexMu (index
+		// writes): lock order indexMu -> mu.
+		s.indexMu.RLock()
+		defer s.indexMu.RUnlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
 
-	for nodeID, labels := range s.nodeLabels {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+		for nodeID, labels := range s.nodeLabels {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 
-		if spec.Label != "" {
-			has := false
-			for _, l := range labels {
-				if l == spec.Label {
-					has = true
-					break
+			if spec.Label != "" {
+				has := false
+				for _, l := range labels {
+					if l == spec.Label {
+						has = true
+						break
+					}
+				}
+				if !has {
+					continue
 				}
 			}
-			if !has {
-				continue
-			}
-		}
 
-		bestScore := math.Inf(-1)
+			bestScore := math.Inf(-1)
 
-		// Apply Cypher precedence for selecting which vector represents this node.
-		if named := s.nodeNamedVector[nodeID]; named != nil {
-			if vecID, ok := named[vectorName]; ok {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					bestScore = prepared.score(v)
+			// Apply Cypher precedence for selecting which vector represents this node.
+			if named := s.nodeNamedVector[nodeID]; named != nil {
+				if vecID, ok := named[vectorName]; ok {
+					if v, ok := s.getVectorForCypher(vecID); ok {
+						bestScore = prepared.score(v)
+					}
+				}
+				// If there is no explicit Cypher property/index mapping (property key is empty),
+				// fall through to managed named embeddings (any key) before chunk fallback.
+				if math.IsInf(bestScore, -1) && spec.Property == "" {
+					for _, vecID := range named {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							score := prepared.score(v)
+							if score > bestScore {
+								bestScore = score
+							}
+						}
+					}
 				}
 			}
-			// If there is no explicit Cypher property/index mapping (property key is empty),
-			// fall through to managed named embeddings (any key) before chunk fallback.
-			if math.IsInf(bestScore, -1) && spec.Property == "" {
-				for _, vecID := range named {
+
+			if math.IsInf(bestScore, -1) && spec.Property != "" {
+				if props := s.nodePropVector[nodeID]; props != nil {
+					if vecID, ok := props[spec.Property]; ok {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							bestScore = prepared.score(v)
+						}
+					}
+				}
+			}
+
+			if math.IsInf(bestScore, -1) {
+				for _, vecID := range s.nodeChunkVectors[nodeID] {
 					if v, ok := s.getVectorForCypher(vecID); ok {
 						score := prepared.score(v)
 						if score > bestScore {
@@ -594,35 +706,46 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 					}
 				}
 			}
-		}
 
-		if math.IsInf(bestScore, -1) && spec.Property != "" {
-			if props := s.nodePropVector[nodeID]; props != nil {
-				if vecID, ok := props[spec.Property]; ok {
-					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = prepared.score(v)
-					}
-				}
+			if !math.IsInf(bestScore, -1) {
+				scored = append(scored, vectorQueryScoredNode{id: nodeID, score: bestScore})
 			}
 		}
 
-		if math.IsInf(bestScore, -1) {
-			for _, vecID := range s.nodeChunkVectors[nodeID] {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					score := prepared.score(v)
-					if score > bestScore {
-						bestScore = score
-					}
-				}
-			}
-		}
-
-		if !math.IsInf(bestScore, -1) {
-			scored = append(scored, scoredNode{id: nodeID, score: bestScore})
-		}
+		return scored, nil
+	}
+	s.mu.RLock()
+	fileBacked := s.vectorFileStore != nil
+	s.mu.RUnlock()
+	var scored []vectorQueryScoredNode
+	var err error
+	if fileBacked {
+		scored, err = s.exactStoredNodeScores(ctx, prepared, spec, vectorName)
+	} else {
+		scored, err = scoreAll()
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	if opts != nil && opts.Where != nil {
+		admitted := scored[:0]
+		for _, candidate := range scored {
+			if len(admitted) == spec.Limit {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			node, err := s.getNodeWithoutEmbeddings(storage.NodeID(candidate.id))
+			if err != nil || !opts.Where(node) {
+				continue
+			}
+			admitted = append(admitted, candidate)
+		}
+		scored = admitted
+	}
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
 	}
@@ -630,6 +753,77 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	out := make([]VectorQueryHit, 0, len(scored))
 	for _, s := range scored {
 		out = append(out, VectorQueryHit{ID: s.id, Score: s.score})
+	}
+	return out, nil
+}
+
+// exactStoredNodeScores uses the indexed population to resolve original node
+// vectors from storage. The file store retains normalized coordinates only;
+// reading the durable values preserves magnitudes without a second vector copy.
+func (s *Service) exactStoredNodeScores(ctx context.Context, prepared cypherVectorQuery, spec VectorQuerySpec, vectorName string) ([]vectorQueryScoredNode, error) {
+	s.indexMu.RLock()
+	s.mu.RLock()
+	// Snapshot admitted source fields, not just labels: excluded managed chunks
+	// still have text/labels but must never re-enter exact search via storage.
+	metadata := make(map[string]vectorQueryCandidateMeta, len(s.nodeLabels))
+	for id, labels := range s.nodeLabels {
+		matches := spec.Label == ""
+		for _, label := range labels {
+			matches = matches || label == spec.Label
+		}
+		if matches {
+			metadata[id] = vectorQueryCandidateMeta{
+				named:  cloneStringMap(s.nodeNamedVector[id]),
+				props:  cloneStringMap(s.nodePropVector[id]),
+				chunks: append([]string(nil), s.nodeChunkVectors[id]...),
+			}
+		}
+	}
+	s.mu.RUnlock()
+	s.indexMu.RUnlock()
+	out := make([]vectorQueryScoredNode, 0, min(len(metadata), spec.Limit))
+	for id, admitted := range metadata {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		node, err := s.engine.GetNode(storage.NodeID(id))
+		if errors.Is(err, storage.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Restrict the durable node to the identities admitted at indexing time.
+		eligible := *node
+		eligible.NamedEmbeddings = make(map[string][]float32, len(admitted.named))
+		for name := range admitted.named {
+			eligible.NamedEmbeddings[name] = node.NamedEmbeddings[name]
+		}
+		eligible.Properties = make(map[string]any, len(admitted.props))
+		for name := range admitted.props {
+			eligible.Properties[name] = node.Properties[name]
+		}
+		eligible.ChunkEmbeddings = nil
+		for _, chunkID := range admitted.chunks {
+			chunk := 0
+			if chunkID != id {
+				key := decodeVectorKey(chunkID)
+				if key.kind != vectorKeyChunk || key.node != id {
+					continue
+				}
+				chunk = key.chunk
+			}
+			if chunk >= 0 && chunk < len(node.ChunkEmbeddings) {
+				eligible.ChunkEmbeddings = append(eligible.ChunkEmbeddings, node.ChunkEmbeddings[chunk])
+			}
+		}
+		best := math.Inf(-1)
+		for _, value := range resolveCypherCandidateEmbeddings(&eligible, spec.Property, vectorName) {
+			best = math.Max(best, prepared.score(value))
+		}
+		if !math.IsInf(best, -1) {
+			out = append(out, vectorQueryScoredNode{id: id, score: best})
+		}
 	}
 	return out, nil
 }
@@ -643,6 +837,8 @@ type cypherVectorQuery struct {
 	query      []float32
 	cosine     vector.Neo4jCosineQuery
 	valid      bool
+	// scale is the scale score reports on; the zero value is Neo4j's.
+	scale VectorScoreScale
 }
 
 func newCypherVectorQuery(similarity string, query []float32) cypherVectorQuery {
@@ -653,17 +849,23 @@ func newCypherVectorQuery(similarity string, query []float32) cypherVectorQuery 
 	return prepared
 }
 
-// score is candidate's score on Neo4j's scale (see VectorQueryNodes); a
-// candidate that isn't a valid vector for the similarity scores -Inf, no hit.
+// score is candidate's score on q.scale (see VectorScoreScale); a candidate
+// that isn't a valid vector for the similarity scores -Inf, no hit.
 func (q cypherVectorQuery) score(candidate []float32) float64 {
 	var score float64
 	ok := q.valid
 	switch {
 	case !ok:
+	case q.similarity == "euclidean" && q.scale == VectorScoreSimilarity:
+		ok = len(candidate) == len(q.query)
+		score = vector.EuclideanSimilarity(q.query, candidate)
 	case q.similarity == "euclidean":
 		score, ok = vector.Neo4jEuclideanSimilarity(q.query, candidate)
 	case q.similarity == "dot":
 		return float64(vector.DotProduct(q.query, candidate))
+	case q.scale == VectorScoreSimilarity:
+		ok = len(candidate) == len(q.query)
+		score = vector.CosineSimilarity(q.query, candidate)
 	default:
 		score, ok = q.cosine.Similarity(candidate)
 	}

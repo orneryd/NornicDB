@@ -162,7 +162,9 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	logSearchPrintf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
 }
 
-func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore) (*IVFPQIndex, error) {
+// seedIDs (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
+// since they read the node metadata under indexMu.
+func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, seedIDs []string) (*IVFPQIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -183,7 +185,6 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	s.mu.RLock()
 	vectorPath := s.vectorIndexPath
 	hnswPath := s.hnswIndexPath
-	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	basePath := s.ivfpqPersistenceBasePath(vectorPath, hnswPath)
 
@@ -200,7 +201,6 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if vfs == nil {
 		return nil, localizedError(localization.SearchIVFPQVectorStoreUnavailable(), nil)
 	}
-	seedIDs := bm25SeedDocIDs(fulltext)
 	built, stats, err := BuildIVFPQFromVectorStore(ctx, vfs, profile, seedIDs)
 	if err != nil {
 		return nil, err

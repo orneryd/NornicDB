@@ -4,8 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/envutil"
 )
 
 type queryTextContextKey struct{}
@@ -23,67 +21,6 @@ func queryTextFromContext(ctx context.Context) string {
 	}
 	v, _ := ctx.Value(queryTextContextKey{}).(string)
 	return strings.TrimSpace(v)
-}
-
-func (s *Service) clearClusterLexicalProfiles() {
-	s.clusterLexicalMu.Lock()
-	s.clusterLexicalProfiles = make(map[int]map[string]float64)
-	s.clusterLexicalMu.Unlock()
-}
-
-func (s *Service) rebuildClusterLexicalProfiles() {
-	s.mu.RLock()
-	clusterIndex := s.clusterIndex
-	fulltext := s.fulltext()
-	analyzer := normalizeAnalyzer(s.bm25Analyzer)
-	s.mu.RUnlock()
-	if clusterIndex == nil || !clusterIndex.IsClustered() || fulltext == nil {
-		s.clearClusterLexicalProfiles()
-		return
-	}
-
-	numClusters := clusterIndex.NumClusters()
-	if numClusters <= 0 {
-		s.clearClusterLexicalProfiles()
-		return
-	}
-
-	topTerms := envutil.GetInt("NORNICDB_VECTOR_HYBRID_ROUTING_LEX_TOP_TERMS", 64)
-	if topTerms < 8 {
-		topTerms = 8
-	}
-
-	profiles := make(map[int]map[string]float64, numClusters)
-	for cid := 0; cid < numClusters; cid++ {
-		memberIDs := clusterIndex.GetClusterMemberIDsForCluster(cid)
-		if len(memberIDs) == 0 {
-			continue
-		}
-		tf := make(map[string]float64, 128)
-		total := 0.0
-		for _, id := range memberIDs {
-			text, ok := fulltext.GetDocument(id)
-			if !ok || text == "" {
-				continue
-			}
-			for _, tok := range analyzer.Analyze(text) {
-				tf[tok]++
-				total++
-			}
-		}
-		if total <= 0 {
-			continue
-		}
-		for tok, v := range tf {
-			tf[tok] = v / total
-		}
-		profiles[cid] = topNTokenWeights(tf, topTerms)
-	}
-
-	s.clusterLexicalMu.Lock()
-	s.clusterLexicalProfiles = profiles
-	s.clusterLexicalMu.Unlock()
-	logSearchPrintf("🔍 Hybrid routing lexical profiles built for %d clusters", len(profiles))
 }
 
 func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
@@ -106,17 +43,28 @@ func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
 	return out
 }
 
+// selectHybridClusters picks the clusters a query probes: the nearest
+// centroids fused with the published generation's lexical routing profiles.
 func (s *Service) selectHybridClusters(ctx context.Context, query []float32, defaultN int) []int {
-	s.mu.RLock()
-	clusterIndex := s.clusterIndex
-	s.mu.RUnlock()
-	if clusterIndex == nil || !clusterIndex.IsClustered() {
+	s.clusterStateMu.RLock()
+	defer s.clusterStateMu.RUnlock()
+	return s.selectHybridClustersLocked(ctx, query, defaultN)
+}
+
+// selectHybridClustersLocked is selectHybridClusters for callers holding
+// clusterStateMu (the clustered generators route under it). It routes on the
+// routing and profiles of the generation the query holds (else the published
+// one).
+func (s *Service) selectHybridClustersLocked(ctx context.Context, query []float32, defaultN int) []int {
+	gen := s.clusterGenerationIn(ctx)
+	if gen == nil {
 		return nil
 	}
+	routing := gen.routing
 	if defaultN <= 0 {
 		defaultN = 3
 	}
-	numClusters := clusterIndex.NumClusters()
+	numClusters := routing.NumClusters()
 	if numClusters <= 0 {
 		return nil
 	}
@@ -127,7 +75,7 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 	if semanticProbe <= 0 {
 		return nil
 	}
-	semanticClusters := clusterIndex.FindNearestClusters(query, semanticProbe)
+	semanticClusters := routing.NearestClusters(query, semanticProbe)
 	if len(semanticClusters) == 0 {
 		return nil
 	}
@@ -150,9 +98,7 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 		return semanticClusters
 	}
 
-	s.clusterLexicalMu.RLock()
-	profiles := s.clusterLexicalProfiles
-	s.clusterLexicalMu.RUnlock()
+	profiles := gen.profiles
 	if len(profiles) == 0 {
 		if len(semanticClusters) > defaultN {
 			return semanticClusters[:defaultN]
@@ -239,7 +185,7 @@ func (s *Service) selectHybridClusters(ctx context.Context, query []float32, def
 
 func (s *Service) applyBM25SeedHints() {
 	s.mu.RLock()
-	clusterIndex := s.clusterIndex
+	clusterIndex := s.currentClusterIndex()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
 	if clusterIndex == nil || fulltext == nil {
@@ -252,7 +198,7 @@ func (s *Service) applyBM25SeedHints() {
 	if len(ids) == 0 {
 		return
 	}
-	indices := clusterIndex.GetIndicesForNodeIDs(ids)
+	indices := clusterIndex.GetIndicesForNodeIDs(s.bm25SeedEmbeddingIDs(ids))
 	if len(indices) == 0 {
 		return
 	}

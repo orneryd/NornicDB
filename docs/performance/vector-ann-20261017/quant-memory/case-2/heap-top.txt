@@ -1,0 +1,25 @@
+File: nornicdb-memory-current
+Type: inuse_space
+Time: 2026-10-17 14:01:39 MST
+Showing nodes accounting for 649.31MB, 95.66% of 678.79MB total
+Dropped 155 nodes (cum <= 3.39MB)
+Showing top 18 nodes out of 155
+      flat  flat%   sum%        cum   cum%
+  293.20MB 43.19% 43.19%   293.20MB 43.19%  github.com/dgraph-io/ristretto/v2/z.Calloc (inline)
+  166.41MB 24.52% 67.71%   166.41MB 24.52%  github.com/dgraph-io/badger/v4/skl.newArena (inline)
+   39.13MB  5.76% 73.47%    39.13MB  5.76%  github.com/orneryd/nornicdb/pkg/search.cloneNestedStringMaps
+   34.39MB  5.07% 78.54%    59.15MB  8.71%  github.com/orneryd/nornicdb/pkg/search.(*Service).indexNodeLocked
+   26.59MB  3.92% 82.46%    28.09MB  4.14%  github.com/orneryd/nornicdb/pkg/storage.copyNode
+   19.41MB  2.86% 85.32%    19.41MB  2.86%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).addLocked
+   11.85MB  1.75% 87.06%    11.85MB  1.75%  github.com/orneryd/nornicdb/pkg/search.(*FulltextIndexV2).IndexBatch
+   10.77MB  1.59% 88.65%    10.77MB  1.59%  github.com/orneryd/nornicdb/pkg/search.(*hnswQuantizedVectors).grow
+    8.79MB  1.29% 89.94%     8.79MB  1.29%  github.com/orneryd/nornicdb/pkg/search.cloneStringSlices
+    7.70MB  1.13% 91.08%     7.70MB  1.13%  github.com/orneryd/nornicdb/pkg/storage.(*idDictionary).nodePairStore
+    6.33MB  0.93% 92.01%     6.33MB  0.93%  github.com/orneryd/nornicdb/pkg/search.(*Service).commitNodeIndexCapacityLocked (inline)
+    6.11MB   0.9% 92.91%     6.11MB   0.9%  github.com/dgraph-io/ristretto/v2.(*lockedMap[go.shape.*uint8]).Set
+       6MB  0.88% 93.79%   299.20MB 44.08%  github.com/dgraph-io/badger/v4/table.(*Table).block
+       5MB  0.74% 94.53%        5MB  0.74%  fmt.Sprintf
+       4MB  0.59% 95.12%        4MB  0.59%  github.com/nicksnyder/go-i18n/v2/i18n.setPluralTemplate (inline)
+    2.61MB  0.39% 95.51%     5.04MB  0.74%  github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineWithOptions
+    1.03MB  0.15% 95.66%     5.03MB  0.74%  github.com/nicksnyder/go-i18n/v2/i18n.(*Bundle).AddMessages
+         0     0% 95.66%   166.41MB 24.52%  github.com/dgraph-io/badger/v4.(*DB).doWrites.func1
