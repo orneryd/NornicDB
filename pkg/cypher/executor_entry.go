@@ -127,6 +127,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the statements it runs on its behalf (#939).
 	stream, ctx := takeResultStream(ctx)
 	e.resetHotPathTrace()
+	ctx = withRelationshipAccessPlans(ctx, cypher)
 	// A result served from the result cache that returns no node or
 	// relationship has no access to record (resultHasMaterializedEntities).
 	recordAccess := true

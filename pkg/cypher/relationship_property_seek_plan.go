@@ -9,11 +9,10 @@ import (
 
 type relationshipSeekProfileKey struct{}
 type relationshipSeekProfile struct {
-	mu           sync.Mutex
-	seeks        map[string]*relationshipSeekStats
-	order        []string
-	fallbacks    map[string]int64
-	firstPattern string
+	mu        sync.Mutex
+	seeks     map[string]*relationshipSeekStats // aggregate compatibility counters
+	sites     map[string]*relationshipSeekStats
+	fallbacks map[string]int64
 }
 type relationshipSeekStats struct {
 	seek                      relationshipSeek
@@ -22,7 +21,15 @@ type relationshipSeekStats struct {
 }
 
 func withRelationshipSeekProfile(ctx context.Context) context.Context {
-	return context.WithValue(ctx, relationshipSeekProfileKey{}, &relationshipSeekProfile{seeks: make(map[string]*relationshipSeekStats), fallbacks: make(map[string]int64)})
+	return context.WithValue(ctx, relationshipSeekProfileKey{}, &relationshipSeekProfile{seeks: make(map[string]*relationshipSeekStats), sites: make(map[string]*relationshipSeekStats), fallbacks: make(map[string]int64)})
+}
+
+// Generated endpoint names do not change a relationship access template.
+// Equal templates at multiple syntactic sites aggregate their runtime counters;
+// EXPLAIN reports their occurrence count rather than pretending they are one site.
+func relationshipAccessID(pattern, where string) string {
+	pattern = strings.ReplaceAll(pattern, traversalAnonVar, "")
+	return strings.TrimSpace(pattern) + "\x00" + normalizePipelineWhitespace(where)
 }
 
 func recordRelationshipSeekFallback(ctx context.Context, pattern, where, variable string) {
@@ -32,20 +39,7 @@ func recordRelationshipSeekFallback(ctx context.Context, pattern, where, variabl
 	}
 	profile.mu.Lock()
 	defer profile.mu.Unlock()
-	if !profile.firstAccess(pattern, where) {
-		return
-	}
-	profile.fallbacks[variable]++
-}
-
-// The surrounding plan is schematic and represents its first relationship
-// expansion. Later MATCH sites must not donate a seek to an earlier scan.
-func (profile *relationshipSeekProfile) firstAccess(pattern, where string) bool {
-	key := pattern + "\x00" + where
-	if profile.firstPattern == "" {
-		profile.firstPattern = key
-	}
-	return profile.firstPattern == key
+	profile.fallbacks[relationshipAccessID(pattern, where)]++
 }
 
 func recordRelationshipSeek(ctx context.Context, pattern, where, variable string, seek relationshipSeek, candidates, rows int64) {
@@ -55,144 +49,263 @@ func recordRelationshipSeek(ctx context.Context, pattern, where, variable string
 	}
 	profile.mu.Lock()
 	defer profile.mu.Unlock()
-	if !profile.firstAccess(pattern, where) {
-		return
+	seek.values = nil
+	add := func(table map[string]*relationshipSeekStats, key string) {
+		stats := table[key]
+		if stats == nil {
+			stats = &relationshipSeekStats{seek: seek, variable: variable}
+			table[key] = stats
+		}
+		stats.lookups++
+		stats.candidates += candidates
+		stats.rows += rows
 	}
-	key := variable + "\x00" + seek.name
-	stats := profile.seeks[key]
-	if stats == nil {
-		seek.values = nil // Plan metadata retains the decision, not input row values.
-		stats = &relationshipSeekStats{seek: seek, variable: variable}
-		profile.seeks[key] = stats
-		profile.order = append(profile.order, key)
-	}
-	stats.lookups++
-	stats.candidates += candidates
-	stats.rows += rows
+	add(profile.seeks, variable+"\x00"+seek.name)
+	add(profile.sites, relationshipAccessID(pattern, where)+"\x00"+seek.name)
 }
 
-// EXPLAIN asks the execution selector with the incoming scope supplied by the
-// canonical semantic walk. WITH projections, UNWIND, CALL imports and Fabric
-// bindings therefore have exactly the same scope owner as normal execution.
-// PROFILE consumes execution's recorded decision without re-planning the query.
-func (e *StorageExecutor) relationshipSeekPlanDecision(ctx context.Context, query string, mode ExecutionMode) (relationshipSeek, string, *relationshipSeekStats, int64, bool) {
-	if mode == ModeProfile {
-		profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
-		if profile == nil {
-			return relationshipSeek{}, "", nil, 0, false
-		}
-		profile.mu.Lock()
-		defer profile.mu.Unlock()
-		if len(profile.order) == 0 {
-			return relationshipSeek{}, "", nil, 0, false
-		}
-		stats := *profile.seeks[profile.order[0]]
-		return stats.seek, stats.variable, &stats, profile.fallbacks[stats.variable], true
+type relationshipAccessSite struct {
+	id          string
+	access      *relationshipAccess
+	occurrences int64
+}
+
+func relationshipAccessMatchWhere(text string) (split struct{ pattern, where string }) {
+	text = pipelineClauseBody(text, "MATCH")
+	split.pattern = text
+	if at := topLevelKeywordIndex(text, "WHERE"); at >= 0 {
+		split.pattern = strings.TrimSpace(text[:at])
+		split.where = normalizePipelineWhitespace(text[at+len("WHERE"):])
 	}
-	if !containsRelationshipPattern(query) {
-		return relationshipSeek{}, "", nil, 0, false
-	}
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(query)
-	if !ok {
-		return relationshipSeek{}, "", nil, 0, false
-	}
-	types := make(typeScope)
-	for name := range e.fabricRecordBindings {
-		types[name] = staticOperand{}
-	}
-	for name := range valueBindingsFromContext(ctx) {
-		types[name] = staticOperand{}
-	}
-	var seek relationshipSeek
-	var variable string
-	var visited, eligible bool
-	observe := func(clause pipelineClause, incoming typeScope) {
-		if visited || (clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch) {
+	return split
+}
+
+// This is syntax discovery, not a scope walk: every binding form deliberately
+// goes through unchanged. Only the access planner decides eligibility, and only
+// execution's existing row owner resolves a key. Nested expression delimiters
+// cover local binders without reproducing any binder's alias/import semantics.
+func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
+	var sites []*relationshipAccessSite
+	seen := make(map[string]*relationshipAccessSite)
+	add := func(pattern, where string) {
+		if !patternHasRelationship(pattern) {
 			return
 		}
-		pattern := strings.TrimSpace(clause.text)
-		if clause.kind == pipelineClauseOptionalMatch {
-			pattern = strings.TrimSpace(pattern[len("OPTIONAL"):])
-		}
-		where := ""
-		if at := topLevelKeywordIndex(pattern, "WHERE"); at >= 0 {
-			where = strings.TrimSpace(pattern[at+len("WHERE"):])
-			pattern = strings.TrimSpace(pattern[:at])
-		}
-		if !containsRelationshipPattern(pattern) {
+		match := e.parseTraversalPattern(ctx, relationshipAccessPatternStructure(pattern))
+		access := e.relationshipAccessFor(ctx, pattern, match, where)
+		id := relationshipAccessID(pattern, where)
+		if site := seen[id]; site != nil {
+			site.occurrences++
 			return
 		}
-		visited = true // The existing schematic plan represents the first expansion.
-		if len(splitTopLevelComma(pattern)) != 1 {
-			return
-		}
-		match := e.parseTraversalPattern(ctx, pattern)
-		if match == nil {
-			return
-		}
-		unknown := make(map[string]bool, len(incoming))
-		for name := range incoming {
-			unknown[name] = true
-		}
-		seek, eligible = e.relationshipPropertySeek(ctx, match, where, unknown)
-		variable = match.Relationship.Variable
+		site := &relationshipAccessSite{id: id, access: access, occurrences: 1}
+		seen[id] = site
+		sites = append(sites, site)
 	}
-	_, _, err := e.semanticScopeWalk(clauses, types, cypherVersionFromContext(ctx) == "25", subqueryScope{}, observe)
-	if err != nil {
-		return relationshipSeek{}, "", nil, 0, false
+	var statement func(string)
+	var expressions func(string)
+	properties := func(pattern string) {
+		for i := 0; i < len(pattern); i++ {
+			if pattern[i] == '\'' || pattern[i] == '"' || pattern[i] == '`' {
+				i = skipCypherQuotedText(pattern, i, pattern[i]) - 1
+				continue
+			}
+			if pattern[i] == '{' {
+				if end := findMatchingDelimiter(pattern, i, '{', '}'); end >= 0 {
+					expressions(pattern[i : end+1])
+					i = end
+				}
+			}
+		}
 	}
-	return seek, variable, nil, 0, eligible
+	expressions = func(text string) {
+		for i := 0; i < len(text); i++ {
+			switch text[i] {
+			case '\'', '"', '`':
+				i = skipCypherQuotedText(text, i, text[i]) - 1
+				continue
+			}
+			if _, open, ok := subqueryExpressionKeywordAt(text, i); ok {
+				if end := findMatchingDelimiter(text, open, '{', '}'); end >= 0 {
+					body := strings.TrimSpace(text[open+1 : end])
+					if strings.HasPrefix(body, "(") {
+						body = "MATCH " + body
+					}
+					statement(body)
+					i = end
+					continue
+				}
+			}
+			if text[i] == '[' {
+				if end := findMatchingDelimiter(text, i, '[', ']'); end >= 0 {
+					if pattern, projection, ok := splitPatternComprehension(text[i : end+1]); ok {
+						split := relationshipAccessMatchWhere("MATCH " + pattern)
+						add(split.pattern, split.where)
+						properties(split.pattern)
+						expressions(split.where)
+						expressions(projection)
+						i = end
+						continue
+					}
+				}
+			}
+			if text[i] == '(' {
+				if end, ok := relationshipChainEnd(text, i, len(text)); ok {
+					add(text[i:end], "")
+					properties(text[i:end])
+					i = end - 1
+				}
+			}
+		}
+	}
+	statement = func(text string) {
+		if branches, _, _, ok := parseTopLevelUnionBranches(text); ok && len(branches) > 1 {
+			for _, branch := range branches {
+				statement(branch)
+			}
+			return
+		}
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(text)
+		if !ok {
+			expressions(text)
+			return
+		}
+		for _, clause := range clauses {
+			switch clause.kind {
+			case pipelineClauseCallSubquery:
+				body, _, _, _ := e.parseCallSubquery(clause.text)
+				statement(body)
+			case pipelineClauseForeach:
+				_, source, updates, err := parsePipelineForeach(clause.text)
+				if err == nil {
+					expressions(source)
+					for _, update := range updates {
+						statement(update.text)
+					}
+				}
+			case pipelineClauseCreate, pipelineClauseMerge:
+				properties(clause.text)
+			case pipelineClauseMatch, pipelineClauseOptionalMatch:
+				text := strings.TrimSpace(clause.text)
+				if clause.kind == pipelineClauseOptionalMatch {
+					text = strings.TrimSpace(text[len("OPTIONAL"):])
+				}
+				split := relationshipAccessMatchWhere(text)
+				for _, pattern := range splitTopLevelComma(split.pattern) {
+					add(pattern, split.where)
+				}
+				// Maps can contain graph expressions, but the pattern itself is
+				// already registered with its full predicate.
+				properties(split.pattern)
+				expressions(split.where)
+			default:
+				expressions(clause.text)
+			}
+		}
+	}
+	statement(query)
+	return sites
 }
 
 func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, query string, plan *ExecutionPlan) {
-	seek, variable, stats, fallbacks, eligible := e.relationshipSeekPlanDecision(ctx, query, plan.Mode)
-	if !eligible {
+	sites := e.relationshipAccessSites(ctx, query)
+	if len(sites) == 0 {
 		return
 	}
-	var delta int64
-	var replace func(*PlanOperator) bool
-	replace = func(op *PlanOperator) bool {
-		if op == nil {
-			return false
+	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	if profile != nil {
+		profile.mu.Lock()
+		defer profile.mu.Unlock()
+	}
+	var operators []*PlanOperator
+	for _, site := range sites {
+		access := site.access
+		fallbacks := int64(0)
+		if plan.Mode == ModeProfile && profile != nil {
+			fallbacks = profile.fallbacks[site.id]
 		}
-		if op.OperatorType == "Expand" {
-			original := *op
-			op.OperatorType = "RelationshipIndexSeek"
-			op.Description = fmt.Sprintf("Equality seek on :%s using %s", seek.relType, seek.name)
-			op.Arguments = map[string]interface{}{"index": seek.name, "relationshipType": seek.relType, "properties": seek.properties}
-			op.Identifiers = []string{variable}
-			op.EstimatedRows = seek.estimatedRows
-			if seek.runtimeKey {
-				op.Arguments["runtimeKeyCheck"] = "scan fallback for unsupported incoming values"
+		var alternatives []*PlanOperator
+		for _, seek := range access.alternatives {
+			var stats *relationshipSeekStats
+			if plan.Mode == ModeProfile && profile != nil {
+				stats = profile.sites[site.id+"\x00"+seek.name]
+				if stats == nil && fallbacks > 0 {
+					continue
+				}
 			}
-			oldHits := op.DBHits
-			op.Children = nil
-			if fallbacks > 0 {
-				op.Children = []*PlanOperator{&original}
-				op.Arguments["scanFallbacks"] = fallbacks
-			}
+			op := &PlanOperator{OperatorType: "RelationshipIndexSeek", Description: fmt.Sprintf("Equality seek on :%s using %s", seek.relType, seek.name), Identifiers: []string{access.variable}, EstimatedRows: seek.estimatedRows, Arguments: map[string]interface{}{
+				"index": seek.name, "relationshipType": seek.relType, "properties": seek.properties, "accessOccurrences": site.occurrences,
+				"runtimeKeyCheck": "resolve against incoming row; scan fallback for unbound or unsupported keys",
+			}}
 			if stats != nil {
 				op.ActualRows = stats.rows
-				// Logical index probes and candidate fetches, not physical I/O.
 				op.DBHits = stats.lookups + stats.candidates
 				op.Arguments["indexLookups"] = stats.lookups
 				op.Arguments["relationshipCandidates"] = stats.candidates
 				op.Arguments["dbHitsAccounting"] = "logical index probes and candidate fetches"
-				if fallbacks > 0 {
-					op.DBHits += oldHits
-				}
-				delta = op.DBHits - oldHits
-				plan.TotalDBHits += delta
+			} else if plan.Mode == ModeProfile {
+				op.Arguments["executed"] = false
 			}
-			return true
+			alternatives = append(alternatives, op)
+		}
+		if len(alternatives) == 0 || fallbacks > 0 {
+			scan := &PlanOperator{OperatorType: "Expand", Description: "Relationship scan", Identifiers: []string{access.variable}, EstimatedRows: 100, Arguments: map[string]interface{}{"accessOccurrences": site.occurrences}}
+			if fallbacks > 0 {
+				scan.Arguments["scanFallbacks"] = fallbacks
+				scan.Arguments["dbHitsAccounting"] = "scan hits are not instrumented"
+			}
+			alternatives = append(alternatives, scan)
+		}
+		if len(alternatives) == 1 {
+			operators = append(operators, alternatives[0])
+		} else {
+			choice := &PlanOperator{OperatorType: "RelationshipAccessChoice", Description: "Ordered key alternatives; scan fallback if no supported key", Children: alternatives}
+			for _, op := range alternatives {
+				choice.DBHits += op.DBHits
+				if op.EstimatedRows > choice.EstimatedRows {
+					choice.EstimatedRows = op.EstimatedRows
+				}
+			}
+			operators = append(operators, choice)
+		}
+	}
+	var replacement *PlanOperator
+	if len(operators) == 1 {
+		replacement = operators[0]
+	} else {
+		replacement = &PlanOperator{OperatorType: "RelationshipAccess", Description: "Relationship access templates (counters aggregate identical templates)", Children: operators}
+		for _, op := range operators {
+			replacement.DBHits += op.DBHits
+			replacement.EstimatedRows += op.EstimatedRows
+		}
+	}
+	var replace func(*PlanOperator) (int64, bool)
+	replace = func(op *PlanOperator) (int64, bool) {
+		if op.OperatorType == "Expand" {
+			old := op.DBHits
+			// Preserve existing heuristic work for a scan; seek probes have
+			// actual counters and must not inherit a fictitious node scan.
+			if len(operators) == 1 && replacement.OperatorType == "Expand" {
+				replacement.DBHits = old
+				replacement.Children = op.Children
+				replacement.ActualRows = op.ActualRows
+			}
+			*op = *replacement
+			return op.DBHits - old, true
 		}
 		for _, child := range op.Children {
-			if replace(child) {
+			if delta, ok := replace(child); ok {
 				op.DBHits += delta
-				return true
+				return delta, true
 			}
 		}
-		return false
+		return 0, false
 	}
-	replace(plan.Root)
+	if delta, ok := replace(plan.Root); ok {
+		plan.TotalDBHits += delta
+	} else {
+		plan.Root.Children = append(plan.Root.Children, replacement)
+		plan.Root.DBHits += replacement.DBHits
+		plan.TotalDBHits += replacement.DBHits
+	}
 }

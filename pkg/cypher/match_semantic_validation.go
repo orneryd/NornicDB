@@ -120,7 +120,7 @@ func (enclosing subqueryScope) redeclarationError(name string) error {
 // walking its body the same way.
 // enclosing, for a subquery body, is what it sees of the query around it
 // (subqueryScope).
-func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope, observers ...func(pipelineClause, typeScope)) (typeScope, bool, error) {
+func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope) (typeScope, bool, error) {
 	var scope matchSemanticScope
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
@@ -137,10 +137,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
-		// Planning observes the canonical incoming scope.
-		for _, observe := range observers {
-			observe(clause, types)
-		}
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
 			// legal statement (RETURN 1 AS x RETURN 2 AS y is Neo4j's
@@ -217,7 +213,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			// The body is a query of its own, walked from the variables it
 			// imports; its subqueries see its scope.
-			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25, observers...)
+			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25)
 			if err != nil {
 				return types, false, err
 			}

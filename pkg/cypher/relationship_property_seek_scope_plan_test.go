@@ -119,7 +119,8 @@ func TestRelationshipPropertySeekPlanScanControls(t *testing.T) {
 	for _, query := range []string{
 		"WITH 'x' AS k MATCH ()-[r:T]->() WHERE r.p IS NOT NULL RETURN r.p",
 		"MATCH ()-[r:T]->() WHERE r.p=r.same RETURN r.p",
-		"MATCH ()-[s:T]->() WHERE s.p IS NOT NULL WITH s MATCH ()-[r:T]->() WHERE r.p='x' RETURN r.p",
+		"MATCH ()-[r:T]->() WHERE r.p='missing' OR true RETURN r.p",
+		"MATCH ()-[r:T]->() WHERE r.p='missing' XOR true RETURN r.p",
 	} {
 		for _, mode := range []string{"EXPLAIN", "PROFILE"} {
 			result, err := exec.Execute(context.Background(), mode+" "+query, nil)
@@ -128,5 +129,12 @@ func TestRelationshipPropertySeekPlanScanControls(t *testing.T) {
 			require.Nil(t, relationshipPlanOperator(plan.Root, "RelationshipIndexSeek"), query)
 			require.NotNil(t, relationshipPlanOperator(plan.Root, "Expand"), query)
 		}
+	}
+	for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+		result, err := exec.Execute(context.Background(), mode+" MATCH ()-[s:T]->() WHERE s.p IS NOT NULL WITH s MATCH ()-[r:T]->() WHERE r.p='x' RETURN r.p", nil)
+		require.NoError(t, err)
+		plan := result.Metadata["plan"].(*ExecutionPlan)
+		require.NotNil(t, relationshipPlanOperator(plan.Root, "Expand"), "first scan remains a scan")
+		require.NotNil(t, relationshipPlanOperator(plan.Root, "RelationshipIndexSeek"), "later seek has its own access template")
 	}
 }
