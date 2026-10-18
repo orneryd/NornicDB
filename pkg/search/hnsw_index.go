@@ -457,6 +457,40 @@ func (h *HNSWIndex) levelZeroSearchLocked(ctx context.Context, normalized []floa
 	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
 }
 
+// scanLiveLocked scores every live vector, closest first, in a slice from
+// itemsPool, with the same distance as the layer-0 search (the quantized
+// scorer when the query carries one). Caller holds h.mu for reading.
+func (h *HNSWIndex) scanLiveLocked(ctx context.Context, normalized []float32) ([]hnswDistItem, error) {
+	scorer, _ := ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
+	items := h.itemsPool.Get().([]hnswDistItem)[:0]
+	for id, deleted := range h.deleted {
+		if id&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				h.itemsPool.Put(items[:0])
+				return nil, err
+			}
+		}
+		if deleted {
+			continue
+		}
+		internalID, ok := util.SafeIntToUint32(id)
+		if !ok {
+			break
+		}
+		if scorer == nil && len(h.vectorAtLocked(internalID)) != h.dimensions {
+			continue
+		}
+		items = append(items, hnswDistItem{id: internalID, dist: h.graphDistanceLocked(normalized, internalID, scorer)})
+	}
+	slices.SortFunc(items, func(left, right hnswDistItem) int {
+		if order := cmp.Compare(left.dist, right.dist); order != 0 {
+			return order
+		}
+		return cmp.Compare(left.id, right.id)
+	})
+	return items, nil
+}
+
 // descendLocked is the greedy descent through the upper layers from the entry
 // point that a query or an insert of normalized makes before its level-0
 // search. Caller holds h.mu for reading and checked h.hasEntryPoint.
@@ -692,7 +726,17 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		ctx = context.WithValue(ctx, hnswQuantizedQueryKey{}, scorer)
 		minSim32 = float32(math.Inf(-1))
 	}
-	candidates, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
+	var candidates []hnswDistItem
+	var err error
+	if ef >= h.liveCount {
+		// A beam as wide as the live population must return all of it. The
+		// graph can't promise that (insert-time pruning can drop a node's last
+		// incoming link), so score every live vector instead: the same O(n)
+		// work the beam would do.
+		candidates, err = h.scanLiveLocked(ctx, normalized)
+	} else {
+		candidates, err = h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
+	}
 	if err != nil {
 		return nil, false, err
 	}
