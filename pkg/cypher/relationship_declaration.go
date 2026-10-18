@@ -3,10 +3,13 @@ package cypher
 import "strings"
 
 // A relationship pattern's inside ([r:A|B *1..2 {k: v}]) is read by one
-// scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf): a
+// scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf, and
+// relationshipDeclarationHead for readers that need no type list): a
 // backtick-quoted type may hold any character, ':', '|', '*', '{' and
 // spaces included, and a doubled backtick inside it is one backtick, as
-// labels are read (eachChainItem, #907).
+// labels are read (eachChainItem, #907). A dynamic type is an expression:
+// a '{', '*' or '..' inside $(...) ($({k: t}.k), $(['A', 'B'][i * 1]),
+// $(ts[0..1][0])) is neither the property map nor a length.
 
 // relationshipDeclaration is a relationship pattern's inside, read outside
 // backticks.
@@ -30,6 +33,10 @@ type relationshipDeclaration struct {
 	// the types); length is its digits and dots after the *.
 	hasLength bool
 	length    string
+	// lengthInvalid is set when the length is malformed: '..' without a
+	// '*', or anything but digits and at most one '..' after the '*'
+	// (MATCH rejects it). Quoted text and expressions don't count (#879).
+	lengthInvalid bool
 	// properties is the property map, from its { to the end, trimmed, or a
 	// trailing parameter ($props); "" when there is none.
 	properties string
@@ -39,32 +46,10 @@ type relationshipDeclaration struct {
 // between [ and ]). Types are separated by | (or by a second colon, the
 // deprecated [:A|:B] form); empty items are skipped.
 func relationshipDeclarationOf(inner string) relationshipDeclaration {
-	var declaration relationshipDeclaration
-	head := strings.TrimSpace(inner)
-	if brace := indexByteOutsideBackticks(head, '{'); brace >= 0 {
-		declaration.properties = strings.TrimSpace(head[brace:])
-		head = head[:brace]
-	} else if rest, parameter, ok := splitPatternParameterMap(head); ok {
-		declaration.properties = parameter
-		head = rest
-	}
-	if star := indexByteOutsideBackticks(head, '*'); star >= 0 {
-		end := star + 1
-		for end < len(head) && (isDigitByte(head[end]) || head[end] == '.') {
-			end++
-		}
-		declaration.hasLength = true
-		declaration.length = head[star+1 : end]
-		head = head[:star] + head[end:]
-	}
-	colon := indexByteOutsideBackticks(head, ':')
-	if colon < 0 {
-		declaration.variable = strings.TrimSpace(head)
+	declaration := relationshipDeclarationHead(inner)
+	if !declaration.hasColon {
 		return declaration
 	}
-	declaration.hasColon = true
-	declaration.variable = strings.TrimSpace(head[:colon])
-	declaration.typeText = strings.TrimSpace(head[colon+1:])
 	text := declaration.typeText
 	inBacktick, depth, start := false, 0, 0
 	for index := 0; index <= len(text); index++ {
@@ -89,6 +74,97 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 		start = index + 1
 	}
 	return declaration
+}
+
+// relationshipDeclarationHead reads a relationship pattern's inside as
+// relationshipDeclarationOf does, without the type list (types and
+// invalidType stay empty): the variable, the type text, the length and the
+// property map. MATCH's range check and variable-length variables read it.
+func relationshipDeclarationHead(inner string) relationshipDeclaration {
+	var declaration relationshipDeclaration
+	head := strings.TrimSpace(inner)
+	masked := blankRelationshipExpressions(head)
+	if brace := strings.IndexByte(masked, '{'); brace >= 0 {
+		declaration.properties = strings.TrimSpace(head[brace:])
+		head, masked = head[:brace], masked[:brace]
+	}
+	declaration.lengthInvalid = relationshipLengthInvalid(masked)
+	if declaration.properties == "" {
+		if rest, parameter, ok := splitPatternParameterMap(head); ok {
+			declaration.properties = parameter
+			head, masked = rest, masked[:len(rest)]
+		}
+	}
+	if star := strings.IndexByte(masked, '*'); star >= 0 {
+		end := star + 1
+		for end < len(head) && (isDigitByte(head[end]) || head[end] == '.') {
+			end++
+		}
+		declaration.hasLength = true
+		declaration.length = head[star+1 : end]
+		if strings.TrimSpace(head[end:]) == "" {
+			head = head[:star]
+		} else {
+			head = head[:star] + head[end:]
+		}
+	}
+	colon := indexByteOutsideBackticks(head, ':')
+	if colon < 0 {
+		declaration.variable = strings.TrimSpace(head)
+		return declaration
+	}
+	declaration.hasColon = true
+	declaration.variable = strings.TrimSpace(head[:colon])
+	declaration.typeText = strings.TrimSpace(head[colon+1:])
+	return declaration
+}
+
+// relationshipLengthInvalid reports a malformed length in masked, a
+// declaration's text before its property map with quoted text and
+// expressions blanked (blankRelationshipExpressions): '..' without a '*',
+// or anything but digits and at most one '..' after the '*'.
+func relationshipLengthInvalid(masked string) bool {
+	masked = strings.TrimSpace(masked)
+	star := strings.IndexByte(masked, '*')
+	if star < 0 {
+		return strings.Contains(masked, "..")
+	}
+	spec := strings.TrimSpace(masked[star+1:])
+	for index := 0; index < len(spec); index++ {
+		if !isDigitByte(spec[index]) && spec[index] != '.' {
+			return true
+		}
+	}
+	return strings.Count(spec, "..") > 1 || strings.Contains(spec, ".") && !strings.Contains(spec, "..")
+}
+
+// blankRelationshipExpressions is text with quoted text and the inside of
+// parenthesized expressions blanked, at the same offsets, so a '{', '*' or
+// '..' left in it belongs to the declaration: one inside a dynamic type
+// ($({k: t}.k), $(t * 2), $(ts[0..1][0])) is part of the type expression.
+func blankRelationshipExpressions(text string) string {
+	text = blankQuotedText(text)
+	var out []byte
+	for index := 0; index < len(text); index++ {
+		if text[index] != '(' {
+			continue
+		}
+		end := findMatchingDelimiter(text, index, '(', ')')
+		if end < 0 {
+			break
+		}
+		if out == nil {
+			out = []byte(text)
+		}
+		for inside := index + 1; inside < end; inside++ {
+			out[inside] = ' '
+		}
+		index = end
+	}
+	if out == nil {
+		return text
+	}
+	return string(out)
 }
 
 // addType adds one type item as written: unquoted when backtick-quoted,
