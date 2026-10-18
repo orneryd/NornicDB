@@ -1419,7 +1419,7 @@ func isIdentifierReferenced(query, identifier string) bool {
 			continue
 		}
 		name, end, ok := scanIdentifierToken(query, index)
-		if !ok || (index > 0 && isIdentByte(query[index-1])) {
+		if !ok || (query[index] != '`' && index > 0 && isIdentByte(query[index-1])) {
 			index++
 			continue
 		}
