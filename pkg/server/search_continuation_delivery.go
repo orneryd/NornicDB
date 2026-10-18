@@ -3,8 +3,9 @@ package server
 import (
 	"context"
 	"net/http"
-	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 type searchDeliveryWriter struct {
@@ -14,12 +15,16 @@ type searchDeliveryWriter struct {
 
 func (w searchDeliveryWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
-	if err != nil { w.delivery.Fail() }
+	if err != nil {
+		w.delivery.Fail()
+	}
 	return n, err
 }
 
 func (w searchDeliveryWriter) WriteHeader(status int) {
-	if status != http.StatusOK { w.delivery.Fail() }
+	if status != http.StatusOK {
+		w.delivery.Fail()
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
