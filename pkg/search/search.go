@@ -2858,7 +2858,7 @@ func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
 	if current == nil {
 		err = s.indexNodeLocked(node, false)
 	} else {
-		err = s.indexNodeAsLocked(node, false, *current)
+		err = s.indexNodeAsLocked(node, false, *current, true)
 	}
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
@@ -3086,21 +3086,36 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 	return nil
 }
 
+// indexStoredNodeLocked indexes one of the build's own stored nodes. Unlike a
+// caller's write it is not rejected for an embedding whose dimensions differ
+// from the index's: the indexer logs and skips that vector and indexes the
+// rest of the node, so one bad stored embedding cannot fail the whole build.
+func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext bool) error {
+	shouldIndex, err := s.shouldIndexNode(node)
+	if err != nil {
+		return err
+	}
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, false)
+}
+
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
 	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex)
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, true)
 }
 
 // indexNodeAsLocked is indexNodeLocked with the temporal decision already
 // made: by indexNodeLocked, or at the call for a write handed to a build.
-func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
+// validate rejects a caller's write whose embeddings have other dimensions
+// (checkEmbeddingDimensions); the build's own stored nodes do not validate
+// (indexStoredNodeLocked).
+func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex, validate bool) error {
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
-	if shouldIndex {
+	if shouldIndex && validate {
 		if err := s.checkEmbeddingDimensions(node); err != nil {
 			return err
 		}
@@ -4284,7 +4299,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 					s.ensureVectorFileStore()
 				}
 				for _, node := range filtered {
-					if err := s.indexNodeLocked(node, false); err != nil {
+					if err := s.indexStoredNodeLocked(node, false); err != nil {
 						return err
 					}
 				}
@@ -4322,7 +4337,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexNodeLocked(n, true); err != nil {
+				if err := s.indexStoredNodeLocked(n, true); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4447,7 +4462,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexNodeLocked(n, true); err != nil {
+			if err := s.indexStoredNodeLocked(n, true); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}
