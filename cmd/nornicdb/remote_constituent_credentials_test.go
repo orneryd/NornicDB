@@ -45,12 +45,12 @@ func investigationPort(t *testing.T) string {
 	return fmt.Sprint(l.Addr().(*net.TCPAddr).Port)
 }
 
-func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool) {
+func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool, parser string) func() {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	logFile, err := os.Create(filepath.Join(dir, "process.log"))
+	logFile, err := os.CreateTemp(dir, "process-*.log")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +63,6 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool) {
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"HOME=" + dir, "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "NORNICDB_LANGUAGE=en", "NORNICDB_BOLT_ENABLED=true", "NORNICDB_EMBEDDING_ENABLED=false", "NORNICDB_TELEMETRY_ENABLED=false", "NORNICDB_TELEMETRY_LISTEN=127.0.0.1:0", "NORNICDB_AUTH_JWT_SECRET=synthetic-investigation-encryption-key-78369214"}
-	parser := "nornic"
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("NORNICDB_PARSER")), "antlr") {
-		parser = "antlr"
-	}
 	cmd.Env = append(cmd.Env, "NORNICDB_PARSER="+parser)
 	t.Logf("real server parser=%s authenticated_remote=%t", parser, remote)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
@@ -74,22 +70,27 @@ func investigationStart(t *testing.T, binary, dir, hp, bp string, remote bool) {
 		logFile.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = logFile.Close()
-		data, _ := os.ReadFile(logFile.Name())
-		for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
-			if bytes.Contains(data, []byte(secret)) {
-				t.Error("process logs disclosed synthetic remote credentials")
-				for _, line := range strings.Split(string(data), "\n") {
-					if strings.Contains(line, secret) {
-						t.Log(investigationDiagnostic(line))
+	var stopped sync.Once
+	stop := func() {
+		stopped.Do(func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = logFile.Close()
+			data, _ := os.ReadFile(logFile.Name())
+			for _, secret := range []string{investigationPass, base64.StdEncoding.EncodeToString([]byte("admin:" + investigationPass))} {
+				if bytes.Contains(data, []byte(secret)) {
+					t.Error("process logs disclosed synthetic remote credentials")
+					for _, line := range strings.Split(string(data), "\n") {
+						if strings.Contains(line, secret) {
+							t.Log(investigationDiagnostic(line))
+						}
 					}
 				}
 			}
-		}
-	})
+		})
+	}
+	t.Cleanup(stop)
+	return stop
 }
 
 type investigationResponse struct {
@@ -314,8 +315,15 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, data)
 	}
 	rh, rb, lh, lb := investigationPort(t), investigationPort(t), investigationPort(t), investigationPort(t)
-	investigationStart(t, binary, filepath.Join(dir, "remote"), rh, rb, true)
-	investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false)
+	parser := "nornic"
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("NORNICDB_PARSER")), "antlr") {
+		parser = "antlr"
+	}
+	investigationStart(t, binary, filepath.Join(dir, "remote"), rh, rb, true, parser)
+	// Inline remote constituent DDL is a native extension not represented by
+	// the ANTLR administration grammar. Configure through public native Cypher,
+	// then restart against the same persisted metadata for ANTLR workflows.
+	stopCoordinator := investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, "nornic")
 	remote, local := "http://127.0.0.1:"+rh, "http://127.0.0.1:"+lh
 	// At most one readiness attempt every 30 seconds.
 	for _, base := range []string{remote, local} {
@@ -360,6 +368,23 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 		u.User = url.UserPassword("admin", investigationPass)
 		create = "CREATE COMPOSITE DATABASE uri_" + entry.alias + " ALIAS r FOR DATABASE nornic AT '" + u.String() + "' TYPE remote ACCESS read_write"
 		investigationMustHTTP(t, local, "system", create, "", false)
+	}
+	if parser == "antlr" {
+		stopCoordinator()
+		investigationStart(t, binary, filepath.Join(dir, "coordinator"), lh, lb, false, parser)
+		ready := false
+		for attempt := 0; attempt < 3; attempt++ {
+			status, _, err := investigationHTTP(local, "nornic", "RETURN 1", "")
+			if err == nil && status == 200 {
+				ready = true
+				break
+			}
+			time.Sleep(30 * time.Second)
+		}
+		if !ready {
+			t.Fatal("ANTLR coordinator restart not ready")
+		}
+		t.Log("native public-Cypher metadata setup complete; coordinator and remote now use ANTLR for every runtime workflow")
 	}
 	for _, target := range []struct {
 		label string
