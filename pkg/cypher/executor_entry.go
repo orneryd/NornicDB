@@ -597,6 +597,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
+			if tx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
+				tx.BindContext(ctx)
+			}
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
