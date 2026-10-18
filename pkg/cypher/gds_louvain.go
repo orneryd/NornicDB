@@ -212,7 +212,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			}
 			levels = list
 		}
-		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
+		rows = append(rows, []interface{}{gdsNodeOutput(projection, id), communityID(last, final[i]), levels})
 	}
 	if consecutive && minSize > 1 {
 		// Number only surviving rows, through the same owner that numbers
@@ -226,7 +226,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			rows[i][1] = int64(community)
 		}
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows, gdsProjection: projection}, nil
+	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
 }
 
 // javaPlainDouble is a Double as GDS's range messages print it: its
