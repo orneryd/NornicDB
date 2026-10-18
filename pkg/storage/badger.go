@@ -299,6 +299,7 @@ type BadgerEngine struct {
 	// dominant per-request cost on warm runs. Populated lazily inside
 	// collectEdgesByIndexPrefix and invalidated on every edge mutation.
 	edgeCache         map[EdgeID]*Edge
+	edgeCacheVersions map[EdgeID]uint64 // physical record versions, guarded by edgeCacheMu
 	edgeCacheMu       sync.RWMutex
 	edgeCacheMaxItems int
 
