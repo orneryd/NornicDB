@@ -1445,3 +1445,20 @@ func (ci *ClusterIndex) Dimensions() int {
 func (ci *ClusterIndex) GetConfig() *KMeansConfig {
 	return ci.config
 }
+
+// PopulatedClusters returns the IDs of every cluster that has members, in
+// ascending order: the clusters a search must cover to be complete.
+func (ci *ClusterIndex) PopulatedClusters() []int {
+	ci.clusterMu.RLock()
+	defer ci.clusterMu.RUnlock()
+	if !ci.clustered {
+		return nil
+	}
+	out := make([]int, 0, len(ci.centroids))
+	for cluster := range ci.centroids {
+		if len(ci.clusterMap[cluster]) > 0 {
+			out = append(out, cluster)
+		}
+	}
+	return out
+}

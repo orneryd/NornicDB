@@ -128,18 +128,22 @@ func TestIVFHNSWCandidateGen_MoreSearchBranches(t *testing.T) {
 	t.Run("lookup turns nil during per-cluster loop", func(t *testing.T) {
 		hidx := NewHNSWIndex(2, DefaultHNSWConfig())
 		require.NoError(t, hidx.Add("a", []float32{1, 0}))
+		require.NoError(t, hidx.Add("b", []float32{0, 1})) // more than k=1 per graph: a narrow, routed request
 
 		calls := 0
+		// The population count reads each populated cluster's graph first,
+		// then the precheck reads the two routed ones.
+		precheck := len(clusterIndex.PopulatedClusters()) + 2
 		gen := NewIVFHNSWCandidateGen(clusterIndex, func(int) *HNSWIndex {
 			calls++
-			if calls <= 2 {
-				return hidx // precheck pass
+			if calls <= precheck {
+				return hidx // population and precheck pass
 			}
 			return nil // per-cluster loop branch: idx == nil => continue
 		}, 2)
 		gen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{0, 1} })
 
-		out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)
+		out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 1, -1)
 		require.NoError(t, err)
 		require.Empty(t, out)
 	})

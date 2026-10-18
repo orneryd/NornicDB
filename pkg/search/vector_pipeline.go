@@ -70,7 +70,7 @@ type approximateCandidateDepthPlanner interface {
 // will, so the adaptive widening stops there (requestCoversCandidatePopulation)
 // instead of repeating the same search with ever larger limits.
 type candidatePopulationReporter interface {
-	candidatePopulation() int
+	candidatePopulation(ctx context.Context) int
 }
 
 // candidateGeneratorWithExhaustion lets generators distinguish a genuinely
@@ -135,11 +135,18 @@ func NewBruteForceCandidateGen(vectorIndex *VectorIndex) *BruteForceCandidateGen
 
 // SearchCandidates generates candidates using brute-force search.
 func (b *BruteForceCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := b.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// searchCandidatesWithExhaustion scores every vector exactly, so a page
+// shorter than the limit holds every vector above minSimilarity.
+func (b *BruteForceCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
 	candidateLimit := boundCandidateLimit(k)
 
 	results, err := b.vectorIndex.Search(ctx, query, candidateLimit, minSimilarity)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	candidates := make([]Candidate, len(results))
@@ -150,7 +157,11 @@ func (b *BruteForceCandidateGen) SearchCandidates(ctx context.Context, query []f
 		}
 	}
 
-	return candidates, nil
+	return candidates, len(results) < candidateLimit, nil
+}
+
+func (b *BruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
+	return b.vectorIndex.Count()
 }
 
 // FileStoreBruteForceCandidateGen implements CandidateGenerator using brute-force search
@@ -166,12 +177,26 @@ func NewFileStoreBruteForceCandidateGen(vectorStore *VectorFileStore) *FileStore
 
 // SearchCandidates scans all vectors from the file store and returns top candidates by exact cosine score.
 func (b *FileStoreBruteForceCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := b.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+func (b *FileStoreBruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
 	if b == nil || b.vectorStore == nil {
-		return nil, nil
+		return 0
+	}
+	return b.vectorStore.Count()
+}
+
+// searchCandidatesWithExhaustion scans every stored vector exactly; it is
+// exhausted when the limit cut none of those above minSimilarity.
+func (b *FileStoreBruteForceCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	if b == nil || b.vectorStore == nil {
+		return nil, true, nil
 	}
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, false, ctx.Err()
 	default:
 	}
 
@@ -199,16 +224,17 @@ func (b *FileStoreBruteForceCandidateGen) SearchCandidates(ctx context.Context, 
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Score > candidates[j].Score
 	})
-	if len(candidates) > candidateLimit {
+	exhausted := len(candidates) <= candidateLimit
+	if !exhausted {
 		candidates = candidates[:candidateLimit]
 	}
-	return candidates, nil
+	return candidates, exhausted, nil
 }
 
 // HNSWCandidateGen implements CandidateGenerator using HNSW approximate search.
@@ -233,7 +259,7 @@ func NewHNSWCandidateGen(hnswIndex *HNSWIndex) *HNSWCandidateGen {
 // candidatePopulation is the number of live vectors in the HNSW index: a
 // search clamps its result count and beam to it, so a wider request repeats
 // the same traversal.
-func (h *HNSWCandidateGen) candidatePopulation() int {
+func (h *HNSWCandidateGen) candidatePopulation(ctx context.Context) int {
 	return h.hnswIndex.Size()
 }
 
@@ -407,30 +433,47 @@ func NewGPUBruteForceCandidateGen(embeddingIndex *gpu.EmbeddingIndex) *GPUBruteF
 }
 
 func (g *GPUBruteForceCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+func (g *GPUBruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
 	if g.embeddingIndex == nil {
-		return nil, localizedError(localization.SearchGPUEmbeddingUnavailable(), nil)
+		return 0
+	}
+	return g.embeddingIndex.Count()
+}
+
+// searchCandidatesWithExhaustion scores every vector exactly: a page shorter
+// than the limit, or one that already reaches below minSimilarity, holds
+// every vector above it.
+func (g *GPUBruteForceCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	if g.embeddingIndex == nil {
+		return nil, false, localizedError(localization.SearchGPUEmbeddingUnavailable(), nil)
 	}
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
 	candidateLimit := boundCandidateLimit(k)
 	results, err := g.embeddingIndex.Search(query, candidateLimit)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	exhausted := len(results) < candidateLimit
 	candidates := make([]Candidate, 0, len(results))
 	for _, r := range results {
 		score := float64(r.Score)
 		if score < minSimilarity {
+			exhausted = true // results are best first: the rest score lower
 			continue
 		}
 		candidates = append(candidates, Candidate{ID: r.ID, Score: score})
 	}
-	return candidates, nil
+	return candidates, exhausted, nil
 }
 
 // IdentityExactScorer is used when the candidate generator already returns exact scores.
@@ -507,10 +550,11 @@ func (p *VectorSearchPipeline) searchWithExhaustionFromEntries(ctx context.Conte
 	} else if generator, ok := p.candidateGen.(candidateGeneratorWithExhaustion); ok {
 		candidates, exhausted, err = generator.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
 	} else {
+		// Exhaustion is the generator's own evidence that it evaluated its
+		// whole population. A generator that doesn't report it is never
+		// exhausted: a short page from an approximate generator is no
+		// evidence that nothing else matches.
 		candidates, err = p.candidateGen.SearchCandidates(ctx, query, k, minSimilarity)
-		// Generators without an exhaustion contract retain the historical
-		// behavior: a short page means their available candidate set ended.
-		exhausted = len(candidates) < boundCandidateLimit(k)
 	}
 	if err != nil {
 		return nil, false, localizedError(localization.SearchCandidateGenerationFailed(err), err)
@@ -534,12 +578,16 @@ func (p *VectorSearchPipeline) searchWithExhaustionFromEntries(ctx context.Conte
 		limit = len(scored)
 	}
 	filtered := make([]ScoredCandidate, 0, util.SafePreallocCap(limit, len(scored)))
-	for _, s := range scored {
+	for i, s := range scored {
 		if s.Score < minSimilarity {
 			break
 		}
 		filtered = append(filtered, s)
 		if len(filtered) >= k {
+			// Candidates above the threshold cut here weren't returned.
+			if i+1 < len(scored) && scored[i+1].Score >= minSimilarity {
+				exhausted = false
+			}
 			break
 		}
 	}

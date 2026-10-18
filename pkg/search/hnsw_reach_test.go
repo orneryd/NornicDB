@@ -705,3 +705,101 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 	require.Equal(t, map[string]bool{target: true}, ids, "ended with %s", page.Completion)
 	require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
 }
+
+// Review of #1499/#1446, F1: the same sole match behind cut links, served by
+// IVF-HNSW (one cluster, so routing can't be the reason it's missed). The
+// cluster generator must report its graph's exhaustion, not a short page as
+// the end, so the continuation reaches the population-wide search; for
+// vector and hybrid search alike.
+func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
+	const docs = 1000
+	for _, mode := range []struct{ name, query string }{{"vector", ""}, {"hybrid", "unrelated words"}} {
+		t.Run(mode.name, func(t *testing.T) {
+			t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+			t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
+			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
+			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			target := fmt.Sprintf("doc-%d", docs/2)
+			for i := 0; i < docs; i++ {
+				vec := []float32{0, 1}
+				if i == docs/2 {
+					vec = []float32{1, 0}
+				}
+				_, err := engine.CreateNode(&storage.Node{
+					ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), Labels: []string{"Doc"},
+					Properties: map[string]any{"text": "background text"}, ChunkEmbeddings: [][]float32{vec},
+				})
+				require.NoError(t, err)
+			}
+			service := NewServiceWithDimensions(engine, 2)
+			t.Cleanup(func() { _ = service.Close() })
+			service.EnableClustering(nil, 1)
+			service.SetMinEmbeddingsForClustering(1)
+			require.NoError(t, service.BuildIndexes(context.Background()))
+			pipeline, err := service.getOrCreateVectorPipeline(context.Background())
+			require.NoError(t, err)
+			require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
+
+			// Cut every link into the matching vector in every cluster graph.
+			service.clusterHNSWMu.RLock()
+			graphs := service.clusterHNSW
+			service.clusterHNSWMu.RUnlock()
+			require.NotEmpty(t, graphs)
+			for _, graph := range graphs {
+				graph.mu.Lock()
+				orphan, found := uint32(0), false
+				for id, external := range graph.internalToID {
+					if normalizeVectorResultIDToNodeID(external) == target {
+						orphan, found = uint32(id), true
+					}
+				}
+				if found {
+					if graph.entryPoint == orphan {
+						for id := range graph.nodeLevel {
+							if uint32(id) != orphan && !graph.deleted[id] {
+								graph.entryPoint, graph.maxLevel = uint32(id), int(graph.nodeLevel[id])
+								break
+							}
+						}
+					}
+					for node := range graph.nodeLevel {
+						for level := 0; level <= int(graph.nodeLevel[node]); level++ {
+							neighbors, _ := graph.neighborsAtLevelLocked(uint32(node), level)
+							kept := make([]uint32, 0, len(neighbors))
+							for _, n := range neighbors {
+								if n != orphan {
+									kept = append(kept, n)
+								}
+							}
+							graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
+						}
+					}
+				}
+				graph.mu.Unlock()
+			}
+
+			threshold := 0.9
+			embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
+			request := SearchContinuationRequest{Owner: "alice", N: 7}
+			page, err := service.SearchTextContinuation(context.Background(), mode.query, &SearchOptions{Limit: 7, MinSimilarity: &threshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+			require.NoError(t, err)
+			ids := map[string]bool{}
+			for {
+				for _, result := range page.Results {
+					ids[searchResultID(result)] = true
+				}
+				if !page.HasMore {
+					break
+				}
+				request.QID = page.QID
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+			}
+			require.True(t, ids[target], "%s missing; ended %s with %d rows", target, page.Completion, len(ids))
+			require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+		})
+	}
+}
