@@ -172,7 +172,7 @@ SET n.embedding = [0.7, 0.2, 0.05, 0.05],
 | Category       | Functions                                                                                                                                     |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Path/Graph** | `apoc.path.subgraphNodes`, `apoc.path.expand`, `apoc.path.spanningTree`                                                                       |
-| **Map**        | `merge`, `setKey`, `removeKey`, `fromPairs`, `fromLists`                                                                                      |
+| **Map**        | `merge`, `setKey`, `removeKey`, `removeKeys`, `fromPairs`, `fromLists`, `clean`                                                               |
 | **Collection** | `flatten`, `toSet`, `sum`, `avg`, `min`, `max`, `sort`, `reverse`, `union`, `unionAll`, `intersection`, `subtract`, `contains`, `containsAll` |
 | **Text**       | `apoc.text.join`                                                                                                                              |
 | **Conversion** | `toJson`, `fromJsonMap`, `fromJsonList`                                                                                                       |

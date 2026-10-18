@@ -1039,60 +1039,57 @@ func extractVectorOptionValue(optionsClause, key string) (string, bool) {
 	if optionsClause == "" || key == "" {
 		return "", false
 	}
-
-	sanitized := strings.ReplaceAll(optionsClause, "`", "")
-	sanitized = strings.ReplaceAll(sanitized, "\"", "")
-	sanitized = strings.ReplaceAll(sanitized, "'", "")
-	lower := lowerASCII(sanitized)
-	keyLower := lowerASCII(key)
-
-	start := 0
-	for start < len(lower) {
-		rel := strings.Index(lower[start:], keyLower)
-		if rel < 0 {
-			return "", false
+	for index := 0; index < len(optionsClause); {
+		name, end, ok := scanIdentifierToken(optionsClause, index)
+		if !ok && isCypherStringQuoteByte(optionsClause[index]) {
+			if quotedEnd, closed := scanCypherQuotedText(optionsClause, index, optionsClause[index]); closed {
+				name, ok = decodeCypherQuotedString(optionsClause[index:quotedEnd])
+				end = quotedEnd
+			}
 		}
-		idx := start + rel
-		leftOK := idx == 0 || isVectorKeyBoundaryChar(sanitized[idx-1])
-		rightIdx := idx + len(keyLower)
-		rightOK := rightIdx >= len(sanitized) || isVectorKeyBoundaryChar(sanitized[rightIdx])
-		if !leftOK || !rightOK {
-			start = idx + len(keyLower)
+		if !ok {
+			index++
 			continue
 		}
-
-		i := rightIdx
-		for i < len(sanitized) && (sanitized[i] == ' ' || sanitized[i] == '\t' || sanitized[i] == ':') {
-			i++
+		index = end
+		if !strings.EqualFold(name, key) {
+			continue
 		}
-		if i >= len(sanitized) {
+		separator := queryGapEnd(optionsClause, end)
+		if separator >= len(optionsClause) || optionsClause[separator] != ':' {
+			continue
+		}
+		start := queryGapEnd(optionsClause, separator+1)
+		if start >= len(optionsClause) {
 			return "", false
 		}
-
-		if sanitized[i] == '\'' || sanitized[i] == '"' {
-			quote := sanitized[i]
-			i++
-			j := i
-			for j < len(sanitized) && sanitized[j] != quote {
-				j++
+		if finish, closed := scanCypherQuotedText(optionsClause, start, optionsClause[start]); closed {
+			if value, quoted := decodeCypherQuotedString(optionsClause[start:finish]); quoted {
+				return strings.TrimSpace(value), true
 			}
-			if j >= len(sanitized) {
-				return "", false
-			}
-			return strings.TrimSpace(sanitized[i:j]), true
 		}
-
-		j := i
-		for j < len(sanitized) {
-			c := sanitized[j]
-			if c == ',' || c == '}' || c == ')' || c == '\n' || c == '\r' {
-				break
+		depth := 0
+		for j := start; j < len(optionsClause); j++ {
+			if finish, quoted := skipCypherLexicalToken(optionsClause, j); quoted {
+				j = finish - 1
+				continue
 			}
-			j++
+			c := optionsClause[j]
+			switch c {
+			case '(', '[', '{':
+				depth++
+			case ')', ']', '}':
+				if depth == 0 {
+					return strings.TrimSpace(optionsClause[start:j]), true
+				}
+				depth--
+			}
+			if depth == 0 && (c == ',' || c == '\n' || c == '\r') {
+				return strings.TrimSpace(optionsClause[start:j]), true
+			}
 		}
-		return strings.TrimSpace(sanitized[i:j]), true
+		return strings.TrimSpace(optionsClause[start:]), true
 	}
-
 	return "", false
 }
 
@@ -2232,17 +2229,10 @@ func qualifiedIndexPropertiesWellFormed(propertiesStr string) bool {
 	if strings.TrimSpace(propertiesStr) == "" {
 		return true
 	}
-	isName := func(token string) bool {
-		token = strings.TrimSpace(token)
-		if len(token) >= 2 && token[0] == '`' && token[len(token)-1] == '`' {
-			return len(token) > 2
-		}
-		return isValidIdentifier(token)
-	}
-	for _, part := range strings.Split(propertiesStr, ",") {
+	for _, part := range splitTopLevelComma(propertiesStr) {
 		part = strings.TrimSpace(part)
-		dotIdx := strings.Index(part, ".")
-		if dotIdx <= 0 || !isName(part[:dotIdx]) || !isName(part[dotIdx+1:]) {
+		variable, property, ok := splitPostfixPropertyAccess(part)
+		if !ok || !isPatternVariableName(strings.TrimSpace(variable)) || property == "" {
 			return false
 		}
 	}
@@ -2355,45 +2345,17 @@ func parseDomainValueList(raw string) ([]interface{}, error) {
 	}
 
 	var values []interface{}
-	// Simple tokenizer: split by comma, handling quoted strings
-	for len(raw) > 0 {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			break
+	for _, item := range splitTopLevelComma(raw) {
+		token := strings.TrimSpace(item)
+		if token == "" {
+			continue
 		}
-
-		var token string
-		if raw[0] == '\'' {
-			// Single-quoted string
-			end := strings.Index(raw[1:], "'")
-			if end < 0 {
-				return nil, localizedError(localization.CypherSchemaUnterminatedString(raw), nil)
-			}
-			token = raw[1 : end+1]
-			values = append(values, token)
-			raw = raw[end+2:]
-		} else if raw[0] == '"' {
-			// Double-quoted string
-			end := strings.Index(raw[1:], "\"")
-			if end < 0 {
-				return nil, localizedError(localization.CypherSchemaUnterminatedString(raw), nil)
-			}
-			token = raw[1 : end+1]
-			values = append(values, token)
-			raw = raw[end+2:]
+		if value, quoted := decodeCypherQuotedString(token); quoted {
+			values = append(values, value)
+		} else if isCypherStringQuoteByte(token[0]) {
+			return nil, localizedError(localization.CypherSchemaUnterminatedString(token), nil)
 		} else {
 			// Numeric or boolean literal
-			commaIdx := strings.Index(raw, ",")
-			if commaIdx >= 0 {
-				token = strings.TrimSpace(raw[:commaIdx])
-				raw = raw[commaIdx:]
-			} else {
-				token = strings.TrimSpace(raw)
-				raw = ""
-			}
-			if token == "" {
-				continue
-			}
 			// Try integer
 			if intVal, err := strconv.ParseInt(token, 10, 64); err == nil {
 				values = append(values, intVal)
@@ -2409,11 +2371,6 @@ func parseDomainValueList(raw string) ([]interface{}, error) {
 			}
 		}
 
-		// Skip comma separator
-		raw = strings.TrimSpace(raw)
-		if len(raw) > 0 && raw[0] == ',' {
-			raw = raw[1:]
-		}
 	}
 
 	return values, nil
@@ -2427,7 +2384,6 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 
 	types := make([]string, 0, 2)
 	var cur strings.Builder
-	inBacktick := false
 
 	flush := func() error {
 		part := normalizeIdentifierToken(strings.TrimSpace(cur.String()))
@@ -2439,26 +2395,24 @@ func parseFulltextRelationshipTypes(raw string) ([]string, error) {
 		return nil
 	}
 
-	for _, r := range raw {
-		switch r {
-		case '`':
-			inBacktick = !inBacktick
-			cur.WriteRune(r)
-		case '|':
-			if inBacktick {
-				cur.WriteRune(r)
-				continue
+	for index := 0; index < len(raw); index++ {
+		if isCypherBacktickByte(raw[index]) {
+			end, closed := scanCypherQuotedText(raw, index, raw[index])
+			if !closed {
+				return nil, nerrors.ErrInvalidFulltextRelationshipTypes
 			}
+			cur.WriteString(raw[index:end])
+			index = end - 1
+			continue
+		}
+		switch raw[index] {
+		case '|':
 			if err := flush(); err != nil {
 				return nil, err
 			}
 		default:
-			cur.WriteRune(r)
+			cur.WriteByte(raw[index])
 		}
-	}
-
-	if inBacktick {
-		return nil, nerrors.ErrInvalidFulltextRelationshipTypes
 	}
 	if err := flush(); err != nil {
 		return nil, err

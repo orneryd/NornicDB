@@ -471,8 +471,10 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 
 	assert.Equal(t, false, eval("NOT true"))
 	assert.Equal(t, true, eval("5 BETWEEN 1 AND 10"))
-	// Invalid BETWEEN shape falls through to generic evaluation path.
-	assert.Equal(t, "5 BETWEEN 1", eval("5 BETWEEN 1"))
+	// Unsupported syntax is an evaluation error, never a string value.
+	invalidCtx := withExpressionFailureSlot(context.Background())
+	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(invalidCtx, "5 BETWEEN 1", "5 between 1", nodes, nil, nil, nil, nil, 0))
+	require.Error(t, getExpressionFailure(invalidCtx))
 	assert.Equal(t, true, eval("1 = 1 AND 2 = 2"))
 	assert.Equal(t, true, eval("1 = 2 OR 2 = 2"))
 	assert.Equal(t, true, eval("true XOR false"))
@@ -1542,13 +1544,17 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 
 	ctx := context.Background()
 	// map-literal parser should normalize quoted/backticked keys and evaluate known values.
-	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true, badPair}", nodes, rels, nil, nil, nil, 0)
+	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true}", nodes, rels, nil, nil, nil, 0)
 	assert.Equal(t, "alice", out["k1"])
 	assert.Equal(t, int64(3), out["k2"])
 	assert.Equal(t, true, out["k3"])
 
-	// Non-map shapes return deterministic empty map.
-	assert.Empty(t, exec.evaluateMapLiteralFull(ctx, "not-a-map", nodes, rels, nil, nil, nil, 0))
+	// No partial map escapes when an entry or the map syntax is invalid.
+	for _, expr := range []string{"{ok:1,badPair}", "not-a-map"} {
+		invalidCtx := withExpressionFailureSlot(ctx)
+		assert.Nil(t, exec.evaluateMapLiteralFull(invalidCtx, expr, nodes, rels, nil, nil, nil, 0))
+		require.Error(t, getExpressionFailure(invalidCtx))
+	}
 }
 
 func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
@@ -1786,17 +1792,19 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 	}
 
 	// Normal map literal with value substitution and list-comprehension transform.
-	out := exec.evaluateMapLiteralFromValues("{person: name, age: age, relTypes: [r IN rels | type(r)]}", values)
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{person: name, age: age, relTypes: [r IN rels | type(r)]}", values))
 	require.Equal(t, "alice", out["person"])
 	require.Equal(t, int64(30), out["age"])
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, out["relTypes"])
 
 	// Invalid/non-map/empty shapes are deterministic empties.
-	assert.Empty(t, exec.evaluateMapLiteralFromValues("not-a-map", values))
-	assert.Empty(t, exec.evaluateMapLiteralFromValues("{}", values))
+	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "not-a-map", values)
+	assert.Error(t, parseErr)
+	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
 	// Pair without colon should be skipped, not panic.
-	out = exec.evaluateMapLiteralFromValues("{good: age, badpair}", values)
-	require.Equal(t, int64(30), out["good"])
+	out, parseErr = exec.evaluateMapLiteralFromValues(context.Background(), "{good: age, badpair}", values)
+	require.Error(t, parseErr)
+	require.Nil(t, out)
 }
 
 func TestCypherHelpers_KalmanPredict_Branches(t *testing.T) {
@@ -1946,7 +1954,7 @@ func TestCypherHelpers_VectorParsingAndQueryBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "q", input.paramName)
 
-	parts := splitParamsCarefully(`'idx', 5, "a,b", [1,2,{x:3}]`)
+	parts := splitTopLevelComma(`'idx', 5, "a,b", [1,2,{x:3}]`)
 	require.Len(t, parts, 4)
 	assert.Equal(t, "\"a,b\"", strings.TrimSpace(parts[2]))
 	assert.Equal(t, []float32{1.5, 2}, parseInlineVector("[1.5, bad, 2]"))

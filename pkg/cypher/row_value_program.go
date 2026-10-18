@@ -101,7 +101,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if program := rowValueProgramFor(expr); program != nil {
 		return program.root.eval(e, values, nil)
 	}
-	return e.evaluateRowValueText(expr, values)
+	return runtimeRowResult(e.evaluateRowValueText(expr, values))
 }
 
 // rowValueInfo describes a compiled part for the per-element memo: pure
@@ -216,6 +216,49 @@ func bound(expr string, node rowValueNode, info rowValueInfo) (rowValueNode, row
 
 // compile compiles expr, running evaluateRowValueText's tests in its order.
 func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
+	node, info := c.compileValue(expr)
+	return normalizeRowValueNode(node), info
+}
+
+// normalizeRowValueNode decides once, at compilation, which results need the
+// runtime boundary. Scalar/constructed results and normalized child results do
+// not need another check. Dynamic producers (including future forms) do. A row
+// binding can override any form, so rowBoundNode checks that read separately.
+func normalizeRowValueNode(node rowValueNode) rowValueNode {
+	switch n := node.(type) {
+	case *rowBoundNode:
+		n.inner = normalizeRowValueNode(n.inner)
+		return n
+	case *rowRuntimeValueNode, rowUnresolvedNode, rowConstNode, *rowLiteralNode, rowEmptyListNode,
+		*rowListNode, *rowLogicalNode, *rowComparisonNode, *rowNullTestNode,
+		*rowMembershipNode, *rowStringPredicateNode, *rowArithmeticNode,
+		*rowCaseNode, *rowCoalesceNode, *rowReduceNode, *rowComprehensionNode,
+		*rowMemoNode, *rowDeferredOperandNode:
+		return node
+	default:
+		return &rowRuntimeValueNode{inner: node}
+	}
+}
+
+type rowRuntimeValueNode struct{ inner rowValueNode }
+
+// rowValueShape exposes the compiled form to structural planners. Runtime
+// result checks apply during evaluation and do not change that form.
+func rowValueShape(node rowValueNode) rowValueNode {
+	for {
+		runtime, wrapped := node.(*rowRuntimeValueNode)
+		if !wrapped {
+			return node
+		}
+		node = runtime.inner
+	}
+}
+
+func (n *rowRuntimeValueNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+	return runtimeRowResult(n.inner.eval(e, values, frames))
+}
+
+func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
@@ -619,7 +662,7 @@ type rowBoundNode struct {
 
 func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
 	if value, ok := values[n.text]; ok {
-		return value, true, nil
+		return runtimeRowResult(value, true, nil)
 	}
 	return n.inner.eval(e, values, frames)
 }
@@ -683,22 +726,32 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	// The context evaluator sends expressions containing subqueries back to
-	// this evaluator. Resolve a containing function here instead of returning
-	// the unchanged expression to that dispatcher indefinitely.
-	if mayContainSubqueryExpression(expr) {
-		if function, argument, call := parseFunctionCallWS(expr); call {
-			return e.evaluateRowGraphFunction(function, argument, values)
+	if isValidIdentifier(expr) {
+		if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
+			return runtimeRowResult(value, true, nil)
 		}
-	}
-	value, err := e.evaluateRowFallback(expr, values)
-	if err != nil {
-		return nil, false, err
-	}
-	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false, nil
 	}
-	return value, true, nil
+	if strings.HasPrefix(expr, "$") {
+		// A parameter absent from a planning scope is unresolved, not text.
+		// Actual materialization rejects this result at the checked boundary.
+		ctx := rowStatementContextOrBackground(values)
+		if value, ok := resolveDirectParamRef(ctx, expr); ok {
+			return runtimeRowResult(value, true, nil)
+		}
+		if value, ok := resolveParamPathRef(ctx, expr); ok {
+			return runtimeRowResult(value, true, nil)
+		}
+		return nil, false, nil
+	}
+	if mayContainSubqueryExpression(expr) {
+		if function, argument, call := parseFunctionCallWS(expr); call {
+			if value, handled, resolved, err := e.evaluateRowGraphFunction(function, argument, values); handled {
+				return value, resolved, err
+			}
+		}
+	}
+	return e.evaluateRowFallback(expr, values)
 }
 
 type rowListNode struct{ items []rowValueNode }

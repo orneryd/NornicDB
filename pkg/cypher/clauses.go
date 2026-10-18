@@ -156,43 +156,7 @@ func rowHasAggregate(items []returnItem) bool {
 
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
-	var items []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for _, c := range expr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteRune(c)
-		case c == '(' || c == '[' || c == '{':
-			if !inQuote {
-				depth++
-			}
-			current.WriteRune(c)
-		case c == ')' || c == ']' || c == '}':
-			if !inQuote {
-				depth--
-			}
-			current.WriteRune(c)
-		case c == ',' && depth == 0 && !inQuote:
-			items = append(items, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		items = append(items, current.String())
-	}
-	return items
+	return splitTopLevelComma(expr)
 }
 
 type unwindSimpleSetAssignment struct {
@@ -1254,7 +1218,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		if len(suffix) < 4 {
 			return "", "", 0, false
 		}
-		if (suffix[0] != '\'' || suffix[len(suffix)-1] != '\'') && (suffix[0] != '"' || suffix[len(suffix)-1] != '"') {
+		if (!isCypherSingleQuoteByte(suffix[0]) || !isCypherSingleQuoteByte(suffix[len(suffix)-1])) && (!isCypherDoubleQuoteByte(suffix[0]) || !isCypherDoubleQuoteByte(suffix[len(suffix)-1])) {
 			return "", "", 0, false
 		}
 		literal := suffix[1 : len(suffix)-1]
@@ -1532,19 +1496,13 @@ func rewriteUnwindCorrelationToIn(query string, variable string, paramName strin
 		lhs   string
 	}
 	matches := make([]equalityMatch, 0, 2)
-	inSingle := false
-	inDouble := false
 	for i := 0; i < len(query); i++ {
+		if end, quoted := skipCypherLexicalToken(query, i); quoted {
+			i = end - 1
+			continue
+		}
 		ch := query[i]
-		if ch == '\'' && !inDouble && !isBackslashEscaped(query, i) {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle && !isBackslashEscaped(query, i) {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble || ch != '=' {
+		if ch != '=' {
 			continue
 		}
 
@@ -2050,7 +2008,11 @@ func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern s
 			endIdx := strings.Index(remaining[idx:], ")")
 			if endIdx > 0 {
 				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo := e.parseNodePattern(ctx, "("+targetStr+")")
+				targetInfo, parseErr := e.parseNodePattern(ctx, "("+targetStr+")")
+				if parseErr != nil {
+					recordExpressionFailure(ctx, parseErr)
+					return optionalRelPattern{}
+				}
 				if targetInfo.variable != "" {
 					result.targetVar = targetInfo.variable
 				}
@@ -2133,53 +2095,13 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 	var b strings.Builder
 	b.Grow(len(input) + 16)
 
-	inSingle := false
-	inDouble := false
-	inBacktick := false
 	for i := 0; i < len(input); {
+		if end, quoted := skipCypherLexicalToken(input, i); quoted {
+			b.WriteString(input[i:end])
+			i = end
+			continue
+		}
 		ch := input[i]
-		switch {
-		case inSingle:
-			b.WriteByte(ch)
-			i++
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			b.WriteByte(ch)
-			i++
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			b.WriteByte(ch)
-			i++
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-
-		if ch == '\'' {
-			inSingle = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
 
 		if !isIdentByte(ch) {
 			b.WriteByte(ch)

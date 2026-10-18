@@ -51,15 +51,14 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 		return declaration
 	}
 	text := declaration.typeText
-	inBacktick, depth, start := false, 0, 0
+	depth, start := 0, 0
 	for index := 0; index <= len(text); index++ {
 		if index < len(text) {
+			if end, quoted := scanCypherQuotedText(text, index, text[index]); quoted {
+				index = end - 1
+				continue
+			}
 			switch c := text[index]; {
-			case c == '`':
-				inBacktick = !inBacktick // a doubled backtick toggles twice
-				continue
-			case inBacktick:
-				continue
 			case c == '(':
 				depth++
 				continue
@@ -174,7 +173,7 @@ func (declaration *relationshipDeclaration) addType(item string) {
 	switch written := item; {
 	case item == "":
 		return
-	case item[0] == '`':
+	case isCypherBacktickByte(item[0]):
 		if item = symbolicNameValue(item); item == "" && declaration.invalidType == "" {
 			declaration.invalidType = written
 		}

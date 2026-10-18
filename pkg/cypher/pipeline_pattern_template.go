@@ -10,10 +10,8 @@ import (
 
 // A pipeline MATCH or MERGE clause evaluates its pattern's property map for
 // every row. A pattern template parses the clause text once and evaluates
-// each property expression for the row directly. An expression the row
-// evaluator doesn't resolve (a parameter path the general parser reads, …)
-// makes that row take the general route. That route parses the original text
-// with the row's typed bindings in its context.
+// each property expression for the row directly. Unsupported syntax or binding
+// scope selects the general route before evaluation; expression errors are final.
 // TestPipelinePatternTemplateMatchesTextRoute runs both on the same values.
 
 // pipelinePropertyExpression is one key: expression pair of a pattern's
@@ -24,47 +22,18 @@ type pipelinePropertyExpression struct {
 }
 
 // pipelinePropertyExpressions splits a property map's text ("{k: e, …}")
-// into its pairs, as parseProperties reads them. ok is false for a pair it
-// would skip (no key), which the general route handles.
+// into its pairs. Unsupported syntax declines before any value is evaluated.
 func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelinePropertyExpression, bool) {
-	props = strings.TrimSpace(props)
-	if strings.HasPrefix(props, "{") && strings.HasSuffix(props, "}") {
-		props = props[1 : len(props)-1]
-	}
-	if strings.TrimSpace(props) == "" {
-		return nil, true
-	}
-	pairs := e.splitPropertyPairs(props)
-	out := make([]pipelinePropertyExpression, 0, len(pairs))
-	for _, pair := range pairs {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			return nil, false
-		}
-		out = append(out, pipelinePropertyExpression{
-			key:  normalizePropertyKey(strings.TrimSpace(pair[:colon])),
-			expr: strings.TrimSpace(pair[colon+1:]),
-		})
-	}
-	return out, true
+	expressions, err := parsePropertyExpressions(props)
+	return expressions, err == nil
 }
 
 // evaluatePipelineProperties evaluates pattern predicates for a row without
-// dropping null-valued equality constraints. ok is false when an expression
-// doesn't resolve.
-func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, bool) {
-	props := make(map[string]interface{}, len(expressions))
-	for _, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression.expr, row)
-		if !ok {
-			return nil, false
-		}
-		props[expression.key] = normalizePropValue(value)
-	}
-	return props, true
+// dropping null-valued equality constraints. Failed evaluation returns an error.
+func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, error) {
+	return e.materializePropertyExpressions(ctx, expressions, row, true, false)
 }
 
-// pipelineNodeMatchTemplate is a single-node MATCH clause parsed once.
 type pipelineNodeMatchTemplate struct {
 	// usable is false for a clause the template doesn't cover.
 	usable       bool
@@ -106,18 +75,15 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 
 // node returns the row's node pattern, ok false when the row takes the
 // general route.
-func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool) {
+func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool, error) {
 	if !t.usable {
-		return nodePatternInfo{}, false
+		return nodePatternInfo{}, false, nil
 	}
-	if len(t.properties) == 0 {
-		return nodePatternInfo{variable: t.variable, labels: t.labels, labelErr: t.labelErr}, true
+	props, err := e.evaluatePipelineProperties(ctx, t.properties, row)
+	if err != nil {
+		return nodePatternInfo{}, true, err
 	}
-	props, ok := e.evaluatePipelineProperties(ctx, t.properties, row)
-	if !ok {
-		return nodePatternInfo{}, false
-	}
-	return nodePatternInfo{variable: t.variable, labels: t.labels, properties: props, labelErr: t.labelErr}, true
+	return nodePatternInfo{variable: t.variable, labels: t.labels, properties: props, labelErr: t.labelErr}, true, nil
 }
 
 // pipelinePropertiesKey is a key for a node pattern's evaluated properties:
@@ -175,20 +141,19 @@ func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMerge
 }
 
 // pattern returns the row's relationship pattern, ok false when the row
-// takes the general route (an endpoint not bound to a node, a property the
-// row evaluator can't evaluate).
-func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool) {
+// takes the general route because syntax or endpoint bindings are unsupported.
+func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool, error) {
 	if !t.usable {
-		return nil, nil, nil, false
+		return nil, nil, nil, false, nil
 	}
 	startNode, _ := row[t.shape.startContent].(*storage.Node)
 	endNode, _ := row[t.shape.endContent].(*storage.Node)
 	if startNode == nil || endNode == nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, false, nil
 	}
-	props, ok := e.evaluatePipelineProperties(ctx, t.properties, row)
-	if !ok {
-		return nil, nil, nil, false
+	props, err := e.evaluatePipelineProperties(ctx, t.properties, row)
+	if err != nil {
+		return nil, nil, nil, true, err
 	}
 	return &mergeRelationshipPattern{
 		pathVariable:     t.shape.pathVariable,
@@ -200,5 +165,5 @@ func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor,
 		relVariable:      t.shape.relVariable,
 		relType:          t.shape.relType,
 		properties:       props,
-	}, startNode, endNode, true
+	}, startNode, endNode, true, nil
 }

@@ -594,7 +594,7 @@ func (b *ASTBuilder) parseSetItems(text string) []ASTSetItem {
 	var items []ASTSetItem
 
 	// Split by comma (but not inside brackets/braces)
-	parts := splitOutsideBrackets(text, ',')
+	parts := splitSetAssignments(text)
 
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -973,8 +973,8 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 			if part == "" {
 				continue
 			}
-			if colonIdx := strings.Index(part, ":"); colonIdx > 0 {
-				key := strings.TrimSpace(part[:colonIdx])
+			if colonIdx := findTopLevelMapKeyValueSeparator(part); colonIdx > 0 {
+				key := normalizePropertyKey(strings.TrimSpace(part[:colonIdx]))
 				value := strings.TrimSpace(part[colonIdx+1:])
 				expr.Map[key] = b.parseExpression(value)
 			}
@@ -1026,54 +1026,13 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 
 // splitOutsideBrackets splits string by delimiter, ignoring delimiters inside brackets.
 func splitOutsideBrackets(s string, delim rune) []string {
-	var parts []string
-	var current strings.Builder
-	depth := 0
-	inString := false
-	stringChar := rune(0)
-
-	for _, ch := range s {
-		if inString {
-			current.WriteRune(ch)
-			if ch == stringChar {
-				inString = false
-			}
-			continue
-		}
-
-		if ch == '\'' || ch == '"' {
-			inString = true
-			stringChar = ch
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == '(' || ch == '[' || ch == '{' {
-			depth++
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == ')' || ch == ']' || ch == '}' {
-			depth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == delim && depth == 0 {
-			parts = append(parts, current.String())
-			current.Reset()
-			continue
-		}
-
-		current.WriteRune(ch)
+	if delim == ',' {
+		return splitTopLevelComma(s)
 	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
+	if index := findTopLevelOperator(s, string(delim), false, true); index >= 0 {
+		return []string{s[:index], s[index+1:]}
 	}
-
-	return parts
+	return []string{s}
 }
 
 // determineReadOnly checks if the AST represents a read-only query.

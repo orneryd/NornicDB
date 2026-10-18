@@ -74,8 +74,8 @@ func joinWhereConjuncts(conjuncts []string) string {
 func hasPatternOrSubquery(expression string) bool {
 	braces := newSubqueryBraceScanner(expression, 0)
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
 		case '-':
 			if index+1 < len(expression) && strings.IndexByte("->[", expression[index+1]) >= 0 {

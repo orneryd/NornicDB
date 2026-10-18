@@ -17,7 +17,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope, params: scope.params}
 	for index := 0; index < len(text); index++ {
-		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+		if isCypherQuoteByte(text[index]) {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
 			continue
 		}
@@ -81,6 +81,11 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	baseExpression := strings.TrimSpace(expression[receiverStart:open])
+	// The trailing bracket must be a postfix access, not a list following
+	// an operator or clause keyword. Validate syntax before evaluating it.
+	if !isOperandExpressionText(baseExpression) || (isCypherKeyword(baseExpression) && !isLiteralKeyword(baseExpression)) {
+		return nil
+	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
 	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
 		return err
@@ -88,6 +93,9 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
 	if err != nil {
 		return err
+	}
+	if !baseOK {
+		return nil
 	}
 	if from, to, slice := staticSliceBounds(indexExpression); slice {
 		if !baseOK || base == nil {
@@ -168,30 +176,7 @@ func rowSubscriptStart(expr string) int {
 // expression starts, reading brackets outside string literals and quoted
 // names; -1 when expression doesn't end with a balanced group.
 func closingBracketGroupStart(expression string) int {
-	if !strings.HasSuffix(expression, "]") {
-		return -1 // no scan for the common expression that ends otherwise
-	}
-	var opens []int
-	for index := 0; index < len(expression); {
-		switch c := expression[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(expression, index, c)
-			continue
-		case '[':
-			opens = append(opens, index)
-		case ']':
-			if len(opens) == 0 {
-				return -1
-			}
-			start := opens[len(opens)-1]
-			opens = opens[:len(opens)-1]
-			if index == len(expression)-1 {
-				return start
-			}
-		}
-		index++
-	}
-	return -1
+	return matchingRowDelimiterStart(expression, len(expression)-1, '[', ']')
 }
 
 // rowSubscriptReceiverStart finds the primary expression immediately to the
@@ -207,7 +192,7 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	if end < 0 {
 		return -1
 	}
-	if !isRowReceiverIdentifierByte(expression[end]) && !strings.ContainsRune(")]'\"`}", rune(expression[end])) {
+	if !isRowReceiverIdentifierByte(expression[end]) && !strings.ContainsRune(")]}", rune(expression[end])) && !isCypherQuoteByte(expression[end]) {
 		return -1
 	}
 	start := end
@@ -220,7 +205,7 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		for before >= 0 && isASCIIWhitespace(expression[before]) {
 			before--
 		}
-		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]'\"`", rune(expression[before])) {
+		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]}", rune(expression[before])) && !isCypherQuoteByte(expression[before]) {
 			return start
 		}
 		if start > 0 {
@@ -244,14 +229,6 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 			start--
 		}
 		return start
-	case '\'', '"':
-		quote := expression[end]
-		for start--; start >= 0; start-- {
-			if expression[start] == quote && !isBackslashEscaped(expression, start) {
-				return start
-			}
-		}
-		return -1
 	case '}':
 		open := matchingRowDelimiterStart(expression, end, '{', '}')
 		if open < 0 {
@@ -276,6 +253,9 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		}
 		return open
 	default:
+		if isCypherStringQuoteByte(expression[end]) {
+			return quotedRowReceiverStart(expression, end)
+		}
 		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
 			start--
 		}
@@ -284,15 +264,55 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 }
 
 func matchingRowDelimiterStart(expression string, closeIndex int, open, close byte) int {
-	depth := 0
-	for index := closeIndex; index >= 0; index-- {
-		switch expression[index] {
-		case close:
-			depth++
-		case open:
-			depth--
-			if depth == 0 {
+	if closeIndex < 0 || closeIndex >= len(expression) || expression[closeIndex] != close {
+		return -1
+	}
+	for index := 0; index <= closeIndex; index++ {
+		switch character := expression[index]; {
+		case isCypherQuoteByte(character):
+			end, closed := scanCypherQuotedText(expression, index, character)
+			if !closed {
+				return -1
+			}
+			index = end - 1
+		case character == '/':
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end - 1
+			}
+		case character == open:
+			end := findMatchingDelimiter(expression, index, rune(open), rune(close))
+			if end == closeIndex {
 				return index
+			}
+			if end < 0 {
+				return -1
+			}
+			if end < closeIndex {
+				index = end
+			}
+		}
+	}
+	return -1
+}
+
+// quotedRowReceiverStart finds a string/name token ending at end. It reads
+// forward through canonical quotation tokens; reverse quote matching loses
+// doubled quotes and escapes.
+func quotedRowReceiverStart(expression string, end int) int {
+	for index := 0; index <= end; index++ {
+		switch character := expression[index]; {
+		case isCypherQuoteByte(character):
+			finish, closed := scanCypherQuotedText(expression, index, character)
+			if !closed {
+				return -1
+			}
+			if finish == end+1 {
+				return index
+			}
+			index = finish - 1
+		case character == '/':
+			if finish := queryCommentEnd(expression, index); finish >= 0 {
+				index = finish - 1
 			}
 		}
 	}
@@ -300,7 +320,7 @@ func matchingRowDelimiterStart(expression string, closeIndex int, open, close by
 }
 
 func isRowReceiverIdentifierByte(value byte) bool {
-	return value == '_' || value == '.' || value == '`' || value == '$' ||
+	return value == '_' || value == '.' || isCypherBacktickByte(value) || value == '$' ||
 		(value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
 		(value >= '0' && value <= '9') || value >= 0x80
 }
@@ -343,6 +363,11 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 				"UnexpectedSyntax",
 				"size() does not accept a pattern predicate; use a pattern comprehension",
 			)
+		}
+		// Aggregates have no value in an input row. Their argument is checked
+		// by the aggregate projection after its group has been evaluated.
+		if containsAggregateFunc(argument) || needsRowStatementContext(argument) {
+			continue
 		}
 		for _, row := range rows {
 			value, ok, err := e.evaluateRowValue(argument, row)

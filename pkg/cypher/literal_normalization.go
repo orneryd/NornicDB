@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 )
@@ -37,181 +38,117 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 		out.WriteString(s[last:end])
 		last = end
 	}
-	inSingle, inDouble, inBacktick := false, false, false
-	inLine, inBlock := false, false
-	// A string with an escape sequence is copied verbatim: its validity can
-	// depend on the escape itself (\u escapes), so it must not share a
-	// canonical form with a plain string.
-	stringHasEscape := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
+		if end := queryCommentEnd(s, i); end >= 0 {
+			flushAt(end)
+			i = end - 1
+			continue
+		}
+		if isCypherBacktickByte(c) {
+			end, _ := scanCypherQuotedText(s, i, c)
+			flushAt(end)
+			i = end - 1
+			continue
+		}
+		if isCypherStringQuoteByte(c) {
+			end, hasEscape, closed := cyphertext.ScanStringToken(s, i)
+			flushAt(i)
+			if !closed {
+				flushAt(len(s))
+				return out.String(), changed
+			}
+			if hasEscape {
+				flushAt(end)
+			} else {
+				out.WriteString(normStringMarker)
+				changed = true
+				last = end
+			}
+			i = end - 1
+			continue
+		}
 		switch {
-		case inLine:
-			if c == '\n' || c == '\r' {
-				inLine = false
-				flushAt(i)
-			}
-		case inBlock:
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlock = false
-				i++
-				flushAt(i + 1)
-			}
-		case inSingle:
-			if c == '\\' && i+1 < len(s) {
-				stringHasEscape = true
-				i++
-				continue
-			}
-			if c == '\'' {
-				// A doubled quote is no escape in Cypher: it ends the string
-				// and opens another ('it''s' is two adjacent literals, which
-				// the validator rejects), so it must not share a canonical
-				// form with one string.
-				inSingle = false
-				if stringHasEscape {
-					flushAt(i + 1)
-				} else {
-					out.WriteString(normStringMarker)
-					changed = true
-					last = i + 1
-				}
-				stringHasEscape = false
-			}
-		case inDouble:
-			if c == '\\' && i+1 < len(s) {
-				stringHasEscape = true
-				i++
-				continue
-			}
-			if c == '"' {
-				inDouble = false
-				if stringHasEscape {
-					flushAt(i + 1)
-				} else {
-					out.WriteString(normStringMarker)
-					changed = true
-					last = i + 1
-				}
-				stringHasEscape = false
-			}
-		case inBacktick:
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-				flushAt(i + 1)
-			}
-		default:
-			switch {
-			case c == '/' && i+1 < len(s):
-				if s[i+1] == '/' {
-					inLine = true
-					i++
-					flushAt(i - 1)
-					continue
-				}
-				if s[i+1] == '*' {
-					inBlock = true
-					i++
-					flushAt(i - 1)
-					continue
-				}
-			case c == '\'':
-				inSingle = true
-				flushAt(i)
-				continue
-			case c == '"':
-				inDouble = true
-				flushAt(i)
-				continue
-			case c == '`':
-				inBacktick = true
-				flushAt(i)
-				continue
-			case c == '$':
-				// $param: names are interchangeable for structural validity.
-				if i+1 < len(s) && (isASCIIDigit(s[i+1]) || isIdentByte(s[i+1])) {
-					j := i + 1
-					for j < len(s) && (isASCIIDigit(s[j]) || isIdentByte(s[j])) {
-						j++
-					}
-					flushAt(i)
-					out.WriteString(normParamMarker)
-					changed = true
-					last = j
-					i = j - 1
-					continue
-				}
-				// $( ... ) dynamic label expressions are copied verbatim.
-				if i+1 < len(s) && s[i+1] == '(' {
-					closing := findMatchingDelimiter(s, i+1, '(', ')')
-					if closing > 0 {
-						i = closing
-						flushAt(i + 1)
-						continue
-					}
-				}
-			case c >= '0' && c <= '9':
-				if i > 0 && (isIdentByte(s[i-1]) || s[i-1] == '$' || s[i-1] == '`') {
-					continue
-				}
+		case c == '$':
+			// $param: names are interchangeable for structural validity.
+			if i+1 < len(s) && (isASCIIDigit(s[i+1]) || isIdentByte(s[i+1])) {
 				j := i + 1
-				if s[i] == '0' && j < len(s) && (s[j] == 'x' || s[j] == 'X') {
-					// A bare 0x is not a number; only consume it as hex
-					// when at least one hex digit follows.
-					k := j + 1
-					digits := 0
-					for k < len(s) && isHexDigit(s[k]) {
-						k++
-						digits++
-					}
-					if digits > 0 {
-						j = k
-					}
+				for j < len(s) && (isASCIIDigit(s[j]) || isIdentByte(s[j])) {
+					j++
 				}
-				if j == i+1 {
+				flushAt(i)
+				out.WriteString(normParamMarker)
+				changed = true
+				last = j
+				i = j - 1
+				continue
+			}
+			// $( ... ) dynamic label expressions are copied verbatim.
+			if i+1 < len(s) && s[i+1] == '(' {
+				closing := findMatchingDelimiter(s, i+1, '(', ')')
+				if closing > 0 {
+					i = closing
+					flushAt(i + 1)
+					continue
+				}
+			}
+		case c >= '0' && c <= '9':
+			if i > 0 && (isIdentByte(s[i-1]) || s[i-1] == '$' || isCypherBacktickByte(s[i-1])) {
+				continue
+			}
+			j := i + 1
+			if s[i] == '0' && j < len(s) && (s[j] == 'x' || s[j] == 'X') {
+				// A bare 0x is not a number; only consume it as hex
+				// when at least one hex digit follows.
+				k := j + 1
+				digits := 0
+				for k < len(s) && isHexDigit(s[k]) {
+					k++
+					digits++
+				}
+				if digits > 0 {
+					j = k
+				}
+			}
+			if j == i+1 {
+				for j < len(s) && isASCIIDigit(s[j]) {
+					j++
+				}
+				if j < len(s) && s[j] == '.' && j+1 < len(s) && isASCIIDigit(s[j+1]) {
+					j++
 					for j < len(s) && isASCIIDigit(s[j]) {
 						j++
 					}
-					if j < len(s) && s[j] == '.' && j+1 < len(s) && isASCIIDigit(s[j+1]) {
-						j++
+				}
+				if j < len(s) && (s[j] == 'e' || s[j] == 'E') {
+					k := j + 1
+					if k < len(s) && (s[k] == '+' || s[k] == '-') {
+						k++
+					}
+					if k < len(s) && isASCIIDigit(s[k]) {
+						j = k
 						for j < len(s) && isASCIIDigit(s[j]) {
 							j++
 						}
 					}
-					if j < len(s) && (s[j] == 'e' || s[j] == 'E') {
-						k := j + 1
-						if k < len(s) && (s[k] == '+' || s[k] == '-') {
-							k++
-						}
-						if k < len(s) && isASCIIDigit(s[k]) {
-							j = k
-							for j < len(s) && isASCIIDigit(s[j]) {
-								j++
-							}
-						}
-					}
 				}
-				flushAt(i)
-				// Only normalize numbers whose value cannot change validity:
-				// out-of-range integers and leading-zero forms keep their text
-				// so their canonical form stays distinct from valid ones.
-				if normNumberSafe(s[i:j]) {
-					if strings.ContainsAny(s[i:j], ".eE") && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
-						out.WriteString(normFloatMarker)
-					} else {
-						out.WriteString(normIntMarker)
-					}
-					changed = true
-					last = j
-				} else {
-					last = i
-				}
-				i = j - 1
 			}
+			flushAt(i)
+			// Only normalize numbers whose value cannot change validity:
+			// out-of-range integers and leading-zero forms keep their text
+			// so their canonical form stays distinct from valid ones.
+			if normNumberSafe(s[i:j]) {
+				if strings.ContainsAny(s[i:j], ".eE") && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
+					out.WriteString(normFloatMarker)
+				} else {
+					out.WriteString(normIntMarker)
+				}
+				changed = true
+				last = j
+			} else {
+				last = i
+			}
+			i = j - 1
 		}
 	}
 	flushAt(len(s))

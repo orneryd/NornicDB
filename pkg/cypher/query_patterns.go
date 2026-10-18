@@ -157,39 +157,15 @@ func extractMatchClause(query string) string {
 }
 
 func countRelationshipPatterns(s string) int {
-	inQuote := false
-	quoteChar := byte(0)
 	count := 0
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
+	for from := 0; from < len(s); {
+		_, close := nextRelationshipBracket(s, from)
+		if close < 0 {
+			break
 		}
-		if inQuote {
-			continue
-		}
-
-		if c != '[' {
-			continue
-		}
-
-		// Relationship patterns are introduced by a preceding '-' (possibly with whitespace).
-		j := i - 1
-		for j >= 0 && isWhitespace(s[j]) {
-			j--
-		}
-		if j >= 0 && s[j] == '-' {
-			count++
-		}
+		count++
+		from = close + 1
 	}
-
 	return count
 }
 
@@ -540,7 +516,7 @@ func functionCallParenAt(text string, open int) bool {
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
-		if matchClause[i] == '\'' || matchClause[i] == '"' {
+		if isCypherStringQuoteByte(matchClause[i]) {
 			i = skipQuotedSemanticText(matchClause, i) - 1
 			continue
 		}

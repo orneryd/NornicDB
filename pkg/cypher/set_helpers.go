@@ -61,23 +61,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	if err := requireSetParameter(ctx, rightExpr); err != nil {
 		return err
 	}
-	// Direct $param / row-path references skip the expression evaluator, so
-	// typed maps keep their Go value types and UNWIND rows stay cheap.
-	value, direct := resolveDirectParamRef(ctx, rightExpr)
-	if !direct {
-		value, direct = resolveContextPathRef(ctx, rightExpr)
-	}
-	if direct {
-		props, err := setPropertyMapValue(value, "+=")
-		if err != nil {
-			return err
-		}
-		writes.mapEntries(node.Properties, props, false)
-		for k, v := range props {
-			setNodeProperty(node, k, v)
-		}
-		return nil
-	}
 	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
 	if err != nil {
 		return err
@@ -214,45 +197,7 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 //	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
 //	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
 func splitSetAssignments(setClause string) []string {
-	if strings.TrimSpace(setClause) == "" {
-		return nil
-	}
-	var assignments []string
-	var current strings.Builder
-	parenDepth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range setClause {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote
-				if i > 0 && !isBackslashEscaped(setClause, i) {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '(' || c == '{' || c == '[') && !inQuote:
-			parenDepth++
-			current.WriteRune(c)
-		case (c == ')' || c == '}' || c == ']') && !inQuote:
-			parenDepth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && parenDepth == 0:
-			assignments = append(assignments, strings.TrimSpace(current.String()))
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	assignments = append(assignments, strings.TrimSpace(current.String()))
-
-	return assignments
+	return splitTopLevelCommaKeepEmpty(setClause)
 }
 
 // hasConcatOperator checks if the expression has a + operator outside of quotes.
@@ -266,25 +211,20 @@ func splitSetAssignments(setClause string) []string {
 //
 //   - true if + operator exists at top level
 func (e *StorageExecutor) hasConcatOperator(expr string) bool {
-	inQuote := false
-	quoteChar := rune(0)
 	parenDepth := 0
 
 	for i := 0; i < len(expr); i++ {
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
+			continue
+		}
 		c := rune(expr[i])
 		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		case c == '(' && !inQuote:
+		case c == '(':
 			parenDepth++
-		case c == ')' && !inQuote:
+		case c == ')':
 			parenDepth--
-		case c == '+' && !inQuote && parenDepth == 0:
+		case c == '+' && parenDepth == 0:
 			// Check for space before and after (to avoid matching ++ or += etc)
 			hasBefore := i > 0 && expr[i-1] == ' '
 			hasAfter := i < len(expr)-1 && expr[i+1] == ' '

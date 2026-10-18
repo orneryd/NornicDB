@@ -18,8 +18,8 @@ func validateArrowOperators(query string) error {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
@@ -50,8 +50,8 @@ func validatePlaceholderOperands(query string) error {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -147,7 +148,10 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		patternPart = strings.TrimSpace(baseMatch[matchIdx+5 : whereIdx])
 		wherePart = strings.TrimSpace(baseMatch[whereIdx+5:])
 	}
-	nodePat := e.parseNodePattern(ctx, patternPart)
+	nodePat, parseErr := e.parseNodePattern(ctx, patternPart)
+	if parseErr != nil {
+		return nil, true, parseErr
+	}
 	if strings.TrimSpace(nodePat.variable) != deleteVar {
 		return nil, false, nil
 	}
@@ -604,37 +608,7 @@ func normalizeUnwindExpression(expr string) string {
 }
 
 func hasOuterParens(s string) bool {
-	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
-		return false
-	}
-	depth := 0
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(':
-			if !inSingle && !inDouble {
-				depth++
-			}
-		case ')':
-			if !inSingle && !inDouble {
-				depth--
-				if depth == 0 && i < len(s)-1 {
-					return false
-				}
-			}
-		}
-	}
-	return depth == 0 && !inSingle && !inDouble
+	return len(s) >= 2 && s[0] == '(' && findMatchingDelimiter(s, 0, '(', ')') == len(s)-1
 }
 
 // coerceToUnwindItems is the one UNWIND coercion, as in Neo4j (#693): null
@@ -712,6 +686,9 @@ func normalizePropValue(value interface{}) interface{} {
 // too. A container is copied only when a descendant changes; rewritten
 // describes a value conversion, independently of a writer's ownership copy.
 func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
+	if value != nil && cypherfn.RuntimeValue(value) == nil {
+		return nil, true
+	}
 	switch v := value.(type) {
 	case time.Time:
 		return dateTimeFromGoTime(v), true

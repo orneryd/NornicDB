@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -127,7 +128,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 // startsOperand reports whether an operand (a name, a number, a string or a
 // parameter) starts with c.
 func startsOperand(c byte) bool {
-	return isIdentStartByte(c) || isDigitByte(c) || c == '\'' || c == '"' || c == '`' || c == '$'
+	return isIdentStartByte(c) || isDigitByte(c) || isCypherQuoteByte(c) || c == '$'
 }
 
 // startsProjectedExpression reports whether an expression, rather than a
@@ -162,7 +163,7 @@ func forEachQueryWord(query string, visit func(start, end int)) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
@@ -189,9 +190,9 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '`':
+		case isCypherBacktickByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
-		case c == '\'' || c == '"':
+		case isCypherStringQuoteByte(c):
 			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !isIdentByte(query[i-2]) && query[i-2] != '.' && query[i-2] != '$') {
 				text, end, err := interpolatedStringText(query, i)
 				if err != nil {
@@ -214,23 +215,27 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 // interpolatedStringText reads the interpolated string whose quote is at
 // query[open]: the expression it stands for and the index after it.
 func interpolatedStringText(query string, open int) (string, int, error) {
-	quote := query[open]
+	delimiter := query[open]
+	end, closed := cyphertext.ScanInterpolatedText(query, open, func(at int) int { return interpolationEnd(query, at) })
 	var out, literal strings.Builder
 	parts := 0
 	flush := func() {
 		if parts > 0 {
 			out.WriteString(" + ")
 		}
-		out.WriteByte(quote)
+		out.WriteByte(delimiter)
 		out.WriteString(literal.String())
-		out.WriteByte(quote)
+		out.WriteByte(delimiter)
 		literal.Reset()
 		parts++
 	}
 	syntaxError := func(message localization.Message) (string, int, error) {
 		return "", 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
 	}
-	for i := open + 1; i < len(query); i++ {
+	if !closed {
+		return syntaxError(localization.CypherCoreInvalidInput(string(delimiter)))
+	}
+	for i := open + 1; i < end-1; i++ {
 		c := query[i]
 		switch {
 		case c == '\\' && i+1 < len(query):
@@ -240,11 +245,6 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 				literal.WriteString(query[i : i+2])
 			}
 			i++
-		case c == quote:
-			if parts == 0 || literal.Len() > 0 {
-				flush()
-			}
-			return "(" + out.String() + ")", i + 1, nil
 		case c == '}':
 			return syntaxError(localization.CypherCoreInvalidInput("}"))
 		case c == '{':
@@ -271,7 +271,10 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 			literal.WriteByte(c)
 		}
 	}
-	return syntaxError(localization.CypherCoreInvalidInput(string(quote)))
+	if parts == 0 || literal.Len() > 0 {
+		flush()
+	}
+	return "(" + out.String() + ")", end, nil
 }
 
 // interpolationEnd is the index of the } that closes the interpolation
@@ -280,8 +283,8 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 func interpolationEnd(query string, open int) int {
 	depth := 0
 	for i := open; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '{':
 			depth++
@@ -347,7 +350,7 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 	for i := 0; i < len(query); i++ {
 		c := query[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case c == '{':
 			close := findMatchingDelimiter(query, i, '{', '}')
