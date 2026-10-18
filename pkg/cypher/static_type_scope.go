@@ -474,7 +474,7 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool, observers ...func(pipelineClause, typeScope)) (typeScope, error) {
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
 	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
 		return nil, nil
@@ -505,7 +505,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 				}
 			}
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained}, observers...)
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
 		if err != nil {
 			if !scoped {
 				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {

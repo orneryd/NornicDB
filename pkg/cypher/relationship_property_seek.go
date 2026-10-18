@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -11,7 +10,6 @@ type relationshipSeek struct {
 	name, relType string
 	properties    []string
 	values        []interface{}
-	runtimeKey    bool // EXPLAIN: supported equality key is resolved per incoming row.
 	estimatedRows int64
 }
 
@@ -22,83 +20,6 @@ func withRelationshipSeekPredicate(ctx context.Context, pattern, where string) c
 	return context.WithValue(ctx, relationshipSeekPredicateKey{}, relationshipSeekPredicate{pattern: pattern, where: where})
 }
 
-// A seek is only a different source of candidates for the existing single-hop
-// MATCH. Pattern parsing, value evaluation, endpoint readers, predicates and
-// projection retain their existing owners.
-func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *TraversalMatch, where string, unknown map[string]bool) (relationshipSeek, bool) {
-	var empty relationshipSeek
-	if match == nil || match.IsChained || match.Relationship.VariableLength || match.Relationship.MinHops != 1 || match.Relationship.MaxHops != 1 || len(match.Relationship.Types) != 1 {
-		return empty, false
-	}
-	if viewport, _ := TemporalViewportFromContext(ctx); viewport.Enabled() {
-		return empty, false
-	}
-	reader, ok := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
-	if !ok || !reader.RelationshipPropertySeeksAvailable() {
-		return empty, false
-	}
-	rel := match.Relationship
-	values := make(map[string]interface{}, len(rel.Properties))
-	var unresolved map[string]bool
-	for key, value := range rel.Properties {
-		values[key] = value
-	}
-	if rel.Variable != "" {
-		for _, conjunct := range splitTopLevelAndConjuncts(where) {
-			shape := parseSimpleIndexedEqualityShape(rel.Variable, conjunct)
-			if !shape.ok || !relationshipSeekExactProperty(rel.Variable, shape.property, conjunct) {
-				continue
-			}
-			if _, exists := values[shape.property]; exists {
-				continue
-			}
-			if value, ok := e.indexSeekConstant(ctx, shape.constant); ok {
-				values[shape.property] = value
-			} else if relationshipSeekIncomingExpression(shape.constant, unknown) {
-				// The semantic scope owner supplies incoming names. Keep a
-				// deferred key explicit, rather than inventing a scalar value.
-				if unresolved == nil {
-					unresolved = make(map[string]bool)
-				}
-				unresolved[shape.property] = true
-			}
-		}
-	}
-	if len(values) == 0 && len(unresolved) == 0 {
-		return empty, false
-	}
-	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(rel.Types[0]) {
-		key := make([]interface{}, len(index.Properties))
-		complete := true
-		runtimeKey := false
-		for i, property := range index.Properties {
-			var exists bool
-			key[i], exists = values[property]
-			if unresolved[property] {
-				runtimeKey = true
-				continue
-			}
-			if !exists {
-				complete = false
-				break
-			}
-		}
-		supportedValues := key
-		if runtimeKey {
-			supportedValues = make([]interface{}, 0, len(key))
-			for i, property := range index.Properties {
-				if !unresolved[property] {
-					supportedValues = append(supportedValues, key[i])
-				}
-			}
-		}
-		if complete && (len(supportedValues) == 0 || storage.RelationshipIndexValuesSupported(supportedValues)) {
-			return relationshipSeek{name: index.Name, relType: rel.Types[0], properties: index.Properties, values: key, runtimeKey: runtimeKey, estimatedRows: 10}, true
-		}
-	}
-	return empty, false
-}
-
 func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, pattern string, match *TraversalMatch, where string, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
 	seekWhere := where
 	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
@@ -106,7 +27,7 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 		// They can still supply an equality key evaluated in this incoming row.
 		seekWhere = original.where
 	}
-	seek, ok := e.relationshipPropertySeek(ctx, match, seekWhere, nil)
+	seek, ok := e.relationshipAccessFor(ctx, pattern, match, seekWhere).resolve(ctx, e, match.Relationship.Properties)
 	if !ok {
 		recordRelationshipSeekFallback(ctx, pattern, seekWhere, match.Relationship.Variable)
 		return nil, false, nil
@@ -189,42 +110,4 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 	}
 	recordRelationshipSeek(ctx, pattern, seekWhere, match.Relationship.Variable, seek, int64(len(edges)), int64(len(paths)))
 	return paths, true, nil
-}
-
-func relationshipSeekIncomingExpression(expr string, unknown map[string]bool) bool {
-	variables := expressionFreeVariables(expr)
-	if len(variables) == 0 {
-		return false
-	}
-	for _, variable := range variables {
-		if !unknown[variable] {
-			return false
-		}
-	}
-	return true
-}
-
-// The generic node equality shape reader folds variable case. Relationship
-// candidate ownership is exact: node R and relationship r are distinct bindings.
-func relationshipSeekExactProperty(variable, property, predicate string) bool {
-	clause := unwrapOuterParens(strings.TrimSpace(predicate))
-	equals := topLevelEqualsIndex(clause)
-	if equals < 0 {
-		return false
-	}
-	for _, side := range []string{clause[:equals], clause[equals+1:]} {
-		name, rest, ok := parseIdentifierToken(strings.TrimSpace(side))
-		if !ok || symbolicNameValue(name) != variable {
-			continue
-		}
-		rest = strings.TrimSpace(rest)
-		if !strings.HasPrefix(rest, ".") {
-			continue
-		}
-		name, tail, ok := parseIdentifierToken(strings.TrimSpace(rest[1:]))
-		if ok && strings.TrimSpace(tail) == "" && symbolicNameValue(name) == property {
-			return true
-		}
-	}
-	return false
 }
