@@ -88,6 +88,7 @@ var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE
 // when the graph doesn't exist.
 func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining string, hasUse bool, err error) {
 	trimmed := strings.TrimSpace(query)
+	trimmed = trimmed[skipSpacesAndComments(trimmed, 0):]
 	if !startsWithWordFold(trimmed, "USE") {
 		return UseClause{}, query, false, nil
 	}
@@ -394,16 +395,14 @@ func skipSpacesAndComments(s string, i int) int {
 // skipping string literals (with backslash escapes) and backtick names.
 func matchingParen(s string, open int) (int, bool) {
 	depth := 0
-	for i := open; i < len(s); i++ {
-		switch s[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(s, i)
-		case '(':
+	for token := range queryTokens(s[open:]) {
+		switch token.text {
+		case "(":
 			depth++
-		case ')':
+		case ")":
 			depth--
 			if depth == 0 {
-				return i, true
+				return open + token.start, true
 			}
 		}
 	}
@@ -436,24 +435,11 @@ func splitArguments(text string) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	var args []string
-	depth, start := 0, 0
-	for i := 0; i < len(text); i++ {
-		switch text[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(text, i)
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case ',':
-			if depth == 0 {
-				args = append(args, strings.TrimSpace(text[start:i]))
-				start = i + 1
-			}
-		}
+	parts := splitTopLevelCSV(text)
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
 	}
-	return append(args, strings.TrimSpace(text[start:]))
+	return parts
 }
 
 // doubleQuoteStringLiterals writes an expression's single-quoted string
