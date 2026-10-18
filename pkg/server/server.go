@@ -2179,31 +2179,29 @@ func (s *Server) initEmbedderWithRetry(ctx context.Context, embedConfig *embed.C
 
 		// Use factory function for all providers.
 		embedder, err := newEmbedder(ctx, embedConfig)
-		ownsEmbedder := err == nil
-		if ownsEmbedder {
+		release, accepted := db.OwnEmbedder(embedder)
+		if err == nil && !accepted {
+			return
+		}
+		if err == nil {
 			// Health check: test embedding before enabling.
 			healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			_, healthErr := embedder.Embed(healthCtx, "health check")
 			cancel()
 			if healthErr != nil {
 				err = fmt.Errorf("health check failed: %w", healthErr)
-				// A failed health check never transfers ownership to the DB.
-				// Release the model and its worker before waiting or retrying.
-				if closer, ok := embedder.(interface{ Close() error }); ok {
-					_ = closer.Close()
-				}
-				ownsEmbedder = false
 			}
+		}
+		if err != nil {
+			// Failed construction/health attempts use the same resource owner as
+			// installed providers, and release before entering retry backoff.
+			_ = release()
 		}
 
 		// Shutdown during the attempt: don't install or report it, and release
 		// what it built (a loaded local model and its warmup goroutine).
 		if ctx.Err() != nil {
-			if ownsEmbedder {
-				if closer, ok := embedder.(interface{ Close() error }); ok {
-					_ = closer.Close()
-				}
-			}
+			_ = release()
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
 			return
 		}

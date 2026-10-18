@@ -380,6 +380,10 @@ func (c *CachedEmbedder) Close() error {
 	return nil
 }
 
+// Unwrap returns the underlying provider so a shared resource owner can release
+// it once even when several caches or registry entries refer to the same model.
+func (c *CachedEmbedder) Unwrap() Embedder { return c.base }
+
 // Clear removes all cached embeddings.
 func (c *CachedEmbedder) Clear() {
 	c.mu.Lock()

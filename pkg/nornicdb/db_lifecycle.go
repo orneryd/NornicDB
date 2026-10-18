@@ -83,7 +83,9 @@ func (db *DB) closeInternal() error {
 	}
 	db.bgWg.Wait()
 
-	var errs []error
+	// Queue workers and initializers are now quiescent. Release all provider
+	// resources through their one owner, including cached/replaced providers.
+	errs := db.closeOwnedEmbedders()
 	// Stop every component that can still mutate graph storage before recording
 	// the durable storage boundary. Search snapshots are derived artifacts and
 	// may take much longer to save; they must not delay this marker.
