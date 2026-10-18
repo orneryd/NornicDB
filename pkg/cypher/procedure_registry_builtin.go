@@ -906,7 +906,7 @@ func registerBuiltInProcedure(name, signature string, description localization.M
 		WorksOnSystem:      worksOnSystem,
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
-	}, gdsStreamHandler(name, handler))
+	}, handler)
 }
 
 // registerAdminBuiltInProcedure is registerBuiltInProcedure for a procedure

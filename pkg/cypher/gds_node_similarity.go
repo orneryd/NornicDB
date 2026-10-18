@@ -96,7 +96,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows, gdsProjection: projection}, nil
+	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows}, nil
 }
 
 func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
@@ -396,7 +396,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 	}
 	rows := make([][]interface{}, len(pairs))
 	for i, pair := range pairs {
-		rows[i] = []interface{}{graph.nodes[pair.source], graph.nodes[pair.target], pair.similarity, pair.shared}
+		rows[i] = []interface{}{gdsNodeOutput(proj, graph.nodes[pair.source]), gdsNodeOutput(proj, graph.nodes[pair.target]), pair.similarity, gdsNodeOutputs(proj, pair.shared)}
 	}
 	return rows, nil
 }
@@ -457,8 +457,8 @@ func nodeSimilarityBefore(a, b nodeSimilarityPair, bottom bool) bool {
 // nodeSimilarity is the similarity of two sorted neighbour vectors by metric,
 // and the neighbours they share (nodeId, and weight: the smaller of the two
 // weights, 1 unweighted), most weight first; without explain, only the
-// similarity. A GDS stream's ids are rendered on the way out
-// (gdsStreamHandler).
+// similarity. nodeId is nodes[i]; the caller turns it into the value its
+// row shows (gdsNodeOutputs, gdsRowNodes) as it builds the row.
 func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string, explain bool) (float64, []interface{}) {
 	weightOf := func(edge gdsEdge) float64 {
 		if weighted {

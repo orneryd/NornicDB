@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -11,7 +10,8 @@ import (
 // How GDS and node-similarity procedures read, match and show nodes
 // (F-GDS-SIM). This file owns all three: readGDSNode is the only reader of
 // a node-valued input, gdsNodeRef.find the only matching rule, and
-// renderGDSNodeColumns the only way a node id leaves a result row.
+// gdsNodeOutput (projection streams) and gdsRowNodes (rows procedures) the
+// only way a node id leaves a result row, once, as the row is built.
 // gdsNodeProcedures lists every procedure and function of the family with
 // the kinds each input accepts and the columns its ids leave through
 // (TestGDSNodeIdentityOwner checks the list against the registries and the
@@ -115,30 +115,13 @@ func (ref gdsNodeRef) isNode() bool {
 	return ref.kind&(gdsLocalNode|gdsRemoteNode) != 0
 }
 
-// gdsShownKey is a key as output shows it: the id it holds.
-func gdsShownKey(key string) string {
-	if strings.HasPrefix(key, gdsRemoteKey) || strings.HasPrefix(key, gdsLocalKey) {
-		return key[2:]
-	}
-	return key
-}
-
-// gdsShownBefore orders two keys by the ids output shows, then by key: a
-// local and a remote node can show the same id.
-func gdsShownBefore(a, b string) bool {
-	if shownA, shownB := gdsShownKey(a), gdsShownKey(b); shownA != shownB {
-		return shownA < shownB
-	}
-	return a < b
-}
-
 // gdsNodeRendering is where a procedure's shown ids come from.
 type gdsNodeRendering uint8
 
 const (
 	gdsRenderNone       gdsNodeRendering = iota // no node ids out
-	gdsRenderProjection                         // the projection the stream read; the stored ids as read without one
-	gdsRenderRows                               // the rows' keys (gdsShownKey)
+	gdsRenderProjection                         // gdsNodeOutput: the projection the stream read; the stored ids as read without one
+	gdsRenderRows                               // gdsRowNodes: the ids the rows gave
 )
 
 // gdsNodeProcedure is how one procedure or function of the family takes and
@@ -209,76 +192,51 @@ func readGDSNodeValue(value interface{}) (*storage.Node, bool) {
 	return value.(*storage.Node), true
 }
 
-// gdsStreamHandler wraps a procedure's handler so the node ids of a stream
-// that read a projection leave through that projection's renderer; other
-// procedures are unchanged.
-func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandler {
-	spec, ok := gdsNodeProcedures[procedure]
-	if !ok || spec.rendering != gdsRenderProjection {
-		return handler
+// gdsNodeOutput is the value a projection stream's node id leaves its row
+// as, produced once when the row is built: the projection's (an
+// aggregation row's INTEGER, else the stored string id; nodeIDValue), or the
+// id as read for a stream over the stored graph (projection nil). The
+// projection is the one the stream computed from, so dropping or replacing
+// the graph's name meanwhile changes nothing.
+func gdsNodeOutput(projection *GraphProjection, id string) interface{} {
+	if projection == nil {
+		return id
 	}
-	return func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-		result, err := handler(ctx, e, cypher, args)
-		if err != nil || result == nil {
-			return result, err
-		}
-		// The projection the stream computed from, not a catalog lookup now:
-		// the name may have been dropped or replaced meanwhile. Nil when the
-		// stream read the stored graph: its ids are the stored ids as read.
-		if projection := result.gdsProjection; projection != nil {
-			result.gdsProjection = nil
-			projection.renderNodeIDs(result, spec.columns)
-		}
-		return result, nil
-	}
+	return projection.nodeIDValue(id)
 }
 
-// renderNodeIDs renders the result's node-id columns through nodeIDValue.
-func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string) {
-	renderGDSNodeColumns(result, columns, p.nodeIDValue)
+// gdsNodeOutputs is gdsNodeOutput for each map's nodeId: the shared lists
+// the node-similarity kernel builds fresh for each pair.
+func gdsNodeOutputs(projection *GraphProjection, shared []interface{}) []interface{} {
+	for _, item := range shared {
+		if entry, ok := item.(map[string]interface{}); ok {
+			if id, ok := entry["nodeId"].(string); ok {
+				entry["nodeId"] = gdsNodeOutput(projection, id)
+			}
+		}
+	}
+	return shared
 }
 
-// renderGDSRowKeys renders a rows procedure's node-id columns: a remote
-// node's elementId, else the id.
-func renderGDSRowKeys(result *ExecuteResult, columns []string) {
-	renderGDSNodeColumns(result, columns, func(key string) interface{} { return gdsShownKey(key) })
+// gdsRowNodes are the nodes a rows procedure met, by key (gdsNodeRef.key),
+// with the id each leaves a row as, recorded once when its input is read.
+// A row's ids are read here; a key is never decoded.
+type gdsRowNodes map[string]string
+
+// add records ref and returns its key.
+func (nodes gdsRowNodes) add(ref gdsNodeRef) string {
+	key := ref.key()
+	if _, seen := nodes[key]; !seen {
+		nodes[key] = ref.id
+	}
+	return key
 }
 
-// renderGDSNodeColumns renders the result's node-id columns through render:
-// a key there, each key of a list there, and the nodeId of each map of a
-// list there.
-func renderGDSNodeColumns(result *ExecuteResult, columns []string, render func(key string) interface{}) {
-	var indexes []int
-	for i, column := range result.Columns {
-		for _, name := range columns {
-			if column == name {
-				indexes = append(indexes, i)
-			}
-		}
+// before orders two keys by the ids they leave rows as, then by key: a
+// local and a remote node can have the same id.
+func (nodes gdsRowNodes) before(a, b string) bool {
+	if idA, idB := nodes[a], nodes[b]; idA != idB {
+		return idA < idB
 	}
-	one := func(value interface{}) interface{} {
-		if key, ok := value.(string); ok {
-			return render(key)
-		}
-		return value
-	}
-	for _, row := range result.Rows {
-		for _, i := range indexes {
-			if i >= len(row) {
-				continue
-			}
-			list, ok := row[i].([]interface{})
-			if !ok {
-				row[i] = one(row[i])
-				continue
-			}
-			for j, item := range list {
-				if entry, ok := item.(map[string]interface{}); ok {
-					entry["nodeId"] = one(entry["nodeId"])
-				} else {
-					list[j] = one(item)
-				}
-			}
-		}
-	}
+	return a < b
 }

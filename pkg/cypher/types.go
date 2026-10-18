@@ -9,10 +9,6 @@ type ExecuteResult struct {
 	Metadata map[string]interface{} // Additional result metadata (e.g., execution plan)
 	// MapKeyOrders retains evaluated map traversal order for transaction HTTP metadata.
 	MapKeyOrders map[uintptr][]string `json:"-"`
-
-	// gdsProjection is the projection a GDS stream read its rows from, for
-	// gdsStreamHandler to render their node ids with; nil otherwise.
-	gdsProjection *GraphProjection
 }
 
 // QueryStats holds query execution statistics.

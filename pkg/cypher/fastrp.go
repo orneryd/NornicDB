@@ -98,9 +98,9 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 	}
 	rows := make([][]any, 0, len(embeddings))
 	for _, embedding := range embeddings {
-		rows = append(rows, []any{embedding.nodeID, embedding.vector})
+		rows = append(rows, []any{gdsNodeOutput(projection, embedding.nodeID), embedding.vector})
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows, gdsProjection: projection}, nil
+	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows}, nil
 }
 
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it

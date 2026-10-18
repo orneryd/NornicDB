@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -66,9 +65,10 @@ func TestGDSStreamsRenderNodeIDs(t *testing.T) {
 	}
 }
 
-// TestGDSStreamRendersWithTheProjectionItRead: a stream renders its ids with
-// the projection it computed from, even when another request drops the name
-// meanwhile, or drops it and projects another graph under it.
+// TestGDSStreamRendersWithTheProjectionItRead: a stream's ids are produced
+// from the projection it computed from as its rows are built, so another
+// request dropping the name afterwards, or dropping it and projecting another
+// graph under it, changes nothing in rows already returned.
 func TestGDSStreamRendersWithTheProjectionItRead(t *testing.T) {
 	gdsFollowUpCatalog(t)
 	exec, run := newGDSEngineGraph(t, "streamread")
@@ -76,23 +76,18 @@ func TestGDSStreamRendersWithTheProjectionItRead(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		_, err := run(project)
 		require.NoError(t, err)
-		handler := gdsStreamHandler("gds.louvain.stream", func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-			result, err := e.callGdsLouvainStream(args)
-			_, dropErr := run("CALL gds.graph.drop('ints')")
-			require.NoError(t, dropErr)
-			if replace {
-				_, projectErr := run("UNWIND [[7,8]] AS e RETURN gds.graph.project('ints', e[0], e[1])")
-				require.NoError(t, projectErr)
-			}
-			return result, err
-		})
-		result, err := handler(context.Background(), exec, "", []interface{}{"ints"})
+		result, err := exec.callGdsLouvainStream([]interface{}{"ints"})
 		require.NoError(t, err)
+		_, err = run("CALL gds.graph.drop('ints')")
+		require.NoError(t, err)
+		if replace {
+			_, err = run("UNWIND [[7,8]] AS e RETURN gds.graph.project('ints', e[0], e[1])")
+			require.NoError(t, err)
+		}
 		require.Len(t, result.Rows, 3, "replace=%v", replace)
 		for _, row := range result.Rows {
 			require.IsType(t, int64(0), row[0], "replace=%v", replace)
 		}
-		require.Nil(t, result.gdsProjection)
 		if replace {
 			_, err = run("CALL gds.graph.drop('ints')")
 			require.NoError(t, err)

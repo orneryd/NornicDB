@@ -324,9 +324,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
-	result := e.formatHybridPredictionResults(predictions, config.SourceNode)
-	result.gdsProjection = projection
-	return result, nil
+	return e.formatHybridPredictionResults(predictions, config.SourceNode, projection), nil
 }
 
 // callGdsLinkPredictionTopology runs a topology link prediction algorithm
@@ -346,9 +344,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
 	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
-	result := e.formatLinkPredictionResults(predictions, config.SourceNode)
-	result.gdsProjection = projection
-	return result, nil
+	return e.formatLinkPredictionResults(predictions, config.SourceNode, projection), nil
 }
 
 // linkPredictionGraph is the graph a link prediction reads (#1192): the
@@ -583,7 +579,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
-func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID, projection *GraphProjection) *ExecuteResult {
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score"},
 		Rows:    make([][]interface{}, 0, len(predictions)),
@@ -591,8 +587,8 @@ func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.
 
 	for _, pred := range predictions {
 		row := []interface{}{
-			string(sourceNode),
-			string(pred.TargetID),
+			gdsNodeOutput(projection, string(sourceNode)),
+			gdsNodeOutput(projection, string(pred.TargetID)),
 			pred.Score,
 		}
 		result.Rows = append(result.Rows, row)
@@ -602,7 +598,7 @@ func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.
 }
 
 // formatHybridPredictionResults formats hybrid predictions with extended columns
-func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID, projection *GraphProjection) *ExecuteResult {
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score", "topology_score", "semantic_score", "reason"},
 		Rows:    make([][]interface{}, 0, len(predictions)),
@@ -610,8 +606,8 @@ func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredic
 
 	for _, pred := range predictions {
 		row := []interface{}{
-			string(sourceNode),
-			string(pred.TargetID),
+			gdsNodeOutput(projection, string(sourceNode)),
+			gdsNodeOutput(projection, string(pred.TargetID)),
 			pred.Score,
 			pred.TopologyScore,
 			pred.SemanticScore,
