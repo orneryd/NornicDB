@@ -115,7 +115,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 }
 
 // executeProfile executes the query and returns the plan with statistics
-func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeProfile(ctx context.Context, query, source string) (*ExecuteResult, error) {
 	// Build the plan first
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
@@ -131,7 +131,11 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
-	result, execErr := e.Execute(ctx, query, nil)
+	// Re-enter with the source, before rewrites introduced internal predicates.
+	// Execute retains the normal transaction and validation behavior for reads
+	// and writes; an internal fragment entry would bypass implicit writes.
+	_, executionQuery := parseExecutionMode(source)
+	result, execErr := e.Execute(ctx, executionQuery, nil)
 	totalTime := time.Since(startTime)
 
 	// A statement that fails fails its PROFILE too, as in Neo4j: the error

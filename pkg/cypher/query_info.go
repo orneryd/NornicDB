@@ -552,23 +552,32 @@ func eachPatternElement(pattern string, visit func(opener byte, element string))
 // type label.
 func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string {
 	eachPatternElement(pattern, func(opener byte, element string) {
-		inner := element[1 : len(element)-1]
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace < 0 {
+		var properties string
+		if opener == '[' {
+			declaration := relationshipDeclarationOf(element[1 : len(element)-1])
+			if hasDynamicToken(declaration.typeText) || !containsString(declaration.types, label) {
+				return
+			}
+			properties = declaration.properties
+		} else {
+			head, props := splitNodePatternProperties(element)
+			_, chain, hasLabels := splitNodeHead(head)
+			if !hasLabels {
+				return
+			}
+			if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
+				return
+			}
+			properties = props
+		}
+		if len(properties) < 2 || properties[0] != '{' {
 			return
 		}
-		_, chain, hasLabels := splitNodeHead(inner[:brace])
-		if !hasLabels {
-			return
-		}
-		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
-			return
-		}
-		closing := findMatchingDelimiter(inner, brace, '{', '}')
+		closing := findMatchingDelimiter(properties, 0, '{', '}')
 		if closing < 0 {
 			return
 		}
-		for _, pair := range splitTopLevelComma(inner[brace+1 : closing]) {
+		for _, pair := range splitTopLevelComma(properties[1:closing]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
 				if keys == nil {
 					keys = make(map[string][]string)

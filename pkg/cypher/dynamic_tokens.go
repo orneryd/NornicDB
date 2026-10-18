@@ -335,17 +335,20 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 		}
 	}
 	typeName := scope.staticExpressionType(expression)
-	switch {
-	case typeName == "" || typeName == "String" || typeName == "Any":
-		return nil
-	case use == dynamicTokenLabel:
-		if strings.HasPrefix(typeName, "List<") && (typeName == "List<String>" || typeName == "List<T>" || typeName == "List<Any>") {
-			return nil
-		}
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(typeName))
-	default:
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
+	// Use the signature owner's union handling, as function arguments do:
+	// CASE can have several possible result types. A compatible alternative
+	// is admitted here; the selected value is still checked at run time.
+	argument := staticArgumentType{options: []string{"String", "Any"}}
+	if use == dynamicTokenLabel {
+		argument.options = append(argument.options, "List<String>", "List<Any>")
 	}
+	if argument.accepts(typeName) {
+		return nil
+	}
+	if use == dynamicTokenLabel {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(typeName))
+	}
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
 }
 
 // dynamicLabelTestFunction is the predicate a dynamic label or type in a

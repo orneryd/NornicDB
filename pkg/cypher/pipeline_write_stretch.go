@@ -179,16 +179,12 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 	eachPatternElement(pattern, func(opener byte, element string) {
 		inner := element[1 : len(element)-1]
-		head := inner
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace >= 0 {
-			head = inner[:brace]
-			addStretchMapKeys(inner[brace:], tokens)
-		}
 		if opener == '(' {
+			head, properties := splitNodePatternProperties(element)
+			addStretchMapKeys(properties, tokens)
 			variable, chain, hasLabels := splitNodeHead(head)
 			if !hasLabels {
-				if written && brace < 0 && variable != "" {
+				if written && properties == "" && variable != "" {
 					return
 				}
 				tokens.anyNode = true
@@ -197,22 +193,20 @@ func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 			addStretchLabelChain(":"+chain, tokens)
 			return
 		}
-		if star := strings.IndexByte(head, '*'); star >= 0 {
-			head = head[:star]
-		}
-		colon := indexByteOutsideBackticks(head, ':')
-		if colon < 0 {
+		declaration := relationshipDeclarationOf(inner)
+		addStretchMapKeys(declaration.properties, tokens)
+		if !declaration.hasColon {
 			tokens.anyRelationship = true
 			return
 		}
-		typeText := head[colon+1:]
+		typeText := declaration.typeText
 		if strings.ContainsAny(typeText, "`$&!%()") {
 			// A quoted, dynamic or expression type: any relationship.
 			tokens.anyRelationship = true
 			return
 		}
-		for _, relationshipType := range strings.Split(typeText, "|") {
-			tokens.add(&tokens.types, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relationshipType), ":")))
+		for _, relationshipType := range declaration.types {
+			tokens.add(&tokens.types, relationshipType)
 		}
 	})
 }

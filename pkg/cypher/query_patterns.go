@@ -586,58 +586,18 @@ func extractNodeVariables(matchClause string) []string {
 
 // extractRelationshipType extracts the relationship type from a pattern
 func extractRelationshipType(pattern string) string {
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] != '[' {
-			continue
-		}
-		inner, _, ok := extractBracketSection(pattern[i:])
-		if !ok {
-			continue
-		}
-		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
-			typePart := strings.TrimSpace(inner[colonIdx+1:])
-			if propIdx := strings.Index(typePart, "{"); propIdx >= 0 {
-				typePart = strings.TrimSpace(typePart[:propIdx])
-			}
-			if pipeIdx := strings.Index(typePart, "|"); pipeIdx >= 0 {
-				typePart = strings.TrimSpace(typePart[:pipeIdx])
-			}
-			if typePart != "" {
-				return typePart
-			}
+	for open, close := nextRelationshipBracket(pattern, 0); open >= 0; open, close = nextRelationshipBracket(pattern, close+1) {
+		declaration := relationshipDeclarationOf(pattern[open+1 : close])
+		if len(declaration.types) > 0 {
+			return declaration.types[0]
 		}
 	}
 	return ""
 }
 
 func extractRelationshipVariable(pattern string) string {
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] != '[' {
-			continue
-		}
-		inner, _, ok := extractBracketSection(pattern[i:])
-		if !ok {
-			continue
-		}
-		inner = strings.TrimSpace(inner)
-		if inner == "" {
-			return ""
-		}
-		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
-			name := strings.TrimSpace(inner[:colonIdx])
-			if name != "" {
-				return name
-			}
-			return ""
-		}
-		if inner[0] == '*' {
-			return ""
-		}
-		name, _, ok := parseIdentifierToken(inner)
-		if ok {
-			return name
-		}
-		return ""
+	if open, close := nextRelationshipBracket(pattern, 0); open >= 0 {
+		return relationshipDeclarationOf(pattern[open+1 : close]).variable
 	}
 	return ""
 }

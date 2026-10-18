@@ -235,6 +235,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	// PROFILE executes the source statement through Execute again, so keep
+	// it before expression rewrites introduce internal-only function calls.
+	profileSource := cypher
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
 	cypher25 := cypherVersionFromContext(ctx) == "25"
@@ -425,7 +428,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if mode == ModeExplain {
 				return e.executeExplain(ctx, modeQuery)
 			}
-			return e.executeProfile(ctx, modeQuery)
+			return e.executeProfile(ctx, modeQuery, profileSource)
 		}
 		info := e.analyzer.Analyze(cypher)
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
@@ -808,7 +811,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if info.HasProfile {
 		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeProfile(ctx, innerQuery)
+		return e.executeProfile(ctx, innerQuery, profileSource)
 	}
 
 	// If in explicit transaction, execute within it
