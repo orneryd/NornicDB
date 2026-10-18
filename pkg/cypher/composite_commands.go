@@ -430,6 +430,7 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
 func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}
@@ -491,6 +492,9 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 
 	rows := make([][]interface{}, len(constituents))
 	for i, c := range constituents {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		// Handle ConstituentRef type
 		if ref, ok := c.(multidb.ConstituentRef); ok {
 			rows[i] = []interface{}{

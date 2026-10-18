@@ -499,6 +499,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 // by Neo4j's properties_set rule (setWrites), or an error for a value Cypher
 // cannot store (replacing with a non-map, a map or entity as a property value).
 func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+	probe := contextPipelineProbe(ctx)
 	if edge == nil || varName == "" {
 		return 0, nil
 	}
@@ -543,6 +544,9 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 				}
 				writes.mapEntries(edge.Properties, props, false)
 				for k, v := range props {
+					if probe.stopped() {
+						return 0, probe.failed()
+					}
 					setRelationshipProperty(edge, k, v)
 				}
 			case operator == "=":

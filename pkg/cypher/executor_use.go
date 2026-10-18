@@ -251,6 +251,7 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 // statement, a statement a procedure runs (nested, run with executeInternal
 // so it stays in the caller's execution) and a CALL { USE … } body.
 func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
@@ -267,6 +268,9 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 		routed := *result
 		routed.Metadata = make(map[string]interface{}, len(result.Metadata)+1)
 		for key, value := range result.Metadata {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			routed.Metadata[key] = value
 		}
 		routed.Metadata["db"] = GetUseDatabaseFromContext(ctx)

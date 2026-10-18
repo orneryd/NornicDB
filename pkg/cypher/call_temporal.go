@@ -31,6 +31,7 @@ import (
 //
 // The registry checks the argument count (7 to 9) before the call.
 func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -65,6 +66,9 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 	}
 
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if node == nil {
 			continue
 		}
@@ -103,6 +107,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 //
 // The registry checks the argument count (6 to 8) before the call.
 func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -150,6 +155,9 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 	var bestNode interface{}
 	var bestStart time.Time
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if node == nil {
 			continue
 		}

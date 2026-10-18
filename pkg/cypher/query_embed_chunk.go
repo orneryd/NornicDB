@@ -18,6 +18,7 @@ import (
 // The Cypher layer uses a minimal QueryEmbedder interface, so chunking and
 // sequential embedding stay provider-specific without importing embed.
 func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string) ([]float32, error) {
+	probe := contextPipelineProbe(ctx)
 	if embedder == nil {
 		return nil, localizedError(localization.CypherCoreEmbedderNotConfigured(), nil)
 	}
@@ -59,12 +60,18 @@ func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string)
 			return nil, localizedError(localization.SearchQueryChunkDimensions(index+1, len(emb), len(sum)), nil)
 		}
 		for i := range emb {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			sum[i] += emb[i]
 		}
 	}
 
 	inv := float32(1.0 / float32(len(chunks)))
 	for i := range sum {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		sum[i] *= inv
 	}
 	vector.NormalizeInPlace(sum)

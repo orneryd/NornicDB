@@ -161,6 +161,7 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 // matched the pattern: ok is false for a pattern it doesn't take or an error,
 // which isn't "no rows" (#1055).
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+	probe := contextPipelineProbe(ctx)
 	pattern = strings.TrimSpace(pattern)
 	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
@@ -180,6 +181,9 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 		seed.rels[name] = relationship
 	}
 	for name, value := range values {
+		if probe.stopped() {
+			return nil, false
+		}
 		switch value.(type) {
 		case *storage.Node, *storage.Edge:
 			continue
@@ -274,6 +278,9 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 			}
 		}
 		for variable, value := range row.values {
+			if probe.stopped() {
+				return nil
+			}
 			scope[variable] = value
 		}
 		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection, scope)
@@ -415,11 +422,17 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 	}
 	if !prepared {
 		for name, value := range valueBindingsFromContext(ctx) {
+			if probe.stopped() {
+				return nil, false
+			}
 			if !bind(name, value) {
 				return nil, false
 			}
 		}
 		for name, value := range parameterRowValues(ctx) {
+			if probe.stopped() {
+				return nil, false
+			}
 			if !bind(name, value) {
 				return nil, false
 			}

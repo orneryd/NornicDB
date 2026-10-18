@@ -233,12 +233,19 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 // values as outer bindings (fabricRecordBindings), for a subquery body that
 // refers to them.
 func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values map[string]interface{}) *StorageExecutor {
+	probe := contextPipelineProbe(ctx)
 	correlated := e.cloneWithStorage(e.getStorage(ctx))
 	correlated.fabricRecordBindings = make(map[string]interface{}, len(e.fabricRecordBindings)+len(values))
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return nil
+		}
 		correlated.fabricRecordBindings[name] = value
 	}
 	for name, value := range values {
+		if probe.stopped() {
+			return nil
+		}
 		if strings.HasPrefix(name, "\x00") {
 			continue // the evaluator's own keys (rowStatementContextKey) aren't variables
 		}
@@ -310,6 +317,7 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	ctx = withoutLocalSubqueryScope(ctx)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
@@ -357,6 +365,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	}
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		if len(row) > 0 {
 			collected = append(collected, row[0])
 		}
@@ -399,12 +410,19 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 // relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
 // WITH $p AS v. Row parameters stay available.
 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	params := make(map[string]interface{}, len(values))
 	for name, value := range getParamsFromContext(ctx) {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		params[name] = value
 	}
 	names := make([]string, 0, len(values))
 	for name := range values {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
 			names = append(names, name)
 		}
@@ -484,6 +502,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 // every row; ok is false for any other body, a value of the map the row
 // can't resolve, and under a temporal viewport.
 func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+	probe := contextPipelineProbe(ctx)
 	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, parseBoundNodeShape)
 	if !shape.ok {
 		return 0, false
@@ -535,6 +554,9 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 			if row == nil {
 				row = make(map[string]interface{}, len(values)+1)
 				for name, value := range values {
+					if probe.stopped() {
+						return 0, false
+					}
 					row[name] = value
 				}
 			}
@@ -619,6 +641,7 @@ func parseBoundNodeShape(body string) boundNodeShape {
 // traversal finds from seed that agree with the row's nodes and
 // relationships and pass where.
 func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+	probe := contextPipelineProbe(ctx)
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
 		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
@@ -651,6 +674,9 @@ func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *Trav
 			// The WHERE sees the row's values with the path's bindings.
 			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
 			for name, value := range values {
+				if probe.stopped() {
+					return 0
+				}
 				row[name] = value
 			}
 			for name, node := range inner.nodes {
@@ -681,6 +707,7 @@ func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *Trav
 // expanded is false for any other chain, and under a temporal viewport,
 // which the traversal handles.
 func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+	probe := contextPipelineProbe(ctx)
 	rel := matches.Relationship
 	if matches.IsChained || rel.VariableLength || rel.MinHops != 1 || rel.MaxHops != 1 {
 		return 0, false
@@ -783,6 +810,9 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			if row == nil {
 				row = make(map[string]interface{}, len(values)+4)
 				for name, value := range values {
+					if probe.stopped() {
+						return 0, false
+					}
 					row[name] = value
 				}
 				row[matches.StartNode.variable] = seed
@@ -1193,6 +1223,7 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 
 // nodeDegreeCount is the degree of node along shape's direction and types.
 func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+	probe := contextPipelineProbe(ctx)
 	store := e.getStorage(ctx)
 	var edges []*storage.Edge
 	if shape.outgoing {
@@ -1205,6 +1236,9 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 	}
 	var count int64
 	for _, edge := range edges {
+		if probe.stopped() {
+			return 0
+		}
 		if e.edgeTypeMatches(edge.Type, shape.types) {
 			count++
 		}

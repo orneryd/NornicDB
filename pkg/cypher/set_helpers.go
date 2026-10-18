@@ -55,6 +55,7 @@ import (
 // Row bindings from UNWIND / WITH are visible in the value scope.
 // Non-map values are an error (setSourceMap).
 func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
+	probe := contextPipelineProbe(ctx)
 	if node == nil {
 		return nil
 	}
@@ -74,6 +75,9 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		writes.mapEntries(node.Properties, props, false)
 		for k, v := range props {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			setNodeProperty(node, k, v)
 		}
 		return nil
@@ -84,6 +88,9 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	}
 	writes.mapEntries(node.Properties, props, false)
 	for k, v := range props {
+		if probe.stopped() {
+			return probe.failed()
+		}
 		setNodeProperty(node, k, v)
 	}
 	return nil

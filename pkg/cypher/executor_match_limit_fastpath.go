@@ -16,6 +16,7 @@ import (
 //
 // It is intentionally strict to avoid semantic drift from full Cypher execution.
 func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+	probe := contextPipelineProbe(ctx)
 	trimmed := strings.TrimSpace(cypher)
 	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
 		return nil, false
@@ -67,6 +68,9 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 	}
 
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, false
+		}
 		rows = append(rows, []interface{}{node})
 		if len(rows) >= limit {
 			break

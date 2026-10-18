@@ -135,6 +135,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			}
 			if result != nil {
 				for _, record := range result.Rows {
+					if probe.stopped() {
+						return nil, nil, false, probe.failed()
+					}
 					if err := retention.reserveResultRow(record); err != nil {
 						return nil, nil, true, err
 					}

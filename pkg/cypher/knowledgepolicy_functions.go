@@ -305,6 +305,7 @@ func validateDecayOptions(
 	rels map[string]*storage.Edge,
 	e *StorageExecutor,
 ) (string, error) {
+	probe := contextPipelineProbe(ctx)
 	val := e.evaluateExpressionWithContext(ctx, optExpr, nodes, rels)
 	m, ok := val.(map[string]interface{})
 	if !ok {
@@ -312,6 +313,9 @@ func validateDecayOptions(
 	}
 	var property string
 	for k, v := range m {
+		if probe.stopped() {
+			return "", probe.failed()
+		}
 		switch k {
 		case "property":
 			s, _ := v.(string)

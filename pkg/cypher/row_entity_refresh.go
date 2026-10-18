@@ -17,6 +17,7 @@ import (
 // storage view; rows that share one copy, or bind distinct entities, cost
 // one pass and no read. An entity the clause deleted keeps its copies.
 func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelineRow) {
+	probe := contextPipelineProbe(ctx)
 	if len(rows) < 2 {
 		return
 	}
@@ -65,6 +66,9 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 	}
 	store := e.getStorage(ctx)
 	for id := range staleNodes {
+		if probe.stopped() {
+			return
+		}
 		if current, err := e.getQueryNode(store, id); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
@@ -72,6 +76,9 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 		}
 	}
 	for id := range staleEdges {
+		if probe.stopped() {
+			return
+		}
 		if current, err := store.GetEdge(id); err == nil && current != nil {
 			staleEdges[id] = current
 		} else {

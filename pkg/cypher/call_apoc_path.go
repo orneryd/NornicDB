@@ -529,6 +529,7 @@ func (step *apocStep) path() PathResult {
 // runApocExpansion expands every start node and returns the ends of the
 // paths the filters include, in BFS or DFS order, at most limit of them.
 func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion) ([]*apocStep, error) {
+	probe := contextPipelineProbe(ctx)
 	var results []*apocStep
 	if x.limit == 0 {
 		return results, nil
@@ -569,6 +570,9 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			edges := e.apocSteps(step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				// A path never turns straight back along the relationship
 				// it arrived by, whatever the uniqueness, as in Neo4j.
 				if step.edge != nil && step.edge.ID == edge.ID {
@@ -752,6 +756,7 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 // (nodes, relationships): the nodes subgraphNodes returns and every
 // relationship between two of them.
 func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
 	if err != nil {
 		return nil, err
@@ -771,8 +776,14 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
 		for _, edge := range edges {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			if members[edge.EndNode] {
 				relationships = append(relationships, edge)
 			}

@@ -283,12 +283,16 @@ func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher st
 // parameters and bound values, so DISTINCT, aggregation, ORDER BY, SKIP and
 // LIMIT behave as after any other clause (#713).
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// Parameters are row values ($name), not text: a substituted value would
 	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
 	// RETURN 1.0 / 0).
 	params := getParamsFromContext(ctx)
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		row[name] = value
 	}
 	bindParameterRow(ctx, row)
@@ -296,6 +300,9 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	// that travel in the value scope; the innermost bindings shadow params.
 	if bindings := valueBindingsFromContext(ctx); bindings != nil {
 		for name, value := range bindings {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			row[name] = value
 		}
 	}

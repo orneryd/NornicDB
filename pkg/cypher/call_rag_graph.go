@@ -27,12 +27,16 @@ func (e *StorageExecutor) callDbRRetrieveGraph(ctx context.Context, args []inter
 }
 
 func (e *StorageExecutor) runGraphSearchRequest(ctx context.Context, procedure string, args []interface{}, useConfiguredRerank bool) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	req, err := ragProcedureRequest(procedure, args)
 	if err != nil {
 		return nil, err
 	}
 	marked := make(map[string]interface{}, len(req)+1)
 	for key, value := range req {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		marked[key] = value
 	}
 	marked[graphSearchRequestKey] = true

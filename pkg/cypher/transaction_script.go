@@ -177,8 +177,12 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 }
 
 func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	rows := make([]pipelineRow, 0, len(input.Rows))
 	for _, row := range input.Rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
 	}
 	if strings.TrimSpace(returnExpr) == "" {

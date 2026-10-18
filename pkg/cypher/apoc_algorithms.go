@@ -225,6 +225,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 // callApocAlgoAllSimplePaths finds all simple paths of at most maxNodes
 // relationships, as in APOC (#1185): below 1, none.
 func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	const procedure = "apoc.algo.allSimplePaths"
 	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
 	if err != nil {
@@ -240,6 +241,9 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	}
 	rows := make([][]interface{}, len(paths))
 	for i, path := range paths {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		rows[i] = []interface{}{path}
 	}
 	return &ExecuteResult{Columns: []string{"path"}, Rows: rows}, nil
@@ -485,6 +489,7 @@ func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []int
 }
 
 func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+	probe := contextPipelineProbe(ctx)
 	if relType == "" || maxHops < 1 {
 		return nil, nil
 	}
@@ -513,6 +518,9 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 			edges = append(edges, outgoing...)
 			edges = append(edges, incoming...)
 			for _, edge := range edges {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				allowed := false
 				for _, filter := range filters {
 					if filter.follows(edge, nodeID) {

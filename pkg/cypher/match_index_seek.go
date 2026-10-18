@@ -111,6 +111,7 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 //
 // via a direct node lookup instead of scanning all nodes.
 func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	varName, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "4")
 	if !ok || varName != nodePattern.variable {
 		return nil, false, nil
@@ -130,6 +131,9 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 
 	if len(nodePattern.properties) > 0 {
 		for k, v := range nodePattern.properties {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			if node.Properties[k] != v {
 				return []*storage.Node{}, true, nil
 			}
@@ -154,6 +158,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	if params == nil || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
@@ -249,6 +254,9 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 
 	if len(nodePattern.properties) > 0 {
 		for k, v := range nodePattern.properties {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			if node.Properties[k] != v {
 				return []*storage.Node{}, true, nil
 			}
@@ -277,6 +285,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" {
 		return nil, false, nil
@@ -334,6 +343,9 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 			}
 
 			for _, node := range nodes {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				if node == nil {
 					continue
 				}
@@ -365,6 +377,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, 
 // for a node that must carry one of anyOf (a WHERE label disjunction, #858;
 // nil when there is none): see seekCandidateLabels.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
 	if !ok {
 		return nil, false, nil
@@ -383,6 +396,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 	idSet := make(map[storage.NodeID]struct{})
 	for _, label := range labels {
 		for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			idSet[id] = struct{}{}
 		}
 	}
@@ -394,6 +410,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
@@ -701,6 +720,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return nil, false, nil
@@ -736,11 +756,17 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	idSet := make(map[storage.NodeID]struct{}, 64)
 	for _, label := range leftLabels {
 		for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, lval) {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			idSet[id] = struct{}{}
 		}
 	}
 	for _, label := range rightLabels {
 		for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, rval) {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			idSet[id] = struct{}{}
 		}
 	}
@@ -751,6 +777,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
@@ -1303,6 +1332,7 @@ func (e *StorageExecutor) parseSimpleIndexedInParamWithCancellation(variable, wh
 }
 
 func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, variable, whereClause string) (property string, values []interface{}, ok bool) {
+	probe := contextPipelineProbe(ctx)
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1345,6 +1375,9 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	out := make([]interface{}, 0, len(list))
 	seen := make(map[string]struct{}, len(list))
 	for _, v := range list {
+		if probe.stopped() {
+			return "", nil, false
+		}
 		if v == nil {
 			continue
 		}
@@ -2014,6 +2047,7 @@ func mirroredComparison(operator string) string {
 // from it, so a lookup that uses an index for rows uses it for count(*) too
 // (#820).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+	probe := contextPipelineProbe(ctx)
 	ctx = withPipelineCancellation(ctx)
 	params := getParamsFromContext(ctx)
 	if hint.limit > 0 && hint.orderExpr != "" {
@@ -2026,6 +2060,9 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			},
 		}
 		for _, plan := range orderedPlans {
+			if probe.stopped() {
+				return nil, false, false, probe.failed()
+			}
 			nodes, used, err := plan()
 			if err != nil {
 				return nil, false, false, err
@@ -2085,6 +2122,9 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			}
 			labelled := nodes[:0]
 			for _, node := range nodes {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				if mergeNodeHasLabels(node, nodePattern.labels) {
 					labelled = append(labelled, node)
 				}

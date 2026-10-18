@@ -231,6 +231,7 @@ func bareEndpointVariable(content string) (string, bool) {
 // edges already staged by this call are rolled back, so the general route
 // replans the whole clause instead of duplicating the template's prefix.
 func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	if !t.usable {
 		return nil, false, nil
 	}
@@ -279,6 +280,9 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			// CREATE drops null properties, exactly as prepareCreateNodePattern
 			// deletes them from the parsed map.
 			for key, value := range props {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				if value == nil {
 					delete(props, key)
 				}
@@ -292,6 +296,9 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 				return nil, false, err
 			}
 			for key, value := range props {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				if _, bad := value.(invalidPropertyValue); bad {
 					rollback()
 					return nil, false, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
@@ -328,6 +335,9 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			}
 			// CREATE drops null properties on relationships too.
 			for key, value := range props {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				if value == nil {
 					delete(props, key)
 				}

@@ -1170,6 +1170,7 @@ func scoreVectorForFastPath(queryVector []float32, embedding []float32, similari
 }
 
 func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+	probe := contextPipelineProbe(ctx)
 	vec, ok := e.resolveCosineQueryVector(ctx, queryExpr)
 	if !ok || len(vec) == 0 {
 		return nil, false
@@ -1205,6 +1206,9 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 	}
 	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(edges)))
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, false
+		}
 		if targetRelType != "" && edge.Type != targetRelType {
 			continue
 		}
@@ -1423,6 +1427,7 @@ func (e *StorageExecutor) buildNegatedCosineQueryExpr(ctx context.Context, query
 }
 
 func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExpr string) ([]float32, bool) {
+	probe := contextPipelineProbe(ctx)
 	value := e.parseValue(ctx, strings.TrimSpace(queryExpr))
 	switch v := value.(type) {
 	case []float32:
@@ -1430,6 +1435,9 @@ func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExp
 	case []float64:
 		out := make([]float32, len(v))
 		for i, val := range v {
+			if probe.stopped() {
+				return nil, false
+			}
 			out[i] = float32(val)
 		}
 		return out, len(out) > 0

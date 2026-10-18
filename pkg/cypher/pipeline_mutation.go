@@ -18,6 +18,7 @@ import (
 // mutation, preserving statement atomicity while retaining input rows for
 // subsequent WITH and RETURN clauses.
 func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	targets, detach, ok := deleteClauseTargets(clause)
 	if !ok || len(targets) == 0 {
 		return nil, false, nil
@@ -91,6 +92,9 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
 	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
 	for _, edgeID := range edgeIDs {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		if err := store.DeleteEdge(edgeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
@@ -106,12 +110,18 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				return nil, true, err
 			}
 			for _, edge := range incident {
+				if probe.stopped() {
+					return nil, false, probe.failed()
+				}
 				deletedEdges[edge.ID] = struct{}{}
 			}
 		}
 	}
 	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
 	for _, nodeID := range nodeIDs {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		deleteNode := store.DeleteNode
 		if _, stillConnected := connected[nodeID]; stillConnected {
 			deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
@@ -364,6 +374,7 @@ func samePropertyValue(a, b interface{}) bool {
 }
 
 func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clauses, originalClauses []pipelineClause) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	end := 0
 	for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
 		end++
@@ -379,9 +390,15 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 	}
 	initial := pipelineRow{}
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		initial[name] = value
 	}
 	for name, value := range valueBindingsFromContext(ctx) {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		initial[name] = value
 	}
 	bindParameterRow(ctx, initial)

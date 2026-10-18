@@ -972,6 +972,7 @@ func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, 
 // failIfMissing is false. NornicDB's catalog isn't per user: username names
 // no other catalog.
 func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	const procedure = "gds.graph.drop"
 	var names []string
 	switch value := procedureArgument(args, 0).(type) {
@@ -985,6 +986,9 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 			return nil, procedureArgumentTypeError(procedure, "graphName", "STRING or LIST<STRING>", value)
 		}
 		for _, item := range items {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			name, ok := item.(string)
 			if !ok {
 				return nil, procedureArgumentTypeError(procedure, "graphName", "STRING or LIST<STRING>", value)

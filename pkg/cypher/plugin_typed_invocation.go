@@ -15,6 +15,7 @@ var pluginErrorType = reflect.TypeOf((*error)(nil)).Elem()
 // allocation-free common cases. Conversion follows declared Go argument types;
 // it never truncates fractional integers or wraps an out-of-range integer.
 func invokeTypedPlugin(ctx context.Context, handler interface{}, args []interface{}) (interface{}, error) {
+	probe := contextPipelineProbe(ctx)
 	fn := reflect.ValueOf(handler)
 	if !fn.IsValid() || fn.Kind() != reflect.Func || fn.IsNil() {
 		return nil, errUnsupportedPluginSignature
@@ -42,6 +43,9 @@ func invokeTypedPlugin(ctx context.Context, handler interface{}, args []interfac
 		values[0] = reflect.ValueOf(ctx)
 	}
 	for i, arg := range args {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		at := i + offset
 		var target reflect.Type
 		if typ.IsVariadic() && at >= typ.NumIn()-1 {

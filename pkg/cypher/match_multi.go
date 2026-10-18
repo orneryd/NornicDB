@@ -136,6 +136,7 @@ type relationshipBinding map[string]interface{}
 // carries forward any relationship bound earlier in the chain plus any
 // relationship variable bound by this clause's own pattern.
 func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
+	probe := contextPipelineProbe(ctx)
 	var newBindings []binding
 	var newRelBindings []relationshipBinding
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
@@ -172,6 +173,9 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				paths = e.traverseGraph(ctx, matches)
 			}
 			for _, path := range paths {
+				if probe.stopped() {
+					return nil, nil
+				}
 				if len(path.Nodes) == 0 {
 					continue
 				}
@@ -216,6 +220,9 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
+				if probe.stopped() {
+					return nil, nil
+				}
 				b := make(binding)
 				for k, v := range existing {
 					b[k] = v
@@ -599,6 +606,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	collected *[]*storage.Node,
 	visit func(*storage.Node) error,
 ) error {
+	probe := contextPipelineProbe(ctx)
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
@@ -673,6 +681,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			node, getErr := e.getQueryNode(store, id)
 			if getErr != nil {
 				return getErr
@@ -719,6 +730,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		keys := make([]string, 0, len(required))
 		var stringEquals map[string]string
 		for key, value := range required {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			keys = append(keys, key)
 			if text, ok := value.(string); ok {
 				if stringEquals == nil {
@@ -775,6 +789,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// Filter out system nodes (labels starting with _)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if probe.stopped() {
+			return probe.failed()
+		}
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 			continue
 		}
@@ -826,12 +843,16 @@ func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error
 // approximating the WHERE is safe because the caller still evaluates it on
 // every node the scan returns.
 func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" || strings.TrimSpace(variable) == "" {
 		return properties
 	}
 	required := make(map[string]interface{}, len(properties)+1)
 	for key, value := range properties {
+		if probe.stopped() {
+			return nil
+		}
 		required[key] = value
 	}
 	for _, conjunct := range splitTopLevelAndConjuncts(clause) {

@@ -10,6 +10,7 @@ import (
 )
 
 func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes()
 	if err != nil {
@@ -22,6 +23,9 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	labels := make(map[string]bool)
 	nodesByID := make(map[storage.NodeID]*storage.Node, len(nodes))
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		nodesByID[node.ID] = node
 		for _, label := range node.Labels {
 			labels[label] = true
@@ -43,6 +47,9 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	endLabels := make(map[string]map[string]bool)
 	types := make(map[string]bool)
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		types[edge.Type] = true
 		if startLabels[edge.Type] == nil {
 			startLabels[edge.Type] = make(map[string]bool)

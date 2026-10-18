@@ -15,6 +15,7 @@ import (
 // equality, and the WHERE still runs on every path, so the paths are the
 // same.
 func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matches *TraversalMatch, whereClause string) {
+	probe := contextPipelineProbe(ctx)
 	rel := &matches.Relationship
 	if whereClause == "" || matches.IsChained || rel.Variable == "" || rel.VariableLength || rel.MinHops != 1 || rel.MaxHops != 1 ||
 		rel.Variable == matches.StartNode.variable || rel.Variable == matches.EndNode.variable || rel.Variable == matches.PathVariable {
@@ -38,6 +39,9 @@ func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matche
 		if pushed == nil {
 			pushed = make(map[string]interface{}, len(rel.Properties)+1)
 			for key, existing := range rel.Properties {
+				if probe.stopped() {
+					return
+				}
 				pushed[key] = existing
 			}
 		}

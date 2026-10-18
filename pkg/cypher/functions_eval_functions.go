@@ -387,6 +387,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				labelsVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				if labels, ok := labelsVal.([]interface{}); ok {
 					for _, reqLabel := range labels {
+						if probe.stopped() {
+							return nil
+						}
 						labelStr, _ := reqLabel.(string)
 						found := false
 						for _, nodeLabel := range node.Labels {

@@ -82,6 +82,7 @@ func (e *StorageExecutor) callDbmsListConfig() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	searchString := ""
 	if len(arguments) > 0 {
 		var valid bool
@@ -96,6 +97,9 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 	}
 	rows := make([][]interface{}, 0, len(settings.Rows)+3)
 	for _, setting := range settings.Rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		validValues, _ := setting[7].([]string)
 		rows = append(rows, []interface{}{setting[0], setting[4], setting[1], setting[2], setting[3], setting[5], setting[6], strings.Join(validValues, ", ")})
 	}
@@ -111,6 +115,9 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 		Rows:    [][]interface{}{},
 	}
 	for _, row := range rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if strings.Contains(row[0].(string), searchString) {
 			result.Rows = append(result.Rows, row)
 		}
@@ -202,6 +209,7 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //
 // Returns one row per matching edge with columns [relationship, score].
 func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(statementCtx)
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -295,6 +303,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx con
 	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
 	var totalDocLen int64
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if !matchesRelationshipTypes(edge, targetTypes) {
 			continue
 		}
@@ -499,6 +510,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 }
 
 func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// Resolve the query vector (same logic as queryNodes)
 	var queryVector []float32
 
@@ -538,11 +550,17 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		case []float64:
 			queryVector = make([]float32, len(val))
 			for i, v := range val {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				queryVector[i] = float32(v)
 			}
 		case []interface{}:
 			queryVector = make([]float32, 0, len(val))
 			for _, item := range val {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				switch v := item.(type) {
 				case float32:
 					queryVector = append(queryVector, v)
@@ -577,6 +595,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			// Check which parameters have unsupported types to provide a better error message
 			var unsupportedParams []string
 			for paramName, paramValue := range params {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				// Check if this parameter has an unsupported type for vector queries
 				switch paramValue.(type) {
 				case []float32, []float64, []interface{}, string:
@@ -660,6 +681,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	var scoredEdges []scoredEdge
 
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		// Check relationship type filter if index specifies one
 		if targetRelType != "" && edge.Type != targetRelType {
 			continue

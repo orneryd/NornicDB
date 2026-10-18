@@ -263,6 +263,7 @@ func (e *StorageExecutor) newAPOCRemoteRequest(ctx context.Context, rawURL strin
 // callApocLoadJson loads JSON data from a URL or file path.
 // Syntax: CALL apoc.load.json(urlOrFile) YIELD value
 func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// The URL or file path is the call's evaluated first argument.
 	urlOrFile, err := requiredProcedureString("apoc.load.json", args, 0, "urlOrKeyOrBinary")
 	if err != nil {
@@ -289,6 +290,9 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	case []interface{}:
 		// Array of items - return each as a row
 		for _, item := range v {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			rows = append(rows, []interface{}{item})
 		}
 	case map[string]interface{}:
@@ -575,6 +579,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 // callApocExportCsvAll exports all data to CSV.
 // Syntax: CALL apoc.export.csv.all(file, config) YIELD file, nodes, relationships
 func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// No file (or '') returns the export instead of writing it.
 	filePath, err := optionalProcedureString("apoc.export.csv.all", args, 0, "file", "")
 	if err != nil {
@@ -599,6 +604,9 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	csvContent.WriteString("# Nodes\n")
 	csvContent.WriteString("_id,_labels,properties\n")
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		props, _ := json.Marshal(node.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
 			node.ID,
@@ -609,6 +617,9 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	csvContent.WriteString("\n# Relationships\n")
 	csvContent.WriteString("_id,_type,_start,_end,properties\n")
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		props, _ := json.Marshal(edge.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
 			edge.ID,
@@ -644,6 +655,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 // callApocExportCsvQuery exports query results to CSV.
 // Syntax: CALL apoc.export.csv.query(query, file, config)
 func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	const procedure = "apoc.export.csv.query"
 	query, err := requiredProcedureString(procedure, args, 0, "query")
 	if err != nil {
@@ -677,8 +689,14 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 
 	// Data rows
 	for _, row := range result.Rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		values := make([]string, len(row))
 		for i, val := range row {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			switch v := val.(type) {
 			case string:
 				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
@@ -760,6 +778,7 @@ func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storag
 // callApocLoadJsonArray loads a JSON array from a specific path.
 // Syntax: CALL apoc.load.jsonArray(urlOrFile, path) YIELD value
 func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	urlOrFile, err := requiredProcedureString("apoc.load.jsonArray", args, 0, "urlOrKeyOrBinary")
 	if err != nil {
 		return nil, err
@@ -782,6 +801,9 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 	switch v := data.(type) {
 	case []interface{}:
 		for _, item := range v {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			rows = append(rows, []interface{}{item})
 		}
 	default:
@@ -801,6 +823,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 // callApocImportJson imports JSON graph data directly.
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
 func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	store := e.getStorage(ctx)
 	prefixIDs := true
 	dbName := GetUseDatabaseFromContext(ctx)
@@ -859,6 +882,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 		// Import nodes
 		if nodes, ok := dataMap["nodes"].([]interface{}); ok {
 			for _, nodeData := range nodes {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				if nodeMap, ok := nodeData.(map[string]interface{}); ok {
 					node := &storage.Node{
 						Properties: make(map[string]interface{}),
@@ -869,6 +895,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 					if labels, ok := nodeMap["labels"].([]interface{}); ok {
 						for _, l := range labels {
+							if probe.stopped() {
+								return nil, probe.failed()
+							}
 							if ls, ok := l.(string); ok {
 								node.Labels = append(node.Labels, ls)
 							}
@@ -890,6 +919,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 		// Import relationships
 		if rels, ok := dataMap["relationships"].([]interface{}); ok {
 			for _, relData := range rels {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				if relMap, ok := relData.(map[string]interface{}); ok {
 					edge := &storage.Edge{
 						Properties: make(map[string]interface{}),

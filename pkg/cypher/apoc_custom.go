@@ -216,12 +216,16 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 // callApocCustomList lists the custom procedures installed in the current
 // database, in APOC's columns: apoc.custom.list() and apoc.custom.show().
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
 	nodes, err := e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)
 	}
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		encoded, _ := node.Properties["record"].(string)
 		payload, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {

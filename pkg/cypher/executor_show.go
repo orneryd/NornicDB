@@ -104,6 +104,7 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 
 // executeShowIndexes handles SHOW INDEXES command
 func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW INDEXES"), nil)
 	}
@@ -129,6 +130,9 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		indexes := schema.GetIndexes()
 		rows = make([][]interface{}, 0, len(indexes))
 		for i, idx := range indexes {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			idxMap, ok := idx.(map[string]interface{})
 			if !ok {
 				continue
@@ -512,6 +516,7 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
 // SKIP / LIMIT) is a SyntaxError, as in Neo4j.
 func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	head := showCommandHead(query)
 	if len(head) == len(query) {
@@ -637,6 +642,9 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		if len(sources) > 0 {
 			projected.Rows = make([][]interface{}, len(result.Rows))
 			for r, row := range result.Rows {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
 				for s, source := range sources {
 					if source < len(row) {
@@ -867,6 +875,7 @@ func showFunctionRows() [][]interface{} {
 }
 
 func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// The listing is static: its rows (with the argument and return
 	// descriptions parsed from each signature) are built once, and each call
 	// gets its own copy of them.
@@ -874,6 +883,9 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 	rows := make([][]interface{}, len(cached))
 	var cells []interface{}
 	for i, row := range cached {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if len(cells) < len(row) {
 			cells = make([]interface{}, len(row)*(len(cached)-i))
 		}

@@ -136,8 +136,12 @@ func expressionErrorSlot(ctx context.Context) *expressionFailure {
 // rowValuesInExpressionContext overrides the statement context for a deferred
 // operand; nested context evaluators must record their errors in that operand.
 func rowValuesInExpressionContext(ctx context.Context, values map[string]interface{}) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	scope := make(map[string]interface{}, len(values)+1)
 	for name, value := range values {
+		if probe.stopped() {
+			return nil
+		}
 		scope[name] = value
 	}
 	scope[rowStatementContextKey] = ctx

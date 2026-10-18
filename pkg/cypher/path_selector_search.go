@@ -1060,6 +1060,7 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 // of the count shortest paths (count lengths for groups) to each end node:
 // to target only when it is given, to the nodes of ends only when they are.
 func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
+	probe := contextPipelineProbe(ctx)
 	bind := func(path pathSearchPath) (pipelineRow, bool) {
 		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
 	}
@@ -1078,6 +1079,9 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 			s.ends = make(map[storage.NodeID]bool, len(ends))
 			s.retain(int64(len(ends)) * searchEntryBytes)
 			for _, node := range ends {
+				if probe.stopped() {
+					return nil
+				}
 				s.ends[node.ID] = true
 			}
 		}

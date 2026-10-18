@@ -236,6 +236,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					execErr = retention.reserveExtendedRow(outer, nil, nil)
 				} else if inner != nil {
 					for _, values := range inner.Rows {
+						if cancellation.stopped() {
+							return nil, nil, false, cancellation.failed()
+						}
 						if execErr = retention.reserveExtendedRow(outer, inner.Columns, values); execErr != nil {
 							break
 						}

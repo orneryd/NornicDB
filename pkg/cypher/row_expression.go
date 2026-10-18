@@ -1640,11 +1640,15 @@ func rowValuesWithStatementContext(ctx context.Context, expression string, value
 // rowValuesBindingStatementContext is values with the statement context
 // bound, for a predicate that needs it (rowValuesWithStatementContext).
 func rowValuesBindingStatementContext(ctx context.Context, values map[string]interface{}) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	if _, bound := values[rowStatementContextKey]; bound {
 		return values
 	}
 	extended := make(map[string]interface{}, len(values)+1)
 	for key, value := range values {
+		if probe.stopped() {
+			return nil
+		}
 		extended[key] = value
 	}
 	extended[rowStatementContextKey] = withPipelineCancellation(ctx)

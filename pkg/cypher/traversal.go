@@ -270,6 +270,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 // relationship in the store and joining the bound value afterward. seedNodes
 // (start-side) takes priority when both are supplied.
 func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -441,6 +442,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			if len(path.Nodes) > 0 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
 				filtered = append(filtered, path)
 			}
@@ -806,6 +810,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 // paths are final even if empty. The caller is responsible for having checked
 // the end node's own labels and inline properties.
 func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
+	probe := contextPipelineProbe(ctx)
 	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
 		return nil, false
 	}
@@ -816,6 +821,9 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 	paths = make([]PathResult, 0, util.SafePreallocCap(len(endSeedNodes)))
 	for _, endNode := range endSeedNodes {
 		for _, reversedPath := range e.traverseFromNode(ctx, endNode, reversed) {
+			if probe.stopped() {
+				return nil, false
+			}
 			paths = append(paths, reversePathResult(reversedPath))
 		}
 	}
@@ -1505,6 +1513,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // false for any other match, which collectPipelineInitialNodeCandidates seeds.
 // The traversal still checks the whole pattern from each start node.
 func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+	probe := contextPipelineProbe(ctx)
 	relationship := match.Relationship
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
 		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
@@ -1527,6 +1536,9 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return nil, true, err
 		}
 		for _, edge := range edges {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			if edge == nil {
 				continue
 			}
@@ -1659,6 +1671,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 // traverseGraphParallel performs parallel traversal from multiple start nodes
 // Each goroutine gets its own TraversalContext to avoid data races
 func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
+	probe := contextPipelineProbe(ctx)
 	numWorkers := config.MaxWorkers
 	if numWorkers > len(startNodes) {
 		numWorkers = len(startNodes)
@@ -1737,6 +1750,9 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 	// Collect results
 	var allResults []PathResult
 	for wr := range resultsChan {
+		if probe.stopped() {
+			return nil
+		}
 		allResults = append(allResults, wr.paths...)
 	}
 
@@ -1746,6 +1762,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 // traverseChainedGraph handles multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 // It traverses each segment sequentially, joining results where intermediate nodes match
 func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *TraversalMatch, seedNodes []*storage.Node) []PathResult {
+	probe := contextPipelineProbe(ctx)
 	if len(match.Segments) == 0 {
 		return nil
 	}
@@ -1778,6 +1795,9 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	repeats := chainRepeatedNodes(match.Segments)
 	kept := currentPaths[:0]
 	for _, path := range currentPaths {
+		if probe.stopped() {
+			return nil
+		}
 		path.SegmentLengths = []int{len(path.Relationships)}
 		if repeats.consistent(path, 1) {
 			kept = append(kept, path)
@@ -2377,6 +2397,7 @@ func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 // predicate can also reference seed-row variables beyond the path endpoints
 // (#581: WHERE length(p) > limit.n).
 func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string, extra map[string]interface{}) []PathResult {
+	probe := contextPipelineProbe(ctx)
 	if whereClause == "" {
 		return paths
 	}
@@ -2386,6 +2407,9 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
 		for name, value := range extra {
+			if probe.stopped() {
+				return nil
+			}
 			switch v := value.(type) {
 			case *storage.Node:
 				if v != nil {

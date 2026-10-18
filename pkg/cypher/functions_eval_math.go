@@ -20,6 +20,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	allPathNodes []*storage.Node,
 	pathLength int,
 ) interface{} {
+	probe := contextPipelineProbe(ctx)
 	// ========================================
 	// Trigonometric Functions
 	// ========================================
@@ -277,6 +278,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			if pathResult, ok := paths[inner]; ok && pathResult != nil {
 				var result []interface{}
 				for _, node := range pathResult.Nodes {
+					if probe.stopped() {
+						return nil
+					}
 					result = append(result, node)
 				}
 				return result
@@ -286,6 +290,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if len(allPathNodes) > 0 {
 			var result []interface{}
 			for _, node := range allPathNodes {
+				if probe.stopped() {
+					return nil
+				}
 				result = append(result, node)
 			}
 			return result
@@ -318,6 +325,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			if pathResult, ok := paths[inner]; ok && pathResult != nil {
 				result := make([]interface{}, len(pathResult.Relationships))
 				for index, edge := range pathResult.Relationships {
+					if probe.stopped() {
+						return nil
+					}
 					result[index] = edge
 				}
 				return result
@@ -327,6 +337,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if len(allPathEdges) > 0 {
 			result := make([]interface{}, len(allPathEdges))
 			for index, edge := range allPathEdges {
+				if probe.stopped() {
+					return nil
+				}
 				result[index] = edge
 			}
 			return result
@@ -1147,6 +1160,9 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	// and copied the row to do it for every element (#1214).
 	values := make(map[string]interface{}, len(pathValues)+len(nodes)+len(rels)+1)
 	for name, value := range pathValues {
+		if probe.stopped() {
+			return nil
+		}
 		values[name] = value
 	}
 	for name, node := range nodes {
@@ -1162,9 +1178,15 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		}
 	}
 	for name, value := range valueBindingsFromContext(ctx) {
+		if probe.stopped() {
+			return nil
+		}
 		bindAbsent(name, value)
 	}
 	for name, value := range parameterRowValues(ctx) {
+		if probe.stopped() {
+			return nil
+		}
 		bindAbsent(name, value)
 	}
 	if needsRowStatementContext(predicate) {

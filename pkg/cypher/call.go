@@ -411,6 +411,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	seed *ExecuteResult,
 	tail string,
 ) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	callIndex := findKeywordIndexInContext(tail, "CALL")
 	if callIndex <= 0 {
 		return nil, false, nil
@@ -447,6 +448,9 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 			combined.Columns = append(combined.Columns, procedureResult.Columns...)
 		}
 		for _, procedureRow := range procedureResult.Rows {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			row := make([]interface{}, 0, len(prefixColumns)+len(procedureRow))
 			for _, column := range prefixColumns {
 				row = append(row, bindings[column])
@@ -499,6 +503,7 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 }
 
 func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
 		return nil, false, nil
@@ -520,6 +525,9 @@ func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *Ex
 		Stats:   seed.Stats,
 	}
 	for index, row := range seed.Rows {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		result.Rows[index] = append([]interface{}(nil), row...)
 	}
 	modifiers := strings.TrimSpace(body[modifierStart:])
@@ -1454,6 +1462,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 // way a WITH does: through the pipeline, over the aliased rows, so the
 // predicate sees the aliases and evaluates like any other WHERE (#530).
 func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	if yield == nil {
 		return result, nil
 	}
@@ -1477,6 +1486,9 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		}
 		newRows := make([][]interface{}, 0, len(result.Rows))
 		for _, row := range result.Rows {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			newRow := make([]interface{}, len(yield.items))
 			for i, item := range yield.items {
 				if idx, ok := colIndex[item.name]; ok && idx < len(row) {

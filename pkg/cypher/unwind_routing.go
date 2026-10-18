@@ -83,6 +83,7 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 // changing clause semantics. Unsupported shapes return handled=false and are
 // executed by the same pipeline's general row operators.
 func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	if plan.remainder == "" {
 		return nil, false, nil
 	}
@@ -140,6 +141,9 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
 				for key, value := range getParamsFromContext(ctx) {
+					if probe.stopped() {
+						return nil, false, probe.failed()
+					}
 					params[key] = value
 				}
 				params["__unwind_items"] = plan.items
@@ -172,6 +176,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 }
 
 func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	clauses, ok, _ := parsePipelineClauses(query)
 	if !ok {
 		return nil, false, nil
@@ -196,16 +201,25 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 	scope := map[string]struct{}{variable: {}}
 	base := pipelineRow{}
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		base[name] = value
 		scope[name] = struct{}{}
 	}
 	for name, value := range valueBindingsFromContext(ctx) {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		base[name] = value
 		scope[name] = struct{}{}
 	}
 	bindParameterRow(ctx, base)
 	rows := make([]pipelineRow, 0, len(items))
 	for _, item := range items {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		row := maps.Clone(base)
 		row[variable] = item
 		rows = append(rows, row)
@@ -218,6 +232,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 }
 
 func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Context, plan topLevelUnwindPlan) (*ExecuteResult, bool, error) {
+	probe := contextPipelineProbe(ctx)
 	query := normalizeMultiMatchWhereClauses(plan.remainder)
 	if findKeywordIndexInContext(query, "CREATE") < 0 ||
 		findKeywordIndexInContext(query, "MERGE") >= 0 ||
@@ -241,6 +256,9 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
 	for key, value := range getParamsFromContext(ctx) {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		params[key] = value
 	}
 	params["__unwind_items"] = plan.items

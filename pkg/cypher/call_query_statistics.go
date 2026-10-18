@@ -245,6 +245,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 }
 
 func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes()
 	if err != nil {
@@ -257,18 +258,30 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 	labels, relationships, properties := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	labelCounts, typeCounts := map[string]int64{}, map[string]int64{}
 	for _, node := range nodes {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		for _, label := range node.Labels {
 			labels[label] = true
 			labelCounts[label]++
 		}
 		for key := range node.Properties {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			properties[key] = true
 		}
 	}
 	for _, edge := range edges {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		relationships[edge.Type] = true
 		typeCounts[edge.Type]++
 		for key := range edge.Properties {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			properties[key] = true
 		}
 	}
@@ -292,6 +305,9 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		}
 		constraintRows := make([]interface{}, 0, len(constraints.Rows))
 		for _, row := range constraints.Rows {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			values := make(map[string]interface{}, len(constraints.Columns))
 			for index, column := range constraints.Columns {
 				values[column] = row[index]

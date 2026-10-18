@@ -18,6 +18,7 @@ import (
 // apoc.cypher.run(q, {})). procedure is the name it was called by
 // (apoc.cypher.run or its alias apoc.cypher.doitall).
 func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure string, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	innerQuery, err := requiredProcedureString(procedure, args, 0, "statement")
 	if err != nil {
 		return nil, err
@@ -42,6 +43,9 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	}
 
 	for _, row := range innerResult.Rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		// Convert row to a map with column names as keys
 		valueMap := make(map[string]interface{})
 		for i, col := range innerResult.Columns {
@@ -83,6 +87,7 @@ func runManyStatistics(result *ExecuteResult, elapsed time.Duration) map[string]
 // CALL apoc.cypher.runMany(statements, params) YIELD row, result
 // The statements and parameters are the call's evaluated arguments.
 func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	const procedure = "apoc.cypher.runMany"
 	statements, err := requiredProcedureString(procedure, args, 0, "statements")
 	if err != nil {
@@ -129,6 +134,9 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 
 		// Add each row from the inner result
 		for i, row := range innerResult.Rows {
+			if probe.stopped() {
+				return nil, probe.failed()
+			}
 			valueMap := make(map[string]interface{})
 			for j, col := range innerResult.Columns {
 				if j < len(row) {

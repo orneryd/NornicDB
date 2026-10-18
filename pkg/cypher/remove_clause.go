@@ -64,6 +64,7 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 // counts in properties_set when the entity had it, a removed label in
 // labels_removed.
 func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
+	probe := contextPipelineProbe(ctx)
 	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
 	if err != nil {
 		return err
@@ -116,6 +117,9 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 			}
 		}
 		for _, entity := range touched {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			switch typed := entity.(type) {
 			case *storage.Node:
 				if err := updateMutatedNode(store, typed); err != nil {

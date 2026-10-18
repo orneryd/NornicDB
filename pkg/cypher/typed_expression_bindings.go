@@ -10,6 +10,7 @@ import (
 // withExpressionBinding scopes an evaluated value without rendering it as
 // Cypher text. Names avoid both client parameters and identifiers in the input.
 func withExpressionBinding(ctx context.Context, expression string, value interface{}) (context.Context, string) {
+	probe := contextPipelineProbe(ctx)
 	params := getParamsFromContext(ctx)
 	for index := 0; ; index++ {
 		name := fmt.Sprintf("__nornic_expression_%d", index)
@@ -18,6 +19,9 @@ func withExpressionBinding(ctx context.Context, expression string, value interfa
 		}
 		bound := make(map[string]interface{}, len(params)+1)
 		for key, original := range params {
+			if probe.stopped() {
+				return nil, ""
+			}
 			bound[key] = original
 		}
 		bound[name], _ = normalizeParameterValueWithCancellation(value, contextPipelineProbe(ctx))

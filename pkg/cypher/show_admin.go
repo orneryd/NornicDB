@@ -127,6 +127,7 @@ var showSingleDatabaseDefaultColumns = []string{"name", "type", "aliases", "acce
 // executeShowDefaultDatabase lists the default database. NornicDB has no
 // per-user home database, so SHOW HOME DATABASE lists the default one too.
 func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	all, err := e.executeShowDatabases(ctx, cypher)
 	if err != nil {
 		return nil, err
@@ -146,6 +147,9 @@ func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher
 	}
 	rows := make([][]interface{}, 0, 1)
 	for _, row := range all.Rows {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if defaultColumn < 0 || defaultColumn >= len(row) || row[defaultColumn] != true {
 			continue
 		}
@@ -629,6 +633,7 @@ func (e *StorageExecutor) parameterRow(ctx context.Context) pipelineRow {
 // statement also has Neo4j 2026.09's currentQueryProgress column (null:
 // NornicDB has no running update counters).
 func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "SHOW")
 	if err != nil {
 		return nil, err
@@ -636,6 +641,9 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	wanted := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		if text, isString := id.(string); isString {
 			wanted[text] = struct{}{}
 		}
@@ -731,6 +739,7 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 // per id with its username and "Transaction terminated." or "Transaction
 // not found.", as in Neo4j.
 func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "TERMINATE")
 	if err != nil {
 		return nil, err
@@ -740,6 +749,9 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 			localization.CypherAdminTerminateTransactionsIDRequired())
 	}
 	for index, id := range ids {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		text, isString := id.(string)
 		if !isString {
 			continue // a Cypher 25 null id
@@ -752,6 +764,9 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 	}
 	rows := make([][]interface{}, 0, len(ids))
 	for _, id := range ids {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		text, isString := id.(string)
 		if !isString {
 			rows = append(rows, []interface{}{nil, nil, "Transaction not found."})

@@ -594,10 +594,16 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
 	for name, value := range e.fabricRecordBindings {
+		if completion.stopped() {
+			return pipelineDispatchOutcome{}
+		}
 		initialRow[name] = value
 	}
 	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
 		for name, value := range valueBindingsFromContext(ctx) {
+			if completion.stopped() {
+				return pipelineDispatchOutcome{}
+			}
 			initialRow[name] = value
 		}
 	}
@@ -743,6 +749,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					return nil, true, err
 				}
 				for _, projection := range projections {
+					if cancellation.stopped() {
+						return nil, false, cancellation.failed()
+					}
 					scope[projection.alias] = struct{}{}
 				}
 			}
@@ -1140,6 +1149,7 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 // imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
 // use, so a body that only names its own variables keeps the shortcuts.
 func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+	probe := contextPipelineProbe(ctx)
 	references := func(name string) bool {
 		if strings.HasPrefix(name, "$") {
 			return false
@@ -1152,12 +1162,18 @@ func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clau
 		return false
 	}
 	for name := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return false
+		}
 		if references(name) {
 			return true
 		}
 	}
 	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
 		for name := range valueBindingsFromContext(ctx) {
+			if probe.stopped() {
+				return false
+			}
 			if references(name) {
 				return true
 			}
@@ -1301,9 +1317,13 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 // (parameterRowValues). The row loop and the fused filtered count evaluate
 // WHERE on it.
 func pipelineNodeRow(ctx context.Context, variable string, node *storage.Node) pipelineRow {
+	probe := contextPipelineProbe(ctx)
 	paramRows := parameterRowValues(ctx)
 	row := make(pipelineRow, len(paramRows)+1)
 	for name, value := range paramRows {
+		if probe.stopped() {
+			return nil
+		}
 		row[name] = value
 	}
 	row[variable] = node
@@ -1387,6 +1407,9 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}
 	if indexed {
 		for _, node := range candidates {
+			if probe.stopped() {
+				return nil, false, probe.failed()
+			}
 			if err := countNode(node, whereApplied); err != nil {
 				return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
 			}
@@ -1633,6 +1656,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 			}
 		}
 		for name, value := range expandedRow.values {
+			if cancellation.stopped() {
+				return nil, cancellation.failed()
+			}
 			joined[name] = value
 		}
 		if err := retention.reserveRow(joined); err != nil {
@@ -1977,12 +2003,16 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
+	probe := contextPipelineProbe(ctx)
 	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}
 	// A property equal to null matches no node ({id: null}, nothing equals
 	// null): no index seek or label scan can find one.
 	for _, value := range nodePattern.properties {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		if value == nil {
 			return nil, false, nil
 		}

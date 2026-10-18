@@ -14,6 +14,7 @@ const relationshipSearchRequestKey = "\x00relationships"
 // callDbRetrieveRelationships searches relationships as db.retrieve searches
 // nodes (#1065), with db.retrieve's request (ragProcedureRequest).
 func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	req, err := ragProcedureRequest("db.retrieveRelationships", args)
 	if err != nil {
 		return nil, err
@@ -21,6 +22,9 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 	// The request may be the caller's parameter map: mark a copy.
 	marked := make(map[string]interface{}, len(req)+1)
 	for key, value := range req {
+		if probe.stopped() {
+			return nil, probe.failed()
+		}
 		marked[key] = value
 	}
 	marked[relationshipSearchRequestKey] = true

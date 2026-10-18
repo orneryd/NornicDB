@@ -72,6 +72,7 @@ func (e *StorageExecutor) addGDSProjectionRow(ctx context.Context, state *pipeli
 // null target alone, stored as the graph named by the first row. It
 // returns GDS's result map; no rows give null.
 func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsProjectionRow, started time.Time) (interface{}, error) {
+	probe := contextPipelineProbe(ctx)
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -123,6 +124,9 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		}
 		keys := make([]string, 0, len(values))
 		for key := range values {
+			if probe.stopped() {
+				return "", probe.failed()
+			}
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)

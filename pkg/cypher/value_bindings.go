@@ -38,9 +38,13 @@ func valueBindingsFromContext(ctx context.Context) map[string]interface{} {
 // plus room for extra names, for a nested scope (a comprehension inside SET)
 // whose own variables shadow outer ones.
 func valueBindingsLayer(ctx context.Context, extra int) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	outer := valueBindingsFromContext(ctx)
 	layer := make(map[string]interface{}, len(outer)+extra)
 	for name, value := range outer {
+		if probe.stopped() {
+			return nil
+		}
 		layer[name] = value
 	}
 	return layer

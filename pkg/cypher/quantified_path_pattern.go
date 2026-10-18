@@ -411,6 +411,7 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 // state: its first node is the path's end node, when the path has one. For
 // each match, then gets the extended state and the chain's bindings.
 func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first, where string, state quantifiedPathState, then func(quantifiedPathState, pipelineRow) error) error {
+	probe := contextPipelineProbe(ctx)
 	row := copyPipelineRow(state.row)
 	if len(state.nodes) > 0 {
 		end := state.nodes[len(state.nodes)-1]
@@ -440,6 +441,9 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		next.nodes = append([]*storage.Node(nil), state.nodes...)
 		next.relationships = append([]*storage.Edge(nil), state.relationships...)
 		for i, item := range nodes {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			if i > 0 || len(state.nodes) == 0 {
 				next.nodes = append(next.nodes, item.(*storage.Node))
 			}
@@ -448,10 +452,16 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		if !repeatable {
 			next.used = make(map[storage.EdgeID]struct{}, len(state.used)+len(relationships))
 			for id := range state.used {
+				if probe.stopped() {
+					return probe.failed()
+				}
 				next.used[id] = struct{}{}
 			}
 		}
 		for _, item := range relationships {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			edge := item.(*storage.Edge)
 			if !repeatable {
 				if _, exists := next.used[edge.ID]; exists {

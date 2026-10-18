@@ -459,6 +459,7 @@ func topLevelColonIndex(input string) int {
 }
 
 func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams map[string]interface{}) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	shell := e.shellParamsFor(ctx)
 	e.shellParamsMu.RLock()
 	shellLen := len(shell)
@@ -473,11 +474,17 @@ func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams m
 
 	merged := make(map[string]interface{}, util.SafePreallocSum(shellLen, len(explicitParams)))
 	for key, value := range shell {
+		if probe.stopped() {
+			return nil
+		}
 		merged[key] = value
 	}
 	e.shellParamsMu.RUnlock()
 
 	for key, value := range explicitParams {
+		if probe.stopped() {
+			return nil
+		}
 		merged[key] = value
 	}
 	return merged
@@ -525,6 +532,7 @@ func cloneShellParamsByToken(e *StorageExecutor) map[string]map[string]interface
 }
 
 func (e *StorageExecutor) getShellParamsSnapshot(ctx context.Context) map[string]interface{} {
+	probe := contextPipelineProbe(ctx)
 	shell := e.shellParamsFor(ctx)
 	e.shellParamsMu.RLock()
 	defer e.shellParamsMu.RUnlock()
@@ -533,12 +541,16 @@ func (e *StorageExecutor) getShellParamsSnapshot(ctx context.Context) map[string
 	}
 	out := make(map[string]interface{}, len(shell))
 	for key, value := range shell {
+		if probe.stopped() {
+			return nil
+		}
 		out[key] = value
 	}
 	return out
 }
 
 func (e *StorageExecutor) setShellParams(ctx context.Context, params map[string]interface{}) {
+	probe := contextPipelineProbe(ctx)
 	e.shellParamsMu.Lock()
 	defer e.shellParamsMu.Unlock()
 	shell := e.shellParamsFor(ctx)
@@ -555,6 +567,9 @@ func (e *StorageExecutor) setShellParams(ctx context.Context, params map[string]
 		shell = e.shellParams
 	}
 	for key, value := range params {
+		if probe.stopped() {
+			return
+		}
 		shell[key] = value
 	}
 }
@@ -570,9 +585,13 @@ func (e *StorageExecutor) clearShellParams(ctx context.Context) {
 }
 
 func (e *StorageExecutor) listShellParams(ctx context.Context) *ExecuteResult {
+	probe := contextPipelineProbe(ctx)
 	params := e.getShellParamsSnapshot(ctx)
 	keys := make([]string, 0, len(params))
 	for key := range params {
+		if probe.stopped() {
+			return nil
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)

@@ -276,6 +276,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 // relationships are rejected after the nodes were written, the nodes are
 // removed again, so the clause is all-or-nothing without a transaction too.
 func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan, result *ExecuteResult) error {
+	probe := contextPipelineProbe(ctx)
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return failure
 	}
@@ -310,6 +311,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		if len(plan.nodes) > 0 {
 			ids := make([]storage.NodeID, len(plan.nodes))
 			for i, node := range plan.nodes {
+				if probe.stopped() {
+					return probe.failed()
+				}
 				ids[i] = node.ID
 			}
 			_ = store.BulkDeleteNodes(ids)
@@ -317,12 +321,18 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
 	for _, node := range plan.nodes {
+		if probe.stopped() {
+			return probe.failed()
+		}
 		e.notifyNodeMutated(string(node.ID))
 		addOptimisticNodeID(result, node.ID)
 		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
 	for _, edge := range plan.edges {
+		if probe.stopped() {
+			return probe.failed()
+		}
 		e.notifyEdgeMutated(string(edge.ID))
 		addOptimisticRelationshipID(result, edge.ID)
 		countCreatedEntity(result.Stats, nil, edge.Properties)
@@ -399,6 +409,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 // earlier in the statement (b {name: a.name}) are resolved against nodes and
 // relationships.
 func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
+	probe := contextPipelineProbe(ctx)
 	var parameterProperties map[string]interface{}
 	if head, props := splitNodePatternProperties(pattern); props == "" {
 		if rest, parameter, ok := splitPatternParameterMap(head); ok {
@@ -419,6 +430,9 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	}
 	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
 	for key, value := range nodePattern.properties {
+		if probe.stopped() {
+			return nodePatternInfo{}, probe.failed()
+		}
 		if value == nil {
 			delete(nodePattern.properties, key)
 		}
@@ -441,6 +455,9 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 		return nodePatternInfo{}, err
 	}
 	for key, val := range nodePattern.properties {
+		if probe.stopped() {
+			return nodePatternInfo{}, probe.failed()
+		}
 		if _, ok := val.(invalidPropertyValue); ok {
 			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 		}
@@ -488,6 +505,7 @@ func namedPathAssignmentPrefix(pattern string) bool {
 // expression the row evaluator resolves is fine — only a truly unevaluable
 // expression is a syntax error.
 func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
+	probe := contextPipelineProbe(ctx)
 	open := indexByteOutsideBackticks(pattern, '{')
 	if open < 0 {
 		return nil
@@ -519,6 +537,9 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		}
 		values := make(map[string]interface{}, len(nodes)+len(relationships)+len(valueBindingsFromContext(ctx)))
 		for name, value := range valueBindingsFromContext(ctx) {
+			if probe.stopped() {
+				return probe.failed()
+			}
 			values[name] = value
 		}
 		for name, node := range nodes {

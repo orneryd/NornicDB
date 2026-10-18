@@ -15,6 +15,7 @@ func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node
 }
 
 func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
+	probe := contextPipelineProbe(ctx)
 	plan := planRowPredicate(whereClause)
 	if plan == nil || !plan.complete {
 		return nil, false
@@ -22,9 +23,15 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 	parameters := getParamsFromContext(ctx)
 	values := make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return nil, false
+		}
 		values[name] = value
 	}
 	for name, value := range valueBindingsFromContext(ctx) {
+		if probe.stopped() {
+			return nil, false
+		}
 		values[name] = value
 	}
 	return func(node *storage.Node) bool {
@@ -45,16 +52,23 @@ func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, 
 // known true under Cypher's three-valued logic (null and false both drop the
 // row).
 func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
+	probe := contextPipelineProbe(ctx)
 	if strings.TrimSpace(whereClause) == "" {
 		return true
 	}
 	values := pipelineNodeRow(ctx, variable, node)
 	for name, value := range e.fabricRecordBindings {
+		if probe.stopped() {
+			return false
+		}
 		if name != variable {
 			values[name] = value
 		}
 	}
 	for name, value := range valueBindingsFromContext(ctx) {
+		if probe.stopped() {
+			return false
+		}
 		if name != variable {
 			values[name] = value
 		}
@@ -68,12 +82,19 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 // parameters and the calling row's variables, as evaluateWhere binds them for
 // a node candidate.
 func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
+	probe := contextPipelineProbe(ctx)
 	return func(edge *storage.Edge, start, end *storage.Node) bool {
 		values := pipelineNodeRow(ctx, "node", nil)
 		for name, value := range e.fabricRecordBindings {
+			if probe.stopped() {
+				return false
+			}
 			values[name] = value
 		}
 		for name, value := range valueBindingsFromContext(ctx) {
+			if probe.stopped() {
+				return false
+			}
 			values[name] = value
 		}
 		values["node"] = nil

@@ -44,6 +44,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodes(ctx context.Context, cyphe
 }
 
 func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	probe := contextPipelineProbe(ctx)
 	// Resolve the query vector
 	var queryVector []float32
 
@@ -84,11 +85,17 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		case []float64:
 			queryVector = make([]float32, len(val))
 			for i, v := range val {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				queryVector[i] = float32(v)
 			}
 		case []interface{}:
 			queryVector = make([]float32, 0, len(val))
 			for _, item := range val {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				switch v := item.(type) {
 				case float32:
 					queryVector = append(queryVector, v)
@@ -123,6 +130,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			// Check which parameters have unsupported types to provide a better error message
 			var unsupportedParams []string
 			for paramName, paramValue := range params {
+				if probe.stopped() {
+					return nil, probe.failed()
+				}
 				// Check if this parameter has an unsupported type for vector queries
 				switch paramValue.(type) {
 				case []float32, []float64, []interface{}, string:

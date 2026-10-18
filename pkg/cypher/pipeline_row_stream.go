@@ -143,6 +143,7 @@ func pipelineUnwindUsesRange(clause string) bool {
 }
 
 func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
+	probe := contextPipelineProbe(ctx)
 	function, arguments, call := parseFunctionCallWS(strings.TrimSpace(expression))
 	if call && strings.EqualFold(function, "range") {
 		parts := e.splitFunctionArgs(arguments)
@@ -162,6 +163,9 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 		}
 		return func(yield func(interface{}) bool) {
 			for value := range sequence.values() {
+				if probe.stopped() {
+					return
+				}
 				if !yield(value) {
 					return
 				}
@@ -184,6 +188,9 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 			defer budget.release()
 		}
 		for _, value := range items {
+			if probe.stopped() {
+				return
+			}
 			if !yield(value) {
 				return
 			}

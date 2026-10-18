@@ -351,6 +351,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 // counts a node's relationships in that graph, a self-loop once. The
 // sourceNode must be in the graph.
 func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, *GraphProjection, error) {
+	probe := contextPipelineProbe(ctx)
 	var graph linkpredict.Graph
 	var degree linkpredict.DegreeFunc
 	var read *GraphProjection
@@ -418,6 +419,9 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 			}
 			seen := make(map[storage.EdgeID]struct{})
 			for _, edge := range e.getNodeEdges(node) {
+				if probe.stopped() {
+					return 0
+				}
 				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
 					seen[edge.ID] = struct{}{}
 				}
