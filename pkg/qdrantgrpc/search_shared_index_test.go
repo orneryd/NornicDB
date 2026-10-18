@@ -491,3 +491,44 @@ func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
 		})
 	}
 }
+
+// A database that indexed and removed vectors before its first Qdrant write
+// keeps an empty file-backed store of the old dimension. A collection of
+// another dimension is rejected before anything is stored, rather than
+// acknowledged with points the index never holds.
+func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
+	ctx := context.Background()
+	base := storage.NewMemoryEngine()
+	dbm, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	var svc *search.Service
+	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+		if svc == nil {
+			svc = search.NewServiceWithDimensions(store, 8)
+			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetPersistenceEnabled(true)
+			t.Cleanup(func() { _ = svc.Close() })
+			if err := svc.IndexNode(&storage.Node{ID: "previous", NamedEmbeddings: map[string][]float32{"default": unitVector(8, 0)}}); err != nil {
+				return nil, err
+			}
+			if err := svc.RemoveNode("previous"); err != nil {
+				return nil, err
+			}
+		}
+		return svc, nil
+	})
+	createCosineCollection(t, ctx, srv.collections, "four", 4)
+	_, err = srv.points.Upsert(ctx, &qpb.UpsertPoints{CollectionName: "four", Points: []*qpb.PointStruct{{
+		Id:      &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}},
+		Vectors: &qpb.Vectors{VectorsOptions: &qpb.Vectors_Vector{Vector: &qpb.Vector{Data: unitVector(4, 0)}}},
+	}}})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "%v", err)
+	count, err := srv.points.Count(ctx, &qpb.CountPoints{CollectionName: "four"})
+	require.NoError(t, err)
+	require.Zero(t, count.GetResult().GetCount(), "a rejected point must not be stored")
+	require.Zero(t, svc.EmbeddingCount())
+
+	createCosineCollection(t, ctx, srv.collections, "eight", 8)
+	upsertPoint(t, ctx, srv.points, "eight", 1, unitVector(8, 1), nil)
+	require.Equal(t, 1, svc.EmbeddingCount(), "an acknowledged point is indexed")
+}
