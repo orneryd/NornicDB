@@ -81,7 +81,7 @@
 - id: nornicdbcli.flag.parallel_batch_size
   other: Tamaño mínimo de lote antes de paralelizar
 - id: nornicdbcli.flag.memory_limit
-  other: "Límite de memoria en MB como entero (p. ej., 500; 0 sin límite)"
+  other: "Límite de memoria en MB como entero (p. ej., 500), 0 sin límite, o auto (predeterminado: 85 % del límite de memoria del contenedor)"
 - id: nornicdbcli.flag.gc_percent
   other: Intensidad de GC (100=predeterminada, un valor menor es más intenso)
 - id: nornicdbcli.flag.pool_enabled
@@ -160,6 +160,10 @@
   other: "   Ejecución paralela:  ❌ desactivada"
 - id: nornicdbcli.serve.memory_limit
   other: "   Límite de memoria:   {{.Value}}"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  other: "   Límite de memoria:   {{.Value}} ({{.Percent}} % del límite del contenedor, {{.Cgroup}})"
+- id: nornicdbcli.serve.memory_limit_clamped
+  other: "⚠️  Advertencia: el límite de memoria {{.Configured}} supera el límite de memoria del contenedor ({{.Cgroup}}) y no evitaría que el sistema terminase el proceso por falta de memoria; se usa {{.Value}}"
 - id: nornicdbcli.serve.memory_unlimited
   other: "   Límite de memoria:   ilimitado"
 - id: nornicdbcli.serve.gc_percent

@@ -81,7 +81,7 @@
 - id: nornicdbcli.flag.parallel_batch_size
   other: "[!! Mín bátch sízé béfóré párállélízíng !!]"
 - id: nornicdbcli.flag.memory_limit
-  other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500, 0 únlímítéd) !!]"
+  other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500), 0 únlímítéd, ór áútó (85% óf thé cóntáínér límít) !!]"
 - id: nornicdbcli.flag.gc_percent
   other: "[!! GC ággréssívénéss (100= défáúlt, lówér=móré ággréssívé) !!]"
 - id: nornicdbcli.flag.pool_enabled
@@ -160,6 +160,10 @@
   other: "[!! Párállél éxéc: ❌ dísábléd !!]"
 - id: nornicdbcli.serve.memory_limit
   other: "[!! Mémórý límít: {{.Value}} !!]"
+- id: nornicdbcli.serve.memory_limit_cgroup
+  other: "[!! Mémórý límít: {{.Value}} ({{.Percent}}% óf thé cóntáínér límít {{.Cgroup}}) !!]"
+- id: nornicdbcli.serve.memory_limit_clamped
+  other: "[!! ⚠️  Wárníng: mémórý límít {{.Configured}} ís ábóvé thé cóntáínér's mémórý límít {{.Cgroup}} ánd cóúld nót prévént án OOM kíll; úsíng {{.Value}} !!]"
 - id: nornicdbcli.serve.memory_unlimited
   other: "[!! Mémórý límít: únlímítéd !!]"
 - id: nornicdbcli.serve.gc_percent
