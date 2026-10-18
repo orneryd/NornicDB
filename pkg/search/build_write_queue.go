@@ -1,7 +1,10 @@
 package search
 
 import (
+	"math"
 	"reflect"
+	"runtime/debug"
+	"runtime/metrics"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -24,9 +27,12 @@ import (
 // depends on that is not index state: a copy of the caller's data that shares
 // no buffer with it, the temporal decision, and the checks the live path
 // reports as errors. The dimension decision has one owner
-// (vectorDimensionsUndecided): while it is still open, an operation carrying
-// a vector waits for the build, because the build's first stored vector
-// chooses the dimensions first in the serial order.
+// (vectorNeedsOrderedDecision): unless the dimensions are fixed, it depends on
+// the index state everything ahead in the sequence leaves (the build's own
+// stored vectors, a removal of the last vector), so an operation carrying a
+// vector waits for the build and is decided in order by the live path. A
+// synchronous caller therefore always gets the dimension error the serial
+// order would give.
 //
 // Installing: node and edge writes are installed where the build already
 // serializes its own work (before each node batch, between streamed edges),
@@ -63,6 +69,13 @@ type deferredIndexWrite struct {
 	// settings ordered in this sequence, so it is ordered here too; it is not
 	// an administrative operation, so writes after it are not held.
 	relationship bool
+	// valid, when set, is checked when the write is installed, before it is
+	// applied: false means a later write superseded it (a refresh whose
+	// reservation is no longer current), so it is skipped and not recorded as
+	// written. It is called with buildMu owned and takes its own lock.
+	valid func() bool
+	// size is the payload the queue retains for the operation.
+	size int
 }
 
 type buildWriteQueue struct {
@@ -74,16 +87,20 @@ type buildWriteQueue struct {
 	writes       []deferredIndexWrite
 	writtenNodes map[string]struct{}
 	writtenEdges map[string]struct{}
-	// dimsAdopted is set once the build has chosen the index dimensions from
-	// a stored vector (adoptBuildVectorDimensions).
-	dimsAdopted bool
 	// populated is set once the build's population (node batches and the
 	// relationship stream) is complete; from then on every queued operation
 	// may be installed.
 	populated bool
-	// pendingOps counts queued dimension-changing operations not installed
-	// yet.
+	// pendingOps counts queued operations that change a setting an entry
+	// decision reads (the dimension mode, the embedding space, the index
+	// flags) and are not installed yet.
 	pendingOps int
+	// bytes is the payload retained by the queued operations.
+	bytes int
+	// flags, when flagsQueued, are the index flags the queued SetIndexFlags
+	// calls leave (bm25, vector).
+	flags       [2]bool
+	flagsQueued bool
 }
 
 // beginBuildWrites opens the queue for a build about to take buildMu.
@@ -102,7 +119,6 @@ func (s *Service) startBuildWrites() {
 	q := &s.buildWrites
 	q.mu.Lock()
 	q.writtenNodes, q.writtenEdges = nil, nil
-	q.dimsAdopted = false
 	q.populated = false
 	q.mu.Unlock()
 }
@@ -120,8 +136,8 @@ func (s *Service) endBuildWrites() {
 		return
 	}
 	q.open.Store(false)
-	writes := q.writes
-	q.writes = nil
+	writes := q.takeLocked(len(q.writes))
+	q.flagsQueued = false
 	q.mu.Unlock()
 	if s.applyBuildWrites(writes) && !s.buildInProgress.Load() {
 		s.schedulePersist()
@@ -141,9 +157,16 @@ func (s *Service) completeBuildPopulation() {
 
 // queueBuildWrite prepares write for the build that owns or awaits buildMu
 // and reports whether it queued it. Outside a build it costs one atomic load.
-// An error from the checks the live path reports is returned and nothing is
-// queued, as a write that waited would have failed; wait reports that the
-// outcome is not known until the build has decided the dimensions.
+// An entry decision reads only inputs no queued operation ahead can change:
+// the caller's data (copied), the temporal decision, and the settings while
+// no setting change is queued. An error from the checks the live path
+// reports is returned and nothing is queued, as a write that waited would
+// have failed. wait reports that the outcome depends on the operations ahead
+// (vectorNeedsOrderedDecision, a queued setting change) or that queuing would
+// pass the runtime's memory limit (queueFitsMemoryLimit): the write waits for
+// the build and the live path decides it in order. Only callers that can wait
+// in order (readLockOrQueue) are refused; administrative operations and
+// relationship-search updates are always queued.
 func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, err error) {
 	q := &s.buildWrites
 	if !q.open.Load() || !s.buildDefersWrites() {
@@ -152,27 +175,92 @@ func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, 
 	switch {
 	case write.node != nil:
 		current, wait, err := s.admitQueuedNode(write.node)
-		if wait || err != nil {
-			return false, wait, err
+		if err != nil {
+			return false, false, err
+		}
+		if wait {
+			return false, true, nil
 		}
 		write.current = current
 	case write.edge != nil && !write.relationship:
-		if firstEdgeVectorDimensions(write.edge) > 0 && s.vectorDimensionsUndecided(true) {
+		// An edge's vectors are judged at install, by the dimensions and
+		// flags of its turn; only automatic dimensions make that turn's
+		// dimensions unknown at the call.
+		if firstEdgeVectorDimensions(write.edge) > 0 && !s.vectorDimensionsFixed.Load() {
 			return false, true, nil
 		}
 	}
-	write.node = copyQueuedNode(write.node)
-	write.edge = copyQueuedEdge(write.edge)
+	var nodeSize, edgeSize int
+	write.node, nodeSize = copyQueuedNode(write.node)
+	write.edge, edgeSize = copyQueuedEdge(write.edge)
+	write.size = max(nodeSize+edgeSize, queuedEntryBytes)
+	holdable := write.apply == nil && !write.relationship
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.owners == 0 {
 		return false, false, nil
 	}
+	if holdable && len(q.writes) > 0 && !queueFitsMemoryLimit(write.size) {
+		return false, true, nil
+	}
 	q.writes = append(q.writes, write)
+	q.bytes += write.size
 	if write.dims {
 		q.pendingOps++
 	}
 	return true, false, nil
+}
+
+// queueFitsMemoryLimit reports whether size more queued bytes keep the live
+// heap within the Go runtime's soft memory limit (memory.runtime_limit,
+// GOMEMLIMIT), the process's configured memory budget. A write that would
+// pass it waits for the build, as every write did before writes were handed
+// to a build, so a long build under a sustained write stream holds at most
+// what the budget leaves. Without a configured limit the queue is not bounded
+// beyond the process's memory, as the runtime is not.
+func queueFitsMemoryLimit(size int) bool {
+	limit := debug.SetMemoryLimit(-1)
+	if limit == math.MaxInt64 {
+		return true
+	}
+	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	metrics.Read(sample)
+	if sample[0].Value.Kind() != metrics.KindUint64 {
+		return true
+	}
+	return sample[0].Value.Uint64()+uint64(size) <= uint64(limit)
+}
+
+// orderIndexFlags is SetIndexFlags in the build sequence. changed is decided
+// against the flags the operations ahead leave, as in the serial order.
+func (s *Service) orderIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
+	set := func() {
+		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
+		prevVec := s.vectorEnabled.Swap(vectorEnabled)
+		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
+			s.indexChanged()
+		}
+	}
+	q := &s.buildWrites
+	if q.open.Load() && s.buildDefersWrites() {
+		q.mu.Lock()
+		if q.owners > 0 {
+			previous := [2]bool{s.bm25Enabled.Load(), s.vectorEnabled.Load()}
+			if q.flagsQueued {
+				previous = q.flags
+			}
+			q.flags, q.flagsQueued = [2]bool{bm25Enabled, vectorEnabled}, true
+			q.writes = append(q.writes, deferredIndexWrite{apply: set, dims: true, size: queuedEntryBytes})
+			q.bytes += queuedEntryBytes
+			q.pendingOps++
+			q.mu.Unlock()
+			return previous != q.flags
+		}
+		q.mu.Unlock()
+	}
+	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
+	set()
+	return changed
 }
 
 // orderWithBuild runs an administrative operation that changes what a write
@@ -191,7 +279,7 @@ func (s *Service) orderWithBuild(op func()) {
 // orderDimensionChange is orderWithBuild for an operation that can change the
 // dimension decision (the dimension mode, the embedding space, the index
 // flags): until it is installed, a write carrying a vector waits for the
-// build (vectorDimensionsUndecided).
+// build (vectorNeedsOrderedDecision).
 func (s *Service) orderDimensionChange(op func()) {
 	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op, dims: true}); queued {
 		return
@@ -215,55 +303,62 @@ func (q *buildWriteQueue) opApplied() {
 	q.mu.Unlock()
 }
 
-// admitQueuedNode decides at the call what the live path would decide: the
-// node's temporal currency (returned, and installed as decided), and the
-// dimension rule for its explicit embeddings.
+// admitQueuedNode decides at the call what the live path would decide, from
+// inputs no queued operation ahead can change: the node's temporal currency
+// (returned, and installed as decided) and the dimension rule for its
+// explicit embeddings. The index flags are read at install, by the node's
+// turn; at the call only while no setting change is queued. A node carrying
+// a vector waits while its dimension decision depends on the operations
+// ahead (vectorNeedsOrderedDecision).
 func (s *Service) admitQueuedNode(node *storage.Node) (current, wait bool, err error) {
-	if !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
+	pending := s.settingChangeQueued()
+	if !pending && !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
 		return false, false, nil
 	}
 	current, err = s.shouldIndexNode(node)
 	if err != nil || !current {
 		return current, false, err
 	}
-	if firstVectorDimensions(node) == 0 || !s.vectorEnabled.Load() {
+	if firstVectorDimensions(node) == 0 || (!pending && !s.vectorEnabled.Load()) {
 		return true, false, nil
 	}
-	if s.vectorDimensionsUndecided(true) {
+	if s.vectorNeedsOrderedDecision() {
 		return true, true, nil
 	}
 	return true, false, s.checkEmbeddingDimensions(node)
 }
 
-// vectorDimensionsUndecided is the one owner of the question "may a vector
-// written now still choose the index dimensions, or be judged by a choice not
-// made yet?". It is true while the dimensions are not fixed, the index holds no
-// vectors and the build has not chosen them from a stored vector, and, when
-// pendingOps is set, while a queued administrative operation (the dimension
-// mode, the embedding space, the index flags) is not installed yet.
-func (s *Service) vectorDimensionsUndecided(pendingOps bool) bool {
+// vectorNeedsOrderedDecision is the one owner of the dimension decision for an
+// operation carrying a vector. Unless the dimensions are fixed, whether the
+// vector is accepted, and which dimensions it gives an empty index, depends on
+// the index state left by everything ahead of it in the sequence: the build's
+// own stored vectors (a forced rebuild clears the index first), a removal of
+// the last vector, a setting change. That state exists only once those are
+// installed, so the operation waits for the build and the live path decides
+// it in order. With fixed dimensions the decision depends only on the vector
+// and is made at the call, unless a setting change is queued.
+func (s *Service) vectorNeedsOrderedDecision() bool {
+	return !s.vectorDimensionsFixed.Load() || s.settingChangeQueued()
+}
+
+// settingChangeQueued reports a queued, not yet installed, change of a
+// setting an entry decision reads (the dimension mode, the embedding space,
+// the index flags).
+func (s *Service) settingChangeQueued() bool {
 	q := &s.buildWrites
 	q.mu.Lock()
-	adopted, pending := q.dimsAdopted, q.pendingOps
-	q.mu.Unlock()
-	if pendingOps && pending > 0 {
-		return true
-	}
-	return !s.vectorDimensionsFixed.Load() && s.EmbeddingCount() == 0 && !adopted
+	defer q.mu.Unlock()
+	return q.pendingOps > 0
 }
 
 // adoptBuildVectorDimensions is the build's choice of the index dimensions
-// from its first stored vector, for node batches and streamed edges alike. It
-// records that the dimensions are decided. Caller is the build.
+// from a stored vector, for node batches and streamed edges alike. Caller is
+// the build.
 func (s *Service) adoptBuildVectorDimensions(dims int) {
 	if dims <= 0 {
 		return
 	}
 	s.maybeAutoSetVectorDimensions(dims)
-	q := &s.buildWrites
-	q.mu.Lock()
-	q.dimsAdopted = true
-	q.mu.Unlock()
 }
 
 // adoptBuildBatchDimensions applies IndexNode's rule to a batch of a rebuild
@@ -328,19 +423,36 @@ func (s *Service) drainBuildWrites() {
 			break
 		}
 	}
-	writes := q.writes[:n:n]
-	q.writes = slices.Clone(q.writes[n:])
+	writes := q.takeLocked(n)
 	q.mu.Unlock()
 	s.applyBuildWrites(writes)
+}
+
+// takeLocked removes and returns the first n queued operations. Caller holds
+// q.mu.
+func (q *buildWriteQueue) takeLocked(n int) []deferredIndexWrite {
+	if n == 0 {
+		return nil
+	}
+	writes := q.writes[:n:n]
+	q.writes = slices.Clone(q.writes[n:])
+	for _, write := range writes {
+		q.bytes -= write.size
+	}
+	return writes
 }
 
 // applyBuildWrites installs operations in arrival order through the same
 // bodies the live entry points run. An ID is recorded as written only once
 // its write was installed: a write that failed leaves the build's storage copy
-// in force, as a failed write that waited would have. Caller owns buildMu.
+// in force, as a failed write that waited would have, and so does a write
+// its valid hook reports superseded. Caller owns buildMu.
 func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 	q := &s.buildWrites
 	for _, write := range writes {
+		if write.valid != nil && !write.valid() {
+			continue
+		}
 		var err error
 		switch {
 		case write.relationship:
@@ -411,46 +523,64 @@ func (s *Service) edgeWritten(id string) bool {
 // as the live path read the caller's node before returning. Every value the
 // index reads by reference is copied: labels, embedding vectors, and the
 // slices and maps inside properties (property vectors) and embedding metadata.
-// The struct copy keeps every other field.
-func copyQueuedNode(node *storage.Node) *storage.Node {
+// The struct copy keeps every other field. size is the payload the queue
+// retains for it.
+func copyQueuedNode(node *storage.Node) (copied *storage.Node, size int) {
 	if node == nil {
-		return nil
+		return nil, 0
 	}
-	copied := *node
-	copied.Labels = slices.Clone(node.Labels)
-	copied.Properties = cloneQueuedMap(node.Properties)
-	copied.EmbedMeta = cloneQueuedMap(node.EmbedMeta)
+	size = queuedEntryBytes
+	clone := *node
+	clone.Labels = slices.Clone(node.Labels)
+	for _, label := range node.Labels {
+		size += len(label)
+	}
+	clone.Properties = cloneQueuedMapSized(node.Properties, &size)
+	clone.EmbedMeta = cloneQueuedMapSized(node.EmbedMeta, &size)
 	if node.NamedEmbeddings != nil {
-		copied.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
+		clone.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
 		for name, embedding := range node.NamedEmbeddings {
-			copied.NamedEmbeddings[name] = slices.Clone(embedding)
+			clone.NamedEmbeddings[name] = slices.Clone(embedding)
+			size += len(name) + 4*len(embedding)
 		}
 	}
 	if node.ChunkEmbeddings != nil {
-		copied.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
+		clone.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
 		for i, embedding := range node.ChunkEmbeddings {
-			copied.ChunkEmbeddings[i] = slices.Clone(embedding)
+			clone.ChunkEmbeddings[i] = slices.Clone(embedding)
+			size += 4 * len(embedding)
 		}
 	}
-	return &copied
+	return &clone, size
 }
 
-func copyQueuedEdge(edge *storage.Edge) *storage.Edge {
+func copyQueuedEdge(edge *storage.Edge) (copied *storage.Edge, size int) {
 	if edge == nil {
-		return nil
+		return nil, 0
 	}
-	copied := *edge
-	copied.Properties = cloneQueuedMap(edge.Properties)
-	return &copied
+	size = queuedEntryBytes
+	clone := *edge
+	clone.Properties = cloneQueuedMapSized(edge.Properties, &size)
+	return &clone, size
 }
+
+// queuedEntryBytes is what the queue counts for an operation besides its
+// payload: the entry, the struct copy and the map headers, approximately.
+const queuedEntryBytes = 256
 
 func cloneQueuedMap(source map[string]any) map[string]any {
+	var size int
+	return cloneQueuedMapSized(source, &size)
+}
+
+func cloneQueuedMapSized(source map[string]any, size *int) map[string]any {
 	if source == nil {
 		return nil
 	}
 	copied := make(map[string]any, len(source))
 	for key, value := range source {
-		copied[key] = cloneQueuedValue(value)
+		*size += len(key) + 16
+		copied[key] = cloneQueuedValue(value, size)
 	}
 	return copied
 }
@@ -460,53 +590,72 @@ func cloneQueuedMap(source map[string]any) map[string]any {
 // places (BM25 text, property vectors, and the chunk-span fallback, which
 // JSON-encodes arbitrary values). Common types take the fast path; any other
 // slice, map, array, pointer, interface or struct is copied recursively.
-// Scalars and strings are immutable and shared.
-func cloneQueuedValue(value any) any {
+// Scalars and strings are immutable and shared. size accumulates the bytes
+// the copy retains, strings included.
+func cloneQueuedValue(value any, size *int) any {
 	switch v := value.(type) {
-	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		*size += 8
+		return value
+	case string:
+		*size += 16 + len(v)
 		return value
 	case []float32:
+		*size += 24 + 4*len(v)
 		return slices.Clone(v)
 	case []float64:
+		*size += 24 + 8*len(v)
 		return slices.Clone(v)
 	case []string:
+		*size += 24 + 16*len(v)
+		for _, item := range v {
+			*size += len(item)
+		}
 		return slices.Clone(v)
 	case []any:
+		*size += 24
 		copied := make([]any, len(v))
 		for i, item := range v {
-			copied[i] = cloneQueuedValue(item)
+			copied[i] = cloneQueuedValue(item, size)
 		}
 		return copied
 	case map[string]any:
-		return cloneQueuedMap(v)
+		return cloneQueuedMapSized(v, size)
 	default:
-		return cloneQueuedReflect(reflect.ValueOf(value)).Interface()
+		return cloneQueuedReflect(reflect.ValueOf(value), size).Interface()
 	}
 }
 
 // cloneQueuedReflect is cloneQueuedValue for any other type. A struct's
 // unexported fields are copied by value, since they cannot be set.
-func cloneQueuedReflect(v reflect.Value) reflect.Value {
+func cloneQueuedReflect(v reflect.Value, size *int) reflect.Value {
 	switch v.Kind() {
 	case reflect.Slice:
 		if v.IsNil() {
 			return v
 		}
+		*size += 24 + v.Len()*int(v.Type().Elem().Size())
 		copied := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
 		if queuedScalarKind(v.Type().Elem().Kind()) {
 			reflect.Copy(copied, v)
+			if v.Type().Elem().Kind() == reflect.String {
+				for i := range v.Len() {
+					*size += v.Index(i).Len()
+				}
+			}
 			return copied
 		}
 		for i := range v.Len() {
-			copied.Index(i).Set(cloneQueuedReflect(v.Index(i)))
+			copied.Index(i).Set(cloneQueuedReflect(v.Index(i), size))
 		}
 		return copied
 	case reflect.Array:
 		copied := reflect.New(v.Type()).Elem()
 		copied.Set(v)
+		*size += int(v.Type().Size())
 		if !queuedScalarKind(v.Type().Elem().Kind()) {
 			for i := range v.Len() {
-				copied.Index(i).Set(cloneQueuedReflect(v.Index(i)))
+				copied.Index(i).Set(cloneQueuedReflect(v.Index(i), size))
 			}
 		}
 		return copied
@@ -516,7 +665,8 @@ func cloneQueuedReflect(v reflect.Value) reflect.Value {
 		}
 		copied := reflect.MakeMapWithSize(v.Type(), v.Len())
 		for it := v.MapRange(); it.Next(); {
-			copied.SetMapIndex(it.Key(), cloneQueuedReflect(it.Value()))
+			*size += int(it.Key().Type().Size()) + 16
+			copied.SetMapIndex(it.Key(), cloneQueuedReflect(it.Value(), size))
 		}
 		return copied
 	case reflect.Pointer:
@@ -524,25 +674,31 @@ func cloneQueuedReflect(v reflect.Value) reflect.Value {
 			return v
 		}
 		copied := reflect.New(v.Type().Elem())
-		copied.Elem().Set(cloneQueuedReflect(v.Elem()))
+		*size += int(v.Type().Elem().Size())
+		copied.Elem().Set(cloneQueuedReflect(v.Elem(), size))
 		return copied
 	case reflect.Interface:
 		if v.IsNil() {
 			return v
 		}
 		copied := reflect.New(v.Type()).Elem()
-		copied.Set(cloneQueuedReflect(v.Elem()))
+		copied.Set(cloneQueuedReflect(v.Elem(), size))
 		return copied
 	case reflect.Struct:
 		copied := reflect.New(v.Type()).Elem()
 		copied.Set(v)
+		*size += int(v.Type().Size())
 		for i := range v.NumField() {
 			if v.Type().Field(i).IsExported() {
-				copied.Field(i).Set(cloneQueuedReflect(v.Field(i)))
+				copied.Field(i).Set(cloneQueuedReflect(v.Field(i), size))
 			}
 		}
 		return copied
+	case reflect.String:
+		*size += v.Len()
+		return v
 	default:
+		*size += int(v.Type().Size())
 		return v
 	}
 }
