@@ -3819,26 +3819,61 @@ func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
 	}
 }
 
-func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
+// readStoredRelationships reads the stored relationships for the build's
+// relationship phase at the point where the build reads its node snapshot, so
+// both phases see storage at one point and every write handed over after it
+// (IndexEdge, RemoveEdge, an index-flag change, a refresh) is installed after
+// it, in order, as for nodes. It keeps what the phase reads: each edge's ID,
+// type and endpoints, and its vector-shaped properties; no other property
+// value is retained.
+func (s *Service) readStoredRelationships(ctx context.Context) ([]*storage.Edge, error) {
 	if s == nil || !s.vectorEnabled.Load() {
-		return nil
+		return nil, nil
 	}
-	return storage.StreamEdgesWithFallback(ctx, s.engine, 1000, func(edge *storage.Edge) error {
+	var edges []*storage.Edge
+	err := storage.StreamEdgesWithFallback(ctx, s.engine, 1000, func(edge *storage.Edge) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// Writes handed over meanwhile are applied first; an edge one of them
-		// wrote keeps that write rather than this stream's copy.
+		kept := &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+		if edge.Properties != nil {
+			kept.Properties = make(map[string]any)
+			for key, value := range edge.Properties {
+				// Kept as the index stores it, converted once.
+				if vec := toFloat32SliceAny(value); len(vec) > 0 {
+					kept.Properties[key] = vec
+				}
+			}
+		}
+		edges = append(edges, kept)
+		return nil
+	})
+	return edges, err
+}
+
+// buildRelationshipVectorIndexes applies the stored relationships the build
+// read with its node snapshot (readStoredRelationships). Writes handed over
+// meanwhile are applied first; an edge one of them wrote keeps that write
+// rather than this copy.
+func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, edges []*storage.Edge) error {
+	if s == nil || !s.vectorEnabled.Load() {
+		return nil
+	}
+	for i, edge := range edges {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		edges[i] = nil // released as the phase goes
 		s.drainBuildWrites()
 		if s.edgeWritten(string(edge.ID)) {
-			return nil
+			continue
 		}
 		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		_ = s.indexEdgeLocked(edge)
 		s.indexMu.Unlock()
-		return nil
-	})
+	}
+	return nil
 }
 
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
@@ -4247,6 +4282,13 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		return nil
 	}
 
+	// The relationship phase reads storage where the node phase does, before
+	// any write handed over is installed (readStoredRelationships).
+	relationships, readErr := s.readStoredRelationships(ctx)
+	if readErr != nil {
+		return readErr
+	}
+
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
 	if vectorPath != "" && !resumeVectors {
 		_ = security.RemoveRootedPath(vectorPath + ".vec")
@@ -4387,7 +4429,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.logPrintf("📊 Indexed %d total nodes", count)
 		s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 		s.setBuildPhase("iterating_relationship_vectors")
-		if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
+		if err := s.buildRelationshipVectorIndexes(ctx, relationships); err != nil {
 			return err
 		}
 		// The population is complete: every queued operation, administrative
@@ -4506,7 +4548,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.logPrintf("📊 Indexed %d total nodes", count)
 	s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 	s.setBuildPhase("iterating_relationship_vectors")
-	if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
+	if err := s.buildRelationshipVectorIndexes(ctx, relationships); err != nil {
 		return err
 	}
 	// The population is complete: every queued operation, administrative ones
