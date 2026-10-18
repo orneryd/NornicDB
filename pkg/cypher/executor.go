@@ -369,6 +369,12 @@ type StorageExecutor struct {
 	nodeLookupCache   map[string]*storage.Node
 	nodeLookupCacheMu *sync.RWMutex
 
+	// readOnlyQueryNodes is set on the clone that runs an auto-commit
+	// statement which cannot write (readsQueryNodesWithoutVectors): its row
+	// nodes are read without vectors (getQueryNode). Never set on an
+	// executor that writes outside a transaction; clones don't inherit it.
+	readOnlyQueryNodes bool
+
 	// deferFlush when true, writes are not auto-flushed (Bolt layer handles it)
 	deferFlush bool
 
@@ -1627,7 +1633,14 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 
-	// Read-only operations don't need transaction wrapping
+	// Read-only operations don't need transaction wrapping. One that cannot
+	// write reads its row nodes without vectors, on a clone so concurrent
+	// statements of this executor keep their own reads.
+	if e.readsQueryNodesWithoutVectors(info) {
+		readExec := e.cloneWithStorage(e.storage)
+		readExec.readOnlyQueryNodes = true
+		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 

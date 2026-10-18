@@ -1129,12 +1129,19 @@ func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, includ
 // decodeNodeWithEmbeddings deserializes a Node and loads separately stored embeddings from transaction.
 // Works in both View and Update transactions (only reads embeddings).
 func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, nodeID NodeID) (*Node, error) {
+	return b.decodeNodeEmbeddingState(txn, data, nodeID, true)
+}
+
+// decodeNodeEmbeddingState is decodeNodeWithEmbeddings; with vectors false
+// it settles the embedding metadata without reading a stored chunk vector
+// (loadNodeEmbeddingState).
+func (b *BadgerEngine) decodeNodeEmbeddingState(txn *badger.Txn, data []byte, nodeID NodeID, vectors bool) (*Node, error) {
 	namespace, _, _ := ParseDatabasePrefix(string(nodeID))
 	node, err := b.decodeNode(namespace, data)
 	if err != nil {
 		return nil, err
 	}
-	return b.loadNodeEmbeddings(txn, node, nodeID)
+	return b.loadNodeEmbeddingState(txn, node, nodeID, vectors)
 }
 
 // loadNodeEmbeddings hydrates separately stored chunk vectors into a decoded
