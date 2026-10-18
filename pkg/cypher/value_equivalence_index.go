@@ -88,6 +88,11 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 	if _, fields := toStringAnyMap(value); fields {
 		return nil, false
 	}
+	// Temporal keys stay unboxed in their typed map/hash path. Keep the common
+	// scalar fast path above free of temporal extraction.
+	if _, temporal := temporalEqualityParts(value); temporal {
+		return nil, false
+	}
 	return cypherEncodedKey(cypherEquivalenceKey(value)), true
 }
 
@@ -101,10 +106,10 @@ func mixCypherHash(hash, value uint64) uint64 {
 // combined commutatively, independently of insertion/iteration order. A hash
 // only selects a bucket; cypherValuesEquivalent checks collisions.
 func cypherEquivalenceHash(value interface{}) uint64 {
-	if key, temporal := temporalEqualityParts(value); temporal {
+	if key, scalar := cypherComparableKey(value); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
-	if key, scalar := cypherComparableKey(value); scalar {
+	if key, temporal := temporalEqualityParts(value); temporal {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
 	if value, bytes := value.([]byte); bytes {
@@ -128,13 +133,13 @@ func cypherEquivalenceHash(value interface{}) uint64 {
 // cypherValuesEquivalent is DISTINCT's structural equality: null equals
 // null, numbers compare exactly across types, and each NaN remains separate.
 func cypherValuesEquivalent(left, right interface{}) bool {
-	if equal, temporal := compareTemporalValues(left, right); temporal {
-		return equal
-	}
 	leftKey, leftScalar := cypherComparableKey(left)
 	rightKey, rightScalar := cypherComparableKey(right)
 	if leftScalar || rightScalar {
 		return leftScalar && rightScalar && leftKey == rightKey
+	}
+	if equal, temporal := compareTemporalValues(left, right); temporal {
+		return equal
 	}
 	leftBytes, leftIsBytes := left.([]byte)
 	rightBytes, rightIsBytes := right.([]byte)
@@ -184,6 +189,9 @@ type cypherValueIndex struct {
 }
 
 func (index *cypherValueIndex) add(value interface{}) (position int, existed bool) {
+	if key, scalar := cypherComparableKey(value); scalar {
+		return index.addComparable(key)
+	}
 	if key, temporal := temporalEqualityParts(value); temporal {
 		if position, existed = index.temporal[key]; existed {
 			return position, true
@@ -196,23 +204,18 @@ func (index *cypherValueIndex) add(value interface{}) (position int, existed boo
 		index.count++
 		return position, false
 	}
-	key, scalar := cypherComparableKey(value)
-	if !scalar {
-		return index.addTupleValues(cypherEquivalenceHash(value), []interface{}{value})
-	}
-	return index.addComparable(key)
+	return index.addTupleValues(cypherEquivalenceHash(value), []interface{}{value})
 }
 
 // find is the position of the value the index holds that is equivalent to
 // value, if it holds one; it adds nothing.
 func (index *cypherValueIndex) find(value interface{}) (position int, found bool) {
-	if key, temporal := temporalEqualityParts(value); temporal {
-		position, found = index.temporal[key]
+	if key, scalar := cypherComparableKey(value); scalar {
+		position, found = index.single[key]
 		return position, found
 	}
-	key, scalar := cypherComparableKey(value)
-	if scalar {
-		position, found = index.single[key]
+	if key, temporal := temporalEqualityParts(value); temporal {
+		position, found = index.temporal[key]
 		return position, found
 	}
 	for _, candidate := range index.tuples[cypherEquivalenceHash(value)] {
