@@ -348,6 +348,9 @@ func (s *Service) SearchTextContinuation(
 	}
 	lastDepth := ownedOptions.Limit
 	nonGrowing := 0
+	// rows is the stream's prefix: append-only (a truncation to max_results
+	// only reslices it), so an expansion boxes just its new results.
+	rows := initialRows
 	expand := func(expandCtx context.Context, depth int) ([][]any, bool, error) {
 		// A candidate budget is not evidence that retrieval is exhausted. Fail
 		// explicitly when no deeper supported request can be made. max_results
@@ -368,10 +371,11 @@ func (s *Service) SearchTextContinuation(
 		// indexes, so it returned every candidate it could find.
 		indexed := s.EmbeddingCount() + s.FulltextDocCount()
 		fullDepth := indexed > 0 && lastDepth >= indexed
-		// Two deeper searches added nothing: rather than doubling through
-		// more of them, search as deep as everything indexed at once. That
-		// search finds what remains or settles that nothing does.
-		if nonGrowing >= 2 && indexed > depth {
+		// A deeper search added nothing: rather than doubling through more
+		// of them, search as deep as everything indexed at once. That search
+		// finds what remains or settles that nothing does; the plateau only
+		// schedules it and never ends the stream.
+		if nonGrowing >= 1 && indexed > depth {
 			depth = min(indexed, depthLimit)
 		}
 		expandedOptions := cloneContinuationSearchOptions(&ownedOptions)
@@ -403,6 +407,7 @@ func (s *Service) SearchTextContinuation(
 			state.seen[id] = struct{}{}
 			grew = true
 			state.results = append(state.results, compactContinuationResult(result))
+			rows = append(rows, []any{state.results[len(state.results)-1]})
 		}
 		if grew {
 			nonGrowing = 0
@@ -416,13 +421,14 @@ func (s *Service) SearchTextContinuation(
 		if continuationMaxResultsReached(maxResults, len(state.results), response.RetrievalExhausted, candidateBudgetReached) {
 			if len(state.results) > maxResults {
 				state.results = state.results[:maxResults]
+				rows = rows[:maxResults]
 			}
 			state.maxResultsReached = true
 		}
 		exhausted := response.RetrievalExhausted ||
 			candidateBudgetReached ||
 			state.maxResultsReached
-		return continuationRows(state.results), exhausted, nil
+		return rows, exhausted, nil
 	}
 	stream, err := resultstream.NewProgressive(initialRows, initialExhausted, ownedOptions.Limit, expand)
 	if err != nil {
