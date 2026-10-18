@@ -323,11 +323,10 @@ func (r *MultiRegionReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown stops the replicator.
 func (r *MultiRegionReplicator) Shutdown() error {
-	if r.closed.Load() {
+	if !r.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
-	r.closed.Store(true)
 	close(r.stopCh)
 
 	// Wait for cross-region replication to stop

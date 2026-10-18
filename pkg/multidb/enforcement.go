@@ -52,6 +52,7 @@ import (
 	"sync"
 	"time"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -371,10 +372,10 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 	return nodeSize, edgeSize, nil
 }
 
-// calculateNodeSize calculates the ACTUAL serialized size of a node using gob encoding.
-//
-// This matches the exact storage format used by BadgerEngine - no estimation, this is the real size.
-// The size returned is the exact number of bytes that will be stored on disk.
+// calculateNodeSize measures the legacy gob-based logical byte quota. Persistent
+// bodies use msgpack; this counter is not the physical Badger/WAL footprint.
+// Empty and nil properties represent the same propertyless entity across
+// point/stream readers and staged writes, so they must have one quota size.
 //
 // Example:
 //
@@ -390,6 +391,11 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 //	size, err := calculateNodeSize(node)
 //	// size is the exact byte count that will be stored
 func calculateNodeSize(node *storage.Node) (int64, error) {
+	if node != nil && node.Properties != nil && len(node.Properties) == 0 {
+		canonical := *node
+		canonical.Properties = nil
+		node = &canonical
+	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(node); err != nil {
@@ -398,10 +404,7 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 	return int64(buf.Len()), nil
 }
 
-// calculateEdgeSize calculates the ACTUAL serialized size of an edge using gob encoding.
-//
-// This matches the exact storage format used by BadgerEngine - no estimation, this is the real size.
-// The size returned is the exact number of bytes that will be stored on disk.
+// calculateEdgeSize uses the same canonical logical quota model as nodes.
 //
 // Example:
 //
@@ -418,6 +421,11 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 //	size, err := calculateEdgeSize(edge)
 //	// size is the exact byte count that will be stored
 func calculateEdgeSize(edge *storage.Edge) (int64, error) {
+	if edge != nil && edge.Properties != nil && len(edge.Properties) == 0 {
+		canonical := *edge
+		canonical.Properties = nil
+		edge = &canonical
+	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(edge); err != nil {
@@ -446,10 +454,11 @@ func (c *databaseLimitChecker) CheckQueryLimits(ctx context.Context) (context.Co
 		c.activeQueriesMu.Unlock()
 	}
 
-	// Create context with timeout if limit is set
+	// Create context with timeout if limit is set. Its cause names the
+	// database's limit as the deadline that ended the statement.
 	var cancel context.CancelFunc
 	if queryLimits.MaxQueryTime > 0 {
-		ctx, cancel = context.WithTimeout(ctx, queryLimits.MaxQueryTime)
+		ctx, cancel = context.WithTimeoutCause(ctx, queryLimits.MaxQueryTime, nornicerrors.ErrDatabaseQueryTimeLimit)
 	} else {
 		cancel = func() {}
 	}

@@ -105,10 +105,13 @@ func (s *Session) handleRun(data []byte) error {
 	// Pick the effective timeout: client tx_timeout wins over
 	// server-side BoltStatementTimeout (Neo4j semantics — the driver's
 	// per-call cap is authoritative; the server cap is the fallback
-	// for clients that didn't set one).
+	// for clients that didn't set one). The deadline's cause names its
+	// owner, so a statement it ends reports that owner's timeout (#1339).
 	var runTimeout time.Duration
+	runTimeoutCause := nornicerrors.ErrServerStatementTimeout
 	if txTimeout, ok := metadata["tx_timeout"].(int64); ok && txTimeout > 0 {
 		runTimeout = time.Duration(txTimeout) * time.Millisecond
+		runTimeoutCause = nornicerrors.ErrClientTransactionTimeout
 	} else if s.server != nil && s.server.config.BoltStatementTimeout > 0 {
 		runTimeout = s.server.config.BoltStatementTimeout
 	}
@@ -216,7 +219,7 @@ func (s *Session) handleRun(data []byte) error {
 	var ctx context.Context
 	var runCancel context.CancelFunc
 	if runTimeout > 0 {
-		ctx, runCancel = context.WithTimeout(parentCtx, runTimeout)
+		ctx, runCancel = context.WithTimeoutCause(parentCtx, runTimeout, runTimeoutCause)
 	} else {
 		ctx, runCancel = context.WithCancel(parentCtx)
 	}
@@ -248,6 +251,9 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	} else {
 		result, err = executor.Execute(ctx, query, params)
+		// Bolt owns this deadline, so it marks the timeout for any executor,
+		// not only one that marks it itself.
+		err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
 	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
 	// defer remains the panic/early-return safety net; finishRun is idempotent.
@@ -1228,7 +1234,7 @@ func (s *Session) handleCommit(data []byte) error {
 	// executor, so a COMMIT that starts before the deadline remains the sole
 	// terminal owner even if storage work crosses the deadline.
 	if txExec != nil {
-		ctx := context.Background()
+		ctx := s.txLifecycle.commitContext()
 		commitCallStarted = true
 		commitCallErr = txExec.CommitTransaction(ctx)
 		commitCallReturned = true
