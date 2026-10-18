@@ -225,6 +225,25 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
+	// An acknowledged generation must land before its namespace is removed:
+	// otherwise the overlay survives DROP and replay resurrects its records
+	// and derived counts after recreation. Replay can call listeners, so drain
+	// outside the exclusive barrier, then recheck for an ACK that raced it.
+	for {
+		if err := b.FlushWriteBehind(); err != nil {
+			return 0, 0, err
+		}
+		release, err := b.beginSchemaWrite()
+		if err != nil {
+			return 0, 0, err
+		}
+		if b.writeBehind != nil && b.writeBehind.PendingOps() != 0 {
+			release()
+			continue
+		}
+		defer release()
+		break
+	}
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 

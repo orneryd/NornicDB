@@ -32,6 +32,8 @@ func openTypedCountScope(t *testing.T, dir string, buffered bool) *typedCountSco
 	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), &storage.WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
 	engine := storage.NewWALEngine(base, wal)
+	_, err = storage.RecoverBufferedCommits(base, wal)
+	require.NoError(t, err)
 	manager, err := multidb.NewDatabaseManager(engine, nil)
 	require.NoError(t, err)
 	f := &typedCountScopeFixture{base: base, engine: engine, manager: manager}
