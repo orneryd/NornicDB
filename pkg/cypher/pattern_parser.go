@@ -49,7 +49,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 )
 
@@ -88,17 +87,16 @@ func containsReservedKeyword(s string) bool {
 //
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
-func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
-	info := nodePatternInfo{
-		labels:     []string{},
-		properties: make(map[string]interface{}),
-	}
+func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) (nodePatternInfo, error) {
 	head, props := splitNodePatternProperties(pattern)
-	if props != "" {
-		info.properties = e.parsePropertyMap(ctx, props, true)
+	info := nodePatternInfo{labels: []string{}}
+	var err error
+	info.properties, err = e.parsePropertyMap(ctx, props, true)
+	if err != nil {
+		return nodePatternInfo{}, err
 	}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
-	return info
+	return info, nil
 }
 
 // splitNodePatternProperties strips the outer parentheses of a node pattern
@@ -142,44 +140,12 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
-func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
+func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) (map[string]interface{}, error) {
 	return e.parsePropertyMap(ctx, propsStr, false)
 }
 
-func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) map[string]interface{} {
-	props := make(map[string]interface{})
-
-	// Remove outer braces
-	propsStr = strings.TrimSpace(propsStr)
-	if strings.HasPrefix(propsStr, "{") && strings.HasSuffix(propsStr, "}") {
-		propsStr = propsStr[1 : len(propsStr)-1]
-	}
-	propsStr = strings.TrimSpace(propsStr)
-
-	if propsStr == "" {
-		return props
-	}
-
-	// Parse key-value pairs using a state machine that respects quotes, brackets, and nested structures
-	pairs := e.splitPropertyPairs(propsStr)
-
-	for _, pair := range pairs {
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 {
-			continue
-		}
-
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		valueStr := strings.TrimSpace(pair[colonIdx+1:])
-
-		value := e.parsePropertyValue(ctx, valueStr)
-		if value == nil && !retainNull {
-			continue
-		}
-		props[key] = value
-	}
-
-	return props
+func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, propsStr, e.fabricRecordBindings, retainNull, false)
 }
 
 func normalizePropertyKey(key string) string {
@@ -197,66 +163,7 @@ func normalizePropertyKey(key string) string {
 }
 
 func findTopLevelMapKeyValueSeparator(pair string) int {
-	depth := 0
-	inSingle := false
-	inDouble := false
-	inBacktick := false
-
-	for i := 0; i < len(pair); i++ {
-		ch := pair[i]
-
-		switch {
-		case inBacktick:
-			if ch == '`' {
-				if i+1 < len(pair) && pair[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-		case inSingle:
-			if ch == '\'' {
-				if i+1 < len(pair) && pair[i+1] == '\'' {
-					i++
-					continue
-				}
-				if !isBackslashEscaped(pair, i) {
-					inSingle = false
-				}
-			}
-		case inDouble:
-			if ch == '"' {
-				if i+1 < len(pair) && pair[i+1] == '"' {
-					i++
-					continue
-				}
-				if !isBackslashEscaped(pair, i) {
-					inDouble = false
-				}
-			}
-		default:
-			switch ch {
-			case '\'':
-				inSingle = true
-			case '"':
-				inDouble = true
-			case '`':
-				inBacktick = true
-			case '{', '[', '(':
-				depth++
-			case '}', ']', ')':
-				if depth > 0 {
-					depth--
-				}
-			case ':':
-				if depth == 0 {
-					return i
-				}
-			}
-		}
-	}
-
-	return -1
+	return findTopLevelOperator(pair, ":", false, true)
 }
 
 func isBackslashEscaped(s string, idx int) bool {
@@ -268,77 +175,6 @@ func isBackslashEscaped(s string, idx int) bool {
 		backslashes++
 	}
 	return backslashes%2 == 1
-}
-
-// splitPropertyPairs splits a property string into key:value pairs,
-// respecting quotes, brackets, and nested braces.
-//
-// # Parameters
-//
-//   - propsStr: The property pairs string (without outer braces)
-//
-// # Returns
-//
-//   - Slice of "key: value" strings
-//
-// # Example
-//
-//	splitPropertyPairs("name: 'Alice', age: 30")
-//	// Returns: ["name: 'Alice'", "age: 30"]
-//
-//	splitPropertyPairs("tags: ['a', 'b'], data: {nested: true}")
-//	// Returns: ["tags: ['a', 'b']", "data: {nested: true}"]
-func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
-	var pairs []string
-	var current strings.Builder
-	depth := 0 // Track [], {} nesting
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range propsStr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote (look back for \)
-				escaped := false
-				if i > 0 {
-					// Count consecutive backslashes before this quote
-					backslashes := 0
-					for j := i - 1; j >= 0 && propsStr[j] == '\\'; j-- {
-						backslashes++
-					}
-					escaped = backslashes%2 == 1
-				}
-				if !escaped {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '[' || c == '{' || c == '(') && !inQuote:
-			depth++
-			current.WriteRune(c)
-		case (c == ']' || c == '}' || c == ')') && !inQuote:
-			depth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && depth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				pairs = append(pairs, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	// Add final pair
-	if s := strings.TrimSpace(current.String()); s != "" {
-		pairs = append(pairs, s)
-	}
-
-	return pairs
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.
@@ -367,100 +203,8 @@ func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 //	parsePropertyValue("30")       // int64(30)
 //	parsePropertyValue("true")     // true
 //	parsePropertyValue("[1, 2]")   // []interface{}{int64(1), int64(2)}
-func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) interface{} {
-	valueStr = strings.TrimSpace(valueStr)
-
-	if valueStr == "" {
-		return nil
-	}
-
-	// Handle $param and dotted $param.path references directly so typed values
-	// survive intact during pattern parsing.
-	if v, ok := resolveParamPathRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
-	}
-	if v, ok := resolveContextPathRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
-	}
-
-	// Handle bare $param references directly so the typed value (e.g. []string,
-	// []float64) survives intact. Without this, the param-skip in
-	// substituteParams leaves "$name" as literal text here and the
-	// remaining branches would either misparse it or fall through to the
-	// invalid-value catch-all.
-	if v, ok := resolveDirectParamRef(ctx, valueStr); ok {
-		return normalizePropValue(v)
-	}
-
-	// Handle null
-	if strings.EqualFold(valueStr, "null") {
-		return nil
-	}
-
-	// Handle quoted strings — but only when the value is exactly one quoted
-	// literal. A leading quote is not enough: 'a' + 'b' is an expression, and
-	// decoding it as one string produced "a' + 'b" instead of "ab" (#514).
-	if len(valueStr) >= 2 && (valueStr[0] == '\'' || valueStr[0] == '"') {
-		if end := skipCypherQuotedText(valueStr, 0, valueStr[0]); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
-			if decoded, ok := decodeCypherQuotedString(valueStr); ok {
-				return decoded
-			}
-		}
-	}
-
-	// Handle booleans
-	lowerVal := lowerASCII(valueStr)
-	if lowerVal == "true" {
-		return true
-	}
-	if lowerVal == "false" {
-		return false
-	}
-
-	// Handle integers
-	if intVal, err := strconv.ParseInt(valueStr, 10, 64); err == nil {
-		return intVal
-	}
-
-	// Handle floats
-	if floatVal, err := strconv.ParseFloat(valueStr, 64); err == nil {
-		return floatVal
-	}
-
-	// Handle arrays: one list literal. A subscript of one (['a', 'b'][i]) is
-	// an expression, evaluated below.
-	if isListLiteral(valueStr) {
-		if _, _, _, _, comprehension := parseListComprehension(valueStr[1 : len(valueStr)-1]); comprehension {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
-			return value
-		}
-		return e.parseArrayValue(ctx, valueStr)
-	}
-
-	// Handle nested maps (rare in properties, but possible)
-	if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
-		return e.parseProperties(ctx, valueStr)
-	}
-
-	// Check for malformed values (unquoted colon indicates injection attempt or syntax error)
-	if findTopLevelMapKeyValueSeparator(valueStr) >= 0 && !strings.HasPrefix(valueStr, "{") {
-		// Return a special marker that will trigger validation error
-		return invalidPropertyValue{raw: valueStr}
-	}
-	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
-		return normalizePropValue(value)
-	}
-
-	// Bound loop variables (FOREACH x, UNWIND rows): a bare identifier that
-	// exists in the value scope resolves to its real Go value before the
-	// string fallback. This is the bound-child path; the query-text
-	// substitution path never leaves bare identifiers here.
-	if v, ok := e.boundValue(ctx, valueStr); ok {
-		return normalizePropValue(v)
-	}
-
-	// Otherwise return as string (handles unquoted identifiers, etc.)
-	return valueStr
+func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) (interface{}, error) {
+	return e.checkedPropertyExpression(ctx, valueStr, e.fabricRecordBindings)
 }
 
 func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {
@@ -507,13 +251,16 @@ type invalidPropertyValue struct {
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
-func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
-	elements := e.splitArrayElements(strings.TrimSpace(arrayStr[1 : len(arrayStr)-1]))
-	value, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
-		return e.parsePropertyValue(ctx, strings.TrimSpace(elements[i])), true, getExpressionFailure(ctx)
-	})
-	result, _ := value.([]interface{})
-	return result
+func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) ([]interface{}, error) {
+	value, err := e.checkedPropertyExpression(ctx, arrayStr, e.fabricRecordBindings)
+	if err != nil {
+		return nil, err
+	}
+	array, ok := value.([]interface{})
+	if !ok {
+		return nil, unresolvedExpressionError(arrayStr)
+	}
+	return array, nil
 }
 
 // splitArrayElements splits array contents by comma, respecting nested structures and quotes.
@@ -586,4 +333,11 @@ func looksLikeFunctionCall(s string) bool {
 	// reader parseFunctionCallWS and dispatch use.
 	_, ok := canonicalCallableName(s[:parenIdx])
 	return ok
+}
+
+// nodePatternStructure reads syntax only; it does not materialize property values.
+func nodePatternStructure(pattern string) nodePatternInfo {
+	head, _ := splitNodePatternProperties(pattern)
+	variable, labels, err := parseNodeHead(head)
+	return nodePatternInfo{variable: variable, labels: labels, labelErr: err}
 }

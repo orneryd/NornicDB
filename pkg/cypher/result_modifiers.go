@@ -103,7 +103,7 @@ type intModifier struct {
 }
 
 func parseIntModifierText(modifiers, keyword string) intModifier {
-	idx := findKeywordIndex(modifiers, keyword)
+	idx := topLevelKeywordIndex(modifiers, keyword)
 	if idx == -1 {
 		return intModifier{}
 	}
@@ -113,7 +113,7 @@ func parseIntModifierText(modifiers, keyword string) intModifier {
 		if otherKeyword == keyword {
 			continue
 		}
-		if kidx := findKeywordIndex(kwPart, otherKeyword); kidx != -1 && kidx < nextKw {
+		if kidx := topLevelKeywordIndex(kwPart, otherKeyword); kidx != -1 && kidx < nextKw {
 			nextKw = kidx
 		}
 	}

@@ -82,44 +82,11 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
-	if mayContainSubqueryExpression(expr) {
-		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-			return coerceToUnwindItems(value), true
-		}
-	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true
 	}
-	if matchFuncStartAndSuffix(expr, "range") {
-		args := e.splitFunctionArgs(extractFuncArgs(expr, "range"))
-		if len(args) < 2 || len(args) > 3 {
-			return nil, false
-		}
-		arguments := make([]interface{}, len(args))
-		for index, argument := range args {
-			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(argument), row)
-			if !resolved {
-				return nil, false
-			}
-			arguments[index] = value
-		}
-		budget := expressionBudgetOf(ctx)
-		items, err := evaluateCypherRange(&budget, arguments)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil, false
-		}
-		return items, true
-	}
-	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return coerceToUnwindItems(value), true
-	}
-
-	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
-	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedString(expr) {
-		return nil, false
-	}
-	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {
+	value, err := e.checkedPropertyExpression(ctx, expr, row)
+	if err != nil {
 		return nil, false
 	}
 	return coerceToUnwindItems(value), true
@@ -135,28 +102,20 @@ func parseLiteralMapForPipeline(s string) map[string]interface{} {
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
 		return nil
 	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	if inner == "" {
-		return map[string]interface{}{}
+	expressions, err := parsePropertyExpressions(s)
+	if err != nil {
+		return nil
 	}
-	pairs := splitTopLevelComma(inner)
-	out := make(map[string]interface{}, len(pairs))
-	for _, pair := range pairs {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
+	out := make(map[string]interface{}, len(expressions))
+	for _, expression := range expressions {
+		value, literal := parseLiteralValueForPipeline(expression.expr)
+		if !literal {
 			return nil
 		}
-		k := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
-		vRaw := strings.TrimSpace(pair[colon+1:])
-		v, ok := parseLiteralValueForPipeline(vRaw)
-		if !ok {
-			return nil
-		}
-		out[k] = v
+		out[expression.key] = value
 	}
 	return out
 }
-
 func parseLiteralListForPipeline(s string) ([]interface{}, bool) {
 	s = strings.TrimSpace(s)
 	if !isListLiteral(s) {

@@ -99,11 +99,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			Storage:  e.storage,
 			Database: e.executionDatabaseName(ctx),
 			Eval: func(argExpr string) (interface{}, error) {
-				value := e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if err := getExpressionFailure(ctx); err != nil {
-					return nil, err
-				}
-				return value, nil
+				return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 			},
 			Now:      time.Now,
 			Graphs:   e,
@@ -399,115 +395,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// APOC Map Functions
 	// ========================================
 
-	// apoc.map.fromPairs uses the same nested-list reader on both evaluators.
-	if matchFuncStartAndSuffix(expr, "apoc.map.frompairs") {
-		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		return fromPairs(e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-	}
-
-	// apoc.map.merge(map1, map2) - merge two maps
-	if matchFuncStartAndSuffix(expr, "apoc.map.merge") {
-		inner := extractFuncArgs(expr, "apoc.map.merge")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 2 {
-			map1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			map2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			m1, ok1 := map1.(map[string]interface{})
-			m2, ok2 := map2.(map[string]interface{})
-			if ok1 && ok2 {
-				result := make(map[string]interface{})
-				for k, v := range m1 {
-					result[k] = v
-				}
-				for k, v := range m2 {
-					result[k] = v
-				}
-				return result
-			}
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.removeKey and apoc.map.removeKeys are registered functions
-	// (apoc_map_functions.go), dispatched above.
-
-	// apoc.map.setKey(map, key, value) - set key in map
-	if matchFuncStartAndSuffix(expr, "apoc.map.setkey") {
-		inner := extractFuncArgs(expr, "apoc.map.setkey")
-		args := e.splitFunctionArgs(inner)
-		if len(args) == 3 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			keyVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				if key, ok := keyVal.(string); ok {
-					result := make(map[string]interface{})
-					for k, v := range m {
-						result[k] = v
-					}
-					result[key] = value
-					return result
-				}
-			}
-		}
-		return map[string]interface{}{}
-	}
-
-	// apoc.map.clean(map, keys, values) - remove specified keys and entries with specified values
-	if matchFuncStartAndSuffix(expr, "apoc.map.clean") {
-		inner := extractFuncArgs(expr, "apoc.map.clean")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 1 {
-			mapVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			var keysToRemove []string
-			var valuesToRemove []interface{}
-
-			if len(args) >= 2 {
-				if keys, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
-					for _, k := range keys {
-						if ks, ok := k.(string); ok {
-							keysToRemove = append(keysToRemove, ks)
-						}
-					}
-				}
-			}
-			if len(args) >= 3 {
-				if vals, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
-					valuesToRemove = vals
-				}
-			}
-
-			if m, ok := mapVal.(map[string]interface{}); ok {
-				result := make(map[string]interface{})
-				for k, v := range m {
-					// Skip if key is in keysToRemove
-					skip := false
-					for _, kr := range keysToRemove {
-						if k == kr {
-							skip = true
-							break
-						}
-					}
-					// A null value goes, as in APOC (#1164).
-					if skip || v == nil {
-						continue
-					}
-					// Skip if value is in valuesToRemove
-					for _, vr := range valuesToRemove {
-						if apocSameValue(v, vr) {
-							skip = true
-							break
-						}
-					}
-					if !skip {
-						result[k] = v
-					}
-				}
-				return result
-			}
-		}
-		return map[string]interface{}{}
-	}
+	// APOC map functions use the registered value/null/error owner.
 
 	// ========================================
 	// String Functions
@@ -652,26 +540,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
-	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) interface{} {
-		return e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) (interface{}, bool, error) {
+		value := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		err := getExpressionFailure(ctx)
+		return value, err == nil, err
 	}, expr); handled {
-		if callErr != nil {
-			recordExpressionFailure(ctx, callErr)
-			return nil
-		}
-		if value == nil {
-			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
-				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				// An argument the evaluator can't resolve comes back as its own
-				// text; that is not a value to parse.
-				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
-					input = nil
-				}
-				if err := temporalConstructorError(function, input); err != nil {
-					recordExpressionFailure(ctx, err)
-				}
-			}
-		}
+		recordExpressionFailure(ctx, callErr)
 		return value
 	}
 
@@ -1166,8 +1040,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		if isFunctionCall(expr, function) {
 			inner := strings.TrimSpace(extractFuncArgs(expr, function))
 			value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			result, ok := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
-			if !ok {
+			result, err := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
 				return nil
 			}
 			return result
@@ -1197,37 +1072,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			return strings.EqualFold(actualType, typeName)
 		}
 		return false
-	}
-
-	// apoc.map.merge(map1, map2) - Merge two maps (map2 values override map1)
-	if isFunctionCall(expr, "apoc.map.merge") {
-		inner := extractFuncArgs(expr, "apoc.map.merge")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			map1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			map2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			return mergeMaps(map1, map2)
-		}
-		return nil
-	}
-
-	// apoc.map.fromPairs(list) - Create map from list of [key, value] pairs
-	if isFunctionCall(expr, "apoc.map.frompairs") {
-		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return fromPairs(listVal)
-	}
-
-	// apoc.map.fromLists(keys, values) - Create map from parallel lists
-	if isFunctionCall(expr, "apoc.map.fromlists") {
-		inner := extractFuncArgs(expr, "apoc.map.fromlists")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			keys := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			values := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			return fromLists(keys, values)
-		}
-		return nil
 	}
 
 	if v, ok := e.evaluateKnowledgePolicyFunction(ctx, expr, lowerExpr, nodes, rels); ok {

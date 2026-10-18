@@ -15,37 +15,9 @@ type revealScopeState struct {
 // hasRevealCall detects the presence of reveal(...) in the query text.
 func hasRevealCall(query string) bool {
 	for index := 0; index < len(query); {
-		switch query[index] {
-		case '\'', '"':
-			quote := query[index]
-			index++
-			for index < len(query) {
-				if query[index] == quote && !isBackslashEscaped(query, index) {
-					index++
-					break
-				}
-				index++
-			}
+		if end, skipped := skipCypherLexicalToken(query, index); skipped {
+			index = end
 			continue
-		case '`':
-			index++
-			for index < len(query) {
-				if query[index] == '`' {
-					if index+1 < len(query) && query[index+1] == '`' {
-						index += 2
-						continue
-					}
-					index++
-					break
-				}
-				index++
-			}
-			continue
-		case '/':
-			if end := queryCommentEnd(query, index); end >= 0 {
-				index = end
-				continue
-			}
 		}
 
 		name, next, ok := scanIdentifierToken(query, index)

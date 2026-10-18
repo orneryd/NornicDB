@@ -130,7 +130,7 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' {
+		if isCypherStringQuoteByte(expression[index]) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
 		}
@@ -143,8 +143,8 @@ func forEachSemanticCall(text string, visit func(name, normalized string, argume
 			index++
 			continue
 		}
-		procedure := expression[index] != '`' && strings.EqualFold(name, "CALL")
-		if procedure || expression[index] != '`' && strings.EqualFold(name, "USE") {
+		procedure := !isCypherBacktickByte(expression[index]) && strings.EqualFold(name, "CALL")
+		if procedure || !isCypherBacktickByte(expression[index]) && strings.EqualFold(name, "USE") {
 			start := queryGapEnd(expression, next)
 			called, end, named := scanIdentifierToken(expression, start)
 			if !named {
@@ -223,7 +223,7 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 			}
 			return expression[origin:end], end
 		}
-		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
+		if !normalizing && (dot != end || partStart != dot+1 || isCypherBacktickByte(expression[partStart])) {
 			normalized.WriteString(expression[origin:end])
 			normalizing = true
 		}
@@ -236,11 +236,5 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
-	quote := expression[start]
-	for index := start + 1; index < len(expression); index++ {
-		if expression[index] == quote && !isBackslashEscaped(expression, index) {
-			return index + 1
-		}
-	}
-	return len(expression)
+	return skipCypherQuotedText(expression, start, expression[start])
 }

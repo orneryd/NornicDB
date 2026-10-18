@@ -100,8 +100,8 @@ func nextQuantifiedGroup(pattern string, from int) (int, int, relationshipQuanti
 // k is read as).
 func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relationshipQuantifier, bool) {
 	for i := from; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
-		case '\'', '"', '`':
+		switch c := pattern[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '[', '{':
 			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
@@ -531,8 +531,8 @@ func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 func elementPredicateSpans(pattern string, from, to int) [][2]int {
 	var spans [][2]int
 	for index := from; index < to; index++ {
-		switch c := pattern[index]; c {
-		case '\'', '"', '`':
+		switch c := pattern[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(pattern, index, c) - 1
 		case '(', '[':
 			closeBy := map[byte]byte{'(': ')', '[': ']'}[c]

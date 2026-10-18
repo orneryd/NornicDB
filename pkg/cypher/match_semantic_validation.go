@@ -844,8 +844,8 @@ func maskPatternComprehensions(expression string) string {
 	}
 	var masked []byte
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, character) - 1
 			continue
 		case '[':
@@ -972,7 +972,7 @@ func validateExpressionPatternBindings(scope staticTypeScope, text string) error
 		return withPatternComprehensionBindings(withLocalTypes(scope, text, at), text, at)
 	}
 	for index := start; index < len(structure); index++ {
-		if structure[index] == '\'' || structure[index] == '"' || structure[index] == '`' {
+		if isCypherQuoteByte(structure[index]) {
 			index = skipCypherQuotedText(structure, index, structure[index]) - 1
 			continue
 		}
@@ -1033,8 +1033,8 @@ func validateBoundPatternKinds(scope matchSemanticScope, pattern string) error {
 func maskNestedScopeBodies(text string) string {
 	masked := []byte(maskSubqueryBodies(text))
 	for index := 0; index < len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		}
@@ -1238,7 +1238,7 @@ func projectionItemTermError(expression string) error {
 	if rest == "" || rest == expression[next:] {
 		return nil // the name alone, or followed directly by an operator
 	}
-	if c := rest[0]; isIdentByte(c) || c == '\'' || c == '"' || c == '`' || c == '$' {
+	if c := rest[0]; isIdentByte(c) || isCypherQuoteByte(c) || c == '$' {
 		token, _, _ := scanIdentifierToken(rest, 0)
 		if token == "" {
 			token = rest[:1]
@@ -1532,8 +1532,8 @@ func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
 func withPatternComprehensionBindings(scope staticTypeScope, text string, at int) staticTypeScope {
 	var added matchSemanticScope
 	for open := 0; open < at; open++ {
-		switch c := text[open]; c {
-		case '\'', '"', '`':
+		switch c := text[open]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			open = skipCypherQuotedText(text, open, c) - 1
 			continue
 		case '[':

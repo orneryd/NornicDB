@@ -512,18 +512,15 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	parenCount := 0
 	bracketCount := 0
 	braceCount := 0
-	inString := false
-	stringChar := byte(0)
 
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
-
-		if inString {
-			// A backtick-quoted name has no backslash escapes (a doubled
-			// backtick closes and reopens it); string literals do.
-			if c == stringChar && (c == '`' || !isBackslashEscaped(cypher, i)) {
-				inString = false
+		if isCypherQuoteByte(c) {
+			end, closed := scanCypherQuotedText(cypher, i, c)
+			if !closed {
+				return &classifiedCypherError{cause: localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil), code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
 			}
+			i = end - 1
 			continue
 		}
 		if c == '/' {
@@ -539,7 +536,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			// A dot other than a range's (1..2) starts a property key (n.k,
 			// n.`k`), a map projection's all-properties (.*) or a number's
 			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
+			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && !isCypherBacktickByte(cypher[next]) && cypher[next] != '*' {
 				token := ""
 				if next < len(cypher) {
 					token = cypher[next : next+1]
@@ -556,9 +553,6 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 
 		switch c {
-		case '"', '\'', '`':
-			inString = true
-			stringChar = c
 		case '(':
 			parenCount++
 		case ')':
@@ -591,14 +585,6 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	if braceCount != 0 {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
 	}
-	if inString {
-		return &classifiedCypherError{
-			cause:  localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil),
-			code:   "Neo.ClientError.Statement.SyntaxError",
-			detail: "UnexpectedSyntax",
-		}
-	}
-
 	e.markCachedValidSyntax(cypher, syntaxValidNornic)
 	return nil
 }
@@ -622,30 +608,20 @@ func hasAdjacentOperands(cypher string) bool {
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			index++
-		case c == '\'' || c == '"':
+		case isCypherStringQuoteByte(c):
 			if operandEnded {
 				return true
 			}
-			end := index + 1
-			for end < len(cypher) {
-				if cypher[end] == c && !isBackslashEscaped(cypher, end) {
-					if end+1 < len(cypher) && cypher[end+1] == c {
-						end += 2 // a doubled quote is an escaped quote
-						continue
-					}
-					break
-				}
-				end++
-			}
-			index = end + 1
+			end, _ := scanCypherQuotedText(cypher, index, c)
+			index = end
 			operandEnded = true
-		case c == '`':
-			end := strings.IndexByte(cypher[index+1:], '`')
-			if end < 0 {
+		case isCypherBacktickByte(c):
+			end, closed := scanCypherQuotedText(cypher, index, c)
+			if !closed {
 				return false
 			}
 			property := index > 0 && cypher[index-1] == '.'
-			index += end + 2
+			index = end
 			operandEnded = property
 		case c >= '0' && c <= '9':
 			if operandEnded {
@@ -732,7 +708,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 		return false
 	}
 	switch c := cypher[next]; {
-	case c == '\'' || c == '"' || (c >= '0' && c <= '9'):
+	case isCypherStringQuoteByte(c) || (c >= '0' && c <= '9'):
 	case c == '$':
 		// A $parameter after a node or relationship pattern's variable or
 		// label is its property map ((n:Label $props), [r $props]);

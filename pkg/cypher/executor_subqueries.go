@@ -297,7 +297,10 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			matchBody = strings.TrimSpace(matchBody[:whereIdx])
 		}
 
-		np := e.parseNodePattern(ctx, matchBody)
+		np, parseErr := e.parseNodePattern(ctx, matchBody)
+		if parseErr != nil {
+			return nil, parseErr
+		}
 		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
 			return nil, nil
 		}
@@ -567,7 +570,7 @@ func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	if scope.text == "*" {
 		return scope
 	}
-	parts := splitProcedureTopLevelComma(scope.text)
+	parts := splitTopLevelComma(scope.text)
 	scope.names = make([]string, 0, len(parts))
 	for _, part := range parts {
 		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
@@ -837,8 +840,8 @@ var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNW
 func leadingWithClause(text string) (clause string, followed bool) {
 	depth := 0
 	for index := len("WITH"); index < len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		case '(', '[', '{':
@@ -953,7 +956,7 @@ func branchLeadingWithImport(branch string, outer func(string) bool, collectName
 			continue
 		}
 		// A plain reference (the usual import) needs no expression scan.
-		if expression[0] != '`' && isSimpleIdentifier(expression) {
+		if !isCypherBacktickByte(expression[0]) && isSimpleIdentifier(expression) {
 			importing = outer(expression)
 			continue
 		}
@@ -1032,8 +1035,8 @@ func patternPartEnd(clause pipelineClause) int {
 // -1 when there is none.
 func firstVariableOccurrence(text, variable string) int {
 	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		}
@@ -1313,8 +1316,8 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 
 	for i := 0; i < len(trimmed); i++ {
 		ch := trimmed[i]
-		switch ch {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(ch) {
+		case cypherQuoteClass:
 			// A string or a backticked name (`union`) holds no UNION.
 			i = skipCypherQuotedText(trimmed, i, ch) - 1
 			continue
@@ -1782,37 +1785,14 @@ func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
 }
 
 func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
-	inSingle, inDouble, inBacktick := false, false, false
 	paren, bracket, brace := 0, 0, 0
 	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		ch := expr[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			paren++
 			continue
@@ -1855,33 +1835,13 @@ func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
 
 func indexTopLevelKeywordCallSubquery(s string, keyword string) int {
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
 			continue
 		}
+		ch := s[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1963,35 +1923,9 @@ func containsStandaloneIdentifier(expr, ident string) bool {
 	isWord := func(b byte) bool {
 		return isIdentByte(b)
 	}
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
 		if i+len(ident) > len(expr) {

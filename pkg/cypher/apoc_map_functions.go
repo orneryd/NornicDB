@@ -85,8 +85,8 @@ func apocMapArguments(ctx cypherfn.Context, function string, args []string) (map
 	if err != nil {
 		return nil, nil, err
 	}
-	if values[0] == nil {
-		return nil, nil, apocMapNullArgumentError(function, "map")
+	if _, err := apocMapNullInput(function, values); err != nil {
+		return nil, nil, err
 	}
 	entries, isMap := apocMapValue(values[0])
 	if !isMap {

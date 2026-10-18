@@ -48,16 +48,9 @@ func mayContainSubqueryExpression(expr string) bool {
 func findSubqueryExpressions(expr string) []subqueryExpression {
 	var found []subqueryExpression
 	for i := 0; i < len(expr); {
-		switch expr[i] {
-		case '\'', '"':
-			i = skipQuotedSemanticText(expr, i)
+		if end, skipped := skipCypherLexicalToken(expr, i); skipped {
+			i = end
 			continue
-		case '`':
-			if end := strings.IndexByte(expr[i+1:], '`'); end >= 0 {
-				i += end + 2
-				continue
-			}
-			return found
 		}
 		keyword, open, isSubquery := subqueryExpressionKeywordAt(expr, i)
 		if !isSubquery {
@@ -888,8 +881,8 @@ var patternMapsConstant = newBoundedCache[string, bool](1024, boundedCacheString
 func patternMapsAreConstantText(pattern string) bool {
 	depth := 0
 	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; c {
-		case '\'', '"', '`':
+		switch c := pattern[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(pattern, index, c) - 1
 		case '(', '[':
 			depth++
@@ -988,14 +981,10 @@ func chainVariablesBindEntities(matches *TraversalMatch, values map[string]inter
 func entityRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
 	values := pipelineRow(valueBindingsLayer(ctx, len(nodes)+len(rels)))
 	for name, node := range nodes {
-		if node != nil {
-			values[name] = node
-		}
+		values[name] = node
 	}
 	for name, relationship := range rels {
-		if relationship != nil {
-			values[name] = relationship
-		}
+		values[name] = relationship
 	}
 	return values
 }
@@ -1024,8 +1013,8 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 func patternHasInlineWhere(text string) bool {
 	depth := 0
 	for index := 0; index < len(text); index++ {
-		switch character := text[index]; character {
-		case '\'', '"', '`':
+		switch character := text[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, character) - 1
 		case '(', '[':
 			depth++

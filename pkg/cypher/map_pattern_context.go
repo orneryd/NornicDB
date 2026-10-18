@@ -18,7 +18,7 @@ func (context *mapPatternContext) insidePatternDelimiter(query string, end int) 
 	previous, prior := -1, -1
 	for index := 0; index < end; index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			prior, previous = previous, index
 			continue
@@ -211,7 +211,7 @@ func newMapPatternContext(query string) *mapPatternContext {
 	previous := -1
 	for index := 0; index < len(query); index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			previous = index
 			continue
@@ -281,7 +281,7 @@ func (context *mapPatternContext) scope(query string, start int) *mapPatternClau
 	// Invoke it at identifier starts once, never for every subsequent node.
 	for index := start; index < end; index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			continue
 		}

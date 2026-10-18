@@ -239,55 +239,14 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 	var scan comparisonChainScan
 	operandStart := 0
 	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
-	var quote byte
-	inLineComment, inBlockComment := false, false
 
 	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end - 1
+			continue
+		}
 		current := expression[index]
-		if inLineComment {
-			if current == '\n' || current == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if current == '*' && index+1 < len(expression) && expression[index+1] == '/' {
-				inBlockComment = false
-				index++
-			}
-			continue
-		}
-		if quote != 0 {
-			if current == '\\' && quote != '`' && index+1 < len(expression) {
-				index++
-				continue
-			}
-			if current == quote {
-				if index+1 < len(expression) && expression[index+1] == quote {
-					index++
-					continue
-				}
-				quote = 0
-			}
-			continue
-		}
-
-		if current == '/' && index+1 < len(expression) {
-			switch expression[index+1] {
-			case '/':
-				inLineComment = true
-				index++
-				continue
-			case '*':
-				inBlockComment = true
-				index++
-				continue
-			}
-		}
 		switch current {
-		case '\'', '"', '`':
-			quote = current
-			continue
 		case '(':
 			parenDepth++
 			continue
@@ -380,8 +339,11 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 	var scan comparisonChainScan
 	operandStart := 0
 	for index := 0; index < len(expression); index++ {
+		if _, quoted := skipCypherLexicalToken(expression, index); quoted {
+			return comparisonChainScan{}, false, true
+		}
 		switch expression[index] {
-		case '\'', '"', '`', '(', ')', '[', ']', '{', '}', ':':
+		case '(', ')', '[', ']', '{', '}', ':':
 			return comparisonChainScan{}, false, true
 		case '/':
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {

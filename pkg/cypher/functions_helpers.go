@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -32,8 +33,13 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
 func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
-	if nativeAPOCForeignGraphHandler(name, handler) {
+	if nativeAPOCForeignGraphHandler(name, handler) || nativeAPOCDigestHandler(name, handler) {
 		return nil, false, nil
+	}
+	if bundledAPOCMapHandler(name, handler, len(args)) {
+		if value, handled, err := apocMapNullResult(name, args); handled {
+			return value, true, err
+		}
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
@@ -65,10 +71,11 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {
-		evalArgs = append(evalArgs, e.evaluateExpressionWithContextFull(ctx, arg, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-		if getExpressionFailure(ctx) != nil {
+		value, err := e.checkedPropertyExpression(ctx, arg, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		if err != nil {
 			return nil, true
 		}
+		evalArgs = append(evalArgs, value)
 	}
 
 	var result interface{}
@@ -100,6 +107,14 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 		if recovered := recover(); recovered != nil {
 			result = nil
 			err = fmt.Errorf("plugin handler panic: %v", recovered)
+		}
+		// Common and reflected invocations return through this conversion.
+		// A nil Go map is Cypher null; an allocated empty map remains {}.
+		if result != nil {
+			value := reflect.ValueOf(result)
+			if value.Kind() == reflect.Map && value.IsNil() {
+				result = nil
+			}
 		}
 	}()
 
@@ -242,48 +257,10 @@ func (e *StorageExecutor) evaluateMapLiteral(ctx context.Context, expr string, n
 
 // evaluateMapLiteralFull parses and evaluates a map literal with full path context
 func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
-	result := make(map[string]interface{})
-	keys := make([]string, 0)
-
-	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "{") || !strings.HasSuffix(expr, "}") {
-		return result
+	value, err := e.materializePropertyMap(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths), true, true)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
-
-	inner := strings.TrimSpace(expr[1 : len(expr)-1])
-	if inner == "" {
-		return result
-	}
-
-	// Split by commas, respecting nesting and quoted values.
-	pairs := splitTopLevelComma(inner)
-
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx == -1 {
-			continue
-		}
-
-		// Keep map-literal key normalization aligned with property/map parsing:
-		// supports backticked and quoted keys like `foo`, 'foo', "foo".
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
-		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
-
-		// Evaluate the value expression in context with full path info
-		value := e.evaluateExpressionWithContextFull(ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if _, exists := result[key]; !exists {
-			keys = append(keys, key)
-		}
-		result[key] = value
-	}
-	if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
-		failure.recordMapKeyOrder(result, keys)
-	}
-
-	return result
+	return value
 }

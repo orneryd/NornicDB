@@ -29,36 +29,5 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 }
 
 func rowTopLevelPipeIndex(expression string) int {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	var quote byte
-	for index := 0; index < len(expression); index++ {
-		current := expression[index]
-		if quote != 0 {
-			if current == quote && !isBackslashEscaped(expression, index) {
-				quote = 0
-			}
-			continue
-		}
-		switch current {
-		case '\'', '"', '`':
-			quote = current
-		case '(':
-			parenDepth++
-		case ')':
-			parenDepth--
-		case '[':
-			bracketDepth++
-		case ']':
-			bracketDepth--
-		case '{':
-			braceDepth++
-		case '}':
-			braceDepth--
-		case '|':
-			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
+	return findTopLevelOperator(expression, "|", false, true)
 }

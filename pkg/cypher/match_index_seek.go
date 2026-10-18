@@ -1262,14 +1262,7 @@ type simpleIndexedEqualityShape struct {
 }
 
 func parseSimpleIndexedEqualityShape(variable, whereClause string) simpleIndexedEqualityShape {
-	clause := strings.TrimSpace(whereClause)
-	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
-		inner := strings.TrimSpace(clause[1 : len(clause)-1])
-		if inner == clause {
-			break
-		}
-		clause = inner
-	}
+	clause := unwrapOuterParens(whereClause)
 	if clause == "" {
 		return simpleIndexedEqualityShape{}
 	}
@@ -1285,13 +1278,15 @@ func parseSimpleIndexedEqualityShape(variable, whereClause string) simpleIndexed
 		}
 	}
 
-	eqIdx := topLevelEqualsIndex(clause)
-	if eqIdx <= 0 || eqIdx >= len(clause)-1 {
+	scan, comparison := scanComparisonChain(clause)
+	if !comparison || scan.count != 1 {
 		return simpleIndexedEqualityShape{}
 	}
-
-	left := strings.TrimSpace(clause[:eqIdx])
-	right := strings.TrimSpace(clause[eqIdx+1:])
+	operator := scan.operator(0)
+	if clause[operator.offset:operator.offset+operator.length] != "=" {
+		return simpleIndexedEqualityShape{}
+	}
+	left, right := scan.operand(clause, 0), scan.operand(clause, 1)
 	if left == "" || right == "" {
 		return simpleIndexedEqualityShape{}
 	}
@@ -1496,39 +1491,16 @@ func splitTopLevelAndConjuncts(clause string) []string {
 	if topLevelKeywordIndex(clause, "OR") >= 0 || topLevelKeywordIndex(clause, "XOR") >= 0 {
 		return []string{strings.TrimSpace(clause)}
 	}
-	inSingle, inDouble, inBacktick := false, false, false
 	paren, bracket, brace, caseDepth := 0, 0, 0, 0
 	parts := make([]string, 0, 2)
 	start := 0
 	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if end, skipped := skipCypherLexicalToken(clause, i); skipped {
+			i = end - 1
 			continue
 		}
+		ch := clause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			paren++
 			continue
@@ -1612,75 +1584,13 @@ func (e *StorageExecutor) tryEvaluateConstantBooleanConjunct(clause string) (val
 }
 
 func topLevelSymbolIndex(expr, sym string) int {
-	inSingle, inDouble, inBacktick := false, false, false
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i <= len(expr)-len(sym); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
-		case '(':
-			paren++
-			continue
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-			continue
-		case '[':
-			bracket++
-			continue
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-			continue
-		case '{':
-			brace++
-			continue
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-			continue
-		}
-		if paren == 0 && bracket == 0 && brace == 0 && expr[i:i+len(sym)] == sym {
-			return i
-		}
-	}
-	return -1
+	return findTopLevelOperator(expr, sym, false, true)
 }
 
 func parseLiteralValue(raw string) (interface{}, bool) {
 	s := strings.TrimSpace(raw)
-	if len(s) >= 2 {
-		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
-			return s[1 : len(s)-1], true
-		}
+	if value, quoted := decodeCypherQuotedString(s); quoted {
+		return value, true
 	}
 	if strings.EqualFold(s, "true") {
 		return true, true
@@ -1731,79 +1641,23 @@ func parseVariableProperty(expr, variable string) (string, bool) {
 }
 
 func topLevelEqualsIndex(clause string) int {
-	inSingle, inDouble, inBacktick := false, false, false
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
+	for offset := 0; offset < len(clause); {
+		index := findTopLevelOperator(clause[offset:], "=", false, true)
+		if index < 0 {
+			return -1
 		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
-		case '(':
-			paren++
-			continue
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-			continue
-		case '[':
-			bracket++
-			continue
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-			continue
-		case '{':
-			brace++
-			continue
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-			continue
-		case '=':
-			if paren != 0 || bracket != 0 || brace != 0 {
+		index += offset
+		if index > 0 {
+			previous := clause[index-1]
+			if previous == '!' || previous == '<' || previous == '>' {
+				offset = index + 1
 				continue
 			}
-			if i > 0 {
-				prev := clause[i-1]
-				if prev == '!' || prev == '<' || prev == '>' {
-					continue
-				}
-			}
-			if i+1 < len(clause) {
-				next := clause[i+1]
-				if next == '=' {
-					continue
-				}
-			}
-			return i
 		}
+		if index+1 < len(clause) && clause[index+1] == '=' {
+			return index + 1
+		}
+		return index
 	}
 	return -1
 }

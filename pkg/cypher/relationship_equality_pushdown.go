@@ -111,7 +111,7 @@ func isLiteralOrParameter(expr string) bool {
 		return false
 	case expr[0] == '$':
 		return isPlainSymbolicName(expr[1:])
-	case expr[0] == '\'' || expr[0] == '"':
+	case isCypherStringQuoteByte(expr[0]):
 		return skipCypherQuotedText(expr, 0, expr[0]) == len(expr)
 	case strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false"):
 		return true

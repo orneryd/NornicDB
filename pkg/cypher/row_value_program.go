@@ -102,7 +102,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if program := rowValueProgramFor(expr); program != nil {
 		return program.root.eval(e, values, nil)
 	}
-	return e.evaluateRowValueText(expr, values)
+	return runtimeRowResult(e.evaluateRowValueText(expr, values))
 }
 
 // rowValueInfo describes a compiled part for the per-element memo: pure
@@ -220,6 +220,49 @@ func bound(expr string, node rowValueNode, info rowValueInfo) (rowValueNode, row
 
 // compile compiles expr, running evaluateRowValueText's tests in its order.
 func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
+	node, info := c.compileValue(expr)
+	return normalizeRowValueNode(node), info
+}
+
+// normalizeRowValueNode decides once, at compilation, which results need the
+// runtime boundary. Scalar/constructed results and normalized child results do
+// not need another check. Dynamic producers (including future forms) do. A row
+// binding can override any form, so rowBoundNode checks that read separately.
+func normalizeRowValueNode(node rowValueNode) rowValueNode {
+	switch n := node.(type) {
+	case *rowBoundNode:
+		n.inner = normalizeRowValueNode(n.inner)
+		return n
+	case *rowRuntimeValueNode, rowUnresolvedNode, rowConstNode, *rowLiteralNode, rowEmptyListNode,
+		*rowMapNode, *rowListNode, *rowLogicalNode, *rowComparisonNode, *rowNullTestNode,
+		*rowMembershipNode, *rowStringPredicateNode, *rowArithmeticNode,
+		*rowCaseNode, *rowCoalesceNode, *rowReduceNode, *rowComprehensionNode,
+		*rowMemoNode, *rowDeferredOperandNode:
+		return node
+	default:
+		return &rowRuntimeValueNode{inner: node}
+	}
+}
+
+type rowRuntimeValueNode struct{ inner rowValueNode }
+
+// rowValueShape exposes the compiled form to structural planners. Runtime
+// result checks apply during evaluation and do not change that form.
+func rowValueShape(node rowValueNode) rowValueNode {
+	for {
+		runtime, wrapped := node.(*rowRuntimeValueNode)
+		if !wrapped {
+			return node
+		}
+		node = runtime.inner
+	}
+}
+
+func (n *rowRuntimeValueNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+	return runtimeRowResult(n.inner.eval(e, values, frames))
+}
+
+func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
@@ -262,8 +305,8 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 	if _, _, projection := rowMapProjectionSplit(expr); projection {
 		return rowTextValue(expr)
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
-		return c.compileMap(expr, inner)
+	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+		return c.compileMap(expr)
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
 		if variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
@@ -470,32 +513,19 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 	return rowTextValue(expr)
 }
 
-// compileMap compiles a map literal as evaluateRowValueText evaluates it:
-// each pair's key normalized and its value compiled once, instead of the
-// literal split and its keys read again on every row. A pair without a key
-// is read from the text, which leaves it unresolved.
-func (c *rowValueCompiler) compileMap(expr, inner string) (rowValueNode, rowValueInfo) {
-	node := &rowMapNode{}
-	if inner == "" {
-		return bound(expr, node, impureRowValue())
+// compileMap compiles the canonical strict syntax plan once. A syntax error
+// selects the checked text reader before evaluation, never a retry after failure.
+func (c *rowValueCompiler) compileMap(expr string) (rowValueNode, rowValueInfo) {
+	expressions, err := parsePropertyExpressions(expr)
+	if err != nil {
+		return rowTextValue(expr)
 	}
-	pairs := splitTopLevelComma(inner)
-	node.keys = make([]string, len(pairs))
-	node.values = make([]rowValueNode, len(pairs))
-	infos := make([]rowValueInfo, len(pairs))
-	for i, pair := range pairs {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			return rowTextValue(expr)
-		}
-		node.keys[i] = normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-		node.values[i], infos[i] = c.part(strings.TrimSpace(pair[separator+1:]))
-		if !containsString(node.order, node.keys[i]) {
-			node.order = append(node.order, node.keys[i])
-		}
+	node := &rowMapNode{expressions: expressions, values: make([]rowValueNode, len(expressions))}
+	infos := make([]rowValueInfo, len(expressions))
+	for index, expression := range expressions {
+		node.values[index], infos[index] = c.part(expression.expr)
 	}
-	// The map is new on every evaluation (the caller's to change, its key
-	// order recorded): it is never memoized itself, only its parts.
+	// Every map result is fresh; only its independent parts may be memoized.
 	c.compose(impureRowValue(), node.values, infos)
 	return bound(expr, node, impureRowValue())
 }
@@ -697,7 +727,7 @@ type rowBoundNode struct {
 
 func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
 	if value, ok := values[n.text]; ok {
-		return value, true, nil
+		return runtimeRowResult(value, true, nil)
 	}
 	return n.inner.eval(e, values, frames)
 }
@@ -761,47 +791,44 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	// The shared evaluator evaluates the text it is handed itself and hands
-	// back only its parts, subqueries included (handedBackByRowEvaluator).
-	value, err := e.evaluateRowFallback(expr, values)
-	if err != nil {
-		return nil, false, err
-	}
-	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
+	if isValidIdentifier(expr) {
+		if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
+			return runtimeRowResult(value, true, nil)
+		}
 		return nil, false, nil
 	}
-	return value, true, nil
+	if strings.HasPrefix(expr, "$") {
+		// A parameter absent from a planning scope is unresolved, not text.
+		// Actual materialization rejects this result at the checked boundary.
+		ctx := rowStatementContextOrBackground(values)
+		if value, ok := resolveDirectParamRef(ctx, expr); ok {
+			return runtimeRowResult(value, true, nil)
+		}
+		if value, ok := resolveParamPathRef(ctx, expr); ok {
+			return runtimeRowResult(value, true, nil)
+		}
+		return nil, false, nil
+	}
+	if mayContainSubqueryExpression(expr) {
+		if function, argument, call := parseFunctionCallWS(expr); call {
+			if value, handled, resolved, err := e.evaluateRowGraphFunction(function, argument, values); handled {
+				return value, resolved, err
+			}
+		}
+	}
+	return e.evaluateRowFallback(expr, values)
 }
 
-// rowMapNode is a map literal: its pairs' keys and compiled values, and
-// its keys in first-occurrence order, recorded for every map it builds as
-// evaluateRowValueText records them (the recorded orders are only read, so
-// one slice serves every map).
 type rowMapNode struct {
-	keys   []string
-	values []rowValueNode
-	order  []string
+	expressions []pipelinePropertyExpression
+	values      []rowValueNode
 }
 
 func (n *rowMapNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	result := make(map[string]interface{}, len(n.order))
-	if len(n.values) == 0 {
-		return result, true, nil
-	}
-	for i, part := range n.values {
-		value, ok, err := part.eval(e, values, frames)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		result[n.keys[i]] = value
-	}
-	if failure, ok := values["\x00mapKeyOrders"].(*expressionFailure); ok {
-		failure.recordMapKeyOrder(result, n.order)
-	}
-	return result, true, nil
+	result, err := materializePropertyEntries(rowMapContext(values), n.expressions, true, true, func(index int) (interface{}, bool, error) {
+		return n.values[index].eval(e, values, frames)
+	})
+	return result, err == nil, err
 }
 
 type rowListNode struct{ items []rowValueNode }

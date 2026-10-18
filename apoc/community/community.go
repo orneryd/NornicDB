@@ -83,28 +83,16 @@ func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []Commun
 	for i, node := range nodes {
 		index[node.ID] = i
 	}
-	arcCounts := make([]int, len(nodes))
-	for _, relationship := range rels {
-		source, sourceFound := index[relationship.StartNode]
-		target, targetFound := index[relationship.EndNode]
-		if sourceFound && targetFound {
-			arcCounts[source]++
-			arcCounts[target]++
-		}
-	}
-	graph := louvain.NewGraph(len(nodes), arcCounts)
-	for _, relationship := range rels {
-		source, sourceFound := index[relationship.StartNode]
-		target, targetFound := index[relationship.EndNode]
-		if sourceFound && targetFound {
-			graph.Link(source, target, getRelWeight(relationship))
-		}
-	}
 	options := louvain.DefaultOptions()
 	options.MaxIterations = config.MaxIterations
 	options.Tolerance = config.Threshold
 	options.Resolution = config.Resolution
-	membership := louvain.Final(louvain.Run(graph, options))
+	membership := louvain.Final(louvain.RunUndirected(len(nodes), len(rels), func(i int) (int, int, float64, bool) {
+		rel := rels[i]
+		source, sourceFound := index[rel.StartNode]
+		target, targetFound := index[rel.EndNode]
+		return source, target, getRelWeight(rel), sourceFound && targetFound
+	}, options))
 	result := make([]CommunityResult, len(nodes))
 	for i, node := range nodes {
 		result[i] = CommunityResult{Node: node, CommunityID: int64(membership[i])}

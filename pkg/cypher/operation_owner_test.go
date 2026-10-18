@@ -57,7 +57,7 @@ func TestOperationOwnerListLiteralResults(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Equal(t, tc.want, value)
-		require.Equal(t, tc.want, exec.parseArrayValue(ctx, tc.literal))
+		require.Equal(t, tc.want, parsedTestValue(exec.parseArrayValue(ctx, tc.literal)))
 		require.Equal(t, tc.want, exec.evaluateExpressionWithContext(ctx, tc.literal, nil, nil))
 		require.NoError(t, getExpressionFailure(ctx))
 	}

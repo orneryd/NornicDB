@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -97,12 +96,10 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 // real values. Node/relationship values are additionally mirrored into the
 // entity scopes so legacy handlers that resolve variables there keep working.
 //
-// The terminal contract is unchanged from the legacy evaluator: expression
-// text the shared evaluator does not recognize round-trips to the caller, so
-// callers can tell "unrecognized" apart from "evaluated to null" and raise the
-// proper statement error (or route to the EXISTS-subquery machinery).
+// The result reader preserves resolution separately from the value. This
+// compatibility wrapper records an unsuccessful evaluation as a statement error.
 func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
-	return e.evaluateExpressionFromValuesContext(context.Background(), expr, values)
+	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
 }
 
 // evaluateRowFallback is the row evaluator's fallback to the shared
@@ -110,91 +107,64 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // argument error), which the shared evaluator records as the statement error
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
-func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
-	// The slot names expr as the row evaluator's: the shared evaluator
-	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
-	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
-	// Keep the statement's clock for the functions that read it (decay, #866).
-	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
-		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
-			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
-		}
+func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	parent := rowStatementContextOrBackground(values)
+	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	if state.depth >= maxRowFallbackDepth {
+		_, err := checkedPropertyResult(parent, expr, nil, false, unresolvedExpressionError(expr))
+		return nil, false, err
 	}
-	// And the statement's Cypher version, which the row carries.
+	ctx := context.WithValue(parent, expressionOperandFailureKey{}, &expressionFailure{})
+	ctx = context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{text: expr, depth: state.depth + 1})
 	if rowIsCypher25(values) {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	value := e.evaluateExpressionFromValuesContext(ctx, expr, values)
-	return value, getExpressionFailure(ctx)
+	return e.evaluateExpressionFromValuesResult(ctx, expr, values)
 }
 
 // evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
 // the evaluation context: expression failures are recorded on ctx.
 func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
+	ctx = withExpressionFailureSlot(ctx)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	value, err = checkedPropertyResult(ctx, expr, value, resolved, err)
+	recordExpressionFailure(ctx, err)
+	return value
+}
+
+// Legacy and row callers share an explicit result, never source text as a value.
+// Pattern syntax can be unhandled; it is not a scalar value or successful NULL.
+func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
-		return nil
+		return nil, false, nil
 	}
-	if isCaseExpression(expr) {
-		return e.evaluateCaseExpressionFromValues(expr, values)
+	if value, found := values[expr]; found {
+		return runtimeRowResult(value, true, nil)
 	}
-
-	// Direct lookup: callers store pre-computed values under the expression
-	// text itself (call-tail plans set values["max(length(p))"] per row), and
-	// plain variable references are the hot path.
-	if val, ok := values[expr]; ok {
-		return val
-	}
-
-	// Bound property expressions use the same row reader as ordinary
-	// projections: a nested "properties" key does not turn a map into an entity.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if receiver, bound := values[variable]; bound {
 			visible := e.queryVisibleValue(receiver)
 			value, supported := evaluateRowPropertyChain(visible, chain)
+			var err error
 			if !supported {
-				recordExpressionFailure(ctx, rowPropertyChainTypeError(visible, chain))
+				err = rowPropertyChainTypeError(visible, chain)
 			}
-			return value
+			return runtimeRowResult(value, supported, err)
 		}
 	}
-	// A bound receiver with a trailing subscript is a row expression. Use
-	// the text reader directly so an unresolved expression cannot recurse
-	// through the compiled fallback into this context reader.
 	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
-			if value, resolved, err := e.evaluateRowValueText(expr, values); resolved || err != nil {
-				recordExpressionFailure(ctx, err)
-				return value
-			}
+			return e.evaluateRowValueText(expr, values)
 		}
 	}
-
-	// Relationship-pattern fragments are not scalar expressions: leave them
-	// for the pattern machinery (WHERE exists-patterns and friends). The
-	// shared recognition heuristics would otherwise misread "--" as
-	// arithmetic operators and a lone ">()" arrow fragment as a comparison,
-	// evaluating the fragment to null instead of round-tripping it.
 	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {
-		return expr
+		return nil, false, nil
 	}
-
 	ctx = withValueBindings(ctx, values)
 	nodes, rels := entityScopesFromValues(values)
-	if value, recognized := e.evaluateExpressionWithContextDefined(ctx, expr, nodes, rels); recognized {
-		return value
-	}
-	// The shared recognition heuristics do not know about value bindings; a
-	// bound-map property access is evaluable even when the plain node/rel
-	// scopes are empty.
-	if bindings := valueBindingsFromContext(ctx); bindings != nil {
-		if dot := strings.IndexByte(expr, '.'); dot > 0 {
-			if _, ok := bindings[expr[:dot]]; ok {
-				return e.evaluateExpressionWithContextFull(ctx, expr, nodes, rels, nil, nil, nil, 0)
-			}
-		}
-	}
-	return expr
+	return e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
 }
 
 // entityScopesFromValues extracts the *storage.Node and *storage.Edge entries of
@@ -247,43 +217,8 @@ func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
 }
 
 // evaluateMapLiteralFromValues evaluates a map literal using computed values
-func (e *StorageExecutor) evaluateMapLiteralFromValues(expr string, values map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "{") || !strings.HasSuffix(expr, "}") {
-		return result
-	}
-
-	inner := strings.TrimSpace(expr[1 : len(expr)-1])
-	if inner == "" {
-		return result
-	}
-
-	// Split by commas, respecting nesting
-	pairs := splitTopLevelComma(inner)
-
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		// Find the first colon (key: value)
-		colonIdx := strings.Index(pair, ":")
-		if colonIdx == -1 {
-			continue
-		}
-
-		key := strings.TrimSpace(pair[:colonIdx])
-		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
-
-		// Evaluate the value expression using the values map
-		value := e.evaluateExpressionFromValues(valueExpr, values)
-		result[key] = value
-	}
-
-	return result
+func (e *StorageExecutor) evaluateMapLiteralFromValues(ctx context.Context, expr string, values map[string]interface{}) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, expr, values, true, true)
 }
 
 // executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries

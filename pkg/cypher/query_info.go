@@ -529,8 +529,8 @@ func patternNodeLabels(pattern string) map[string][]string {
 // "[…]" of pattern, delimiters included, skipping quoted text.
 func eachPatternElement(pattern string, visit func(opener byte, element string)) {
 	for index := 0; index < len(pattern); index++ {
-		switch pattern[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(pattern[index]) {
+		case cypherQuoteClass:
 			index = skipQuotedSemanticText(pattern, index) - 1
 		case '(', '[':
 			closer := ')'
@@ -642,9 +642,8 @@ func staticCommitValue(expression string, params map[string]interface{}) (interf
 		value, ok := params[expression[1:]]
 		return value, ok
 	}
-	if len(expression) >= 2 && (expression[0] == '\'' || expression[0] == '"') &&
-		expression[len(expression)-1] == expression[0] && !strings.ContainsAny(expression[1:len(expression)-1], "\\'\"") {
-		return expression[1 : len(expression)-1], true
+	if value, quoted := decodeCypherQuotedString(expression); quoted {
+		return value, true
 	}
 	if integer, err := strconv.ParseInt(expression, 10, 64); err == nil {
 		return integer, true

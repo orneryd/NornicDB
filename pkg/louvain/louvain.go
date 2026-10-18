@@ -22,6 +22,31 @@ func DefaultOptions() Options {
 	return Options{MaxLevels: 10, MaxIterations: 10, Tolerance: 0.0001, Resolution: 1}
 }
 
+// RunUndirected is the shared APOC input adapter and engine. Each indexed
+// relationship is one physical relationship, including parallel relationships
+// and self-loops. The callback supplies stable endpoints in [0,size), weight,
+// and whether both endpoints belong to the selected graph. It is read twice
+// to reserve one adjacency buffer, without copying an adapter's input graph.
+// Only Graph.Link expands a relationship into its two degree contributions.
+func RunUndirected(size, relationshipCount int, relationship func(int) (int, int, float64, bool), options Options) Result {
+	counts := make([]int, size)
+	for i := 0; i < relationshipCount; i++ {
+		source, target, _, included := relationship(i)
+		if included {
+			counts[source]++
+			counts[target]++
+		}
+	}
+	graph := NewGraph(size, counts)
+	for i := 0; i < relationshipCount; i++ {
+		source, target, weight, included := relationship(i)
+		if included {
+			graph.Link(source, target, weight)
+		}
+	}
+	return Run(graph, options)
+}
+
 // Result is a Louvain run's result: each level's community of every
 // node, numbered by first node; each level's representative of each
 // community, the node whose community it grew from (GDS names a community
@@ -50,23 +75,25 @@ func Run(graph *Graph, options Options) Result {
 	}
 	var run Result
 	size := len(graph.arcs)
+	scratch := newWorkspace(size)
 	membership := identityCommunities(size)
 	representative := identityCommunities(size)
 	initial := options.Seed
 	previous := 0.0
 	for level := 0; level < options.MaxLevels; level++ {
-		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution)
+		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution, scratch)
 		initial = nil
-		modularity := graph.modularity(communities, options.Resolution)
+		modularity := graph.modularityScratch(communities, options.Resolution, scratch.inside, scratch.totals)
 		var representatives []int
-		numbered := make(map[int]bool)
+		numbered := scratch.numbers[:len(graph.arcs)]
+		clear(numbered)
 		for _, c := range communities {
-			if !numbered[c] {
-				numbered[c] = true
+			if numbered[c] == 0 {
+				numbered[c] = 1
 				representatives = append(representatives, representative[c])
 			}
 		}
-		count := Renumber(communities)
+		count := renumberDense(communities, numbered)
 		for i := range membership {
 			membership[i] = communities[membership[i]]
 		}
@@ -82,10 +109,42 @@ func Run(graph *Graph, options Options) Result {
 			break
 		}
 		previous = modularity
-		graph = graph.aggregate(communities, count)
+		graph = graph.aggregate(communities, count, scratch)
 		representative = representatives
 	}
 	return run
+}
+
+// Dense node/community IDs allow one run-local workspace, reused as levels
+// shrink. No buffers are shared between runs or retained on the input graph.
+type workspace struct {
+	community, next, stamps, candidates, heads, links, counts, numbers []int
+	communityDegree, influence, inside, totals, weights                []float64
+}
+
+func newWorkspace(size int) *workspace {
+	integers := make([]int, 8*size)
+	floats := make([]float64, 5*size)
+	return &workspace{
+		community: integers[:size], next: integers[size : 2*size], stamps: integers[2*size : 3*size], candidates: integers[3*size : 4*size],
+		heads: integers[4*size : 5*size], links: integers[5*size : 6*size], counts: integers[6*size : 7*size], numbers: integers[7*size:],
+		communityDegree: floats[:size], influence: floats[size : 2*size], inside: floats[2*size : 3*size], totals: floats[3*size : 4*size], weights: floats[4*size:],
+	}
+}
+
+func renumberDense(community, numbers []int) int {
+	for i := range numbers {
+		numbers[i] = -1
+	}
+	count := 0
+	for i, c := range community {
+		if numbers[c] == -1 {
+			numbers[c] = count
+			count++
+		}
+		community[i] = numbers[c]
+	}
+	return count
 }
 
 // Final is each node's community after the run's last level (a run
@@ -107,6 +166,13 @@ func identityCommunities(size int) []int {
 func (g *Graph) modularity(community []int, resolution float64) float64 {
 	inside := make([]float64, len(g.arcs))
 	degree := make([]float64, len(g.arcs))
+	return g.modularityScratch(community, resolution, inside, degree)
+}
+
+func (g *Graph) modularityScratch(community []int, resolution float64, inside, degree []float64) float64 {
+	inside, degree = inside[:len(g.arcs)], degree[:len(g.arcs)]
+	clear(inside)
+	clear(degree)
 	for i, arcs := range g.arcs {
 		degree[community[i]] += g.degree[i]
 		for _, arc := range arcs {
@@ -187,10 +253,11 @@ func (g *Graph) Link(i, j int, w float64) {
 // more modularity than the Tolerance, or MaxIterations have run. Nodes
 // start in initial's communities (nil: each its own). It reports each
 // node's community.
-func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64) []int {
+func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64, scratch *workspace) []int {
 	size := len(g.arcs)
-	community := make([]int, size)
-	communityDegree := make([]float64, size)
+	community := scratch.community[:size]
+	communityDegree := scratch.communityDegree[:size]
+	clear(communityDegree)
 	for i := range community {
 		community[i] = i
 		if initial != nil {
@@ -218,10 +285,14 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 	neighbours := g.neighbours()
 	classes := g.colourClasses(neighbours)
 	before := 0.0
-	next := make([]int, size)
+	next := scratch.next[:size]
 	// Reuse influence storage across nodes and passes. Candidate scores are
 	// independent; the explicit positive-gain/minimum-ID rule resolves ties.
-	influence := make(map[int]float64)
+	influence := scratch.influence[:size]
+	stamps := scratch.stamps[:size]
+	clear(stamps)
+	stamp := 0
+	totalSquared := math.Pow(g.total, 2)
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		moves := 0
 		for _, class := range classes {
@@ -229,22 +300,32 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 				current := community[i]
 				// The weight from i to each neighbouring community (its own
 				// self-loops apart).
-				clear(influence)
+				stamp++
+				candidates := scratch.candidates[:0]
 				self := 0.0
 				for _, arc := range g.arcs[i] {
 					if arc.target == i {
 						self += arc.weight
 					}
-					influence[community[arc.target]] += arc.weight
+					c := community[arc.target]
+					if stamps[c] != stamp {
+						stamps[c], influence[c] = stamp, 0
+						candidates = append(candidates, c)
+					}
+					influence[c] += arc.weight
 				}
 				// GDS's modularity gain of i leaving its community for c,
 				// computed as GDS computes it: a node moves only for a
 				// positive gain, to the smaller community on a tie.
 				ki := g.degree[i]
-				eix := influence[current] - self
+				eix := 0.0 - self
+				if stamps[current] == stamp {
+					eix = influence[current] - self
+				}
 				ax := communityDegree[current] - ki
 				best, maxGain := current, 0.0
-				for c, weight := range influence {
+				for _, c := range candidates {
+					weight := influence[c]
 					if c == current {
 						continue
 					}
@@ -252,7 +333,7 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 					if resolution != 1 {
 						observed *= resolution
 					}
-					gain := observed/(g.total/2) + (2*ki*ax-2*ki*communityDegree[c])/math.Pow(g.total, 2)
+					gain := observed/(g.total/2) + (2*ki*ax-2*ki*communityDegree[c])/totalSquared
 					if gain > maxGain || (gain == maxGain && gain != 0 && best > c) {
 						best, maxGain = c, gain
 					}
@@ -273,7 +354,7 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 		}
 		// The tolerance compares each pass with the one before; the first
 		// pass is always followed by a second, as in GDS.
-		after := g.modularity(community, resolution)
+		after := g.modularityScratch(community, resolution, scratch.inside, scratch.totals)
 		if iteration > 0 && !(after > before && after-before > tolerance) {
 			break
 		}
@@ -291,7 +372,7 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 	pending := make([]bool, len(colour))
 	next := make([]bool, len(colour))
 	// GDS's initial colour also forbids 1000 before a neighbour is visited.
-	forbidden := make([]int, max(len(colour)+1, 1001))
+	forbidden := make([]int, len(colour)+1)
 	stamp := 0
 	for i := range colour {
 		colour[i], pending[i] = 1000, true
@@ -303,7 +384,9 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 			}
 			stamp++
 			for _, j := range neighbours[i] {
-				if j != i {
+				// On small graphs 1000 cannot be selected as a colour, so
+				// its sentinel needs no slot in the forbidden-colour array.
+				if j != i && colour[j] < len(forbidden) {
 					forbidden[colour[j]] = stamp
 				}
 			}
@@ -379,27 +462,49 @@ func Renumber(community []int) int {
 // aggregate is the next level's graph: one node per community, the weights
 // between communities summed, and a community's inner weight its
 // self-loop.
-func (g *Graph) aggregate(community []int, count int) *Graph {
-	next := NewGraph(count)
-	weights := make([]map[int]float64, count)
-	for i := range weights {
-		weights[i] = make(map[int]float64)
+func (g *Graph) aggregate(community []int, count int, scratch *workspace) *Graph {
+	heads, links := scratch.heads[:count], scratch.links[:len(g.arcs)]
+	for i := range heads {
+		heads[i] = -1
 	}
-	for i, arcs := range g.arcs {
-		for _, arc := range arcs {
-			weights[community[i]][community[arc.target]] += arc.weight
+	// Group source nodes without reordering the reductions of their arcs.
+	for i := len(g.arcs) - 1; i >= 0; i-- {
+		c := community[i]
+		links[i], heads[c] = heads[c], i
+	}
+	stamps, counts := scratch.stamps[:count], scratch.counts[:count]
+	clear(stamps)
+	clear(counts)
+	for source := range heads {
+		for node := heads[source]; node >= 0; node = links[node] {
+			for _, arc := range g.arcs[node] {
+				target := community[arc.target]
+				if stamps[target] != source+1 {
+					stamps[target] = source + 1
+					counts[source]++
+				}
+			}
 		}
-		next.degree[community[i]] += g.degree[i]
 	}
-	for source, targets := range weights {
-		ordered := make([]int, 0, len(targets))
-		for target := range targets {
-			ordered = append(ordered, target)
+	next := NewGraph(count, counts)
+	clear(stamps)
+	weights := scratch.weights[:count]
+	for source := range heads {
+		ordered := scratch.candidates[:0]
+		for node := heads[source]; node >= 0; node = links[node] {
+			for _, arc := range g.arcs[node] {
+				target := community[arc.target]
+				if stamps[target] != source+1 {
+					stamps[target], weights[target] = source+1, 0
+					ordered = append(ordered, target)
+				}
+				weights[target] += arc.weight
+			}
+			next.degree[source] += g.degree[node]
 		}
 		sort.Ints(ordered)
-		next.arcs[source] = make([]weightedArc, len(ordered))
-		for i, target := range ordered {
-			next.arcs[source][i] = weightedArc{target: target, weight: targets[target]}
+		for _, target := range ordered {
+			next.arcs[source] = append(next.arcs[source], weightedArc{target: target, weight: weights[target]})
 		}
 	}
 	next.total = g.total

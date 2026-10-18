@@ -406,8 +406,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = end
 			continue
 		}
-		switch text[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(text[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(text, index)
 			continue
 		}

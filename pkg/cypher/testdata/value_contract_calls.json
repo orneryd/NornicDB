@@ -315,6 +315,24 @@
     "reason": "Regression or allocation probe exercises this explicitly selected contract."
   },
   {
+    "id": "apoc_map_null_contract.go:apocMapConstructor:apocSameValue:1",
+    "file": "apoc_map_null_contract.go",
+    "caller": "apocMapConstructor",
+    "callee": "apocSameValue",
+    "contract": "equivalence removal adapter (numeric kinds preserved)",
+    "line": 0,
+    "reason": "apoc.map.clean uses a Java-object removal set, retaining overlap occurrence identity and numeric kinds."
+  },
+  {
+    "id": "apoc_map_null_contract.go:apocMapConstructor:apocSameValue:2",
+    "file": "apoc_map_null_contract.go",
+    "caller": "apocMapConstructor",
+    "callee": "apocSameValue",
+    "contract": "equivalence removal adapter (numeric kinds preserved)",
+    "line": 0,
+    "reason": "apoc.map.clean string-coercion removal uses the same Java-object equivalence policy while preserving numeric kinds."
+  },
+  {
     "id": "apoc_native_functions.go:*StorageExecutor.nativeAPOCPath:cypherEqualityValue:1",
     "file": "apoc_native_functions.go",
     "caller": "*StorageExecutor.nativeAPOCPath",
@@ -439,15 +457,6 @@
     "contract": "ordering (separate contract)",
     "line": 0,
     "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
-  },
-  {
-    "id": "functions_eval_functions.go:*StorageExecutor.evaluateExpressionWithContextFullFunctions:apocSameValue:1",
-    "file": "functions_eval_functions.go",
-    "caller": "*StorageExecutor.evaluateExpressionWithContextFullFunctions",
-    "callee": "apocSameValue",
-    "contract": "equivalence removal adapter (numeric kinds preserved)",
-    "line": 0,
-    "reason": "apoc.map.clean uses a Java-object removal set, retaining overlap occurrence identity and numeric kinds."
   },
   {
     "id": "functions_eval_operators.go:cypherMembership:cypherEquality:1",

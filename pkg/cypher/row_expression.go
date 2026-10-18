@@ -142,7 +142,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return value, err == nil, err
 	}
 	if variable, labels, labelPredicate := parseWithWhereLabelTest(expr); labelPredicate {
-		return entityHasAllLabelsOrTypes(values[variable], labels), true, nil
+		value, bound := values[variable]
+		if !bound {
+			return nil, false, nil
+		}
+		return entityHasAllLabelsOrTypes(value, labels), true, nil
 	}
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
@@ -150,34 +154,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	if value, matched, resolved, err := e.evaluateRowMapProjection(expr, values); matched {
 		return value, resolved, err
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
-		result := make(map[string]interface{})
-		keys := make([]string, 0)
-		if inner == "" {
-			return result, true, nil
-		}
-		for _, pair := range splitTopLevelComma(inner) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
-			if separator <= 0 {
-				return nil, false, nil
-			}
-			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(pair[separator+1:]), values)
-			if err != nil {
-				return nil, false, err
-			}
-			if !ok {
-				return nil, false, nil
-			}
-			if _, exists := result[key]; !exists {
-				keys = append(keys, key)
-			}
-			result[key] = value
-		}
-		if failure, ok := values["\x00mapKeyOrders"].(*expressionFailure); ok {
-			failure.recordMapKeyOrder(result, keys)
-		}
-		return result, true, nil
+	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+		result, err := e.materializePropertyMap(rowMapContext(values), expr, values, true, true)
+		return result, err == nil, err
 	}
 	if value, matched, ok, err := e.evaluateRowListComprehension(expr, values); matched {
 		return value, ok, err
@@ -198,37 +177,14 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if function, argument, ok := parseFunctionCallWS(expr); ok {
-		var argumentErr error
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
 			temporalContext = context.Background()
 		}
-		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
-			value, evaluated, err := e.evaluateRowValue(inner, values)
-			if err != nil && argumentErr == nil {
-				argumentErr = err
-			}
-			if err != nil || !evaluated {
-				return nil
-			}
-			return value
+		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) (interface{}, bool, error) {
+			return e.evaluateRowValue(inner, values)
 		}, expr); handled {
-			if argumentErr != nil {
-				return nil, false, argumentErr
-			}
-			if callErr != nil {
-				return nil, false, callErr
-			}
-			if value == nil && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
-				input, resolved, err := e.evaluateRowValue(argument, values)
-				if err != nil {
-					return nil, false, err
-				}
-				if resolved && input != nil {
-					return nil, false, temporalConstructorError(function, input)
-				}
-			}
-			return value, true, nil
+			return value, callErr == nil, callErr
 		}
 		if value, matched, resolved, err := e.evaluateRowMathFunction(function, argument, values); matched {
 			return value, resolved, err
@@ -237,7 +193,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return value, resolved, err
 		}
 		if isGDSFunctionName(lowerASCII(function)) {
-			return e.evaluateRowGraphFunction(function, argument, values)
+			value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+			return value, resolved, err
 		}
 		switch lowerASCII(function) {
 		case "exists":
@@ -246,7 +203,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return matched, recognized, nil
 			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
-			return e.evaluateRowGraphFunction(function, argument, values)
+			value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+			return value, resolved, err
 		case "shortestpath", "allshortestpaths":
 			nodes := make(map[string]*storage.Node, len(values))
 			for name, value := range values {
@@ -386,7 +344,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				}
 				return cypherfn.EntityProperties(e.queryEntityProperties(entity)), true, nil
 			case storage.RemoteEntityValue:
-				return entity["properties"], true, nil
+				properties, _ := entity["properties"].(map[string]interface{})
+				return cypherfn.EntityProperties(properties), true, nil
 			default:
 				object, isMap := toStringAnyMap(value)
 				return object, isMap, nil
@@ -719,8 +678,8 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 				continue
 			}
 		}
-		switch current {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(current) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expr, index, current) - 1
 			continue
 		case '(':
@@ -1151,26 +1110,13 @@ func parseListComprehension(inner string) (variable, listExpression, predicate, 
 
 func findListComprehensionToken(expression, token string) int {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	var quote rune
-	escaped := false
-	for index, current := range expression {
-		if quote != 0 {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if current == '\\' {
-				escaped = true
-				continue
-			}
-			if current == quote {
-				quote = 0
-			}
+	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end - 1
 			continue
 		}
+		current := expression[index]
 		switch current {
-		case '\'', '"', '`':
-			quote = current
 		case '(':
 			parenDepth++
 		case ')':
@@ -1358,72 +1304,29 @@ func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
 // close the identifier. Scanning avoids splitting and reallocating the entire
 // chain for each row in the streaming executor.
 func nextRowPropertySeparator(chain string, start int) int {
-	delimited := false
 	for index := start; index < len(chain); index++ {
+		if end, quoted := scanCypherQuotedText(chain, index, chain[index]); quoted {
+			index = end - 1
+			continue
+		}
 		switch chain[index] {
-		case '`':
-			if delimited && index+1 < len(chain) && chain[index+1] == '`' {
-				index++
-				continue
-			}
-			delimited = !delimited
 		case '.':
-			if !delimited {
-				return index
-			}
+			return index
 		}
 	}
 	return len(chain)
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
-	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
-		return "", false
-	}
-	depth := 0
-	quote := byte(0)
-	for i := 0; i < len(expr); i++ {
-		character := expr[i]
-		if quote != 0 {
-			if character == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
-			continue
-		}
-		if character == '\'' || character == '"' {
-			quote = character
-			continue
-		}
-		switch character {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 && i != len(expr)-1 {
-				return "", false
-			}
-			if depth < 0 {
-				return "", false
-			}
-		}
-	}
-	if depth != 0 || quote != 0 {
-		return "", false
-	}
-	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+	return stripEnclosingRowDelimiter(expr, '(', ')')
 }
 
-// stripEnclosingRowDelimiter returns the inside of expr when expr is one
-// open … close group: its first delimiter closes at its end, matched by
-// findMatchingDelimiter (quoted text, escaped quotes and comments skipped).
-// For '[' it is isListLiteral.
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
-	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
+	if len(expr) < 2 || expr[0] != open || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
 		return "", false
 	}
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
-
 func rowSubscriptIndex(value interface{}) (int, bool) {
 	if number, ok := cypherSignedInteger(value); ok {
 		return int(number), true
@@ -1974,13 +1877,11 @@ func isRelationshipPatternOperand(expression string) bool {
 // literal.
 func containsRelationshipPattern(expression string) bool {
 	for i := 0; i < len(expression); i++ {
+		if end, quoted := skipCypherLexicalToken(expression, i); quoted {
+			i = end - 1
+			continue
+		}
 		switch c := expression[i]; c {
-		case '\'', '"', '`':
-			j := i + 1
-			for j < len(expression) && (expression[j] != c || isBackslashEscaped(expression, j)) {
-				j++
-			}
-			i = j
 		case '(':
 			if _, chain := relationshipChainEnd(expression, i, len(expression)); chain {
 				return true

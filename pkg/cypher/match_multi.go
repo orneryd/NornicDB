@@ -203,7 +203,11 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern := e.parseNodePattern(ctx, pattern)
+			nodePattern, parseErr := e.parseNodePattern(ctx, pattern)
+			if parseErr != nil {
+				recordExpressionFailure(ctx, parseErr)
+				return nil, nil
+			}
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
@@ -425,7 +429,9 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 			}
 		}
 	}
-	return e.parseValue(ctx, s)
+	value, err := e.parseValue(ctx, s)
+	recordExpressionFailure(ctx, err)
+	return value
 }
 
 // resolveBindingItem resolves a return item against a binding. rels carries
@@ -475,7 +481,9 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(expr, "'") || strings.HasPrefix(expr, "\"") ||
 		strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false") ||
 		strings.EqualFold(expr, "null") || isNumericLiteral(expr) {
-		return e.parseValue(ctx, expr)
+		value, err := e.parseValue(ctx, expr)
+		recordExpressionFailure(ctx, err)
+		return value
 	}
 
 	// Property access: var.prop — check node bindings first, then

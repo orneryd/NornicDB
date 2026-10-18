@@ -91,6 +91,7 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	require.True(t, ok, "expected CypherLocalDateTime")
 	require.False(t, local.Time.IsZero())
 
+	values["missing"] = nil
 	coalesced := exec.evaluateExpressionFromValues("coalesce(missing, n.name)", values)
 	require.Equal(t, "alice", coalesced)
 }
@@ -216,10 +217,11 @@ func TestEvaluateMapLiteralFromValues_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_with_rel_map_cov"))
 	values := map[string]interface{}{"x": int64(1), "y": int64(2)}
 
-	require.Equal(t, map[string]interface{}{}, exec.evaluateMapLiteralFromValues("{}", values))
-	require.Equal(t, map[string]interface{}{}, exec.evaluateMapLiteralFromValues("{badpair}", values))
+	require.Equal(t, map[string]interface{}{}, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
+	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "{badpair}", values)
+	require.Error(t, parseErr)
 
-	out := exec.evaluateMapLiteralFromValues("{a: x, b: {inner: y}}", values)
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{a: x, b: {inner: y}}", values))
 	require.Equal(t, int64(1), out["a"])
 	nested, ok := out["b"].(map[string]interface{})
 	require.True(t, ok)
@@ -228,6 +230,6 @@ func TestEvaluateMapLiteralFromValues_AdditionalBranches(t *testing.T) {
 
 func TestEvaluateExpressionFromValues_CoalesceParamContext(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_with_rel_coalesce_cov"))
-	ctx := withParams(context.Background(), map[string]interface{}{"fallback": "z"})
+	ctx := withValueBindings(withParams(context.Background(), map[string]interface{}{"fallback": "z"}), map[string]interface{}{"missing": nil})
 	require.Equal(t, "z", exec.evaluateExpressionWithContext(ctx, "coalesce(missing, $fallback)", nil, nil))
 }

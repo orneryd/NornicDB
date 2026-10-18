@@ -274,21 +274,14 @@ func isWithWhereIdentifier(s string) bool {
 // inside quoted text or a map literal is left alone.
 func substituteWithWhereLabelTests(whereClause string, values map[string]interface{}) string {
 	var out strings.Builder
-	inSingle, inDouble := false, false
 	i := 0
 	for i < len(whereClause) {
-		c := whereClause[i]
-		switch {
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-		}
-		if inSingle || inDouble {
-			out.WriteByte(c)
-			i++
+		if end, quoted := skipCypherLexicalToken(whereClause, i); quoted {
+			out.WriteString(whereClause[i:end])
+			i = end
 			continue
 		}
+		c := whereClause[i]
 		if !isIdentStartByte(c) || (i > 0 && isIdentByte(whereClause[i-1])) {
 			out.WriteByte(c)
 			i++

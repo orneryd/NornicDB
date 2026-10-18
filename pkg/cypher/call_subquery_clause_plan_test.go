@@ -179,7 +179,7 @@ func TestRowSubqueryAtomCompilesOnce(t *testing.T) {
 	}
 
 	root, _ := (&rowValueCompiler{}).compile("COUNT { MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1 }")
-	node, ok := root.(*rowBoundNode).inner.(*rowSubqueryNode)
+	node, ok := rowValueShape(rowValueShape(root).(*rowBoundNode).inner).(*rowSubqueryNode)
 	require.True(t, ok, "a subquery atom compiles to a rowSubqueryNode")
 	require.Equal(t, "COUNT", node.kind)
 	require.Equal(t, "MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1", node.body)

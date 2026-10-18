@@ -15,6 +15,20 @@ type expressionFailureKey struct{}
 // statement's map ordering and REVEAL metadata in expressionFailureKey.
 type expressionOperandFailureKey struct{}
 
+// rowFallbackExpressionKey prevents evaluator dispatch from handing the same
+// syntax back to its caller. It is independent of value/error resolution.
+type rowFallbackExpressionKey struct{}
+
+// A fallback may call back into the row evaluator through a legacy reader.
+// Carry its depth with its existing dispatch state, so a non-progressing read
+// fails through the checked contract instead of exhausting the goroutine stack.
+type rowFallbackState struct {
+	text  string
+	depth int
+}
+
+const maxRowFallbackDepth = 64
+
 // deferredExpressionValue adapts a context evaluator to the logical fold's
 // explicit error contract. A later deciding operand can discard this error.
 func deferredExpressionValue(ctx context.Context, evaluate func(context.Context) interface{}) (interface{}, bool, error) {
@@ -53,10 +67,6 @@ type expressionFailure struct {
 	readScopeEngine  *storage.BadgerEngine
 	readScopeContext context.Context
 	mapKeyOrders     map[uintptr][]string
-
-	// rowFallback is the expression the row evaluator handed the shared
-	// evaluator (evaluateRowFallback), "" for any other slot.
-	rowFallback string
 }
 
 // handedBackByRowEvaluator reports whether expr is the expression the row
@@ -66,8 +76,8 @@ type expressionFailure struct {
 // each other until the stack overflows. Every hand-back to the row
 // evaluator asks this.
 func handedBackByRowEvaluator(ctx context.Context, expr string) bool {
-	failure, _ := ctx.Value(expressionFailureKey{}).(*expressionFailure)
-	return failure != nil && failure.rowFallback != "" && logicalOperandKey(failure.rowFallback) == logicalOperandKey(expr)
+	state, _ := ctx.Value(rowFallbackExpressionKey{}).(rowFallbackState)
+	return state.text != "" && logicalOperandKey(state.text) == logicalOperandKey(expr)
 }
 
 // contextFoldOperand evaluates an operand of a context evaluator's logical
@@ -500,8 +510,8 @@ func subqueryInsideCase(expression string, offset int) bool {
 // merely because it is textually inside the function's parentheses.
 func inLocalExpressionScope(expression string, offset int) bool {
 	for i := 0; i < offset; i++ {
-		switch expression[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(expression[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(expression, i, expression[i]) - 1
 		case '/':
 			if end := queryCommentEnd(expression, i); end >= 0 {
@@ -789,7 +799,7 @@ func simpleRowOperand(operand string) bool {
 	switch {
 	case operand == "":
 		return false
-	case operand[0] == '\'' || operand[0] == '"':
+	case isCypherStringQuoteByte(operand[0]):
 		return isWholeCypherQuotedString(operand)
 	case operand[0] == '$':
 		return isValidIdentifier(operand[1:])

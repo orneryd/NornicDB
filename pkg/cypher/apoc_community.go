@@ -60,28 +60,26 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 			unique = append(unique, node)
 		}
 	}
-	graph := louvain.NewGraph(len(unique))
-	for i, node := range unique {
-		for _, edge := range e.getNodeEdges(node.ID) {
-			// Each relationship once: from its start node.
-			if edge.StartNode != node.ID {
-				continue
-			}
-			j, ok := index[edge.EndNode]
-			if !ok {
-				continue
-			}
-			weight := 1.0
-			if weightProp != "" {
-				if w, ok := toFloat64(edge.Properties[weightProp]); ok {
-					weight = w
-				}
-			}
-			graph.Link(i, j, weight)
-		}
+	var relationships []*storage.Edge
+	for _, node := range unique {
+		// Enumerate physical relationships once. Undirected expansion and
+		// degree/weight accounting belong to louvain.RunUndirected;
+		// outgoing+incoming incidence lists repeat a physical self-loop.
+		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		relationships = append(relationships, edges...)
 	}
-
-	membership := louvain.Final(louvain.Run(graph, louvain.DefaultOptions()))
+	membership := louvain.Final(louvain.RunUndirected(len(unique), len(relationships), func(i int) (int, int, float64, bool) {
+		edge := relationships[i]
+		source, sourceFound := index[edge.StartNode]
+		target, targetFound := index[edge.EndNode]
+		weight := 1.0
+		if weightProp != "" {
+			if w, ok := toFloat64(edge.Properties[weightProp]); ok {
+				weight = w
+			}
+		}
+		return source, target, weight, sourceFound && targetFound
+	}, louvain.DefaultOptions()))
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
 		result[node.ID] = membership[i]

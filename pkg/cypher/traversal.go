@@ -185,7 +185,7 @@ type RelationshipPattern struct {
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
-func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
+func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) (*RelationshipPattern, error) {
 	result := &RelationshipPattern{
 		Direction:  "both",
 		MinHops:    1,
@@ -253,13 +253,17 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 		// Property maps are valid with or without a relationship type, e.g.
 		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
 		if declaration.properties != "" {
-			result.Properties = e.parseProperties(ctx, declaration.properties)
+			var err error
+			result.Properties, err = e.parseProperties(ctx, declaration.properties)
+			if err != nil {
+				return nil, err
+			}
 		}
 		result.Variable = declaration.variable
 		result.Types = declaration.types
 	}
 
-	return result
+	return result, nil
 }
 
 // executeMatchWithRelationshipsWithPathSeeded is the single traversal entry
@@ -279,6 +283,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil {
+		if err := getExpressionFailure(ctx); err != nil {
+			return nil, err
+		}
 		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
 	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
@@ -1163,23 +1170,13 @@ func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern str
 func normalizeAnonymousTraversalRelationships(pattern string) string {
 	var normalized strings.Builder
 	normalized.Grow(len(pattern) + 8)
-	quote := byte(0)
 	for index := 0; index < len(pattern); {
+		if end, quoted := skipCypherLexicalToken(pattern, index); quoted {
+			normalized.WriteString(pattern[index:end])
+			index = end
+			continue
+		}
 		character := pattern[index]
-		if quote != 0 {
-			normalized.WriteByte(character)
-			if character == quote && !isBackslashEscaped(pattern, index) {
-				quote = 0
-			}
-			index++
-			continue
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote = character
-			normalized.WriteByte(character)
-			index++
-			continue
-		}
 		switch {
 		case strings.HasPrefix(pattern[index:], "<-->"):
 			normalized.WriteString("-[]-")
@@ -1240,30 +1237,18 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 	inRel := false
 	parenDepth := 0
 	bracketDepth := 0
-	inQuote := false
-	quoteChar := byte(0)
 
 	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
-
-		// Handle quotes
-		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		}
-
-		if inQuote {
+		if end, quoted := skipCypherLexicalToken(pattern, i); quoted {
 			if inNode {
-				currentNode.WriteByte(c)
+				currentNode.WriteString(pattern[i:end])
 			} else if inRel {
-				currentRel.WriteByte(c)
+				currentRel.WriteString(pattern[i:end])
 			}
+			i = end - 1
 			continue
 		}
+		c := pattern[i]
 
 		switch c {
 		case '(':
@@ -1283,6 +1268,12 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 				inNode = false
 			}
 		case '[':
+			// A bracket inside a node pattern belongs to a property value
+			// (list, subscript or slice), not to the next relationship.
+			if inNode {
+				currentNode.WriteByte(c)
+				continue
+			}
 			if bracketDepth == 0 {
 				inRel = true
 			}
@@ -1291,6 +1282,10 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 				currentRel.WriteByte(c)
 			}
 		case ']':
+			if inNode {
+				currentNode.WriteByte(c)
+				continue
+			}
 			if inRel {
 				currentRel.WriteByte(c)
 			}
@@ -1345,7 +1340,12 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 	var allNodes []nodePatternInfo
 	for _, part := range parts {
 		nodeStr := strings.Trim(part.nodeStr, "()")
-		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, nodeStr))
+		node, err := e.parseNodePatternFromString(ctx, nodeStr)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
+		}
+		allNodes = append(allNodes, node)
 	}
 
 	// Build segments
@@ -1355,10 +1355,15 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 			continue
 		}
 
+		relationship, err := e.parseRelationshipPattern(ctx, relStr)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
+		}
 		segment := TraversalSegment{
 			FromNode:     allNodes[i],
 			ToNode:       allNodes[i+1],
-			Relationship: *e.parseRelationshipPattern(ctx, relStr),
+			Relationship: *relationship,
 		}
 		result.Segments = append(result.Segments, segment)
 	}
@@ -1433,11 +1438,22 @@ func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context,
 	}
 	endNodeStr := pattern[endStart+1 : endEnd]
 
-	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(ctx, startNodeStr),
-		Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		EndNode:      e.parseNodePatternFromString(ctx, endNodeStr),
+	start, err := e.parseNodePatternFromString(ctx, startNodeStr)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
 	}
+	end, err := e.parseNodePatternFromString(ctx, endNodeStr)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
+	relationship, err := e.parseRelationshipPattern(ctx, relStr)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
+	return &TraversalMatch{StartNode: start, Relationship: *relationship, EndNode: end}
 }
 
 func findMatchingBracket(s string, startIdx int) int {
@@ -1452,7 +1468,7 @@ func findMatchingParen(s string, startIdx int) int {
 }
 
 // parseNodePatternFromString parses n:Label {props} from a string
-func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) nodePatternInfo {
+func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) (nodePatternInfo, error) {
 	return e.parseNodePattern(ctx, s)
 }
 

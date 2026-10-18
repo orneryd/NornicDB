@@ -639,8 +639,8 @@ func maskCaseBlocks(expression string) string {
 	}
 	var masked []byte
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, character) - 1
 			continue
 		case 'C', 'c':
@@ -676,9 +676,13 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 	last := -1
 	depth := 0
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
-			index = skipQuotedSemanticText(expression, index) - 1
+		switch character := expression[index]; cypherLexicalByte(character) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(expression, index, character) - 1
+		case '/':
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end - 1
+			}
 		case '(', '{':
 			depth++
 		case ')', '}':
@@ -720,20 +724,8 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 // the static checks and every evaluator (evaluateRowValue,
 // evaluateCypherSubscript, applyArraySuffix).
 func staticSliceBounds(inner string) (from, to string, slice bool) {
-	depth := 0
-	for index := 0; index+1 < len(inner); index++ {
-		switch inner[index] {
-		case '\'', '"', '`':
-			index = skipQuotedSemanticText(inner, index) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case '.':
-			if depth == 0 && inner[index+1] == '.' {
-				return inner[:index], inner[index+2:], true
-			}
-		}
+	if separator := findTopLevelOperator(inner, "..", false, true); separator >= 0 {
+		return inner[:separator], inner[separator+2:], true
 	}
 	return "", "", false
 }
@@ -862,8 +854,8 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 		return "", false
 	}
 	for open := 0; open < len(expression); open++ {
-		switch expression[open] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(expression[open]) {
+		case cypherStringQuoteClass:
 			open = skipQuotedSemanticText(expression, open) - 1
 		case '(', '[':
 			opening, closingDelimiter := '(', ')'
@@ -929,7 +921,7 @@ func endsWithOperand(text string) bool {
 	}
 	last := text[len(text)-1]
 	switch {
-	case last == '\'' || last == '"' || last == '`' || last == ')' || last == ']' || last == '}':
+	case isCypherQuoteByte(last) || last == ')' || last == ']' || last == '}':
 		return true
 	case !isIdentByte(last):
 		return false
@@ -1166,8 +1158,8 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 	}
 	visitPatternValues := func(pattern string) error {
 		for index := 0; index < len(pattern); index++ {
-			switch pattern[index] {
-			case '\'', '"':
+			switch cypherStringLexicalByte(pattern[index]) {
+			case cypherStringQuoteClass:
 				index = skipQuotedSemanticText(pattern, index) - 1
 			case '{':
 				closing := findMatchingDelimiter(pattern, index, '{', '}')
@@ -1406,8 +1398,8 @@ func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params
 func parameterMayMismatchOperator(cypher string, params map[string]interface{}) bool {
 	var previous byte
 	for index := 0; index < len(cypher); index++ {
-		switch cypher[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(cypher[index]) {
+		case cypherStringQuoteClass:
 			previous = cypher[index]
 			index = skipQuotedSemanticText(cypher, index) - 1
 			continue

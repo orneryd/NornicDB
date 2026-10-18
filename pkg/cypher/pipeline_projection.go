@@ -489,20 +489,14 @@ func stripExpressionWhitespace(expression string) string {
 	}
 	var stripped strings.Builder
 	stripped.Grow(len(expression))
-	var quote byte
 	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			stripped.WriteString(expression[index:end])
+			index = end - 1
+			continue
+		}
 		current := expression[index]
 		switch {
-		case quote != 0:
-			if current == '\\' && quote != '`' && index+1 < len(expression) {
-				stripped.WriteByte(current)
-				index++
-				current = expression[index]
-			} else if current == quote {
-				quote = 0
-			}
-		case current == '\'' || current == '"' || current == '`':
-			quote = current
 		case isASCIIWhitespace(current):
 			next := index + 1
 			for next < len(expression) && isASCIIWhitespace(expression[next]) {

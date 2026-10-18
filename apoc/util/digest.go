@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,8 +27,9 @@ func hexDigest(digest hash.Hash, value interface{}) string {
 // The string forms are Java's for the values APOC receives: a string is
 // itself; an integer is in decimal; a float as Java's Double.toString writes
 // it (1.0, 1.0E7, 1.0E-4, NaN, Infinity); a boolean true or false; a list
-// [a, b] and a map {k=v} (Java leaves a map's order unspecified; the keys are
-// sorted here), null inside them being null. Other values are written as
+// [a, b] and a map {k=v} with sorted keys. Utils.toHashString renders null
+// as empty text at every depth, including list elements and map values.
+// Other values are written as
 // their Cypher text (fmt.Stringer), which Java's may differ from.
 func DigestText(value interface{}) string {
 	var out strings.Builder
@@ -44,7 +46,11 @@ func DigestText(value interface{}) string {
 			out.WriteString(item)
 		}
 	default:
-		writeJavaString(&out, value)
+		if list, ok := digestListValue(value); ok {
+			writeJavaList(&out, list, false)
+		} else {
+			writeJavaString(&out, value)
+		}
 	}
 	return out.String()
 }
@@ -52,7 +58,6 @@ func DigestText(value interface{}) string {
 func writeJavaString(out *strings.Builder, value interface{}) {
 	switch v := value.(type) {
 	case nil:
-		out.WriteString("null")
 	case string:
 		out.WriteString(v)
 	case bool:
@@ -95,7 +100,36 @@ func writeJavaString(out *strings.Builder, value interface{}) {
 		}
 		out.WriteByte('}')
 	default:
-		out.WriteString(fmt.Sprint(v))
+		if list, ok := digestListValue(v); ok {
+			writeJavaList(out, list, true)
+		} else {
+			out.WriteString(fmt.Sprint(v))
+		}
+	}
+}
+
+// Cypher lists retain their Go slice/array type across parameter and plugin
+// boundaries. Their Java text is independent of that representation.
+func digestListValue(value interface{}) (reflect.Value, bool) {
+	if _, bytes := value.([]byte); bytes || value == nil {
+		return reflect.Value{}, false
+	}
+	list := reflect.ValueOf(value)
+	return list, list.Kind() == reflect.Slice || list.Kind() == reflect.Array
+}
+
+func writeJavaList(out *strings.Builder, list reflect.Value, nested bool) {
+	if nested {
+		out.WriteByte('[')
+	}
+	for index := 0; index < list.Len(); index++ {
+		if nested && index > 0 {
+			out.WriteString(", ")
+		}
+		writeJavaString(out, list.Index(index).Interface())
+	}
+	if nested {
+		out.WriteByte(']')
 	}
 }
 
@@ -128,7 +162,12 @@ func JavaDoubleString(value float64) string {
 	text := strconv.FormatFloat(value, 'e', -1, 64)
 	mantissa, exponent, _ := strings.Cut(text, "e")
 	if !strings.Contains(mantissa, ".") {
-		mantissa += ".0"
+		// Java's decimal selection includes both one- and two-digit
+		// candidates when the shortest has one digit, choosing the nearest
+		// (ties to even). Appending .0 to Go's shortest loses this distinction
+		// for subnormals: Double.MIN_VALUE is 4.9E-324, not 5.0E-324.
+		text = strconv.FormatFloat(value, 'e', 1, 64)
+		mantissa, exponent, _ = strings.Cut(text, "e")
 	}
 	sign := ""
 	if exponent[0] == '-' {

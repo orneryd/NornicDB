@@ -18,8 +18,8 @@ func validateStaticMapKeys(query string) error {
 	// zero for each brace makes a flat list of ordinary maps quadratic.
 	lastLive := -1
 	for index := 0; index < len(query); index++ {
-		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
-			index = numericValidationSkipQuoted(query, index) - 1
+		if isCypherQuoteByte(query[index]) {
+			index = skipCypherQuotedText(query, index, query[index]) - 1
 			lastLive = index
 			continue
 		}
@@ -182,11 +182,11 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 		precedingToken--
 	}
 	if precedingToken >= 0 {
-		switch query[precedingToken] {
-		case '`':
-			// Backtick-quoted identifier (`` `count` {bad} ``), never the
-			// keyword.
+		if isCypherBacktickByte(query[precedingToken]) {
+			// Backtick-quoted identifier (`count` {bad}), never the keyword.
 			return false
+		}
+		switch query[precedingToken] {
 		case ':':
 			// Label/type name (`:Count {bad}`), unless the colon separates
 			// a map key from its value ({k: COUNT { … }}).
@@ -247,25 +247,10 @@ func inProjectionClause(query string, position int) bool {
 }
 
 func validMapLiteralKey(key string) bool {
-	if isValidIdentifier(key) {
+	if _, ok := isOneSymbolicName(key); ok {
 		return true
 	}
-	if isWholeCypherQuotedString(key) {
-		return true
-	}
-	if len(key) < 2 || key[0] != '`' || key[len(key)-1] != '`' {
-		return false
-	}
-	for index := 1; index < len(key)-1; index++ {
-		if key[index] != '`' {
-			continue
-		}
-		if index+1 >= len(key)-1 || key[index+1] != '`' {
-			return false
-		}
-		index++
-	}
-	return true
+	return isWholeCypherQuotedString(key)
 }
 
 func undefinedStandaloneMapValue(expression string) string {
@@ -293,29 +278,22 @@ func undefinedStandaloneMapValue(expression string) string {
 // colonIsMapKeySeparator reports whether the ':' at colon follows a map key
 // ({key: …} or {…, key: …}) rather than a variable or label in a pattern.
 func colonIsMapKeySeparator(query string, colon int) bool {
-	index := colon - 1
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
+	if colon <= 0 || colon > len(query) {
+		return false
 	}
-	if index >= 0 && query[index] == '`' {
-		index--
-		for index >= 0 && query[index] != '`' {
-			index--
+	// Test every possible entry boundary. Delimiter-looking bytes inside
+	// strings, comments or quoted names cannot win: the shared symbolic-name
+	// reader must consume the complete candidate between boundary and colon.
+	for boundary := colon - 1; boundary >= 0; boundary-- {
+		if query[boundary] != '{' && query[boundary] != ',' {
+			continue
 		}
-		index--
-	} else {
-		end := index
-		for index >= 0 && isIdentByte(query[index]) {
-			index--
-		}
-		if index == end {
-			return false
+		candidate := strings.TrimSpace(StripComments(query[boundary+1 : colon]))
+		if _, ok := isOneSymbolicName(candidate); ok {
+			return true
 		}
 	}
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
-	}
-	return index >= 0 && (query[index] == '{' || query[index] == ',')
+	return false
 }
 
 // subqueryBraceScanner retains lexical progress across increasing brace offsets.
@@ -336,7 +314,7 @@ func (scanner *subqueryBraceScanner) at(brace int) bool {
 	for scanner.position < brace {
 		i := scanner.position
 		c := scanner.query[i]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			scanner.position = skipCypherQuotedText(scanner.query, i, c)
 			scanner.lastLive = scanner.position - 1
 			continue

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -66,39 +67,28 @@ func (e *StorageExecutor) evaluateExpressionWithContext(ctx context.Context, exp
 // values must preserve that distinction instead of replacing null with the
 // original expression text or another fallback value.
 func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
-	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	if value != nil {
-		return value, true
-	}
-	expr = strings.TrimSpace(expr)
-	if strings.EqualFold(expr, "null") || isCaseExpression(expr) || looksLikeFunctionCall(expr) {
-		return nil, true
-	}
-	if dot := strings.IndexByte(expr, '.'); dot > 0 {
-		variable := expr[:dot]
-		if _, ok := nodes[variable]; ok {
-			return nil, true
-		}
-		if _, ok := rels[variable]; ok {
-			return nil, true
-		}
-	}
-	for _, operator := range []string{
-		" AND ", " OR ", " XOR ", " NOT IN ", " IN ", " STARTS WITH ", " ENDS WITH ", " CONTAINS ",
-		"<=", ">=", "<>", "!=", "=~", "=", "<", ">", "+", "-", "*", "/", "%", "^",
-	} {
-		if _, _, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
-			return nil, true
-		}
-	}
-	upper := upperASCII(expr)
-	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
-		return nil, true
-	}
-	return nil, false
+	value, resolved, err := e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
+	recordExpressionFailure(ctx, err)
+	return value, resolved
 }
 
-func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+// Context dispatch's handled flag selects an implementation. Resolution belongs
+// to this result boundary; errors cannot be presented as successful NULL values.
+func (e *StorageExecutor) evaluateContextExpressionResult(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool, error) {
+	ctx = withExpressionFailureSlot(ctx)
+	if strings.TrimSpace(expr) == "" {
+		return nil, false, nil
+	}
+	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+	err := getExpressionFailure(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return value, true, nil
+}
+
+func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (result interface{}) {
+	defer func() { result = cypherfn.RuntimeValue(result) }()
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -128,7 +118,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
 		if _, _, projection := rowMapProjectionSplit(expr); projection {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
+			value, _ := e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}
 	}
@@ -138,7 +128,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// entities, paths and values (#1055). Text the row evaluator handed
 		// here is evaluated below instead, its subqueries reached through
 		// its parts.
-		value, _ := e.evaluateRowExpressionWithContext(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		value, _ := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		return value
 	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
@@ -218,61 +208,14 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	lastDot := -1
-	for index := 0; index < len(expr); index++ {
-		ch := expr[index]
-		if ch == '\\' && (inSingle || inDouble) {
-			index++
-			continue
+	for offset := 0; offset < len(expr); {
+		dot := findTopLevelOperator(expr[offset:], ".", false, true)
+		if dot < 0 {
+			break
 		}
-		// A backtick-quoted name may hold any character, dots included.
-		if ch == '`' && !inSingle && !inDouble {
-			inBacktick = !inBacktick
-			continue
-		}
-		if inBacktick {
-			continue
-		}
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(':
-			if !inSingle && !inDouble {
-				parenDepth++
-			}
-		case ')':
-			if !inSingle && !inDouble && parenDepth > 0 {
-				parenDepth--
-			}
-		case '[':
-			if !inSingle && !inDouble {
-				bracketDepth++
-			}
-		case ']':
-			if !inSingle && !inDouble && bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '{':
-			if !inSingle && !inDouble {
-				braceDepth++
-			}
-		case '}':
-			if !inSingle && !inDouble && braceDepth > 0 {
-				braceDepth--
-			}
-		case '.':
-			if !inSingle && !inDouble && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				lastDot = index
-			}
-		}
+		lastDot = offset + dot
+		offset = lastDot + 1
 	}
 	if lastDot <= 0 || lastDot == len(expr)-1 {
 		return "", "", false
@@ -326,14 +269,8 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 		}
 	}
 
-	if equalFoldASCII(expr, "null") {
-		return nil, false
-	}
-	if equalFoldASCII(expr, "true") {
-		return true, true
-	}
-	if equalFoldASCII(expr, "false") {
-		return false, true
+	if value, literal := literalKeywordValue(expr); literal {
+		return value, true
 	}
 
 	if exprCanBeNumber(expr) {
@@ -411,7 +348,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 		}
 	}
 
-	return nil, true
+	return nil, false
 }
 
 func exprCanBeNumber(expr string) bool {

@@ -1123,11 +1123,6 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	if list == nil {
 		return nil
 	}
-	if text, isText := list.(string); isText && text == listExpr {
-		// This evaluator returns an expression it can't evaluate as its
-		// own text; that is no list value, so the result is unknown.
-		return nil
-	}
 	// The predicate sees the path variables too (r[i], nodes(p)[i], #882),
 	// converted once for every item.
 	var pathValues map[string]interface{}

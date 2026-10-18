@@ -174,7 +174,7 @@ func (prefix pathPatternPrefix) finish(q string, at, end int) (pathPatternPrefix
 func mayUsePathPatternPrefix(query string) bool {
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; {
-		case c == '\'' || c == '"':
+		case isCypherStringQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
 		case isIdentByte(c):
 			end := i + 1
@@ -416,8 +416,8 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 	q := r.query
 	end = trimRightIndex(q, start, end)
 	for i := start; i < end; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '[', '{':
 			if close := findMatchingDelimiter(q[:end], i, rune(c), map[byte]rune{'[': ']', '{': '}'}[c]); close > i {
@@ -517,8 +517,8 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 		from = close + 1
 	}
 	for i := start; i < end; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
 			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
@@ -564,8 +564,8 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 // after a relationship is not one.
 func hasVariableLengthRelationship(q string, start, end int) bool {
 	for i := start; i < end; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
 			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {

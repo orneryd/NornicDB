@@ -31,30 +31,28 @@ import (
 // route a clause to the seeded single-hop fast path (2 groups, 1
 // relationship) or the general path.
 func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
-	var inQuote bool
-	var quoteChar byte
-	depth := 0
 	for i := 0; i < len(pattern); i++ {
 		c := pattern[i]
-		if inQuote {
-			if c == quoteChar && !isBackslashEscaped(pattern, i) {
-				inQuote = false
+		switch cypherLexicalByte(c) {
+		case cypherQuoteClass:
+			i = skipCypherQuotedText(pattern, i, c) - 1
+		case '/':
+			if end := queryCommentEnd(pattern, i); end >= 0 {
+				i = end - 1
 			}
-			continue
-		}
-		switch c {
-		case '\'', '"', '`':
-			inQuote = true
-			quoteChar = c
+		case '{':
+			if end := findMatchingDelimiter(pattern, i, '{', '}'); end > i {
+				i = end
+			}
 		case '(':
 			nodeGroups++
 		case '[':
 			brackets++
-			depth++
-		case ']':
-			depth--
+			if end := findMatchingDelimiter(pattern, i, '[', ']'); end > i {
+				i = end
+			}
 		case '-':
-			if depth == 0 && i+1 < len(pattern) && pattern[i+1] == '-' {
+			if i+1 < len(pattern) && pattern[i+1] == '-' {
 				brackets++
 				i++
 			}
@@ -142,7 +140,10 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 	if group == "" {
 		return rows, nil
 	}
-	np := e.parseNodePattern(ctx, group)
+	np, parseErr := e.parseNodePattern(ctx, group)
+	if parseErr != nil {
+		return nil, parseErr
+	}
 	varName := np.variable
 	if varName == "" {
 		varName = traversalAnonVar
