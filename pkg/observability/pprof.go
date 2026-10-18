@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/pprof"
-	"os"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -49,11 +46,9 @@ func resolvePprofListen(cfg PprofConfig) string {
 // NORNICDB_PPROF_LISTEN. The /debug/pprof/* handlers expose goroutine
 // stacks and heap data; a non-loopback default would be a security bug.
 //
-// Handlers are registered EXPLICITLY on a custom mux. We do NOT use the
-// blank/underscore side-effect import form because that registers on
-// http.DefaultServeMux, which we deliberately avoid for isolation. A
-// dedicated mux also prevents accidental cross-pollution if some unrelated
-// import elsewhere ever registers something on DefaultServeMux.
+// Handlers use runtime profiling APIs and are registered only on this listener's
+// mux. Importing the HTTP profiling package would register its raw argv handler
+// on DefaultServeMux even when this listener is disabled.
 func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -74,25 +69,7 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	runtime.SetBlockProfileRate(1_000_000)
 
 	mux := http.NewServeMux()
-	// Explicit registration — see godoc above for the rationale.
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = w.Write([]byte(strings.Join(DisplayArgs(os.Args), "\x00")))
-	})
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	// Named profiles (mutex, block, goroutine, heap, allocs, threadcreate)
-	// are all routed through pprof.Index, but we register explicit handles
-	// so operators can query them directly with short paths.
-	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
-	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
-	mux.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
-	mux.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
-	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
-	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	registerPprofHandlers(mux)
 
 	return &pprofListener{
 		srv: &http.Server{

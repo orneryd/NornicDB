@@ -47,6 +47,9 @@ func cliSecretProbeCommand(t *testing.T, dir string, extraEnv, args []string) *e
 	t.Cleanup(cancel)
 	argv := append([]string{"-test.run=^TestCLISecretFamilyProcess$", "--"}, args...)
 	cmd := exec.CommandContext(ctx, os.Args[0], argv...)
+	if solRealBinary != "" {
+		cmd = exec.CommandContext(ctx, solRealBinary, args...)
+	}
 	cmd.Dir = dir
 	cmd.Env = []string{
 		"HOME=" + dir,

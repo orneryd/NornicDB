@@ -173,10 +173,22 @@ func fieldWords(name string) []string {
 // DisplayValue projects a configuration value for output only. Callers must
 // retain the original value for execution and persistence.
 func DisplayValue(name, value string) string {
+	if value == "" {
+		return ""
+	}
 	if IsSensitiveFieldName(name) {
 		return redactedPlaceholder
 	}
 	return RedactText(value)
+}
+
+// DisplayFlagDefault projects help metadata even when a secret default is unset.
+// Runtime flag values and configuration presence are unaffected.
+func DisplayFlagDefault(name, value string) string {
+	if IsSensitiveFieldName(name) {
+		return redactedPlaceholder
+	}
+	return DisplayValue(name, value)
 }
 
 const credentialURLScheme = `[A-Za-z][A-Za-z0-9+.-]*://`
@@ -230,6 +242,19 @@ func RedactURL(raw string) string {
 	return u.String()
 }
 
+// Query aliases use the same canonical names and normalization as fields.
+// Provider prefixes (X-Amz-Signature, for example) do not change the credential
+// meaning of the final component. Metadata suffixes such as auth_provider stay.
+func isSensitiveURLQueryName(name string) bool {
+	parts := fieldWords(name)
+	for i := range parts {
+		if IsSensitiveFieldName("url_query_" + strings.Join(parts[i:], "_")) {
+			return true
+		}
+	}
+	return false
+}
+
 func redactURLQuery(query string) (string, bool, bool) {
 	// Preserve the original query spelling/order and non-secret values.
 	changed := false
@@ -240,7 +265,7 @@ func redactURLQuery(query string) (string, bool, bool) {
 		if decodeErr != nil {
 			return "", false, false
 		}
-		if found && IsSensitiveFieldName("url_query_"+decoded) {
+		if found && isSensitiveURLQueryName(decoded) {
 			parts[i] = key + "=" + url.QueryEscape(redactedPlaceholder)
 			changed = true
 		}
@@ -296,7 +321,7 @@ func ClientCredentials(endpoint string, secrets ...string) []string {
 				continue
 			}
 			key, _ = url.QueryUnescape(key)
-			if IsSensitiveFieldName("url_query_" + key) {
+			if isSensitiveURLQueryName(key) {
 				decoded, err := url.QueryUnescape(value)
 				if err != nil {
 					decoded = value

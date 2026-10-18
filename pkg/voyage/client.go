@@ -435,10 +435,16 @@ func (c *Client) postOnce(ctx context.Context, path string, body []byte, respons
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		raw, _ := io.ReadAll(resp.Body)
+		// Project the complete structured error before limiting its display.
+		// A byte-limited read can turn valid JSON into an unparseable prefix.
+		display := observability.RedactText(strings.TrimSpace(string(raw)), observability.ClientCredentials(c.baseURL, c.apiKey)...)
+		if len(display) > 4096 {
+			display = display[:4096]
+		}
 		return apiError{
 			StatusCode: resp.StatusCode,
-			Body:       observability.RedactText(strings.TrimSpace(string(raw)), observability.ClientCredentials(c.baseURL, c.apiKey)...),
+			Body:       display,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}

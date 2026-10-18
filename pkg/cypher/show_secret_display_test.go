@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 func TestShowSecretDisplay(t *testing.T) {
@@ -26,5 +28,47 @@ func TestShowSecretDisplay(t *testing.T) {
 	}
 	if active["db.nornic.embedding.api.key"] != credential {
 		t.Error("runtime settings mutated")
+	}
+}
+
+func TestShowUnsetSecretsRemainEmpty(t *testing.T) {
+	const key = "db.nornic.embedding.api.key"
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	for _, value := range []string{"", "synthetic-show-set-credential-813624"} {
+		settings := map[string]string{key: value}
+		executor.SetSettingsResolver(func() SettingsSnapshot { return SettingsSnapshot{Configured: settings, Active: settings} })
+		result, err := executor.Execute(context.Background(), "SHOW SETTINGS YIELD *", nil)
+		if err != nil {
+			t.Fatal("SHOW SETTINGS failed; details withheld")
+		}
+		columns := make(map[string]int)
+		for i, column := range result.Columns {
+			columns[column] = i
+		}
+		found := false
+		for _, row := range result.Rows {
+			if row[columns["name"]] != key {
+				continue
+			}
+			found = true
+			want := ""
+			if value != "" {
+				want = observability.RedactedPlaceholder()
+			}
+			for _, column := range []string{"value", "startupValue"} {
+				if row[columns[column]] != want {
+					t.Error("SHOW changed unset state or disclosed a secret; row withheld")
+				}
+			}
+			if row[columns["defaultValue"]] != "" {
+				t.Error("SHOW changed the unset secret default")
+			}
+		}
+		if !found {
+			t.Error("secret setting row missing")
+		}
+		if settings[key] != value {
+			t.Error("SHOW changed runtime settings")
+		}
 	}
 }

@@ -53,3 +53,23 @@ func TestConfigDisplaySecretSyntaxAndCause(t *testing.T) {
 		t.Error("original parser cause was not preserved")
 	}
 }
+
+func TestConfigDisplayAuditSigningKey(t *testing.T) {
+	const credential = "synthetic-audit-yaml-sign-key-42813695"
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := []byte("encryption_audit_sign_key: &audit " + credential + "\nserver:\n  bolt_port: *audit\n")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadFromFile(path)
+	if err == nil {
+		t.Fatal("audit-key alias in integer field did not fail decoding")
+	}
+	var typed *yaml.TypeError
+	if !errors.As(err, &typed) {
+		t.Error("YAML error identity lost")
+	}
+	if strings.Contains(err.Error(), credential[:7]) {
+		t.Error("YAML diagnostic disclosed signing key material; output withheld")
+	}
+}

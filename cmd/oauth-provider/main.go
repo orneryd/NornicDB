@@ -564,10 +564,10 @@ func (p *OAuthProvider) handleDiscovery(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"issuer":                                p.issuer,
-		"authorization_endpoint":                fmt.Sprintf("%s/oauth2/v1/authorize", p.issuer),
-		"token_endpoint":                        fmt.Sprintf("%s/oauth2/v1/token", p.issuer),
-		"userinfo_endpoint":                     fmt.Sprintf("%s/oauth2/v1/userinfo", p.issuer),
+		"issuer":                                observability.RedactURL(p.issuer),
+		"authorization_endpoint":                observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/authorize", p.issuer)),
+		"token_endpoint":                        observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/token", p.issuer)),
+		"userinfo_endpoint":                     observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/userinfo", p.issuer)),
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
@@ -621,7 +621,7 @@ func main() {
 	clientSecret := flag.String("client-secret", defaultClientSecret, "OAuth client secret")
 	issuer := flag.String("issuer", defaultIssuer, "OAuth issuer URL")
 	redirectURI := flag.String("redirect-uri", defaultRedirectURI, "Exact registered OAuth callback URL")
-	flag.VisitAll(func(f *flag.Flag) { f.DefValue = observability.DisplayValue(f.Name, f.DefValue) })
+	flag.VisitAll(func(f *flag.Flag) { f.DefValue = observability.DisplayFlagDefault(f.Name, f.DefValue) })
 	flag.Parse()
 
 	provider, err := NewOAuthProvider(*clientID, *clientSecret, *issuer, *redirectURI)
@@ -633,12 +633,13 @@ func main() {
 	go provider.cleanupExpiredTokens()
 
 	// Register routes
-	http.HandleFunc("/oauth2/v1/authorize", provider.handleAuthorize)
-	http.HandleFunc("/oauth2/v1/authorize/consent", provider.handleConsent)
-	http.HandleFunc("/oauth2/v1/token", provider.handleToken)
-	http.HandleFunc("/oauth2/v1/userinfo", provider.handleUserinfo)
-	http.HandleFunc("/.well-known/oauth-authorization-server", provider.handleDiscovery)
-	http.HandleFunc("/health", provider.handleHealth)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth2/v1/authorize", provider.handleAuthorize)
+	mux.HandleFunc("/oauth2/v1/authorize/consent", provider.handleConsent)
+	mux.HandleFunc("/oauth2/v1/token", provider.handleToken)
+	mux.HandleFunc("/oauth2/v1/userinfo", provider.handleUserinfo)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", provider.handleDiscovery)
+	mux.HandleFunc("/health", provider.handleHealth)
 
 	addr := fmt.Sprintf(":%d", *port)
 
@@ -671,7 +672,7 @@ func main() {
 
 	fmt.Print(output)
 
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
