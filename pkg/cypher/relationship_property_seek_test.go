@@ -4,9 +4,39 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+// The server obtains storage through DatabaseManager, whose size-tracking
+// wrapper must preserve the seek capability and the database's namespace.
+func TestRelationshipPropertySeekDatabaseManager(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	defer base.Close()
+	manager, err := multidb.NewDatabaseManager(base, nil)
+	require.NoError(t, err)
+	defer manager.Close()
+	for _, name := range []string{"seek_a", "seek_b"} {
+		require.NoError(t, manager.CreateDatabase(name))
+		store, err := manager.GetStorage(name)
+		require.NoError(t, err)
+		exec := NewStorageExecutor(store)
+		_, err = exec.Execute(context.Background(), "CREATE ()-[:KEYED {_ci_key:'same', tenant:$tenant}]->()", map[string]interface{}{"tenant": name})
+		require.NoError(t, err)
+		_, err = exec.Execute(context.Background(), "CREATE RANGE INDEX rel_key FOR ()-[r:KEYED]-() ON (r._ci_key)", nil)
+		require.NoError(t, err)
+	}
+	for _, name := range []string{"seek_a", "seek_b"} {
+		store, err := manager.GetStorage(name)
+		require.NoError(t, err)
+		exec := NewStorageExecutor(store)
+		result, err := exec.Execute(context.Background(), "PROFILE UNWIND ['same'] AS k MATCH ()-[r:KEYED]->() WHERE r._ci_key = k RETURN r.tenant", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{name}}, result.Rows)
+		require.Contains(t, planStringFromResult(t, result), "RelationshipIndexSeek")
+	}
+}
 
 // The public query must select the relationship index, including a key bound
 // by UNWIND. Correct rows alone did not catch the repeated type/graph scans.
