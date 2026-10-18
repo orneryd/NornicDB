@@ -2137,8 +2137,8 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			continue
 		}
 		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
-			start, startErr := store.GetNode(endpoints[0])
-			end, endErr := store.GetNode(endpoints[1])
+			start, startErr := getQueryNode(store, endpoints[0])
+			end, endErr := getQueryNode(store, endpoints[1])
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
 				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
 				continue

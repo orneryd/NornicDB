@@ -44,6 +44,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// getQueryNode reads a node as query rows carry it: labels, properties and
+// embedding metadata, without the separately stored embedding vectors a row
+// never reads (n.has_embedding reads the metadata). Only the transaction
+// wrapper reads it that way (BadgerTransaction.GetNodeWithoutEmbeddings): a
+// transaction's UpdateNode reconciles embeddings against the stored node, so
+// a row node written back keeps them, while an engine's own UpdateNode takes
+// the body as written and would clear them. Any other store reads the full
+// node. Code that reads vectors (link prediction, vector scoring, search
+// indexing) reads with GetNode.
+func getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+	if wrapper, ok := store.(*transactionStorageWrapper); ok {
+		return wrapper.GetNodeWithoutEmbeddings(id)
+	}
+	return store.GetNode(id)
+}
+
 type materializedAccessRecorder interface {
 	RecordMaterializedAccess(entityID string)
 }
