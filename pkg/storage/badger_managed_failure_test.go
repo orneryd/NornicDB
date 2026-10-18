@@ -35,33 +35,27 @@ func overwriteRaw(t *testing.T, engine *BadgerEngine, key []byte) {
 // write is caught by Badger's conflict check: the commit fails as a
 // conflict, ordinary or large, and writes nothing.
 func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
-	for _, operation := range []string{"update", "delete"} {
-		for _, large := range []bool{false, true} {
-			engine := openLargeCommitTestEngine(t, t.TempDir())
-			_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
-			require.NoError(t, err)
-			tx, err := engine.BeginTransaction()
-			require.NoError(t, err)
-			if large {
-				stageLargeCreate(t, tx, 6000)
-			}
-			if operation == "delete" {
-				require.NoError(t, tx.DeleteNode("test:base"))
-			} else {
-				require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
-			}
-			overwriteRaw(t, engine, nodeKey("test:base"))
-
-			err = tx.Commit()
-			require.ErrorIs(t, err, ErrConflict, "large=%v", large)
-			require.ErrorIs(t, err, badger.ErrConflict, "large=%v", large)
-			require.Zero(t, countBigNodes(t, engine))
-			base, err := engine.GetNode("test:base")
-			require.NoError(t, err)
-			require.Equal(t, int64(1), base.Properties["v"])
-			requireNoLargeCommitIntent(t, engine)
-			require.NoError(t, engine.Close())
+	for _, large := range []bool{false, true} {
+		engine := openLargeCommitTestEngine(t, t.TempDir())
+		_, err := engine.CreateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(1)}})
+		require.NoError(t, err)
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		if large {
+			stageLargeCreate(t, tx, 6000)
 		}
+		require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+		overwriteRaw(t, engine, nodeKey("test:base"))
+
+		err = tx.Commit()
+		require.ErrorIs(t, err, ErrConflict, "large=%v", large)
+		require.ErrorIs(t, err, badger.ErrConflict, "large=%v", large)
+		require.Zero(t, countBigNodes(t, engine))
+		base, err := engine.GetNode("test:base")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), base.Properties["v"])
+		requireNoLargeCommitIntent(t, engine)
+		require.NoError(t, engine.Close())
 	}
 }
 

@@ -180,19 +180,19 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 // commit commits txn as one ordinary commit: it takes the next timestamp
 // under the shared commit gate, writes, and waits until the published
 // timestamp covers the write so the caller reads its own write afterwards.
-func (m *managedBadgerDB) commit(txn *badger.Txn, onAssign ...func()) error {
-	ts, err := m.commitShared(txn, onAssign...)
+func (m *managedBadgerDB) commit(txn *badger.Txn) error {
+	ts, err := m.commitShared(txn)
 	if err != nil {
 		return err
 	}
 	return m.oracle.waitPublished(ts)
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn, onAssign ...func()) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
 	m.advanceDiscardTs()
-	ts, err := m.oracle.assignNotifying(onAssign...)
+	ts, err := m.oracle.assign()
 	if err != nil {
 		return 0, err
 	}
@@ -408,9 +408,9 @@ type largeCommit struct {
 
 // beginLargeCommit takes the commit gate exclusively and durably records the
 // intent of a large commit.
-func (m *managedBadgerDB) beginLargeCommit(onAssign ...func()) (*largeCommit, error) {
+func (m *managedBadgerDB) beginLargeCommit() (*largeCommit, error) {
 	m.commitGate.Lock()
-	intentTs, err := m.oracle.assignNotifying(onAssign...)
+	intentTs, err := m.oracle.assign()
 	if err != nil {
 		m.commitGate.Unlock()
 		return nil, err
@@ -691,12 +691,6 @@ func (o *commitOracle) releaseReads() {
 
 // assign returns the next commit timestamp, unfinished until finish.
 func (o *commitOracle) assign() (uint64, error) {
-	return o.assignNotifying()
-}
-
-// Reservations share the timestamp lock, so event order follows commit order
-// even when physical commits or their publication tails overlap.
-func (o *commitOracle) assignNotifying(onAssign ...func()) (uint64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.failed != nil {
@@ -705,9 +699,6 @@ func (o *commitOracle) assignNotifying(onAssign ...func()) (uint64, error) {
 	ts := o.nextTs
 	o.nextTs++
 	o.inflight[ts] = struct{}{}
-	for _, reserve := range onAssign {
-		reserve()
-	}
 	return ts, nil
 }
 

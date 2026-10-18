@@ -63,15 +63,6 @@ func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
 func (tx *BadgerTransaction) commitBufferedLocked() error {
-	// Unlike a synchronous commit, an ACK never commits badgerTx's read set.
-	// Revalidate against the latest committed heads while excluding physical
-	// publication, and keep that exclusion through the WAL record and ACK.
-	tx.badgerDB.commitGate.Lock()
-	defer tx.badgerDB.commitGate.Unlock()
-	if err := tx.validateSnapshotIsolationConflicts(); err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
-	}
 	physicalOps := tx.physicalOperationsLocked()
 	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
 		tx.releaseSnapshotReaderLocked()
@@ -94,9 +85,6 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		ops:       physicalOps,
 		writes:    tx.pendingWrites,
 		deletes:   tx.pendingDeletes,
-	}
-	for id := range tx.embeddingChanges {
-		c.embeddingRanges = append(c.embeddingRanges, id)
 	}
 	// Allocate the commit's MVCC version NOW, at ACK time: the DB-local
 	// sequence counter pins the commit's place in history, so the flusher
@@ -140,12 +128,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
-	// The exclusive commit gate orders this ACK against synchronous timestamp
-	// reservations. Replay keeps this place even after retiring its overlay.
-	c.notification = &commitNotification{revisionPublished: true}
-	tx.engine.reserveCommitNotification(c.notification)
 	tx.engine.writeBehind.AppendCommit(c)
-	tx.engine.forgetReplacedSidecars(tx.embeddingChanges)
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
 	// not at flush. The sync path advances it per-op through the notify*
@@ -192,9 +175,11 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	// Retire the read overlay before callbacks may flush recursively. Its
-	// reserved notifications still precede every later generation's events.
-	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, buf.markApplied)
+	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
+		return err
+	}
+	buf.markApplied()
+	return nil
 }
 
 // applyBufferedCommits replays buffered commits into Badger: a single Badger
@@ -204,72 +189,19 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // commits it also writes each commit's flush marker key, so the marker is
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
-func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit, beforeNotifications ...func()) error {
-	return b.applyBufferedCommitsWithCountPublication(commits, nil, beforeNotifications...)
+func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
+	return b.applyBufferedCommitsWithCountPublication(commits, nil)
 }
 
-// Count-overlay retirement stays inside the count publication locks. Entity
-// retirement follows cache publication and precedes the ordered notifications.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) (result error) {
+// publishCounts retires the generation count overlay under the same locks that
+// publish persisted counters. Entity/cache callbacks run afterward without locks.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	release, err := b.beginPublication(true)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
 
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	cw := b.newCommitWriter(b.db, txn)
-	// WAL recovery has no in-memory ACK reservations. Reserve the recovered
-	// batch at its physical publication, preserving its operation order.
-	var replayNotification *commitNotification
-	var replayOps []Operation
-	needsReplayNotification := false
-	for _, c := range commits {
-		if c.notification == nil && len(c.ops) > 0 {
-			needsReplayNotification = true
-		}
-	}
-	if needsReplayNotification {
-		replayNotification = &commitNotification{}
-		cw.notification = replayNotification
-	}
-	defer func() {
-		// Replay shares the same Close/sidecar publication discipline as
-		// direct and transactional writes. Dispatch only after releasing it.
-		release()
-		release = nil
-		if result == nil {
-			if replayNotification != nil {
-				// Recovery hydrates the operations from their typed bodies.
-				// Capture events afterward, not the legacy JSON projections.
-				for _, c := range commits {
-					if c.notification == nil {
-						replayOps = append(replayOps, c.ops...)
-					}
-				}
-				replayNotification.ops = replayOps
-			}
-			for _, c := range commits {
-				if c.notification != nil {
-					c.notification.ops = append([]Operation(nil), c.ops...)
-					b.readyCommitNotification(c.notification)
-				}
-			}
-		}
-		// Failed replay cancels only a new physical reservation. An ACK keeps
-		// its position and payload pending for the buffer's retry.
-		b.readyCommitNotification(replayNotification)
-		// Ready the whole generation before dispatch: a callback panic must
-		// not strand later ACKs in this already-applied generation.
-		b.drainCommitNotifications()
-	}()
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
 	// a separate batchWriter whose txn never follows the batch rotation
@@ -330,23 +262,13 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
-		var references embeddingReferenceView
-		if len(c.embeddingRanges) > 0 {
-			references = newEmbeddingReferenceView(nil, c.writes, c.deletes, c.embeddingRanges)
-			references.writer = cw
-		}
 		if c.recovered {
-			if err := b.restoreBufferedOperationBodies(cw.txn, c, references); err != nil {
+			if err := b.restoreBufferedOperationBodies(cw.txn, c); err != nil {
 				return abort(err)
 			}
 		}
 		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
-		}
-		for _, id := range c.embeddingRanges {
-			if err := cw.replaceEmbeddingKeys(id, nil, references); err != nil {
-				return abort(err)
-			}
 		}
 		for keyStr := range c.deletes {
 			key := []byte(keyStr)
@@ -495,23 +417,34 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops)
-	}
-	for _, publish := range beforeNotifications {
-		publish()
+		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
 	}
 	return nil
 }
 
-// publishCommitOperations mirrors the commit tail's entity and unique-value
-// cache updates. The replay caller dispatches notifications after retirement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
+// publishCommitOperations mirrors the commit tail's callback and unique-value
+// cache updates for one buffered statement.
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
+	// Normal buffered writes already advanced their logical revision at ACK.
+	// Replaying durability must not invalidate stable query results once per row.
+	// Recovery has no prior ACK in this process and still publishes its revision.
+	notifyNodeCreated, notifyNodeUpdated := b.publishNodeCreated, b.publishNodeUpdated
+	notifyNodeDeleted := b.publishNodeDeleted
+	notifyEdgeCreated, notifyEdgeUpdated := b.publishEdgeCreated, b.publishEdgeUpdated
+	notifyEdgeDeleted := b.publishEdgeDeleted
+	if publishRevision {
+		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
+		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
+	}
+
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
 			b.cacheOnNodeCreatedWithCounts(op.Node, false)
+			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
@@ -523,20 +456,27 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			} else {
 				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
 			}
+			for _, edgeID := range op.DeletedEdgeIDs {
+				notifyEdgeDeleted(edgeID)
+			}
+			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
 			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
+			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeUpdated(oldType, op.Edge)
+			notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
+			notifyEdgeDeleted(op.EdgeID)
 		}
 	}
 

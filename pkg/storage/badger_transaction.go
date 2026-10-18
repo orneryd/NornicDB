@@ -136,9 +136,6 @@ type BadgerTransaction struct {
 	// read before the invalidation doesn't store them again. Nil until the
 	// first invalidation.
 	droppedEmbeddings map[NodeID]*Node
-	// Final embedding range replacements, materialized from current keys at
-	// commit. Nil for nodes without separately stored keys.
-	embeddingChanges map[NodeID][][]float32
 	// connectedDeletes are nodes a non-DETACH DELETE deleted while
 	// relationships still connected them (DeleteConnectedNode), with their
 	// state before: deleted for scans and lookups by label, still the
@@ -391,7 +388,6 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		tx.mergeKeyRelease = nil
 	}
 	tx.clearSnapshotCachesLocked()
-	tx.embeddingChanges = nil
 	if tx.bufferedStagingTransferred {
 		// The write-behind buffer owns the staged state; the transaction is
 		// dead after close, so leaving the fields nil saves six fresh-map
@@ -755,6 +751,19 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// Buffer node write
 	tx.bufferSet(key, data)
 
+	// If embeddings are stored separately, buffer them
+	if embeddingsSeparate {
+		for i, emb := range node.ChunkEmbeddings {
+			kvs, err := buildEmbeddingChunkWriteKVs(node.ID, i, emb)
+			if err != nil {
+				return "", err
+			}
+			for _, kv := range kvs {
+				tx.bufferSet(kv.key, kv.val)
+			}
+		}
+	}
+
 	// Buffer all label index writes
 	for _, label := range node.Labels {
 		indexKey, err := tx.engine.labelIndexKeyString(tx.staged(), label, node.ID)
@@ -772,11 +781,6 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 
 	// Track for read-your-writes and constraint validation
 	nodeCopy := copyNode(node)
-	nodeCopy.embeddingKeysPresent = embeddingsSeparate
-	nodeCopy.embeddingKeysKnown = true
-	if embeddingsSeparate {
-		tx.stageEmbeddingReplacementLocked(node.ID, nodeCopy.ChunkEmbeddings)
-	}
 	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	delete(tx.deletedNodes, node.ID)
@@ -853,7 +857,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Buffer updated node write
-	nodeBytes, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), body)
+	nodeBytes, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), body)
 	if err != nil {
 		return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 	}
@@ -901,22 +905,6 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 
 	// Track for read-your-writes
 	nodeCopy := copyNode(node)
-	// A distinct body means reconciliation intentionally preserved a managed
-	// sidecar. Otherwise this write owns the full range, even when it fits inline.
-	if body == node {
-		var embeddings [][]float32
-		if embeddingsSeparate {
-			embeddings = nodeCopy.ChunkEmbeddings
-		}
-		_, staged := tx.embeddingChanges[node.ID]
-		if embeddingsSeparate || !oldNode.embeddingKeysKnown || oldNode.embeddingKeysPresent || staged {
-			tx.stageEmbeddingReplacementLocked(node.ID, embeddings)
-		}
-		nodeCopy.embeddingKeysPresent = embeddingsSeparate
-	} else {
-		nodeCopy.embeddingKeysPresent = true
-	}
-	nodeCopy.embeddingKeysKnown = true
 	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
@@ -972,14 +960,9 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
 		return node, nil
 	}
-	var meta map[string]any
-	var sidecar bool
-	if _, replaced := tx.embeddingChanges[node.ID]; !replaced {
-		var err error
-		meta, sidecar, err = tx.retainedSidecarMetadataLocked(oldNode)
-		if err != nil {
-			return nil, err
-		}
+	meta, sidecar, err := tx.retainedSidecarMetadataLocked(oldNode)
+	if err != nil {
+		return nil, err
 	}
 	if tx.engine.sameEmbeddingSource(oldNode, node) {
 		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
@@ -1009,6 +992,12 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	tx.droppedEmbeddings[node.ID] = &Node{ChunkEmbeddings: oldNode.ChunkEmbeddings, EmbedMeta: oldNode.EmbedMeta}
 	node.ChunkEmbeddings = nil
 	node.EmbedMeta = nil
+	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+		tx.bufferDelete(key)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return node, nil
 }
 
@@ -1067,12 +1056,17 @@ func (tx *BadgerTransaction) scanCommittedKeysWithPrefixLocked(prefix []byte, vi
 func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (edgesDeleted int64, deletedEdgeIDs []EdgeID, err error) {
 	key := nodeKey(nodeID)
 
+	// Buffer deletion of separately stored embeddings
+	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+		tx.bufferDelete(key)
+		return nil
+	}); err != nil {
+		return 0, nil, err
+	}
+
 	// Get node for label cleanup (if not already provided)
 	var deletedNode *Node
 	if oldNode != nil {
-		if err := tx.enrollCommittedWriteLocked(nodeKey(nodeID), "node"); err != nil {
-			return 0, nil, err
-		}
 		deletedNode = oldNode
 	} else {
 		item, err := tx.badgerTx.Get(key)
@@ -1095,13 +1089,6 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 		}); err != nil {
 			return 0, nil, err
 		}
-	}
-
-	// No cleanup intent for bodies that have no separately stored keys.
-	// A prior staged replacement still needs its final (empty) range intent.
-	_, staged := tx.embeddingChanges[nodeID]
-	if !deletedNode.embeddingKeysKnown || deletedNode.embeddingKeysPresent || staged {
-		tx.stageEmbeddingReplacementLocked(nodeID, nil)
 	}
 
 	// The committed body is archived at commit (materializeMVCCCommit), from
@@ -2789,7 +2776,7 @@ func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
 func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
-	notification := &commitNotification{}
+	var notification *commitNotification
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
@@ -2805,9 +2792,8 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	// The engine's write barrier is held through publication, with event
-	// callbacks dispatched after it and tx.mu are released
-	// (releaseWriteBarrierLocked): exclusively for a schema transaction, so
+	// The engine's write barrier is held through publication, before listener
+	// delivery (releaseWriteBarrierLocked): exclusively for a schema transaction, so
 	// no data write publishes between its snapshot check and its schema
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
@@ -2877,8 +2863,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return err
 	}
 
-	tx.collectLateEmbeddingChangesLocked()
-
 	temporalTargets, err := tx.bufferTemporalIndexWrites()
 	if err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2911,16 +2895,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
-		if err := tx.materializeEmbeddingChangesLocked(false); err != nil {
-			tx.closeLocked(TxStatusRolledBack, true, nil)
-			return err
-		}
 		return tx.commitBufferedLocked()
-	}
-
-	if err := tx.materializeEmbeddingChangesLocked(true); err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
 	}
 
 	physicalOperations := tx.physicalOperationsLocked()
@@ -2960,7 +2935,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.releaseSnapshotReaderLocked()
 
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
-	cw.notification = notification
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
@@ -3013,9 +2987,11 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return tx.abortCommitLocked(err)
 	}
 	tx.engine.idDict.markTxnCommitted(committingTxn)
-	tx.engine.forgetReplacedSidecars(tx.embeddingChanges)
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
+	if len(tx.operations) > 0 {
+		notification = tx.engine.reserveCommitOperations(tx.operations)
+	}
 	runCommitTailHook()
 
 	tx.endChangeCaptureLocked(true)
@@ -3063,8 +3039,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
-	// Apply cache/count updates after commit. Callbacks run after the barrier
-	// and tx.mu are released, permitting synchronous storage re-entry.
+	// Apply cache/count updates and fire callbacks after commit.
 	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)
 	// observe transactional writes the same way as non-transactional writes.
 	for _, op := range tx.operations {
@@ -3097,6 +3072,8 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 			// Embeddings are regenerable; no-op for cached counts.
 		}
 	}
+
+	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
 
 	// Update derived unique-constraint caches (in-memory) based on committed operations.
 	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
@@ -3169,7 +3146,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		}
 	}
 
-	notification.ops = append([]Operation(nil), tx.operations...)
 	tx.closeLocked(TxStatusCommitted, false, nil)
 	return nil
 }
@@ -3270,9 +3246,6 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 		sidecar := false
 		_ = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
 			sidecar = tx.nodeHasEmbeddingSidecar(txn, nodeID)
-			if txn != nil && !sidecar {
-				node.embeddingKeysKnown = true
-			}
 			return nil
 		})
 		if !sidecar {

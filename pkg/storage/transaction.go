@@ -162,8 +162,6 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 		UpdatedAt:                  node.UpdatedAt,
 		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
 		VisibilitySuppressed:       node.VisibilitySuppressed,
-		embeddingKeysPresent:       node.embeddingKeysPresent || node.EmbeddingsStoredSeparately,
-		embeddingKeysKnown:         node.embeddingKeysKnown || node.EmbeddingsStoredSeparately,
 	}
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 

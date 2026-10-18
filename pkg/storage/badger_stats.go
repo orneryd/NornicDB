@@ -201,18 +201,6 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
-	// Reject new committers first. Wait for every admitted committer to
-	// finish its ACK before the last drain; callbacks hold no publication
-	// lease and can re-enter to observe ErrStorageClosed while we quiesce.
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return nil
-	}
-	b.closing = true
-	b.mu.Unlock()
-	b.writeBarrier.Lock()
-	b.writeBarrier.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
@@ -225,11 +213,8 @@ func (b *BadgerEngine) Close() error {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
-		if err := b.FlushWriteBehind(); err != nil {
-			return fmt.Errorf("write-behind drain on close: %w", err)
-		}
-		if b.writeBehind.PendingOps() != 0 {
-			return fmt.Errorf("write-behind drain on close made no progress")
+		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
 		}
 		b.writeBehind.Close()
 	}
@@ -247,8 +232,8 @@ func (b *BadgerEngine) Close() error {
 
 	// Wait for every in-flight durable write (see writeBarrier) so no
 	// commit that already reached Badger has its publication tail torn by
-	// the release below. Mark closed while holding the barrier so no new
-	// write can reach a closing Badger handle.
+	// the release below. Mark closed before releasing the barrier; later
+	// writers fail before reaching Badger, while listeners can re-enter.
 	b.writeBarrier.Lock()
 
 	b.mu.Lock()
@@ -264,12 +249,14 @@ func (b *BadgerEngine) Close() error {
 	b.closed = true
 	db := b.db
 	b.mu.Unlock()
-	// No new writes can start after closed is set. Let a callback re-enter
-	// storage, observe ErrStorageClosed, and finish while Close drains it.
+	// Publication has finished and new writes observe closed. Do not retain
+	// the barrier while listeners re-enter storage; keep state until they finish.
 	b.writeBarrier.Unlock()
 
-	// Registrations preceded the barrier release, so no new notifications
-	// can be added now. Drain callbacks before tearing down their state.
+	// Drain in-flight node-deleted notifications before releasing the
+	// callback fields and other engine state they run against (#726). No
+	// new notifications can start: BulkDeleteNodes adds them under mu only
+	// when the engine is not closed.
 	b.txnWG.Wait()
 	b.notifyWG.Wait()
 
@@ -294,7 +281,6 @@ func (b *BadgerEngine) Close() error {
 //
 // b.mu must be held and b.closed must already be true.
 func (b *BadgerEngine) releaseClosedStateLocked() {
-	b.embeddingSidecarWrites.Clear()
 	b.db = nil
 	b.nodeCache = nil
 	b.nodeBodyCache = nil

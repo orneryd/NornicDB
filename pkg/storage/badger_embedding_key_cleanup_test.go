@@ -83,6 +83,37 @@ func TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails(t *testing.T) {
 	}))
 }
 
+func TestEmbeddingCleanup_CopiesKeysAndIncludesSidecarAndShards(t *testing.T) {
+	engine := newTestEngine(t)
+	id := NodeID("test:owned-keys")
+	_, err := engine.CreateNode(&Node{ID: id})
+	require.NoError(t, err)
+	node, err := engine.GetNode(id)
+	require.NoError(t, err)
+	node.ChunkEmbeddings = [][]float32{make([]float32, 32768)}
+	node.ChunkEmbeddings[0][3] = 17
+	node.EmbedMeta = map[string]any{"chunk_count": 1}
+	require.NoError(t, engine.UpdateNodeEmbeddingSidecar(node))
+	var keys [][]byte
+	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+		return visitEmbeddingKeys(txn, id, func(key []byte) error {
+			keys = append(keys, key)
+			return nil
+		})
+	}))
+	require.Greater(t, len(keys), 3, "marker, shard parts and metadata")
+	seen := make(map[string]bool)
+	for _, key := range keys {
+		require.False(t, seen[string(key)], "retained keys must not alias the iterator buffer")
+		seen[string(key)] = true
+		require.Equal(t, byte(0x08), key[0], "keep the released layout")
+	}
+	require.True(t, seen[string(embeddingMetaKey(id))])
+	require.True(t, seen[string(embeddingChunkPartKey(id, 0, 0))])
+	require.NoError(t, engine.DeleteNode(id))
+	require.Zero(t, countEmbeddingKeys(t, engine, id))
+}
+
 // BenchmarkDeleteNode_SeparateEmbeddings deletes a node whose chunk vectors
 // are stored under separate keys. Each iteration uses a new node ID: reusing
 // one would pile up versions of the same keys, which every later scan of the

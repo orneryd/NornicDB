@@ -170,38 +170,31 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db      *managedBadgerDB
-	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed  bool
-	closing bool // write admission is closed before the final buffered drain
+	db     *managedBadgerDB
+	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closed bool
 	// changes is the change data capture state (change_capture.go, #937).
 	changes changeCapture
-	// notifyWG tracks notifications registered before publication releases
-	// writeBarrier. Close marks the engine closed, then drains them without
-	// that barrier, so callbacks may re-enter storage without an upgrade.
+	// notifyWG tracks publication-registered listeners and bulk-delete events.
+	// Close rejects new writes, releases writeBarrier, then waits for listener
+	// re-entry before releasing engine state.
 	notifyWG                           sync.WaitGroup
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
 	notificationDraining               bool
-	closeMu                            sync.Mutex // Serializes Close while callbacks drain without writeBarrier.
+	closeMu                            sync.Mutex
 	txnWG                              sync.WaitGroup
 	// writeBarrier orders Close against durable writes. Every public
-	// non-transactional mutator holds it for read through publication,
+	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
 	// Badger commit through the post-commit tail (derived counts, MVCC
-	// sequence, ID counters, caches). Notifications transfer to notifyWG.
-	// Close takes it for write
+	// sequence, ID counters, caches). Listeners transfer to notifyWG. Close takes it for write
 	// before releasing engine state, so a write whose Badger commit has
 	// already returned always finishes publishing and reports success, and a
 	// write that arrives after Close fails cleanly with ErrStorageClosed.
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
-	// Sidecar publication is the only writer that does not change a body.
-	// Versions are recorded only for live sidecar ranges; the scalar is read
-	// under writeBarrier and avoids any registry walk on ordinary commits.
-	lastEmbeddingSidecarWrite uint64
-	embeddingSidecarWrites    sync.Map // NodeID -> physical publication version
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup
@@ -538,7 +531,11 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 // notifyNodeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeCreated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.dispatchNodeCreated(node)
+	b.publishNodeCreated(node)
+}
+
+func (b *BadgerEngine) publishNodeCreated(node *Node) {
+	b.enqueueCommitOperation(Operation{Type: OpCreateNode, Node: node})
 }
 
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
@@ -555,7 +552,11 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 // notifyNodeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.dispatchNodeUpdated(node)
+	b.publishNodeUpdated(node)
+}
+
+func (b *BadgerEngine) publishNodeUpdated(node *Node) {
+	b.enqueueCommitOperation(Operation{Type: OpUpdateNode, Node: node})
 }
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
@@ -579,7 +580,7 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
 	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
-	b.dispatchNodeDeleted(nodeID)
+	b.enqueueCommitOperation(Operation{Type: OpDeleteNode, NodeID: nodeID})
 }
 
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
@@ -595,7 +596,11 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 // notifyEdgeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.dispatchEdgeCreated(edge)
+	b.publishEdgeCreated(edge)
+}
+
+func (b *BadgerEngine) publishEdgeCreated(edge *Edge) {
+	b.enqueueCommitOperation(Operation{Type: OpCreateEdge, Edge: edge})
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
@@ -612,7 +617,11 @@ func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 // notifyEdgeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.dispatchEdgeUpdated(edge)
+	b.publishEdgeUpdated(edge)
+}
+
+func (b *BadgerEngine) publishEdgeUpdated(edge *Edge) {
+	b.enqueueCommitOperation(Operation{Type: OpUpdateEdge, Edge: edge})
 }
 
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
@@ -629,9 +638,13 @@ func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 // notifyEdgeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
+	b.publishEdgeDeleted(edgeID)
+}
+
+func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
 	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
-	b.dispatchEdgeDeleted(edgeID)
+	b.enqueueCommitOperation(Operation{Type: OpDeleteEdge, EdgeID: edgeID})
 }
 
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
@@ -1092,13 +1105,6 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	if err := engine.loadMVCCFloorKeys(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load mvcc prune floors: %w", err)
-	}
-
-	// Old shrink/delete code could leave orphan chunks behind an inline or
-	// missing body. Repair once before reads may trust body/meta absence.
-	if err := engine.ensureEmbeddingKeyRepair(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to repair orphaned embedding keys: %w", err)
 	}
 
 	// Now bodies are guaranteed v2. Schema load + unique-value rebuild

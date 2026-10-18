@@ -25,31 +25,19 @@ func (b *BadgerEngine) ensureOpen() error {
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginWrite() (func(), error) {
-	return b.beginPublication(false)
-}
-
-// Replay is the only write admitted during shutdown's final drain. Existing
-// committers already hold their publication lease and finish before that drain.
-func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
 	b.writeBarrier.RLock()
-	b.mu.RLock()
-	closed := b.closed || (b.closing && !replay)
-	b.mu.RUnlock()
-	if closed {
+	if err := b.ensureOpen(); err != nil {
 		b.writeBarrier.RUnlock()
-		return nil, ErrStorageClosed
+		return nil, err
 	}
 	return b.writeBarrier.RUnlock, nil
 }
 
 func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
 	b.writeBarrier.Lock()
-	b.mu.RLock()
-	closed := b.closed || b.closing
-	b.mu.RUnlock()
-	if closed {
+	if err := b.ensureOpen(); err != nil {
 		b.writeBarrier.Unlock()
-		return nil, ErrStorageClosed
+		return nil, err
 	}
 	return b.writeBarrier.Unlock, nil
 }
@@ -81,11 +69,7 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // withUpdateUnits.
 func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
-	return b.withNotifyingUpdate(fn)
-}
-
-func (b *BadgerEngine) withNotifyingUpdate(fn func(txn *badger.Txn) error, notification ...*commitNotification) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) }, notification...)
+	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each
@@ -112,17 +96,7 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, notification ...*commitNotification) error {
-	return b.commitEngineWriteWithRead(write, false, notification...)
-}
-
-// commitEngineWriteHeld is for offline maintenance under writeBarrier, while
-// Restore holds reads. It uses the same commit writer and publication path.
-func (b *BadgerEngine) commitEngineWriteHeld(write func(cw *commitWriter) error) error {
-	return b.commitEngineWriteWithRead(write, true)
-}
-
-func (b *BadgerEngine) commitEngineWriteWithRead(write func(cw *commitWriter) error, held bool, notification ...*commitNotification) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -130,22 +104,12 @@ func (b *BadgerEngine) commitEngineWriteWithRead(write func(cw *commitWriter) er
 	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
-		var txn *badger.Txn
-		var readTs uint64
-		if held {
-			readTs = db.oracle.beginReadHeld()
-			txn = db.newTxnAt(readTs, true)
-		} else {
-			txn, readTs, err = db.beginTxn(true)
-			if err != nil {
-				return err
-			}
+		txn, readTs, err := db.beginTxn(true)
+		if err != nil {
+			return err
 		}
 		defer db.endRead(readTs)
 		cw := b.newCommitWriter(db, txn)
-		if len(notification) > 0 {
-			cw.notification = notification[0]
-		}
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)

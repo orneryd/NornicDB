@@ -40,16 +40,12 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
-	recovered    bool // WAL operations require authoritative typed-body hydration.
-	namespace    string
-	txID         string // transaction ID, used for the WAL buffered-commit payload and flush marker
-	ops          []Operation
-	notification *commitNotification // ACK order; ready after replay retires the overlay
-	writes       map[string][]byte
-	deletes      map[string]bool
-	// Keep range intent until ordered replay, including WAL recovery. Earlier
-	// buffered commits may own keys that do not exist in Badger at ACK time.
-	embeddingRanges []NodeID
+	recovered bool // WAL operations require authoritative binary-body hydration before publication.
+	namespace string
+	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
+	ops       []Operation
+	writes    map[string][]byte
+	deletes   map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it
@@ -887,12 +883,7 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			if err := w.LastErr(); err != nil {
-				return err
-			}
-			// A claimed large generation may still be making progress in
-			// Badger. Absence of an apply error is not proof of completion.
-			stalls = 0
+			return w.LastErr()
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -1330,9 +1321,7 @@ func (w *WriteBehindBuffer) PendingOps() int {
 	total := w.opCount
 	for _, buf := range w.draining {
 		if !buf.IsApplied() {
-			// Rotated generations carry both legacy mutations and captured
-			// transaction commits. AddCommit does not populate Mutations().
-			total += buf.ops
+			total += len(buf.Mutations())
 		}
 	}
 	return total

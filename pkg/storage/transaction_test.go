@@ -1137,12 +1137,10 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		if !tx.pendingDeletes[string(personKey)] ||
 			!tx.pendingDeletes[string(employeeKey)] ||
 			!tx.pendingDeletes[string(nodeKey(nodeID))] ||
-			!tx.pendingDeletes[string(pendingEmbedKey(nodeID))] {
-			t.Fatal("expected node, label, and pending embedding deletes to be buffered")
+			!tx.pendingDeletes[string(pendingEmbedKey(nodeID))] ||
+			!tx.pendingDeletes[string(embeddingKey(nodeID, 0))] {
+			t.Fatal("expected node, label, pending embedding, and embedding chunk deletes to be buffered")
 		}
-		embeddings, cleanup := tx.embeddingChanges[nodeID]
-		require.True(t, cleanup, "embedding range cleanup is resolved from current keys at commit")
-		require.Empty(t, embeddings)
 	})
 }
 

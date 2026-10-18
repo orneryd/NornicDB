@@ -92,24 +92,19 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // whether or not decay is enabled (#1064). Showing it again re-indexes it for
 // search. ErrNotFound when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
-	notification, finish, err := b.beginNotifyingWrite()
-	if err != nil {
-		return err
-	}
-	defer finish()
 	var node *Node
-	err = b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
+	err := b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
 		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
 		node = decoded
 		return err
-	}, notification)
+	})
 	if err != nil {
 		return err
 	}
 	b.graphMutationVersions.changed(namespaceForNodeID(id))
 	if !suppressed && node != nil {
 		// Search drops a node it can't load; index it again.
-		notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+		b.notifyNodeUpdated(node)
 	}
 	return nil
 }
@@ -127,11 +122,11 @@ func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) err
 // setManualSuppression writes (or deletes) an entity's suppression key, once
 // its record is found, and mirrors it in memory. decode, when set, reads the
 // record.
-func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error, notification ...*commitNotification) error {
+func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
+	err := b.withUpdate(func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -148,7 +143,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	}, notification...)
+	})
 	if err != nil {
 		return err
 	}
