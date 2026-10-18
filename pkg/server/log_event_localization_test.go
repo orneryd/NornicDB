@@ -229,11 +229,16 @@ func TestEmbeddingModelLoadingLogPreservesFieldsAcrossLocales(t *testing.T) {
 		{name: "Spanish", tag: language.EuropeanSpanish, message: "cargando modelo de incrustaciones"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			db, err := nornicdb.Open("", nil)
+			// Let server initialization publish the queue, then wait for that
+			// publication before closing the database during test cleanup.
+			dbConfig := nornicdb.DefaultConfig()
+			dbConfig.Memory.EmbeddingEnabled = false
+			dbConfig.Memory.KmeansClusterInterval = 0
+			db, err := nornicdb.Open("", dbConfig)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-			var output bytes.Buffer
+			var output synchronizedLogBuffer
 			logger := slog.New(slog.NewJSONHandler(&output, nil))
 			manager, err := localization.NewManager([]language.Tag{test.tag}, logger)
 			require.NoError(t, err)
@@ -250,6 +255,9 @@ func TestEmbeddingModelLoadingLogPreservesFieldsAcrossLocales(t *testing.T) {
 
 			server, err := New(db, nil, config)
 			require.NoError(t, err)
+			// Wait for queue publication to avoid the known SetEmbedder versus
+			// Close product lifecycle race tracked for 1.5.0 in #1469.
+			require.Eventually(t, func() bool { return db.GetEmbedQueue() != nil }, 10*time.Second, 10*time.Millisecond)
 			require.NoError(t, server.Stop(context.Background()))
 
 			record := findJSONLogRecord(t, output.Bytes(), "server.embedding.model_loading", "loading embedding model")
