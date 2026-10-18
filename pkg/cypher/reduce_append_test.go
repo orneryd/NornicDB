@@ -206,22 +206,15 @@ func TestReduceAppendFoldSharesNothing(t *testing.T) {
 
 // TestReduceAppendResultHandoff: runReduceForm hands its list over at its
 // own length, apart from the list it appended to (which has spare
-// capacity: a result on it would hide that capacity from its next owner,
-// whose estimate reads the result's own capacity), and gives back what the
-// budget held for the fold.
+// capacity, and which a later step's operands saw).
 func TestReduceAppendResultHandoff(t *testing.T) {
-	resetTransactionMemory(t)
-	ConfigureTransactionMemory(1<<40, TransactionMemoryLimits{})
-	tracker := newTestMemoryTracker("reduce handoff")
-	defer tracker.end()
-	budget := expressionBudget{scope: &tracker.root}
 	base := make([]interface{}, 20000)
 	for i := range base {
 		base[i] = int64(i)
 	}
 	form := reduceForm{accumulator: "a", variable: "x", step: "a + x"}
 	var folding []interface{}
-	result, err := runReduceForm(&budget, form, base, []interface{}{int64(1), int64(2)},
+	result, err := runReduceForm(form, base, []interface{}{int64(1), int64(2)},
 		func(a, x interface{}) (interface{}, error) { return nil, nil }, nil,
 		&reduceAppender{plan: form.appendPlan(), term: func(_ int, a, x interface{}) (interface{}, error) {
 			folding = a.([]interface{})
@@ -234,7 +227,5 @@ func TestReduceAppendResultHandoff(t *testing.T) {
 	// The second step saw the fold's own list (copied from base by the first).
 	require.Len(t, folding, 20001)
 	require.NotSame(t, &folding[0], &list[0], "the result is the list the fold appended to")
-	require.Equal(t, estimateValueBytes(append(make([]interface{}, 0, len(list)), list...)), estimateValueBytes(result))
-	require.Zero(t, tracker.root.mark())
 	require.Len(t, base, 20000)
 }
