@@ -167,10 +167,10 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 				}
 			}
 			var err error
-			if h, ok := r.(interface {
+			if contextual, ok := r.(interface {
 				HandleForwardApplyContext(context.Context, *Command, time.Duration) error
 			}); ok {
-				err = h.HandleForwardApplyContext(ctx, &cmd, timeout)
+				err = contextual.HandleForwardApplyContext(ctx, &cmd, timeout)
 			} else {
 				err = h.HandleForwardApply(&cmd, timeout)
 			}
