@@ -284,6 +284,9 @@ func participantKeyFromLocation(loc Location) string {
 	case *LocationLocal:
 		return "local:" + strings.TrimSpace(l.DBName)
 	case *LocationRemote:
+		if l.GraphName != "" {
+			return "remote:" + l.GraphName
+		}
 		return "remote:" + strings.TrimSpace(l.URI) + "|" + strings.TrimSpace(l.DBName)
 	default:
 		return fmt.Sprintf("unknown:%T", loc)
