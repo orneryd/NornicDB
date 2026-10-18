@@ -104,6 +104,18 @@ func TestDisplaySecretEndpointContext(t *testing.T) {
 	}
 }
 
+func TestDisplaySecretMalformedURLScalar(t *testing.T) {
+	const credential = "synthetic-malformed-url-credential-314159"
+	for _, suffix := range []string{`"`, " space", "%zz"} {
+		raw := "http://probe:" + credential + suffix + "@example.test"
+		for _, output := range []string{DisplayValue("embedding-url", raw), RedactText(raw), strings.Join(DisplayArgs([]string{"serve", "--embedding-url=" + raw}), "\x00")} {
+			if strings.Contains(output, credential) {
+				t.Error("malformed scalar URL disclosed credential (value withheld)")
+			}
+		}
+	}
+}
+
 func TestDisplaySecretSpanAliasesAndURL(t *testing.T) {
 	inner := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(NewRedactingSpanProcessor(inner)))

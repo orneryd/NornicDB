@@ -179,7 +179,10 @@ func DisplayValue(name, value string) string {
 	return RedactText(value)
 }
 
-var credentialURL = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>\x00]+`)
+const credentialURLScheme = `[A-Za-z][A-Za-z0-9+.-]*://`
+
+var credentialURL = regexp.MustCompile(credentialURLScheme + `[^\s"'<>\x00]+`)
+var scalarCredentialURL = regexp.MustCompile(`^` + credentialURLScheme)
 
 // RedactURL preserves credential-free URLs byte for byte. Only userinfo and
 // sensitive query values are changed; paths, hosts and ordinary query options
@@ -340,6 +343,12 @@ func RedactText(text string, credentials ...string) string {
 		}
 	}
 	if strings.Contains(text, "://") {
+		// Config/flag URL scalars may be malformed. Inspect their complete
+		// value before tokenization so quotes or whitespace in userinfo cannot
+		// split a credential away from its '@' delimiter.
+		if scalarCredentialURL.MatchString(text) {
+			text = RedactURL(text)
+		}
 		text = credentialURL.ReplaceAllStringFunc(text, RedactURL)
 	}
 	trimmed := strings.TrimSpace(text)

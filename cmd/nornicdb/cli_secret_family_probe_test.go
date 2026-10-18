@@ -82,6 +82,7 @@ func TestCLISecretFamilyPublicOutput(t *testing.T) {
 		{"root-help-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"--help"}, false},
 		{"completion-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"completion", "bash"}, false},
 		{"serve-help-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"serve", "--help"}, false},
+		{"serve-help-malformed-url", []string{"NORNICDB_EMBEDDING_API_URL=http://probe:" + cliSecretProbeFlag + `"@127.0.0.1:1`}, []string{"serve", "--help"}, false},
 		{"help-subcommand-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"help", "serve"}, false},
 		{"parse-error-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"serve", "--http-port=invalid"}, true},
 		{"unknown-flag-env", []string{"NORNICDB_EMBEDDING_API_KEY=" + cliSecretProbeEnv}, []string{"serve", "--not-a-real-flag"}, true},
