@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"encoding/binary"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/big"
@@ -136,15 +137,26 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		}
 		return
 	}
-	if kind, parts, temporal := temporalEqualityParts(value); temporal {
-		// The equality owner discards incidental Go representations (pointers,
-		// clock/date fields a type does not use, and duration unit choices).
-		// Reuse it for scalar keys and every recursively nested collection key.
-		key.WriteString(fmt.Sprintf("T%s:%#v", kind, parts))
+	if parts, temporal := temporalEqualityParts(value); temporal {
+		appendTemporalEquivalenceKey(key, parts)
 		return
 	}
 	key.WriteByte('T')
 	key.WriteString(fmt.Sprintf("%T:%#v", value, value))
+}
+
+// Encoded keys are needed by older grouping paths and nested encoded values.
+// Serialize the same typed identity without reflection or per-field formatting.
+func appendTemporalEquivalenceKey(key *strings.Builder, parts temporalEqualityKey) {
+	var buffer [1 + 7*8 + 8]byte
+	buffer[0] = parts.kind
+	for i, part := range parts.parts {
+		binary.LittleEndian.PutUint64(buffer[1+i*8:], uint64(part))
+	}
+	binary.LittleEndian.PutUint64(buffer[1+7*8:], uint64(parts.offset))
+	key.WriteByte('T')
+	key.Write(buffer[:])
+	key.WriteString(parts.zone)
 }
 
 // appendNestedEquivalenceKey writes a list or map element's key preceded by
