@@ -112,6 +112,8 @@ func TestImportedIdentifierReferenceTokens(t *testing.T) {
 		{"MATCH (`a``b`:A) RETURN count(`a``b`)", "a`b", true},
 		{"MATCH (`a b`:A) RETURN `a b`", "a b", true},
 		{"RETURN `a`", "a", true},
+		{"RETURN`a``b`", "a`b", true},
+		{"RETURN 1e3", "e3", false},
 		{"RETURN a", "a", true},
 		{"RETURN `a``b`", "a", false},
 		{"RETURN `a b`", "a", false},
