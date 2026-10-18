@@ -1483,12 +1483,14 @@ func (s *Service) MarkReadyDisabled() {
 // the construction path in getOrCreateSearchService) can observe whether
 // the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
-	prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
-	prevVec := s.vectorEnabled.Swap(vectorEnabled)
-	changed = prevBM25 != bm25Enabled || prevVec != vectorEnabled
-	if changed {
-		s.indexChanged()
-	}
+	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
+	s.orderWithBuild(func() {
+		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
+		prevVec := s.vectorEnabled.Swap(vectorEnabled)
+		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
+			s.indexChanged()
+		}
+	})
 	return changed
 }
 
@@ -2749,7 +2751,7 @@ func (s *Service) getVectorForCypherLocked(vecID string) ([]float32, bool) {
 // vector-shaped value sets the dimension of an empty index (a database with
 // no embedder storing its own vectors).
 func (s *Service) FixVectorDimensions() {
-	s.vectorDimensionsFixed.Store(true)
+	s.orderWithBuild(func() { s.vectorDimensionsFixed.Store(true) })
 }
 
 // AdmitsVectorDimensions reports whether IndexNode indexes a vector of
@@ -3707,10 +3709,17 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 // propertyKey. Callers are expected to also call DropIndex on the schema
 // to remove the named-index entry that points at this property.
 func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
-	defer s.indexChanged()
 	if s == nil || propertyKey == "" {
 		return
 	}
+	// During a build the removal is handed to the build in order with the
+	// writes acknowledged before it, so it also removes their vectors.
+	s.orderWithBuild(func() { s.removePropertyVectorIndexOwned(propertyKey) })
+}
+
+// removePropertyVectorIndexOwned is RemovePropertyVectorIndex's removal.
+func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
+	defer s.indexChanged()
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -4198,7 +4207,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			if len(batch) == 0 {
 				return nil
 			}
-			s.adoptFirstVectorDimensions(batch)
+			s.adoptBuildVectorDimensions(batch)
 			// Writes handed over since the last batch are applied first; a node
 			// one of them wrote keeps that write, whether this batch read it
 			// before or after it.
@@ -4335,7 +4344,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		s.adoptFirstVectorDimensions(batch)
+		s.adoptBuildVectorDimensions(batch)
 		// Writes handed over since the last batch are applied first; a node
 		// one of them wrote keeps that write, whether this batch read it
 		// before or after it.
@@ -7691,9 +7700,11 @@ func visitSearchableFields(node *storage.Node, fulltextProperties []string, visi
 // Configure this before building indexes.
 func (s *Service) SetFulltextProperties(properties []string) {
 	normalized := normalizeFulltextProperties(properties)
-	s.mu.Lock()
-	s.fulltextProperties = normalized
-	s.mu.Unlock()
+	s.orderWithBuild(func() {
+		s.mu.Lock()
+		s.fulltextProperties = normalized
+		s.mu.Unlock()
+	})
 }
 
 // SetRelationshipFulltextProperties limits relationship search's keyword
@@ -7702,9 +7713,11 @@ func (s *Service) SetFulltextProperties(properties []string) {
 // is built.
 func (s *Service) SetRelationshipFulltextProperties(properties []string) {
 	normalized := normalizeFulltextProperties(properties)
-	s.mu.Lock()
-	s.relationshipFulltextProperties = normalized
-	s.mu.Unlock()
+	s.orderWithBuild(func() {
+		s.mu.Lock()
+		s.relationshipFulltextProperties = normalized
+		s.mu.Unlock()
+	})
 }
 
 // RelationshipFulltextProperties is relationship search's keyword property
@@ -7758,9 +7771,11 @@ func (s *Service) SetFulltextLabels(labels []string) {
 		seen[label] = struct{}{}
 		normalized = append(normalized, label)
 	}
-	s.mu.Lock()
-	s.fulltextLabels = normalized
-	s.mu.Unlock()
+	s.orderWithBuild(func() {
+		s.mu.Lock()
+		s.fulltextLabels = normalized
+		s.mu.Unlock()
+	})
 }
 
 // FulltextLabels returns the configured BM25 label allowlist.

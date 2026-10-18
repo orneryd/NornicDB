@@ -28,6 +28,7 @@ type deferredIndexWrite struct {
 	nodeID string        // RemoveNode
 	edge   *storage.Edge // IndexEdge
 	edgeID string        // RemoveEdge
+	apply  func()        // an administrative operation (orderWithBuild)
 }
 
 type buildWriteQueue struct {
@@ -39,6 +40,11 @@ type buildWriteQueue struct {
 	writes       []deferredIndexWrite
 	writtenNodes map[string]struct{}
 	writtenEdges map[string]struct{}
+	// dimsAdopted is set once the build has chosen the index dimensions from
+	// a stored vector (adoptBuildVectorDimensions).
+	dimsAdopted bool
+	// pendingOps counts queued administrative operations not applied yet.
+	pendingOps int
 }
 
 // beginBuildWrites opens the queue for a build about to take buildMu.
@@ -47,6 +53,7 @@ func (s *Service) beginBuildWrites() {
 	q.mu.Lock()
 	if q.owners == 0 {
 		q.writtenNodes, q.writtenEdges = nil, nil
+		q.dimsAdopted = false
 	}
 	q.owners++
 	q.open.Store(true)
@@ -76,14 +83,14 @@ func (s *Service) endBuildWrites() {
 // acknowledged only after the checks the live path would report: an error
 // from them is returned and nothing is queued, as a write that waited would
 // have failed. The queued copy owns everything the build later reads.
-func (s *Service) queueBuildWrite(write deferredIndexWrite) (bool, error) {
+func (s *Service) queueBuildWrite(write deferredIndexWrite) (queued, wait bool, err error) {
 	q := &s.buildWrites
 	if !q.open.Load() || !s.buildDefersWrites() {
-		return false, nil
+		return false, false, nil
 	}
 	if write.node != nil {
-		if err := s.admitQueuedNode(write.node); err != nil {
-			return false, err
+		if wait, err := s.admitQueuedNode(write.node); wait || err != nil {
+			return false, wait, err
 		}
 	}
 	write.node = copyQueuedNode(write.node)
@@ -91,29 +98,105 @@ func (s *Service) queueBuildWrite(write deferredIndexWrite) (bool, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.owners == 0 {
-		return false, nil
+		return false, false, nil
 	}
 	q.writes = append(q.writes, write)
-	return true, nil
+	if write.apply != nil {
+		q.pendingOps++
+	}
+	return true, false, nil
+}
+
+// orderWithBuild runs an administrative operation that changes what a write
+// applies to (a property-vector index removal, an indexing setting, the
+// dimension mode) in order with the writes: while a build owns or awaits
+// buildMu it is handed to the build behind the writes already acknowledged,
+// so the final state equals that of the same calls made one after another;
+// otherwise it runs now.
+func (s *Service) orderWithBuild(op func()) {
+	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op}); queued {
+		return
+	}
+	op()
+}
+
+func (q *buildWriteQueue) opApplied() {
+	q.mu.Lock()
+	q.pendingOps--
+	q.mu.Unlock()
 }
 
 // admitQueuedNode applies the outcome checks of indexNodeOwned that do not
 // depend on the build's progress: the temporal-currency read and the
-// dimension rule. While the index has no vectors and its dimensions are not
-// fixed, the first vector still selects them, so the dimension rule waits for
-// the deferred write.
-func (s *Service) admitQueuedNode(node *storage.Node) error {
+// dimension rule. A node with explicit embeddings on an index whose
+// dimensions are still undecided (not fixed, no vectors, and the build has not
+// chosen them from a stored vector yet) must wait for the build: in the order
+// of a write that waited, the build's first stored vector chooses the
+// dimensions before this write, so the write's outcome is not known until the
+// build has decided them.
+func (s *Service) admitQueuedNode(node *storage.Node) (wait bool, err error) {
 	if !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
-		return nil
+		return false, nil
 	}
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil || !shouldIndex {
-		return err
+		return false, err
 	}
-	if !s.vectorDimensionsFixed.Load() && s.EmbeddingCount() == 0 {
-		return nil
+	q := &s.buildWrites
+	q.mu.Lock()
+	adopted, pendingOps := q.dimsAdopted, q.pendingOps
+	q.mu.Unlock()
+	// A queued administrative operation (the dimension mode, the embedding
+	// space, the index flags) may change the dimension rule before this write
+	// applies, so its outcome is decided after it.
+	if pendingOps > 0 && (len(node.NamedEmbeddings) > 0 || len(node.ChunkEmbeddings) > 0) {
+		return true, nil
 	}
-	return s.checkEmbeddingDimensions(node)
+	if !s.vectorEnabled.Load() || !s.hasExplicitEmbeddings(node) {
+		return false, nil
+	}
+	if !s.vectorDimensionsFixed.Load() && s.EmbeddingCount() == 0 && !adopted {
+		return true, nil
+	}
+	return false, s.checkEmbeddingDimensions(node)
+}
+
+// hasExplicitEmbeddings reports whether node carries an embedding the
+// dimension rule (checkEmbeddingDimensions) applies to.
+func (s *Service) hasExplicitEmbeddings(node *storage.Node) bool {
+	for _, embedding := range node.NamedEmbeddings {
+		if len(embedding) > 0 {
+			return true
+		}
+	}
+	if s.managedEmbeddingEligible(node) {
+		for _, embedding := range node.ChunkEmbeddings {
+			if len(embedding) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// adoptBuildVectorDimensions is the build's choice of the index dimensions
+// from its first stored vector (adoptFirstVectorDimensions). It records that
+// the dimensions are decided, so later writes are checked against them.
+// Caller is the build.
+func (s *Service) adoptBuildVectorDimensions(batch []*storage.Node) {
+	s.adoptFirstVectorDimensions(batch)
+	if s.EmbeddingCount() > 0 || s.vectorDimensionsFixed.Load() {
+		return
+	}
+	for _, node := range batch {
+		if firstVectorDimensions(node) > 0 {
+			q := &s.buildWrites
+			q.mu.Lock()
+			q.dimsAdopted = true
+			q.mu.Unlock()
+			return
+		}
+	}
 }
 
 // readLockOrQueue admits a live write: it queues write on the build that owns
@@ -123,8 +206,13 @@ func (s *Service) admitQueuedNode(node *storage.Node) error {
 // waiting for it is short.
 func (s *Service) readLockOrQueue(write deferredIndexWrite) (queued bool, err error) {
 	for {
-		if queued, err := s.queueBuildWrite(write); queued || err != nil {
+		queued, wait, err := s.queueBuildWrite(write)
+		if queued || err != nil {
 			return queued, err
+		}
+		if wait {
+			s.buildMu.RLock()
+			return false, nil
 		}
 		if s.buildMu.TryRLock() {
 			return false, nil
@@ -179,6 +267,9 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 		case write.edgeID != "":
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
 			q.markWritten(&q.writtenEdges, write.edgeID)
+		case write.apply != nil:
+			write.apply()
+			s.buildWrites.opApplied()
 		}
 		if err != nil {
 			s.logPrintf("⚠️ Search: queued index write failed: %v", err)
