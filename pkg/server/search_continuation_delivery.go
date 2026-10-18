@@ -1,39 +1,43 @@
 package server
 
 import (
-	"context"
-	"net/http"
-	"time"
+ "context"
+ "io"
+ "net/http"
 
-	"github.com/orneryd/nornicdb/pkg/resultstream"
+ "github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 type searchDeliveryWriter struct {
-	http.ResponseWriter
-	delivery *resultstream.Delivery
+ http.ResponseWriter
+ delivery *resultstream.Delivery
 }
-
-func (w searchDeliveryWriter) Write(data []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(data)
-	if err != nil {
-		w.delivery.Fail()
-	}
-	return n, err
+func (w searchDeliveryWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w searchDeliveryWriter) Write(data []byte)(int,error) {
+ n,err:=w.ResponseWriter.Write(data)
+ if err==nil&&n!=len(data) { err=io.ErrShortWrite }
+ if err!=nil { w.delivery.Fail() }
+ return n,err
 }
-
 func (w searchDeliveryWriter) WriteHeader(status int) {
-	if status != http.StatusOK {
-		w.delivery.Fail()
-	}
-	w.ResponseWriter.WriteHeader(status)
+ if status>=http.StatusBadRequest { w.delivery.Fail() }
+ w.ResponseWriter.WriteHeader(status)
+}
+func (w searchDeliveryWriter) Flush() {
+ if err:=http.NewResponseController(w.ResponseWriter).Flush();err!=nil { w.delivery.Fail() }
 }
 
-func serveSearchWithTimeout(w http.ResponseWriter, r *http.Request, next http.Handler, timeout time.Duration) {
-	delivery := &resultstream.Delivery{}
-	stop := context.AfterFunc(r.Context(), delivery.Fail)
-	defer stop()
-	r = r.WithContext(resultstream.WithDelivery(r.Context(), delivery))
-	http.TimeoutHandler(next, timeout, "request timeout: search busy").ServeHTTP(searchDeliveryWriter{w, delivery}, r)
-	stop()
-	delivery.Delivered()
+// All HTTP producers share the final response boundary, outside any timeout
+// buffers. This includes Cypher transactions, GraphQL and tool adapters as well
+// as the direct search route.
+func continuationDeliveryMiddleware(next http.Handler) http.Handler {
+ return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+  delivery:=&resultstream.Delivery{}
+  stop:=context.AfterFunc(r.Context(),delivery.Fail)
+  defer stop()
+  defer delivery.Fail()
+  r=r.WithContext(resultstream.WithDelivery(r.Context(),delivery))
+  next.ServeHTTP(searchDeliveryWriter{w,delivery},r)
+  if r.Context().Err()==nil { delivery.Delivered() }
+ })
 }

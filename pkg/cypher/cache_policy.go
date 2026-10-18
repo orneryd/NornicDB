@@ -11,7 +11,9 @@ import (
 // including an implicit transaction carried by context or a storage-scoped view.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
 	return !e.inTransaction(ctx) && info.IsReadOnly && e.StatementCacheSelectionValid() &&
-		e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) &&
+		e.cache != nil && cacheableReadQueryWithRetrieval(cypher, 0, func(argument string) (bool, bool) {
+			return cacheableBoundRetrievalRequest(ctx, argument)
+		}) && !profileExecutionBypassesCache(ctx) &&
 		// Visibility changes with elapsed time and access metadata, independently
 		// of graph-write revisions. Cache neither raw nor previously stripped rows.
 		!e.queryPropertyDecayEnabled()
@@ -33,6 +35,13 @@ func isCacheableReadQuery(cypher string) bool {
 }
 
 func cacheableReadQuery(cypher string, depth int) bool {
+	return cacheableReadQueryWithRetrieval(cypher, depth, nil)
+}
+
+// resolveRetrieval is used only after parameters are attached to the execution
+// context. Row-bound/computed expressions remain outside the outer result cache;
+// their one-shot searches still use the search service's existing cache.
+func cacheableReadQueryWithRetrieval(cypher string, depth int, resolveRetrieval func(string) (bool, bool)) bool {
 	if depth >= 16 {
 		return false
 	}
@@ -69,7 +78,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 
 	// Stateful retrieval must reach the registry, including requests hidden
 	// in parameters. Ordinary literal db.rretrieve searches keep their cache.
-	if strings.Contains(upper, "RETRIEVE") && !cacheableRetrievalCalls(cypher) {
+	if strings.Contains(upper, "RETRIEVE") && !cacheableRetrievalCalls(cypher, resolveRetrieval) {
 		return false
 	}
 
@@ -107,7 +116,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 	return true
 }
 
-func cacheableRetrievalCalls(query string) bool {
+func cacheableRetrievalCalls(query string, resolve func(string) (bool, bool)) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
 	for from := 0; from < len(query); {
@@ -127,6 +136,12 @@ func cacheableRetrievalCalls(query string) bool {
 			args := explicitProcedureArgumentTexts(query[at:])
 			if len(args) != 1 {
 				return false
+			}
+			if resolve != nil {
+				if cacheable, known := resolve(args[0]); known {
+					if !cacheable { return false }
+					continue
+				}
 			}
 			if isWholeCypherQuotedString(args[0]) {
 				continue

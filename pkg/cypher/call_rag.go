@@ -183,13 +183,12 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 
 func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
 	query := stringOr(req["query"], stringOr(req["text"], ""))
-	qid := stringOr(req["qid"], "")
-	discard, _ := toBool(req["discard"])
-	n, nPresent := toInt(req["n"])
-	mode := search.SearchContinuationMode(lowerASCII(strings.TrimSpace(stringOr(req["mode"], ""))))
-	groupBy := stringOr(firstPresent(req, "groupBy", "group_by"), "")
-	rankedLimit, rankedLimitPresent := toInt(firstPresent(req, "rankedLimit", "ranked_limit"))
-	continuationRequested := qid != "" || discard || nPresent || mode != "" || groupBy != "" || rankedLimitPresent
+	continuation := readRetrievalContinuation(req)
+	qid, discard := continuation.qid, continuation.discard
+	n, nPresent := continuation.n, continuation.nPresent
+	mode, groupBy := continuation.mode, continuation.groupBy
+	rankedLimit, rankedLimitPresent := continuation.rankedLimit, continuation.rankedLimitPresent
+	continuationRequested := continuation.requested()
 	if qid != "" && !nPresent {
 		n = 50
 	}

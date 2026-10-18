@@ -289,7 +289,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 		}
 	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return continuationDeliveryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
 		case path == "/status":
@@ -299,7 +299,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			http.TimeoutHandler(next, embedStatsTimeout, "request timeout: embed stats busy").ServeHTTP(w, r)
 			return
 		case path == "/nornicdb/search":
-			serveSearchWithTimeout(w, r, next, searchTimeout)
+			http.TimeoutHandler(next, searchTimeout, "request timeout: search busy").ServeHTTP(w, r)
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +312,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 		default:
 			next.ServeHTTP(w, r)
 		}
-	})
+	}))
 }
 
 func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
