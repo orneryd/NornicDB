@@ -37,7 +37,7 @@ func TestDeleteByPrefixRejectsEarlierTransactions(t *testing.T) {
 				_, _, err = b.DeleteByPrefixContext(context.Background(), "a:")
 				require.NoError(t, err)
 				// Recreate A before committing the old transaction. Its new lifetime
-				// must remain usable, including after another DROP/recreate cycle.
+				// must remain usable while the old transaction stays retired.
 				_, err = b.CreateNode(&Node{ID: "a:recreated"})
 				require.NoError(t, err)
 				if stage == "unbound" {

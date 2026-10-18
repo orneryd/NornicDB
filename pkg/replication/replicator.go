@@ -344,6 +344,14 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext preserves cancellation through local storage preparation.
+func (r *StandaloneReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.RLock()
 	if r.closed {
 		r.mu.RUnlock()
@@ -355,7 +363,7 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 	}
 	r.mu.RUnlock()
 
-	return r.storage.ApplyCommand(cmd)
+	return applyStorageContext(ctx, r.storage, cmd)
 }
 
 // ApplyBatch applies multiple commands directly to storage.

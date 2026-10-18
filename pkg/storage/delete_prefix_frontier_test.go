@@ -124,6 +124,11 @@ func TestDeleteByPrefixContextCancellation(t *testing.T) {
 	defer close(resume)
 	require.NoError(t, appendFrontierNode(t, b, "a", "old"))
 	ctx, cancel := context.WithCancel(context.Background())
+	earlier, err := b.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, earlier.SetNamespace("a"))
+	_, err = earlier.CreateNode(&Node{ID: "a:earlier"})
+	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() { _, _, err := b.DeleteByPrefixContext(ctx, "a:"); done <- err }()
 	select {
@@ -138,10 +143,11 @@ func TestDeleteByPrefixContextCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled DROP did not return")
 	}
+	require.NoError(t, earlier.Commit(), "cancelled preparation must not retire the namespace lifetime")
 	require.NoError(t, appendFrontierNode(t, b, "a", "after_cancel"), "cancelled DROP must release namespace admission")
 	count, err := NewNamespacedEngine(b, "a").NodeCount()
 	require.NoError(t, err)
-	require.Equal(t, int64(2), count, "cancellation must leave A intact")
+	require.Equal(t, int64(3), count, "cancellation must leave A intact")
 }
 
 func TestDeleteByPrefixContextDeadlineAndApplyError(t *testing.T) {

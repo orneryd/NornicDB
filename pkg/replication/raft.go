@@ -202,6 +202,7 @@ func (r *RaftReplicator) peerCount() int {
 
 // applyFuture represents a pending apply operation.
 type applyFuture struct {
+	caller context.Context // admission only; committed entries outlive the caller
 	cmd    *Command
 	index  uint64
 	term   uint64
@@ -803,6 +804,12 @@ func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
 
 // processApply handles a single apply request.
 func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) {
+	if future.caller != nil {
+		if err := future.caller.Err(); err != nil {
+			future.errCh <- err
+			return
+		}
+	}
 	r.mu.RLock()
 	isLeader := r.state == StateLeader
 	term := r.currentTerm
@@ -1305,9 +1312,22 @@ func (r *RaftReplicator) HandleForwardApply(cmd *Command, timeout time.Duration)
 	return r.Apply(cmd, timeout)
 }
 
+func (r *RaftReplicator) HandleForwardApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(ctx, cmd, timeout)
+}
+
 // Apply applies a command through Raft consensus.
 // If this node is not the leader, it forwards the command to the leader automatically.
 func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext cancels queue/forward/consensus waits. Once appended to the Raft
+// log, application remains independent of a caller that no longer awaits ACK.
+func (r *RaftReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Plan 04-06-03 D-15a: observe apply latency at the function-exit
 	// chokepoint via the pre-bound MET-25 observer (zero alloc when ctx
 	// has no sampled span). Wrapped at the outer entry so retries /
@@ -1339,7 +1359,7 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		if r.transport == nil {
 			return ErrNotLeader
 		}
-		fwdCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fwdCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		conn, err := r.transport.Connect(fwdCtx, leaderAddr)
 		if err != nil {
@@ -1352,12 +1372,15 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	}
 
 	future := &applyFuture{
-		cmd:   cmd,
-		errCh: make(chan error, 1),
+		caller: ctx,
+		cmd:    cmd,
+		errCh:  make(chan error, 1),
 	}
 
 	select {
 	case r.applyCh <- future:
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-time.After(timeout):
 		return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
 	}
@@ -1365,6 +1388,8 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	select {
 	case err := <-future.errCh:
 		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-time.After(timeout):
 		return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
 	}

@@ -130,40 +130,30 @@ func (a *StorageAdapter) SetExecutor(executor *cypher.StorageExecutor) {
 // ApplyCommand applies a replicated command to storage.
 // WAL writes are now asynchronous for better performance.
 func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+	return a.ApplyCommandContext(context.Background(), cmd)
+}
+
+// ApplyCommandContext lets DROP preparation cancel before physical deletion.
+// Only a completed DROP enters the replication journal: a cancelled preparation
+// must never be streamed to a standby as a command it should execute later.
+func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) error {
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
 	}
-
-	// Record in persistent WAL (write-ahead logging)
-	record := replicationWALRecord{
-		Timestamp: cmd.Timestamp.UnixNano(),
-		Command:   cmd,
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	// Queue async WAL write (non-blocking)
-	req := &walWriteRequest{
-		record:  record,
-		posCh:   make(chan uint64, 1),
-		errCh:   make(chan error, 1),
-		waiting: false, // Don't wait for WAL write to complete
-	}
-
-	// Try to queue async write
-	select {
-	case a.walQueue <- req:
-		// Successfully queued, continue
-	default:
-		// Channel full - fall back to synchronous write to avoid blocking
-		// This should be rare with a 1000-item buffer
-		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
-			a.walMu.Unlock()
-			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+	if cmd.Type == CmdDeleteByPrefix {
+		if err := a.applyDeleteByPrefixContext(ctx, cmd.Data); err != nil {
+			return err
 		}
-		pos := a.wal.Sequence()
-		a.walPosition.Store(pos)
-		a.walMu.Unlock()
-		a.appendToMemWAL(pos, record, cmd)
+		_, _, err := a.queueCommandWAL(cmd)
+		return err
+	}
+
+	req, record, err := a.queueCommandWAL(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Execute the command immediately (don't wait for WAL write)
@@ -188,8 +178,6 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		execErr = a.applyBatchWrite(cmd.Data)
 	case CmdCypher:
 		execErr = a.applyCypher(cmd.Data)
-	case CmdDeleteByPrefix:
-		execErr = a.applyDeleteByPrefix(cmd.Data)
 	case CmdBulkCreateNodes:
 		execErr = a.applyBulkCreateNodes(cmd.Data)
 	case CmdBulkCreateEdges:
@@ -220,6 +208,31 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	}
 
 	return execErr
+}
+
+// queueCommandWAL retains the existing async journal path and synchronous
+// overflow fallback. Non-DROP command ordering is unchanged.
+func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replicationWALRecord, error) {
+	record := replicationWALRecord{Timestamp: cmd.Timestamp.UnixNano(), Command: cmd}
+	req := &walWriteRequest{
+		record: record,
+		posCh:  make(chan uint64, 1),
+		errCh:  make(chan error, 1),
+	}
+	select {
+	case a.walQueue <- req:
+	default:
+		a.walMu.Lock()
+		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
+			a.walMu.Unlock()
+			return nil, record, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+		}
+		pos := a.wal.Sequence()
+		a.walPosition.Store(pos)
+		a.walMu.Unlock()
+		a.appendToMemWAL(pos, record, cmd)
+	}
+	return req, record, nil
 }
 
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
@@ -450,6 +463,10 @@ func (a *StorageAdapter) applyBatchWrite(data []byte) error {
 }
 
 func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
+	return a.applyDeleteByPrefixContext(context.Background(), data)
+}
+
+func (a *StorageAdapter) applyDeleteByPrefixContext(ctx context.Context, data []byte) error {
 	var req struct {
 		Prefix string
 	}
@@ -459,7 +476,7 @@ func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
 	if req.Prefix == "" {
 		return localizedError(localization.ReplicationStoragePrefixRequired(), nil)
 	}
-	_, _, err := a.engine.DeleteByPrefix(req.Prefix)
+	_, _, err := storage.DeletePrefixContext(ctx, a.engine, req.Prefix)
 	return err
 }
 
