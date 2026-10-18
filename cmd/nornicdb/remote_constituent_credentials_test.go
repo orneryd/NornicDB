@@ -362,43 +362,33 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 		for _, mode := range []string{"explicit", "uri"} {
 			graph := mode + "_" + target.label + ".r"
 			for _, ingress := range []string{"HTTP", "GraphQL", "Bolt"} {
-				t.Run(mode+"/remote_"+target.label+"/"+ingress, func(t *testing.T) {
-					target.wire.reset()
-					query := "USE " + graph + " " + investigationRead
-					ok := false
-					status := 0
-					var requestErr error
-					if ingress == "Bolt" {
-						ok, requestErr = investigationBolt("bolt://127.0.0.1:"+lb, "nornic", query, neo4j.NoAuth())
-					} else if ingress == "HTTP" {
-						var data []byte
-						status, data, requestErr = investigationHTTP(local, "nornic", query, "")
-						ok = status == 200 && bytes.Contains(data, []byte(investigationMarker))
-					} else {
-						raw, _ := json.Marshal(map[string]string{"query": fmt.Sprintf("query { cypher(input: {statement: %q}) {columns rows rowCount} }", query)})
-						response, e := (&http.Client{Timeout: 8 * time.Second}).Post(local+"/graphql", "application/json", bytes.NewReader(raw))
-						requestErr = e
-						if e == nil {
-							data, _ := io.ReadAll(response.Body)
-							response.Body.Close()
-							status = response.StatusCode
-							ok = bytes.Contains(data, []byte(investigationMarker))
+				for _, ending := range []string{"commit", "rollback"} {
+					name := ingress
+					if ending == "rollback" {
+						name += "_implicit_rollback"
+					}
+					t.Run(mode+"/remote_"+target.label+"/"+name, func(t *testing.T) {
+						target.wire.reset()
+						query := "USE " + graph + " " + investigationRead
+						if ending == "rollback" {
+							query = "USE " + graph + " CALL nornic.synthetic_missing_credential_workflow()"
 						}
-					}
-					requests, correct, encrypted := target.wire.info()
-					t.Logf("marker=%t http_status=%d transport_error=%t outgoing_requests=%d plaintext_password=%t encrypted_password=%t", ok, status, requestErr != nil, requests, correct, encrypted)
-					for _, event := range target.wire.trace() {
-						t.Log(event)
-					}
-					var neoErr *neo4j.Neo4jError
-					if errors.As(requestErr, &neoErr) {
-						t.Logf("Bolt ingress error code=%s", neoErr.Code)
-					}
-					if !ok || !correct || encrypted {
-						t.Errorf("configured credential did not authenticate the full remote workflow")
-					}
-					investigationAssertHTTPWorkflow(t, target.wire, target.label, "commit")
-				})
+						ok, failed, status, requestErr := investigationIngress(local, "bolt://127.0.0.1:"+lb, ingress, query)
+						requests, correct, encrypted := target.wire.info()
+						t.Logf("marker=%t http_status=%d transport_error=%t outgoing_requests=%d plaintext_password=%t encrypted_password=%t", ok, status, requestErr != nil, requests, correct, encrypted)
+						for _, event := range target.wire.trace() {
+							t.Log(event)
+						}
+						var neoErr *neo4j.Neo4jError
+						if errors.As(requestErr, &neoErr) {
+							t.Logf("Bolt ingress error code=%s", neoErr.Code)
+						}
+						if (ending == "commit" && (!ok || failed)) || (ending == "rollback" && !failed) || !correct || encrypted {
+							t.Errorf("configured credential did not authenticate the full remote workflow")
+						}
+						investigationAssertHTTPWorkflow(t, target.wire, target.label, ending)
+					})
+				}
 			}
 			for _, ingress := range []string{"HTTP", "Bolt"} {
 				for _, ending := range []string{"commit", "rollback"} {
@@ -431,6 +421,35 @@ func TestRemoteConstituentCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+func investigationIngress(base, boltURI, ingress, query string) (bool, bool, int, error) {
+	if ingress == "Bolt" {
+		marker, err := investigationBolt(boltURI, "nornic", query, neo4j.NoAuth())
+		return marker, err != nil, 0, err
+	}
+	var status int
+	var data []byte
+	var err error
+	if ingress == "HTTP" {
+		status, data, err = investigationHTTP(base, "nornic", query, "")
+	} else {
+		raw, _ := json.Marshal(map[string]string{"query": fmt.Sprintf("query { cypher(input: {statement: %q}) {columns rows rowCount} }", query)})
+		response, requestErr := (&http.Client{Timeout: 8 * time.Second}).Post(base+"/graphql", "application/json", bytes.NewReader(raw))
+		err = requestErr
+		if err == nil {
+			data, err = io.ReadAll(response.Body)
+			response.Body.Close()
+			status = response.StatusCode
+		}
+	}
+	var body struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &body)
+	}
+	return bytes.Contains(data, []byte(investigationMarker)), len(body.Errors) > 0, status, err
 }
 
 func investigationAssertHTTPWorkflow(t *testing.T, wire *investigationWire, transport, ending string) {
