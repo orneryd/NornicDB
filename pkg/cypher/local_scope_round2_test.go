@@ -272,7 +272,7 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	_, _, ok := callSubqueryImports("CALL db.labels()", typeScope{})
 	require.False(t, ok)
 	exec := &StorageExecutor{}
-	returned, err := exec.callSubqueryReturnTypes("CALL db.labels()", nil, typeScope{}, false)
+	returned, err := exec.callSubqueryReturnTypes("CALL db.labels()", nil, typeScope{}, false, nil)
 	require.NoError(t, err)
 	require.Nil(t, returned)
 }

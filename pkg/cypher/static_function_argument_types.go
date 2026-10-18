@@ -726,6 +726,9 @@ type staticTypeScope struct {
 	// Neo4j 2026.09's compile-time rules ('a' + true is a string there); a
 	// Cypher 5 statement keeps Neo4j 5.26's (#907).
 	cypher25 bool
+	// reads is the body walk's recorder (subqueryScope.reads), for the
+	// walks of the subquery bodies this scope's clause holds.
+	reads *scopeRecorder
 }
 
 // bound reports whether variable is bound in scope.
