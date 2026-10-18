@@ -20,6 +20,18 @@ import "strings"
 // underscores of its numeric literals removed and the rewrite that maps the
 // result back, or query and nil when it has none.
 func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
+	return canonicalizeNumericLiteralsWithCancellation(query, nil)
+}
+func canonicalizeNumericLiteralsWithCancellation(query string, probe *pipelineCancellation) (canonical string, result *queryRewrite) {
+	defer func() {
+		if probe != nil && probe.err != nil {
+			canonical, result = "", nil
+		}
+	}()
+	if probe != nil && !probe.check() {
+		return "", nil
+	}
+
 	if !mayHaveGroupedNumericLiteral(query) {
 		return query, nil
 	}
@@ -29,6 +41,10 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 		last    int
 	)
 	for index := 0; index < len(query); {
+		if probe != nil && !probe.check() {
+			return "", nil
+		}
+
 		c := query[index]
 		switch {
 		case c == '\'' || c == '"' || c == '`':
@@ -44,16 +60,24 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 			index++
 			continue
 		}
-		end, grouped := groupedNumericLiteralEnd(query, index)
+		end, grouped := groupedNumericLiteralEndWithCancellation(query, index, probe)
 		if grouped {
 			if rewrite == nil {
 				rewrite = &queryRewrite{original: query}
-				out.Grow(len(query))
+				out.Grow(pipelineInitialCapacity(len(query), probe))
 			}
-			out.WriteString(query[last:index])
+			if !appendPipelineString(&out, query[last:index], probe) {
+				return "", nil
+			}
 			canonStart := out.Len()
-			out.WriteString(strings.ReplaceAll(query[index:end], "_", ""))
-			rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: index, origEnd: end, canonStart: canonStart, canonEnd: out.Len()})
+			if !appendPipelineString(&out, replaceTextWithCancellation(query[index:end], "_", "", probe), probe) {
+				return "", nil
+			}
+			rewrite.edits = appendPipelineItem(rewrite.edits, queryTextEdit{origStart: index, origEnd: end, canonStart: canonStart, canonEnd: out.Len()}, probe)
+			if probe != nil && probe.err != nil {
+				return "", nil
+			}
+
 			last = end
 		}
 		index = end
@@ -61,7 +85,9 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 	if rewrite == nil {
 		return query, nil
 	}
-	out.WriteString(query[last:])
+	if !appendPipelineString(&out, query[last:], probe) {
+		return "", nil
+	}
 	rewrite.canonical = out.String()
 	return rewrite.canonical, rewrite
 }
@@ -70,15 +96,30 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 // the end of a word that starts with a digit (1_000, 0x1F_E, .5_0): every
 // grouped literal has one, and names (user_id, node_1_a) don't.
 func mayHaveGroupedNumericLiteral(query string) bool {
-	for index := strings.IndexByte(query, '_'); index >= 0; {
+	return mayHaveGroupedNumericLiteralWithCancellation(query, nil)
+}
+func mayHaveGroupedNumericLiteralWithCancellation(query string, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
+	for index := indexByteWithCancellation(query, '_', probe); index >= 0; {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		start := index
 		for start > 0 && isIdentByte(query[start-1]) {
+			if probe != nil && !probe.check() {
+				return false
+			}
+
 			start--
 		}
 		if start < index && isASCIIDigit(query[start]) {
 			return true
 		}
-		next := strings.IndexByte(query[index+1:], '_')
+		next := indexByteWithCancellation(query[index+1:], '_', probe)
 		if next < 0 {
 			return false
 		}
@@ -108,23 +149,30 @@ func numericLiteralStartsAt(query string, index int) bool {
 // with underscores as Neo4j allows. A decimal integer with a leading zero
 // (0_1, the legacy octal form) is not one.
 func groupedNumericLiteralEnd(query string, start int) (int, bool) {
+	return groupedNumericLiteralEndWithCancellation(query, start, nil)
+}
+func groupedNumericLiteralEndWithCancellation(query string, start int, probe *pipelineCancellation) (int, bool) {
+	if probe != nil && !probe.check() {
+		return start, false
+	}
+
 	if start+1 < len(query) && query[start] == '0' && (query[start+1] == 'x' || query[start+1] == 'o') {
 		digit := isASCIIHexDigit
 		if query[start+1] == 'o' {
 			digit = isASCIIOctalDigit
 		}
-		end, valid, grouped := numericDigitRun(query, start+2, digit, true)
+		end, valid, grouped := numericDigitRunWithCancellation(query, start+2, digit, true, probe)
 		return end, valid && grouped
 	}
 	end, valid, grouped := start, true, false
 	if query[start] != '.' {
-		end, valid, grouped = numericDigitRun(query, start, isASCIIDigit, false)
+		end, valid, grouped = numericDigitRunWithCancellation(query, start, isASCIIDigit, false, probe)
 	}
 	integerEnd := end
 	floating := false
 	if end+1 < len(query) && query[end] == '.' && isASCIIDigit(query[end+1]) {
 		var fractionValid, fractionGrouped bool
-		end, fractionValid, fractionGrouped = numericDigitRun(query, end+1, isASCIIDigit, false)
+		end, fractionValid, fractionGrouped = numericDigitRunWithCancellation(query, end+1, isASCIIDigit, false, probe)
 		valid, grouped, floating = valid && fractionValid, grouped || fractionGrouped, true
 	}
 	if end+1 < len(query) && (query[end] == 'e' || query[end] == 'E') {
@@ -134,7 +182,7 @@ func groupedNumericLiteralEnd(query string, start int) (int, bool) {
 		}
 		if exponent < len(query) && (isASCIIDigit(query[exponent]) || query[exponent] == '_') {
 			var exponentValid, exponentGrouped bool
-			end, exponentValid, exponentGrouped = numericDigitRun(query, exponent, isASCIIDigit, false)
+			end, exponentValid, exponentGrouped = numericDigitRunWithCancellation(query, exponent, isASCIIDigit, false, probe)
 			valid, grouped, floating = valid && exponentValid, grouped || exponentGrouped, true
 		}
 	}
@@ -149,13 +197,24 @@ func groupedNumericLiteralEnd(query string, start int) (int, bool) {
 // in a row and, unless leadingUnderscore, starts with a digit; grouped when it
 // has an underscore.
 func numericDigitRun(query string, start int, digit func(byte) bool, leadingUnderscore bool) (end int, valid, grouped bool) {
+	return numericDigitRunWithCancellation(query, start, digit, leadingUnderscore, nil)
+}
+func numericDigitRunWithCancellation(query string, start int, digit func(byte) bool, leadingUnderscore bool, probe *pipelineCancellation) (end int, valid, grouped bool) {
+	if probe != nil && !probe.check() {
+		return start, false, false
+	}
+
 	end = start
 	for end < len(query) && (digit(query[end]) || query[end] == '_') {
+		if probe != nil && !probe.check() {
+			return start, false, false
+		}
+
 		end++
 	}
 	run := query[start:end]
-	grouped = strings.IndexByte(run, '_') >= 0
-	valid = run != "" && run[len(run)-1] != '_' && !strings.Contains(run, "__") && (leadingUnderscore || run[0] != '_')
+	grouped = indexByteWithCancellation(run, '_', probe) >= 0
+	valid = run != "" && run[len(run)-1] != '_' && !containsTextWithCancellation(run, "__", probe) && (leadingUnderscore || run[0] != '_')
 	return end, valid, grouped
 }
 

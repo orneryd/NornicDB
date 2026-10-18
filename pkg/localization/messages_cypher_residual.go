@@ -172,3 +172,14 @@ func CypherResidualShowAliasesManagerUnavailable() Message {
 func CypherResidualShowAliasesSyntaxInvalid() Message {
 	return cypherResidualMessage(MessageCypherResidualShowAliasesSyntaxInvalid, "invalid SHOW ALIASES syntax", nil)
 }
+
+// MessageCypherResidualStatementWorkerFailed identifies a statement worker
+// that failed unexpectedly; the statement fails with it.
+const MessageCypherResidualStatementWorkerFailed MessageID = "cypherresidual.statement_worker_failed"
+
+// CypherResidualStatementWorkerFailed identifies a statement worker that
+// failed unexpectedly (a recovered panic).
+func CypherResidualStatementWorkerFailed(cause interface{}) Message {
+	text := fmt.Sprint(cause)
+	return cypherResidualMessage(MessageCypherResidualStatementWorkerFailed, fmt.Sprintf("internal error in a statement worker: %s", text), map[string]any{"Cause": text})
+}

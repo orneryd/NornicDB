@@ -159,11 +159,17 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 // reference (#701). A quoted parameter name ($`a b`) is made plain by
 // canonicalizeQuotedVariables before any scan.
 func scanParameterReferences(query string, visit func(dollar, start, end int)) {
-	if strings.IndexByte(query, '$') < 0 {
+	scanParameterReferencesWithCancellation(query, visit, nil)
+}
+func scanParameterReferencesWithCancellation(query string, visit func(dollar, start, end int), probe *pipelineCancellation) {
+	if indexByteWithCancellation(query, '$', probe) < 0 {
 		return
 	}
-	quoted := containsQuoteCharacter(query)
+	quoted := containsQuoteCharacterWithCancellation(query, probe)
 	for i := 0; i < len(query); {
+		if probe != nil && !probe.check() {
+			return
+		}
 		next := nextUnquotedDollar(query, i, quoted)
 		if next < 0 {
 			return
@@ -183,6 +189,9 @@ func scanParameterReferences(query string, visit func(dollar, start, end int)) {
 		}
 		end := start + 1
 		for end < len(query) && isIdentByte(query[end]) {
+			if probe != nil && !probe.check() {
+				return
+			}
 			end++
 		}
 		if dynamicLabelStartsAt(query, next) {
@@ -191,6 +200,9 @@ func scanParameterReferences(query string, visit func(dollar, start, end int)) {
 			continue
 		}
 		visit(next, start, end)
+		if probe != nil && probe.err != nil {
+			return
+		}
 		i = end
 	}
 }
@@ -201,19 +213,32 @@ func containsQuoteCharacter(query string) bool {
 	return strings.IndexByte(query, '\'') >= 0 || strings.IndexByte(query, '"') >= 0 || strings.IndexByte(query, '`') >= 0
 }
 
+func containsQuoteCharacterWithCancellation(query string, probe *pipelineCancellation) bool {
+	if probe == nil {
+		return containsQuoteCharacter(query)
+	}
+	return indexAnyWithCancellation(query, "'\"`", probe) >= 0
+}
+
 // nextUnquotedDollar is the offset of the first '$' at or after from that
 // isn't inside a string literal or a backtick-quoted name, or -1. Without
 // quote characters (quoted false) the single-byte search is much faster
 // than IndexAny.
 func nextUnquotedDollar(query string, from int, quoted bool) int {
+	return nextUnquotedDollarWithCancellation(query, from, quoted, nil)
+}
+func nextUnquotedDollarWithCancellation(query string, from int, quoted bool, probe *pipelineCancellation) int {
 	for from < len(query) {
+		if probe != nil && !probe.check() {
+			return -1
+		}
 		if !quoted {
-			if next := strings.IndexByte(query[from:], '$'); next >= 0 {
+			if next := indexByteWithCancellation(query[from:], '$', probe); next >= 0 {
 				return from + next
 			}
 			return -1
 		}
-		next := strings.IndexAny(query[from:], "$'\"`")
+		next := indexAnyWithCancellation(query[from:], "$'\"`", probe)
 		if next < 0 {
 			return -1
 		}
@@ -221,7 +246,7 @@ func nextUnquotedDollar(query string, from int, quoted bool) int {
 		if query[next] == '$' {
 			return next
 		}
-		from = skipQuotedText(query, next)
+		from = skipCypherQuotedText(query, next, query[next])
 	}
 	return -1
 }
@@ -234,7 +259,10 @@ func nextUnquotedDollar(query string, from int, quoted bool) int {
 // the scanners, written for Cypher 5, where '$' goes on a name (a$b,
 // isParameterStart), then read a parameter there too.
 func separateCypher25Parameters(query string) (string, *queryRewrite) {
-	if strings.IndexByte(query, '$') < 0 {
+	return separateCypher25ParametersWithCancellation(query, nil)
+}
+func separateCypher25ParametersWithCancellation(query string, probe *pipelineCancellation) (string, *queryRewrite) {
+	if indexByteWithCancellation(query, '$', probe) < 0 {
 		return query, nil
 	}
 	var (
@@ -242,25 +270,39 @@ func separateCypher25Parameters(query string) (string, *queryRewrite) {
 		out     strings.Builder
 		last    int
 	)
-	quoted := containsQuoteCharacter(query)
-	for i := nextUnquotedDollar(query, 0, quoted); i >= 0; i = nextUnquotedDollar(query, i+1, quoted) {
+	quoted := containsQuoteCharacterWithCancellation(query, probe)
+	for i := nextUnquotedDollarWithCancellation(query, 0, quoted, probe); i >= 0; i = nextUnquotedDollarWithCancellation(query, i+1, quoted, probe) {
+		if probe != nil && !probe.check() {
+			return query, nil
+		}
 		if isParameterStart(query, i) {
 			continue
 		}
 		if rewrite == nil {
 			rewrite = &queryRewrite{original: query}
-			out.Grow(len(query) + 4)
+			if !reservePipelineString(&out, len(query)+4, probe) {
+				return query, nil
+			}
 		}
-		out.WriteString(query[last:i])
+		if !appendPipelineString(&out, query[last:i], probe) {
+			return query, nil
+		}
 		canonStart := out.Len()
-		out.WriteString(" $")
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()})
+		if !appendPipelineString(&out, " $", probe) {
+			return query, nil
+		}
+		rewrite.edits = appendPipelineItem(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()}, probe)
+		if probe != nil && probe.err != nil {
+			return query, nil
+		}
 		last = i + 1
 	}
 	if rewrite == nil {
 		return query, nil
 	}
-	out.WriteString(query[last:])
+	if !appendPipelineString(&out, query[last:], probe) {
+		return query, nil
+	}
 	rewrite.canonical = out.String()
 	return rewrite.canonical, rewrite
 }
@@ -270,9 +312,12 @@ func separateCypher25Parameters(query string) (string, *queryRewrite) {
 // end), and writes the returned text in its place when ok is true, or keeps
 // the reference.
 func replaceParameterReferences(query string, replace func(name string, next byte) (string, bool)) string {
+	return replaceParameterReferencesWithCancellation(query, replace, nil)
+}
+func replaceParameterReferencesWithCancellation(query string, replace func(name string, next byte) (string, bool), probe *pipelineCancellation) string {
 	var result strings.Builder
 	last := 0
-	scanParameterReferences(query, func(dollar, start, end int) {
+	scanParameterReferencesWithCancellation(query, func(dollar, start, end int) {
 		var following byte
 		if end < len(query) {
 			following = query[end]
@@ -282,16 +327,26 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 			return
 		}
 		if last == 0 {
-			result.Grow(len(query))
+			if probe == nil {
+				result.Grow(len(query))
+			} else if !reservePipelineString(&result, min(len(query), 128), probe) {
+				return
+			}
 		}
-		result.WriteString(query[last:dollar])
-		result.WriteString(replacement)
+		if !appendPipelineString(&result, query[last:dollar], probe) || !appendPipelineString(&result, replacement, probe) {
+			return
+		}
 		last = end
-	})
+	}, probe)
+	if probe != nil && probe.err != nil {
+		return ""
+	}
 	if last == 0 {
 		return query
 	}
-	result.WriteString(query[last:])
+	if !appendPipelineString(&result, query[last:], probe) {
+		return ""
+	}
 	return result.String()
 }
 
@@ -300,22 +355,7 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 // backslash escapes the next character in a string literal; a doubled quote
 // continues the quoted text.
 func skipQuotedText(query string, start int) int {
-	quote := query[start]
-	for i := start + 1; i < len(query); i++ {
-		switch query[i] {
-		case '\\':
-			if quote != '`' {
-				i++
-			}
-		case quote:
-			if i+1 < len(query) && query[i+1] == quote {
-				i++
-				continue
-			}
-			return i + 1
-		}
-	}
-	return len(query)
+	return skipCypherQuotedText(query, start, query[start])
 }
 
 // validateStatementParameters is Neo4j's ParameterMissing check: every
@@ -468,15 +508,30 @@ func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool)
 // ([]string, []int64, []float64, …) stay typed: storage keeps their element
 // type. The map is copied only when a value changes.
 func normalizeQueryParameters(params map[string]interface{}) map[string]interface{} {
+	return normalizeQueryParametersWithCancellation(params, nil)
+}
+func normalizeQueryParametersWithCancellation(params map[string]interface{}, probe *pipelineCancellation) map[string]interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	var normalized map[string]interface{}
 	for name, value := range params {
-		converted, changed := normalizeParameterValue(value)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		converted, changed := normalizeParameterValueWithCancellation(value, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		if !changed {
 			continue
 		}
 		if normalized == nil {
-			normalized = make(map[string]interface{}, len(params))
+			normalized = make(map[string]interface{}, pipelineInitialCapacity(len(params), probe))
 			for key, original := range params {
+				if probe != nil && !probe.check() {
+					return nil
+				}
 				normalized[key] = original
 			}
 		}
@@ -493,14 +548,30 @@ func normalizeQueryParameters(params map[string]interface{}) map[string]interfac
 // value is read through a WITH, while a typed list parameter itself keeps
 // its type (normalizeParameterValue).
 func parameterRowValue(value interface{}) interface{} {
+	return parameterRowValueWithCancellation(value, nil)
+}
+func parameterRowValueWithCancellation(value interface{}, probe *pipelineCancellation) interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		var converted map[string]interface{}
 		for key, element := range typed {
-			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			nested := nestedParameterValueWithCancellation(element, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+			if !sameParameterValue(nested, element) {
 				if converted == nil {
-					converted = make(map[string]interface{}, len(typed))
+					converted = make(map[string]interface{}, pipelineInitialCapacity(len(typed), probe))
 					for k, v := range typed {
+						if probe != nil && !probe.check() {
+							return nil
+						}
 						converted[k] = v
 					}
 				}
@@ -513,9 +584,19 @@ func parameterRowValue(value interface{}) interface{} {
 	case []interface{}:
 		var converted []interface{}
 		for index, element := range typed {
-			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			nested := nestedParameterValueWithCancellation(element, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+			if !sameParameterValue(nested, element) {
 				if converted == nil {
-					converted = append([]interface{}(nil), typed...)
+					converted = copyParameterListWithCancellation(typed, probe)
+					if probe != nil && probe.err != nil {
+						return nil
+					}
 				}
 				converted[index] = nested
 			}
@@ -530,11 +611,17 @@ func parameterRowValue(value interface{}) interface{} {
 // nestedParameterValue is a value inside a parameter's map or list: a
 // typed list is a Cypher list of its elements.
 func nestedParameterValue(value interface{}) interface{} {
+	return nestedParameterValueWithCancellation(value, nil)
+}
+func nestedParameterValueWithCancellation(value interface{}, probe *pipelineCancellation) interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	switch value.(type) {
 	case []string, []int, []int64, []float32, []float64, []bool:
-		return toAnySlice(value)
+		return toAnySliceWithCancellation(value, probe)
 	case map[string]interface{}, []interface{}:
-		return parameterRowValue(value)
+		return parameterRowValueWithCancellation(value, probe)
 	}
 	return value
 }
@@ -552,6 +639,12 @@ func sameParameterValue(converted, original interface{}) bool {
 
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
+	return normalizeParameterValueWithCancellation(value, nil)
+}
+func normalizeParameterValueWithCancellation(value interface{}, probe *pipelineCancellation) (interface{}, bool) {
+	if probe != nil && !probe.check() {
+		return nil, false
+	}
 	switch typed := value.(type) {
 	case storage.RemotePathValue:
 		if typed == nil {
@@ -577,19 +670,31 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	case map[string]interface{}:
 		public := storage.PublicRemoteMap(typed)
 		if len(public) != len(typed) {
-			normalized, _ := normalizeParameterValue(public)
+			normalized, _ := normalizeParameterValueWithCancellation(public, probe)
+			if probe != nil && probe.err != nil {
+				return nil, false
+			}
 			return normalized, true
 		}
 
 		var converted map[string]interface{}
 		for key, element := range typed {
-			normalized, changed := normalizeParameterValue(element)
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			normalized, changed := normalizeParameterValueWithCancellation(element, probe)
+			if probe != nil && probe.err != nil {
+				return nil, false
+			}
 			if !changed {
 				continue
 			}
 			if converted == nil {
-				converted = make(map[string]interface{}, len(typed))
+				converted = make(map[string]interface{}, pipelineInitialCapacity(len(typed), probe))
 				for k, v := range typed {
+					if probe != nil && !probe.check() {
+						return nil, false
+					}
 					converted[k] = v
 				}
 			}
@@ -602,12 +707,21 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	case []interface{}:
 		var converted []interface{}
 		for index, element := range typed {
-			normalized, changed := normalizeParameterValue(element)
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			normalized, changed := normalizeParameterValueWithCancellation(element, probe)
+			if probe != nil && probe.err != nil {
+				return nil, false
+			}
 			if !changed {
 				continue
 			}
 			if converted == nil {
-				converted = append([]interface{}(nil), typed...)
+				converted = copyParameterListWithCancellation(typed, probe)
+				if probe != nil && probe.err != nil {
+					return nil, false
+				}
 			}
 			converted[index] = normalized
 		}
@@ -624,25 +738,46 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 		}
 	case reflect.Map:
 		if reflected.Type().Key().Kind() != reflect.String {
-			converted := make(map[interface{}]interface{}, reflected.Len())
+			converted := make(map[interface{}]interface{}, pipelineInitialCapacity(reflected.Len(), probe))
 			iterator := reflected.MapRange()
 			for iterator.Next() {
-				element, _ := normalizeParameterValue(iterator.Value().Interface())
+				if probe != nil && !probe.check() {
+					return nil, false
+				}
+				element, _ := normalizeParameterValueWithCancellation(iterator.Value().Interface(), probe)
+				if probe != nil && probe.err != nil {
+					return nil, false
+				}
 				converted[iterator.Key().Interface()] = element
 			}
 			return converted, true
 		}
-		converted := make(map[string]interface{}, reflected.Len())
+		converted := make(map[string]interface{}, pipelineInitialCapacity(reflected.Len(), probe))
 		iterator := reflected.MapRange()
 		for iterator.Next() {
-			element, _ := normalizeParameterValue(iterator.Value().Interface())
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			element, _ := normalizeParameterValueWithCancellation(iterator.Value().Interface(), probe)
+			if probe != nil && probe.err != nil {
+				return nil, false
+			}
 			converted[iterator.Key().String()] = element
 		}
 		return converted, true
 	case reflect.Slice, reflect.Array:
+		if reflected.Len() > pipelineCancellationInterval && probe != nil && !probe.poll() {
+			return nil, false
+		}
 		converted := make([]interface{}, reflected.Len())
 		for index := range converted {
-			element, _ := normalizeParameterValue(reflected.Index(index).Interface())
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			element, _ := normalizeParameterValueWithCancellation(reflected.Index(index).Interface(), probe)
+			if probe != nil && probe.err != nil {
+				return nil, false
+			}
 			converted[index] = element
 		}
 		return converted, true
@@ -698,10 +833,17 @@ func mergeInheritedQueryParams(ctx context.Context, params map[string]interface{
 		return inherited
 	}
 	merged := make(map[string]interface{}, len(inherited)+len(params))
+	probe := parameterCancellationForContext(ctx)
 	for name, value := range inherited {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		merged[name] = value
 	}
 	for name, value := range params {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		merged[name] = value
 	}
 	return merged
@@ -732,10 +874,12 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(params, cypher25) })
+		cache.once.Do(func() {
+			cache.rows = parameterRowsOfWithCancellation(params, cypher25, parameterCancellationForContext(ctx))
+		})
 		return cache.rows
 	}
-	return parameterRowsOf(params, cypher25)
+	return parameterRowsOfWithCancellation(params, cypher25, parameterCancellationForContext(ctx))
 }
 
 // cypher25RowValues are the row values of a Cypher 25 statement without
@@ -743,9 +887,25 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 var cypher25RowValues = map[string]interface{}{cypher25RowKey: true}
 
 func parameterRowsOf(params map[string]interface{}, cypher25 bool) map[string]interface{} {
+	return parameterRowsOfWithCancellation(params, cypher25, nil)
+}
+func parameterRowsOfWithCancellation(params map[string]interface{}, cypher25 bool, probe *pipelineCancellation) map[string]interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	rows := make(map[string]interface{}, len(params)+1)
 	for name, value := range params {
-		rows["$"+name] = parameterRowValue(value)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		key := concatPipelineStrings("$", name, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		rows[key] = parameterRowValueWithCancellation(value, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 	if cypher25 {
 		rows[cypher25RowKey] = true
@@ -761,7 +921,11 @@ func sameParameterMap(a, b map[string]interface{}) bool {
 // bindParameterRow adds the context's parameters to row as "$name" values
 // (with a Cypher 25 statement's mark, parameterRowValues).
 func bindParameterRow(ctx context.Context, row pipelineRow) {
+	probe := parameterCancellationForContext(ctx)
 	for name, value := range parameterRowValues(ctx) {
+		if probe != nil && !probe.check() {
+			return
+		}
 		row[name] = value
 	}
 }

@@ -179,12 +179,12 @@ func TestApocLoadExportHelpers_LoadJsonFromURL_AndQueryExports(t *testing.T) {
 			}
 		}),
 	}
-	data, err := e.loadJsonFromURL("https://example.com/ok")
+	data, err := e.loadJsonFromURL(context.Background(), "https://example.com/ok")
 	require.NoError(t, err)
 	require.NotNil(t, data)
-	_, err = e.loadJsonFromURL("https://example.com/bad")
+	_, err = e.loadJsonFromURL(context.Background(), "https://example.com/bad")
 	require.Error(t, err)
-	_, err = e.loadJsonFromURL("https://example.com/malformed")
+	_, err = e.loadJsonFromURL(context.Background(), "https://example.com/malformed")
 	require.Error(t, err)
 
 	// File loader branches: missing file and malformed JSON.
@@ -344,7 +344,7 @@ func TestApocLoadExportHelpers_RemoteURLLoadsRequireAllowlistedHost(t *testing.T
 	exec.SetAllowRemoteAPOCURLAccess(true)
 	ctx := context.Background()
 
-	_, err := exec.loadJsonFromURL("https://example.com/ok")
+	_, err := exec.loadJsonFromURL(context.Background(), "https://example.com/ok")
 	require.ErrorIs(t, err, errAPOCRemoteURLHostNotAllowed)
 
 	exec.SetAPOCRemoteURLAllowlist([]string{"api.example.com"})

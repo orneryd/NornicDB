@@ -380,7 +380,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	}
 	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
 	for name, path := range out.paths {
-		row[name] = e.pathToMap(path)
+		row[name] = e.pathToMapContext(ctx, path)
 	}
 	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {
@@ -527,7 +527,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		for name, edge := range relationships {
 			values[name] = edge.Properties
 		}
-		if _, resolved, evalErr := e.evaluateRowValue(expression, values); evalErr != nil {
+		if _, resolved, evalErr := e.evaluateRowValueProbed(expression, values, contextPipelineProbe(ctx)); evalErr != nil {
 			return evalErr
 		} else if resolved {
 			continue
@@ -899,7 +899,7 @@ func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 // Integer") when it isn't a map.
 func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
 	value, _ := resolveDirectParamRef(ctx, parameter)
-	properties, isMap := toStringAnyMap(value)
+	properties, isMap := toStringAnyMapWithCancellation(value, contextPipelineProbe(ctx))
 	if !isMap {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))

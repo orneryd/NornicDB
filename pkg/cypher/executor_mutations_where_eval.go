@@ -9,7 +9,9 @@ import (
 )
 
 func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
-	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
+	return parallelFilterNodesWithCancellation(ctx, nodes, func(workerContext context.Context) FilterFunc {
+		return e.compileNodeWhereFilter(workerContext, variable, whereClause)
+	})
 }
 
 func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
@@ -101,15 +103,18 @@ func hasSuffixFold(s, suffix string) bool {
 	return strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
-func containsFold(s, sub string) bool {
+func containsFold(s, sub string) bool { return containsFoldWithCancellation(s, sub, nil) }
+func containsFoldWithCancellation(s, sub string, probe *pipelineCancellation) bool {
 	if len(sub) == 0 {
 		return true
 	}
 	if len(s) < len(sub) {
 		return false
 	}
-	max := len(s) - len(sub)
-	for i := 0; i <= max; i++ {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		if strings.EqualFold(s[i:i+len(sub)], sub) {
 			return true
 		}
@@ -170,7 +175,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	// Handle quoted strings with escape sequence support
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
 		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		if decoded, ok := decodeCypherQuotedString(s); ok {
+		if decoded, ok := decodeCypherQuotedStringWithCancellation(s, contextPipelineProbe(ctx)); ok {
 			return decoded
 		}
 	}

@@ -111,9 +111,19 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
+	return e.evaluateRowFallbackProbed(expr, values, nil)
+}
+
+// evaluateRowFallbackProbed is evaluateRowFallback under the statement's
+// probe: the shared evaluator's loops check it, so an expression handed to
+// it (a nested comprehension, an APOC call) stops at the deadline too.
+func (e *StorageExecutor) evaluateRowFallbackProbed(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, error) {
 	// The slot names expr as the row evaluator's: the shared evaluator
 	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
 	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
+	if probe != nil {
+		ctx = context.WithValue(ctx, pipelineCancellationKey{}, probe)
+	}
 	// Keep the statement's clock for the functions that read it (decay, #866).
 	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
 		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
@@ -136,7 +146,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 		return nil
 	}
 	if isCaseExpression(expr) {
-		return e.evaluateCaseExpressionFromValues(expr, values)
+		return e.evaluateCaseExpression(withValueBindings(withStatementProbe(context.Background(), ctx), values), expr, nil, nil, nil, nil, nil, 0)
 	}
 
 	// Direct lookup: callers store pre-computed values under the expression
@@ -148,7 +158,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 
 	// Bound property expressions use the same row reader as ordinary
 	// projections: a nested "properties" key does not turn a map into an entity.
-	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+	if variable, chain, ok := rowPropertyChainShapeWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 		if receiver, bound := values[variable]; bound {
 			visible := e.queryVisibleValue(receiver)
 			value, supported := evaluateRowPropertyChain(visible, chain)
@@ -161,7 +171,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// A bound receiver with a trailing subscript is a row expression. Use
 	// the text reader directly so an unresolved expression cannot recurse
 	// through the compiled fallback into this context reader.
-	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
+	if name, end, ok := scanSymbolicNameWithCancellation(expr, 0, contextPipelineProbe(ctx)); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
 			if value, resolved, err := e.evaluateRowValueText(expr, values); resolved || err != nil {
 				recordExpressionFailure(ctx, err)

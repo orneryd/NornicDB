@@ -96,7 +96,7 @@ func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool
 
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
-	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
+	for at := skipASCIISpacesWithCancellation(pattern, 0, len(pattern), contextPipelineProbe(ctx)); at < len(pattern); at = skipASCIISpacesWithCancellation(pattern, at, len(pattern), contextPipelineProbe(ctx)) {
 		if ctx.Err() != nil {
 			return nil, false
 		}
@@ -1002,16 +1002,25 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 				starts = ends
 			}
 			for _, source := range starts {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.forward, false, source, source, nil)
 			}
 		case len(starts) == 1 && len(ends) == 1:
 			search(plan.forward, false, starts[0], ends[0], nil)
 		case ends != nil && (starts == nil || len(ends) < len(starts)):
 			for _, source := range ends {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.backward, true, source, nil, starts)
 			}
 		default:
 			for _, source := range starts {
+				if ctx.Err() != nil {
+					break
+				}
 				search(plan.forward, false, source, nil, ends)
 			}
 		}
@@ -1064,7 +1073,7 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 			}
 		}
 		rows = s.pair(source, target, count, groups, direct, bind)
-	} else {
+	} else if ctx.Err() == nil {
 		if ends != nil {
 			s.ends = make(map[storage.NodeID]bool, len(ends))
 			s.retain(int64(len(ends)) * searchEntryBytes)

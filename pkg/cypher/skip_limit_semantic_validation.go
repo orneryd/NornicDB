@@ -127,7 +127,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValueProbed(pagination.value, values, contextPipelineProbe(ctx))
 		if err != nil {
 			return err
 		}

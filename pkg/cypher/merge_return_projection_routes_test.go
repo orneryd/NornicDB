@@ -233,13 +233,13 @@ func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 	require.False(t, returnProjectionPlanFor("RETURN ").valid)
 
 	returnProjectionPlans.Lock()
-	for index := len(returnProjectionPlans.plans); index < returnProjectionPlanLimit; index++ {
-		returnProjectionPlans.plans[fmt.Sprintf("RETURN %d", index)] = &returnProjectionPlan{}
+	for index := returnProjectionPlans.plans.Len(); index < returnProjectionPlanLimit; index++ {
+		returnProjectionPlans.plans.Set(fmt.Sprintf("RETURN %d", index), &returnProjectionPlan{})
 	}
 	returnProjectionPlans.Unlock()
 	returnProjectionPlanFor("RETURN 'after the limit'")
 	returnProjectionPlans.RLock()
-	size := len(returnProjectionPlans.plans)
+	size := returnProjectionPlans.plans.Len()
 	returnProjectionPlans.RUnlock()
 	require.Equal(t, 1, size)
 }

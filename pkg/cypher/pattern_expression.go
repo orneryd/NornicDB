@@ -220,10 +220,12 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
 func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
@@ -250,6 +252,9 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
 		for variable, value := range outer {
 			scope[variable] = value
@@ -271,9 +276,8 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
+		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection, scope)
+		if getExpressionFailure(ctx) != nil {
 			return nil
 		}
 		if evaluated {
@@ -355,46 +359,80 @@ func rowContextShapeOf(expr string) *rowContextShape {
 	return shape
 }
 
-func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow, cancellation ...*pipelineCancellation) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
-	return e.evaluateRowExpressionShaped(ctx, expr, rowContextShapeOf(expr), values, false)
+	return e.evaluateRowExpressionShaped(ctx, expr, rowContextShapeOf(expr), values, false, cancellation...)
 }
 
 // evaluateRowExpressionShaped is evaluateRowExpressionWithContext after its
 // bound-value check, for expr's shape. prepared says values already binds
 // every value binding and parameter of ctx (a rowEvaluationScope's map), so
-// binding them again would bind nothing.
-func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr string, shape *rowContextShape, values pipelineRow, prepared bool) (interface{}, bool) {
+// binding them again would bind nothing. cancellation is the statement's
+// probe when the caller holds it; otherwise it is read from ctx.
+func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr string, shape *rowContextShape, values pipelineRow, prepared bool, cancellation ...*pipelineCancellation) (interface{}, bool) {
+	// The statement installs its probe on ctx before any row is evaluated;
+	// reading it back is one lookup, and only a context without one gets
+	// its own.
+	var probe *pipelineCancellation
+	if len(cancellation) > 0 && cancellation[0] != nil {
+		probe = cancellation[0]
+		if contextPipelineProbe(ctx) != probe {
+			ctx = context.WithValue(ctx, pipelineCancellationKey{}, probe)
+		}
+	} else if probe = contextPipelineProbe(ctx); probe == nil {
+		ctx = withPipelineCancellation(ctx)
+		probe = pipelineCancellationForContext(ctx)
+	}
+	if !probe.check() {
+		return nil, false
+	}
 	if shape.pattern {
 		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
 			return value, ok
 		}
 	}
 	var extended pipelineRow
-	bind := func(name string, value interface{}) {
+	bind := func(name string, value interface{}) bool {
+		if !probe.check() {
+			return false
+		}
 		if _, exists := values[name]; exists {
-			return
+			return true
 		}
 		if extended == nil {
 			extended = make(pipelineRow, len(values)+1)
 			for key, existing := range values {
+				if !probe.check() {
+					return false
+				}
 				extended[key] = existing
 			}
 		}
 		extended[name] = value
+		return true
 	}
 	if !prepared {
 		for name, value := range valueBindingsFromContext(ctx) {
-			bind(name, value)
+			if !bind(name, value) {
+				return nil, false
+			}
 		}
 		for name, value := range parameterRowValues(ctx) {
-			bind(name, value)
+			if !bind(name, value) {
+				return nil, false
+			}
 		}
 	}
+	if probe.err != nil {
+		return nil, false
+	}
 	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
-		bind(rowStatementContextKey, ctx)
+		ctx = withPipelineCancellation(ctx)
+		if !bind(rowStatementContextKey, ctx) {
+			return nil, false
+		}
 	}
 	if extended != nil {
 		values = extended
@@ -420,7 +458,8 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		}
 	}
 	if shape.comprehension {
-		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
+		value := e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values)
+		return value, getExpressionFailure(ctx) == nil
 	}
 	if shape.exists {
 		matched, _ := e.evaluateRowExistsPredicate(ctx, shape.trimmed, values)
@@ -436,6 +475,9 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 				if extended == nil {
 					extended = make(pipelineRow, len(values)+1)
 					for name, value := range values {
+						if !probe.check() {
+							return nil, false
+						}
 						extended[name] = value
 					}
 					values = extended
@@ -444,9 +486,14 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 			}
 		}
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	// Simple arithmetic/comparisons borrow a probe without cloning the row to
+	// carry context metadata. Recursive calls keep this same budget.
+	value, resolved, err := e.evaluateRowValueWithCancellation(expr, values, probe)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
+	if getExpressionFailure(ctx) != nil {
 		return nil, false
 	}
 	if !resolved && shape.pattern {
@@ -523,13 +570,13 @@ func (scope *rowEvaluationScope) release() {
 	scope.plain, scope.keyed, scope.row = nil, nil, nil
 }
 
-func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string) (interface{}, bool) {
+func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string, cancellation ...*pipelineCancellation) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, scope.row); bound {
 		return value, true
 	}
 	shape := rowContextShapeOf(expr)
 	values, prepared := scope.valuesFor(shape)
-	return e.evaluateRowExpressionShaped(ctx, expr, shape, values, prepared)
+	return e.evaluateRowExpressionShaped(ctx, expr, shape, values, prepared, cancellation...)
 }
 
 // valuesFor is the map an expression of shape is evaluated on: the row
@@ -590,7 +637,7 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 	if value, bound := values[inner]; bound {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+	} else if value, resolved, err := e.evaluateRowValueProbed(inner, values, contextPipelineProbe(ctx)); err == nil && resolved {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
 	} else {

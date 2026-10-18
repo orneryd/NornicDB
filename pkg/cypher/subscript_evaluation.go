@@ -10,7 +10,7 @@ import (
 // evaluateCypherSubscript owns receiver/index evaluation order and subscript
 // value checks for row, compiled fallback and context evaluators. Even a null
 // receiver evaluates its index; an index error must not disappear into null.
-func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript string, evaluate func(string) (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
 	base, ok, err := evaluate(baseExpression)
 	if err != nil {
 		return nil, false, err
@@ -34,7 +34,11 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 	_, isNode := base.(*storage.Node)
 	_, isRelationship := base.(*storage.Edge)
 	_, isRemote := base.(storage.RemoteEntityValue)
-	if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship || isRemote {
+	_, isObject := toStringAnyMapWithCancellation(base, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
+	if isObject || isNode || isRelationship || isRemote {
 		// A dynamic property access: n[key] is n.key.
 		key, isString := indexValue.(string)
 		if !isString {
@@ -53,7 +57,10 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 	}
 	// Only a list is indexed by an integer: n.big[0] on a number is a
 	// TypeError wherever it is read, a WHERE included (#907).
-	items, isList := cypherListValue(base)
+	items, isList := cypherListValueWithCancellation(base, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
 	if !isList {
 		return nil, false, subscriptReceiverError(base, indexValue)
 	}

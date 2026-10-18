@@ -7,6 +7,10 @@ import (
 )
 
 func isWholeCypherQuotedString(raw string) bool {
+	return isWholeCypherQuotedStringWithCancellation(raw, nil)
+}
+
+func isWholeCypherQuotedStringWithCancellation(raw string, probe *pipelineCancellation) bool {
 	if len(raw) < 2 {
 		return false
 	}
@@ -15,6 +19,9 @@ func isWholeCypherQuotedString(raw string) bool {
 		return false
 	}
 	for i := 1; i < len(raw); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		ch := raw[i]
 		if ch == '\\' && i+1 < len(raw) {
 			i++
@@ -35,6 +42,10 @@ func isWholeCypherQuotedString(raw string) bool {
 // It supports both doubled quote escaping (Cypher standard) and the
 // backslash escapes already tolerated in several parser paths.
 func decodeCypherQuotedString(raw string) (string, bool) {
+	return decodeCypherQuotedStringWithCancellation(raw, nil)
+}
+
+func decodeCypherQuotedStringWithCancellation(raw string, probe *pipelineCancellation) (string, bool) {
 	if len(raw) < 2 {
 		return "", false
 	}
@@ -44,13 +55,22 @@ func decodeCypherQuotedString(raw string) (string, bool) {
 	}
 
 	inner := raw[1 : len(raw)-1]
-	if !strings.ContainsRune(inner, rune(quote)) && !strings.ContainsRune(inner, '\\') {
+	if !containsAnyWithCancellation(inner, string([]byte{quote, '\\'}), probe) {
+		if probe != nil && probe.err != nil {
+			return "", false
+		}
 		return inner, true
 	}
 
 	var builder strings.Builder
-	builder.Grow(len(inner))
+	builder.Grow(pipelineInitialCapacity(len(inner), probe))
 	for i := 0; i < len(inner); i++ {
+		if probe != nil && !probe.check() {
+			return "", false
+		}
+		if probe != nil && !reservePipelineString(&builder, utf8.UTFMax, probe) {
+			return "", false
+		}
 		ch := inner[i]
 		if ch == '\\' && i+1 < len(inner) {
 			next := inner[i+1]
@@ -121,11 +141,29 @@ func decodeCypherQuotedString(raw string) (string, bool) {
 }
 
 func validateUnicodeStringLiterals(query string) error {
+	return validateUnicodeStringLiteralsWithCancellation(query, nil)
+}
+
+func validateUnicodeStringLiteralsWithCancellation(query string, probe *pipelineCancellation) (err error) {
+	if probe != nil && !probe.check() {
+		return probe.err
+	}
+	defer func() {
+		if probe != nil && probe.err != nil {
+			err = probe.err
+		}
+	}()
 	for index := 0; index < len(query); {
+		if probe != nil && !probe.check() {
+			return probe.err
+		}
 		if index+1 < len(query) && query[index] == '/' {
 			if query[index+1] == '/' {
 				index += 2
 				for index < len(query) && query[index] != '\n' && query[index] != '\r' {
+					if probe != nil && !probe.check() {
+						return probe.err
+					}
 					index++
 				}
 				continue
@@ -133,6 +171,9 @@ func validateUnicodeStringLiterals(query string) error {
 			if query[index+1] == '*' {
 				index += 2
 				for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
+					if probe != nil && !probe.check() {
+						return probe.err
+					}
 					index++
 				}
 				if index+1 < len(query) {
@@ -148,6 +189,9 @@ func validateUnicodeStringLiterals(query string) error {
 		}
 		index++
 		for index < len(query) {
+			if probe != nil && !probe.check() {
+				return probe.err
+			}
 			if query[index] == quote {
 				if index+1 < len(query) && query[index+1] == quote {
 					index += 2

@@ -1,0 +1,3 @@
+- id: cyphercore.custom_formatting_unsupported
+  description: Expanded pseudo-locale custom formatter error.
+  other: "[!! custom formatting is unsupported for value type {{.Type}} in a cancellable query !!]"

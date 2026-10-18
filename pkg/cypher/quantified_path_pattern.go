@@ -304,7 +304,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
 			bound := done.row
 			if m.pathVariable != "" {
-				bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
+				bound[m.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
 			}
 			for name := range bound {
 				if strings.HasPrefix(name, generatedVariablePrefix+"qpp") {
@@ -673,18 +673,29 @@ func (r *labelExpressionRewriter) quantifiedGroup(open, close int) error {
 // quantifiedGroupQuantifierAt reports whether the + or * at s[at]
 // quantifies a parenthesised path: it follows a ')' that closes one.
 func quantifiedGroupQuantifierAt(s string, at int) bool {
+	return quantifiedGroupQuantifierAtWithCancellation(s, at, nil)
+}
+func quantifiedGroupQuantifierAtWithCancellation(s string, at int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	close := trimRightIndex(s, 0, at) - 1
 	if close < 0 || s[close] != ')' {
 		return false
 	}
 	depth := 0
 	for open := close; open >= 0; open-- {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		switch s[open] {
 		case ')':
 			depth++
 		case '(':
 			if depth--; depth == 0 {
-				return parenthesisedPathAt(s, open, close)
+				return parenthesisedPathAtWithCancellation(s, open, close, probe)
 			}
 		}
 	}
@@ -694,16 +705,23 @@ func quantifiedGroupQuantifierAt(s string, at int) bool {
 // parenthesisedPathAt reports whether s[open:close+1] is a parenthesised
 // path pattern: a node pattern, then a relationship arrow.
 func parenthesisedPathAt(s string, open, close int) bool {
+	return parenthesisedPathAtWithCancellation(s, open, close, nil)
+}
+func parenthesisedPathAtWithCancellation(s string, open, close int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	inner := skipASCIISpaces(s, open+1, close)
 	if inner >= close || s[inner] != '(' {
 		return false
 	}
-	nodeEnd := findMatchingParen(s[:close], inner)
+	nodeEnd := findMatchingDelimiter(s[:close], inner, '(', ')')
 	if nodeEnd < 0 {
 		return false
 	}
 	arrow := skipASCIISpaces(s, nodeEnd+1, close)
-	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && strings.IndexByte("-[>", s[arrow+1]) >= 0
+	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && indexByteWithCancellation("-[>", s[arrow+1], probe) >= 0
 }
 
 // quantifiedGroupError is Neo4j's SyntaxError for the quantified group

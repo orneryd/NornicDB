@@ -6,32 +6,44 @@ import (
 )
 
 func cypherGrammarVersion(query string) string {
+	return cypherGrammarVersionWithCancellation(query, nil)
+}
+func cypherGrammarVersionWithCancellation(query string, probe *pipelineCancellation) string {
 	version := "5"
-	rest := strings.TrimSpace(query)
+	rest := trimSpaceWithCancellation(query, probe)
 	for rest != "" {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		if startsWithKeywordFold(rest, "EXPLAIN") || startsWithKeywordFold(rest, "PROFILE") {
-			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
+			rest = trimSpaceWithCancellation(rest[len("EXPLAIN"):], probe)
 			continue
 		}
 		if !startsWithKeywordFold(rest, "CYPHER") {
 			break
 		}
-		rest = strings.TrimSpace(rest[len("CYPHER"):])
+		rest = trimSpaceWithCancellation(rest[len("CYPHER"):], probe)
 		if len(rest) > 0 && isDigitByte(rest[0]) {
 			end := 0
 			for end < len(rest) && isDigitByte(rest[end]) {
+				if probe != nil && !probe.check() {
+					return ""
+				}
 				end++
 			}
 			version = rest[:end]
-			rest = strings.TrimSpace(rest[end:])
+			rest = trimSpaceWithCancellation(rest[end:], probe)
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			end := strings.IndexAny(rest, " \t\r\n")
+			if probe != nil && !probe.check() {
+				return ""
+			}
+			end := indexAnyWithCancellation(rest, " \t\r\n", probe)
 			if end < 0 {
 				rest = ""
 				break
 			}
-			rest = strings.TrimSpace(rest[end:])
+			rest = trimSpaceWithCancellation(rest[end:], probe)
 		}
 	}
 	return version
@@ -165,10 +177,11 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 			return nil, sharedClauseSyntaxError("FILTER requires a predicate")
 		}
 		return func(yield func(pipelineRow) bool) bool {
+			ctx = withPipelineCancellation(ctx)
+			probe := pipelineCancellationForContext(ctx)
 			valid := true
 			completed := input(func(row pipelineRow) bool {
-				if err := ctx.Err(); err != nil {
-					recordExpressionFailure(ctx, err)
+				if !probe.check() {
 					valid = false
 					return false
 				}

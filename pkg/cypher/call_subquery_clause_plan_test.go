@@ -186,7 +186,7 @@ func TestRowSubqueryAtomCompilesOnce(t *testing.T) {
 
 	// Without a statement context the node reads its text, as the text
 	// route does.
-	value, resolved, err := node.eval(exec, map[string]interface{}{}, nil)
+	value, resolved, err := node.eval(exec, map[string]interface{}{}, nil, nil)
 	textValue, textResolved, textErr := exec.evaluateRowValueText(node.text, map[string]interface{}{})
 	require.Equal(t, textValue, value)
 	require.Equal(t, textResolved, resolved)

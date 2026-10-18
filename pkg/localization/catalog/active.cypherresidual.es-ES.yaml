@@ -52,3 +52,5 @@
   other: "el administrador de bases de datos no está disponible; SHOW ALIASES requiere compatibilidad con varias bases de datos"
 - id: cypherresidual.show_aliases_syntax_invalid
   other: "sintaxis SHOW ALIASES no válida"
+- id: cypherresidual.statement_worker_failed
+  other: "error interno en un proceso de la sentencia: {{.Cause}}"

@@ -310,7 +310,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
 		items = strings.TrimSpace(items[:cut])
 	}
-	items, _ = cutDistinct(items)
+	items, _ = cutDistinctWithCancellation(items, contextPipelineProbe(ctx))
 	parts := splitTopLevelComma(items)
 	for index, part := range parts {
 		// Same alias parsing as every projection (parseProjectionExprAlias).
@@ -349,13 +349,28 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 // top-level ORDER BY, SKIP or LIMIT, or -1. The shared RETURN projection and
 // standalone RETURN both use it.
 func firstTopLevelModifierIndex(clause string) int {
+	return firstTopLevelModifierIndexWithCancellation(clause, nil)
+}
+func firstTopLevelModifierIndexWithCancellation(clause string, probe *pipelineCancellation) int {
 	cut := -1
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		// The keyword scan is costly; most projections have no modifier.
-		if !containsFold(clause, kw[:4]) {
+		if probe != nil && !probe.check() {
+			return -1
+		}
+		// Keep the existing allocation-free prefilter for context-free readers.
+		if !containsFoldWithCancellation(clause, kw[:4], probe) {
+			if probe != nil && probe.err != nil {
+				return -1
+			}
 			continue
 		}
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && (cut == -1 || idx < cut) {
+		opts := defaultKeywordScanOpts()
+		opts.SkipBraces = true
+		idx := keywordIndexFromWithCancellation(clause, kw, 0, opts, probe)
+		if probe != nil && probe.err != nil {
+			return -1
+		}
+		if idx >= 0 && (cut < 0 || idx < cut) {
 			cut = idx
 		}
 	}
@@ -373,54 +388,83 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 // cypher25 is the statement's language version (its scope checks differ).
 func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
+	return e.validateSyntaxWithCancellation(cypher, cypher25, nil)
+}
+func (e *StorageExecutor) validateSyntaxWithCancellation(cypher string, cypher25 bool, probe *pipelineCancellation) error {
+	if probe != nil && !probe.poll() {
+		return probe.err
+	}
 	// A text the selected validator accepted passed every check below (it
 	// is marked valid only then), so a repeated query skips them all (#823):
 	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
 	// (#911).
 	validator := activeSyntaxValidator()
-	if e.hasCachedValidSyntax(cypher, validator) {
+	if e.hasCachedValidSyntaxWithCancellation(cypher, validator, probe) {
 		return nil
 	}
-	if err := validateUnicodeOperators(cypher); err != nil {
+	if probe != nil && probe.err != nil {
+		return probe.err
+	}
+	if err := validateUnicodeOperatorsWithCancellation(cypher, probe); err != nil {
 		return err
 	}
-	if err := validateUnicodeStringLiterals(cypher); err != nil {
+	if err := validateUnicodeStringLiteralsWithCancellation(cypher, probe); err != nil {
 		return err
 	}
-	if err := validateStaticMapKeys(cypher); err != nil {
+	if err := validateStaticMapKeysWithCancellation(cypher, probe); err != nil {
 		return err
 	}
-	if err := validateNumericLiterals(cypher); err != nil {
+	if err := validateNumericLiteralsWithCancellation(cypher, probe); err != nil {
 		return err
 	}
-	if err := validateArrowOperators(cypher); err != nil {
+	if err := validateArrowOperatorsWithCancellation(cypher, probe); err != nil {
 		return err
 	}
-	if err := validatePlaceholderOperands(cypher); err != nil {
+	if err := validatePlaceholderOperandsWithCancellation(cypher, probe); err != nil {
 		return err
 	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(cypher, cypher25)
+		return e.validateSyntaxANTLRWithCancellation(cypher, cypher25, probe)
 	}
-	return e.validateSyntaxNornic(cypher)
+	return e.validateSyntaxNornicWithCancellation(cypher, probe)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
 func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) error {
+	return e.validateSyntaxANTLRWithCancellation(cypher, cypher25, nil)
+}
+func (e *StorageExecutor) validateSyntaxANTLRWithCancellation(cypher string, cypher25 bool, probe *pipelineCancellation) error {
+	if probe != nil && !probe.poll() {
+		return probe.err
+	}
 	if isNornicExtensionStatement(cypher) {
-		if err := e.validateSyntaxNornic(cypher); err != nil {
+		if err := e.validateSyntaxNornicWithCancellation(cypher, probe); err != nil {
 			return err
 		}
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		e.markCachedValidSyntaxWithCancellation(cypher, syntaxValidANTLR|syntaxGrammarAccepted, probe)
+		if probe != nil {
+			return probe.err
+		}
 		return nil
 	}
-	parserError := antlr.Validate(cypher)
+	var parserError error
+	if probe == nil {
+		parserError = antlr.Validate(cypher)
+	} else {
+		parserError = antlr.ValidateWithCancellation(cypher, probe)
+		if probe.err != nil {
+			return probe.err
+		}
+	}
 	if parserError == nil {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
+		e.markCachedValidSyntaxWithCancellation(cypher, syntaxValidANTLR|syntaxGrammarAccepted, probe)
+		if probe != nil {
+			return probe.err
+		}
 		return nil
 	}
-	if err := e.validateSyntaxNornic(cypher); err != nil {
+	if err := e.validateSyntaxNornicWithCancellation(cypher, probe); err != nil {
 		return err
 	}
 	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
@@ -463,16 +507,25 @@ func isDropRoleCommand(cypher string) bool {
 
 // validateSyntaxNornic performs fast inline syntax validation.
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
-	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
+	return e.validateSyntaxNornicWithCancellation(cypher, nil)
+}
+func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, probe *pipelineCancellation) error {
+	if e.hasCachedValidSyntaxWithCancellation(cypher, syntaxValidNornic, probe) {
 		return nil
+	}
+	if probe != nil && probe.err != nil {
+		return probe.err
 	}
 	if containsNotInOperator(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
 	}
-	if containsTrailingListComma(cypher) {
+	if containsTrailingListCommaWithCancellation(cypher, probe) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input ']': expected an expression")
+	}
+	if probe != nil && probe.err != nil {
+		return probe.err
 	}
 	if singleNodePatternComprehension(cypher) {
 		// [(n) | …]: a pattern comprehension needs a relationship, as the
@@ -480,14 +533,17 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherCoreInvalidInputExpectedExpression("|"))
 	}
-	if hasAdjacentStringLiterals(cypher) {
+	if hasAdjacentStringLiteralsWithCancellation(cypher, probe) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input: adjacent string literals require an operator between them")
+	}
+	if probe != nil && probe.err != nil {
+		return probe.err
 	}
 	if explainProfileConflict(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
 	}
-	if _, ok := trailingBareFinish(cypher); ok {
+	if _, ok := trailingBareFinishWithCancellation(cypher, probe); ok {
 		// FINISH can't follow RETURN, as in Neo4j; every valid trailing
 		// FINISH was stripped before validation.
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
@@ -516,6 +572,9 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	stringChar := byte(0)
 
 	for i := 0; i < len(cypher); i++ {
+		if probe != nil && !probe.check() {
+			return probe.err
+		}
 		c := cypher[i]
 
 		if inString {
@@ -526,8 +585,12 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			}
 			continue
 		}
+		// The canonical lexical owner distinguishes comment text from syntax.
 		if c == '/' {
-			if end := queryCommentEnd(cypher, i); end >= 0 {
+			if end := queryCommentEndWithCancellation(cypher, i, probe); end >= 0 {
+				if probe != nil && probe.err != nil {
+					return probe.err
+				}
 				i = end - 1
 				continue
 			}
@@ -539,7 +602,10 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			// A dot other than a range's (1..2) starts a property key (n.k,
 			// n.`k`), a map projection's all-properties (.*) or a number's
 			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
+			if next := queryGapEndWithCancellation(cypher, i+1, probe); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
+				if probe != nil && probe.err != nil {
+					return probe.err
+				}
 				token := ""
 				if next < len(cypher) {
 					token = cypher[next : next+1]
@@ -549,7 +615,10 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			}
 		}
 		if c == '+' {
-			next := skipSpaces(cypher, i+1)
+			next := skipSpacesWithCancellation(cypher, i+1, probe)
+			if probe != nil && probe.err != nil {
+				return probe.err
+			}
 			if next < len(cypher) && cypher[next] == '*' {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
 			}
@@ -582,6 +651,9 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 
+	if probe != nil && probe.err != nil {
+		return probe.err
+	}
 	if parenCount != 0 {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
 	}
@@ -599,7 +671,10 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 
-	e.markCachedValidSyntax(cypher, syntaxValidNornic)
+	e.markCachedValidSyntaxWithCancellation(cypher, syntaxValidNornic, probe)
+	if probe != nil {
+		return probe.err
+	}
 	return nil
 }
 
@@ -616,8 +691,14 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 // administration and knowledge-policy statements have their own grammars,
 // e.g. constraint contract blocks separate predicates by line breaks.
 func hasAdjacentOperands(cypher string) bool {
+	return hasAdjacentOperandsWithCancellation(cypher, nil)
+}
+func hasAdjacentOperandsWithCancellation(cypher string, probe *pipelineCancellation) bool {
 	operandEnded := false
 	for index := 0; index < len(cypher); {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		c := cypher[index]
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
@@ -628,6 +709,9 @@ func hasAdjacentOperands(cypher string) bool {
 			}
 			end := index + 1
 			for end < len(cypher) {
+				if probe != nil && !probe.check() {
+					return false
+				}
 				if cypher[end] == c && !isBackslashEscaped(cypher, end) {
 					if end+1 < len(cypher) && cypher[end+1] == c {
 						end += 2 // a doubled quote is an escaped quote
@@ -640,7 +724,7 @@ func hasAdjacentOperands(cypher string) bool {
 			index = end + 1
 			operandEnded = true
 		case c == '`':
-			end := strings.IndexByte(cypher[index+1:], '`')
+			end := indexTextWithCancellation(cypher[index+1:], "`", probe)
 			if end < 0 {
 				return false
 			}
@@ -654,6 +738,9 @@ func hasAdjacentOperands(cypher string) bool {
 			index++
 			for index < len(cypher) && (isIdentByte(cypher[index]) ||
 				(cypher[index] == '.' && index+1 < len(cypher) && cypher[index+1] >= '0' && cypher[index+1] <= '9')) {
+				if probe != nil && !probe.check() {
+					return false
+				}
 				index++
 			}
 			operandEnded = true
@@ -663,12 +750,18 @@ func hasAdjacentOperands(cypher string) bool {
 			}
 			index++
 			for index < len(cypher) && isIdentByte(cypher[index]) {
+				if probe != nil && !probe.check() {
+					return false
+				}
 				index++
 			}
 			operandEnded = true
 		case isIdentByte(c):
 			start := index
 			for index < len(cypher) && isIdentByte(cypher[index]) {
+				if probe != nil && !probe.check() {
+					return false
+				}
 				index++
 			}
 			startsProperty := index < len(cypher) && cypher[index] == '.' &&
@@ -696,6 +789,11 @@ func hasAdjacentOperands(cypher string) bool {
 }
 
 func isSyntaxBoundaryKeyword(word string) bool {
+	// Every keyword in this finite grammar table is shorter than 32 bytes.
+	// A long identifier cannot match; avoid case-folding/hashing its whole text.
+	if len(word) > 32 {
+		return false
+	}
 	if _, allowed := literalLeadingKeywords[upperASCII(word)]; allowed {
 		return true
 	}
@@ -727,6 +825,9 @@ var literalLeadingKeywords = map[string]struct{}{
 // another operand. A word followed by '(' (a function call) or ':' (a map key
 // or label) is never such a variable.
 func bareWordBeforeLiteral(cypher string, start, end int) bool {
+	return bareWordBeforeLiteralWithCancellation(cypher, start, end, nil)
+}
+func bareWordBeforeLiteralWithCancellation(cypher string, start, end int, probe *pipelineCancellation) bool {
 	next := skipSpaces(cypher, end)
 	if next == end || next >= len(cypher) {
 		return false
@@ -741,6 +842,9 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 		// "Invalid input '$'".
 		before := start
 		for before > 0 && isASCIIWhitespace(cypher[before-1]) {
+			if probe != nil && !probe.check() {
+				return false
+			}
 			before--
 		}
 		if before > 0 && strings.IndexByte("([:|&!", cypher[before-1]) >= 0 {
@@ -751,6 +855,9 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	}
 	if c := cypher[start]; c >= '0' && c <= '9' {
 		return false
+	}
+	if end-start > 32 {
+		return true
 	}
 	_, keyword := literalLeadingKeywords[upperASCII(cypher[start:end])]
 	return !keyword
@@ -849,9 +956,6 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	e.syntaxValidationOnce.Do(func() {
 		if e.syntaxValidationCache == nil {
 			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
-			for i := range e.syntaxValidationCache.shards {
-				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
-			}
 		}
 	})
 	return e.syntaxValidationCache
@@ -897,14 +1001,22 @@ func activeSyntaxValidator() uint8 {
 }
 
 func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) bool {
+	return e.hasCachedValidSyntaxWithCancellation(cypher, validator, nil)
+}
+func (e *StorageExecutor) hasCachedValidSyntaxWithCancellation(cypher string, validator uint8, probe *pipelineCancellation) bool {
 	if cypher == "" {
 		return false
 	}
 	c := e.ensureSyntaxValidationCache()
-	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
-	sh.mu.RLock()
-	accepted := sh.cache[cypher]
-	sh.mu.RUnlock()
+	shard := boundedCacheStringShardIndexWithCancellation(cypher, probe)
+	if probe != nil && probe.err != nil {
+		return false
+	}
+	sh := &c.shards[shard]
+	accepted, _ := getQueryTextCache(&sh.cache, &sh.mu, cypher, probe)
+	if probe != nil && probe.err != nil {
+		return false
+	}
 	if accepted&validator != 0 {
 		return true
 	}
@@ -912,34 +1024,45 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 	// statements that differ only in literals share one cached verdict
 	// through the canonical form (PR #1043 #6). The canonical form is only
 	// computed on an exact-text miss.
-	if canonical, normalized := normalizeLiteralText(cypher); normalized {
-		csh := &c.shards[boundedCacheStringShardIndex(canonical)]
-		csh.mu.RLock()
-		accepted = csh.cache[canonical]
-		csh.mu.RUnlock()
+	if canonical, normalized := normalizeLiteralTextWithCancellation(cypher, probe); normalized {
+		shard := boundedCacheStringShardIndexWithCancellation(canonical, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		csh := &c.shards[shard]
+		accepted, _ = getQueryTextCache(&csh.cache, &csh.mu, canonical, probe)
 	}
-	return accepted&validator != 0
+	return (probe == nil || probe.err == nil) && accepted&validator != 0
 }
 
 func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) {
+	e.markCachedValidSyntaxWithCancellation(cypher, validator, nil)
+}
+func (e *StorageExecutor) markCachedValidSyntaxWithCancellation(cypher string, validator uint8, probe *pipelineCancellation) {
 	if cypher == "" {
 		return
 	}
 	c := e.ensureSyntaxValidationCache()
-	add := func(key string) {
-		sh := &c.shards[boundedCacheStringShardIndex(key)]
-		sh.mu.Lock()
-		if _, cached := sh.cache[key]; !cached && len(sh.cache) >= c.max/boundedCacheShardCount {
-			for k := range sh.cache {
-				delete(sh.cache, k)
-				break
-			}
+	add := func(key string) bool {
+		shard := boundedCacheStringShardIndexWithCancellation(key, probe)
+		if probe != nil && probe.err != nil {
+			return false
 		}
-		sh.cache[key] |= validator
-		sh.mu.Unlock()
+		sh := &c.shards[shard]
+		if !lockQueryTextCache(&sh.mu, false, probe) {
+			return false
+		}
+		defer sh.mu.Unlock()
+		previous, _ := sh.cache.GetWithCancellation(key, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		return putQueryTextCache(&sh.cache, c.max/boundedCacheShardCount, key, previous|validator, probe)
 	}
-	add(cypher)
-	if canonical, normalized := normalizeLiteralText(cypher); normalized {
+	if !add(cypher) {
+		return
+	}
+	if canonical, normalized := normalizeLiteralTextWithCancellation(cypher, probe); normalized {
 		add(canonical)
 	}
 }
