@@ -254,6 +254,23 @@ func TestServer_DatabaseReadsRequireResolvedRead(t *testing.T) {
 	require.NoError(t, open.AllowDatabaseAccess(context.Background(), "nornic", false))
 }
 
+func TestServer_FullSnapshotMethodsAllowAuthenticatedAdmin(t *testing.T) {
+	srv := &Server{config: DefaultConfig()}
+	admin := &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}
+	viewer := &auth.JWTClaims{Roles: []string{string(auth.RoleViewer)}}
+
+	for _, method := range []string{
+		"/qdrant.Snapshots/CreateFull",
+		"/qdrant.Snapshots/ListFull",
+		"/qdrant.Snapshots/DeleteFull",
+	} {
+		t.Run(method, func(t *testing.T) {
+			require.NoError(t, srv.authorizeMethod(context.Background(), method, admin))
+			require.Equal(t, codes.PermissionDenied, status.Code(srv.authorizeMethod(context.Background(), method, viewer)))
+		})
+	}
+}
+
 func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	t.Parallel()
 
