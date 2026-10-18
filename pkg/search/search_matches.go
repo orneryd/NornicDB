@@ -282,9 +282,11 @@ func (s *Service) hitEmbedMeta(node *storage.Node) map[string]any {
 // chunks of an embedding made before chunk places were recorded can be
 // placed in the node's properties.
 func (s *Service) SetEmbedTextOptions(opts *embeddingutil.EmbedTextOptions) {
-	s.mu.Lock()
-	s.embedTextOptions = opts
-	s.mu.Unlock()
+	s.orderWithBuild(func() {
+		s.mu.Lock()
+		s.embedTextOptions = opts
+		s.mu.Unlock()
+	})
 }
 
 // termIDFReader is a BM25 index that can weigh a query term.

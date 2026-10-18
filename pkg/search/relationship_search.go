@@ -254,9 +254,11 @@ func (s *Service) SetRelationshipEmbedPolicy(policy string) {
 	}
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(policy))
-	rs.mu.Lock()
-	rs.policy = hash.Sum64()
-	rs.mu.Unlock()
+	s.orderWithBuild(func() {
+		rs.mu.Lock()
+		rs.policy = hash.Sum64()
+		rs.mu.Unlock()
+	})
 }
 
 // source is edge's source under the embedding policy.
