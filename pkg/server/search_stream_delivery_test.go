@@ -70,6 +70,9 @@ func (w pageDeliveryFaultWriter) WriteHeader(status int) {
 	}
 }
 func (w pageDeliveryFaultWriter) Write(data []byte) (int, error) {
+	if w.point == "headers" {
+		w.cancel() // Write also emits an implicit 200 header.
+	}
 	_, _ = w.ResponseRecorder.Write(data)
 	switch w.point {
 	case "write":
