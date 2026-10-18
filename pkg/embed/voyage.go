@@ -318,6 +318,11 @@ func (e *VoyageEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 				textChunks[index] = append(textChunks[index], part.Text)
 			}
 		}
+		// The provider returns one vector for the whole multimodal document.
+		// Its text parts therefore describe one chunk, not independent vectors.
+		if len(textChunks[index]) > 1 {
+			textChunks[index] = []string{strings.Join(textChunks[index], "\n")}
+		}
 	}
 	if len(inputs) == 0 {
 		return []*DocumentChunkResult{}, nil

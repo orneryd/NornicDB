@@ -92,3 +92,39 @@ func TestProviderHTTPWorkerPartialFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderHTTPWorkerMultimodalChunkMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  []map[string]any{{"index": 0, "embedding": []float32{1, 1}}},
+			"usage": map[string]int{"total_tokens": 7},
+		})
+	}))
+	t.Cleanup(server.Close)
+	base, err := embed.NewEmbedder(&embed.Config{Provider: "voyage", Mode: "multimodal", APIURL: server.URL, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
+	require.NoError(t, err)
+	engine, err := storage.NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	engine.SetEmbeddingsEnabled(true)
+	store := storage.NewNamespacedEngine(engine, "http-multimodal")
+	_, err = store.CreateNode(&storage.Node{ID: "document", Labels: []string{"Doc"}, Properties: map[string]any{
+		"text":               "fallback",
+		"_embedding_content": `[{"type":"text","text":"first passage"},{"type":"image_url","image_url":"https://example.test/mock.png"},{"type":"text","text":"later passage"}]`,
+	}})
+	require.NoError(t, err)
+	worker := nornicdb.NewEmbedWorker(embed.NewTracedEmbedder(embed.NewCachedEmbedder(base, 16)), store, &nornicdb.EmbedWorkerConfig{NumWorkers: 1, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 32, DeferWorkerStart: true, ScanInterval: time.Minute})
+	t.Cleanup(worker.Close)
+	worker.StartWorkers()
+	require.Eventually(t, func() bool {
+		node, err := store.GetNode("document")
+		return err == nil && len(node.ChunkEmbeddings) == 1
+	}, 5*time.Second, 10*time.Millisecond)
+	worker.Close()
+	node, err := store.GetNode("document")
+	require.NoError(t, err)
+	require.EqualValues(t, 7, node.EmbedMeta["embedding_total_tokens"])
+	chunks, err := json.Marshal(node.EmbedMeta["chunk_texts"])
+	require.NoError(t, err)
+	require.JSONEq(t, `["first passage\nlater passage"]`, string(chunks))
+}
