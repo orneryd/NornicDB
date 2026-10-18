@@ -178,11 +178,13 @@ func (b *BadgerEngine) GetNodesByLabel(label string) ([]*Node, error) {
 func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, error) {
 	// Single-pass: iterate label index and fetch nodes in same transaction
 	// This reduces transaction overhead compared to two-phase approach
+	var overlay []*Node
+	var touched map[NodeID]bool
 	var nodes []*Node
 	var loaded []*Node
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(label) }, func(txn *badger.Txn) error {
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
@@ -196,7 +198,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 
 			// Cache-first: avoid Badger reads/decodes for hot label scans.
 			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok {
+			if cached, ok := b.nodeCache[nodeID]; ok && b.writeBehind == nil {
 				b.nodeCacheMu.RUnlock()
 				cn := copyNode(cached)
 				if b.filterNodeByDecay(cn, nowNanos) {
@@ -247,7 +249,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	}
 
 	if b.writeBehind != nil {
-		nodes = b.mergeWriteBehindNodes(nodes, label, scope, nil)
+		nodes = b.mergeWriteBehindNodes(nodes, overlay, touched, scope, nil)
 	}
 	return nodes, nil
 }
@@ -278,8 +280,8 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	// shadow committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
-	if b.writeBehind != nil {
-		overlay, touched = b.writeBehind.LabelOverlay(label)
+	capture := func(w *WriteBehindBuffer) {
+		overlay, touched = w.labelOverlayLocked(label)
 	}
 
 	include := propertyProjectionSet(properties)
@@ -290,7 +292,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	// LIMIT-stopped scan.
 	var covers bool
 	coversDecided := false
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
 			if properties == nil {
 				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
@@ -301,7 +303,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			b.nodeCacheMu.RLock()
 			cached, ok := b.nodeCache[nodeID]
 			b.nodeCacheMu.RUnlock()
-			if !ok {
+			if !ok || b.writeBehind != nil {
 				return nil, false
 			}
 			return projectCachedNodeForRead(cached, properties), true
@@ -436,8 +438,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 // mergeWriteBehindNodes folds the write-behind overlay for label over
 // committed rows: rows whose IDs the buffer touched are dropped and the
 // buffered versions (copied, or projected for the caller) take their place.
-func (b *BadgerEngine) mergeWriteBehindNodes(nodes []*Node, label, scope string, projected []string) []*Node {
-	overlay, touched := b.writeBehind.LabelOverlay(label)
+func (b *BadgerEngine) mergeWriteBehindNodes(nodes, overlay []*Node, touched map[NodeID]bool, scope string, projected []string) []*Node {
 	if len(touched) == 0 {
 		return nodes
 	}
@@ -489,12 +490,12 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	var loaded []*Node
 	var overlay []*Node
 	var touched map[NodeID]bool
-	if b.writeBehind != nil {
-		overlay, touched = b.writeBehind.AllNodesOverlay()
+	capture := func(w *WriteBehindBuffer) {
+		overlay, touched = w.allNodesOverlayLocked()
 	}
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -511,7 +512,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			}
 
 			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok {
+			if cached, ok := b.nodeCache[nodeID]; ok && b.writeBehind == nil {
 				b.nodeCacheMu.RUnlock()
 				nodeCopy := copyNode(cached)
 				if b.filterNodeByDecay(nodeCopy, nowNanos) {
@@ -566,11 +567,11 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 	var edges []*Edge
 	var overlay []*Edge
 	var touched map[EdgeID]bool
-	if b.writeBehind != nil {
-		overlay, touched = b.writeBehind.AllEdgesOverlay()
+	capture := func(w *WriteBehindBuffer) {
+		overlay, touched = w.allEdgesOverlayLocked()
 	}
 	nowNanos := DecayScoringTime()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -636,10 +637,12 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		b.edgeTypeCacheMu.RUnlock()
 	}
 
+	var overlay []*Edge
+	var touched map[EdgeID]bool
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	gen := b.edgeTypeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.typeOverlayLocked(edgeType) }, func(txn *badger.Txn) error {
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -699,7 +702,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	}
 
 	if b.writeBehind != nil {
-		edges = b.mergeWriteBehindEdges(edges, edgeType)
+		edges = b.mergeWriteBehindEdges(edges, overlay, touched)
 		return edges, nil
 	}
 
@@ -710,8 +713,7 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 // mergeWriteBehindEdges folds the write-behind overlay for edgeType over
 // committed rows: rows whose IDs the buffer touched are dropped and the
 // buffered versions (copied for the caller) take their place.
-func (b *BadgerEngine) mergeWriteBehindEdges(edges []*Edge, edgeType string) []*Edge {
-	overlay, touched := b.writeBehind.TypeOverlay(edgeType)
+func (b *BadgerEngine) mergeWriteBehindEdges(edges, overlay []*Edge, touched map[EdgeID]bool) []*Edge {
 	if len(touched) == 0 {
 		return edges
 	}
@@ -780,6 +782,7 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	//
 	// This is critical for read-heavy workloads (and benchmarks) where the same
 	// node sets are repeatedly fetched (e.g., aggregation and COLLECT queries).
+	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]*Node, len(ids))
 	missing := make([]NodeID, 0, len(ids))
 
@@ -788,7 +791,7 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 		if id == "" {
 			continue
 		}
-		if cached, ok := b.nodeCache[id]; ok {
+		if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
 			nodeCopy := copyNode(cached)
 			if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
 				continue
@@ -807,9 +810,13 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	var loaded []*Node
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+  states = make(map[NodeID]bufferedEntityState, len(ids))
+  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
+ }, func(txn *badger.Txn) error {
 		loaded = loaded[:0]
 		for _, id := range missing {
+			if state, found := states[id]; found { if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) { result[id] = copyNode(state.node) }; continue }
 			item, err := txn.Get(nodeKey(id))
 			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue // Skip missing nodes
@@ -859,6 +866,7 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 		return nil, err
 	}
 
+	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]*Node, len(ids))
 	missing := make([]NodeID, 0, len(ids))
 	cacheHits := 0
@@ -868,7 +876,7 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 		if id == "" {
 			continue
 		}
-		if cached, ok := b.nodeCache[id]; ok {
+		if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
 			cacheHits++
 			nodeCopy := copyNodeWithoutEmbeddings(cached)
 			if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
@@ -888,8 +896,12 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 	}
 
 	nowNanos := DecayScoringTime()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+  states = make(map[NodeID]bufferedEntityState, len(ids))
+  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
+ }, func(txn *badger.Txn) error {
 		for _, id := range missing {
+			if state, found := states[id]; found { if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) { result[id] = copyNodeWithoutEmbeddings(state.node) }; continue }
 			item, err := txn.Get(nodeKey(id))
 			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
@@ -926,9 +938,14 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 		return make(map[NodeID]bool), nil
 	}
 
+	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]bool, len(ids))
-	err := b.withView(func(txn *badger.Txn) error {
-		for _, id := range ids {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+  states = make(map[NodeID]bufferedEntityState, len(ids))
+  for _, id := range ids { if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found { states[id] = state } }
+ }, func(txn *badger.Txn) error {
+  for _, id := range ids {
+   if state, found := states[id]; found { if !state.deleted && hasLabel(state.node.Labels, label) { result[id] = true }; continue }
 			if id == "" {
 				continue
 			}
@@ -961,73 +978,10 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 // its pointers). When the node itself is buffered-deleted the result is
 // empty. edges may be nil when only ids were resolved (cache hit); it is
 // then materialized from the filtered ids.
-func (b *BadgerEngine) mergeWriteBehindAdjacency(nodeID NodeID, outgoing bool, edges []*Edge, ids []EdgeID) ([]*Edge, error) {
-	if b.writeBehind == nil {
-		if edges == nil {
-			return b.materializeAdjEdges(ids)
-		}
-		return edges, nil
-	}
-	live, suppressed, nodeDeleted := b.writeBehind.EdgeAdjacencyOverlay(nodeID, outgoing)
-	if nodeDeleted {
-		return nil, nil
-	}
-	if len(suppressed) > 0 {
-		filtered := make([]EdgeID, 0, len(ids))
-		for _, id := range ids {
-			if _, dead := suppressed[id]; dead {
-				continue
-			}
-			filtered = append(filtered, id)
-		}
-		materialized, err := b.materializeAdjEdges(filtered)
-		if err != nil {
-			return nil, err
-		}
-		edges = materialized
-	} else if edges == nil {
-		materialized, err := b.materializeAdjEdges(ids)
-		if err != nil {
-			return nil, err
-		}
-		edges = materialized
-	}
-	for _, e := range live {
-		copyEdge := *e
-		edges = append(edges, &copyEdge)
-	}
-	return edges, nil
-}
+
 
 func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	if nodeID == "" {
-		return nil, ErrInvalidID
-	}
-
-	var edges []*Edge
-	var ids []EdgeID
-	if cached, ok := b.adjCacheLoadOutgoing(nodeID); ok {
-		ids = cached
-	} else {
-		prefix := b.outgoingIndexPrefixString(nodeID)
-		if prefix == nil {
-			// No committed index for this node: only buffered edges can
-			// exist (PR #1043 read-overlay parity).
-			return b.mergeWriteBehindAdjacency(nodeID, true, nil, nil)
-		}
-		nowNanos := DecayScoringTime()
-		adjGen, edgeGen := b.adjCacheGen.current(), b.edgeCacheGen.current()
-		err := b.withView(func(txn *badger.Txn) error {
-			var err error
-			edges, ids, err = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos, edgeGen)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-		b.adjCacheStoreOutgoing(adjGen, nodeID, ids)
-	}
-	return b.mergeWriteBehindAdjacency(nodeID, true, edges, ids)
+ out, _, err := b.readAdjacency(nodeID, true, false); return out, err
 }
 
 // GetAdjacentEdges fetches both outgoing and incoming edges for nodeID. On a
@@ -1035,84 +989,7 @@ func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // entirely, falling back to a single view transaction when either direction
 // misses.
 func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	if nodeID == "" {
-		return nil, nil, ErrInvalidID
-	}
-
-	cachedOutIDs, outHit := b.adjCacheLoadOutgoing(nodeID)
-	cachedInIDs, inHit := b.adjCacheLoadIncoming(nodeID)
-	if outHit && inHit {
-		outgoing, err := b.mergeWriteBehindAdjacency(nodeID, true, nil, cachedOutIDs)
-		if err != nil {
-			return nil, nil, err
-		}
-		incoming, err := b.mergeWriteBehindAdjacency(nodeID, false, nil, cachedInIDs)
-		if err != nil {
-			return nil, nil, err
-		}
-		return outgoing, incoming, nil
-	}
-
-	var outPrefix, inPrefix []byte
-	if !outHit {
-		outPrefix = b.outgoingIndexPrefixString(nodeID)
-	}
-	if !inHit {
-		inPrefix = b.incomingIndexPrefixString(nodeID)
-	}
-	if outPrefix == nil && inPrefix == nil && !outHit && !inHit {
-		// No committed index for this node: only buffered edges can exist
-		// (PR #1043 read-overlay parity).
-		outgoing, err := b.mergeWriteBehindAdjacency(nodeID, true, nil, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		incoming, err := b.mergeWriteBehindAdjacency(nodeID, false, nil, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		return outgoing, incoming, nil
-	}
-
-	var outgoing, incoming []*Edge
-	var outIDs, inIDs []EdgeID
-	nowNanos := DecayScoringTime()
-	adjGen, edgeGen := b.adjCacheGen.current(), b.edgeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
-		var err error
-		if !outHit && outPrefix != nil {
-			outgoing, outIDs, err = b.collectEdgesByIndexPrefix(txn, outPrefix, nowNanos, edgeGen)
-			if err != nil {
-				return err
-			}
-		}
-		if !inHit && inPrefix != nil {
-			incoming, inIDs, err = b.collectEdgesByIndexPrefix(txn, inPrefix, nowNanos, edgeGen)
-		}
-		return err
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if !outHit {
-		b.adjCacheStoreOutgoing(adjGen, nodeID, outIDs)
-	} else {
-		outIDs = cachedOutIDs
-	}
-	if !inHit {
-		b.adjCacheStoreIncoming(adjGen, nodeID, inIDs)
-	} else {
-		inIDs = cachedInIDs
-	}
-	outgoing, err = b.mergeWriteBehindAdjacency(nodeID, true, outgoing, outIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-	incoming, err = b.mergeWriteBehindAdjacency(nodeID, false, incoming, inIDs)
-	if err != nil {
-		return nil, nil, err
-	}
-	return outgoing, incoming, nil
+ return b.readAdjacency(nodeID, true, true)
 }
 
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
@@ -1234,11 +1111,15 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		// Fold the write-behind overlay into the header list so a node's
 		// unnamed-relationship expansion sees acknowledged-but-unflushed edges
 		// (PR #1043 read-overlay parity; monster retest part 1).
-		live, suppressed, nodeDeleted := b.writeBehind.EdgeAdjacencyOverlay(nodeID, outgoing)
+		var live []*Edge
+ var suppressed map[EdgeID]struct{}
+ var nodeDeleted bool
+ view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, nodeDeleted = w.edgeAdjacencyOverlayLocked(nodeID, outgoing) })
+ if err != nil { return nil, true, err }; defer view.Close()
 		if nodeDeleted {
 			return nil, true, nil
 		}
-		committed, answered, err := b.edgeHeadersCommitted(nodeID, outgoing)
+		committed, answered, err := b.edgeHeadersCommitted(nodeID, outgoing, view.withView)
 		if err != nil || !answered {
 			return committed, answered, err
 		}
@@ -1261,7 +1142,9 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 	return b.edgeHeadersCommitted(nodeID, outgoing)
 }
 
-func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, bool, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	if nodeID == "" {
 		return nil, true, ErrInvalidID
 	}
@@ -1275,7 +1158,7 @@ func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool) ([]*Ed
 	}
 	var edges []*Edge
 	edgeGen := b.edgeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
+	err := withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -1374,7 +1257,7 @@ func (b *BadgerEngine) adjacencyHeadersInTxn(txn *badger.Txn, nodeID NodeID, dir
 // cache was written since gen, captured before txn was opened. A missing
 // record returns nil; other read or decode errors are returned.
 func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen uint64) (*Edge, error) {
-	if cached, ok := b.cacheLoadEdge(edgeID); ok {
+	if cached, ok := b.cacheLoadEdge(edgeID); ok && b.writeBehind == nil {
 		return cached, nil
 	}
 	item, err := txn.Get(edgeKey(edgeID))
@@ -1392,40 +1275,13 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	}); err != nil {
 		return nil, err
 	}
-	b.cacheFillEdge(gen, edge)
+	if b.writeBehind == nil { b.cacheFillEdge(gen, edge) }
 	return edge, nil
 }
 
 // GetIncomingEdges returns all edges where the given node is the target.
 func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	if nodeID == "" {
-		return nil, ErrInvalidID
-	}
-
-	if ids, ok := b.adjCacheLoadIncoming(nodeID); ok {
-		return b.mergeWriteBehindAdjacency(nodeID, false, nil, ids)
-	}
-
-	prefix := b.incomingIndexPrefixString(nodeID)
-	if prefix == nil {
-		// No committed index for this node: only buffered edges can exist
-		// (PR #1043 read-overlay parity).
-		return b.mergeWriteBehindAdjacency(nodeID, false, nil, nil)
-	}
-	var edges []*Edge
-	var ids []EdgeID
-	nowNanos := DecayScoringTime()
-	adjGen, edgeGen := b.adjCacheGen.current(), b.edgeCacheGen.current()
-	err := b.withView(func(txn *badger.Txn) error {
-		var err error
-		edges, ids, err = b.collectEdgesByIndexPrefix(txn, prefix, nowNanos, edgeGen)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	b.adjCacheStoreIncoming(adjGen, nodeID, ids)
-	return b.mergeWriteBehindAdjacency(nodeID, false, edges, ids)
+ _, in, err := b.readAdjacency(nodeID, false, true); return in, err
 }
 
 // GetEdgesBetween returns all edges between two nodes.
@@ -1440,11 +1296,15 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		// buffered delete of a between edge hides that row; buffered live
 		// edges between the pair are appended (PR #1043 read-overlay
 		// parity, MERGE identity reads).
-		live, suppressed, sourceDeleted, targetDeleted := b.writeBehind.EdgesBetweenOverlay(startID, endID)
+		var live []*Edge
+ var suppressed map[EdgeID]struct{}
+ var sourceDeleted, targetDeleted bool
+ view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID) })
+ if err != nil { return nil, err }; defer view.Close()
 		if sourceDeleted || targetDeleted {
 			return nil, nil
 		}
-		committed, err := b.committedEdgesBetween(startID, endID, "")
+		committed, err := b.committedEdgesBetween(startID, endID, "", view.withView)
 		if err != nil {
 			return nil, err
 		}
@@ -1469,8 +1329,10 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 
 // committedEdgesBetween is the committed between-index read, set index first
 // with the legacy outgoing fallback and self-heal.
-func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType string) ([]*Edge, error) {
-	result, err := b.edgesBetweenFromSetIndex(startID, endID, edgeType)
+func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
+	result, err := b.edgesBetweenFromSetIndex(startID, endID, edgeType, withView)
 	if err != nil {
 		return nil, err
 	}
@@ -1478,7 +1340,7 @@ func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType str
 		return result, nil
 	}
 
-	result, err = b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType)
+	result, err = b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType, withView)
 	if err != nil {
 		return nil, err
 	}
@@ -1494,16 +1356,18 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	if source == "" || target == "" {
 		return nil
 	}
-	committed := b.committedEdgeBetween(source, target, edgeType)
-	if b.writeBehind == nil {
-		return committed
-	}
+	if b.writeBehind == nil { return b.committedEdgeBetween(source, target, edgeType) }
 	// A buffered endpoint delete hides the committed row; a buffered delete
 	// of the edge hides it; a buffered live edge of the type wins.
-	live, suppressed, sourceDeleted, targetDeleted := b.writeBehind.EdgesBetweenOverlay(source, target)
+	var live []*Edge
+ var suppressed map[EdgeID]struct{}
+ var sourceDeleted, targetDeleted bool
+ view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(source, target) })
+ if err != nil { return nil }; defer view.Close()
 	if sourceDeleted || targetDeleted {
 		return nil
 	}
+	committed := b.committedEdgeBetween(source, target, edgeType, view.withView)
 	if committed != nil {
 		if _, dead := suppressed[committed.ID]; !dead {
 			return committed
@@ -1520,9 +1384,11 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 }
 
 // committedEdgeBetween is the committed between-index read for one edge.
-func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType string) *Edge {
+func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) *Edge {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	if edgeType != "" {
-		edge, err := b.edgeBetweenFromHeadIndex(source, target, edgeType)
+		edge, err := b.edgeBetweenFromHeadIndex(source, target, edgeType, withView)
 		if err != nil {
 			b.log.Warn("edge-between head lookup failed; falling back to set/legacy scan",
 				"subsystem", "edge_between_index",
@@ -1533,13 +1399,13 @@ func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType stri
 		}
 	}
 
-	indexed, err := b.edgesBetweenFromSetIndex(source, target, edgeType)
+	indexed, err := b.edgesBetweenFromSetIndex(source, target, edgeType, withView)
 	if err == nil && len(indexed) > 0 {
 		_ = b.selfHealEdgeBetweenIndexes(indexed[:1])
 		return indexed[0]
 	}
 
-	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(source, target, edgeType)
+	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(source, target, edgeType, withView)
 	if err == nil && len(legacy) > 0 {
 		_ = b.selfHealEdgeBetweenIndexes(legacy)
 		return legacy[0]
@@ -1549,14 +1415,16 @@ func (b *BadgerEngine) committedEdgeBetween(source, target NodeID, edgeType stri
 }
 
 // edgeBetweenFromHeadIndex loads the typed common-case lookup without scanning.
-func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string) (*Edge, error) {
+func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) (*Edge, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	sourceNum, sourceOK := b.idDict.lookupNodeNumID(source)
 	targetNum, targetOK := b.idDict.lookupNodeNumID(target)
 	if !sourceOK || !targetOK {
 		return nil, nil // no numID ever allocated — no index entry can exist
 	}
 	var result *Edge
-	err := b.withView(func(txn *badger.Txn) error {
+	err := withView(func(txn *badger.Txn) error {
 		headKey := edgeBetweenHeadKey(sourceNum, targetNum, edgeType)
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		if checkTombstones && hasIndexTombstone(txn, headKey) {
@@ -1599,14 +1467,16 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 // Keys use 8-byte numeric IDs so we resolve start/end via the id dict
 // before scanning. Each entry's VALUE carries the string edge ID, which
 // saves a reverse-dict lookup for the scan payload.
-func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType string) ([]*Edge, error) {
+func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	startNum, sOK := b.idDict.lookupNodeNumID(startID)
 	endNum, eOK := b.idDict.lookupNodeNumID(endID)
 	if !sOK || !eOK {
 		return nil, nil
 	}
 	var result []*Edge
-	err := b.withView(func(txn *badger.Txn) error {
+	err := withView(func(txn *badger.Txn) error {
 		prefix := edgeBetweenIndexPrefix(startNum, endNum)
 		if edgeType != "" {
 			prefix = typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
@@ -1659,14 +1529,16 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 // new relationship from a hub with thousands of edges to a fresh node misses
 // the between index every time, and walking the hub's outgoing edges made a
 // bulk load quadratic in the hub's degree.
-func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID, edgeType string) ([]*Edge, error) {
+func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID, edgeType string, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	outPrefix := b.outgoingIndexPrefixString(startID)
 	inPrefix := b.incomingIndexPrefixString(endID)
 	if outPrefix == nil || inPrefix == nil {
 		return nil, nil
 	}
 	var result []*Edge
-	err := b.withView(func(txn *badger.Txn) error {
+	err := withView(func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		outIt := txn.NewIterator(badgerPrefixIteratorOptions(outPrefix))
