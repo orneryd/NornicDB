@@ -72,6 +72,23 @@ func (s *PointsService) getSearchService(ctx context.Context, database string, s
 	return svc, nil
 }
 
+// getVectorWriteSearchService returns the collection's search service for a
+// write that stores vectors of the collection's dimension, after checking the
+// service can index them. Upsert and UpdateVectors store points before
+// indexing them, so a collection whose dimension the service doesn't admit
+// (a service fixed at the embedding dimension) is rejected here, before
+// anything is stored, instead of leaving stored points the index never holds.
+func (s *PointsService) getVectorWriteSearchService(ctx context.Context, database string, store storage.Engine, metadata *CollectionMeta) (*search.Service, error) {
+	svc, err := s.getSearchService(ctx, database, store, metadata)
+	if err != nil {
+		return nil, err
+	}
+	if svc != nil && metadata != nil && !svc.AdmitsVectorDimensions(metadata.Dimensions) {
+		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(metadata.Dimensions, svc.VectorIndexDimensions()))
+	}
+	return svc, nil
+}
+
 // Only text requests capture a provider. The owner keeps the same binding when
 // a batch delegates to Query or Recommend, including an unavailable provider.
 func (s *PointsService) bindQueryEmbedding(ctx context.Context, request any) context.Context {
@@ -131,6 +148,10 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 	}
 
 	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getVectorWriteSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -200,11 +221,6 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 			node.CreatedAt = time.Now()
 			nodesToCreate = append(nodesToCreate, node)
 		}
-	}
-
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
-	if err != nil {
-		return nil, err
 	}
 
 	if len(nodesToCreate) > 0 {
@@ -705,7 +721,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 	if err != nil {
 		return nil, err
 	}
-	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
+	searchSvc, err := s.getVectorWriteSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
