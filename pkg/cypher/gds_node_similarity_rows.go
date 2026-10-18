@@ -25,8 +25,8 @@ var similarityRowsConfigKeys = []string{"sourceNode", "similarityMetric", "simil
 // similarityRowsConfig is nornicdb.similarity.stream's configuration.
 type similarityRowsConfig struct {
 	sources     []gdsNodeRef // the source: one node, or the nodes of a list, scored as one
-	group       bool     // sourceNode was a list: node1 is its ids
-	metric      string   // JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION
+	group       bool         // sourceNode was a list: node1 is its ids
+	metric      string       // JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION
 	cutoff      float64
 	includeZero bool // an explicit similarityCutoff of 0: every other source in the rows
 	topK        int
