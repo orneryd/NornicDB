@@ -12,32 +12,32 @@ import (
 func TestRetiredSubscriptionsCollectible(t *testing.T) {
 	cases := map[string]func(*EventBroker, *string){
 		"node_created": func(b *EventBroker, id *string) {
-			ch := make(chan *models.Node)
+			ch := newSubscriptionOwner[*models.Node]()
 			b.nodeCreatedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeNodeCreated(ch)
 		},
 		"node_updated": func(b *EventBroker, id *string) {
-			ch := make(chan *models.Node)
+			ch := newSubscriptionOwner[*models.Node]()
 			b.nodeUpdatedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeNodeUpdated(ch)
 		},
 		"node_deleted": func(b *EventBroker, id *string) {
-			ch := make(chan string)
+			ch := newSubscriptionOwner[string]()
 			b.nodeDeletedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeNodeDeleted(ch)
 		},
 		"relationship_created": func(b *EventBroker, id *string) {
-			ch := make(chan *models.Relationship)
+			ch := newSubscriptionOwner[*models.Relationship]()
 			b.relationshipCreatedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeRelationshipCreated(ch)
 		},
 		"relationship_updated": func(b *EventBroker, id *string) {
-			ch := make(chan *models.Relationship)
+			ch := newSubscriptionOwner[*models.Relationship]()
 			b.relationshipUpdatedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeRelationshipUpdated(ch)
 		},
 		"relationship_deleted": func(b *EventBroker, id *string) {
-			ch := make(chan string)
+			ch := newSubscriptionOwner[string]()
 			b.relationshipDeletedSubs = []subscriptionInfo{{ch: ch, id: id}}
 			b.unsubscribeRelationshipDeleted(ch)
 		},
