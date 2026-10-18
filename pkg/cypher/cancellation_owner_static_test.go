@@ -53,7 +53,7 @@ func TestCancellationOwnerStaticInventory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("type-checks the package and its clients from source")
 	}
-	findings := collectCancellationContractFindings(t)
+	_, findings := collectCancellationContractFindings(t)
 	seen := map[string]bool{}
 	var open []string
 	counts := map[string]int{}
@@ -83,7 +83,13 @@ func TestCancellationOwnerStaticInventory(t *testing.T) {
 	}
 }
 
-type contractFinding struct{ rule, key, where string }
+type contractFinding struct {
+	rule, key, where string
+	// For R1: the function and the loop (body nil for a bulk operation).
+	fn   *contractFunc
+	node ast.Node
+	body *ast.BlockStmt
+}
 
 // The packages whose use of this one makes a function reachable.
 var cancellationContractClients = []string{"../bolt", "../server", "../txsession", "../nornicdb", "../fabric", "../mcp", "../../cmd/nornicdb"}
@@ -107,7 +113,7 @@ type contractAnalysis struct {
 	fns  map[*types.Func]*contractFunc
 }
 
-func collectCancellationContractFindings(t *testing.T) []contractFinding {
+func collectCancellationContractFindings(t *testing.T) (*contractAnalysis, []contractFinding) {
 	ctxt := build.Default
 	ctxt.BuildTags = []string{"noui", "nolocalllm"}
 	build.Default = ctxt
@@ -270,7 +276,7 @@ func collectCancellationContractFindings(t *testing.T) []contractFinding {
 			if body == nil {
 				kind = "bulk"
 			}
-			findings = append(findings, contractFinding{"R1", fmt.Sprintf("R1 %s %s#%d %s", name, kind, ordinal, typ), a.where(n.Pos())})
+			findings = append(findings, contractFinding{rule: "R1", key: fmt.Sprintf("R1 %s %s#%d %s", name, kind, ordinal, typ), where: a.where(n.Pos()), fn: fn, node: n, body: body})
 		})
 		if !fn.reach {
 			continue
@@ -283,13 +289,13 @@ func collectCancellationContractFindings(t *testing.T) []contractFinding {
 				// R3.
 				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
 					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO") {
-						findings = append(findings, contractFinding{"R3", fmt.Sprintf("R3 %s %s", name, sel.Sel.Name), a.where(x.Pos())})
+						findings = append(findings, contractFinding{rule: "R3", key: fmt.Sprintf("R3 %s %s", name, sel.Sel.Name), where: a.where(x.Pos())})
 					}
 				}
 				// R4.
 				if holdsOwner {
 					if callee := a.callee(x); callee != nil && forwarders[callee] != "" {
-						findings = append(findings, contractFinding{"R4", fmt.Sprintf("R4 %s -> %s", name, contractFuncName(a.fns[callee].decl)), a.where(x.Pos())})
+						findings = append(findings, contractFinding{rule: "R4", key: fmt.Sprintf("R4 %s -> %s", name, contractFuncName(a.fns[callee].decl)), where: a.where(x.Pos())})
 					}
 				}
 			case *ast.GoStmt:
@@ -307,13 +313,25 @@ func collectCancellationContractFindings(t *testing.T) []contractFinding {
 					return true
 				})
 				if !forks || !recovers {
-					findings = append(findings, contractFinding{"R5", fmt.Sprintf("R5 %s go", name), a.where(x.Pos())})
+					findings = append(findings, contractFinding{rule: "R5", key: fmt.Sprintf("R5 %s go", name), where: a.where(x.Pos())})
 				}
 			}
 			return true
 		})
 	}
-	// data: the function, or one it calls, does data work.
+	// data: the function takes a data value, or it or one it calls does data
+	// work.
+	for _, fn := range a.fns {
+		sig := fn.obj.Type().(*types.Signature)
+		for i := 0; i < sig.Params().Len(); i++ {
+			if contractClassify(sig.Params().At(i).Type()) == "DATA" {
+				fn.data = true
+			}
+		}
+		if sig.Recv() != nil && contractClassify(sig.Recv().Type()) == "DATA" {
+			fn.data = true
+		}
+	}
 	fixedPoint(a.fns, func(fn *contractFunc) bool {
 		for _, c := range fn.calls {
 			if g := a.fns[c]; g != nil && g.data {
@@ -331,11 +349,11 @@ func collectCancellationContractFindings(t *testing.T) []contractFinding {
 	for key, fn := range byName {
 		for _, suffix := range []string{"WithCancellation", "Probed"} {
 			if strings.HasSuffix(key, suffix) && byName[strings.TrimSuffix(key, suffix)] != nil && !fn.data {
-				findings = append(findings, contractFinding{"R2", "R2 " + key, a.where(fn.decl.Pos())})
+				findings = append(findings, contractFinding{rule: "R2", key: "R2 " + key, where: a.where(fn.decl.Pos())})
 			}
 		}
 	}
-	return findings
+	return a, findings
 }
 
 func fixedPoint(fns map[*types.Func]*contractFunc, step func(*contractFunc) bool, done func(*contractFunc) bool) {
@@ -631,7 +649,10 @@ func (a *contractAnalysis) condDomain(s *ast.ForStmt) (string, string) {
 	return domain, typ
 }
 
-// bulk: a native operation whose cost is the size of a data value.
+// bulk: a native operation whose cost is the size of a data value and that
+// does work per element (sorting, joining, deep comparison, map copies).
+// copy, append and Clone of a value already in memory run at memory speed,
+// like allocating it, and are not counted.
 func (a *contractAnalysis) bulk(call *ast.CallExpr) (string, string, bool) {
 	name := ""
 	switch f := ast.Unparen(call.Fun).(type) {
@@ -644,22 +665,14 @@ func (a *contractAnalysis) bulk(call *ast.CallExpr) (string, string, bool) {
 	}
 	switch name {
 	case "sort.Slice", "sort.SliceStable", "sort.Sort", "sort.Stable", "slices.Sort", "slices.SortFunc", "slices.SortStableFunc",
-		"copy", "slices.Clone", "maps.Copy", "maps.Clone", "strings.Join", "reflect.DeepEqual":
-	case "append":
-		if !call.Ellipsis.IsValid() {
-			return "", "", false
-		}
+		"maps.Copy", "maps.Clone", "strings.Join", "reflect.DeepEqual":
 	default:
 		return "", "", false
 	}
 	if len(call.Args) == 0 {
 		return "", "", false
 	}
-	arg := call.Args[0]
-	if name == "append" || name == "copy" {
-		arg = call.Args[len(call.Args)-1]
-	}
-	t := a.info.TypeOf(arg)
+	t := a.info.TypeOf(call.Args[0])
 	if contractClassify(t) != "DATA" {
 		return "", "", false
 	}
