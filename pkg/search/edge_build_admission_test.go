@@ -34,7 +34,7 @@ func (e *edgeStreamGateEngine) StreamEdges(ctx context.Context, fn func(edge *st
 	}); err != nil {
 		return err
 	}
-	if edgeStreamCallerOnStack("buildRelationshipVectorIndexes") {
+	if edgeStreamCallerOnStack("readStoredRelationships") {
 		parked := false
 		e.once.Do(func() { parked = true; close(e.entered) })
 		if parked {
