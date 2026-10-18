@@ -7,6 +7,10 @@ var (
 	_ NodeWithoutEmbeddingsReader          = (*NamespacedEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsReader     = (*NamespacedEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsCapability = (*NamespacedEngine)(nil)
+	_ QueryNodeReader                      = (*BadgerEngine)(nil)
+	_ QueryNodeReader                      = (*BadgerTransaction)(nil)
+	_ QueryNodeReader                      = (*WALEngine)(nil)
+	_ QueryNodeReader                      = (*NamespacedEngine)(nil)
 )
 
 // batchNodeWithoutEmbeddingsSupported reports whether engine can perform a
