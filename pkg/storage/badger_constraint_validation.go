@@ -477,6 +477,30 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 		keyValue:   keyValue,
 	}
 	prefix := temporalHistoryPrefix(target.desc)
+	if spec.listBearing(keyValue) {
+		if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+			return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
+		}
+		// Canonical list keys may merge valid old-format histories that overlap.
+		// Completeness does not establish the disjointness needed by neighbours.
+		interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			id := extractNodeIDFromTemporalHistoryKey(it.Item().Key(), len(prefix))
+			if id == "" || id == excludeNodeID {
+				continue
+			}
+			holder, err := b.loadNodeForTemporalTxn(txn, id, false)
+			if err != nil {
+				return err
+			}
+			if err := temporalOverlapViolation(constraint, spec, holder, keyValue, interval); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	hasIndexedEntries := false
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	for it.Rewind(); it.Valid(); it.Next() {
