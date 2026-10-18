@@ -2359,7 +2359,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		// load-bearing for snapshot isolation: later label reads in this
 		// transaction must see the scan-time labels, not labels committed
 		// afterwards (TestTxReads_LabelCacheBoundPreservesSnapshotLabels).
-		if len(tx.snapshotNodeLabels) < maxSnapshotNodeLabelCacheNodes {
+		if !engineOverlaid && len(tx.snapshotNodeLabels) < maxSnapshotNodeLabelCacheNodes {
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
 		if !hasPending {
@@ -2389,7 +2389,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	// outlives each statement's REVEAL scope, so its filtered population must
 	// never answer a reveal read (or the reverse). Keep both views pinned to
 	// the same physical snapshot, but cache their populations independently.
-	if cached, ok := cache[cacheKey]; ok {
+	if cached, ok := cache[cacheKey]; ok && !engineOverlaid {
 		for _, node := range cached {
 			if err := emitCommitted(node); err != nil {
 				return err
@@ -2403,7 +2403,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 
 	completed := make([]*Node, 0)
 	afterNodeID := NodeID("")
-	if prefix := tx.snapshotLabelPrefixNodes[cacheKey]; tx.snapshotTx != nil && len(prefix) > 0 {
+	if prefix := tx.snapshotLabelPrefixNodes[cacheKey]; !engineOverlaid && tx.snapshotTx != nil && len(prefix) > 0 {
 		completed = append(completed, prefix...)
 		for _, node := range prefix {
 			if err := emitCommitted(node); err != nil {
@@ -2429,13 +2429,13 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		)
 	}
 	if err != nil {
-		if err == ErrIterationStopped && tx.snapshotTx != nil {
+		if err == ErrIterationStopped && !engineOverlaid && tx.snapshotTx != nil {
 			cacheEndpointNodes := properties == nil && !tx.engine.visibilityFiltered()
 			tx.storeSnapshotLabelPrefixLocked(tx.snapshotTx, cacheKey, completed, cacheEndpointNodes)
 		}
 		return err
 	}
-	if properties == nil {
+	if properties == nil && !engineOverlaid {
 		if tx.snapshotLabelNodes == nil {
 			tx.snapshotLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
@@ -2449,7 +2449,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 				tx.snapshotLabelNodeByID[node.ID] = node
 			}
 		}
-	} else if len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
+	} else if !engineOverlaid && len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
 		if tx.snapshotProjectedLabelNodes == nil {
 			tx.snapshotProjectedLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
