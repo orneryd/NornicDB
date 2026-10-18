@@ -19,10 +19,16 @@ func (db *DB) onNodeEmbedded(node *storage.Node) {
 	if node == nil {
 		return
 	}
-	// Keep embed worker hot: index/inference can be expensive, so run asynchronously.
 	nodeCopy := storage.CopyNode(node)
+	// Publish into a ready search service before returning: the worker reports
+	// the node embedded only after this callback, and a search must then find
+	// the vector. Otherwise the deferred mutation queue publishes it.
+	published := db.publishEmbeddedNode(nodeCopy)
+	// Keep embed worker hot: inference can be expensive, so run asynchronously.
 	go func(n *storage.Node) {
-		db.indexNodeFromEvent(n)
+		if !published {
+			db.indexNodeFromEvent(n)
+		}
 		db.runInferenceForEmbeddedNode(n)
 	}(nodeCopy)
 }

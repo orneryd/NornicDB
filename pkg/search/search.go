@@ -258,7 +258,8 @@ type SearchResult struct {
 	Similarity float64 `json:"similarity,omitempty"`
 
 	// RRF metadata (vector_rank/bm25_rank are always emitted so clients see original
-	// ranks even when Stage-2 reranking is applied; 0 means not in that result set)
+	// ranks even when Stage-2 reranking is applied; 0 means not in that result set.
+	// A chunked search reports each method's best rank across its chunks.)
 	RRFScore   float64 `json:"rrf_score,omitempty"`
 	VectorRank int     `json:"vector_rank"`
 	BM25Rank   int     `json:"bm25_rank"`
