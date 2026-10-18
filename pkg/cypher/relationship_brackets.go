@@ -1,7 +1,5 @@
 package cypher
 
-import "strings"
-
 // Relationship brackets in pattern text are found by one scanner for every
 // reader (CREATE / MERGE shape checks, relationship variable scoping, the MERGE
 // relationship parser and OPTIONAL MATCH endpoints). A '[' starts a
@@ -52,47 +50,6 @@ func scanRelationshipBracket(text string, from int) (open, close int) {
 		}
 	}
 	return -1, -1
-}
-
-// relationshipBracketHead is the inside of a relationship bracket before its
-// property map: the variable, the type expression and the variable-length
-// range ("r:T*1..2" of "[r:T*1..2 {w: $ws[i * 2]}]"). A '*' or '..' in a
-// property value is part of an expression, not a range, and a '{' in a
-// dynamic type ($({k: t}.k)) is not the property map.
-func relationshipBracketHead(inner string) string {
-	if property := strings.IndexByte(relationshipRangeText(inner), '{'); property >= 0 {
-		return inner[:property]
-	}
-	return inner
-}
-
-// relationshipRangeText is text with quoted text and the inside of
-// parenthesized expressions blanked, at the same offsets, so a '{', '*' or
-// '..' left in it belongs to the relationship: one inside a dynamic type
-// ($({k: t}.k), $(t * 2), $(ts[0..1][0])) is part of the type expression.
-func relationshipRangeText(text string) string {
-	text = blankQuotedText(text)
-	var out []byte
-	for index := 0; index < len(text); index++ {
-		if text[index] != '(' {
-			continue
-		}
-		end := findMatchingDelimiter(text, index, '(', ')')
-		if end < 0 {
-			break
-		}
-		if out == nil {
-			out = []byte(text)
-		}
-		for inside := index + 1; inside < end; inside++ {
-			out[inside] = ' '
-		}
-		index = end
-	}
-	if out == nil {
-		return text
-	}
-	return string(out)
 }
 
 // patternHasRelationship reports whether pattern text has a relationship
