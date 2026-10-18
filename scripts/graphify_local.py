@@ -1343,9 +1343,14 @@ def git_output(repo_root, *args):
         return ""
 
 def repo_from_git(repo_root):
-    """owner/name from the origin remote, or the project default."""
+    """Origin owner/name, or the primary checkout's folder for every linked worktree."""
     match = re.search(r"([^/:]+/[^/]+?)(?:\.git)?$", git_output(repo_root, "remote", "get-url", "origin"))
-    return match.group(1) if match else DEFAULT_REPO
+    if match:
+        return match.group(1)
+    for field in git_output(repo_root, "worktree", "list", "--porcelain", "-z").split("\0"):
+        if field.startswith("worktree "):
+            return Path(field[len("worktree "):]).name
+    return DEFAULT_REPO
 
 def emit_enriched_graph(graph_path, out_path, repo_root):
     """Write graph.json with full `body` properties embedded on every node.
