@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,6 +52,22 @@ func TestCatalogRemoteRuntimeCredentials(t *testing.T) {
 			result, err := executor.Execute(context.Background(), runtime, "RETURN 'real-catalog-result' AS marker", nil, "")
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{"real-catalog-result"}}, result.Rows)
+			for _, ending := range []string{"commit", "rollback"} {
+				transaction := NewFabricTransaction("synthetic-terminal-identity")
+				participant, err := transaction.GetOrOpen(participantKeyFromLocation(runtime), false)
+				require.NoError(t, err)
+				require.NoError(t, transaction.BindParticipantCallbacks(participant.ShardName,
+					func(*SubTransaction) error { return fmt.Errorf("synthetic commit rejection") },
+					func(*SubTransaction) error { return fmt.Errorf("synthetic rollback rejection") }))
+				if ending == "commit" {
+					err = transaction.Commit(nil, nil)
+				} else {
+					err = transaction.Rollback(nil)
+				}
+				require.Error(t, err)
+				require.NotContains(t, err.Error(), password)
+				require.Contains(t, err.Error(), "catalog_runtime.r")
+			}
 		})
 	}
 }
@@ -58,6 +75,8 @@ func TestCatalogRemoteRuntimeCredentials(t *testing.T) {
 func TestRemoteResolvedAliasesKeepDistinctCredentials(t *testing.T) {
 	executor := NewRemoteFragmentExecutor()
 	defer executor.Close()
+	transaction := NewFabricTransaction("synthetic-alias-identities")
+	var participants []*SubTransaction
 	for _, alias := range []string{"first", "second"} {
 		location := &LocationRemote{GraphName: "composite." + alias, URI: "http://127.0.0.1:1", DBName: "nornic", AuthMode: "user_password"}
 		location.ResolveEngine = func(string) (storage.Engine, error) {
@@ -68,6 +87,12 @@ func TestRemoteResolvedAliasesKeepDistinctCredentials(t *testing.T) {
 		again, err := executor.getOrCreateEngine(location, "")
 		require.NoError(t, err)
 		require.Same(t, engine, again)
+		location.URI = "http://admin:synthetic-uri-secret-91736482@127.0.0.1:1"
+		participant, err := transaction.GetOrOpen(participantKeyFromLocation(location), false)
+		require.NoError(t, err)
+		require.Equal(t, "remote:composite."+alias, participant.ShardName)
+		participants = append(participants, participant)
 	}
+	require.NotSame(t, participants[0], participants[1], "aliases with distinct credentials must not share a remote transaction")
 	require.Len(t, executor.engineCache, 2, "constituents with different identities at one endpoint must not share a connection")
 }
