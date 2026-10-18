@@ -176,7 +176,7 @@ func embedLocallyChunkedDocuments(
 	texts []string,
 	maxTokens, overlap int,
 	chunk func(string, int, int) ([]string, error),
-	embedBatch func(context.Context, []string) ([][]float32, error),
+	embedBatch func(context.Context, []string) ([][]float32, []providerBatchUsage, error),
 	model string,
 ) ([]*DocumentChunkResult, error) {
 	results := make([]*DocumentChunkResult, len(texts))
@@ -194,7 +194,7 @@ func embedLocallyChunkedDocuments(
 	if len(allChunks) == 0 {
 		return results, nil
 	}
-	embeddings, err := embedBatch(ctx, allChunks)
+	embeddings, usage, err := embedBatch(ctx, allChunks)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +206,7 @@ func embedLocallyChunkedDocuments(
 		results[i].Embeddings = append([][]float32(nil), embeddings[offset:offset+count]...)
 		offset += count
 	}
+	attributeDocumentUsage(results, usage)
 	return results, nil
 }
 
@@ -912,11 +913,14 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 //
 // Returns a slice of embeddings (one per input text), or an error if the API request fails.
 func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+	var results [][]float32
 	err := forProviderBatches(ctx, len(texts), 2048, 300000, func(i int) int { return min(len(texts[i]), 8192) }, func(start, end int) error {
 		vectors, err := e.embedBatchRequest(ctx, texts[start:end])
 		if err == nil {
-			copy(results[start:end], vectors)
+			results = mergeProviderBatch(results, vectors, start, len(texts))
 		}
 		return err
 	})

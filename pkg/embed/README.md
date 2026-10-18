@@ -31,11 +31,14 @@ remote image dimensions are unknown.
 
 Returned usage is logged once per successful HTTP response at debug level
 (`embedding provider usage`, with provider, model, inputs and total_tokens).
-Voyage single-document results also retain the exact total in the existing
-`DocumentChunkResult.TotalTokens`, including split requests. A request spanning
-several documents has no provider-supplied per-document attribution, so its
-total is logged rather than copied into every document. No token metric or
-public result/configuration field is added.
+Voyage results also retain exactly attributable request totals in the existing
+`DocumentChunkResult.TotalTokens`. Every request whose inputs all belong to one
+document credits that document, even within a multi-document caller batch or
+when it contains several chunks. A request spanning documents has no
+provider-supplied per-document attribution, so its total is logged rather than
+copied into document results. If a document participates in both kinds of
+request, its result contains only its exactly attributable usage. No token
+metric or public result/configuration field is added.
 
 #### Usage Example
 
