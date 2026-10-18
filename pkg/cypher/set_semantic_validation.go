@@ -347,6 +347,12 @@ func expressionFreeVariables(expression string) []string {
 			// A quoted name: a variable where a plain one would be (`n`.id),
 			// not a property key, label, parameter or map key.
 			end := skipCypherQuotedText(expression, index, '`')
+			// A quoted function name, qualified or not (`custom`.`range`(x)).
+			if functionEnd, call := qualifiedFunctionNameEnd(expression, end); call {
+				delimiters = append(delimiters, '(')
+				index = functionEnd + 1
+				continue
+			}
 			previous := previousSetExpressionByte(expression, index)
 			following := nextSetExpressionByte(expression, end)
 			inMap := len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{'
