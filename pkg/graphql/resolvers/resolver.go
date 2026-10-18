@@ -57,8 +57,8 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 	// This enables GraphQL subscriptions to receive real-time updates
 	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine)
 	// to reach the BadgerEngine that implements StorageEventNotifier
-	// Note: Events from all namespaces will be published. Namespace filtering
-	// can be added later if needed by checking node/edge ID prefixes.
+	// Events from all namespaces reach this notifier. The broker tags each event
+	// with its database and delivers it only to subscriptions bound to that DB.
 	if db != nil {
 		underlyingEngine := db.GetStorage()
 
@@ -73,63 +73,62 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 		}
 
 		if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
-			// Get default database name for namespace prefix removal
-			defaultDBName := dbManager.DefaultDatabaseName()
-			namespacePrefix := defaultDBName + ":"
-
-			// Helper to unprefix node ID
+			// Helpers expose user-facing IDs while retaining the namespace as the
+			// event's database routing key.
 			unprefixNodeID := func(id storage.NodeID) storage.NodeID {
-				idStr := string(id)
-				if strings.HasPrefix(idStr, namespacePrefix) {
-					return storage.NodeID(idStr[len(namespacePrefix):])
+				if _, userID, found := strings.Cut(string(id), ":"); found {
+					return storage.NodeID(userID)
 				}
 				return id
 			}
-
-			// Helper to unprefix edge ID
 			unprefixEdgeID := func(id storage.EdgeID) storage.EdgeID {
-				idStr := string(id)
-				if strings.HasPrefix(idStr, namespacePrefix) {
-					return storage.EdgeID(idStr[len(namespacePrefix):])
+				if _, userID, found := strings.Cut(string(id), ":"); found {
+					return storage.EdgeID(userID)
 				}
 				return id
 			}
 
 			// Node events
 			notifier.OnNodeCreated(func(node *storage.Node) {
+				database := storage.ExtractNamespaceFromID(string(node.ID))
 				// Create a copy with unprefixed ID for GraphQL
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeCreated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeCreatedInDatabase(database, storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeUpdated(func(node *storage.Node) {
+				database := storage.ExtractNamespaceFromID(string(node.ID))
 				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
-				broker.PublishNodeUpdated(storageNodeToModel(&unprefixedNode))
+				broker.PublishNodeUpdatedInDatabase(database, storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
+				database := storage.ExtractNamespaceFromID(string(nodeID))
 				unprefixedID := unprefixNodeID(nodeID)
-				broker.PublishNodeDeleted(string(unprefixedID))
+				broker.PublishNodeDeletedInDatabase(database, string(unprefixedID))
 			})
 
 			// Relationship (edge) events
 			notifier.OnEdgeCreated(func(edge *storage.Edge) {
+				database := storage.ExtractNamespaceFromID(string(edge.ID))
 				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipCreated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipCreatedInDatabase(database, storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeUpdated(func(edge *storage.Edge) {
+				database := storage.ExtractNamespaceFromID(string(edge.ID))
 				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
-				broker.PublishRelationshipUpdated(storageEdgeToModel(&unprefixedEdge))
+				broker.PublishRelationshipUpdatedInDatabase(database, storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) {
+				database := storage.ExtractNamespaceFromID(string(edgeID))
 				unprefixedID := unprefixEdgeID(edgeID)
-				broker.PublishRelationshipDeleted(string(unprefixedID))
+				broker.PublishRelationshipDeletedInDatabase(database, string(unprefixedID))
 			})
 		}
 	}
