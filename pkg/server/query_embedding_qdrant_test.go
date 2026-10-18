@@ -30,6 +30,12 @@ func TestQdrantRecommendKeepsProviderSnapshot(t *testing.T) {
 			client := qpb.NewPointsClient(conn)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			// This fixture exercises provider snapshots after collection warmup.
+			// A new collection may still have an asynchronous index build running.
+			collectionStorage, _, err := server.qdrantCollectionStore.Open(ctx, collection)
+			require.NoError(t, err)
+			_, err = server.db.EnsureSearchIndexesBuilt(ctx, collection, collectionStorage)
+			require.NoError(t, err)
 			old := &nativeRequestEmbedder{}
 			replacement := &nativeRequestEmbedder{axis: 1}
 			base := server.db.GetCypherExecutor()
