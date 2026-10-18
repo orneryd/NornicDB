@@ -71,6 +71,9 @@ func (db *DB) closeInternal() error {
 		db.embedQueue.Close()
 	}
 	db.bgWg.Wait()
+	if db.cypherExecutor != nil {
+		db.cypherExecutor.StatementCaches().Dispose()
+	}
 
 	var errs []error
 	// Stop every component that can still mutate graph storage before recording

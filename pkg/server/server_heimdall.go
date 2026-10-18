@@ -27,8 +27,9 @@ type heimdallDBRouter struct {
 	dbManager *multidb.DatabaseManager
 	features  *nornicConfig.FeatureFlagsConfig
 
-	executorsMu sync.RWMutex
-	executors   map[string]*cypher.StorageExecutor
+	statementCacheIndex multidb.StatementCacheIndex
+	executorsMu         sync.RWMutex
+	executors           map[string]*cypher.StorageExecutor
 }
 
 func newHeimdallDBRouter(db *nornicdb.DB, dbManager *multidb.DatabaseManager, features *nornicConfig.FeatureFlagsConfig) *heimdallDBRouter {
@@ -78,6 +79,7 @@ func (r *heimdallDBRouter) ListDatabases() []string {
 }
 
 func (r *heimdallDBRouter) storageForDatabase(database string) (dbName string, engine storage.Engine, err error) {
+	r.bindStatementCacheIndex()
 	dbName, err = r.ResolveDatabase(database)
 	if err != nil {
 		return "", nil, err
@@ -102,10 +104,15 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 		return "", nil, nil, err
 	}
 
+	selection := database
+	if selection == "" {
+		selection = dbName
+	}
+
 	// Fast path: cached executor
 	r.executorsMu.RLock()
 	if r.executors != nil {
-		if cached := r.executors[dbName]; cached != nil {
+		if cached := r.executors[selection]; cached != nil && cached.StatementCacheSelectionValid() {
 			r.executorsMu.RUnlock()
 			return dbName, cached, engine, nil
 		}
@@ -114,6 +121,13 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 
 	// Create executor scoped to this database.
 	exec = cypher.NewStorageExecutor(engine)
+	if r.dbManager != nil {
+		if err := exec.UseDatabaseStatementCaches(r.dbManager, selection); err != nil {
+			return "", nil, nil, err
+		}
+	} else if r.db != nil {
+		exec.ShareStatementCachesFrom(r.db.GetCypherExecutor())
+	}
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
 			exec.ShareEmbedderFrom(baseExecutor)
@@ -153,11 +167,15 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	if r.executors == nil {
 		r.executors = make(map[string]*cypher.StorageExecutor)
 	}
-	if existing := r.executors[dbName]; existing != nil {
+	if existing := r.executors[selection]; existing != nil && existing.StatementCacheSelectionValid() {
 		r.executorsMu.Unlock()
 		return dbName, existing, engine, nil
 	}
-	r.executors[dbName] = exec
+	if !exec.StatementCacheSelectionValid() {
+		r.executorsMu.Unlock()
+		return "", nil, nil, multidb.ErrDatabaseNotFound
+	}
+	r.executors[selection] = exec
 	r.executorsMu.Unlock()
 
 	return dbName, exec, engine, nil
@@ -447,4 +465,23 @@ func (r *heimdallMetricsReader) Runtime() heimdall.RuntimeMetrics {
 		MemoryAllocMB:  m.Alloc / 1024 / 1024,
 		NumGC:          m.NumGC,
 	}
+}
+
+func (r *heimdallDBRouter) bindStatementCacheIndex() {
+	r.statementCacheIndex.Bind(r.dbManager, func() {
+		r.executorsMu.Lock()
+		defer r.executorsMu.Unlock()
+		for name, executor := range r.executors {
+			if !executor.StatementCacheSelectionValid() {
+				delete(r.executors, name)
+			}
+		}
+	})
+}
+
+func (r *heimdallDBRouter) Close() {
+	r.statementCacheIndex.Close()
+	r.executorsMu.Lock()
+	r.executors = nil
+	r.executorsMu.Unlock()
 }
