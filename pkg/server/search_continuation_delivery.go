@@ -3,57 +3,32 @@ package server
 import (
 	"context"
 	"net/http"
-	"sync"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"time"
 )
 
-type searchDeliveryKey struct{}
-
-// TimeoutHandler buffers the response before writing to the connection. Keep
-// delivery failure outside that buffer so an undelivered qid is discarded too.
-type searchContinuationDelivery struct {
-	mu sync.Mutex
-	failed bool
-	discard func()
-}
-
-func (d *searchContinuationDelivery) register(discard func()) {
-	d.mu.Lock()
-	failed := d.failed
-	if !failed { d.discard = discard }
-	d.mu.Unlock()
-	if failed { discard() }
-}
-
-func (d *searchContinuationDelivery) fail() {
-	d.mu.Lock()
-	d.failed = true
-	discard := d.discard
-	d.discard = nil
-	d.mu.Unlock()
-	if discard != nil { discard() }
-}
-
 type searchDeliveryWriter struct {
 	http.ResponseWriter
-	delivery *searchContinuationDelivery
+	delivery *resultstream.Delivery
 }
 
 func (w searchDeliveryWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
-	if err != nil { w.delivery.fail() }
+	if err != nil { w.delivery.Fail() }
 	return n, err
 }
 
 func (w searchDeliveryWriter) WriteHeader(status int) {
-	if status != http.StatusOK { w.delivery.fail() }
+	if status != http.StatusOK { w.delivery.Fail() }
 	w.ResponseWriter.WriteHeader(status)
 }
 
 func serveSearchWithTimeout(w http.ResponseWriter, r *http.Request, next http.Handler, timeout time.Duration) {
-	delivery := &searchContinuationDelivery{}
-	stop := context.AfterFunc(r.Context(), delivery.fail)
+	delivery := &resultstream.Delivery{}
+	stop := context.AfterFunc(r.Context(), delivery.Fail)
 	defer stop()
-	r = r.WithContext(context.WithValue(r.Context(), searchDeliveryKey{}, delivery))
+	r = r.WithContext(resultstream.WithDelivery(r.Context(), delivery))
 	http.TimeoutHandler(next, timeout, "request timeout: search busy").ServeHTTP(searchDeliveryWriter{w, delivery}, r)
+	stop()
+	delivery.Delivered()
 }
