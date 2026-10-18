@@ -520,11 +520,21 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 			qualified := dbName + "." + ref.Alias
 			if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
 				catalog.Register(qualified, &fabric.LocationRemote{
-					DBName:   ref.DatabaseName,
-					URI:      ref.URI,
-					AuthMode: strings.TrimSpace(ref.AuthMode),
-					User:     ref.User,
-					Password: ref.Password,
+					GraphName: qualified,
+					DBName:    ref.DatabaseName,
+					URI:       ref.URI,
+					AuthMode:  strings.TrimSpace(ref.AuthMode),
+					ResolveEngine: func(authToken string) (storage.Engine, error) {
+						resolved, err := e.dbManager.GetStorageForUse(qualified, authToken)
+						if err != nil {
+							return nil, err
+						}
+						engine, ok := resolved.(storage.Engine)
+						if !ok {
+							return nil, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(qualified), nil)
+						}
+						return engine, nil
+					},
 				})
 				continue
 			}
