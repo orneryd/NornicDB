@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound aggregate ANTLR prediction generations with an exactly counted ledger,
+  and detach completed parsers so idle validators and kept trees release retired
+  prediction state (#1382).
+
 - Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
   macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
   tests retain their assertions and debug information (#1366).
