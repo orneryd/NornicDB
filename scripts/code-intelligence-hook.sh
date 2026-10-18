@@ -13,6 +13,7 @@ python="${python:-${CODE_INTEL_PYTHON:-$repo_root/.venv-code-intelligence/bin/py
 if [ ! -x "$python" ]; then
     echo "code-intelligence: Python environment missing: $python" >&2
     echo "Create a venv, install scripts/requirements-code-intelligence.txt, and set git config codeIntelligence.python /absolute/path/to/python." >&2
+    echo "MANDATORY COMMIT CHECK: Do not override, bypass or disable this hook. Fix the Python environment before proceeding to prevent duplicate, divergent code from being checked in." >&2
     exit 1
 fi
 command="${1:?hook command required}"
