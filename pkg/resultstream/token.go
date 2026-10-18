@@ -11,6 +11,8 @@ const (
 	tokenVersion   = byte(2)
 	tokenBodyBytes = 1 + 8 + 16 + 8 + 8 + 32
 	tokenBytes     = tokenBodyBytes + sha256.Size
+	// Bound the self-contained database binding before decoding client input.
+	maxTokenDatabaseBytes = 64 << 10
 )
 
 type decodedToken struct {
@@ -38,7 +40,8 @@ func encodeToken(secret [32]byte, instance [8]byte, streamID [16]byte, position 
 
 func decodeToken(secret [32]byte, instance [8]byte, qid string) (decodedToken, error) {
 	var token decodedToken
-	if len(qid) < base64.RawURLEncoding.EncodedLen(tokenBytes+1) {
+	if len(qid) < base64.RawURLEncoding.EncodedLen(tokenBytes+1) ||
+		len(qid) > base64.RawURLEncoding.EncodedLen(tokenBytes+maxTokenDatabaseBytes) {
 		return token, ErrInvalidQID
 	}
 	raw := make([]byte, base64.RawURLEncoding.DecodedLen(len(qid)))
