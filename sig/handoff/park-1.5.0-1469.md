@@ -5,7 +5,7 @@ User requested an immediate park under [the parking protocol](park-1.5.0-protoco
 ## Branches and preserved work
 
 - Develop PR [#1469](https://github.com/orneryd/NornicDB/pull/1469): OPEN, draft, milestone **v1.5.0**, base `develop`, unchanged remote head `fe3650049ad4c488b4001337915cdddc48b08cf6`, branch `fix/embedder-failed-health-cleanup`.
-- WIP branch: **`wip/1.5.0-1469-single-owner-park`** on the same origin. Preservation commit **`254e92a4afaa15b0bc2ae683821acda93cb5c237`** contains the probes, partial owner/consumer/adapter work, complete provisional snapshots/patches, extracted inventory, scripts, old superseded drafts and results. A following documentation commit adds this handoff. Resolve the branch ref for the final documentation tip.
+- WIP branch: **`wip-1.5.0-1469-single-owner-park`** on the same origin. Preservation commit **`254e92a4afaa15b0bc2ae683821acda93cb5c237`** contains the probes, partial owner/consumer/adapter work, complete provisional snapshots/patches, extracted inventory, scripts, old superseded drafts and results. A following documentation commit adds this handoff. Resolve the branch ref for the final documentation tip.
 - WIP base: local develop test commit `662402128c165cb9a40a887035b6b9d84e492857`, directly above the unchanged PR head. It adds callback/concurrent-Close/HTTP-status/allocation regression tests.
 - WIP worktree: `src/wt-park-1469`. Original develop worktree `wt-embed-health-develop` is retained and clean at `662402128`; original provisional worktree `wt-rc144-embed-lifecycle-fix` is retained with its uncommitted source. The isolated analysis/reviewer/Graphify worktrees are also retained. Do not delete any during the park.
 - Former release PR #1465 is CLOSED at `6665a99fead163751897f1481523e9e0949458de`. Do not update it, recreate a release PR, or put this family into 1.4.4. No unfinished changes were pushed to either PR head.
@@ -84,3 +84,6 @@ Cross-agent dependencies: release PRs #1476/#1477/#1481/#1482 may update the cor
 ## RC role remains separate
 
 `rc/1.4.4-final-2` remains pushed at **`a007e924cecefd8cd74565149c4b817d6251aefc`**, containing #1472 and excluding this family. Release parity ran successfully while parking: release `24d08776c` versus develop `16923aef7`, 329 commits accounted, zero failures, 18 user-deferred groups / 69 commits. The corrected invocation used Git Bash and the installed Python312 interpreter; default WSL bash lacked `python` and failed before checking parity. Run `bash sig/release-parity.sh` again before every actual RC build. No candidate rebuild or new workload was started as part of this park. Reviewed 1.4.4 additions remain the active RC responsibility.
+
+
+Naming exception: the requested wip/1.5.0-1469-single-owner-park push was rejected by origin with `directory file conflict`: remote branch `wip` already exists at bd089c10b99576cd197687020c26ea644f82a66b. The existing shared branch was not renamed or deleted. The preserved branch therefore uses wip-1.5.0-1469-single-owner-park on the same origin. This changes only the preservation branch name; all required work is retained.
