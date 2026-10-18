@@ -170,17 +170,15 @@ func namedFunctionArguments(expression, function string) []string {
 	function = lowerASCII(function)
 	arguments := make([]string, 0)
 	for index := 0; index < len(lower); {
-		quote := lower[index]
-		if quote == '\'' || quote == '"' || quote == '`' {
-			index++
-			for index < len(lower) {
-				if lower[index] == quote && !isBackslashEscaped(lower, index) {
-					index++
-					break
-				}
-				index++
-			}
+		if isCypherQuoteByte(lower[index]) {
+			index = skipCypherQuotedText(expression, index, expression[index])
 			continue
+		}
+		if lower[index] == '/' {
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end
+				continue
+			}
 		}
 		if !strings.HasPrefix(lower[index:], function) || !functionNameStartsAt(expression, index) {
 			index++

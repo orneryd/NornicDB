@@ -65,23 +65,18 @@ func kpScanQuotedString(s string, i int) (string, int) {
 	if i >= len(s) {
 		return "", i
 	}
-	q := s[i]
-	if q != '\'' && q != '"' {
+	if !isCypherStringQuoteByte(s[i]) {
 		return "", i
 	}
-	i++
-	start := i
-	for i < len(s) && s[i] != q {
-		if s[i] == '\\' {
-			i++
-		}
-		i++
-	}
-	if i >= len(s) {
+	end, closed := scanCypherQuotedText(s, i, s[i])
+	if !closed {
 		return "", -1
 	}
-	val := s[start:i]
-	return val, i + 1
+	value, decoded := decodeCypherQuotedString(s[i:end])
+	if !decoded {
+		return "", -1
+	}
+	return value, end
 }
 
 func kpScanNumber(s string, i int) (float64, int, bool) {
@@ -152,18 +147,15 @@ func kpScanBraceBlock(s string, i int) (string, int) {
 	start := i + 1
 	i++
 	for i < len(s) && depth > 0 {
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end
+			continue
+		}
 		switch s[i] {
 		case '{':
 			depth++
 		case '}':
 			depth--
-		case '\'', '"':
-			_, j := kpScanQuotedString(s, i)
-			if j < 0 {
-				return "", -1
-			}
-			i = j
-			continue
 		}
 		if depth > 0 {
 			i++
@@ -375,7 +367,7 @@ func kpScanQuotedName(s string, i int) (string, int) {
 	if i >= len(s) {
 		return "", i
 	}
-	if s[i] == '\'' || s[i] == '"' {
+	if isCypherStringQuoteByte(s[i]) {
 		val, j := kpScanQuotedString(s, i)
 		if j < 0 {
 			return "", i
@@ -1396,7 +1388,7 @@ func scanOptionValue(s string, i int) (string, int) {
 		return "", i
 	}
 
-	if s[i] == '\'' || s[i] == '"' {
+	if isCypherStringQuoteByte(s[i]) {
 		val, j := kpScanQuotedString(s, i)
 		if j >= 0 {
 			return val, j

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -605,21 +606,10 @@ func parsePropertyInExpression(expr string) (bool, []interface{}, string, error)
 		return false, nil, "", nil
 	}
 	p++
-	// Find matching ]
+	// Raw REQUIRE text keeps canonical quote/comment boundaries across packages.
 	bracketStart := p
-	depth := 1
-	for p < len(s) && depth > 0 {
-		switch s[p] {
-		case '[':
-			depth++
-		case ']':
-			depth--
-		}
-		if depth > 0 {
-			p++
-		}
-	}
-	if depth != 0 {
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '[', ']')
+	if p < 0 {
 		return false, nil, "", nil
 	}
 	listContent := s[bracketStart:p]
@@ -1090,9 +1080,9 @@ func parseContractLiteralList(raw string) ([]interface{}, error) {
 
 func parseContractLiteral(raw string) (interface{}, error) {
 	raw = strings.TrimSpace(raw)
-	if len(raw) >= 2 {
-		if (raw[0] == '\'' && raw[len(raw)-1] == '\'') || (raw[0] == '"' && raw[len(raw)-1] == '"') {
-			return raw[1 : len(raw)-1], nil
+	if cyphertext.IsWholeString(raw) {
+		if value, ok := cyphertext.DecodeString(raw); ok {
+			return value, nil
 		}
 	}
 	if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
@@ -1115,36 +1105,28 @@ func parseContractLiteral(raw string) (interface{}, error) {
 
 func splitTopLevelCSV(raw string) []string {
 	parts := make([]string, 0)
-	var builder strings.Builder
-	depth := 0
-	quote := rune(0)
-	for _, ch := range raw {
-		switch {
-		case quote != 0:
-			builder.WriteRune(ch)
-			if ch == quote {
-				quote = 0
-			}
-		case ch == '\'' || ch == '"':
-			quote = ch
-			builder.WriteRune(ch)
-		case ch == '[' || ch == '(' || ch == '{':
+	depth, start := 0, 0
+	for index := 0; index < len(raw); index++ {
+		if end, skipped := cyphertext.SkipToken(raw, index); skipped {
+			index = end - 1
+			continue
+		}
+		switch raw[index] {
+		case '[', '(', '{':
 			depth++
-			builder.WriteRune(ch)
-		case ch == ']' || ch == ')' || ch == '}':
+		case ']', ')', '}':
 			if depth > 0 {
 				depth--
 			}
-			builder.WriteRune(ch)
-		case ch == ',' && depth == 0:
-			parts = append(parts, strings.TrimSpace(builder.String()))
-			builder.Reset()
-		default:
-			builder.WriteRune(ch)
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(raw[start:index]))
+				start = index + 1
+			}
 		}
 	}
-	if builder.Len() > 0 {
-		parts = append(parts, strings.TrimSpace(builder.String()))
+	if start < len(raw) {
+		parts = append(parts, strings.TrimSpace(raw[start:]))
 	}
 	return parts
 }

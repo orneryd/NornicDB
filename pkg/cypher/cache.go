@@ -792,21 +792,12 @@ func extractLabelsFromQuery(cypher string) []string {
 		labels = append(labels, label)
 	}
 
-	inSingle := false
-	inDouble := false
 	for i := 0; i < len(cypher); i++ {
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			i = end - 1
+			continue
+		}
 		ch := cypher[i]
-		if ch == '\'' && !inDouble && !isBackslashEscaped(cypher, i) {
-			inSingle = !inSingle
-			continue
-		}
-		if ch == '"' && !inSingle && !isBackslashEscaped(cypher, i) {
-			inDouble = !inDouble
-			continue
-		}
-		if inSingle || inDouble {
-			continue
-		}
 
 		if ch != ':' {
 			continue
@@ -1085,32 +1076,20 @@ func normalizeQuery(cypher string) string {
 	var b strings.Builder
 	b.Grow(len(cypher))
 	prevSpace := true
-	quote := byte(0)
 	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if quote != 0 {
-			b.WriteByte(c)
-			switch {
-			case c == '\\' && quote != '`' && i+1 < len(cypher):
-				// A backslash escape in a string literal: the next byte (an
-				// escaped quote, too) is part of the literal.
-				i++
-				b.WriteByte(cypher[i])
-			case c == quote:
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
 			continue
 		}
+		c := cypher[i]
 		switch c {
 		case ' ', '\t', '\n', '\r', '\f', '\v':
 			if !prevSpace {
 				b.WriteByte(' ')
 				prevSpace = true
 			}
-		case '\'', '"', '`':
-			quote = c
-			b.WriteByte(c)
-			prevSpace = false
 		default:
 			b.WriteByte(c)
 			prevSpace = false

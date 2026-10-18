@@ -575,8 +575,8 @@ func TestCoverageLiftCallTailParsersAndMaps(t *testing.T) {
 	_, _, _, ok = parseCallTailSinglePropertyMap("{a: 1, b: 2}")
 	assert.False(t, ok)
 
-	assert.Equal(t, 7, findTopLevelByte("a(b, c), d", ','))
-	assert.Equal(t, -1, findTopLevelByte("a('b,c')", ','))
+	assert.Equal(t, 7, findTopLevelOperator("a(b, c), d", ",", false, true))
+	assert.Equal(t, -1, findTopLevelOperator("a('b,c')", ",", false, true))
 }
 
 func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {

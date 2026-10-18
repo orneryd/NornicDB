@@ -75,8 +75,8 @@ func validateStaticQuantifierCall(inner string) error {
 func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 	var previous byte
 	for index := 0; index < len(predicate); index++ {
-		switch predicate[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(predicate[index]) {
+		case cypherQuoteClass:
 			previous = predicate[index]
 			index = skipQuotedSemanticText(predicate, index) - 1
 			continue

@@ -60,23 +60,23 @@ func TestNormalizeParamMap_Variants(t *testing.T) {
 
 func TestTopLevelColonIndex_BoundaryCases(t *testing.T) {
 	// Simple top-level colon.
-	require.Equal(t, 3, topLevelColonIndex("foo:bar"))
+	require.Equal(t, 3, findTopLevelMapKeyValueSeparator("foo:bar"))
 
 	// Quotes hide a colon.
-	require.Equal(t, 5, topLevelColonIndex(`"a:b":c`))
-	require.Equal(t, 5, topLevelColonIndex(`'a:b':c`))
+	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`"a:b":c`))
+	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`'a:b':c`))
 
 	// Colon inside braces is hidden by depth tracking; the only
 	// top-level colon is the one outside the brace pair, at index 5.
-	require.Equal(t, 5, topLevelColonIndex("{a:b}: c"))
+	require.Equal(t, 5, findTopLevelMapKeyValueSeparator("{a:b}: c"))
 
 	// Same for parens — only the colon at depth 0 (after the close
 	// paren) counts. Index 6 is the close-paren-then-colon position.
-	require.Equal(t, 6, topLevelColonIndex("(a: b): c"))
+	require.Equal(t, 6, findTopLevelMapKeyValueSeparator("(a: b): c"))
 
 	// No top-level colon → -1.
-	require.Equal(t, -1, topLevelColonIndex(`{"a":1}`))
+	require.Equal(t, -1, findTopLevelMapKeyValueSeparator(`{"a":1}`))
 
 	// Single-quote-inside-double doesn't toggle inSingle.
-	require.Equal(t, 5, topLevelColonIndex(`"a'b":c`))
+	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`"a'b":c`))
 }

@@ -163,8 +163,8 @@ func arrowEndsAt(query string, start, i int) bool {
 func blankQuotedText(s string) string {
 	var out []byte
 	for i := 0; i < len(s); i++ {
-		switch c := s[i]; c {
-		case '\'', '"', '`':
+		switch c := s[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			if out == nil {
 				out = []byte(s)
 			}
@@ -184,10 +184,10 @@ func blankQuotedText(s string) string {
 // indexOutsideQuotes is the index of c in s outside quoted text, or -1.
 func indexOutsideQuotes(s string, c byte) int {
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(s[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(s, i, s[i]) - 1
-		case c:
+		case int(c):
 			return i
 		}
 	}
@@ -199,8 +199,8 @@ func indexOutsideQuotes(s string, c byte) int {
 // answers false for one.
 func mayUseRelationshipQuantifier(query string) bool {
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
+		switch c := query[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '{', '+', '*':
 			j := trimRightIndex(query, 0, i)

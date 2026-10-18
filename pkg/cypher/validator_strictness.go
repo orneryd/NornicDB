@@ -20,38 +20,11 @@ func validateExpressionOperandCompleteness(expression string) error {
 
 func validateExpressionLexicalTokens(text string) error {
 	for index := 0; index < len(text); index++ {
-		character := text[index]
-		if character == '\'' || character == '"' || character == '`' {
-			quote := character
-			for index++; index < len(text); index++ {
-				if text[index] == '\\' && quote != '`' {
-					index++
-					continue
-				}
-				if text[index] == quote {
-					if quote == '`' && index+1 < len(text) && text[index+1] == '`' {
-						index++
-						continue
-					}
-					break
-				}
-			}
+		if end, quoted := skipCypherLexicalToken(text, index); quoted {
+			index = end - 1
 			continue
 		}
-		if character == '/' && index+1 < len(text) {
-			if text[index+1] == '/' {
-				for index < len(text) && text[index] != '\n' {
-					index++
-				}
-				continue
-			}
-			if text[index+1] == '*' {
-				if end := strings.Index(text[index+2:], "*/"); end >= 0 {
-					index += end + 3
-					continue
-				}
-			}
-		}
+		character := text[index]
 		malformedOptional := matchKeywordAt(text, index, "OPTIONAL") &&
 			(index == 0 || !clauseKeywordUsedAsName(text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
 			strings.HasPrefix(text[skipSpaces(text, index+len("OPTIONAL")):], "<tab>")
@@ -73,7 +46,7 @@ func validateExpressionLexicalTokens(text string) error {
 func containsNotInOperator(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			i = skipCypherQuotedText(cypher, i, c) - 1
 			continue
 		}
@@ -107,7 +80,7 @@ func containsNotInOperator(cypher string) bool {
 func containsTrailingListComma(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			i = skipCypherQuotedText(cypher, i, c) - 1
 			continue
 		}
@@ -136,28 +109,40 @@ func containsTrailingListComma(cypher string) bool {
 func hasAdjacentStringLiterals(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
-		if c != '\'' && c != '"' {
+		if isCypherBacktickByte(c) {
+			i = skipCypherQuotedText(cypher, i, c) - 1
 			continue
 		}
-		end := i + 1
-		for end < len(cypher) {
-			if cypher[end] == '\\' {
-				end += 2
+		if c == '/' {
+			if end := queryCommentEnd(cypher, i); end >= 0 {
+				i = end - 1
 				continue
 			}
-			if cypher[end] == c {
-				break
-			}
-			end++
 		}
-		if end >= len(cypher) {
+		if !isCypherStringQuoteByte(c) {
+			continue
+		}
+		end, closed := scanCypherQuotedText(cypher, i, c)
+		if !closed {
 			// Unterminated literal; the existing validation rejects it.
 			return false
 		}
-		if end+1 < len(cypher) && (cypher[end+1] == '\'' || cypher[end+1] == '"') {
+		// The shared lexer recognizes doubled quote bytes as one quoted span;
+		// Cypher's string grammar rejects that spelling, so retain the strict
+		// check inside the already-delimited token.
+		for index := i + 1; index+1 < end; index++ {
+			if cypher[index] == '\\' {
+				index++
+				continue
+			}
+			if cypher[index] == c && cypher[index+1] == c {
+				return true
+			}
+		}
+		if end < len(cypher) && (isCypherStringQuoteByte(cypher[end])) {
 			return true
 		}
-		i = end
+		i = end - 1
 	}
 	return false
 }
@@ -206,44 +191,15 @@ func foldByte(b byte) int {
 // Keywords inside quotes, comments or nested delimiters do not count; keywords
 // used as names (aliases, property keys) do not count either.
 func lastTopLevelClauseWord(s string) string {
-	inQuote := byte(0)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	last := ""
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if inQuote != 0 {
-			if c == '\\' && inQuote != '`' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == inQuote {
-				if i+1 < len(s) && s[i+1] == inQuote {
-					i++
-					continue
-				}
-				inQuote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
 			continue
 		}
+		c := s[i]
 		switch c {
-		case '\'', '"', '`':
-			inQuote = c
-			continue
-		case '/':
-			if i+1 < len(s) && s[i+1] == '/' {
-				for i < len(s) && s[i] != '\n' && s[i] != '\r' {
-					i++
-				}
-				continue
-			}
-			if i+1 < len(s) && s[i+1] == '*' {
-				end := strings.Index(s[i+2:], "*/")
-				if end < 0 {
-					return last
-				}
-				i += 2 + end + 1
-				continue
-			}
 		case '(':
 			parenDepth++
 			continue

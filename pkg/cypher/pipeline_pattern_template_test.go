@@ -42,14 +42,11 @@ func TestPipelinePatternTemplateMatchesTextRoute(t *testing.T) {
 	}
 	for _, expression := range expressions {
 		pattern := fmt.Sprintf("(x:L {k: %s})", expression)
-		textRoute := exec.parseNodePattern(withValueBindings(ctx, row), pattern).properties
+		textRoute := parsedTestValue(exec.parseNodePattern(withValueBindings(ctx, row), pattern)).properties
 		pairs, ok := exec.pipelinePropertyExpressions(fmt.Sprintf("{k: %s}", expression))
 		require.True(t, ok, expression)
-		direct, evaluated := exec.evaluatePipelineProperties(ctx, pairs, row)
-		if !evaluated {
-			// The row takes the text route.
-			continue
-		}
+		direct, evalErr := exec.evaluatePipelineProperties(ctx, pairs, row)
+		require.NoError(t, evalErr, expression)
 		require.True(t, reflect.DeepEqual(textRoute, direct), "%s: text route %#v, template %#v", expression, textRoute, direct)
 	}
 }

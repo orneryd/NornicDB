@@ -122,6 +122,7 @@ import (
 	"unicode"
 
 	apoccfg "github.com/orneryd/nornicdb/apoc"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -172,8 +173,8 @@ func hasCallSubqueryPattern(query string) bool {
 func firstTopLevelCallSubquery(query string) int {
 	depth := 0
 	for i := 0; i < len(query); i++ {
-		switch query[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(query[i]) {
+		case cypherQuoteClass:
 			i = skipQuotedSemanticText(query, i) - 1
 		case '(', '[', '{':
 			depth++
@@ -1300,139 +1301,44 @@ func normalizeCypherSyntaxConfusables(query string) string {
 		return query
 	}
 
-	const (
-		normalizeDefault = iota
-		normalizeSingleQuoted
-		normalizeDoubleQuoted
-		normalizeBacktickQuoted
-		normalizeLineComment
-		normalizeBlockComment
-	)
-
 	runes := []rune(query)
 	var builder strings.Builder
 	builder.Grow(len(query) + 8)
 	changed := false
-	state := normalizeDefault
-
 	for i := 0; i < len(runes); i++ {
+		if end, quoted := cyphertext.SkipTokenRunes(runes, i); quoted {
+			for _, character := range runes[i:end] {
+				builder.WriteRune(character)
+			}
+			i = end - 1
+			continue
+		}
 		r := runes[i]
-		next := rune(0)
-		if i+1 < len(runes) {
-			next = runes[i+1]
+
+		if replacement, ok := cypherArrowReplacement(runes, i); ok {
+			builder.WriteByte(replacement)
+			changed = true
+			continue
 		}
 
-		switch state {
-		case normalizeDefault:
-			switch {
-			case r == '/' && next == '/':
-				builder.WriteRune(r)
-				builder.WriteRune(next)
-				i++
-				state = normalizeLineComment
-				continue
-			case r == '/' && next == '*':
-				builder.WriteRune(r)
-				builder.WriteRune(next)
-				i++
-				state = normalizeBlockComment
-				continue
-			case r == '\'':
-				builder.WriteRune(r)
-				state = normalizeSingleQuoted
-				continue
-			case r == '"':
-				builder.WriteRune(r)
-				state = normalizeDoubleQuoted
-				continue
-			case r == '`':
-				builder.WriteRune(r)
-				state = normalizeBacktickQuoted
-				continue
-			}
-
-			if replacement, ok := cypherArrowReplacement(runes, i); ok {
-				builder.WriteByte(replacement)
-				changed = true
-				continue
-			}
-
-			if replacement, ok := cypherSyntaxConfusableReplacement(r); ok {
-				builder.WriteString(replacement)
-				changed = changed || replacement != string(r)
-				continue
-			}
-
-			if replacement, ok := cypherWhitespaceReplacement(r); ok {
-				builder.WriteRune(replacement)
-				changed = changed || replacement != r
-				continue
-			}
-
-			if isIgnorableCypherFormatRune(r) {
-				changed = true
-				continue
-			}
-
-			builder.WriteRune(r)
-
-		case normalizeSingleQuoted:
-			builder.WriteRune(r)
-			if r == '\\' && i+1 < len(runes) {
-				builder.WriteRune(runes[i+1])
-				i++
-				continue
-			}
-			if r == '\'' {
-				if i+1 < len(runes) && runes[i+1] == '\'' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeDoubleQuoted:
-			builder.WriteRune(r)
-			if r == '\\' && i+1 < len(runes) {
-				builder.WriteRune(runes[i+1])
-				i++
-				continue
-			}
-			if r == '"' {
-				if i+1 < len(runes) && runes[i+1] == '"' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeBacktickQuoted:
-			builder.WriteRune(r)
-			if r == '`' {
-				if i+1 < len(runes) && runes[i+1] == '`' {
-					builder.WriteRune(runes[i+1])
-					i++
-					continue
-				}
-				state = normalizeDefault
-			}
-
-		case normalizeLineComment:
-			builder.WriteRune(r)
-			if r == '\n' || r == '\r' {
-				state = normalizeDefault
-			}
-
-		case normalizeBlockComment:
-			builder.WriteRune(r)
-			if r == '*' && next == '/' {
-				builder.WriteRune(next)
-				i++
-				state = normalizeDefault
-			}
+		if replacement, ok := cypherSyntaxConfusableReplacement(r); ok {
+			builder.WriteString(replacement)
+			changed = changed || replacement != string(r)
+			continue
 		}
+
+		if replacement, ok := cypherWhitespaceReplacement(r); ok {
+			builder.WriteRune(replacement)
+			changed = changed || replacement != r
+			continue
+		}
+
+		if isIgnorableCypherFormatRune(r) {
+			changed = true
+			continue
+		}
+
+		builder.WriteRune(r)
 	}
 
 	if !changed {
@@ -2170,8 +2076,8 @@ func graphReadingExpression(cypher string) string {
 	}
 	pattern := ""
 	for i := 0; i < len(cypher); i++ {
-		switch cypher[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(cypher[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(cypher, i, cypher[i]) - 1
 			continue
 		case '/':

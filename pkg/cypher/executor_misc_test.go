@@ -2304,7 +2304,7 @@ func TestVectorParsingProcedureBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "q", input.paramName)
 
-	parts := splitParamsCarefully("'a,b',[1,2],{\"k\":\"v\"},\"x,y\"")
+	parts := splitTopLevelComma("'a,b',[1,2],{\"k\":\"v\"},\"x,y\"")
 	require.Len(t, parts, 4)
 	assert.Equal(t, "'a,b'", strings.TrimSpace(parts[0]))
 	assert.Equal(t, "[1,2]", strings.TrimSpace(parts[1]))

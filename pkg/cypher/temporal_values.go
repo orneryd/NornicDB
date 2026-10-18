@@ -282,7 +282,30 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // is false for any other expression. A call Neo4j rejects at run time
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
-func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evaluate func(string) (interface{}, bool, error), expression string) (result interface{}, handled bool, err error) {
+	var argumentErr error
+	var lastArgument interface{}
+	argumentEvaluated := false
+	ctxEval := func(argument string) interface{} {
+		if argumentErr != nil {
+			return nil
+		}
+		value, resolved, evalErr := evaluate(argument)
+		value, argumentErr = checkedPropertyResult(ctx, argument, value, resolved, evalErr)
+		argumentEvaluated, lastArgument = true, value
+		return value
+	}
+	defer func() {
+		if argumentErr != nil {
+			result, err = nil, argumentErr
+			return
+		}
+		if result == nil && handled && err == nil && argumentEvaluated && lastArgument != nil {
+			if function, argument, call := parseFunctionCallWS(expression); call && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" && len(e.splitFunctionArgs(argument)) == 1 {
+				err = temporalConstructorError(function, lastArgument)
+			}
+		}
+	}()
 	name, argument, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return nil, false, nil
