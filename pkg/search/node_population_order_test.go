@@ -322,12 +322,13 @@ func TestPopulationOrderWriteIsVisibleWhenTheBuildInstallsIt(t *testing.T) {
 
 // buildReplayOp is one public call with the storage change it stands for.
 type buildReplayOp struct {
-	kind string
-	id   string
-	text string
-	vec  []float32
-	prop []float32
-	keys []string
+	kind  string
+	id    string
+	text  string
+	vec   []float32
+	prop  []float32
+	keys  []string
+	flags [2]bool
 }
 
 func buildReplayOps(r *rand.Rand, n int) []buildReplayOp {
@@ -336,7 +337,7 @@ func buildReplayOps(r *rand.Rand, n int) []buildReplayOp {
 	unit := func() []float32 { v := []float32{0, 0, 0}; v[r.Intn(3)] = 1; return v }
 	ops := make([]buildReplayOp, 0, n)
 	for i := range n {
-		switch k := r.Intn(10); {
+		switch k := r.Intn(11); {
 		case k < 4:
 			op := buildReplayOp{kind: "node", id: ids[r.Intn(len(ids))], text: fmt.Sprintf("w%dterm", i), vec: unit()}
 			if r.Intn(2) == 0 {
@@ -354,9 +355,14 @@ func buildReplayOps(r *rand.Rand, n int) []buildReplayOp {
 			ops = append(ops, buildReplayOp{kind: "unrelate", id: edges[r.Intn(len(edges))]})
 		case k < 9:
 			ops = append(ops, buildReplayOp{kind: "drop"})
-		default:
+		case k < 10:
 			keys := [][]string{nil, {"text"}, {"text", "title"}, {"title"}}[r.Intn(4)]
 			ops = append(ops, buildReplayOp{kind: "setting", keys: keys})
+		default:
+			// BM25 only: the relationship stream reads storage when it runs, so
+			// a relationship stored during the build and held behind a queued
+			// vector-off change has no serial-order counterpart (see the PR).
+			ops = append(ops, buildReplayOp{kind: "flags", flags: [2]bool{r.Intn(3) > 0, true}})
 		}
 	}
 	return ops
@@ -419,6 +425,8 @@ func applyBuildReplayOp(engine storage.Engine, svc *Service, op buildReplayOp) s
 	case "setting":
 		svc.SetFulltextProperties(op.keys)
 		return "<nil>"
+	case "flags":
+		return fmt.Sprint(svc.SetIndexFlags(op.flags[0], op.flags[1]))
 	}
 	return "?"
 }
@@ -462,7 +470,7 @@ func buildReplayState(svc *Service) string {
 			lines = append(lines, fmt.Sprintf("edge %s %s %.3f", id, key, v))
 		}
 	}
-	lines = append(lines, fmt.Sprintf("dims %d props %v", dims, svc.fulltextProperties))
+	lines = append(lines, fmt.Sprintf("dims %d props %v flags %v %v", dims, svc.fulltextProperties, svc.bm25Enabled.Load(), svc.vectorEnabled.Load()))
 	svc.mu.RUnlock()
 	svc.indexMu.RUnlock()
 	if rs := svc.relationshipSearch(); rs != nil {
@@ -492,7 +500,14 @@ func TestPopulationOrderSequenceReplaysAsTheSerialOrder(t *testing.T) {
 			run := func(gated bool) ([]string, string) {
 				engine := newSnapshotGateEngine(t)
 				buildReplaySeed(t, engine)
-				svc := populationOrderService(t, engine, filepath.Join(t.TempDir(), "idx"), "v2", nil)
+				// Even seeds use automatic dimensions: every vector write then
+				// waits for the build (vectorNeedsOrderedDecision).
+				var svc *Service
+				if seed%2 == 0 {
+					svc = NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+				} else {
+					svc = populationOrderService(t, engine, filepath.Join(t.TempDir(), "idx"), "v2", nil)
+				}
 				svc.EnableRelationshipSearch(nil)
 				t.Cleanup(func() { _ = svc.Close() })
 				t.Cleanup(engine.open)

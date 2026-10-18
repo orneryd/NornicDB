@@ -115,12 +115,17 @@ type nodePopulationAdmission struct {
 	queued       atomic.Bool
 	writtenNodes map[string]struct{}
 	writtenEdges map[string]struct{}
-	// pendingOps counts queued dimension-changing operations not applied yet;
-	// dimsAdopted is set once the population chose the index dimensions from
-	// a stored vector; populated once its batches and stream are complete.
-	pendingOps  int
-	dimsAdopted bool
-	populated   bool
+	// pendingOps counts queued operations that change a setting an entry
+	// decision reads (the dimension mode, the embedding space, the index
+	// flags) and are not applied yet; populated is set once its batches and
+	// stream are complete; bytes is the payload the queued operations retain.
+	pendingOps int
+	populated  bool
+	bytes      int
+	// flags, when flagsQueued, are the index flags the queued SetIndexFlags
+	// calls leave (bm25, vector).
+	flags       [2]bool
+	flagsQueued bool
 }
 
 func (s *Service) nodeSourcesCompleteLocked() bool {

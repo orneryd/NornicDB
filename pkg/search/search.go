@@ -849,7 +849,9 @@ type Service struct {
 	buildAttempted atomic.Bool
 	embeddingSpace atomic.Value
 	// resumeVectorBuild skips re-adding vectors already present in vectorFileStore during BuildIndexes.
-	resumeVectorBuild bool
+	// It is atomic: a live write admitted after NODE publication reads it
+	// while the population's tail clears it.
+	resumeVectorBuild atomic.Bool
 
 	// cypherMetadata is a small, in-memory view of node embedding availability and labels.
 	// It allows Cypher-compatible vector queries to execute without scanning storage.
@@ -1484,15 +1486,7 @@ func (s *Service) MarkReadyDisabled() {
 // the construction path in getOrCreateSearchService) can observe whether
 // the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
-	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
-	s.orderDimensionChange(func() {
-		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
-		prevVec := s.vectorEnabled.Swap(vectorEnabled)
-		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
-			s.indexChanged()
-		}
-	})
-	return changed
+	return s.orderIndexFlags(bm25Enabled, vectorEnabled)
 }
 
 // IndexRevision is a number that advances whenever what a search can return
@@ -2943,12 +2937,25 @@ func (s *Service) ClearVectorIndex() {
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
 	bm25On, vecOn := s.bm25Enabled.Load(), s.vectorEnabled.Load()
-	if !bm25On && !vecOn {
+	// The flags are read here only outside a population; during one a queued
+	// SetIndexFlags may change them first (queueOnPopulation decides).
+	if !bm25On && !vecOn && !s.populationRunning.Load() {
 		return nil
 	}
 	release, queued, err := s.lockNodeMutation(firstVectorDimensions(node), true, deferredIndexWrite{node: node})
 	if err != nil || queued {
 		return err
+	}
+	// A caller's write is validated before any entry changes, so a mismatched
+	// embedding is returned (as on release/v1.4.4) instead of being skipped
+	// with the node's earlier vectors removed. The build's own stored nodes
+	// keep the logged skip.
+	shouldIndex, temporalErr := s.shouldIndexNode(node)
+	if temporalErr == nil && shouldIndex {
+		if err := s.checkEmbeddingDimensions(node); err != nil {
+			release()
+			return err
+		}
 	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
@@ -2956,7 +2963,11 @@ func (s *Service) IndexNode(node *storage.Node) error {
 			s.resultCache.Invalidate()
 		}
 	}
-	err = s.indexNodeLocked(node, !bm25On)
+	if temporalErr != nil {
+		err = s.indexNodeLocked(node, !s.bm25Enabled.Load()) // reports the temporal error
+	} else {
+		err = s.indexNodeAsLocked(node, !s.bm25Enabled.Load(), shouldIndex)
+	}
 	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -2987,7 +2998,7 @@ func (s *Service) addVectorLocked(id string, vec []float32) error {
 	}
 	var err error
 	if s.vectorFileStore != nil {
-		if s.resumeVectorBuild && s.vectorFileStore.Has(id) {
+		if s.resumeVectorBuild.Load() && s.vectorFileStore.Has(id) {
 			return nil
 		}
 		err = s.vectorFileStore.Add(id, vec)
@@ -3226,6 +3237,31 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		return err
 	}
 	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex)
+}
+
+// checkEmbeddingDimensions rejects a node whose explicit embeddings do not
+// have the index's dimensions. It is the one dimension rule for live writes,
+// applied by indexNodeAsLocked before any entry changes and, for a write
+// queued on a population, before the write is acknowledged
+// (queueOnPopulation).
+func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
+	if !s.vectorEnabled.Load() {
+		return nil
+	}
+	dims := s.VectorIndexDimensions()
+	for _, embedding := range node.NamedEmbeddings {
+		if len(embedding) > 0 && len(embedding) != dims {
+			return ErrDimensionMismatch
+		}
+	}
+	if s.managedEmbeddingEligible(node) {
+		for _, embedding := range node.ChunkEmbeddings {
+			if len(embedding) > 0 && len(embedding) != dims {
+				return ErrDimensionMismatch
+			}
+		}
+	}
+	return nil
 }
 
 // indexNodeAsLocked is indexNodeLocked with the temporal decision already
@@ -3688,7 +3724,7 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
 	}
-	if !s.vectorEnabled.Load() {
+	if !s.vectorEnabled.Load() && !s.populationRunning.Load() {
 		s.IndexRelationship(edge)
 		return nil
 	}
@@ -3917,7 +3953,7 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodeP
 			return ctx.Err()
 		}
 		s.applyDeferredIndexWrites(job)
-		s.adoptPopulationDimensions(job, firstEdgeVectorDimensions(edge))
+		s.adoptPopulationDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		var err error
 		if !job.edgeWrittenLocked(string(edge.ID)) {
@@ -4290,16 +4326,10 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 	resumeVectors := false
 	if !skipIteration && !restartVectorStore && vectorPath != "" && s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
 		resumeVectors = true
-		s.mu.Lock()
-		s.resumeVectorBuild = true
-		s.mu.Unlock()
+		s.resumeVectorBuild.Store(true)
 		s.logPrintf("📇 BuildIndexes: resuming vector store with %d existing vectors", s.vectorFileStore.Count())
 	}
-	defer func() {
-		s.mu.Lock()
-		s.resumeVectorBuild = false
-		s.mu.Unlock()
-	}()
+	defer s.resumeVectorBuild.Store(false)
 	// Account only after settings/staleness checks have decided which loaded
 	// source survives. Both skip-iteration and resumed builds share this owner.
 	s.indexMu.Lock()
@@ -4344,7 +4374,7 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 			return nil
 		}
 		if count == 0 && len(batch) > 0 {
-			s.adoptPopulationDimensions(job, firstVectorDimensions(batch[0]))
+			s.adoptPopulationDimensions(firstVectorDimensions(batch[0]))
 		}
 		// Live writes queued since the last batch are applied first; a node
 		// one of them wrote keeps that write, whether this batch read the
