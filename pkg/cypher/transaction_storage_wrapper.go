@@ -24,7 +24,7 @@ func propertyIndexLookup(owner *memoryRetention, engine storage.Engine, schema *
 		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return owner.heldIndexIDs(wrapper.tx.MergePendingPropertyMatches(ids, label, property, value))
+		return owner.heldMergedIDs(ids, wrapper.tx.MergePendingPropertyMatches(ids, label, property, value))
 	}
 	return ids, nil
 }
@@ -45,7 +45,7 @@ func compositeIndexLookup(owner *memoryRetention, engine storage.Engine, idx *st
 		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return owner.heldIndexIDs(wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values))
+		return owner.heldMergedIDs(ids, wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values))
 	}
 	return ids, nil
 }

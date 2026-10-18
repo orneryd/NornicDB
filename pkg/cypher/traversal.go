@@ -1528,7 +1528,8 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // would read and decode every node, for a relationship among a few. seeded is
 // false for any other match, which collectPipelineInitialNodeCandidates seeds.
 // The traversal still checks the whole pattern from each start node. The
-// relationships read and the nodes found are held in owner (#1343).
+// nodes found are held in owner; each type's relationships count only while
+// they are read (visitEdgesOfTypes, #1343).
 func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *memoryRetention, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
@@ -1548,35 +1549,49 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, owner *
 		}
 		return nil
 	}
-	for _, relationshipType := range relationship.Types {
-		edges, err := owner.heldEdges(store.GetEdgesByType(relationshipType))
-		if err != nil {
-			return nil, true, err
+	err = visitEdgesOfTypes(ctx, store, relationship.Types, func(edge *storage.Edge) error {
+		switch relationship.Direction {
+		case "outgoing":
+			return add(edge.StartNode)
+		case "incoming":
+			return add(edge.EndNode)
 		}
-		for _, edge := range edges {
-			if edge == nil {
-				continue
-			}
-			var addErr error
-			switch relationship.Direction {
-			case "outgoing":
-				addErr = add(edge.StartNode)
-			case "incoming":
-				addErr = add(edge.EndNode)
-			default:
-				if addErr = add(edge.StartNode); addErr == nil {
-					addErr = add(edge.EndNode)
-				}
-			}
-			if addErr != nil {
-				return nil, true, addErr
-			}
+		if err := add(edge.StartNode); err != nil {
+			return err
 		}
+		return add(edge.EndNode)
+	})
+	if err != nil {
+		return nil, true, err
 	}
 	if err := found.done(); err != nil {
 		return nil, true, err
 	}
 	return found.nodes, true, nil
+}
+
+// visitEdgesOfTypes hands visit every relationship of each type, one type's
+// list at a time: a type's list counts while it is visited and is given back
+// before the next type's is read (#1343). What visit keeps, it holds itself.
+func visitEdgesOfTypes(ctx context.Context, store storage.Engine, types []string, visit func(*storage.Edge) error) error {
+	read := trackedRetention(ctx)
+	defer read.release()
+	for _, relationshipType := range types {
+		read.release()
+		edges, err := read.heldEdges(store.GetEdgesByType(relationshipType))
+		if err != nil {
+			return err
+		}
+		for _, edge := range edges {
+			if edge == nil {
+				continue
+			}
+			if err := visit(edge); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(

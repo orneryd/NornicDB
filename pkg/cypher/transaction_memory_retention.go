@@ -450,6 +450,20 @@ func (r *memoryRetention) heldNodeIDs(ids []storage.NodeID, err error) ([]storag
 	return ids, nil
 }
 
+// heldMergedIDs holds the IDs a transaction's pending writes merged into
+// committed, which the owner holds already (MergePendingPropertyMatches): only
+// what the merge added. A read-only transaction gets committed back, which
+// counts once (#1343).
+func (r *memoryRetention) heldMergedIDs(committed, merged []storage.NodeID) ([]storage.NodeID, error) {
+	if r == nil || r.account.scope == nil || len(merged) <= len(committed) {
+		return merged, nil
+	}
+	if err := r.reserveSlots(len(merged)-len(committed), entityReferenceBytes); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
 // heldIndexIDs holds the node IDs an index lookup found.
 func (r *memoryRetention) heldIndexIDs(ids []storage.NodeID) ([]storage.NodeID, error) {
 	return r.heldNodeIDs(ids, nil)

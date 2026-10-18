@@ -25,8 +25,13 @@ var mergeIdentityCacheDisabled = false
 // without ON CREATE SET is added to its pair's entry; any ON CREATE SET or
 // ON MATCH SET, or a create whose relationship isn't known, drops every
 // entry, since it can change identity values.
+//
+// The relationships it keeps are held in owner until the entries are dropped
+// (reset) or the MERGE is done and its caller releases owner (#1343): the
+// entries outlive each row, so they count as long as they are kept.
 type relationshipMergeIdentityCache struct {
 	entries map[string]*relationshipMergeIdentityEntry
+	owner   *memoryRetention
 }
 
 type relationshipMergeIdentityEntry struct {
@@ -34,8 +39,8 @@ type relationshipMergeIdentityEntry struct {
 	byKey map[string][]*storage.Edge
 }
 
-func newRelationshipMergeIdentityCache() *relationshipMergeIdentityCache {
-	return &relationshipMergeIdentityCache{entries: map[string]*relationshipMergeIdentityEntry{}}
+func newRelationshipMergeIdentityCache(owner *memoryRetention) *relationshipMergeIdentityCache {
+	return &relationshipMergeIdentityCache{entries: map[string]*relationshipMergeIdentityEntry{}, owner: owner}
 }
 
 // relationships is findRelationshipsForMerge through the cache.
@@ -50,7 +55,7 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 	entryKey := relationshipMergeIdentityEntryKey(startID, endID, relType, keys)
 	entry, ok := c.entries[entryKey]
 	if !ok {
-		edges, err := storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(*storage.Edge) bool { return true })
+		edges, err := c.owner.heldEdges(storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(*storage.Edge) bool { return true }))
 		if err != nil {
 			return nil, err
 		}
@@ -75,15 +80,20 @@ func (c *relationshipMergeIdentityCache) created(edge *storage.Edge) {
 	}
 	for entryKey, entry := range c.entries {
 		if entryKey == relationshipMergeIdentityEntryKey(edge.StartNode, edge.EndNode, edge.Type, entry.keys) {
+			// Over a limit, the statement has failed and stops (#1343).
+			if c.owner.reserveSlots(1, entityReferenceBytes) != nil {
+				return
+			}
 			entry.add(edge)
 		}
 	}
 }
 
-// reset drops every entry.
+// reset drops every entry, and gives back what they held.
 func (c *relationshipMergeIdentityCache) reset() {
 	if c != nil && len(c.entries) > 0 {
 		c.entries = map[string]*relationshipMergeIdentityEntry{}
+		c.owner.release()
 	}
 }
 

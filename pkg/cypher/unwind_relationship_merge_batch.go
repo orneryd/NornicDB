@@ -73,7 +73,11 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
+	// The prefetched nodes count until the rows that read them are done
+	// (#1343).
+	prefetchOwner := trackedRetention(ctx)
+	defer prefetchOwner.release()
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, prefetchOwner, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -390,11 +394,10 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-// The index lookups and label scans it reads count while it reads them
-// (#1343).
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
-	lookup := trackedRetention(ctx)
-	defer lookup.release()
+// The nodes it keeps are held in owner, which the caller releases once the
+// rows that read them are done; what a lookup or a scan reads counts only
+// while it is read (#1343).
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, owner *memoryRetention, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -416,26 +419,21 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
-				lookup.release()
-				ids, err := propertyIndexLookup(lookup, store, schema, key.label, key.prop, value)
+				node, matched, err := e.indexedBatchMatchNode(ctx, store, schema, key, value)
 				if err != nil {
 					return nil, false, err
 				}
-				matched := 0
-				for _, id := range ids {
-					node, err := e.getQueryNode(store, id)
-					if err == nil && nodeBatchMatchesValue(node, key, value) {
-						matched++
-						idx[valueKey] = node
-					}
-				}
 				if matched != 1 {
-					delete(idx, valueKey)
 					unresolved[valueKey] = value
+					continue
 				}
+				if err := owner.reserveSlots(1, entityReferenceBytes); err != nil {
+					return nil, false, err
+				}
+				idx[valueKey] = node
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, owner, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -450,7 +448,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, owner, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -462,36 +460,80 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
-	idx := make(map[string]*storage.Node, len(distinct))
-	// The label's nodes count while they are matched (#1343).
-	scan := trackedRetention(ctx)
-	defer scan.release()
-	nodes, err := scan.heldNodes(store.GetNodesByLabel(key.label))
+// indexedBatchMatchNode is the node of key's label whose indexed property is
+// value, and how many nodes the index lists for it; what the lookup reads
+// counts while it is read (#1343).
+func (e *StorageExecutor) indexedBatchMatchNode(ctx context.Context, store storage.Engine, schema *storage.SchemaManager, key nodeBatchMatchKey, value interface{}) (*storage.Node, int, error) {
+	lookup := trackedRetention(ctx)
+	defer lookup.release()
+	ids, err := propertyIndexLookup(lookup, store, schema, key.label, key.prop, value)
 	if err != nil {
-		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
+		return nil, 0, err
 	}
+	var found *storage.Node
+	matched := 0
+	for _, id := range ids {
+		node, err := e.getQueryNode(store, id)
+		if err == nil && nodeBatchMatchesValue(node, key, value) {
+			matched++
+			found = node
+		}
+	}
+	return found, matched, nil
+}
+
+// buildNodeBatchLabelMatchIndex holds the nodes it keeps in owner; the
+// label's list counts only while it is scanned (#1343).
+func buildNodeBatchLabelMatchIndex(ctx context.Context, owner *memoryRetention, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+	idx := make(map[string]*storage.Node, len(distinct))
 	unique := true
-	for _, node := range nodes {
+	err := visitLabelNodes(ctx, store, key.label, func(node *storage.Node) error {
 		if node == nil || node.Properties == nil {
-			continue
+			return nil
 		}
 		value, ok := node.Properties[key.prop]
 		if !ok {
-			continue
+			return nil
 		}
 		valueKey := propEqKeyBatch(value)
 		wantedValue, wanted := distinct[valueKey]
 		if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
-			continue
+			return nil
 		}
 		if _, exists := idx[valueKey]; exists {
 			unique = false
-			continue
+			return nil
+		}
+		if err := owner.reserveSlots(1, entityReferenceBytes); err != nil {
+			return err
 		}
 		idx[valueKey] = node
+		return nil
+	})
+	if err != nil {
+		if memoryFailureFromContext(ctx) != nil {
+			return nil, false, err
+		}
+		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
 	return idx, unique, nil
+}
+
+// visitLabelNodes hands visit each node of label; the label's list counts
+// while it is visited (#1343). What visit keeps, it holds itself.
+func visitLabelNodes(ctx context.Context, store storage.Engine, label string, visit func(*storage.Node) error) error {
+	scan := trackedRetention(ctx)
+	defer scan.release()
+	nodes, err := scan.heldNodes(store.GetNodesByLabel(label))
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value interface{}) bool {

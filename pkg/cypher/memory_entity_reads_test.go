@@ -88,7 +88,6 @@ var nodeAdjacencySites = map[string]string{
 	"incidentEdgeListsContext.GetAdjacentEdges":              "the per-node reader of the path searches and DETACH DELETE: each caller expands one node's lists before the next node's",
 	"selectRelationshipMergeCreateID.GetEdgesBetween":        "one endpoint pair's relationships, read to pick a free ID",
 	"findRelationshipsForMerge.MatchEdgesBetween":            "one endpoint pair's matching relationships, for one MERGE row",
-	"relationships.MatchEdgesBetween":                        "one endpoint pair's matching relationships, cached per pair for one MERGE batch (bounded by the batch's rows)",
 	"nodeDegreeCount.GetOutgoingEdges":                       "counts one node's relationships",
 	"nodeDegreeCount.GetIncomingEdges":                       "counts one node's relationships",
 	"traversalEdges.OutgoingEdgeHeaders":                     "one node's relationships for an expansion step; a depth-first expansion holds one list per hop of the current path, and the paths it keeps are reserved (reservePath)",
@@ -96,6 +95,23 @@ var nodeAdjacencySites = map[string]string{
 	"traversalEdges.GetOutgoingEdges":                        "one node's relationships for an expansion step; a depth-first expansion holds one list per hop of the current path, and the paths it keeps are reserved (reservePath)",
 	"traversalEdges.GetIncomingEdges":                        "one node's relationships for an expansion step; a depth-first expansion holds one list per hop of the current path, and the paths it keeps are reserved (reservePath)",
 	"lookupRelationshipBatchExistingEdge.GetEdgesBetween":    "one endpoint pair's relationships, matched before the next pair's",
+}
+
+// entityReadsKeptAcrossIterations are functions whose loops keep what each
+// iteration reads (an ID set or a list they build), so the reads' charges
+// stay while the loop runs, with what they keep.
+var entityReadsKeptAcrossIterations = map[string]string{
+	"tryCollectNodesFromPropertyIndexAnyOf":           "each label's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInAnyOf":         "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInLiteralAnyOf":  "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInOrParam":       "each value's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexOrEquality":      "each branch's IDs go into the ID set it returns nodes from",
+	"tryCollectNodesFromPropertyIndexInCompound":      "returns the first conjunct's seek; the loop stops at it",
+	"tryCollectNodesFromPropertyIndexEqualityCompound": "returns the first conjunct's seek; the loop stops at it",
+	"lookupPatternCandidatesUsingPropertyIndex":       "each index's IDs go into the sets it intersects",
+	"mergeNodeIndexedCandidateIDs":                    "returns the first full composite match or keeps the smallest property result; at most one lookup per pattern property",
+	"findMergeNode":                                   "returns at the first match; at most one lookup per index and pattern property",
+	"buildRelationshipBatchNodeMatchIndex":            "each label's matched nodes go into the batch index it returns",
 }
 
 // entityReadsOutsideStatements are functions that read entities in bulk
@@ -224,15 +240,25 @@ func isEntityListType(expression ast.Expr, qualifier string) bool {
 		}
 		return false
 	}
+	// element is what a container keeps: an entity, an entity ID, or a
+	// container of them, at any depth (a cache by key, a list of lists).
+	var element func(expression ast.Expr) bool
+	element = func(expression ast.Expr) bool {
+		switch typed := expression.(type) {
+		case *ast.StarExpr:
+			return entity(typed, "Node", "Edge")
+		case *ast.ArrayType:
+			return element(typed.Elt)
+		case *ast.MapType:
+			return element(typed.Value)
+		}
+		return entity(expression, "NodeID", "EdgeID")
+	}
 	switch typed := expression.(type) {
 	case *ast.ArrayType:
-		if _, pointer := typed.Elt.(*ast.StarExpr); pointer {
-			return entity(typed.Elt, "Node", "Edge")
-		}
-		return entity(typed.Elt, "NodeID", "EdgeID")
+		return element(typed.Elt)
 	case *ast.MapType:
-		_, pointer := typed.Value.(*ast.StarExpr)
-		return pointer && entity(typed.Key, "NodeID", "EdgeID") && entity(typed.Value, "Node", "Edge")
+		return element(typed.Value)
 	}
 	return false
 }
@@ -385,6 +411,12 @@ func entityReadViolations(t *testing.T, sources map[string][]byte, reads, adjace
 		}
 		where := func(node ast.Node) string { return files.Position(node.Pos()).String() }
 		checkOwner := func(node ast.Node, expression ast.Expr, use string) {
+			if field, ok := expression.(*ast.SelectorExpr); ok && field.Sel.Name == "owner" {
+				// An owner a structure keeps, given to it by its
+				// constructor (whose callers pass one) for as long as it
+				// keeps what it reads.
+				return
+			}
 			name, ok := expression.(*ast.Ident)
 			if !ok || name.Name == "nil" {
 				violations = append(violations, where(node)+": "+use+" has no owner")
@@ -399,6 +431,51 @@ func entityReadViolations(t *testing.T, sources map[string][]byte, reads, adjace
 			}
 		}
 		var stack []ast.Node
+		// checkIteration: a list read in a loop and bound for the iteration
+		// only (x := read inside the loop) is dropped when the next one
+		// replaces it, so the owner that holds it is released in the loop
+		// before the next read: otherwise the charges of the lists it
+		// dropped add up. A loop that keeps what each iteration reads (in a
+		// set or list of its own) is listed in entityReadsKeptAcrossIterations.
+		checkIteration := func(call *ast.CallExpr, owner, use string) {
+			if _, kept := entityReadsKeptAcrossIterations[declared.Name.Name]; kept {
+				return
+			}
+			if len(stack) == 0 {
+				return
+			}
+			if assign, ok := stack[len(stack)-1].(*ast.AssignStmt); !ok || assign.Tok != token.DEFINE {
+				return
+			}
+			var loop ast.Node
+		ancestors:
+			for index := len(stack) - 1; index >= 0; index-- {
+				switch n := stack[index].(type) {
+				case *ast.ForStmt, *ast.RangeStmt:
+					loop = n
+					break ancestors
+				case *ast.FuncLit:
+					break ancestors
+				}
+			}
+			if loop == nil {
+				return
+			}
+			released := false
+			ast.Inspect(loop, func(node ast.Node) bool {
+				if inner, ok := node.(*ast.CallExpr); ok {
+					if selector, ok := inner.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "release" {
+						if receiver, ok := selector.X.(*ast.Ident); ok && receiver.Name == owner {
+							released = true
+						}
+					}
+				}
+				return !released
+			})
+			if !released {
+				violations = append(violations, where(call)+": "+use+" in a loop of "+declared.Name.Name+" binds a list for one iteration, but owner "+owner+" is not released in the loop: the lists it drops stay counted")
+			}
+		}
 		ast.Inspect(declared.Body, func(node ast.Node) bool {
 			if node == nil {
 				stack = stack[:len(stack)-1]
@@ -421,6 +498,14 @@ func entityReadViolations(t *testing.T, sources map[string][]byte, reads, adjace
 			}
 			if index, takes := ownerParameter[called]; takes && index < len(call.Args) {
 				checkOwner(call, call.Args[index], called)
+				if owner, ok := call.Args[index].(*ast.Ident); ok {
+					checkIteration(call, owner.Name, called)
+				}
+			}
+			if selector, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasPrefix(called, "held") {
+				if owner, ok := selector.X.(*ast.Ident); ok {
+					checkIteration(call, owner.Name, called)
+				}
 			}
 			if _, isSelector := call.Fun.(*ast.SelectorExpr); !isSelector {
 				return true
@@ -436,6 +521,11 @@ func entityReadViolations(t *testing.T, sources map[string][]byte, reads, adjace
 				if adjacency[called] {
 					seenAdjacency[site] = true
 					if _, ok := reviewedAdjacency[site]; ok {
+						if receiver := receiverType(declared); receiver != "" && receiver != "StorageExecutor" {
+							// A method of a type that keeps state can keep
+							// the list across calls: it needs an owner.
+							violations = append(violations, where(call)+": "+site+" is in a method of "+receiver+", which can keep what it reads across calls: hold it in an owner")
+						}
 						break
 					}
 				}
@@ -574,10 +664,37 @@ func unreviewedAdjacency(store storage.Engine, node *storage.Node) bool {
 	edges, _ := store.GetOutgoingEdges(node.ID)
 	return len(edges) > 0
 }
+
+func accumulates(ctx context.Context, store storage.Engine, labels []string) int {
+	owner := trackedRetention(ctx)
+	defer owner.release()
+	total := 0
+	for _, label := range labels {
+		nodes, _ := owner.heldNodes(store.GetNodesByLabel(label))
+		total += len(nodes)
+	}
+	return total
+}
+
+func (c *pairCache) keeps(store storage.Engine, node *storage.Node) []*storage.Edge {
+	edges, _ := store.GetOutgoingEdges(node.ID)
+	return edges
+}
+
+func cacheByKey(ctx context.Context, store storage.Engine) (map[string]*storage.Node, error) {
+	owner := trackedRetention(ctx)
+	defer owner.release()
+	nodes, err := owner.heldNodes(store.GetNodesByLabel("A"))
+	byKey := map[string]*storage.Node{}
+	for _, node := range nodes {
+		byKey[string(node.ID)] = node
+	}
+	return byKey, err
+}
 `
-	violations, _ := entityReadViolations(t, map[string][]byte{"planted.go": []byte(planted)}, reads, adjacency, visitors, map[string]string{}, map[string]string{})
-	require.Len(t, violations, 6, "%s", strings.Join(violations, "\n"))
-	for index, want := range []string{"GetNodesByLabel() read in unheld is not held", "owner owner is not released", "returnsOwn returns entities but holds them in an owner it made", "takesOwner has no owner", "storage visitor visits.StreamNodes is not reviewed", "GetOutgoingEdges() read in unreviewedAdjacency is not held"} {
+	violations, _ := entityReadViolations(t, map[string][]byte{"planted.go": []byte(planted)}, reads, adjacency, visitors, map[string]string{"keeps.GetOutgoingEdges": "planted"}, map[string]string{})
+	require.Len(t, violations, 9, "%s", strings.Join(violations, "\n"))
+	for index, want := range []string{"GetNodesByLabel() read in unheld is not held", "owner owner is not released", "returnsOwn returns entities but holds them in an owner it made", "takesOwner has no owner", "storage visitor visits.StreamNodes is not reviewed", "GetOutgoingEdges() read in unreviewedAdjacency is not held", "heldNodes in a loop of accumulates binds a list for one iteration", "keeps.GetOutgoingEdges is in a method of pairCache", "cacheByKey returns entities but holds them in an owner it made"} {
 		found := false
 		for _, violation := range violations {
 			found = found || strings.Contains(violation, want)

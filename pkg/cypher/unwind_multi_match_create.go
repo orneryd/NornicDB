@@ -162,7 +162,11 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, matches)
+		// The prefetched nodes count until the rows that read them are done
+		// (#1343).
+		prefetchOwner := trackedRetention(ctx)
+		defer prefetchOwner.release()
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, prefetchOwner, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err
 		}

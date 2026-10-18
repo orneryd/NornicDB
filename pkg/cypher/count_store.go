@@ -154,44 +154,41 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 // not the number of relationships: a relationship matches once from each
 // endpoint, a self-loop once.
 func countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, bool, error) {
-	// The relationships count while they are counted (#1343).
+	// The relationships count while they are counted, one type's at a
+	// time, and the IDs it has counted while it counts (#1343).
 	held := trackedRetention(ctx)
 	defer held.release()
-	var candidates []*storage.Edge
+	var count int64
+	countEdge := func(edge *storage.Edge) {
+		count++
+		if edge.StartNode != edge.EndNode {
+			count++
+		}
+	}
 	if len(types) == 0 {
 		edges, err := held.heldEdges(store.AllEdges())
 		if err != nil {
 			return 0, true, err
 		}
-		candidates = edges
-	} else {
-		seen := make(map[storage.EdgeID]struct{})
-		for _, relationshipType := range types {
-			edges, err := held.heldEdges(store.GetEdgesByType(relationshipType))
-			if err != nil {
-				return 0, true, err
-			}
-			for _, edge := range edges {
-				if edge == nil {
-					continue
-				}
-				if _, exists := seen[edge.ID]; exists {
-					continue
-				}
-				seen[edge.ID] = struct{}{}
-				candidates = append(candidates, edge)
+		for _, edge := range edges {
+			if edge != nil {
+				countEdge(edge)
 			}
 		}
+		return count, true, nil
 	}
-	var count int64
-	for _, edge := range candidates {
-		if edge == nil {
-			continue
+	seen := make(map[storage.EdgeID]struct{})
+	seenHeld := 0
+	err := visitEdgesOfTypes(ctx, store, types, func(edge *storage.Edge) error {
+		if _, exists := seen[edge.ID]; exists {
+			return nil
 		}
-		count++
-		if edge.StartNode != edge.EndNode {
-			count++
-		}
+		seen[edge.ID] = struct{}{}
+		countEdge(edge)
+		return held.holdAppended(&seenHeld, len(seen), false)
+	})
+	if err != nil {
+		return 0, true, err
 	}
 	return count, true, nil
 }

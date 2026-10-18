@@ -527,9 +527,12 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	// The relationship lookups of this MERGE over its rows share one read
 	// per endpoint pair (relationshipMergeIdentityCache); one row looks up
 	// directly.
+	// What it keeps counts until it drops it or the MERGE is done (#1343).
+	identityOwner := trackedRetention(ctx)
+	defer identityOwner.release()
 	var identities *relationshipMergeIdentityCache
 	if len(rows) > 1 {
-		identities = newRelationshipMergeIdentityCache()
+		identities = newRelationshipMergeIdentityCache(identityOwner)
 	}
 	template := e.pipelineMergeTemplateFor(clause)
 	// The clause's pattern and actions (each action clause a SET of its own,
