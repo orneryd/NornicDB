@@ -1336,7 +1336,7 @@ func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	for open, end := nextRelationshipBracket(pattern, 0); open >= 0; open, end = nextRelationshipBracket(pattern, end+1) {
 		head := strings.TrimSpace(relationshipBracketHead(pattern[open+1 : end]))
 		name, next, ok := scanIdentifierToken(head, 0)
-		if ok && strings.Contains(blankQuotedText(head[next:]), "*") {
+		if ok && strings.Contains(relationshipRangeText(head)[next:], "*") {
 			result[name] = struct{}{}
 		}
 	}
@@ -1379,8 +1379,8 @@ func invalidRelationshipPattern(pattern string) bool {
 			return true
 		}
 		// Quoted names and values can hold * and .. (#879), and so can
-		// property values.
-		inner := strings.TrimSpace(blankQuotedText(relationshipBracketHead(pattern[open+1 : end])))
+		// property values and dynamic types.
+		inner := strings.TrimSpace(relationshipRangeText(relationshipBracketHead(pattern[open+1 : end])))
 		star := strings.IndexByte(inner, '*')
 		if strings.Contains(inner, "..") && star < 0 {
 			return true
