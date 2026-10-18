@@ -15,6 +15,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // DatabaseManager manages multiple logical databases within a single storage engine.
@@ -394,9 +395,18 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 // Returns ErrDatabaseNotFound if database doesn't exist.
 // Returns ErrCannotDropSystemDB for system/default databases.
 func (m *DatabaseManager) DropDatabase(name string) error {
-	m.mu.Lock()
+	return m.DropDatabaseContext(context.Background(), name)
+}
+
+// DropDatabaseContext respects cancellation while waiting for metadata and
+// retiring acknowledged writes before deleting a database.
+func (m *DatabaseManager) DropDatabaseContext(ctx context.Context, name string) error {
 	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
+	release, err := util.LockContext(ctx, m.mu.Lock, func() { m.unlockStatementCacheIndexes(changed, false) })
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Check if exists
 	info, exists := m.databases[name]
@@ -416,7 +426,7 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 
 	// Delete all data with this namespace prefix
 	prefix := name + ":"
-	nodesDeleted, edgesDeleted, err := m.inner.DeleteByPrefix(prefix)
+	nodesDeleted, edgesDeleted, err := storage.DeletePrefixContext(ctx, m.inner, prefix)
 	if err != nil {
 		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
 	}

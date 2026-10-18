@@ -238,7 +238,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		v := c.version
 		if v.IsZero() {
 			var err error
-			v, err = b.allocateMVCCVersion(txn, c.namespace, time.Now())
+			v, err = b.reserveMVCCVersion(txn, c.namespace, time.Now())
 			if err != nil {
 				return abort(err)
 			}

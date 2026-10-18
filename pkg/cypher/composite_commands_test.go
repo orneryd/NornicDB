@@ -25,6 +25,10 @@ func (a *testDatabaseManagerAdapter) DropDatabase(name string) error {
 	return a.manager.DropDatabase(name)
 }
 
+func (a *testDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropDatabaseContext(ctx, name)
+}
+
 func (a *testDatabaseManagerAdapter) ListDatabases() []DatabaseInfoInterface {
 	dbs := a.manager.ListDatabases()
 	result := make([]DatabaseInfoInterface, len(dbs))
