@@ -9,6 +9,8 @@ type Channel[T any] struct {
 	mu     sync.Mutex
 	events chan T
 	closed bool
+
+	done chan struct{}
 }
 
 // New creates a channel with the requested event buffer capacity.
@@ -17,12 +19,16 @@ type Channel[T any] struct {
 //	queue.TrySend("created")
 //	event := <-queue.Events()
 func New[T any](capacity int) *Channel[T] {
-	return &Channel[T]{events: make(chan T, capacity)}
+	return &Channel[T]{events: make(chan T, capacity), done: make(chan struct{})}
 }
 
 // Events returns the receive-only event stream. Closing the owner preserves
 // buffered events for readers, followed by the usual closed-channel indication.
 func (c *Channel[T]) Events() <-chan T { return c.events }
+
+// Done is closed when delivery ends, so subscription watchers can stop without
+// depending on their caller to cancel a context.
+func (c *Channel[T]) Done() <-chan struct{} { return c.done }
 
 // TrySend queues an event without waiting for a reader. It returns false when
 // the buffer is full or the owner is closed, leaving existing events intact.
@@ -53,5 +59,6 @@ func (c *Channel[T]) Close() {
 	if !c.closed {
 		c.closed = true
 		close(c.events)
+		close(c.done)
 	}
 }
