@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Check the manager's runtime factory boundary and the unchanged persisted
-// representation, rather than providing already-decrypted credentials to Fabric.
+// Check the manager's runtime factory boundary without supplying plaintext
+// credentials directly to Fabric.
 func TestRemoteRuntimeCredentials(t *testing.T) {
 	const password = "synthetic-runtime-password-91364827"
 	for _, test := range []struct{ name, uri, user, password, mode, token, wantUser, wantPass, wantMode string }{
@@ -35,10 +35,9 @@ func TestRemoteRuntimeCredentials(t *testing.T) {
 			require.NoError(t, manager.CreateCompositeDatabase("runtime", []ConstituentRef{ref}))
 			stored, err := manager.GetCompositeConstituents("runtime")
 			require.NoError(t, err)
-			if test.mode == "user_password" {
-				require.True(t, strings.HasPrefix(stored[0].Password, remoteCredentialPrefix))
-				require.NotEqual(t, password, stored[0].Password)
-			}
+			require.True(t, strings.HasPrefix(stored[0].Password, remoteCredentialPrefix))
+			require.NotEqual(t, password, stored[0].Password)
+			require.NotContains(t, stored[0].URI, "@")
 			for _, name := range []string{"runtime.remote", "runtime"} {
 				engine, err := manager.GetStorageWithAuth(name, test.token)
 				require.NoError(t, err)
@@ -68,8 +67,7 @@ func TestRemoteRuntimeCredentialErrorsAreRedacted(t *testing.T) {
 	manager, err := NewDatabaseManager(storage.NewMemoryEngine(), config)
 	require.NoError(t, err)
 	defer manager.Close()
-	require.NoError(t, manager.CreateCompositeDatabase("invalid_uri", []ConstituentRef{{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@%invalid"}}))
-	_, err = manager.GetStorage("invalid_uri.remote")
+	err = manager.CreateCompositeDatabase("invalid_uri", []ConstituentRef{{Alias: "remote", DatabaseName: "nornic", Type: "remote", AccessMode: "read", URI: "http://admin:" + password + "@%invalid"}})
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), password)
 }
