@@ -119,11 +119,14 @@ var clusterAccessors = map[string]bool{"Service.currentClusterIndex": true}
 // clusterReaders route a query on the generation it holds: they read
 // generation and view state but reference no mutator or helper.
 var clusterReaders = map[string]bool{
-	"Service.selectHybridClustersLocked":     true,
-	"IVFHNSWCandidateGen.routedGraphs":       true,
-	"KMeansCandidateGen.SearchCandidates":    true,
-	"GPUKMeansCandidateGen.SearchCandidates": true,
-	"ownClusterView":                         true,
+	"Service.selectHybridClustersLocked":                   true,
+	"IVFHNSWCandidateGen.routedGraphs":                     true,
+	"KMeansCandidateGen.searchCandidatesWithExhaustion":    true,
+	"GPUKMeansCandidateGen.searchCandidatesWithExhaustion": true,
+	"routeClusters":             true,
+	"graphPopulation":           true,
+	"clusterServing.population": true,
+	"ownClusterView":            true,
 }
 
 // Service fields holding the generation; every field of these types is
@@ -185,6 +188,7 @@ var gpuClusterBodies = map[string]bool{
 	"Clustering.MemberIDsOf":              true,
 	"Clustering.NearestClusters":          true,
 	"Clustering.NumClusters":              true,
+	"Clustering.PopulatedClusters":        true,
 	"Clustering.Remove":                   true,
 	"clusterMembership.clusterOf":         true,
 	"clusterMembership.ids":               true,

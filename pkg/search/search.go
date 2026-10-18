@@ -5183,7 +5183,7 @@ func (s *Service) adaptiveVectorSearch(
 		// A request as wide as the generator's whole population repeats
 		// the same search when widened: what it can't reach stays out of
 		// reach, so the budget ends there (#974).
-		if requestLimit >= config.maxLimit || requestCoversCandidatePopulation(pipeline, requestLimit) {
+		if requestLimit >= config.maxLimit || requestCoversCandidatePopulation(ctx, pipeline, requestLimit) {
 			if postProcess == nil || explicitCandidateCap(opts) {
 				return results, stats, nil
 			}
@@ -5211,9 +5211,9 @@ func nextCandidateLimit(current int, factor float64, ceiling int) int {
 // requestCoversCandidatePopulation reports whether a request of limit
 // candidates already asks the pipeline's generator for every vector it holds
 // (candidatePopulationReporter), so that a wider one can't return more.
-func requestCoversCandidatePopulation(pipeline *VectorSearchPipeline, limit int) bool {
+func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearchPipeline, limit int) bool {
 	reporter, ok := pipeline.candidateGen.(candidatePopulationReporter)
-	return ok && limit >= reporter.candidatePopulation()
+	return ok && limit >= reporter.candidatePopulation(ctx)
 }
 
 // completeVectorSearch fills a vector page the approximate search's budget
