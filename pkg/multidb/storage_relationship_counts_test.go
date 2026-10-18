@@ -9,7 +9,7 @@ import (
 
 func TestSizeTrackingNamespaceRelationshipCounts(t *testing.T) {
 	base := storage.NewMemoryEngine()
-	manager, err := NewDatabaseManager(storage.NewWALEngine(base, nil), nil)
+	manager, err := NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	for _, namespace := range []string{"a", "b"} {
