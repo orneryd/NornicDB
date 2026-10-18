@@ -185,7 +185,9 @@ func (s *Service) SearchTextContinuation(
 		database = s.continuationDatabase()
 	}
 	scope := resultstream.Scope{Owner: request.Owner, Database: database}
-	if binder, ok := registry.(interface { BindScope(resultstream.Scope) resultstream.Scope }); ok {
+	if binder, ok := registry.(interface {
+		BindScope(resultstream.Scope) resultstream.Scope
+	}); ok {
 		scope = binder.BindScope(scope)
 	}
 	if request.Discard {
@@ -488,7 +490,9 @@ func (s *Service) SetContinuationRegistry(registry *resultstream.Registry) {
 }
 
 func (s *Service) continuationDatabase() string {
-	if s.cacheNamespace != "" { return s.cacheNamespace }
+	if s.cacheNamespace != "" {
+		return s.cacheNamespace
+	}
 	return "default"
 }
 

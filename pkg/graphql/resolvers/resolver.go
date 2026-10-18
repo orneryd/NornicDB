@@ -162,6 +162,9 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 
 	// Copy configuration from base DB's executor if available
 	if r.DB != nil {
+		service, err := r.DB.GetOrCreateSearchService(effectiveDb, storage)
+		if err != nil { return nil, err }
+		executor.SetSearchService(service)
 		baseExecutor := r.DB.GetCypherExecutor()
 		if baseExecutor != nil {
 			executor.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
