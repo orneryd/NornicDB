@@ -3819,61 +3819,57 @@ func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
 	}
 }
 
-// readStoredRelationships reads the stored relationships for the build's
-// relationship phase at the point where the build reads its node snapshot, so
-// both phases see storage at one point and every write handed over after it
-// (IndexEdge, RemoveEdge, an index-flag change, a refresh) is installed after
-// it, in order, as for nodes. It keeps what the phase reads: each edge's ID,
-// type and endpoints, and its vector-shaped properties; no other property
-// value is retained.
-func (s *Service) readStoredRelationships(ctx context.Context) ([]*storage.Edge, error) {
-	if s == nil || !s.vectorEnabled.Load() {
-		return nil, nil
+// openBuildSnapshot opens the storage snapshot the build reads its baseline
+// through, when the queue defers writes (the engine supports snapshots). The
+// returned close is idempotent; the build closes the snapshot once its
+// baseline is installed, before queued writes are applied.
+func (s *Service) openBuildSnapshot(ctx context.Context) (storage.ReadSnapshotView, func(), error) {
+	if !s.buildWrites.deferring.Load() {
+		return nil, func() {}, nil
 	}
-	var edges []*storage.Edge
-	err := storage.StreamEdgesWithFallback(ctx, s.engine, 1000, func(edge *storage.Edge) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		kept := &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
-		if edge.Properties != nil {
-			kept.Properties = make(map[string]any)
-			for key, value := range edge.Properties {
-				// Kept as the index stores it, converted once.
-				if vec := toFloat32SliceAny(value); len(vec) > 0 {
-					kept.Properties[key] = vec
-				}
-			}
-		}
-		edges = append(edges, kept)
-		return nil
-	})
-	return edges, err
+	snapshot, err := storage.OpenReadSnapshot(ctx, s.engine)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	var once sync.Once
+	return snapshot, func() { once.Do(snapshot.Close) }, nil
 }
 
-// buildRelationshipVectorIndexes applies the stored relationships the build
-// read with its node snapshot (readStoredRelationships). Writes handed over
-// meanwhile are applied first; an edge one of them wrote keeps that write
-// rather than this copy.
-func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, edges []*storage.Edge) error {
+// buildNodeIterator is the node source of the build: its snapshot, or the
+// engine's own iterator when the build has no snapshot.
+func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeIterator {
+	if snapshot != nil {
+		return snapshot
+	}
+	if iterator, ok := s.engine.(NodeIterator); ok {
+		return iterator
+	}
+	return nil
+}
+
+// buildRelationshipVectorIndexes installs the stored relationships' vectors,
+// streamed from the build's snapshot (the engine itself when the build has
+// none). Writes handed over meanwhile wait in the queue: they are applied
+// after the baseline (completeBuildPopulation), so none is overtaken by this
+// stream's copy.
+func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot storage.ReadSnapshotView) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
 	}
-	for i, edge := range edges {
+	install := func(edge *storage.Edge) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		edges[i] = nil // released as the phase goes
-		s.drainBuildWrites()
-		if s.edgeWritten(string(edge.ID)) {
-			continue
 		}
 		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		_ = s.indexEdgeLocked(edge)
 		s.indexMu.Unlock()
+		return nil
 	}
-	return nil
+	if snapshot != nil {
+		return snapshot.StreamEdges(ctx, install)
+	}
+	return storage.StreamEdgesWithFallback(ctx, s.engine, 1000, install)
 }
 
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
@@ -3910,14 +3906,23 @@ type NodeIterator interface {
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) error {
-	// Live writes from here until buildMu is released are handed to this
-	// build, which applies them (build_write_queue.go); the last of them
-	// before it releases buildMu.
-	s.beginBuildWrites()
+	// The build reads its baseline (nodes, relationships) through one storage
+	// snapshot, opened after the queue: a write whose search call ran live
+	// before the queue opened committed before the snapshot, which therefore
+	// holds it. Live writes from here until buildMu is released are handed to
+	// this build, which applies them after the baseline, in order
+	// (build_write_queue.go). On an engine without read snapshots writes wait
+	// for the build instead.
+	s.beginBuildWrites(storage.SupportsReadSnapshot(ctx, s.engine))
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
 	defer s.endBuildWrites()
 	s.startBuildWrites()
+	snapshot, closeSnapshot, snapErr := s.openBuildSnapshot(ctx)
+	if snapErr != nil {
+		return snapErr
+	}
+	defer closeSnapshot()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -4271,6 +4276,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
+		closeSnapshot()
 		// The indexes are restored: the population is complete.
 		s.completeBuildPopulation()
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
@@ -4280,13 +4286,6 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.drainBuildWrites()
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
-	}
-
-	// The relationship phase reads storage where the node phase does, before
-	// any write handed over is installed (readStoredRelationships).
-	relationships, readErr := s.readStoredRelationships(ctx)
-	if readErr != nil {
-		return readErr
 	}
 
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
@@ -4308,7 +4307,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	}
 	s.setBuildPhase("iterating_nodes")
 	// Build indexes by iterating over storage.
-	if iterator, ok := s.engine.(NodeIterator); ok {
+	if iterator := s.buildNodeIterator(snapshot); iterator != nil {
 		count := 0
 		var fulltextBatch []*storage.Node
 		var flushErr error
@@ -4317,15 +4316,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				return nil
 			}
 			s.adoptBuildBatchDimensions(batch)
-			// Writes handed over since the last batch are applied first; a node
-			// one of them wrote keeps that write, whether this batch read it
-			// before or after it.
-			s.drainBuildWrites()
 			filtered := make([]*storage.Node, 0, len(batch))
 			for _, n := range batch {
-				if s.nodeWritten(string(n.ID)) {
-					continue
-				}
 				shouldIndex, err := s.shouldIndexNode(n)
 				if err != nil {
 					return err
@@ -4429,7 +4421,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.logPrintf("📊 Indexed %d total nodes", count)
 		s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 		s.setBuildPhase("iterating_relationship_vectors")
-		if err := s.buildRelationshipVectorIndexes(ctx, relationships); err != nil {
+		if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
 			return err
 		}
 		// The population is complete: every queued operation, administrative
@@ -4457,15 +4449,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			return nil
 		}
 		s.adoptBuildBatchDimensions(batch)
-		// Writes handed over since the last batch are applied first; a node
-		// one of them wrote keeps that write, whether this batch read it
-		// before or after it.
-		s.drainBuildWrites()
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
-			if s.nodeWritten(string(n.ID)) {
-				continue
-			}
 			shouldIndex, err := s.shouldIndexNode(n)
 			if err != nil {
 				return err
@@ -4548,7 +4533,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.logPrintf("📊 Indexed %d total nodes", count)
 	s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 	s.setBuildPhase("iterating_relationship_vectors")
-	if err := s.buildRelationshipVectorIndexes(ctx, relationships); err != nil {
+	if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
 		return err
 	}
 	// The population is complete: every queued operation, administrative ones

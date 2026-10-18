@@ -34,7 +34,7 @@ func (e *edgeStreamGateEngine) StreamEdges(ctx context.Context, fn func(edge *st
 	}); err != nil {
 		return err
 	}
-	if edgeStreamCallerOnStack("readStoredRelationships") {
+	if edgeStreamCallerOnStack("buildRelationshipVectorIndexes") {
 		parked := false
 		e.once.Do(func() { parked = true; close(e.entered) })
 		if parked {
@@ -47,6 +47,23 @@ func (e *edgeStreamGateEngine) StreamEdges(ctx context.Context, fn func(edge *st
 		}
 	}
 	return nil
+}
+
+// OpenReadSnapshot parks the build's relationship read through its snapshot,
+// once, as StreamEdges parks a read of the engine itself.
+func (e *edgeStreamGateEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.MemoryEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeEdges: func() error {
+		parked := false
+		e.once.Do(func() { parked = true; close(e.entered) })
+		if parked {
+			<-e.release
+		}
+		return nil
+	}}, nil
 }
 
 func edgeStreamCallerOnStack(name string) bool {
