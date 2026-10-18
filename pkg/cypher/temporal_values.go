@@ -283,7 +283,7 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
 func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool, error) {
-	name, argument, ok := parseFunctionCallWSWithCancellation(expression, contextPipelineProbe(ctx))
+	name, argument, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return nil, false, nil
 	}

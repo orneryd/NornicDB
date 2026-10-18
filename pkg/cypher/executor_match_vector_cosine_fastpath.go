@@ -274,7 +274,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	withProjectionEnd := returnIdx
 	_ = withProjectionEnd
 	withProjection := strings.TrimSpace(withProjectionRaw)
-	withProjection, _ = cutDistinctWithCancellation(withProjection, contextPipelineProbe(ctx))
+	withProjection, _ = cutDistinct(withProjection)
 	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 {
 		return nil, false
@@ -653,7 +653,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		}
 	}
 
-	withProjection, _ := cutDistinctWithCancellation(withProjectionRaw, contextPipelineProbe(ctx))
+	withProjection, _ := cutDistinct(withProjectionRaw)
 	withItems := e.parseReturnItems(withProjection)
 	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
 		return nil, false

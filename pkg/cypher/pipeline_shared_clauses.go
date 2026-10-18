@@ -6,44 +6,32 @@ import (
 )
 
 func cypherGrammarVersion(query string) string {
-	return cypherGrammarVersionWithCancellation(query, nil)
-}
-func cypherGrammarVersionWithCancellation(query string, probe *pipelineCancellation) string {
 	version := "5"
-	rest := trimSpaceWithCancellation(query, probe)
+	rest := strings.TrimSpace(query)
 	for rest != "" {
-		if probe != nil && !probe.check() {
-			return ""
-		}
 		if startsWithKeywordFold(rest, "EXPLAIN") || startsWithKeywordFold(rest, "PROFILE") {
-			rest = trimSpaceWithCancellation(rest[len("EXPLAIN"):], probe)
+			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
 			continue
 		}
 		if !startsWithKeywordFold(rest, "CYPHER") {
 			break
 		}
-		rest = trimSpaceWithCancellation(rest[len("CYPHER"):], probe)
+		rest = strings.TrimSpace(rest[len("CYPHER"):])
 		if len(rest) > 0 && isDigitByte(rest[0]) {
 			end := 0
 			for end < len(rest) && isDigitByte(rest[end]) {
-				if probe != nil && !probe.check() {
-					return ""
-				}
 				end++
 			}
 			version = rest[:end]
-			rest = trimSpaceWithCancellation(rest[end:], probe)
+			rest = strings.TrimSpace(rest[end:])
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			if probe != nil && !probe.check() {
-				return ""
-			}
-			end := indexAnyWithCancellation(rest, " \t\r\n", probe)
+			end := strings.IndexAny(rest, " \t\r\n")
 			if end < 0 {
 				rest = ""
 				break
 			}
-			rest = trimSpaceWithCancellation(rest[end:], probe)
+			rest = strings.TrimSpace(rest[end:])
 		}
 	}
 	return version

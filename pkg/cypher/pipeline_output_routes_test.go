@@ -140,7 +140,7 @@ func TestPipelineOutputCollectionBranchesReplay(t *testing.T) {
 				}
 			}}, []string{"items", "index", "value"})
 		},
-		func(p *pipelineCancellation) { _, _ = normalizeLiteralTextWithCancellation("RETURN $x", p) },
+		func(p *pipelineCancellation) { _, _ = normalizeLiteralText("RETURN $x") },
 	} {
 		replayPrepassWork(t, run)
 	}

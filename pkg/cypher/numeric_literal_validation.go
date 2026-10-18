@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -13,27 +13,11 @@ import (
 // the shared compile boundary prevents individual executors from interpreting
 // malformed or overflowing tokens differently.
 func validateNumericLiterals(cypher string) error {
-	return validateNumericLiteralsWithCancellation(cypher, nil)
-}
-func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCancellation) (err error) {
-	defer func() {
-		if probe != nil && probe.err != nil {
-			err = probe.err
-		}
-	}()
-	if probe != nil && !probe.check() {
-		return probe.err
-	}
-
-	upper := upperASCII(trimSpaceWithCancellation(cypher, probe))
-	if strings.HasPrefix(upper, "ALTER DATABASE ") && containsTextWithCancellation(upper, " SET LIMIT ", probe) {
+	upper := upperASCII(strings.TrimSpace(cypher))
+	if strings.HasPrefix(upper, "ALTER DATABASE ") && strings.Contains(upper, " SET LIMIT ") {
 		return nil
 	}
 	for index := 0; index < len(cypher); {
-		if probe != nil && !probe.check() {
-			return probe.err
-		}
-
 		switch cypher[index] {
 		case '\'', '"', '`':
 			index = numericValidationSkipQuoted(cypher, index)
@@ -42,10 +26,6 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 			if index+1 < len(cypher) && cypher[index+1] == '/' {
 				index += 2
 				for index < len(cypher) && cypher[index] != '\n' && cypher[index] != '\r' {
-					if probe != nil && !probe.check() {
-						return probe.err
-					}
-
 					index++
 				}
 				continue
@@ -53,10 +33,6 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 			if index+1 < len(cypher) && cypher[index+1] == '*' {
 				index += 2
 				for index+1 < len(cypher) && (cypher[index] != '*' || cypher[index+1] != '/') {
-					if probe != nil && !probe.check() {
-						return probe.err
-					}
-
 					index++
 				}
 				if index+1 < len(cypher) {
@@ -71,7 +47,7 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 			continue
 		}
 
-		next, err := validateNumericLiteralAtWithCancellation(cypher, index, probe)
+		next, err := validateNumericLiteralAt(cypher, index)
 		if err != nil {
 			return err
 		}
@@ -81,13 +57,6 @@ func validateNumericLiteralsWithCancellation(cypher string, probe *pipelineCance
 }
 
 func validateNumericLiteralAt(cypher string, start int) (int, error) {
-	return validateNumericLiteralAtWithCancellation(cypher, start, nil)
-}
-func validateNumericLiteralAtWithCancellation(cypher string, start int, probe *pipelineCancellation) (int, error) {
-	if probe != nil && !probe.check() {
-		return 0, probe.err
-	}
-
 	negative := numericLiteralHasUnaryMinus(cypher, start)
 	end := start
 	base := 10
@@ -95,13 +64,9 @@ func validateNumericLiteralAtWithCancellation(cypher string, start int, probe *p
 	if cypher[start] == '.' {
 		end++
 		for end < len(cypher) && isASCIIDigit(cypher[end]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			end++
 		}
-		return validateFloatingLiteralTailWithCancellation(cypher, start, end, probe)
+		return validateFloatingLiteralTail(cypher, start, end)
 	}
 
 	if start+1 < len(cypher) && cypher[start] == '0' {
@@ -120,91 +85,68 @@ func validateNumericLiteralAtWithCancellation(cypher string, start int, probe *p
 		end = start + 2
 		digitStart := end
 		for end < len(cypher) && isIdentByte(cypher[end]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			if !isDigitForBase(cypher[end], base) {
-				return end, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end+1], probe)
+				return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end+1])
 			}
 			end++
 		}
 		if end == digitStart {
-			return end, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end], probe)
+			return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 		}
 		if end < len(cypher) && cypher[end] == '#' {
-			return end, numericLiteralErrorWithCancellation("UnexpectedSyntax", cypher[start:end+1], probe)
+			return end, numericLiteralError("UnexpectedSyntax", cypher[start:end+1])
 		}
-		magnitude, parseErr := parseUintLiteralWithCancellation(cypher[digitStart:end], base, probe)
+		magnitude, parseErr := strconv.ParseUint(cypher[digitStart:end], base, 64)
 		if parseErr != nil || numericMagnitudeOverflowsInt64(magnitude, negative) {
-			return end, numericLiteralErrorWithCancellation("IntegerOverflow", cypher[start:end], probe)
+			return end, numericLiteralError("IntegerOverflow", cypher[start:end])
 		}
 		return end, nil
 	}
 
 	for end < len(cypher) && isASCIIDigit(cypher[end]) {
-		if probe != nil && !probe.check() {
-			return 0, probe.err
-		}
-
 		end++
 	}
 	// 5. is not a number: Neo4j reads the dot as a property access, so
 	// RETURN 5. AS v and 5.e3 are SyntaxErrors. In 1..2 (a range) the
 	// integer ends at the dots.
 	if end < len(cypher) && cypher[end] == '.' && (end+1 >= len(cypher) || (!isASCIIDigit(cypher[end+1]) && cypher[end+1] != '.')) {
-		return end + 1, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end+1], probe)
+		return end + 1, numericLiteralError("InvalidNumberLiteral", cypher[start:end+1])
 	}
 	if end+1 < len(cypher) && cypher[end] == '.' && cypher[end+1] != '.' {
 		end++
 		for end < len(cypher) && isASCIIDigit(cypher[end]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			end++
 		}
-		return validateFloatingLiteralTailWithCancellation(cypher, start, end, probe)
+		return validateFloatingLiteralTail(cypher, start, end)
 	}
 	if end < len(cypher) && (cypher[end] == 'e' || cypher[end] == 'E') {
-		return validateFloatingLiteralTailWithCancellation(cypher, start, end, probe)
+		return validateFloatingLiteralTail(cypher, start, end)
 	}
 	if end < len(cypher) && isIdentStartByte(cypher[end]) {
 		invalidEnd := end + 1
 		for invalidEnd < len(cypher) && isIdentByte(cypher[invalidEnd]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			invalidEnd++
 		}
-		return invalidEnd, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:invalidEnd], probe)
+		return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
 	}
 	if end < len(cypher) && cypher[end] == '#' {
-		return end, numericLiteralErrorWithCancellation("UnexpectedSyntax", cypher[start:end+1], probe)
+		return end, numericLiteralError("UnexpectedSyntax", cypher[start:end+1])
 	}
 	// 01 is the legacy octal form, which Neo4j 5 rejects (#907). It stays
 	// rejected, unlike the uppercase prefixes: Cypher before 5 read 010 as
 	// octal 8, and NornicDB read it as decimal 10, so accepting it would give
 	// a statement written for that Cypher a different value.
 	if cypher[start] == '0' && end-start > 1 {
-		return end, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end], probe)
+		return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 	}
-	magnitude, parseErr := parseUintLiteralWithCancellation(cypher[start:end], 10, probe)
+	magnitude, parseErr := strconv.ParseUint(cypher[start:end], 10, 64)
 	if parseErr != nil || numericMagnitudeOverflowsInt64(magnitude, negative) {
-		return end, numericLiteralErrorWithCancellation("IntegerOverflow", cypher[start:end], probe)
+		return end, numericLiteralError("IntegerOverflow", cypher[start:end])
 	}
 	return end, nil
 }
 
 func validateFloatingLiteralTail(cypher string, start, end int) (int, error) {
-	return validateFloatingLiteralTailWithCancellation(cypher, start, end, nil)
-}
-func validateFloatingLiteralTailWithCancellation(cypher string, start, end int, probe *pipelineCancellation) (int, error) {
-	if probe != nil && !probe.check() {
-		return 0, probe.err
-	}
-
 	if end < len(cypher) && (cypher[end] == 'e' || cypher[end] == 'E') {
 		end++
 		if end < len(cypher) && (cypher[end] == '+' || cypher[end] == '-') {
@@ -212,42 +154,28 @@ func validateFloatingLiteralTailWithCancellation(cypher string, start, end int, 
 		}
 		exponentStart := end
 		for end < len(cypher) && isASCIIDigit(cypher[end]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			end++
 		}
 		if end == exponentStart {
-			return end, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end], probe)
+			return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 		}
 	}
 	if end < len(cypher) && isIdentStartByte(cypher[end]) {
 		invalidEnd := end + 1
 		for invalidEnd < len(cypher) && isIdentByte(cypher[invalidEnd]) {
-			if probe != nil && !probe.check() {
-				return 0, probe.err
-			}
-
 			invalidEnd++
 		}
-		return invalidEnd, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:invalidEnd], probe)
+		return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
 	}
 	if end < len(cypher) && cypher[end] == '#' {
-		return end, numericLiteralErrorWithCancellation("UnexpectedSyntax", cypher[start:end+1], probe)
-	}
-	if end-start > 768 {
-		if !floatLiteralInRangeWithCancellation(cypher[start:end], probe) {
-			return end, numericLiteralErrorWithCancellation("FloatingPointOverflow", cypher[start:end], probe)
-		}
-		return end, nil
+		return end, numericLiteralError("UnexpectedSyntax", cypher[start:end+1])
 	}
 	value, parseErr := strconv.ParseFloat(cypher[start:end], 64)
 	if math.IsInf(value, 0) {
-		return end, numericLiteralErrorWithCancellation("FloatingPointOverflow", cypher[start:end], probe)
+		return end, numericLiteralError("FloatingPointOverflow", cypher[start:end])
 	}
 	if parseErr != nil {
-		return end, numericLiteralErrorWithCancellation("InvalidNumberLiteral", cypher[start:end], probe)
+		return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 	}
 	return end, nil
 }
@@ -260,19 +188,8 @@ func numericMagnitudeOverflowsInt64(magnitude uint64, negative bool) bool {
 }
 
 func numericLiteralHasUnaryMinus(cypher string, numberStart int) bool {
-	return numericLiteralHasUnaryMinusWithCancellation(cypher, numberStart, nil)
-}
-func numericLiteralHasUnaryMinusWithCancellation(cypher string, numberStart int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	minus := numberStart - 1
 	for minus >= 0 && isASCIISpace(cypher[minus]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		minus--
 	}
 	if minus < 0 || cypher[minus] != '-' {
@@ -280,10 +197,6 @@ func numericLiteralHasUnaryMinusWithCancellation(cypher string, numberStart int,
 	}
 	previous := minus - 1
 	for previous >= 0 && isASCIISpace(cypher[previous]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		previous--
 	}
 	if previous < 0 {
@@ -297,18 +210,10 @@ func numericLiteralHasUnaryMinusWithCancellation(cypher string, numberStart int,
 	}
 	wordEnd := previous + 1
 	for previous >= 0 && isIdentByte(cypher[previous]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		previous--
 	}
 	word := cypher[previous+1 : wordEnd]
 	for _, keyword := range [...]string{"RETURN", "WITH", "AS", "WHERE", "WHEN", "THEN", "ELSE", "IN", "AND", "OR", "XOR", "NOT", "CASE"} {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		if strings.EqualFold(word, keyword) {
 			return true
 		}
@@ -317,19 +222,8 @@ func numericLiteralHasUnaryMinusWithCancellation(cypher string, numberStart int,
 }
 
 func numericValidationSkipQuoted(cypher string, start int) int {
-	return numericValidationSkipQuotedWithCancellation(cypher, start, nil)
-}
-func numericValidationSkipQuotedWithCancellation(cypher string, start int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return len(cypher)
-	}
-
 	quote := cypher[start]
 	for index := start + 1; index < len(cypher); index++ {
-		if probe != nil && !probe.check() {
-			return len(cypher)
-		}
-
 		if cypher[index] == '\\' {
 			index++
 			continue
@@ -347,39 +241,11 @@ func numericValidationSkipQuotedWithCancellation(cypher string, start int, probe
 }
 
 func numericLiteralError(detail, literal string) error {
-	return numericLiteralErrorWithCancellation(detail, literal, nil)
-}
-func numericLiteralErrorWithCancellation(detail, literal string, probe *pipelineCancellation) error {
-	if probe != nil && !probe.check() {
-		return probe.err
-	}
-
-	var message strings.Builder
-	message.WriteString("invalid numeric literal ")
-	appendEquivalenceGoValue(&message, reflect.ValueOf(literal), probe, false)
-	if probe != nil && probe.err != nil {
-		return probe.err
-	}
 	return newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",
 		detail,
-		message.String(),
+		fmt.Sprintf("invalid numeric literal %q", literal),
 	)
-}
-
-func parseUintLiteralWithCancellation(digits string, base int, probe *pipelineCancellation) (uint64, error) {
-	for len(digits) > 1 && digits[0] == '0' {
-		if probe != nil && !probe.check() {
-			return 0, probe.err
-		}
-		digits = digits[1:]
-	}
-	// Even base eight needs at most 22 digits for a uint64. This bounds
-	// strconv's input and the NumError copy on its overflow path.
-	if len(digits) > 22 {
-		return 0, strconv.ErrRange
-	}
-	return strconv.ParseUint(digits, base, 64)
 }
 
 func isASCIIDigit(value byte) bool { return value >= '0' && value <= '9' }

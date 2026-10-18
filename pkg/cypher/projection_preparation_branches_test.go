@@ -45,20 +45,20 @@ func TestProjectionColumnPreparationBudgets(t *testing.T) {
 	items := []string{"x+1 AS x", "count(*) AS c"}
 	plan := parseReturnProjectionPlan("RETURN *, x+1 AS x, count(*) AS c")
 	runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-		actual := plan.withStarExpandedWithCancellation(columns, p)
+		actual := plan.withStarExpanded(columns)
 		if p.err == nil {
 			require.Equal(t, plan.withStarExpanded(columns), actual)
 		}
 	})
 	runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-		actual := starProjectionItemsWithCancellation(columns, items, p)
+		actual := starProjectionItems(columns, items)
 		if p.err == nil {
 			require.Equal(t, starProjectionItems(columns, items), actual)
 		}
 	})
 	for _, name := range []string{"", "`", "x", " x ", "1x", "x!", "a b", "a`b", "`x`", strings.Repeat("x", 129)} {
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-			actual := projectionVariableTextWithCancellation(name, p)
+			actual := projectionVariableText(name)
 			if p.err == nil {
 				require.Equal(t, projectionVariableText(name), actual)
 			}
@@ -73,7 +73,7 @@ func TestProjectionCacheLockDeadline(t *testing.T) {
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	p := &pipelineCancellation{ctx: ctx}
-	plan := returnProjectionPlanForWithCancellation("RETURN 1 AS value", p)
+	plan := returnProjectionPlanFor("RETURN 1 AS value")
 	returned := time.Now()
 	require.False(t, plan.valid)
 	require.ErrorIs(t, p.err, context.DeadlineExceeded)

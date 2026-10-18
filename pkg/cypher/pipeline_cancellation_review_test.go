@@ -69,7 +69,7 @@ func TestPipelineSingleRowValidationDeadline(t *testing.T) {
 		}}, {"membership_index", func(ctx context.Context) error {
 			probe := pipelineCancellation{ctx: ctx}
 			cache := bindingParamMembershipCache{}
-			_, _, _ = cache.getValidatedWithCancellation(items, &probe)
+			_, _, _ = cache.getValidated(items)
 			require.Nil(t, cache.snapshot, "a cancelled index must not be published")
 			return probe.err
 		}},

@@ -21,7 +21,7 @@ func TestProjectionPreparationBudgetBoundaries(t *testing.T) {
 		t.Run(body[:min(len(body), 50)], func(t *testing.T) {
 			want := executor.parseReturnItems(body)
 			runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-				actual := executor.parseReturnItemsWithCancellation(body, probe)
+				actual := executor.parseReturnItems(body)
 				if probe.err == nil {
 					require.Equal(t, want, actual)
 				}
@@ -29,7 +29,7 @@ func TestProjectionPreparationBudgetBoundaries(t *testing.T) {
 			clause := "RETURN " + body
 			plan := parseReturnProjectionPlan(clause)
 			runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-				actual := parseReturnProjectionPlanWithCancellation(clause, probe)
+				actual := parseReturnProjectionPlan(clause)
 				if probe.err == nil {
 					require.Equal(t, plan, actual)
 				}
@@ -49,13 +49,13 @@ func TestProjectionAggregateReaderBudgetBoundaries(t *testing.T) {
 		want := findAggregateSpans(expr)
 		name, inner, distinct, ok := parsePipelineAggregate(expr)
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			actual := findAggregateSpansWithCancellation(expr, probe)
+			actual := findAggregateSpans(expr)
 			if probe.err == nil {
 				require.Equal(t, want, actual)
 			}
 		})
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			n, i, d, o := parsePipelineAggregateWithCancellation(expr, probe)
+			n, i, d, o := parsePipelineAggregate(expr)
 			if probe.err == nil {
 				require.Equal(t, name, n)
 				require.Equal(t, inner, i)
@@ -74,7 +74,7 @@ func TestProjectionPlanCacheCancellationPublication(t *testing.T) {
 	returnProjectionPlans.Lock()
 	returnProjectionPlans.plans.DeleteWithCancellation(clause, nil)
 	returnProjectionPlans.Unlock()
-	plan := returnProjectionPlanForWithCancellation(clause, probe)
+	plan := returnProjectionPlanFor(clause)
 	require.False(t, plan.valid)
 	require.ErrorIs(t, probe.err, context.Canceled)
 	returnProjectionPlans.RLock()

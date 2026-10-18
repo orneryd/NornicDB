@@ -83,7 +83,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if _, _, call := parseFunctionCallWSWithCancellation(expr, probe); call && strings.Contains(expr, ".") {
+	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
 		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
@@ -92,7 +92,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
+	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		args := e.splitFunctionArgs(inner)
 		if equalFoldASCII(name, "size") && len(args) == 1 {
 			args[0] = sizeArgumentExpression(args[0])
@@ -624,7 +624,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			return nil
 		}
 		if value == nil {
-			if function, argument, ok := parseFunctionCallWSWithCancellation(expr, probe); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
+			if function, argument, ok := parseFunctionCallWS(expr); ok && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
 				input := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				// An argument the evaluator can't resolve comes back as its own
 				// text; that is not a value to parse.
@@ -647,7 +647,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// date.<component>(value) and datetime.<component>(value): read as the
 	// row evaluator reads them (temporalComponent), so both evaluators give
 	// the same value for every accessor (#1105).
-	if name, inner, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
+	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
 			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return value

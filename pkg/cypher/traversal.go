@@ -515,7 +515,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
 					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -587,7 +587,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				case isAggregateFuncName(item.expr, "max"):
 					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInnerWithCancellation(item.expr, contextPipelineProbe(ctx))):
+				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
 					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
@@ -1044,7 +1044,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 	if inner == "*" {
 		return int64(len(paths))
 	}
-	inner, distinct := cutDistinctArgumentWithCancellation(inner, contextPipelineProbe(ctx))
+	inner, distinct := cutDistinctArgument(inner)
 	seen := make(map[string]struct{}, len(paths))
 	var count int64
 	for _, path := range paths {
@@ -1068,7 +1068,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
 	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
 	if distinct {
-		inner, _ = cutDistinctArgumentWithCancellation(inner, contextPipelineProbe(ctx))
+		inner, _ = cutDistinctArgument(inner)
 	}
 
 	collected := make([]interface{}, 0, len(paths))

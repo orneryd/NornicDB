@@ -288,7 +288,7 @@ type callSubqueryParse struct {
 func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string, probe *pipelineCancellation) callSubqueryParse {
 	return clauseAnalysisFor(ctx, clauseAnalysisCallSubquery, clause, func(clause string) callSubqueryParse {
 		var parsed callSubqueryParse
-		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubqueryWithCancellation(clause, probe)
+		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubquery(clause)
 		callScope := readCallSubqueryScope(clause)
 		parsed.scoped, parsed.scopedImports = callScope.scoped, callScope.names
 		return parsed
@@ -314,7 +314,7 @@ type unionBranchesParse struct {
 func parseTopLevelUnionBranchesFor(ctx context.Context, query string) ([]string, bool, bool, bool) {
 	parsed := clauseAnalysisFor(ctx, clauseAnalysisUnionBranches, query, func(query string) unionBranchesParse {
 		var parsed unionBranchesParse
-		parsed.branches, parsed.all, parsed.mixed, parsed.ok = parseTopLevelUnionBranchesWithCancellation(query, contextPipelineProbe(ctx))
+		parsed.branches, parsed.all, parsed.mixed, parsed.ok = parseTopLevelUnionBranches(query)
 		return parsed
 	})
 	return parsed.branches, parsed.all, parsed.mixed, parsed.ok

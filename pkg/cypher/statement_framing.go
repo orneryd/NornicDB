@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -9,14 +10,6 @@ import (
 )
 
 func (e *StorageExecutor) validateStatementFraming(cypher string) error {
-	return e.validateStatementFramingWithCancellation(cypher, nil)
-}
-func (e *StorageExecutor) validateStatementFramingWithCancellation(cypher string, probe *pipelineCancellation) (resultErr error) {
-	defer func() {
-		if probe != nil && probe.err != nil {
-			resultErr = probe.err
-		}
-	}()
 	if containsOutsideStrings(cypher, ";") {
 		statements := e.splitBySemicolon(cypher)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
@@ -27,16 +20,13 @@ func (e *StorageExecutor) validateStatementFramingWithCancellation(cypher string
 			"Can't specify multiple conflicting values for execution mode"))
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
-	if keywordIndexFromWithCancellation(cypher, "UNION", 0, defaultKeywordScanOpts(), probe) < 0 {
+	if findKeywordIndex(cypher, "UNION") < 0 {
 		return nil
 	}
-	if branches, _, _, ok := parseTopLevelUnionBranchesWithCancellation(cypher, probe); ok && len(branches) > 1 {
+	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
-			if probe != nil && !probe.check() {
-				return probe.err
-			}
-			_, finishes := stripTrailingFinishWithCancellation(branch, probe)
+			_, finishes := stripTrailingFinish(branch)
 			if finishes {
 				hasFinish = true
 			} else if len(e.StatementColumns(branch)) > 0 {
@@ -97,166 +87,110 @@ var cypherPreambleOptionValues = map[string]string{
 }
 
 func validateCypherPreamble(query string) error {
-	return validateCypherPreambleWithCancellation(query, nil)
-}
-func validateCypherPreambleWithCancellation(query string, probe *pipelineCancellation) (resultErr error) {
-	defer func() {
-		if probe != nil && probe.err != nil {
-			resultErr = probe.err
-		}
-	}()
-	rest := trimSpaceWithCancellation(query, probe)
-	argumentError := func(message string) (resultErr error) {
-		if probe != nil && probe.err != nil {
-			return probe.err
-		}
+	rest := strings.TrimSpace(query)
+	argumentError := func(message string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
 	}
 	var seenVersion string
 	for rest != "" {
-		if probe != nil && !probe.check() {
-			return probe.err
-		}
 		if matchKeywordAt(rest, 0, "EXPLAIN") || matchKeywordAt(rest, 0, "PROFILE") {
-			rest = trimSpaceWithCancellation(rest[len("EXPLAIN"):], probe)
+			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
 			continue
 		}
 		if !matchKeywordAt(rest, 0, "CYPHER") {
 			return nil
 		}
-		rest = trimSpaceWithCancellation(rest[len("CYPHER"):], probe)
+		rest = strings.TrimSpace(rest[len("CYPHER"):])
 		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
 			end := 0
 			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
-				if probe != nil && !probe.check() {
-					return probe.err
-				}
 				end++
 			}
 			version := rest[:end]
 			if version != "5" && version != "25" {
-				return argumentError(concatPipelineStrings(version, " is not a valid option for cypher version. Valid options are: 5, 25", probe))
+				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5, 25", version))
 			}
 			if seenVersion != "" && seenVersion != version {
 				return argumentError("Can't specify multiple conflicting values for cypher version")
 			}
 			seenVersion = version
-			rest = trimSpaceWithCancellation(rest[end:], probe)
+			rest = strings.TrimSpace(rest[end:])
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			if probe != nil && !probe.check() {
-				return probe.err
-			}
 			end := 0
 			for end < len(rest) && isIdentByte(rest[end]) {
-				if probe != nil && !probe.check() {
-					return probe.err
-				}
 				end++
 			}
-			name := lowerASCII(rest[:end])
-			rest = trimSpaceWithCancellation(rest[end:], probe)
+			name := strings.ToLower(rest[:end])
+			rest = strings.TrimSpace(rest[end:])
 			if end == 0 || rest == "" || rest[0] != '=' {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected name=value")
 			}
-			rest = trimSpaceWithCancellation(rest[1:], probe)
+			rest = strings.TrimSpace(rest[1:])
 			end = 0
 			for end < len(rest) && isIdentByte(rest[end]) {
-				if probe != nil && !probe.check() {
-					return probe.err
-				}
 				end++
 			}
 			if end == 0 {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
 			}
-			value := lowerASCII(rest[:end])
-			rest = trimSpaceWithCancellation(rest[end:], probe)
-			allowed, known := "", false
-			for key, options := range cypherPreambleOptionValues {
-				if comparePipelineStrings(key, name, probe) == 0 {
-					allowed, known = options, true
-					break
-				}
-				if probe != nil && probe.err != nil {
-					return probe.err
-				}
-			}
+			value := strings.ToLower(rest[:end])
+			rest = strings.TrimSpace(rest[end:])
+			allowed, known := cypherPreambleOptionValues[name]
 			if !known {
-				return argumentError(concatPipelineStrings("Unsupported options: ", name, probe))
+				return argumentError("Unsupported options: " + name)
 			}
 			valid := false
 			for _, candidate := range strings.Split(allowed, ", ") {
-				if probe != nil && !probe.check() {
-					return probe.err
-				}
 				if value == candidate {
 					valid = true
 					break
 				}
 			}
 			if !valid {
-				return argumentError(joinPipelineStrings([]string{value, " is not a valid option for ", name, ". Valid options are: ", allowed}, "", probe))
+				return argumentError(fmt.Sprintf("%s is not a valid option for %s. Valid options are: %s", value, name, allowed))
 			}
 		}
-	}
-	if probe != nil && probe.err != nil {
-		return probe.err
 	}
 	return nil
 }
 
 func stripCypherPreamble(query string) (string, bool) {
-	return stripCypherPreambleWithCancellation(query, nil)
-}
-func stripCypherPreambleWithCancellation(query string, probe *pipelineCancellation) (string, bool) {
 	rest := query
 	changed := false
 	var modes []string
 	for {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
-		trimmed := trimSpaceWithCancellation(rest, probe)
+		trimmed := strings.TrimSpace(rest)
 		if matchKeywordAt(trimmed, 0, "EXPLAIN") || matchKeywordAt(trimmed, 0, "PROFILE") {
-			modes = appendPipelineItem(modes, trimmed[:len("EXPLAIN")], probe)
-			rest = trimSpaceWithCancellation(trimmed[len("EXPLAIN"):], probe)
+			modes = append(modes, trimmed[:len("EXPLAIN")])
+			rest = strings.TrimSpace(trimmed[len("EXPLAIN"):])
 			continue
 		}
 		if !matchKeywordAt(trimmed, 0, "CYPHER") {
 			break
 		}
 		changed = true
-		rest = trimSpaceWithCancellation(trimmed[len("CYPHER"):], probe)
+		rest = strings.TrimSpace(trimmed[len("CYPHER"):])
 		// Optional version number (e.g. CYPHER 5, CYPHER 25).
 		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
 			i := 0
 			for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-				if probe != nil && !probe.check() {
-					return "", false
-				}
 				i++
 			}
-			rest = trimSpaceWithCancellation(rest[i:], probe)
+			rest = strings.TrimSpace(rest[i:])
 		}
 		// Option tokens until the next clause keyword starts the statement.
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			if probe != nil && !probe.check() {
-				return "", false
-			}
 			if rest[0] == '\'' || rest[0] == '"' {
 				end := skipCypherQuotedText(rest, 0, rest[0])
-				rest = trimSpaceWithCancellation(rest[end:], probe)
+				rest = strings.TrimSpace(rest[end:])
 				continue
 			}
 			i := 0
 			for i < len(rest) && !isASCIISpace(rest[i]) {
-				if probe != nil && !probe.check() {
-					return "", false
-				}
 				i++
 			}
-			rest = trimSpaceWithCancellation(rest[i:], probe)
+			rest = strings.TrimSpace(rest[i:])
 		}
 		if rest == "" {
 			break
@@ -264,9 +198,9 @@ func stripCypherPreambleWithCancellation(query string, probe *pipelineCancellati
 	}
 	if changed {
 		if len(modes) > 0 {
-			return concatPipelineStrings(concatPipelineStrings(joinPipelineStrings(modes, " ", probe), " ", probe), trimSpaceWithCancellation(rest, probe), probe), true
+			return strings.Join(modes, " ") + " " + strings.TrimSpace(rest), true
 		}
-		return trimSpaceWithCancellation(rest, probe), true
+		return strings.TrimSpace(rest), true
 	}
 	return query, false
 }
@@ -286,9 +220,6 @@ var finishProhibitedClauses = map[string]bool{
 // m.finish) is a variable, not the clause: FINISH is not a reserved word in
 // Neo4j (#958).
 func trailingBareFinish(cypher string) (string, bool) {
-	return trailingBareFinishWithCancellation(cypher, nil)
-}
-func trailingBareFinishWithCancellation(cypher string, probe *pipelineCancellation) (string, bool) {
 	last := lastLiveByte(cypher, len(cypher))
 	if last < 0 || !isIdentByte(cypher[last]) {
 		return "", false
@@ -296,15 +227,12 @@ func trailingBareFinishWithCancellation(cypher string, probe *pipelineCancellati
 	end := last + 1
 	start := end
 	for start > 0 && isIdentByte(cypher[start-1]) {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
 		start--
 	}
 	if !strings.EqualFold(cypher[start:end], "FINISH") {
 		return "", false
 	}
-	remainder := trimSpaceWithCancellation(cypher[:start], probe)
+	remainder := strings.TrimSpace(cypher[:start])
 	// A FINISH with nothing before it is the whole statement, the clause.
 	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
 		return "", false
@@ -320,10 +248,7 @@ func trailingBareFinishWithCancellation(cypher string, probe *pipelineCancellati
 // lastTopLevelClauseWord (validator_strictness.go): one clause scanner for
 // both the FINISH position and the dangling-UNWIND rule.
 func stripTrailingFinish(cypher string) (string, bool) {
-	return stripTrailingFinishWithCancellation(cypher, nil)
-}
-func stripTrailingFinishWithCancellation(cypher string, probe *pipelineCancellation) (string, bool) {
-	remainder, ok := trailingBareFinishWithCancellation(cypher, probe)
+	remainder, ok := trailingBareFinish(cypher)
 	if !ok {
 		return cypher, false
 	}
@@ -354,15 +279,9 @@ func endsInFinish(ctx context.Context, statement string) bool {
 // topLevelUnionCut returns the offset of the first top-level UNION keyword
 // (outside quotes, comments and nested delimiters), or -1.
 func topLevelUnionCut(s string) int {
-	return topLevelUnionCutWithCancellation(s, nil)
-}
-func topLevelUnionCutWithCancellation(s string, probe *pipelineCancellation) int {
 	inQuote := byte(0)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	for i := 0; i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
 		c := s[i]
 		if inQuote != 0 {
 			if c == '\\' && inQuote != '`' && i+1 < len(s) {
@@ -385,15 +304,12 @@ func topLevelUnionCutWithCancellation(s string, probe *pipelineCancellation) int
 		case '/':
 			if i+1 < len(s) && s[i+1] == '/' {
 				for i < len(s) && s[i] != '\n' && s[i] != '\r' {
-					if probe != nil && !probe.check() {
-						return -1
-					}
 					i++
 				}
 				continue
 			}
 			if i+1 < len(s) && s[i+1] == '*' {
-				end := indexTextWithCancellation(s[i+2:], "*/", probe)
+				end := strings.Index(s[i+2:], "*/")
 				if end < 0 {
 					return -1
 				}
@@ -424,93 +340,56 @@ func topLevelUnionCutWithCancellation(s string, probe *pipelineCancellation) int
 // stripUnionBranchFinishes strips a trailing FINISH from each UNION branch of
 // the statement. If no branch ends in FINISH the text is unchanged.
 func stripUnionBranchFinishes(cypher string) (string, bool) {
-	return stripUnionBranchFinishesWithCancellation(cypher, nil)
-}
-func stripUnionBranchFinishesWithCancellation(cypher string, probe *pipelineCancellation) (string, bool) {
-	if probe != nil && !probe.check() {
-		return cypher, false
-	}
 	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
-		return stripTrailingFinishWithCancellation(cypher, probe)
+		return stripTrailingFinish(cypher)
 	}
-	before := trimSpaceWithCancellation(cypher[:cut], probe)
-	after := trimSpaceWithCancellation(cypher[cut:], probe)
+	before := strings.TrimSpace(cypher[:cut])
+	after := strings.TrimSpace(cypher[cut:])
 	// Consume UNION and an optional ALL.
 	wordEnd := 0
 	for wordEnd < len(after) && !isASCIISpace(after[wordEnd]) {
-		if probe != nil && !probe.check() {
-			return cypher, false
-		}
 		wordEnd++
 	}
 	unionWord := after[:wordEnd]
-	tail := trimSpaceWithCancellation(after[wordEnd:], probe)
-	if nextWord, ok := firstWordUpperWithCancellation(tail, probe); ok && nextWord == "ALL" {
+	tail := strings.TrimSpace(after[wordEnd:])
+	if nextWord, ok := firstWordUpper(tail); ok && nextWord == "ALL" {
 		unionWord += " ALL"
-		tail = trimSpaceWithCancellation(tail[len("ALL"):], probe)
+		tail = strings.TrimSpace(tail[len("ALL"):])
 	}
-	right, rightStripped := stripUnionBranchFinishesWithCancellation(tail, probe)
-	if probe != nil && probe.err != nil {
-		return cypher, false
-	}
-	left, leftStripped := stripTrailingFinishWithCancellation(before, probe)
-	if probe != nil && probe.err != nil {
-		return cypher, false
-	}
+	right, rightStripped := stripUnionBranchFinishes(tail)
+	left, leftStripped := stripTrailingFinish(before)
 	if !leftStripped && !rightStripped {
 		return cypher, false
 	}
 	if leftStripped && rightStripped && left == "" && right == "" {
-		_, _, mixed, _ := parseTopLevelUnionBranchesWithCancellation(cypher, probe)
-		if probe != nil && probe.err != nil {
-			return cypher, false
-		}
-		if !mixed {
+		if _, _, mixed, _ := parseTopLevelUnionBranches(cypher); !mixed {
 			return "", true
 		}
 		return cypher, false
 	}
-	var joined strings.Builder
-	for _, part := range []string{left, " ", unionWord, " ", right} {
-		if !appendPipelineString(&joined, part, probe) {
-			return cypher, false
-		}
-	}
-	return trimSpaceWithCancellation(joined.String(), probe), true
+	return strings.TrimSpace(left + " " + unionWord + " " + right), true
 }
 
 func firstWordUpper(s string) (string, bool) {
-	return firstWordUpperWithCancellation(s, nil)
-}
-func firstWordUpperWithCancellation(s string, probe *pipelineCancellation) (string, bool) {
 	i := 0
 	for i < len(s) && !isASCIISpace(s[i]) {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
 		i++
 	}
 	if i == 0 {
 		return "", false
 	}
-	return upperASCIIWithCancellation(s[:i], probe), true
+	return upperASCII(s[:i]), true
 }
 
 // explainProfileConflict reports whether the statement starts with both
 // EXPLAIN and PROFILE (either order), which Neo4j rejects.
 func explainProfileConflict(cypher string) bool {
-	return explainProfileConflictWithCancellation(cypher, nil)
-}
-func explainProfileConflictWithCancellation(cypher string, probe *pipelineCancellation) bool {
-	query := trimSpaceWithCancellation(cypher, probe)
+	query := strings.TrimSpace(cypher)
 	first := ""
 	for {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		query = trimSpaceWithCancellation(query[queryGapEnd(query, 0):], probe)
-		query, _ = stripCypherPreambleWithCancellation(query, probe)
+		query = strings.TrimSpace(query[queryGapEnd(query, 0):])
+		query, _ = stripCypherPreamble(query)
 		mode := ""
 		if matchKeywordAt(query, 0, "EXPLAIN") {
 			mode = "EXPLAIN"
@@ -523,6 +402,6 @@ func explainProfileConflictWithCancellation(cypher string, probe *pipelineCancel
 			return true
 		}
 		first = mode
-		query = trimSpaceWithCancellation(query[len(mode):], probe)
+		query = strings.TrimSpace(query[len(mode):])
 	}
 }

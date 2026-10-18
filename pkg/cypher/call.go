@@ -78,31 +78,25 @@ type callSplit struct {
 // a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
 // STARTS WITH, belong to the expression they are in.
 func parseYieldClause(cypher string) *yieldClause {
-	return parseYieldClauseWithCancellation(cypher, nil)
-}
-func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation) *yieldClause {
-	if probe != nil && !probe.check() {
-		return nil
-	}
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
-	normalized := replaceTextWithCancellation(replaceTextWithCancellation(cypher, "\n", " ", probe), "\t", " ", probe)
-	yieldIdx := topLevelKeywordIndex(normalized, "YIELD")
+	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
+	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
 	if yieldIdx == -1 {
 		return nil
 	}
 	result := &yieldClause{items: []yieldItem{}}
 
-	afterYield := trimSpaceWithCancellation(normalized[yieldIdx+len("YIELD"):], probe)
+	afterYield := strings.TrimSpace(normalized[yieldIdx+len("YIELD"):])
 	if len(afterYield) > 0 && afterYield[0] == '*' {
 		result.yieldAll = true
-		afterYield = trimSpaceWithCancellation(afterYield[1:], probe)
+		afterYield = strings.TrimSpace(afterYield[1:])
 	}
 
 	// Limit YIELD parsing to the CALL-clause scope only. Anything after the first
 	// outer clause boundary (and a RETURN) belongs to the subsequent query.
 	yieldScope := scopeYieldToCallClause(afterYield)
 	if returnIdx := topLevelKeywordIndex(yieldScope, "RETURN"); returnIdx >= 0 {
-		yieldScope = trimSpaceWithCancellation(yieldScope[:returnIdx], probe)
+		yieldScope = strings.TrimSpace(yieldScope[:returnIdx])
 	}
 	whereIdx := topLevelKeywordIndex(yieldScope, "WHERE")
 	orderIdx := topLevelKeywordIndex(yieldScope, "ORDER")
@@ -114,21 +108,15 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 	part := func(start, keywordLen int) string {
 		end := len(yieldScope)
 		for _, idx := range positions {
-			if probe != nil && !probe.check() {
-				return ""
-			}
 			if idx > start && idx < end {
 				end = idx
 			}
 		}
-		return trimSpaceWithCancellation(yieldScope[start+keywordLen:end], probe)
+		return strings.TrimSpace(yieldScope[start+keywordLen : end])
 	}
 	if whereIdx >= 0 {
 		result.where = part(whereIdx, len("WHERE"))
 		for _, idx := range []int{orderIdx, skipIdx, limitIdx} {
-			if probe != nil && !probe.check() {
-				return nil
-			}
 			if idx >= 0 && idx < whereIdx {
 				result.misplacedWhere = true
 			}
@@ -137,7 +125,7 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 	if orderIdx >= 0 {
 		orderBy := part(orderIdx, len("ORDER"))
 		if len(orderBy) >= len("BY") && strings.EqualFold(orderBy[:len("BY")], "BY") {
-			orderBy = trimSpaceWithCancellation(orderBy[len("BY"):], probe)
+			orderBy = strings.TrimSpace(orderBy[len("BY"):])
 		}
 		result.orderBy = orderBy
 	}
@@ -152,78 +140,49 @@ func parseYieldClauseWithCancellation(cypher string, probe *pipelineCancellation
 	if !result.yieldAll {
 		itemsEnd := len(yieldScope)
 		for _, idx := range positions {
-			if probe != nil && !probe.check() {
-				return nil
-			}
 			if idx != -1 && idx < itemsEnd {
 				itemsEnd = idx
 			}
 		}
-		itemsStr := trimSpaceWithCancellation(yieldScope[:itemsEnd], probe)
+		itemsStr := strings.TrimSpace(yieldScope[:itemsEnd])
 		if itemsStr != "" {
 			// Split by comma, respecting AS keyword
-			for from := 0; from <= len(itemsStr); {
-				if probe != nil && !probe.check() {
-					return nil
-				}
-				next := indexByteWithCancellation(itemsStr[from:], ',', probe)
-				if probe != nil && probe.err != nil {
-					return nil
-				}
-				if next < 0 {
-					next = len(itemsStr)
-				} else {
-					next += from
-				}
-				item := itemsStr[from:next]
-				from = next + 1
-				item = trimSpaceWithCancellation(item, probe)
+			for _, item := range strings.Split(itemsStr, ",") {
+				item = strings.TrimSpace(item)
 				if item == "" {
 					continue
 				}
 				yi := yieldItem{}
 				upperItem := upperASCII(item)
-				if asIdx := indexTextWithCancellation(upperItem, " AS ", probe); asIdx != -1 {
-					yi.name = trimSpaceWithCancellation(item[:asIdx], probe)
-					yi.alias = trimSpaceWithCancellation(item[asIdx+4:], probe)
+				if asIdx := strings.Index(upperItem, " AS "); asIdx != -1 {
+					yi.name = strings.TrimSpace(item[:asIdx])
+					yi.alias = strings.TrimSpace(item[asIdx+4:])
 				} else {
 					yi.name = item
 				}
-				result.items = appendPipelineItem(result.items, yi, probe)
+				result.items = append(result.items, yi)
 			}
 		}
 	}
 
-	if probe != nil && probe.err != nil {
-		return nil
-	}
 	return result
 }
 
 // scopeYieldToCallClause trims text after YIELD to the first outer query-clause
 // boundary so YIELD item parsing does not accidentally consume later clauses.
 func scopeYieldToCallClause(afterYield string) string {
-	return scopeYieldToCallClauseWithCancellation(afterYield, nil)
-}
-func scopeYieldToCallClauseWithCancellation(afterYield string, probe *pipelineCancellation) string {
 	scopeEnd := findYieldOuterBoundary(afterYield)
-	if scopeEnd < 0 {
+	if scopeEnd == -1 {
 		scopeEnd = len(afterYield)
 	}
-	return trimSpaceWithCancellation(afterYield[:scopeEnd], probe)
+	return strings.TrimSpace(afterYield[:scopeEnd])
 }
 
 func findYieldOuterBoundary(afterYield string) int {
-	return findYieldOuterBoundaryWithCancellation(afterYield, nil)
-}
-func findYieldOuterBoundaryWithCancellation(afterYield string, probe *pipelineCancellation) int {
 	scopeEnd := len(afterYield)
 	// The clause keywords; ORDER/RETURN/WHERE/LIMIT/SKIP are excluded because
 	// they are valid within the YIELD scope.
 	for _, kw := range callTailPlanClauseKeywords {
-		if probe != nil && !probe.check() {
-			return -1
-		}
 		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}

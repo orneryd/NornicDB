@@ -478,18 +478,12 @@ func (e *StorageExecutor) currentDatabaseName() string {
 // inferTopLevelReturnColumns best-effort derives outer RETURN columns for Fabric queries.
 // This is used when a distributed execution path returns zero rows and no columns.
 func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
-	return e.inferTopLevelReturnColumnsWithCancellation(query, nil)
-}
-func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query string, probe *pipelineCancellation) []string {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 
 	lastReturn := -1
 	searchFrom := 0
 	for {
-		if probe != nil && !probe.check() {
-			return nil
-		}
 		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
 		if idx < 0 {
 			break
@@ -501,7 +495,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 		return nil
 	}
 
-	clause := trimSpaceWithCancellation(query[lastReturn+len("RETURN"):], probe)
+	clause := strings.TrimSpace(query[lastReturn+len("RETURN"):])
 	if clause == "" {
 		return nil
 	}
@@ -509,16 +503,13 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 	// Strip trailing ORDER BY / SKIP / LIMIT at top-level.
 	end := len(clause)
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if probe != nil && !probe.check() {
-			return nil
-		}
 		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
-	clause = trimSpaceWithCancellation(clause[:end], probe)
+	clause = strings.TrimSpace(clause[:end])
 	clause = strings.TrimSuffix(clause, ";")
-	clause = trimSpaceWithCancellation(clause, probe)
+	clause = strings.TrimSpace(clause)
 	if clause == "" {
 		return nil
 	}
@@ -527,7 +518,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query strin
 	if len(items) == 0 {
 		return nil
 	}
-	return e.buildColumnsFromReturnItemsWithCancellation(items, probe)
+	return e.buildColumnsFromReturnItems(items)
 }
 
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {

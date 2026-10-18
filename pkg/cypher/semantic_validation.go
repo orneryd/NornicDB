@@ -31,7 +31,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	var canonical string
 	var normalized bool
 	if !cached {
-		canonical, normalized = normalizeLiteralTextWithCancellation(cacheKey, contextPipelineProbe(ctx))
+		canonical, normalized = normalizeLiteralText(cacheKey)
 		cached = normalized && e.semanticValidationCache.contains(canonical)
 	}
 	if cached && names == nil && !normalized {
@@ -134,7 +134,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				if projectionHasEmptyItem(items) {
 					return emptyProjectionItemError("RETURN")
 				}
-				projectionItems, _ := cutDistinctWithCancellation(strings.TrimSpace(items), contextPipelineProbe(ctx))
+				projectionItems, _ := cutDistinct(strings.TrimSpace(items))
 				for _, item := range splitTopLevelComma(projectionItems) {
 					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
 					if err := validateExpressionOperandCompleteness(expression); err != nil {

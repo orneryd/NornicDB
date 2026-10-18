@@ -69,7 +69,7 @@ func TestStageBYieldClauseChildCancellation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("query=%q owner=parseYieldClauseWithCancellation", tc.query)
 			require.Equal(t, tc.want, parseYieldClause(tc.query))
-			run := func(p *pipelineCancellation) *yieldClause { return parseYieldClauseWithCancellation(tc.query, p) }
+			run := func(p *pipelineCancellation) *yieldClause { return parseYieldClause(tc.query) }
 			got, calls, _, _, _ := stageBContractInvocation(t, 0, run)
 			require.Equal(t, tc.want, got)
 			stageBRequireInnerReplay(t, calls)
@@ -96,9 +96,9 @@ func TestStageBDeclaredMetadataChildCancellation(t *testing.T) {
 			t.Logf("query=%q fabric=%t", tc.query, tc.fabric)
 			run := func(p *pipelineCancellation) []string {
 				if tc.fabric {
-					return e.inferTopLevelReturnColumnsWithCancellation(tc.query, p)
+					return e.inferTopLevelReturnColumns(tc.query)
 				}
-				return e.StatementColumnsWithCancellation(tc.query, p)
+				return e.StatementColumns(tc.query)
 			}
 			require.Equal(t, tc.want, run(nil))
 			got, calls, _, _, _ := stageBContractInvocation(t, 0, run)
@@ -116,7 +116,7 @@ func TestStageBSemicolonChildCancellation(t *testing.T) {
 	query := "RETURN `semi;colon`, ';' " + comment + "; RETURN 2 // ;\n"
 	want := []string{"RETURN `semi;colon`, ';' " + comment, " RETURN 2 // ;\n"}
 	require.Equal(t, want, e.splitBySemicolon(query))
-	run := func(p *pipelineCancellation) []string { return e.splitBySemicolonWithCancellation(query, p) }
+	run := func(p *pipelineCancellation) []string { return e.splitBySemicolon(query) }
 	got, calls, _, _, _ := stageBContractInvocation(t, 0, run)
 	require.Equal(t, want, got)
 	stageBRequireInnerReplay(t, calls)
@@ -144,7 +144,7 @@ func TestStageBFramingCancellationErrorPrecedence(t *testing.T) {
 			require.Error(t, want, "NONACCEPTANCE original error control")
 			code, _ := nornicerrors.Neo4jStatus(want)
 			require.Equal(t, tc.code, code)
-			run := func(p *pipelineCancellation) error { return e.validateStatementFramingWithCancellation(query, p) }
+			run := func(p *pipelineCancellation) error { return e.validateStatementFraming(query) }
 			got, calls, _, _, _ := stageBContractInvocation(t, 0, run)
 			require.Error(t, got, "NONACCEPTANCE padded error control")
 			code, _ = nornicerrors.Neo4jStatus(got)
@@ -163,7 +163,7 @@ func TestStageBPreambleAndRecursiveFinishCancellation(t *testing.T) {
 		require.True(t, changed)
 		require.Equal(t, "EXPLAIN RETURN 1 AS x", want)
 		run := func(p *pipelineCancellation) string {
-			value, _ := stripCypherPreambleWithCancellation(query, p)
+			value, _ := stripCypherPreamble(query)
 			return value
 		}
 		got, calls, _, _, _ := stageBContractInvocation(t, 0, run)
@@ -183,7 +183,7 @@ func TestStageBPreambleAndRecursiveFinishCancellation(t *testing.T) {
 			changed bool
 		}
 		run := func(p *pipelineCancellation) result {
-			text, changed := stripUnionBranchFinishesWithCancellation(query, p)
+			text, changed := stripUnionBranchFinishes(query)
 			return result{text, changed}
 		}
 		got, calls, _, _, _ := stageBContractInvocation(t, 0, run)

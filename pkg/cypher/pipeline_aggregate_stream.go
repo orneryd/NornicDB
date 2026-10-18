@@ -31,27 +31,17 @@ func pipelineProjectionHasOnlyAggregates(projections []returnProjection) bool {
 }
 
 func pipelineClauseAggregates(clause pipelineClause) bool {
-	return pipelineClauseAggregatesWithCancellation(clause, nil)
-}
-func pipelineClauseAggregatesWithCancellation(clause pipelineClause, probe *pipelineCancellation) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
-	keyword := "RETURN"
+	body := pipelineClauseBody(clause.text, "RETURN")
 	if clause.kind == pipelineClauseWith {
-		keyword = "WITH"
+		body = pipelineClauseBody(clause.text, "WITH")
 	}
-	body := pipelineClauseBody(clause.text, keyword)
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-	if where := keywordIndexFromWithCancellation(body, "WHERE", 0, opts, probe); where >= 0 {
+	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
-	if probe != nil && probe.err != nil {
-		return false
-	}
-	plan := returnProjectionPlanForWithCancellation(concatPipelineStrings("RETURN ", body, probe), probe)
-	return plan.hasAggregate && (probe == nil || probe.err == nil)
+	return returnProjectionPlanFor("RETURN " + body).hasAggregate
 }
 
 func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
@@ -107,8 +97,8 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		needsValidation := false
 		var rewritten strings.Builder
 		last := 0
-		for offset, span := range findAggregateSpansWithCancellation(projection.expr, probe) {
-			name, inner, distinct, ok := parsePipelineAggregateWithCancellation(projection.expr[span.start:span.end], probe)
+		for offset, span := range findAggregateSpans(projection.expr) {
+			name, inner, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
 			if !ok {
 				return nil, false
 			}
@@ -328,7 +318,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			return nil, false, nil
 		}
 		for _, span := range spans {
-			name, expression, distinct, ok := parsePipelineAggregateWithCancellation(projection.expr[span.start:span.end], preparationProbe)
+			name, expression, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
 			if !ok || distinct || (name != "count" && name != "sum") {
 				return nil, false, nil
 			}

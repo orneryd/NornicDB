@@ -496,7 +496,7 @@ func TestPipelineCancellationAtEveryReachableStagePoll(t *testing.T) {
 		{"membership_index_build", func(ctx context.Context) error {
 			probe := pipelineCancellation{ctx: ctx}
 			cache := bindingParamMembershipCache{}
-			_, _, _ = cache.getValidatedWithCancellation(list, &probe)
+			_, _, _ = cache.getValidated(list)
 			return probe.err
 		}},
 		{"membership_index_validate", func(ctx context.Context) error {
@@ -507,7 +507,7 @@ func TestPipelineCancellationAtEveryReachableStagePoll(t *testing.T) {
 			cache := bindingParamMembershipCache{}
 			_, _, _ = cache.getValidated(items)
 			probe := pipelineCancellation{ctx: ctx}
-			_, _, _ = cache.getValidatedWithCancellation(items, &probe)
+			_, _, _ = cache.getValidated(items)
 			return probe.err
 		}},
 	}...)

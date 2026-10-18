@@ -85,7 +85,7 @@ func evaluateStaticListForPipelineWithCancellation(expr string, row pipelineRow,
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	if inner, wrapped := stripEnclosingExpressionParenthesesWithCancellation(strings.TrimSpace(expr), probe); wrapped {
+	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
 	if mayContainSubqueryExpression(expr) {

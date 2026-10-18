@@ -23,18 +23,12 @@ import (
 // follows it can't start an expression (distinctFollowsAsName, #894).
 // Without the keyword, text is returned trimmed.
 func cutDistinct(text string) (string, bool) {
-	return cutDistinctWithCancellation(text, nil)
-}
-func cutDistinctWithCancellation(text string, probe *pipelineCancellation) (string, bool) {
-	if probe != nil && !probe.check() {
-		return "", false
-	}
-	text = trimSpaceWithCancellation(text, probe)
+	text = strings.TrimSpace(text)
 	const keyword = "DISTINCT"
 	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isIdentByte(text[len(keyword)]) {
 		return text, false
 	}
-	rest := trimSpaceWithCancellation(text[len(keyword):], probe)
+	rest := strings.TrimSpace(text[len(keyword):])
 	if rest == "" || distinctFollowsAsName(rest) {
 		return text, false
 	}
@@ -51,36 +45,27 @@ func cutDistinctWithCancellation(text string, probe *pipelineCancellation) (stri
 // (startsWithClauseAfterDistinct: RETURN distinct ORDER BY distinct). Before
 // + - [ ( a number, IN, STARTS, ENDS or a name, distinct is the keyword.
 func distinctFollowsAsName(rest string) bool {
-	return distinctFollowsAsNameWithCancellation(rest, nil)
-}
-func distinctFollowsAsNameWithCancellation(rest string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
 	switch rest[0] {
 	case '.':
 		return len(rest) == 1 || !isDigitByte(rest[1]) // RETURN DISTINCT .5
 	case ',', ':', '/', '%', '^', '=', '<', '>':
 		return true
 	case '*':
-		after := trimSpaceWithCancellation(rest[1:], probe)
-		return after != "" && after[0] != ',' && !startsWithClauseAfterDistinctWithCancellation(after, probe)
+		after := strings.TrimSpace(rest[1:])
+		return after != "" && after[0] != ',' && !startsWithClauseAfterDistinct(after)
 	case '{':
-		after := trimSpaceWithCancellation(rest[1:], probe)
+		after := strings.TrimSpace(rest[1:])
 		return after != "" && after[0] == '.'
 	}
 	for _, word := range [...]string{"AS", "AND", "OR", "XOR", "CONTAINS"} {
-		if probe != nil && !probe.check() {
-			return false
-		}
 		if matchKeywordAt(rest, 0, word) {
 			return true
 		}
 	}
 	if matchKeywordAt(rest, 0, "IS") {
-		return !strings.HasPrefix(trimSpaceWithCancellation(rest[len("IS"):], probe), "::")
+		return !strings.HasPrefix(strings.TrimSpace(rest[len("IS"):]), "::")
 	}
-	return startsWithClauseAfterDistinctWithCancellation(rest, probe)
+	return startsWithClauseAfterDistinct(rest)
 }
 
 // startsWithClauseAfterDistinct reports whether text, which follows the word
@@ -91,29 +76,18 @@ func distinctFollowsAsNameWithCancellation(rest string, probe *pipelineCancellat
 // (RETURN distinct SKIP 1, WITH distinct WHERE where = 3). UNION is a clause
 // only as UNION ALL.
 func startsWithClauseAfterDistinct(text string) bool {
-	return startsWithClauseAfterDistinctWithCancellation(text, nil)
-}
-func startsWithClauseAfterDistinctWithCancellation(text string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	end := 0
 	for end < len(text) && isIdentByte(text[end]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		end++
 	}
 	if end == 0 || !isNameableClauseKeyword(text[:end]) {
 		return false
 	}
-	rest := trimSpaceWithCancellation(text[end:], probe)
+	rest := strings.TrimSpace(text[end:])
 	if strings.EqualFold(text[:end], "UNION") {
 		return matchKeywordAt(rest, 0, "ALL")
 	}
-	return startsWithClauseAfterNameWithCancellation(text, probe)
+	return startsWithClauseAfterName(text)
 }
 
 // startsWithClauseAfterName reports whether text, which follows a name,
@@ -124,25 +98,14 @@ func startsWithClauseAfterDistinctWithCancellation(text string, probe *pipelineC
 // is a clause only as ORDER BY and OPTIONAL only as OPTIONAL MATCH (WITH
 // order ORDER BY order).
 func startsWithClauseAfterName(text string) bool {
-	return startsWithClauseAfterNameWithCancellation(text, nil)
-}
-func startsWithClauseAfterNameWithCancellation(text string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	end := 0
 	for end < len(text) && isIdentByte(text[end]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		end++
 	}
 	if end == 0 || !isNameableClauseKeyword(text[:end]) {
 		return false
 	}
-	rest := trimSpaceWithCancellation(text[end:], probe)
+	rest := strings.TrimSpace(text[end:])
 	switch {
 	case strings.EqualFold(text[:end], "ORDER"):
 		return matchKeywordAt(rest, 0, "BY")
@@ -152,7 +115,7 @@ func startsWithClauseAfterNameWithCancellation(text string, probe *pipelineCance
 	if rest == "" || nameContinuesExpression(rest) {
 		return false
 	}
-	return strings.EqualFold(text[:end], "UNION") || !startsWithClauseAfterNameWithCancellation(rest, probe)
+	return strings.EqualFold(text[:end], "UNION") || !startsWithClauseAfterName(rest)
 }
 
 // nameContinuesExpression reports whether rest, the non-empty text after a
@@ -160,27 +123,16 @@ func startsWithClauseAfterNameWithCancellation(text string, probe *pipelineCance
 // property access, a subscript, a closing parenthesis, AS or a word
 // operator.
 func nameContinuesExpression(rest string) bool {
-	return nameContinuesExpressionWithCancellation(rest, nil)
-}
-func nameContinuesExpressionWithCancellation(rest string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
-	if indexByteWithCancellation(".,:/%^=<>*+-[)", rest[0], probe) >= 0 {
+	if strings.IndexByte(".,:/%^=<>*+-[)", rest[0]) >= 0 {
 		return true
 	}
 	if matchKeywordAt(rest, 0, "AS") {
 		// AS introduces an alias only before a name (WHERE as = 3: as is a
 		// variable).
-		alias := trimSpaceWithCancellation(rest[len("AS"):], probe)
+		alias := strings.TrimSpace(rest[len("AS"):])
 		return alias != "" && (isIdentByte(alias[0]) || alias[0] == '`')
 	}
 	for _, word := range [...]string{"AND", "OR", "XOR", "CONTAINS", "IS", "IN", "STARTS", "ENDS"} {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		if matchKeywordAt(rest, 0, word) {
 			return true
 		}
@@ -199,13 +151,10 @@ func startsWithDistinct(text string) bool {
 // a lone distinct is the keyword with no argument: count(distinct) has no
 // argument, as Neo4j reads it, while RETURN distinct returns the variable.
 func cutDistinctArgument(text string) (string, bool) {
-	return cutDistinctArgumentWithCancellation(text, nil)
-}
-func cutDistinctArgumentWithCancellation(text string, probe *pipelineCancellation) (string, bool) {
-	if strings.EqualFold(trimSpaceWithCancellation(text, probe), "DISTINCT") {
+	if strings.EqualFold(strings.TrimSpace(text), "DISTINCT") {
 		return "", true
 	}
-	return cutDistinctWithCancellation(text, probe)
+	return cutDistinct(text)
 }
 
 // startsWithDistinctArgument reports whether a function's argument list
@@ -279,12 +228,9 @@ func keywordIndex(s, keyword string) int {
 // braces are used for write operations (CREATE {...}) and CALL { ... } subqueries, and other
 // analyzers need to see keywords within those bodies.
 func topLevelKeywordIndex(s, keyword string) int {
-	return topLevelKeywordIndexWithCancellation(s, keyword, nil)
-}
-func topLevelKeywordIndexWithCancellation(s, keyword string, probe *pipelineCancellation) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
-	return keywordIndexFromWithCancellation(s, keyword, 0, opts, probe)
+	return keywordIndexFrom(s, keyword, 0, opts)
 }
 
 // isWithKeyword reports whether a keyword search is for the WITH clause.
@@ -313,22 +259,16 @@ func isWithKeyword(keyword string) bool {
 // a comma, an operator symbol, or a '.' (property key), so that WITH is a
 // clause: UNWIND [1] AS starts WITH starts RETURN starts.
 func isOperatorWith(s string, pos int) bool {
-	return isOperatorWithWithCancellation(s, pos, nil)
-}
-func isOperatorWithWithCancellation(s string, pos int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
-	// The WITH in TIME WITH TIME ZONE and TIMESTAMP WITH TIME ZONE is not a clause.
+	// The WITH of the type names TIME WITH TIME ZONE and TIMESTAMP WITH TIME
+	// ZONE (type predicates, #838) is not a clause.
 	if (prevWordEqualsIgnoreCase(s, pos, "TIME") || prevWordEqualsIgnoreCase(s, pos, "TIMESTAMP")) && followedByTimeZone(s, pos+len("WITH")) {
 		return true
 	}
 	var wordStart int
 	switch {
-	case prevWordEqualsIgnoreCaseWithCancellation(s, pos, "STARTS", probe):
+	case prevWordEqualsIgnoreCase(s, pos, "STARTS"):
 		wordStart = prevWordStart(s, pos)
-	case prevWordEqualsIgnoreCaseWithCancellation(s, pos, "ENDS", probe):
+	case prevWordEqualsIgnoreCase(s, pos, "ENDS"):
 		wordStart = prevWordStart(s, pos)
 	default:
 		return false
@@ -343,10 +283,6 @@ func isOperatorWithWithCancellation(s string, pos int, probe *pipelineCancellati
 	case isIdentByte(c):
 		end := i + 1
 		for i >= 0 && isIdentByte(s[i]) {
-			if probe != nil && !probe.check() {
-				return false
-			}
-
 			i--
 		}
 		if i >= 0 && s[i] == '.' {
@@ -378,29 +314,15 @@ func isOperatorWithWithCancellation(s string, pos int, probe *pipelineCancellati
 // block no clause can start, so a clause keyword there is a name wherever it
 // stands (CASE match WHEN 1 THEN match END; #1162).
 func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
-	return clauseKeywordUsedAsNameWithCancellation(s, pos, end, keyword, nil)
-}
-func clauseKeywordUsedAsNameWithCancellation(s string, pos, end int, keyword string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
-	return clauseKeywordNamedByContextWithCancellation(s, pos, end, keyword, probe) || insideCaseBlockWithCancellation(s, pos, probe)
+	return clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
 }
 
 // clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
 // keyword's neighbours.
 func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
-	return clauseKeywordNamedByContextWithCancellation(s, pos, end, keyword, nil)
-}
-func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	i := lastLiveByte(s, pos)
 	if i >= 0 {
 		switch s[i] {
@@ -414,21 +336,17 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 		case '%':
 			// n:% (any label, #860) ends an operand; a remainder operator
 			// follows one.
-			return !labelWildcardAtWithCancellation(s, i, probe)
+			return !labelWildcardAt(s, i)
 		case '+':
 			// ((a)-->(b))+ RETURN …: a quantified path pattern's + ends the
 			// pattern.
-			return !quantifiedGroupQuantifierAtWithCancellation(s, i, probe)
+			return !quantifiedGroupQuantifierAt(s, i)
 		case '-', '^', '=', '<', '>', ',', '(', '[':
 			return true
 		}
 	}
 	j := end
 	for j < len(s) && isASCIISpace(s[j]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		j++
 	}
 	if j < len(s) && s[j] == ':' {
@@ -437,17 +355,9 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 	if strings.EqualFold(keyword, "SKIP") || strings.EqualFold(keyword, "LIMIT") {
 		wordEnd := j
 		for wordEnd < len(s) && isIdentByte(s[wordEnd]) {
-			if probe != nil && !probe.check() {
-				return false
-			}
-
 			wordEnd++
 		}
 		for _, next := range [...]string{"ORDER", "SKIP", "LIMIT", "WHERE", "UNION", "RETURN", "WITH"} {
-			if probe != nil && !probe.check() {
-				return false
-			}
-
 			if strings.EqualFold(s[j:wordEnd], next) {
 				return true
 			}
@@ -473,10 +383,6 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 	}
 	wordEnd := i + 1
 	for i >= 0 && isIdentByte(s[i]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		i--
 	}
 	if i >= 0 && s[i] == '.' {
@@ -492,7 +398,7 @@ func clauseKeywordNamedByContextWithCancellation(s string, pos, end int, keyword
 	}
 	if strings.EqualFold(s[i+1:wordEnd], "DISTINCT") {
 		// distinct may be a variable: RETURN distinct ORDER BY distinct (#894).
-		return !startsWithClauseAfterDistinctWithCancellation(s[pos:], probe)
+		return !startsWithClauseAfterDistinct(s[pos:])
 	}
 	return true
 }
@@ -506,12 +412,7 @@ func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 // OR, XOR, NOT, IN), a word other than NOT, CASE and DISTINCT is a name too
 // (WITH x, where RETURN where, WITH where WHERE where = 3, RETURN by ORDER BY
 // by, WHERE x AND not RETURN …; #894).
-func wordIsName(s string, wordStart int) bool { return wordIsNameWithCancellation(s, wordStart, nil) }
-func wordIsNameWithCancellation(s string, wordStart int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
+func wordIsName(s string, wordStart int) bool {
 	i := lastLiveByte(s, wordStart)
 	if i < 0 {
 		return false
@@ -520,23 +421,19 @@ func wordIsNameWithCancellation(s string, wordStart int, probe *pipelineCancella
 	case '.', ':', '$':
 		return true
 	case ',', '(', '[', '+', '-', '*', '/', '%', '^', '=', '<', '>':
-		return !wordStartsExpressionWithCancellation(s[wordStart:], probe)
+		return !wordStartsExpression(s[wordStart:])
 	}
 	end := i + 1
 	for i >= 0 && isIdentByte(s[i]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		i--
 	}
 	// The word before must be the keyword, not a name spelled the same
 	// (WITH 3 AS as WITH as RETURN as, WITH 3 AS with WITH with WHERE …).
 	switch word := s[i+1 : end]; {
 	case strings.EqualFold(word, "AS"):
-		return !wordIsNameWithCancellation(s, i+1, probe)
+		return !wordIsName(s, i+1)
 	case expressionFollowsKeyword(word):
-		return !wordStartsExpressionWithCancellation(s[wordStart:], probe) && !wordIsNameWithCancellation(s, i+1, probe)
+		return !wordStartsExpression(s[wordStart:]) && !wordIsName(s, i+1)
 	}
 	return false
 }
@@ -557,22 +454,13 @@ func expressionFollowsKeyword(word string) bool {
 // starts an expression or a projection where a name could stand: DISTINCT,
 // or NOT or CASE unless a clause follows it (WITH case WHERE case = 1: case
 // is a variable).
-func wordStartsExpression(text string) bool { return wordStartsExpressionWithCancellation(text, nil) }
-func wordStartsExpressionWithCancellation(text string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
+func wordStartsExpression(text string) bool {
 	if matchKeywordAt(text, 0, "DISTINCT") {
 		return true
 	}
 	for _, keyword := range [...]string{"NOT", "CASE"} {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		if matchKeywordAt(text, 0, keyword) {
-			return !startsWithClauseAfterNameWithCancellation(trimSpaceWithCancellation(text[len(keyword):], probe), probe)
+			return !startsWithClauseAfterName(strings.TrimSpace(text[len(keyword):]))
 		}
 	}
 	return false
@@ -581,16 +469,9 @@ func wordStartsExpressionWithCancellation(text string, probe *pipelineCancellati
 // isNameableClauseKeyword reports whether keyword (its first word) starts a
 // clause that a name spelled the same can be mistaken for.
 func isNameableClauseKeyword(keyword string) bool {
-	return isNameableClauseKeywordWithCancellation(keyword, nil)
-}
-func isNameableClauseKeywordWithCancellation(keyword string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	start, end := trimKeywordWSBounds(keyword)
 	word := keyword[start:end]
-	if space := indexAnyWithCancellation(word, " \t", probe); space >= 0 {
+	if space := strings.IndexAny(word, " \t"); space >= 0 {
 		word = word[:space]
 	}
 	var candidates []string
@@ -612,10 +493,6 @@ func isNameableClauseKeywordWithCancellation(keyword string, probe *pipelineCanc
 	}
 	first := asciiUpper(word[0])
 	for _, clause := range candidates {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		if clause[0] == first && equalFoldASCII(word, clause) {
 			return true
 		}
@@ -636,18 +513,9 @@ var (
 
 // prevWordStart returns the start of the word that precedes pos (after
 // skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
-func prevWordStart(s string, pos int) int { return prevWordStartWithCancellation(s, pos, nil) }
-func prevWordStartWithCancellation(s string, pos int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return 0
-	}
-
-	i := lastLiveByteWithCancellation(s, pos, probe)
+func prevWordStart(s string, pos int) int {
+	i := lastLiveByte(s, pos)
 	for i >= 0 && isIdentByte(s[i]) {
-		if probe != nil && !probe.check() {
-			return 0
-		}
-
 		i--
 	}
 	return i + 1
@@ -667,22 +535,12 @@ func prevWordStartWithCancellation(s string, pos int, probe *pipelineCancellatio
 // labelWildcardAt reports whether the % at s[i] is the label expression
 // wildcard (n:%, n:A|%, n:!%, n:(%)) rather than the remainder operator, which
 // always follows an operand.
-func labelWildcardAt(s string, i int) bool { return labelWildcardAtWithCancellation(s, i, nil) }
-func labelWildcardAtWithCancellation(s string, i int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
+func labelWildcardAt(s string, i int) bool {
 	j := lastLiveByte(s, i)
-	return j >= 0 && indexByteWithCancellation(":|&!(", s[j], probe) >= 0
+	return j >= 0 && strings.IndexByte(":|&!(", s[j]) >= 0
 }
 
-func lastLiveByte(s string, pos int) int { return lastLiveByteWithCancellation(s, pos, nil) }
-func lastLiveByteWithCancellation(s string, pos int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
+func lastLiveByte(s string, pos int) int {
 	if pos <= 0 {
 		return -1
 	}
@@ -690,10 +548,6 @@ func lastLiveByteWithCancellation(s string, pos int, probe *pipelineCancellation
 	inLineComment, inBlockComment := false, false
 	quote := byte(0)
 	for i := 0; i < pos && i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		c := s[i]
 		if inLineComment {
 			if c == '\n' || c == '\r' {
@@ -781,27 +635,7 @@ func isExpressionBoundaryWord(word string) bool {
 // WITH of STARTS WITH / ENDS WITH is skipped (isOperatorWith, checked at each
 // match in both scan loops, so cached results already exclude it).
 func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
-	return keywordIndexFromWithCancellation(s, keyword, from, opts, nil)
-}
-func keywordIndexFromWithCancellation(s, keyword string, from int, opts keywordScanOpts, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
 	if isDefaultKeywordScanOpts(opts) {
-		if probe != nil {
-			// The cache answers a text read before; a scan the probe
-			// stopped is not stored.
-			key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
-			if idx, ok := defaultKeywordIndexCache.get(key); ok {
-				return idx
-			}
-			idx := keywordIndexFromDefaultWithCancellation(s, keyword, from, probe)
-			if probe.err == nil {
-				defaultKeywordIndexCache.put(key, idx)
-			}
-			return idx
-		}
 		return cachedKeywordIndexFromDefault(s, keyword, from)
 	}
 
@@ -831,10 +665,6 @@ func keywordIndexFromWithCancellation(s, keyword string, from int, opts keywordS
 	)
 
 	for i := from; i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		c := s[i]
 
 		if opts.SkipComments {
@@ -958,7 +788,7 @@ func keywordIndexFromWithCancellation(s, keyword string, from int, opts keywordS
 			continue
 		}
 
-		endPos, ok := keywordMatchAtWithCancellation(s, i, keyword, ks, ke, probe)
+		endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
 		if !ok {
 			continue
 		}
@@ -988,17 +818,7 @@ func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
 }
 
 func keywordIndexFromDefault(s, keyword string, from int) int {
-	return keywordIndexFromDefaultWithCancellation(s, keyword, from,
-
-		// maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
-		nil)
-}
-func keywordIndexFromDefaultWithCancellation(s, keyword string, from int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
-	return firstKeywordIndexFromDefaultWithCancellation(s, from, probe, keyword)
+	return firstKeywordIndexFromDefault(s, from, keyword)
 }
 
 const maxKeywordSet = 16
@@ -1009,15 +829,6 @@ const maxKeywordSet = 16
 // keywords is found in one scan rather than one scan per keyword. It takes
 // at most maxKeywordSet keywords.
 func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
-	return firstKeywordIndexFromDefaultWithCancellation(s, from, nil, keywords...)
-}
-func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pipelineCancellation,
-
-	keywords ...string) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
 	if len(keywords) > maxKeywordSet {
 		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
 	}
@@ -1027,10 +838,6 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 	}
 	var bounds [maxKeywordSet]keywordBounds
 	for k, keyword := range keywords {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		ks, ke := trimKeywordWSBounds(keyword)
 		if ks < ke {
 			bounds[k] = keywordBounds{ks: ks, ke: ke, first: asciiUpper(keyword[ks])}
@@ -1056,10 +863,6 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 	)
 
 	for i := from; i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		c := s[i]
 
 		if inLineComment {
@@ -1166,10 +969,6 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 		upper := asciiUpper(c)
 		leftChecked := false
 		for k, keyword := range keywords {
-			if probe != nil && !probe.check() {
-				return -1
-			}
-
 			b := bounds[k]
 			if b.first != upper || b.ks >= b.ke {
 				continue
@@ -1180,7 +979,7 @@ func firstKeywordIndexFromDefaultWithCancellation(s string, from int, probe *pip
 				}
 				leftChecked = true
 			}
-			endPos, ok := keywordMatchAtWithCancellation(s, i, keyword, b.ks, b.ke, probe)
+			endPos, ok := keywordMatchAt(s, i, keyword, b.ks, b.ke)
 			if !ok {
 				continue
 			}
@@ -1211,38 +1010,19 @@ func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
 }
 
 func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, ok bool) {
-	return keywordMatchAtWithCancellation(s, pos, keyword, ks, ke, nil)
-}
-func keywordMatchAtWithCancellation(s string, pos int, keyword string, ks, ke int, probe *pipelineCancellation) (endPos int, ok bool) {
-	if probe != nil && !probe.check() {
-		return 0, false
-	}
-
 	j := pos
 	k := ks
 
 	for k < ke {
-		if probe != nil && !probe.check() {
-			return 0, false
-		}
-
 		ck := keyword[k]
 		if isASCIISpace(ck) {
 			for k < ke && isASCIISpace(keyword[k]) {
-				if probe != nil && !probe.check() {
-					return 0, false
-				}
-
 				k++
 			}
 			if j >= len(s) || !isASCIISpace(s[j]) {
 				return 0, false
 			}
 			for j < len(s) && isASCIISpace(s[j]) {
-				if probe != nil && !probe.check() {
-					return 0, false
-				}
-
 				j++
 			}
 			continue
@@ -1261,27 +1041,12 @@ func keywordMatchAtWithCancellation(s string, pos int, keyword string, ks, ke in
 }
 
 func trimKeywordWSBounds(s string) (start, end int) {
-	return trimKeywordWSBoundsWithCancellation(s, nil)
-}
-func trimKeywordWSBoundsWithCancellation(s string, probe *pipelineCancellation) (start, end int) {
-	if probe != nil && !probe.check() {
-		return 0, 0
-	}
-
 	start = 0
 	end = len(s)
 	for start < end && isASCIISpace(s[start]) {
-		if probe != nil && !probe.check() {
-			return 0, 0
-		}
-
 		start++
 	}
 	for end > start && isASCIISpace(s[end-1]) {
-		if probe != nil && !probe.check() {
-			return 0, 0
-		}
-
 		end--
 	}
 	return start, end
@@ -1335,29 +1100,14 @@ func asciiUpper(b byte) byte {
 // in the wrong place (#748). Cypher's toUpper() on data keeps
 // strings.ToUpper.
 func upperASCII(text string) string {
-	return upperASCIIWithCancellation(text, nil)
-}
-
-func upperASCIIWithCancellation(text string, probe *pipelineCancellation) string {
 	for i := 0; i < len(text); i++ {
-		if probe != nil && !probe.check() {
-			return ""
-		}
 		if c := text[i]; c >= 'a' && c <= 'z' {
 			// One allocation, as strings.ToUpper's ASCII path.
 			var out strings.Builder
-			out.Grow(pipelineInitialCapacity(len(text), probe))
-			if !appendPipelineString(&out, text[:i], probe) {
-				return ""
-			}
+			out.Grow(len(text))
+			out.WriteString(text[:i])
 			for j := i; j < len(text); j++ {
-				if probe != nil && !probe.check() {
-					return ""
-				}
-				if !appendPipelineByte(&out, asciiUpper(text[j]), probe) {
-					return ""
-				}
-
+				out.WriteByte(asciiUpper(text[j]))
 			}
 			return out.String()
 		}
@@ -1365,39 +1115,22 @@ func upperASCIIWithCancellation(text string, probe *pipelineCancellation) string
 	return text
 }
 
+
 // lowerASCII is upperASCII's lower-case counterpart: ASCII letters only, same
 // length and positions as the text ('İ' lower-cases to three bytes with
 // strings.ToLower). Cypher's toLower() on data keeps strings.ToLower.
-func lowerASCII(text string) string { return lowerASCIIWithCancellation(text, nil) }
-func lowerASCIIWithCancellation(text string, probe *pipelineCancellation) string {
-	if probe != nil && !probe.check() {
-		return ""
-	}
-
+func lowerASCII(text string) string {
 	for i := 0; i < len(text); i++ {
-		if probe != nil && !probe.check() {
-			return ""
-		}
-
 		if c := text[i]; c >= 'A' && c <= 'Z' {
 			var out strings.Builder
-			out.Grow(pipelineInitialCapacity(len(text), probe))
-			if !appendPipelineString(&out, text[:i], probe) {
-				return ""
-			}
+			out.Grow(len(text))
+			out.WriteString(text[:i])
 			for j := i; j < len(text); j++ {
-				if probe != nil && !probe.check() {
-					return ""
-				}
-
 				c := text[j]
 				if c >= 'A' && c <= 'Z' {
 					c += 'a' - 'A'
 				}
-				if !appendPipelineByte(&out, c, probe) {
-					return ""
-				}
-
+				out.WriteByte(c)
 			}
 			return out.String()
 		}
@@ -1410,22 +1143,11 @@ func lowerASCIIWithCancellation(text string, probe *pipelineCancellation) string
 // allocations on the miss path; shares equalFoldASCII with the other ASCII
 // keyword comparisons.
 func indexASCIIFold(text, lowerSub string) int {
-	return indexASCIIFoldWithCancellation(text, lowerSub, nil)
-}
-func indexASCIIFoldWithCancellation(text, lowerSub string, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
 	if lowerSub == "" {
 		return 0
 	}
 	first := lowerSub[0]
 	for i := 0; i+len(lowerSub) <= len(text); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		if asciiLowerByte(text[i]) != first {
 			continue
 		}
@@ -1558,10 +1280,6 @@ func queryWhitespaceAt(query string, index int) int {
 // query[index], or -1 when none starts there. A line comment ends before
 // its line break.
 func queryCommentEnd(query string, index int) int {
-	return queryCommentEndWithCancellation(query, index, nil)
-}
-
-func queryCommentEndWithCancellation(query string, index int, probe *pipelineCancellation) int {
 	if index+1 >= len(query) || query[index] != '/' {
 		return -1
 	}
@@ -1569,40 +1287,24 @@ func queryCommentEndWithCancellation(query string, index int, probe *pipelineCan
 	case '/':
 		end := index + 2
 		for end < len(query) && query[end] != '\n' && query[end] != '\r' {
-			if probe != nil && !probe.check() {
-				return len(query)
-			}
 			end++
 		}
 		return end
 	case '*':
-		for end := index + 2; end+1 < len(query); end++ {
-			if probe != nil && !probe.check() {
-				return len(query)
-			}
-			if query[end] == '*' && query[end+1] == '/' {
-				return end + 2
-			}
+		if close := strings.Index(query[index+2:], "*/"); close >= 0 {
+			return index + 2 + close + 2
 		}
 		return len(query)
 	}
 	return -1
 }
 
+
 // queryGapEnd returns the end of the run of whitespace and comments that
 // starts at index, index itself when none does.
-func queryGapEnd(query string, index int) int { return queryGapEndWithCancellation(query, index, nil) }
-func queryGapEndWithCancellation(query string, index int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return len(query)
-	}
-
+func queryGapEnd(query string, index int) int {
 	end := index
 	for end < len(query) {
-		if probe != nil && !probe.check() {
-			return len(query)
-		}
-
 		if commentEnd := queryCommentEnd(query, end); commentEnd >= 0 {
 			end = commentEnd
 			continue
@@ -2000,29 +1702,15 @@ func (r *queryRewrite) restoreValue(value interface{}) (interface{}, bool) {
 // that starts at query[start] (quote): a doubled quote, or a backslash escape
 // in a string, doesn't end it.
 func skipCypherQuotedText(query string, start int, quote byte) int {
-	return skipCypherQuotedTextWithCancellation(query, start, quote, nil)
-}
-func skipCypherQuotedTextWithCancellation(query string, start int, quote byte, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return len(query)
-	}
-
-	end, _ := scanCypherQuotedTextWithCancellation(query, start, quote, probe)
+	end, _ := scanCypherQuotedText(query, start, quote)
 	return end
 }
 
 func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
-	return scanCypherQuotedTextWithCancellation(query, start, quote, nil)
-}
-
-func scanCypherQuotedTextWithCancellation(query string, start int, quote byte, probe *pipelineCancellation) (int, bool) {
 	if start < 0 || start >= len(query) || query[start] != quote {
 		return start, false
 	}
 	for index := start + 1; index < len(query); index++ {
-		if probe != nil && !probe.check() {
-			return len(query), false
-		}
 		if query[index] == '\\' && quote != '`' && index+1 < len(query) {
 			index++
 			continue
@@ -2039,33 +1727,23 @@ func scanCypherQuotedTextWithCancellation(query string, start int, quote byte, p
 	return len(query), false
 }
 
-func scanIdentifierToken(text string, start int) (string, int, bool) {
-	return scanIdentifierTokenWithCancellation(text, start, nil)
-}
-func scanIdentifierTokenWithCancellation(text string, start int, probe *pipelineCancellation) (string, int, bool) {
-	if probe != nil && !probe.check() {
-		return "", start, false
-	}
 
+func scanIdentifierToken(text string, start int) (string, int, bool) {
 	if start < 0 || start >= len(text) {
 		return "", start, false
 	}
 	if text[start] == '`' {
-		end, closed := scanCypherQuotedTextWithCancellation(text, start, '`', probe)
+		end, closed := scanCypherQuotedText(text, start, '`')
 		if !closed {
 			return "", start, false
 		}
-		return replaceTextWithCancellation(text[start+1:end-1], "``", "`", probe), end, true
+		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true
 	}
 	if !isIdentStartByte(text[start]) {
 		return "", start, false
 	}
 	end := start + 1
 	for end < len(text) && isIdentByte(text[end]) {
-		if probe != nil && !probe.check() {
-			return "", start, false
-		}
-
 		end++
 	}
 	return text[start:end], end, true
@@ -2083,10 +1761,6 @@ func parseIdentifierToken(text string) (string, string, bool) {
 // findMatchingDelimiter skips Cypher quoted text and comments while matching
 // nested delimiters, returning -1 for invalid offsets or unclosed sections.
 func findMatchingDelimiter(text string, start int, opener, closer rune) int {
-	return findMatchingDelimiterWithCancellation(text, start, opener, closer, nil)
-}
-
-func findMatchingDelimiterWithCancellation(text string, start int, opener, closer rune, probe *pipelineCancellation) int {
 	if start < 0 || start >= len(text) || rune(text[start]) != opener {
 		return -1
 	}
@@ -2095,9 +1769,6 @@ func findMatchingDelimiterWithCancellation(text string, start int, opener, close
 	open, close := byte(opener), byte(closer)
 	depth := 0
 	for index := start; index < len(text); index++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
 		switch character := text[index]; {
 		case character == open:
 			depth++
@@ -2107,7 +1778,7 @@ func findMatchingDelimiterWithCancellation(text string, start int, opener, close
 				return index
 			}
 		case character == '\'' || character == '"' || character == '`':
-			end, closed := scanCypherQuotedTextWithCancellation(text, index, character, probe)
+			end, closed := scanCypherQuotedText(text, index, character)
 			if !closed {
 				return -1
 			}
@@ -2120,6 +1791,7 @@ func findMatchingDelimiterWithCancellation(text string, start int, opener, close
 	}
 	return -1
 }
+
 
 func extractDelimitedSection(text string, opener, closer rune) (string, string, bool) {
 	end := findMatchingDelimiter(text, 0, opener, closer)
@@ -2139,18 +1811,7 @@ func extractBracketSection(text string) (string, string, bool) {
 
 // followedByTimeZone reports whether the words TIME ZONE follow position pos.
 func followedByTimeZone(s string, pos int) bool {
-	return followedByTimeZoneWithCancellation(s, pos, nil)
-}
-func followedByTimeZoneWithCancellation(s string, pos int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	for _, word := range []string{"TIME", "ZONE"} {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		pos = skipSpaces(s, pos)
 		if pos+len(word) > len(s) || !strings.EqualFold(s[pos:pos+len(word)], word) ||
 			(pos+len(word) < len(s) && isIdentByte(s[pos+len(word)])) {

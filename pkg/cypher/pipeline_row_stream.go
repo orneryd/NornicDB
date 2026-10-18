@@ -143,7 +143,7 @@ func pipelineUnwindUsesRange(clause string) bool {
 }
 
 func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
-	function, arguments, call := parseFunctionCallWSWithCancellation(strings.TrimSpace(expression), contextPipelineProbe(ctx))
+	function, arguments, call := parseFunctionCallWS(strings.TrimSpace(expression))
 	if call && strings.EqualFold(function, "range") {
 		parts := e.splitFunctionArgs(arguments)
 		values := make([]interface{}, len(parts))

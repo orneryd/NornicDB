@@ -100,7 +100,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 
 	// String literal (single or double quotes)
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
+		if decoded, ok := decodeCypherQuotedString(expr); ok {
 			return decoded
 		}
 	}

@@ -468,15 +468,12 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 // parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
 // Returns: body, afterCall, inTransactions bool, batchSize int
 func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
-	return e.parseCallSubqueryWithCancellation(cypher, nil)
-}
-func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe *pipelineCancellation) (body, afterCall string, inTransactions bool, batchSize int) {
 	batchSize = 1000 // Default batch size
 
-	trimmed := trimSpaceWithCancellation(cypher, probe)
+	trimmed := strings.TrimSpace(cypher)
 
 	// Find the opening brace
-	braceStart := indexByteWithCancellation(trimmed, '{', probe)
+	braceStart := strings.Index(trimmed, "{")
 	if braceStart == -1 {
 		return "", "", false, batchSize
 	}
@@ -489,19 +486,19 @@ func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe
 	}
 
 	// Extract body (between braces)
-	body = trimSpaceWithCancellation(trimmed[braceStart+1:braceEnd], probe)
-	if stripped, finishes := stripUnionBranchFinishesWithCancellation(body, probe); finishes && trimSpaceWithCancellation(stripped, probe) != "" {
+	body = strings.TrimSpace(trimmed[braceStart+1 : braceEnd])
+	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
 		body = stripped
 	}
 
 	// Get what's after the closing brace
-	afterCall = trimSpaceWithCancellation(trimmed[braceEnd+1:], probe)
+	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
 
 	// Check for IN TRANSACTIONS
 	upperAfter := upperASCII(afterCall)
 	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
 		inTransactions = true
-		afterTx := trimSpaceWithCancellation(afterCall[15:], probe)
+		afterTx := strings.TrimSpace(afterCall[15:])
 		upperAfterTx := upperASCII(afterTx)
 
 		// Check for OF n ROWS
@@ -509,13 +506,13 @@ func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe
 			// Parse batch size
 			ofPart := afterTx[3:]
 			// Find ROWS keyword
-			rowsIdx := indexTextWithCancellation(upperASCII(ofPart), " ROWS", probe)
+			rowsIdx := strings.Index(upperASCII(ofPart), " ROWS")
 			if rowsIdx > 0 {
-				sizeStr := trimSpaceWithCancellation(ofPart[:rowsIdx], probe)
-				if size, ok := callSubqueryBatchSizeWithCancellation(sizeStr, probe); ok {
+				sizeStr := strings.TrimSpace(ofPart[:rowsIdx])
+				if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
 					batchSize = size
 				}
-				afterCall = trimSpaceWithCancellation(ofPart[rowsIdx+5:], probe)
+				afterCall = strings.TrimSpace(ofPart[rowsIdx+5:])
 			} else {
 				afterCall = ""
 			}
@@ -527,32 +524,6 @@ func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe
 	return body, afterCall, inTransactions, batchSize
 }
 
-// The batch grammar accepts a positive machine integer. Preserve Atoi's
-// leading-plus/zero behavior without an unchecked scan of a long zero prefix.
-func callSubqueryBatchSizeWithCancellation(text string, probe *pipelineCancellation) (int, bool) {
-	if probe == nil {
-		value, err := strconv.Atoi(text)
-		return value, err == nil && value > 0
-	}
-	if len(text) > 0 && text[0] == '+' {
-		text = text[1:]
-	}
-	if len(text) == 0 {
-		return 0, false
-	}
-	value, limit := 0, int(^uint(0)>>1)
-	for i := 0; i < len(text); i++ {
-		if !probe.check() {
-			return 0, false
-		}
-		digit := int(text[i] - '0')
-		if digit < 0 || digit > 9 || value > (limit-digit)/10 {
-			return 0, false
-		}
-		value = value*10 + digit
-	}
-	return value, value > 0
-}
 
 // callSubqueryHasScopeClause reports whether a CALL subquery declares its
 // imports with a scope clause (CALL () { … }, CALL (x, y) { … }, CALL (*)
@@ -1326,10 +1297,7 @@ func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
 // UNION ALL so callers can report the Cypher semantic error rather than
 // treating the statement as an unsplittable query.
 func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, mixed, ok bool) {
-	return parseTopLevelUnionBranchesWithCancellation(query, nil)
-}
-func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCancellation) (branches []string, unionAllMode, mixed, ok bool) {
-	trimmed := trimSpaceWithCancellation(query, probe)
+	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return nil, false, false, false
 	}
@@ -1345,9 +1313,6 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 	depthBrace := 0
 
 	for i := 0; i < len(trimmed); i++ {
-		if probe != nil && !probe.check() {
-			return nil, false, false, false
-		}
 		ch := trimmed[i]
 		switch ch {
 		case '\'', '"', '`':
@@ -1393,10 +1358,7 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 			all = true
 			j = skipSpaces(trimmed, j+len("ALL"))
 		}
-		seps = appendPipelineItem(seps, sep{pos: i, end: j, all: all}, probe)
-		if probe != nil && probe.err != nil {
-			return nil, false, false, false
-		}
+		seps = append(seps, sep{pos: i, end: j, all: all})
 		i = j - 1
 	}
 
@@ -1408,9 +1370,6 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 	hasDistinct := false
 	hasAll := false
 	for _, s := range seps {
-		if probe != nil && !probe.check() {
-			return nil, false, false, false
-		}
 		if s.all {
 			hasAll = true
 		} else {
@@ -1423,27 +1382,18 @@ func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCan
 	branches = make([]string, 0, util.SafePreallocSum(len(seps), 1))
 	start := 0
 	for _, s := range seps {
-		if probe != nil && !probe.check() {
-			return nil, false, false, false
-		}
-		part := trimSpaceWithCancellation(trimmed[start:s.pos], probe)
+		part := strings.TrimSpace(trimmed[start:s.pos])
 		if part == "" {
 			return nil, false, false, false
 		}
-		branches = appendPipelineItem(branches, part, probe)
-		if probe != nil && probe.err != nil {
-			return nil, false, false, false
-		}
+		branches = append(branches, part)
 		start = s.end
 	}
-	last := trimSpaceWithCancellation(trimmed[start:], probe)
+	last := strings.TrimSpace(trimmed[start:])
 	if last == "" {
 		return nil, false, false, false
 	}
-	branches = appendPipelineItem(branches, last, probe)
-	if probe != nil && probe.err != nil {
-		return nil, false, false, false
-	}
+	branches = append(branches, last)
 	return branches, unionAllMode, mixed, true
 }
 
@@ -1986,36 +1936,20 @@ func callSubqueryQueryIsWrite(query string) bool {
 		findKeywordIndex(query, "REMOVE") >= 0
 }
 
-func isSimpleIdentifier(s string) bool { return isSimpleIdentifierWithCancellation(s, nil) }
-func isSimpleIdentifierWithCancellation(s string, probe *pipelineCancellation) bool {
-	start, end := 0, len(s)
-	for start < end && s[start] == '`' {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		start++
-	}
-	for start < end && s[end-1] == '`' {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		end--
-	}
-	s = trimSpaceWithCancellation(s[start:end], probe)
+func isSimpleIdentifier(s string) bool {
+	s = strings.TrimSpace(strings.Trim(s, "`"))
 	if s == "" {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return false
-		}
+		ch := s[i]
 		if i == 0 {
-			if !isIdentStartByte(s[i]) {
+			if !isIdentStartByte(ch) {
 				return false
 			}
 			continue
 		}
-		if !isIdentByte(s[i]) {
+		if !isIdentByte(ch) {
 			return false
 		}
 	}

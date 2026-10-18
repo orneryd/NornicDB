@@ -613,7 +613,7 @@ func (memberships *compiledRowMemberships) prepareWithCancellation(part *rowPred
 	if part.membership != nil {
 		if value, ok := part.right.resolveScope(scope); ok {
 			if items, ok := cypherListValueWithCancellation(value, probe); ok {
-				comparable, nonComparable, hasNull := part.membership.getValidatedWithCancellation(items, probe)
+				comparable, nonComparable, hasNull := part.membership.getValidated(items)
 				if probe != nil && probe.err != nil {
 					return
 				}
@@ -785,7 +785,7 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		}
 		if indexed {
 			if items, ok := cypherListValueWithCancellation(haystack, probe); ok {
-				comparable, nonComparable, hasNull := part.membership.getValidatedWithCancellation(items, probe)
+				comparable, nonComparable, hasNull := part.membership.getValidated(items)
 				if probe != nil && probe.err != nil {
 					return truthUnknown, probe.err
 				}

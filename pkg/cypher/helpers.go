@@ -44,9 +44,6 @@ func containsKeywordOutsideStrings(s, keyword string) bool {
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
-	return containsOutsideStringsWithCancellation(s, substr, nil)
-}
-func containsOutsideStringsWithCancellation(s, substr string, probe *pipelineCancellation) bool {
 	if substr == "" {
 		return false
 	}
@@ -61,10 +58,6 @@ func containsOutsideStringsWithCancellation(s, substr string, probe *pipelineCan
 	)
 
 	for i := 0; i < len(s); i++ {
-
-		if probe != nil && !probe.check() {
-			return false
-		}
 		c := s[i]
 
 		if inLineComment {
@@ -152,8 +145,8 @@ func containsOutsideStringsWithCancellation(s, substr string, probe *pipelineCan
 		if i+len(substr) > len(s) {
 			return false
 		}
-		if comparePipelineStrings(s[i:i+len(substr)], substr, probe) == 0 {
-			return probe == nil || probe.err == nil
+		if s[i:i+len(substr)] == substr {
+			return true
 		}
 	}
 

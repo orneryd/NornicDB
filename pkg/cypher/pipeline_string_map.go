@@ -40,13 +40,6 @@ type pipelineStringMap[T any] struct {
 func (index *pipelineStringMap[T]) Len() int { return index.size }
 func (index *pipelineStringMap[T]) Clear()   { index.root = nil; index.size = 0 }
 
-// A shared cache borrows work for an operation, never retaining a statement's
-// context on its persistent index. Its caller supplies the cache lock.
-func (index *pipelineStringMap[T]) GetWithCancellation(key string, probe *pipelineCancellation) (T, bool) {
-	borrowed := *index
-	borrowed.probe = probe
-	return borrowed.Get(key)
-}
 func (index *pipelineStringMap[T]) SetWithCancellation(key string, value T, probe *pipelineCancellation) bool {
 	borrowed := *index
 	borrowed.probe = probe
@@ -55,22 +48,6 @@ func (index *pipelineStringMap[T]) SetWithCancellation(key string, value T, prob
 	}
 	index.root, index.size = borrowed.root, borrowed.size
 	return true
-}
-func (index *pipelineStringMap[T]) FirstKeyWithCancellation(probe *pipelineCancellation) (string, bool) {
-	if probe != nil && !probe.check() {
-		return "", false
-	}
-	node := index.root
-	for node != nil && node.bit >= 0 {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
-		node = node.children[0]
-	}
-	if node == nil {
-		return "", false
-	}
-	return node.bucket.first.key, true
 }
 
 func (index *pipelineStringMap[T]) DeleteWithCancellation(key string, probe *pipelineCancellation) bool {

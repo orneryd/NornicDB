@@ -158,7 +158,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 
 	// Bound property expressions use the same row reader as ordinary
 	// projections: a nested "properties" key does not turn a map into an entity.
-	if variable, chain, ok := rowPropertyChainShapeWithCancellation(expr, contextPipelineProbe(ctx)); ok {
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if receiver, bound := values[variable]; bound {
 			visible := e.queryVisibleValue(receiver)
 			value, supported := evaluateRowPropertyChain(visible, chain)
@@ -171,7 +171,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// A bound receiver with a trailing subscript is a row expression. Use
 	// the text reader directly so an unresolved expression cannot recurse
 	// through the compiled fallback into this context reader.
-	if name, end, ok := scanSymbolicNameWithCancellation(expr, 0, contextPipelineProbe(ctx)); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
+	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
 			if value, resolved, err := e.evaluateRowValueText(expr, values); resolved || err != nil {
 				recordExpressionFailure(ctx, err)

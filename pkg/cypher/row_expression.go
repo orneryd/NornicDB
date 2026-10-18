@@ -122,11 +122,11 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			}
 		}()
 	}
-	expr = trimSpaceWithCancellation(expr, probe)
+	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, false, nil
 	}
-	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expr, probe); ok {
+	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
 		return e.evaluateRowValueWithCancellation(inner, values, probe)
 	}
 	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
@@ -155,7 +155,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 	// A plain property chain on a row variable (e.uuid, n.a.b) can't match
 	// any branch below but the property access at the end: resolve it there
 	// directly instead of scanning for literals, operators and subscripts.
-	if variable, chain, ok := rowPropertyChainShapeWithCancellation(expr, probe); ok {
+	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
 			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
 			if !ok {
@@ -195,7 +195,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if inner == "" {
 			return result, true, nil
 		}
-		for _, pair := range splitTopLevelCommaWithCancellation(inner, probe) {
+		for _, pair := range splitTopLevelComma(inner) {
 			if probe != nil && !probe.check() {
 				return nil, false, probe.err
 			}
@@ -203,7 +203,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if separator <= 0 {
 				return nil, false, nil
 			}
-			key := normalizePropertyKey(trimSpaceWithCancellation(pair[:separator], probe))
+			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
 			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(pair[separator+1:]), values, probe)
 			if err != nil {
 				return nil, false, err
@@ -229,7 +229,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if inner == "" {
 			return []interface{}{}, true, nil
 		}
-		items := splitTopLevelCommaWithCancellation(inner, probe)
+		items := splitTopLevelComma(inner)
 		if probe != nil && probe.err != nil {
 			return nil, false, probe.err
 		}
@@ -247,7 +247,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		return value, ok, err
 	}
 
-	if function, argument, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
+	if function, argument, ok := parseFunctionCallWS(expr); ok {
 		var argumentErr error
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
@@ -286,10 +286,10 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
 			return value, resolved, err
 		}
-		if isGDSFunctionName(lowerASCIIWithCancellation(function, probe)) {
+		if isGDSFunctionName(lowerASCII(function)) {
 			return e.evaluateRowGraphFunction(function, argument, values)
 		}
-		switch lowerASCIIWithCancellation(function, probe) {
+		switch lowerASCII(function) {
 		case "exists":
 			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
 				matched, recognized := e.rowPatternPredicate(rowStatementContextOrBackground(values), argument, values)
@@ -320,7 +320,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			// EXISTS subqueries are non-null booleans and end coalesce
 			// immediately. An argument is evaluated only when reached, its
 			// subqueries too (evaluateRowLocalSubqueries).
-			operands := splitTopLevelCommaWithCancellation(argument, probe)
+			operands := splitTopLevelComma(argument)
 			if probe != nil && probe.err != nil {
 				return nil, false, probe.err
 			}
@@ -1153,7 +1153,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if !enclosed {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, projection, matched := parseListComprehensionWithCancellation(inner, probe)
+	variable, listExpression, predicate, projection, matched := parseListComprehension(inner)
 	if !matched {
 		return nil, false, false, nil
 	}
@@ -1215,13 +1215,10 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	return value, true, resolved, err
 }
 
-func parseListComprehension(inner string) (string, string, string, string, bool) {
-	return parseListComprehensionWithCancellation(inner, nil)
-}
-func parseListComprehensionWithCancellation(inner string, probe *pipelineCancellation) (variable, listExpression, predicate, projection string, ok bool) {
+func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
 	// The declaration as every reader reads it (bindingDeclaration): x IN[1]
 	// and x /* … */ IN l too.
-	variable, _, listStart, declared := bindingDeclarationWithCancellation(inner, 0, probe)
+	variable, _, listStart, declared := bindingDeclaration(inner, 0)
 	if !declared {
 		return "", "", "", "", false
 	}
@@ -1235,7 +1232,7 @@ func parseListComprehensionWithCancellation(inner string, probe *pipelineCancell
 	if pipeIndex >= 0 && pipeIndex < endList {
 		endList = pipeIndex
 	}
-	listExpression = trimSpaceWithCancellation(rest[:endList], probe)
+	listExpression = strings.TrimSpace(rest[:endList])
 	if listExpression == "" {
 		return "", "", "", "", false
 	}
@@ -1244,34 +1241,25 @@ func parseListComprehensionWithCancellation(inner string, probe *pipelineCancell
 		if pipeIndex > whereIndex {
 			conditionEnd = pipeIndex
 		}
-		predicate = trimSpaceWithCancellation(rest[whereIndex+len(" WHERE "):conditionEnd], probe)
+		predicate = strings.TrimSpace(rest[whereIndex+len(" WHERE ") : conditionEnd])
 		if predicate == "" {
 			return "", "", "", "", false
 		}
 	}
 	if pipeIndex >= 0 {
-		projection = trimSpaceWithCancellation(rest[pipeIndex+1:], probe)
+		projection = strings.TrimSpace(rest[pipeIndex+1:])
 		if projection == "" {
 			return "", "", "", "", false
 		}
-	}
-	if probe != nil && probe.err != nil {
-		return "", "", "", "", false
 	}
 	return variable, listExpression, predicate, projection, true
 }
 
 func findListComprehensionToken(expression, token string) int {
-	return findListComprehensionTokenWithCancellation(expression, token, nil)
-}
-func findListComprehensionTokenWithCancellation(expression, token string, probe *pipelineCancellation) int {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	var quote rune
 	escaped := false
 	for index, current := range expression {
-		if probe != nil && !probe.check() {
-			return -1
-		}
 		if quote != 0 {
 			if escaped {
 				escaped = false
@@ -1303,10 +1291,7 @@ func findListComprehensionTokenWithCancellation(expression, token string, probe 
 			braceDepth--
 		}
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) &&
-			!insideCaseBlockWithCancellation(expression, index, probe) {
-			if probe != nil && probe.err != nil {
-				return -1
-			}
+			!insideCaseBlock(expression, index) {
 			return index
 		}
 	}
@@ -1335,12 +1320,12 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if len(budgets) > 0 {
 		probe = budgets[0]
 	}
-	function, inner, isFunction := parseFunctionCallWSWithCancellation(expr, probe)
+	function, inner, isFunction := parseFunctionCallWS(expr)
 	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, parsed := parseQuantifierArgumentsWithCancellation(inner, probe)
+	variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
 	if !parsed {
 		return nil, true, false, nil
 	}
@@ -1512,18 +1497,12 @@ func nextRowPropertySeparator(chain string, start int) int {
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
-	return stripEnclosingExpressionParenthesesWithCancellation(expr, nil)
-}
-func stripEnclosingExpressionParenthesesWithCancellation(expr string, probe *pipelineCancellation) (string, bool) {
 	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
 		return "", false
 	}
 	depth := 0
 	quote := byte(0)
 	for i := 0; i < len(expr); i++ {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
 		character := expr[i]
 		if quote != 0 {
 			if character == quote && !isBackslashEscaped(expr, i) {
@@ -1551,8 +1530,7 @@ func stripEnclosingExpressionParenthesesWithCancellation(expr string, probe *pip
 	if depth != 0 || quote != 0 {
 		return "", false
 	}
-	inner := trimSpaceWithCancellation(expr[1:len(expr)-1], probe)
-	return inner, probe == nil || probe.err == nil
+	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
 
 // stripEnclosingRowDelimiter returns the inside of expr when expr is one
@@ -1710,7 +1688,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// prefix from those recognizers, silently falling through to the
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
-	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	strictLogical := rowPredicateIsStrictLogical(expression)

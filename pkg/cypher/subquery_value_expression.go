@@ -83,21 +83,15 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 // subquery expression starts at expr[i]: the keyword, then its body's '{'
 // (at open). It is the one reader of where a subquery expression starts.
 func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
-	return subqueryExpressionKeywordAtWithCancellation(expr, i, nil)
-}
-func subqueryExpressionKeywordAtWithCancellation(expr string, i int, probe *pipelineCancellation) (keyword string, open int, ok bool) {
 	if i < 0 || i > len(expr) || i > 0 && isIdentByte(expr[i-1]) {
 		return "", 0, false
 	}
 	for _, keyword := range subqueryExpressionKeywords {
-		if probe != nil && !probe.check() {
-			return "", 0, false
-		}
-		end, matched := keywordMatchAtWithCancellation(expr, i, keyword, 0, len(keyword), probe)
+		end, matched := keywordMatchAt(expr, i, keyword, 0, len(keyword))
 		if !matched {
 			continue
 		}
-		if open := queryGapEndWithCancellation(expr, end, probe); open < len(expr) && expr[open] == '{' && (probe == nil || probe.err == nil) && subqueryExpressionKeywordBeforeBraceWithCancellation(expr, i, end, open, probe) {
+		if open := queryGapEnd(expr, end); open < len(expr) && expr[open] == '{' && subqueryExpressionKeywordBeforeBrace(expr, i, end, open) {
 			return keyword, open, true
 		}
 	}

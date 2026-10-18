@@ -52,26 +52,26 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
 	preparationProbe := parameterCancellationForContext(ctx)
-	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
+	cypher = normalizeCypherSyntaxConfusables(cypher)
 	if preparationProbe != nil && preparationProbe.err != nil {
 		return nil, preparationProbe.err
 	}
 	if config.IsCypherQueryNormalizationEnabled() {
-		cypher, _ = canonicalizeQueryTextWithCancellation(cypher, preparationProbe)
+		cypher, _ = canonicalizeQueryText(cypher)
 		if preparationProbe != nil && preparationProbe.err != nil {
 			return nil, preparationProbe.err
 		}
 	}
-	cypher, _ = canonicalizeNumericLiteralsWithCancellation(cypher, preparationProbe)
+	cypher, _ = canonicalizeNumericLiterals(cypher)
 	if preparationProbe != nil && preparationProbe.err != nil {
 		return nil, preparationProbe.err
 	}
-	cypher, _ = canonicalizeFunctionAliasesWithCancellation(cypher, preparationProbe)
+	cypher, _ = canonicalizeFunctionAliases(cypher)
 	if preparationProbe != nil && preparationProbe.err != nil {
 		return nil, preparationProbe.err
 	}
 	if cypherVersionFromContext(ctx) == "25" {
-		cypher, _ = separateCypher25ParametersWithCancellation(cypher, preparationProbe)
+		cypher, _ = separateCypher25Parameters(cypher)
 		if preparationProbe != nil && preparationProbe.err != nil {
 			return nil, preparationProbe.err
 		}
@@ -83,12 +83,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
-	if err := e.validateStatementFramingWithCancellation(cypher, preparationProbe); err != nil {
+	if err := e.validateStatementFraming(cypher); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishesWithCancellation(cypher, preparationProbe); ok {
-		cypher = trimSpaceWithCancellation(stripped, preparationProbe)
+	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
 	}
@@ -160,7 +160,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
-	upper := e.cachedUpperQueryWithCancellation(cypher, preparationProbe)
+	upper := e.cachedUpperQuery(cypher)
 	if preparationProbe != nil && preparationProbe.err != nil {
 		return nil, preparationProbe.err
 	}

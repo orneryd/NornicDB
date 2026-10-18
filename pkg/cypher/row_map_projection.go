@@ -78,7 +78,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 	if inner == "" {
 		return result, true, true, nil
 	}
-	for _, rawItem := range splitTopLevelCommaWithCancellation(inner, probe) {
+	for _, rawItem := range splitTopLevelComma(inner) {
 		if probe != nil && !probe.check() {
 			return nil, true, false, probe.err
 		}
@@ -96,7 +96,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 				result[name] = value
 			}
 		case strings.HasPrefix(item, "."):
-			name, selector := mapProjectionPropertySelectorWithCancellation(item, probe)
+			name, selector := mapProjectionPropertySelector(item)
 			if !selector {
 				return nil, true, false, nil
 			}
@@ -142,19 +142,12 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 // mapProjectionPropertySelector reads a map projection's property selector,
 // .name or .`quoted name`, and returns the property key (unquoted).
 func mapProjectionPropertySelector(item string) (string, bool) {
-	return mapProjectionPropertySelectorWithCancellation(item, nil)
-}
-func mapProjectionPropertySelectorWithCancellation(item string, probe *pipelineCancellation) (string, bool) {
-	if probe != nil && !probe.check() {
-		return "", false
-	}
-
-	name := trimSpaceWithCancellation(strings.TrimPrefix(trimSpaceWithCancellation(item, probe), "."), probe)
+	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
 	switch {
-	case isValidIdentifierWithCancellation(name, probe):
+	case isValidIdentifier(name):
 		return name, true
-	case isBacktickQuotedNameWithCancellation(name, probe):
-		return normalizePropertyKeyWithCancellation(name, probe), true
+	case isBacktickQuotedName(name):
+		return normalizePropertyKey(name), true
 	}
 	return "", false
 }

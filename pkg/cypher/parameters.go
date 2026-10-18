@@ -159,17 +159,11 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 // reference (#701). A quoted parameter name ($`a b`) is made plain by
 // canonicalizeQuotedVariables before any scan.
 func scanParameterReferences(query string, visit func(dollar, start, end int)) {
-	scanParameterReferencesWithCancellation(query, visit, nil)
-}
-func scanParameterReferencesWithCancellation(query string, visit func(dollar, start, end int), probe *pipelineCancellation) {
-	if indexByteWithCancellation(query, '$', probe) < 0 {
+	if strings.IndexByte(query, '$') < 0 {
 		return
 	}
-	quoted := containsQuoteCharacterWithCancellation(query, probe)
+	quoted := containsQuoteCharacter(query)
 	for i := 0; i < len(query); {
-		if probe != nil && !probe.check() {
-			return
-		}
 		next := nextUnquotedDollar(query, i, quoted)
 		if next < 0 {
 			return
@@ -189,9 +183,6 @@ func scanParameterReferencesWithCancellation(query string, visit func(dollar, st
 		}
 		end := start + 1
 		for end < len(query) && isIdentByte(query[end]) {
-			if probe != nil && !probe.check() {
-				return
-			}
 			end++
 		}
 		if dynamicLabelStartsAt(query, next) {
@@ -200,9 +191,6 @@ func scanParameterReferencesWithCancellation(query string, visit func(dollar, st
 			continue
 		}
 		visit(next, start, end)
-		if probe != nil && probe.err != nil {
-			return
-		}
 		i = end
 	}
 }
@@ -213,32 +201,20 @@ func containsQuoteCharacter(query string) bool {
 	return strings.IndexByte(query, '\'') >= 0 || strings.IndexByte(query, '"') >= 0 || strings.IndexByte(query, '`') >= 0
 }
 
-func containsQuoteCharacterWithCancellation(query string, probe *pipelineCancellation) bool {
-	if probe == nil {
-		return containsQuoteCharacter(query)
-	}
-	return indexAnyWithCancellation(query, "'\"`", probe) >= 0
-}
 
 // nextUnquotedDollar is the offset of the first '$' at or after from that
 // isn't inside a string literal or a backtick-quoted name, or -1. Without
 // quote characters (quoted false) the single-byte search is much faster
 // than IndexAny.
 func nextUnquotedDollar(query string, from int, quoted bool) int {
-	return nextUnquotedDollarWithCancellation(query, from, quoted, nil)
-}
-func nextUnquotedDollarWithCancellation(query string, from int, quoted bool, probe *pipelineCancellation) int {
 	for from < len(query) {
-		if probe != nil && !probe.check() {
-			return -1
-		}
 		if !quoted {
-			if next := indexByteWithCancellation(query[from:], '$', probe); next >= 0 {
+			if next := strings.IndexByte(query[from:], '$'); next >= 0 {
 				return from + next
 			}
 			return -1
 		}
-		next := indexAnyWithCancellation(query[from:], "$'\"`", probe)
+		next := strings.IndexAny(query[from:], "$'\"`")
 		if next < 0 {
 			return -1
 		}
@@ -246,7 +222,7 @@ func nextUnquotedDollarWithCancellation(query string, from int, quoted bool, pro
 		if query[next] == '$' {
 			return next
 		}
-		from = skipCypherQuotedText(query, next, query[next])
+		from = skipQuotedText(query, next)
 	}
 	return -1
 }
@@ -259,10 +235,7 @@ func nextUnquotedDollarWithCancellation(query string, from int, quoted bool, pro
 // the scanners, written for Cypher 5, where '$' goes on a name (a$b,
 // isParameterStart), then read a parameter there too.
 func separateCypher25Parameters(query string) (string, *queryRewrite) {
-	return separateCypher25ParametersWithCancellation(query, nil)
-}
-func separateCypher25ParametersWithCancellation(query string, probe *pipelineCancellation) (string, *queryRewrite) {
-	if indexByteWithCancellation(query, '$', probe) < 0 {
+	if strings.IndexByte(query, '$') < 0 {
 		return query, nil
 	}
 	var (
@@ -270,39 +243,25 @@ func separateCypher25ParametersWithCancellation(query string, probe *pipelineCan
 		out     strings.Builder
 		last    int
 	)
-	quoted := containsQuoteCharacterWithCancellation(query, probe)
-	for i := nextUnquotedDollarWithCancellation(query, 0, quoted, probe); i >= 0; i = nextUnquotedDollarWithCancellation(query, i+1, quoted, probe) {
-		if probe != nil && !probe.check() {
-			return query, nil
-		}
+	quoted := containsQuoteCharacter(query)
+	for i := nextUnquotedDollar(query, 0, quoted); i >= 0; i = nextUnquotedDollar(query, i+1, quoted) {
 		if isParameterStart(query, i) {
 			continue
 		}
 		if rewrite == nil {
 			rewrite = &queryRewrite{original: query}
-			if !reservePipelineString(&out, len(query)+4, probe) {
-				return query, nil
-			}
+			out.Grow(len(query) + 4)
 		}
-		if !appendPipelineString(&out, query[last:i], probe) {
-			return query, nil
-		}
+		out.WriteString(query[last:i])
 		canonStart := out.Len()
-		if !appendPipelineString(&out, " $", probe) {
-			return query, nil
-		}
-		rewrite.edits = appendPipelineItem(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()}, probe)
-		if probe != nil && probe.err != nil {
-			return query, nil
-		}
+		out.WriteString(" $")
+		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()})
 		last = i + 1
 	}
 	if rewrite == nil {
 		return query, nil
 	}
-	if !appendPipelineString(&out, query[last:], probe) {
-		return query, nil
-	}
+	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
 	return rewrite.canonical, rewrite
 }
@@ -312,12 +271,9 @@ func separateCypher25ParametersWithCancellation(query string, probe *pipelineCan
 // end), and writes the returned text in its place when ok is true, or keeps
 // the reference.
 func replaceParameterReferences(query string, replace func(name string, next byte) (string, bool)) string {
-	return replaceParameterReferencesWithCancellation(query, replace, nil)
-}
-func replaceParameterReferencesWithCancellation(query string, replace func(name string, next byte) (string, bool), probe *pipelineCancellation) string {
 	var result strings.Builder
 	last := 0
-	scanParameterReferencesWithCancellation(query, func(dollar, start, end int) {
+	scanParameterReferences(query, func(dollar, start, end int) {
 		var following byte
 		if end < len(query) {
 			following = query[end]
@@ -327,26 +283,16 @@ func replaceParameterReferencesWithCancellation(query string, replace func(name 
 			return
 		}
 		if last == 0 {
-			if probe == nil {
-				result.Grow(len(query))
-			} else if !reservePipelineString(&result, min(len(query), 128), probe) {
-				return
-			}
+			result.Grow(len(query))
 		}
-		if !appendPipelineString(&result, query[last:dollar], probe) || !appendPipelineString(&result, replacement, probe) {
-			return
-		}
+		result.WriteString(query[last:dollar])
+		result.WriteString(replacement)
 		last = end
-	}, probe)
-	if probe != nil && probe.err != nil {
-		return ""
-	}
+	})
 	if last == 0 {
 		return query
 	}
-	if !appendPipelineString(&result, query[last:], probe) {
-		return ""
-	}
+	result.WriteString(query[last:])
 	return result.String()
 }
 

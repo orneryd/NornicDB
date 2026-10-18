@@ -161,7 +161,7 @@ func TestPipelineStringMapSharedOperationsAndDeletion(t *testing.T) {
 	defer cancel()
 	probe := &pipelineCancellation{ctx: ctx}
 	index := pipelineStringMap[int]{}
-	_, found := index.FirstKeyWithCancellation(probe)
+	_, found := index.FirstKey()
 	require.False(t, found)
 	require.False(t, index.DeleteWithCancellation("missing", probe))
 	for i := 0; i < 1000; i++ {
@@ -169,13 +169,13 @@ func TestPipelineStringMapSharedOperationsAndDeletion(t *testing.T) {
 	}
 	require.Nil(t, index.probe, "persistent cache must not retain query work")
 	require.Equal(t, 1000, index.Len())
-	first, found := index.FirstKeyWithCancellation(probe)
+	first, found := index.FirstKey()
 	require.True(t, found)
 	_, found = index.Get(first)
 	require.True(t, found)
 	require.False(t, index.DeleteWithCancellation("missing", probe))
 	for i := 0; i < 1000; i++ {
-		value, ok := index.GetWithCancellation(fmt.Sprint(i), probe)
+		value, ok := index.Get(fmt.Sprint(i))
 		require.True(t, ok)
 		require.Equal(t, i, value)
 		require.True(t, index.DeleteWithCancellation(fmt.Sprint(i), probe))
@@ -188,9 +188,9 @@ func TestPipelineStringMapSharedOperationsAndDeletion(t *testing.T) {
 	cancel()
 	probe.remaining = 1
 	require.False(t, index.SetWithCancellation("cancelled", 3, probe))
-	_, found = index.GetWithCancellation("same", probe)
+	_, found = index.Get("same")
 	require.False(t, found)
-	_, found = index.FirstKeyWithCancellation(probe)
+	_, found = index.FirstKey()
 	require.False(t, found)
 	require.False(t, index.DeleteWithCancellation("same", probe))
 	require.Equal(t, 1, index.Len())

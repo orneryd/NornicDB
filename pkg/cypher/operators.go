@@ -77,23 +77,17 @@ func asciiLowerByte(b byte) byte {
 }
 
 func equalFoldASCII(text, other string) bool {
-	return equalFoldASCIIWithCancellation(text, other, nil)
-}
-
-func equalFoldASCIIWithCancellation(text, other string, probe *pipelineCancellation) bool {
 	if len(text) != len(other) {
 		return false
 	}
 	for i := 0; i < len(text); i++ {
-		if probe != nil && !probe.check() {
-			return false
-		}
 		if asciiLowerByte(text[i]) != asciiLowerByte(other[i]) {
 			return false
 		}
 	}
 	return true
 }
+
 
 func hasPrefixFoldASCII(text, prefix string) bool {
 	return len(text) >= len(prefix) && equalFoldASCII(text[:len(prefix)], prefix)
@@ -254,30 +248,16 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 // clauses after it; and inside a bracket or a subquery's braces within the
 // block (THEN COLLECT { MATCH … }) a clause can start, so nothing there is
 // the block's.
-func insideCaseBlock(s string, at int) bool { return insideCaseBlockWithCancellation(s, at, nil) }
-func insideCaseBlockWithCancellation(s string, at int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
+func insideCaseBlock(s string, at int) bool {
 	end := enclosingCaseBlockEnd(s, at)
-	return end >= 2 && caseKeywordAtWithCancellation(s, end-2, "END", probe) && bracketDepthAtWithCancellation(s, at, probe) == 0
+	return end >= 2 && caseKeywordAt(s, end-2, "END") && bracketDepthAt(s, at) == 0
 }
 
 // bracketDepthAt is the number of brackets, parentheses and braces open at
 // s[at], outside quotes and backtick names.
-func bracketDepthAt(s string, at int) int { return bracketDepthAtWithCancellation(s, at, nil) }
-func bracketDepthAtWithCancellation(s string, at int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return 0
-	}
-
+func bracketDepthAt(s string, at int) int {
 	depth := 0
 	for i := 0; i < at && i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return 0
-		}
-
 		switch c := s[i]; c {
 		case '\'', '"', '`':
 			i = skipCypherQuotedText(s, i, c) - 1
@@ -295,20 +275,9 @@ func bracketDepthAtWithCancellation(s string, at int, probe *pipelineCancellatio
 // inside one. A CASE counts only outside quotes, backtick names, brackets and
 // property access (n.case); an unterminated CASE extends to the end of expr.
 func enclosingCaseBlockEnd(expr string, at int) int {
-	return enclosingCaseBlockEndWithCancellation(expr, at, nil)
-}
-func enclosingCaseBlockEndWithCancellation(expr string, at int, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
 	depth, nest := 0, 0
 	var quote byte
 	for i := 0; i < len(expr); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		if i >= at && depth == 0 {
 			return -1
 		}
@@ -330,10 +299,10 @@ func enclosingCaseBlockEndWithCancellation(expr string, at int, probe *pipelineC
 			if nest != 0 || (i > 0 && expr[i-1] == '.') {
 				continue
 			}
-			if c|0x20 == 'c' && caseKeywordAtWithCancellation(expr, i, "CASE", probe) {
+			if c|0x20 == 'c' && caseKeywordAt(expr, i, "CASE") {
 				depth++
 				i += len("CASE") - 1
-			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAtWithCancellation(expr, i, "END", probe) {
+			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(expr, i, "END") {
 				depth--
 				i += len("END") - 1
 				if depth == 0 && i >= at {

@@ -30,7 +30,7 @@ func TestStageBValidatorReplayDiagnostic(t *testing.T) {
 			if p == nil {
 				return e.validateSyntaxNornic(q)
 			}
-			return e.validateSyntaxNornicWithCancellation(q, p)
+			return e.validateSyntaxNornic(q)
 		}},
 		{"antlr", 449, func(e *StorageExecutor, q string, p *pipelineCancellation) error {
 			if p == nil {

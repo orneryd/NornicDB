@@ -268,14 +268,8 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 // a named pattern comprehension's head, for localBindingAt,
 // patternComprehensionHead and the quoted-variable classifier.
 func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
-	return namedPathDeclarationWithCancellation(text, from, nil)
-}
-func namedPathDeclarationWithCancellation(text string, from int, probe *pipelineCancellation) (name string, at, pattern int, ok bool) {
-	if probe != nil && !probe.check() {
-		return "", 0, 0, false
-	}
 	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
+	name, end, ok := scanIdentifierToken(text, at)
 	if !ok {
 		return "", 0, 0, false
 	}
@@ -297,14 +291,8 @@ func namedPathDeclarationWithCancellation(text string, from int, probe *pipeline
 // (localBindingAt) and the evaluators (parseListComprehension,
 // parseQuantifierArguments).
 func bindingDeclaration(text string, from int) (name string, at, list int, ok bool) {
-	return bindingDeclarationWithCancellation(text, from, nil)
-}
-func bindingDeclarationWithCancellation(text string, from int, probe *pipelineCancellation) (name string, at, list int, ok bool) {
-	if probe != nil && !probe.check() {
-		return "", 0, 0, false
-	}
 	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
+	name, end, ok := scanIdentifierToken(text, at)
 	if !ok {
 		return "", 0, 0, false
 	}
@@ -774,7 +762,7 @@ func isCypherListParameter(value interface{}) bool {
 // runtime validation by the row evaluator.
 func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, expression string) error {
 	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.validateStaticBooleanOperands(ctx, inner)
 	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
@@ -817,7 +805,7 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 
 func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, expression string) (interface{}, bool) {
 	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
+	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		expression = inner
 	}
 	if value, literal := parseLiteralValueFromComputedRow(expression); literal {

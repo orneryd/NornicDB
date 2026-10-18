@@ -459,31 +459,11 @@ func topLevelColonIndex(input string) int {
 }
 
 func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams map[string]interface{}) map[string]interface{} {
-	probe := parameterCancellationForContext(ctx)
-	// The narrow lock scope is defer-owned because copying now polls the
-	// statement. No callback can strand the shared shell-parameter lock.
-	merged, shellLen := func() (map[string]interface{}, int) {
-		if !lockQueryTextCache(&e.shellParamsMu, true, probe) {
-			return nil, 0
-		}
-		defer e.shellParamsMu.RUnlock()
-		shell := e.shellParamsFor(ctx)
-		if len(shell) == 0 {
-			return nil, 0
-		}
-		out := make(map[string]interface{}, util.SafePreallocSum(len(shell), len(explicitParams)))
-		for key, value := range shell {
-			if probe != nil && !probe.check() {
-				return nil, 0
-			}
-			out[key] = value
-		}
-		return out, len(shell)
-	}()
-	if probe != nil && probe.err != nil {
-		return nil
-	}
+	shell := e.shellParamsFor(ctx)
+	e.shellParamsMu.RLock()
+	shellLen := len(shell)
 	if shellLen == 0 {
+		e.shellParamsMu.RUnlock()
 		if len(explicitParams) == 0 {
 			return nil
 		}
@@ -491,10 +471,13 @@ func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams m
 		return explicitParams
 	}
 
+	merged := make(map[string]interface{}, util.SafePreallocSum(shellLen, len(explicitParams)))
+	for key, value := range shell {
+		merged[key] = value
+	}
+	e.shellParamsMu.RUnlock()
+
 	for key, value := range explicitParams {
-		if probe != nil && !probe.check() {
-			return nil
-		}
 		merged[key] = value
 	}
 	return merged

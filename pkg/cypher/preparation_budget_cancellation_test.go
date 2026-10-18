@@ -84,18 +84,18 @@ func TestParameterPreparationBudgetBoundaries(t *testing.T) {
 		{"normalize", func(_ context.Context, p *pipelineCancellation) { normalizeQueryParametersWithCancellation(fields, p) }},
 		{"row", func(_ context.Context, p *pipelineCancellation) { parameterRowValueWithCancellation(fields, p) }},
 		{"separate_cypher25", func(_ context.Context, p *pipelineCancellation) {
-			separateCypher25ParametersWithCancellation(strings.Repeat("L$props ", 129), p)
+			separateCypher25Parameters(strings.Repeat("L$props ", 129))
 		}},
 		{"rewrite_get", func(_ context.Context, p *pipelineCancellation) {
 			query := "RETURN " + strings.Repeat("x ", 4096)
 			markRewriteFree(rewriteFreeFunctionAliases, false, query)
-			rewriteFreeWithCancellation(rewriteFreeFunctionAliases, false, query, p)
+			rewriteFree(rewriteFreeFunctionAliases, false, query)
 		}},
 		{"rewrite_put", func(_ context.Context, p *pipelineCancellation) {
-			markRewriteFreeWithCancellation(rewriteFreeCypher25Expressions, true, "RETURN "+strings.Repeat("x ", 4096), p)
+			markRewriteFree(rewriteFreeCypher25Expressions, true, "RETURN "+strings.Repeat("x ", 4096))
 		}},
 		{"aliases", func(_ context.Context, p *pipelineCancellation) {
-			canonicalizeFunctionAliasesWithCancellation("RETURN property_exists(n,`"+strings.Repeat("a'\\", 257)+"`),"+strings.Repeat("ln(2),", 257)+"ln(2)", p)
+			canonicalizeFunctionAliases("RETURN property_exists(n,`"+strings.Repeat("a'\\", 257)+"`),"+strings.Repeat("ln(2),", 257)+"ln(2)")
 		}},
 	} {
 		t.Run(stage.name, func(t *testing.T) { runPreparationBudgetSweep(t, stage.run) })

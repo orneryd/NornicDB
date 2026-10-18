@@ -96,7 +96,7 @@ func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool
 
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
-	for at := skipASCIISpacesWithCancellation(pattern, 0, len(pattern), contextPipelineProbe(ctx)); at < len(pattern); at = skipASCIISpacesWithCancellation(pattern, at, len(pattern), contextPipelineProbe(ctx)) {
+	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
 		if ctx.Err() != nil {
 			return nil, false
 		}

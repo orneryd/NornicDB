@@ -1,17 +1,10 @@
 package cypher
 
 import (
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
-func trimSpaceWithCancellation(text string, probe *pipelineCancellation) string {
-	if probe == nil {
-		return strings.TrimSpace(text)
-	}
-	return trimPipelineCharacters(text, "", true, true, probe)
-}
 
 func trimPipelineCharacters(text, cutset string, leading, trailing bool, probe *pipelineCancellation) string {
 	characters := map[rune]struct{}{}

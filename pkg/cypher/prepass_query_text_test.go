@@ -23,37 +23,37 @@ func TestPrepassCanonicalQueryParityAndReplay(t *testing.T) {
 	for _, query := range append(prepassFixtureQueries, prepassCanonicalFixtures...) {
 		want, wantRewrite := canonicalizeQueryText(query)
 		p := &pipelineCancellation{ctx: context.Background()}
-		got, gotRewrite := canonicalizeQueryTextWithCancellation(query, p)
+		got, gotRewrite := canonicalizeQueryText(query)
 		require.Equal(t, want, got, query)
 		require.Equal(t, wantRewrite, gotRewrite, query)
-		require.Equal(t, StripComments(query), StripCommentsWithCancellation(query, p))
-		require.Equal(t, classificationText(query), classificationTextWithCancellation(query, p))
-		require.Equal(t, hasOwnStatementSyntax(query), hasOwnStatementSyntaxWithCancellation(query, p))
-		require.Equal(t, leadingShellCommandsEnd(query), leadingShellCommandsEndWithCancellation(query, p))
-		require.Equal(t, queryMayNeedCanonicalRewrite(query), queryMayNeedCanonicalRewriteWithCancellation(query, p))
-		require.Equal(t, commentReplacement(query), commentReplacementWithCancellation(query, p))
+		require.Equal(t, StripComments(query), StripComments(query))
+		require.Equal(t, classificationText(query), classificationText(query))
+		require.Equal(t, hasOwnStatementSyntax(query), hasOwnStatementSyntax(query))
+		require.Equal(t, leadingShellCommandsEnd(query), leadingShellCommandsEnd(query))
+		require.Equal(t, queryMayNeedCanonicalRewrite(query), queryMayNeedCanonicalRewrite(query))
+		require.Equal(t, commentReplacement(query), commentReplacement(query))
 		require.NoError(t, p.err)
 		for _, run := range []func(*pipelineCancellation){
 			func(p *pipelineCancellation) {
-				text, rewrite := canonicalizeQueryTextWithCancellation(query, p)
+				text, rewrite := canonicalizeQueryText(query)
 				if p.err != nil {
 					require.Empty(t, text)
 					require.Nil(t, rewrite)
 				}
 			},
 			func(p *pipelineCancellation) {
-				text, rewrite := scanCanonicalQueryTextWithCancellation(query, p)
+				text, rewrite := scanCanonicalQueryText(query)
 				if p.err != nil {
 					require.Empty(t, text)
 					require.Nil(t, rewrite)
 				}
 			},
-			func(p *pipelineCancellation) { _ = StripCommentsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = hasOwnStatementSyntaxWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = leadingShellCommandsEndWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = queryMayNeedCanonicalRewriteWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = commentReplacementWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = inPatternClauseWithCancellation(query, len(query), p) },
+			func(p *pipelineCancellation) { _ = StripComments(query) },
+			func(p *pipelineCancellation) { _ = hasOwnStatementSyntax(query) },
+			func(p *pipelineCancellation) { _ = leadingShellCommandsEnd(query) },
+			func(p *pipelineCancellation) { _ = queryMayNeedCanonicalRewrite(query) },
+			func(p *pipelineCancellation) { _ = commentReplacement(query) },
+			func(p *pipelineCancellation) { _ = inPatternClause(query, len(query)) },
 		} {
 			replayPrepassWork(t, run)
 		}
@@ -71,14 +71,14 @@ func TestPrepassCanonicalMemoBypass(t *testing.T) {
 	// leaves the memo alone.
 	ctx := &pipelineCountingContext{Context: context.Background(), stop: 1}
 	p := &pipelineCancellation{ctx: withExpressionFailureSlot(ctx)}
-	text, rewrite := canonicalizeQueryTextWithCancellation(query, p)
+	text, rewrite := canonicalizeQueryText(query)
 	require.ErrorIs(t, p.err, context.Canceled)
 	require.Empty(t, text)
 	require.Nil(t, rewrite)
 	require.Same(t, memo, canonicalRewrites.slot(query).Load(), "cancelled scan cannot publish or replace memo")
 	p = &pipelineCancellation{ctx: context.Background()}
 	// A live statement reuses the memo through the probe-checked lookup.
-	_, fresh := canonicalizeQueryTextWithCancellation(query, p)
+	_, fresh := canonicalizeQueryText(query)
 	require.NoError(t, p.err)
 	require.Equal(t, memo, fresh)
 	require.Same(t, memo, canonicalRewrites.slot(query).Load())
@@ -89,7 +89,7 @@ func TestPrepassCanonicalLongInnerWork(t *testing.T) {
 	for _, query := range []string{long, "/*" + long + "*/ RETURN 1", ":USE " + long, "CREATE " + long, "RETURN '" + long + "'", "MATCH (" + long + ") - > (b) RETURN b"} {
 		ctx := &pipelineCountingContext{Context: context.Background(), stop: 2}
 		p := &pipelineCancellation{ctx: ctx}
-		text, rewrite := canonicalizeQueryTextWithCancellation(query, p)
+		text, rewrite := canonicalizeQueryText(query)
 		require.ErrorIs(t, p.err, context.Canceled)
 		require.Empty(t, text)
 		require.Nil(t, rewrite)
@@ -120,7 +120,7 @@ func BenchmarkPrepassCanonicalRewrite(b *testing.B) {
 					if checked {
 						p = &pipelineCancellation{ctx: ctx}
 					}
-					prepassCanonicalBenchmarkSink, _ = canonicalizeQueryTextWithCancellation(query, p)
+					prepassCanonicalBenchmarkSink, _ = canonicalizeQueryText(query)
 				}
 			})
 		}

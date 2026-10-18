@@ -206,14 +206,11 @@ func splitUnwindBody(body string) (list, alias string, ok bool) {
 // pipelineClauseBody is a clause's text after its keyword, which the
 // clause splitter matched in any letter case (Return, rEtUrN).
 func pipelineClauseBody(text, keyword string) string {
-	return pipelineClauseBodyWithCancellation(text, keyword, nil)
-}
-func pipelineClauseBodyWithCancellation(text, keyword string, probe *pipelineCancellation) string {
-	text = trimSpaceWithCancellation(text, probe)
+	text = strings.TrimSpace(text)
 	if len(text) >= len(keyword) && strings.EqualFold(text[:len(keyword)], keyword) {
 		text = text[len(keyword):]
 	}
-	return trimSpaceWithCancellation(text, probe)
+	return strings.TrimSpace(text)
 }
 
 // pipelineClauseSplits caches parsePipelineClauses by statement text: one
@@ -458,13 +455,6 @@ func pipelineApplyOptionally(ctx context.Context, rows []pipelineRow, apply func
 // EXISTS { MATCH ... } belongs to the predicate and must never become a new
 // outer pipeline clause.
 func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
-	return findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword, nil)
-}
-func findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword string, probe *pipelineCancellation) []int {
-	if probe != nil && !probe.check() {
-		return nil
-	}
-
 	// Allocated on the first match: most scans find nothing.
 	var positions []int
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
@@ -476,10 +466,6 @@ func findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword stri
 	// most positions cost one byte comparison instead of an EqualFold call.
 	first := asciiUpper(keyword[0])
 	for i := 0; i < len(query); i++ {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-
 		character := query[i]
 		switch character {
 		case '\'', '"', '`':
@@ -997,7 +983,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			ok := true
 			var err error
 			if clause.optional {
-				body, _, _, _ := e.parseCallSubqueryWithCancellation(clause.text, cancellation)
+				body, _, _, _ := e.parseCallSubquery(clause.text)
 				if cancellation.err != nil {
 					return nil, true, cancellation.err
 				}
@@ -1102,7 +1088,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		output.wrote = wrote
 	}
 	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
-		body, _, _, _ := e.parseCallSubqueryWithCancellation(clauses[len(clauses)-1].text, cancellation)
+		body, _, _, _ := e.parseCallSubquery(clauses[len(clauses)-1].text)
 		if cancellation.err != nil {
 			return nil, true, cancellation.err
 		}

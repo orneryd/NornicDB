@@ -13,7 +13,7 @@ func TestExpressionReaderBudgetBoundaries(t *testing.T) {
 	for _, text := range []string{"", "x", "a.b", "a..b", "(1)", "((1))", "(1)+2", "['a''b']", "['unterminated]", "CASE WHEN true THEN 'END' ELSE 1 END", "CASE x WHEN 1 THEN CASE y WHEN 2 THEN 3 END END+1", "collect('" + strings.Repeat("\\", 130) + "')", "[x IN [1,2] WHERE x>1 | x+1]"} {
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
 			want, wok := stripEnclosingExpressionParentheses(text)
-			actual, ok := stripEnclosingExpressionParenthesesWithCancellation(text, p)
+			actual, ok := stripEnclosingExpressionParentheses(text)
 			if p.err == nil {
 				require.Equal(t, want, actual)
 				require.Equal(t, wok, ok)
@@ -29,7 +29,7 @@ func TestExpressionReaderBudgetBoundaries(t *testing.T) {
 		})
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
 			name, inner, ok := parseFunctionCallWS(text)
-			n, i, o := parseFunctionCallWSWithCancellation(text, p)
+			n, i, o := parseFunctionCallWS(text)
 			if p.err == nil {
 				require.Equal(t, name, n)
 				require.Equal(t, inner, i)
@@ -38,7 +38,7 @@ func TestExpressionReaderBudgetBoundaries(t *testing.T) {
 		})
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
 			want := leadingCaseExpressionEnd(text)
-			actual := leadingCaseExpressionEndWithCancellation(text, p)
+			actual := leadingCaseExpressionEnd(text)
 			if p.err == nil {
 				require.Equal(t, want, actual)
 			}
@@ -47,7 +47,7 @@ func TestExpressionReaderBudgetBoundaries(t *testing.T) {
 	for _, text := range []string{"x IN [1,2]", "x IN [1,2] WHERE x>1 | x", "x IN [CASE WHEN true THEN 1 ELSE 2 END] | x", "x IN xs WHERE ", "x IN xs | ", "x IN ", "x", "x /*comment*/ IN '" + strings.Repeat("x", 129) + "' | x"} {
 		v, l, w, r, ok := parseListComprehension(text)
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-			a, b, c, d, o := parseListComprehensionWithCancellation(text, p)
+			a, b, c, d, o := parseListComprehension(text)
 			if p.err == nil {
 				require.Equal(t, v, a)
 				require.Equal(t, l, b)
@@ -65,13 +65,13 @@ func TestExpressionReaderContextDeadlines(t *testing.T) {
 		name, text string
 		run        func(string, *pipelineCancellation)
 	}{
-		{"function", "collect('" + large + "')", func(s string, p *pipelineCancellation) { parseFunctionCallWSWithCancellation(s, p) }},
-		{"parentheses", "('" + large + "')", func(s string, p *pipelineCancellation) { stripEnclosingExpressionParenthesesWithCancellation(s, p) }},
+		{"function", "collect('" + large + "')", func(s string, p *pipelineCancellation) { parseFunctionCallWS(s) }},
+		{"parentheses", "('" + large + "')", func(s string, p *pipelineCancellation) { stripEnclosingExpressionParentheses(s) }},
 		{"list", "['" + large + "']", func(s string, p *pipelineCancellation) { stripEnclosingRowDelimiterWithCancellation(s, '[', ']', p) }},
-		{"comprehension", "'" + large + "' | value", func(s string, p *pipelineCancellation) { findListComprehensionTokenWithCancellation(s, "|", p) }},
-		{"case", "CASE WHEN true THEN '" + large + "' END", func(s string, p *pipelineCancellation) { leadingCaseExpressionEndWithCancellation(s, p) }},
-		{"property", large + ".value", func(s string, p *pipelineCancellation) { rowPropertyChainShapeWithCancellation(s, p) }},
-		{"aggregate", "sum('" + large + "')", func(s string, p *pipelineCancellation) { findAggregateSpansWithCancellation(s, p) }},
+		{"comprehension", "'" + large + "' | value", func(s string, p *pipelineCancellation) { findListComprehensionToken(s, "|") }},
+		{"case", "CASE WHEN true THEN '" + large + "' END", func(s string, p *pipelineCancellation) { leadingCaseExpressionEnd(s) }},
+		{"property", large + ".value", func(s string, p *pipelineCancellation) { rowPropertyChainShape(s) }},
+		{"aggregate", "sum('" + large + "')", func(s string, p *pipelineCancellation) { findAggregateSpans(s) }},
 	} {
 		t.Run(stage.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)

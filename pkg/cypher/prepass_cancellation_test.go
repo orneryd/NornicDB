@@ -22,13 +22,13 @@ func TestPrepassCanonicalReadersParity(t *testing.T) {
 		"RETURN 1." + strings.Repeat("0", 2000) + "1e2",
 	} {
 		probe := &pipelineCancellation{ctx: context.Background()}
-		require.Equal(t, upperASCII(text), upperASCIIWithCancellation(text, probe))
+		require.Equal(t, upperASCII(text), upperASCII(text))
 		want, changed := normalizeLiteralText(text)
-		got, gotChanged := normalizeLiteralTextWithCancellation(text, probe)
+		got, gotChanged := normalizeLiteralText(text)
 		require.Equal(t, want, got)
 		require.Equal(t, changed, gotChanged)
-		require.Equal(t, strings.TrimSpace(text), trimSpaceWithCancellation(text, probe))
-		require.Equal(t, strings.TrimSpace(text), trimSpaceWithCancellation(text, nil))
+		require.Equal(t, strings.TrimSpace(text), strings.TrimSpace(text))
+		require.Equal(t, strings.TrimSpace(text), strings.TrimSpace(text))
 		require.NoError(t, probe.err)
 	}
 }
@@ -75,7 +75,7 @@ func TestPrepassLongNumericRangeParity(t *testing.T) {
 			want = err == nil
 		}
 		probe := &pipelineCancellation{ctx: context.Background()}
-		require.Equal(t, want, normNumberSafeWithCancellation(number, probe), "number prefix %q suffix %q len %d", number[:min(len(number), 40)], number[max(0, len(number)-45):], len(number))
+		require.Equal(t, want, normNumberSafe(number), "number prefix %q suffix %q len %d", number[:min(len(number), 40)], number[max(0, len(number)-45):], len(number))
 		require.NoError(t, probe.err)
 	}
 }
@@ -84,35 +84,35 @@ func TestPrepassCanonicalReadersStopInsideWork(t *testing.T) {
 	long := strings.Repeat("x", 1<<20)
 	readers := map[string]func(*pipelineCancellation){
 		"upper prefix": func(p *pipelineCancellation) {
-			require.Empty(t, upperASCIIWithCancellation(strings.Repeat("X", 1<<20)+"a", p))
+			require.Empty(t, upperASCII(strings.Repeat("X", 1<<20)+"a"))
 		},
-		"upper conversion": func(p *pipelineCancellation) { require.Empty(t, upperASCIIWithCancellation(long, p)) },
+		"upper conversion": func(p *pipelineCancellation) { require.Empty(t, upperASCII(long)) },
 		"trim leading": func(p *pipelineCancellation) {
-			require.Empty(t, trimSpaceWithCancellation(strings.Repeat("\u2003", 1<<18)+"x", p))
+			require.Empty(t, strings.TrimSpace(strings.Repeat("\u2003", 1<<18)+"x"))
 		},
 		"trim trailing": func(p *pipelineCancellation) {
-			require.Empty(t, trimSpaceWithCancellation("x"+strings.Repeat("\u2003", 1<<18), p))
+			require.Empty(t, strings.TrimSpace("x"+strings.Repeat("\u2003", 1<<18)))
 		},
-		"comment":      func(p *pipelineCancellation) { queryCommentEndWithCancellation("/*"+long+"*/", 0, p) },
-		"line comment": func(p *pipelineCancellation) { queryCommentEndWithCancellation("//"+long, 0, p) },
+		"comment":      func(p *pipelineCancellation) { queryCommentEnd("/*"+long+"*/", 0) },
+		"line comment": func(p *pipelineCancellation) { queryCommentEnd("//"+long, 0) },
 		"quoted": func(p *pipelineCancellation) {
-			_, closed := scanCypherQuotedTextWithCancellation("'"+long+"'", 0, '\'', p)
+			_, closed := scanCypherQuotedText("'"+long+"'", 0, '\'')
 			require.False(t, closed)
 		},
 		"delimiter": func(p *pipelineCancellation) {
-			require.Equal(t, -1, findMatchingDelimiterWithCancellation("("+long+")", 0, '(', ')', p))
+			require.Equal(t, -1, findMatchingDelimiter("("+long+")", 0, '(', ')'))
 		},
 		"float range": func(p *pipelineCancellation) {
-			require.False(t, floatLiteralInRangeWithCancellation("1."+strings.Repeat("0", 1<<20)+"e1", p))
+			require.False(t, floatLiteralInRange("1."+strings.Repeat("0", 1<<20)+"e1"))
 		},
 		"hex range": func(p *pipelineCancellation) {
-			require.False(t, normNumberSafeWithCancellation("0x"+strings.Repeat("0", 1<<20)+"f", p))
+			require.False(t, normNumberSafe("0x"+strings.Repeat("0", 1<<20)+"f"))
 		},
 	}
 	for _, text := range []string{long, "'" + long + "'", "\"" + long + "\"", "`" + long + "`", "/*" + long + "*/", "//" + long, "$" + long, "$(" + long + ")", "0x" + strings.Repeat("f", 1<<20), strings.Repeat("1", 1<<20), "1." + strings.Repeat("1", 1<<20), "1e" + strings.Repeat("1", 1<<20)} {
 		text := text
 		readers["literal "+text[:min(len(text), 8)]] = func(p *pipelineCancellation) {
-			canonical, changed := normalizeLiteralTextWithCancellation(text, p)
+			canonical, changed := normalizeLiteralText(text)
 			require.Empty(t, canonical)
 			require.False(t, changed)
 		}
@@ -134,7 +134,7 @@ func TestPrepassLiteralFlushSharesProbe(t *testing.T) {
 	ctx := &pipelineCountingContext{Context: context.Background(), stop: 1}
 	probe := &pipelineCancellation{ctx: ctx, remaining: 97}
 	text := strings.Repeat("x", 95) + "'a'"
-	canonical, changed := normalizeLiteralTextWithCancellation(text, probe)
+	canonical, changed := normalizeLiteralText(text)
 	require.ErrorIs(t, probe.err, context.Canceled)
 	require.Empty(t, canonical)
 	require.False(t, changed)
@@ -182,28 +182,28 @@ func TestPrepassStaticValidatorParity(t *testing.T) {
 func TestPrepassScannerCancellationReplay(t *testing.T) {
 	for fixture, query := range prepassFixtureQueries {
 		actions := []func(*pipelineCancellation){
-			func(p *pipelineCancellation) { _ = validateUnicodeOperatorsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = validateUnicodeStringLiteralsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = validateStaticMapKeysWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = validateNumericLiteralsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = validateArrowOperatorsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = validatePlaceholderOperandsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _, _ = canonicalizeNumericLiteralsWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _, _ = decodeCypherQuotedStringWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _, _ = normalizeLiteralTextWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = lowerASCIIWithCancellation(query, p) },
-			func(p *pipelineCancellation) { _ = indexASCIIFoldWithCancellation(query, "return", p) },
-			func(p *pipelineCancellation) { _, _, _ = scanIdentifierTokenWithCancellation(query, 0, p) },
+			func(p *pipelineCancellation) { _ = validateUnicodeOperators(query) },
+			func(p *pipelineCancellation) { _ = validateUnicodeStringLiterals(query) },
+			func(p *pipelineCancellation) { _ = validateStaticMapKeys(query) },
+			func(p *pipelineCancellation) { _ = validateNumericLiterals(query) },
+			func(p *pipelineCancellation) { _ = validateArrowOperators(query) },
+			func(p *pipelineCancellation) { _ = validatePlaceholderOperands(query) },
+			func(p *pipelineCancellation) { _, _ = canonicalizeNumericLiterals(query) },
+			func(p *pipelineCancellation) { _, _ = decodeCypherQuotedString(query) },
+			func(p *pipelineCancellation) { _, _ = normalizeLiteralText(query) },
+			func(p *pipelineCancellation) { _ = lowerASCII(query) },
+			func(p *pipelineCancellation) { _ = indexASCIIFold(query, "return") },
+			func(p *pipelineCancellation) { _, _, _ = scanIdentifierToken(query, 0) },
 			func(p *pipelineCancellation) {
-				_ = keywordIndexFromWithCancellation(query, "RETURN", 0, defaultKeywordScanOpts(), p)
+				_ = keywordIndexFrom(query, "RETURN", 0, defaultKeywordScanOpts())
 			},
 			func(p *pipelineCancellation) {
 				opts := defaultKeywordScanOpts()
 				opts.SkipBraces = true
-				_ = keywordIndexFromWithCancellation(query, "ORDER BY", 0, opts, p)
+				_ = keywordIndexFrom(query, "ORDER BY", 0, opts)
 			},
 			func(p *pipelineCancellation) {
-				_ = findAllTopLevelPipelineKeywordPositionsWithCancellation(query, "WITH", p)
+				_ = findAllTopLevelPipelineKeywordPositions(query, "WITH")
 			},
 		}
 		for action, run := range actions {
@@ -276,30 +276,30 @@ func TestPrepassPrivateCaseReadersReplay(t *testing.T) {
 	} {
 		for at := 0; at <= len(text); at++ {
 			actions := []func(*pipelineCancellation){
-				func(p *pipelineCancellation) { _ = caseKeywordAtWithCancellation(text, at, "CASE", p) },
-				func(p *pipelineCancellation) { _ = caseKeywordAtWithCancellation(text, at, "END", p) },
-				func(p *pipelineCancellation) { _ = caseKeywordAtWithCancellation(text, at, "WHEN", p) },
-				func(p *pipelineCancellation) { _ = caseKeywordAtWithCancellation(text, at, "THEN", p) },
-				func(p *pipelineCancellation) { _ = caseOperandExpectedBeforeWithCancellation(text, at, p) },
+				func(p *pipelineCancellation) { _ = caseKeywordAt(text, at, "CASE") },
+				func(p *pipelineCancellation) { _ = caseKeywordAt(text, at, "END") },
+				func(p *pipelineCancellation) { _ = caseKeywordAt(text, at, "WHEN") },
+				func(p *pipelineCancellation) { _ = caseKeywordAt(text, at, "THEN") },
+				func(p *pipelineCancellation) { _ = caseOperandExpectedBefore(text, at) },
 				func(p *pipelineCancellation) {
-					_ = casePreviousWordInWithCancellation(text, at, p, "as", "case", "starts", "ends")
+					_ = casePreviousWordIn(text, at, p, "as", "case", "starts")
 				},
-				func(p *pipelineCancellation) { _ = casePrefixWordIsVariableWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseHasPreviousTokenWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseNestedLacksEndWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = casePreviousWordIsCaseWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseOperandEndsAtWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseVariableNamedCaseWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseSimpleTestContinuesAtWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = caseWordAtWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = insideCaseBlockWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = bracketDepthAtWithCancellation(text, at, p) },
-				func(p *pipelineCancellation) { _ = enclosingCaseBlockEndWithCancellation(text, at, p) },
+				func(p *pipelineCancellation) { _ = casePrefixWordIsVariable(text, at) },
+				func(p *pipelineCancellation) { _ = caseHasPreviousToken(text, at) },
+				func(p *pipelineCancellation) { _ = caseNestedLacksEnd(text, at) },
+				func(p *pipelineCancellation) { _ = casePreviousWordIsCase(text, at) },
+				func(p *pipelineCancellation) { _ = caseOperandEndsAt(text, at) },
+				func(p *pipelineCancellation) { _ = caseVariableNamedCase(text, at) },
+				func(p *pipelineCancellation) { _ = caseSimpleTestContinuesAt(text, at) },
+				func(p *pipelineCancellation) { _ = caseWordAt(text, at) },
+				func(p *pipelineCancellation) { _ = insideCaseBlock(text, at) },
+				func(p *pipelineCancellation) { _ = bracketDepthAt(text, at) },
+				func(p *pipelineCancellation) { _ = enclosingCaseBlockEnd(text, at) },
 			}
 			if at < len(text) {
 				actions = append(actions,
-					func(p *pipelineCancellation) { _ = caseTypeParameterClosesWithCancellation(text, at, p) },
-					func(p *pipelineCancellation) { _ = caseBinaryOperatorAtWithCancellation(text, at, p) },
+					func(p *pipelineCancellation) { _ = caseTypeParameterCloses(text, at) },
+					func(p *pipelineCancellation) { _ = caseBinaryOperatorAt(text, at) },
 				)
 			}
 			for _, run := range actions {
@@ -316,46 +316,46 @@ func TestPrepassPrivateLexicalReadersReplay(t *testing.T) {
 		"0x"+strings.Repeat("0", 30)+"f", "RETURN 1_000.5_0e1_0, 0x_1_F, 0o1_7, 0_1, 1__2, 1_",
 	) {
 		actions := []func(*pipelineCancellation){
-			func(p *pipelineCancellation) { _ = isOperatorWithWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = lastLiveByteWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = prevWordStartWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = startsWithClauseAfterDistinctWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = startsWithClauseAfterNameWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _, _ = trimKeywordWSBoundsWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = isNameableClauseKeywordWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _, _ = keywordMatchAtWithCancellation(text, 0, "ORDER BY", 0, 8, p) },
-			func(p *pipelineCancellation) { _ = isValidIdentifierWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = validMapLiteralKeyWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = isWholeCypherQuotedStringWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _, _ = decodeCypherQuotedStringWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = isBacktickQuotedNameWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = symbolicNameValueWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _, _ = mapProjectionPropertySelectorWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = normalizePropertyKeyWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = splitTopLevelCommaWithCancellation(text, p) },
+			func(p *pipelineCancellation) { _ = isOperatorWith(text, len(text)) },
+			func(p *pipelineCancellation) { _ = lastLiveByte(text, len(text)) },
+			func(p *pipelineCancellation) { _ = prevWordStart(text, len(text)) },
+			func(p *pipelineCancellation) { _ = startsWithClauseAfterDistinct(text) },
+			func(p *pipelineCancellation) { _ = startsWithClauseAfterName(text) },
+			func(p *pipelineCancellation) { _, _ = trimKeywordWSBounds(text) },
+			func(p *pipelineCancellation) { _ = isNameableClauseKeyword(text) },
+			func(p *pipelineCancellation) { _, _ = keywordMatchAt(text, 0, "ORDER BY", 0, 8) },
+			func(p *pipelineCancellation) { _ = isValidIdentifier(text) },
+			func(p *pipelineCancellation) { _ = validMapLiteralKey(text) },
+			func(p *pipelineCancellation) { _ = isWholeCypherQuotedString(text) },
+			func(p *pipelineCancellation) { _, _ = decodeCypherQuotedString(text) },
+			func(p *pipelineCancellation) { _ = isBacktickQuotedName(text) },
+			func(p *pipelineCancellation) { _ = symbolicNameValue(text) },
+			func(p *pipelineCancellation) { _, _ = mapProjectionPropertySelector(text) },
+			func(p *pipelineCancellation) { _ = normalizePropertyKey(text) },
+			func(p *pipelineCancellation) { _ = splitTopLevelComma(text) },
 			func(p *pipelineCancellation) {
-				_ = precedingSubqueryExpressionKeywordWithCancellation(text, len(text), p)
+				_ = precedingSubqueryExpressionKeyword(text, len(text))
 			},
-			func(p *pipelineCancellation) { _ = subqueryBraceBodyStartsLikeClauseWithCancellation(text, -1, p) },
-			func(p *pipelineCancellation) { _ = inProjectionClauseWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = insidePatternDelimiterWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = colonIsMapKeySeparatorWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _ = quantifiedGroupQuantifierAtWithCancellation(text, len(text), p) },
-			func(p *pipelineCancellation) { _, _ = canonicalizeNumericLiteralsWithCancellation(text, p) },
-			func(p *pipelineCancellation) { _ = numericLiteralHasUnaryMinusWithCancellation(text, len(text), p) },
+			func(p *pipelineCancellation) { _ = subqueryBraceBodyStartsLikeClause(text, -1) },
+			func(p *pipelineCancellation) { _ = inProjectionClause(text, len(text)) },
+			func(p *pipelineCancellation) { _ = insidePatternDelimiter(text, len(text)) },
+			func(p *pipelineCancellation) { _ = colonIsMapKeySeparator(text, len(text)) },
+			func(p *pipelineCancellation) { _ = quantifiedGroupQuantifierAt(text, len(text)) },
+			func(p *pipelineCancellation) { _, _ = canonicalizeNumericLiterals(text) },
+			func(p *pipelineCancellation) { _ = numericLiteralHasUnaryMinus(text, len(text)) },
 		}
 		for _, run := range actions {
 			replayPrepassWork(t, run)
 		}
 		for at := 0; at <= len(text); at++ {
-			replayPrepassWork(t, func(p *pipelineCancellation) { _ = wordIsNameWithCancellation(text, at, p) })
+			replayPrepassWork(t, func(p *pipelineCancellation) { _ = wordIsName(text, at) })
 			replayPrepassWork(t, func(p *pipelineCancellation) {
-				_ = clauseKeywordNamedByContextWithCancellation(text, at, min(at+4, len(text)), "WITH", p)
+				_ = clauseKeywordNamedByContext(text, at, min(at+4, len(text)), "WITH")
 			})
 			replayPrepassWork(t, func(p *pipelineCancellation) {
-				_ = clauseKeywordUsedAsNameWithCancellation(text, at, min(at+6, len(text)), "RETURN", p)
+				_ = clauseKeywordUsedAsName(text, at, min(at+6, len(text)), "RETURN")
 			})
-			replayPrepassWork(t, func(p *pipelineCancellation) { _ = queryGapEndWithCancellation(text, at, p) })
+			replayPrepassWork(t, func(p *pipelineCancellation) { _ = queryGapEnd(text, at) })
 		}
 	}
 }
@@ -393,7 +393,7 @@ func TestPrepassLegacyReaderContract(t *testing.T) {
 			}
 		}
 		for _, word := range []string{"RETURN", "WITH", "CASE"} {
-			require.Equal(t, casePreviousWordIn(text, len(text), word), casePreviousWordInWithCancellation(text, len(text), p, word))
+			require.Equal(t, casePreviousWordIn(text, len(text), word), casePreviousWordIn(text, len(text), p))
 		}
 		for _, pair := range []struct {
 			plain   func(string) string
@@ -403,54 +403,54 @@ func TestPrepassLegacyReaderContract(t *testing.T) {
 		} {
 			require.Equal(t, pair.plain(text), pair.checked(text, p))
 		}
-		require.Equal(t, skipASCIISpaces(text, 0, len(text)), skipASCIISpacesWithCancellation(text, 0, len(text), p))
-		require.Equal(t, followedByTimeZone(text, 0), followedByTimeZoneWithCancellation(text, 0, p))
-		require.Equal(t, normNumberSafe(text), normNumberSafeWithCancellation(text, p))
+		require.Equal(t, skipASCIISpaces(text, 0, len(text)), skipASCIISpaces(text, 0, len(text)))
+		require.Equal(t, followedByTimeZone(text, 0), followedByTimeZone(text, 0))
+		require.Equal(t, normNumberSafe(text), normNumberSafe(text))
 		require.NoError(t, p.err)
 	}
 	for _, number := range []string{"1", "0x1", ".25", "1e3", "1e999", "-1"} {
 		p := &pipelineCancellation{ctx: context.Background()}
 		a, errA := validateNumericLiteralAt(number, 0)
-		b, errB := validateNumericLiteralAtWithCancellation(number, 0, p)
+		b, errB := validateNumericLiteralAt(number, 0)
 		require.Equal(t, a, b)
 		require.Equal(t, fmt.Sprint(errA), fmt.Sprint(errB))
 		a, errA = validateFloatingLiteralTail(number, 0, len(number))
-		b, errB = validateFloatingLiteralTailWithCancellation(number, 0, len(number), p)
+		b, errB = validateFloatingLiteralTail(number, 0, len(number))
 		require.Equal(t, a, b)
 		require.Equal(t, fmt.Sprint(errA), fmt.Sprint(errB))
-		require.Equal(t, numericLiteralHasUnaryMinus(number, len(number)), numericLiteralHasUnaryMinusWithCancellation(number, len(number), p))
+		require.Equal(t, numericLiteralHasUnaryMinus(number, len(number)), numericLiteralHasUnaryMinus(number, len(number)))
 		x, y := groupedNumericLiteralEnd(number, 0)
-		z, w := groupedNumericLiteralEndWithCancellation(number, 0, p)
+		z, w := groupedNumericLiteralEnd(number, 0)
 		require.Equal(t, x, z)
 		require.Equal(t, y, w)
 		e, v, g := numericDigitRun(number, 0, isASCIIDigit, false)
-		e2, v2, g2 := numericDigitRunWithCancellation(number, 0, isASCIIDigit, false, p)
+		e2, v2, g2 := numericDigitRun(number, 0, isASCIIDigit, false)
 		require.Equal(t, []interface{}{e, v, g}, []interface{}{e2, v2, g2})
 	}
 	for _, quoted := range []string{"'a''b'", `"a\n\r\t\b\f\\\""`, `'\u0041'`, `'\U0001F600'`, `'\uD83D\uDE00'`, `'\uD800'`, `'\uZZZZ'`, `'\UFFFFFFFF'`} {
-		replayPrepassWork(t, func(p *pipelineCancellation) { _, _ = decodeCypherQuotedStringWithCancellation(quoted, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _, _ = decodeCypherQuotedString(quoted) })
 	}
 	for _, number := range []string{"1." + strings.Repeat("0", 800) + "e+1", "1." + strings.Repeat("0", 800) + "e-1", strings.Repeat("0", 800) + "e0", "0x" + strings.Repeat("0", 30) + "f"} {
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = normNumberSafeWithCancellation(number, p) })
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = floatLiteralInRangeWithCancellation(number, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = normNumberSafe(number) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = floatLiteralInRange(number) })
 		replayPrepassWork(t, func(p *pipelineCancellation) {
-			_, _ = parseUintLiteralWithCancellation(strings.Repeat("0", 30)+"f", 16, p)
+			_, _ = parseUintLiteral(strings.Repeat("0", 30)+"f", 16)
 		})
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = validateNumericLiteralsWithCancellation("RETURN "+number, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = validateNumericLiterals("RETURN "+number) })
 	}
 	for _, needle := range []string{"", "needle", strings.Repeat("a", 80)} {
 		text := strings.Repeat("x", 4100) + needle
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = indexTextWithCancellation(text, needle, p) })
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = equalFoldASCIIWithCancellation(text, text, p) })
-		require.Equal(t, strings.Index(text, needle), indexTextWithCancellation(text, needle, nil))
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = strings.Index(text, needle) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = equalFoldASCII(text, text) })
+		require.Equal(t, strings.Index(text, needle), strings.Index(text, needle))
 	}
 	for _, text := range []string{"abcDEF", "NOT     CASE", "CASE  RETURN", "ORDER     BY x", "`x``y`", "'x''y'"} {
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = lowerASCIIWithCancellation(text, p) })
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = wordStartsExpressionWithCancellation(text, p) })
-		replayPrepassWork(t, func(p *pipelineCancellation) { _ = nameContinuesExpressionWithCancellation(text, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = lowerASCII(text) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = wordStartsExpression(text) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { _ = nameContinuesExpression(text) })
 		if text[0] == '`' || text[0] == '\'' {
 			a, b := scanCypherQuotedText(text, 0, text[0])
-			c, d := scanCypherQuotedTextWithCancellation(text, 0, text[0], &pipelineCancellation{ctx: context.Background()})
+			c, d := scanCypherQuotedText(text, 0, text[0])
 			require.Equal(t, a, c)
 			require.Equal(t, b, d)
 		}

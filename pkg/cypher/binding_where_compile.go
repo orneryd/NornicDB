@@ -290,7 +290,7 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 	if clause == "" {
 		return bindingWherePlan{predicate: func(binding, map[string]interface{}) bool { return true }}, true
 	}
-	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(clause, contextPipelineProbe(ctx)); ok {
+	if inner, ok := stripEnclosingExpressionParentheses(clause); ok {
 		return e.compileBindingWherePlan(ctx, inner)
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
@@ -708,23 +708,12 @@ func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement 
 }
 
 func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map[interface{}]struct{}, []interface{}, bool) {
-	return cache.getValidatedWithCancellation(items, nil)
-}
-
-func (cache *bindingParamMembershipCache) getValidatedWithCancellation(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}, bool) {
-	// Published snapshots and indexes are immutable. Expensive validation and
-	// construction run outside the shared lock, so another statement's index
-	// construction cannot hold a cancelled query behind an unbounded scan.
-	cache.RLock()
-	previousItems, comparable, nonComparable, hasNull := cache.snapshot, cache.comparable, cache.nonComparable, cache.hasNull
-	cache.RUnlock()
-	unchanged := comparable != nil && len(previousItems) == len(items)
+	cache.Lock()
+	defer cache.Unlock()
+	unchanged := cache.comparable != nil && len(cache.snapshot) == len(items)
 	if unchanged {
 		for index, item := range items {
-			if probe != nil && !probe.check() {
-				return nil, nil, false
-			}
-			previous := previousItems[index]
+			previous := cache.snapshot[index]
 			if item == nil && previous == nil {
 				continue
 			}
@@ -735,25 +724,13 @@ func (cache *bindingParamMembershipCache) getValidatedWithCancellation(items []i
 		}
 	}
 	if !unchanged {
-		comparable, nonComparable = buildComparableMembershipIndexWithCancellation(items, probe)
-		if probe != nil && probe.err != nil {
-			return nil, nil, false
-		}
-		hasNull = false
-		snapshot := make([]interface{}, len(items))
-		for index, item := range items {
-			if probe != nil && !probe.check() {
-				return nil, nil, false
-			}
-			hasNull = hasNull || item == nil
-			snapshot[index] = item
-		}
-		cache.Lock()
-		cache.comparable, cache.nonComparable, cache.hasNull, cache.snapshot = comparable, nonComparable, hasNull, snapshot
-		cache.Unlock()
+		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
+		cache.hasNull = listHasNull(items)
+		cache.snapshot = append(cache.snapshot[:0], items...)
 	}
-	return comparable, nonComparable, hasNull
+	return cache.comparable, cache.nonComparable, cache.hasNull
 }
+
 
 func firstInterfaceElement(items []interface{}) *interface{} {
 	if len(items) == 0 {

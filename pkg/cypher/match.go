@@ -24,17 +24,17 @@ func isAggregateFuncName(expr, funcName string) bool {
 
 // extractFuncInner extracts the inner expression from a function call (whitespace-tolerant)
 // e.g., "COUNT(n)" -> "n", "SUM (x.val)" -> "x.val", "collect({a:1})[..10]" -> "{a:1}"
-func extractFuncInner(expr string) string { return extractFuncInnerWithCancellation(expr, nil) }
-func extractFuncInnerWithCancellation(expr string, probe *pipelineCancellation) string {
-	open := indexByteWithCancellation(expr, '(', probe)
+func extractFuncInner(expr string) string {
+	open := strings.IndexByte(expr, '(')
 	if open < 0 {
 		return ""
 	}
-	close := findMatchingDelimiter(expr, open, '(', ')')
+	// The matching closing paren, not the last one: collect({…})[..10].
+	close := findMatchingParen(expr, open)
 	if close < 0 {
 		return ""
 	}
-	return trimSpaceWithCancellation(expr[open+1:close], probe)
+	return strings.TrimSpace(expr[open+1 : close])
 }
 
 // compareForSort compares two values for sorting, returns true if a < b

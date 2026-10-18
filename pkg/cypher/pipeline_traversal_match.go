@@ -278,7 +278,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		return hint
 	}
 	body := strings.TrimSpace(terminalReturn[len("RETURN"):])
-	if _, distinct := cutDistinctWithCancellation(body, contextPipelineProbe(ctx)); distinct {
+	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
 	for _, item := range e.parseReturnItems(body) {

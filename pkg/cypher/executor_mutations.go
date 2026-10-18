@@ -813,50 +813,28 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 }
 
 func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
-	return e.parseReturnItemsWithCancellation(returnPart, nil)
-}
-
-func (e *StorageExecutor) parseReturnItemsWithCancellation(returnPart string, probe *pipelineCancellation) []returnItem {
-	if probe != nil && !probe.poll() {
-		return nil
-	}
-	if trimSpaceWithCancellation(returnPart, probe) == "" {
+	if strings.TrimSpace(returnPart) == "" {
 		returnPart = "*"
 	}
-	clause := concatPipelineStrings("RETURN ", returnPart, probe)
-	plan := returnProjectionPlanForWithCancellation(clause, probe)
-	if probe != nil && probe.err != nil {
-		return nil
-	}
+	plan := returnProjectionPlanFor("RETURN " + returnPart)
 	if plan.star {
 		items := []returnItem{{expr: "*", alias: "*"}}
 		for _, item := range plan.starItems {
-			if probe != nil && !probe.check() {
-				return nil
-			}
-			expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
-			if probe != nil && probe.err != nil {
-				return nil
-			}
-			items = appendPipelineItem(items, returnItem{expr: expr, alias: alias}, probe)
+			expr, alias := parseProjectionExprAlias(item)
+			items = append(items, returnItem{expr: expr, alias: alias})
 		}
 		return items
 	}
-	items := make([]returnItem, 0, pipelineInitialCapacity(len(plan.projections), probe))
+	items := make([]returnItem, 0, len(plan.projections))
 	for _, projection := range plan.projections {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-		items = appendPipelineItem(items, returnItem{expr: projection.expr, alias: projection.alias}, probe)
+		items = append(items, returnItem{expr: projection.expr, alias: projection.alias})
 	}
 	return items
 }
 
+
 func normalizeProjectionColumnName(raw string) string {
-	return normalizeProjectionColumnNameWithCancellation(raw, nil)
-}
-func normalizeProjectionColumnNameWithCancellation(raw string, probe *pipelineCancellation) string {
-	return symbolicNameValueWithCancellation(trimSpaceWithCancellation(raw, probe), probe)
+	return symbolicNameValue(strings.TrimSpace(raw))
 }
 
 func (e *StorageExecutor) generateID() string {

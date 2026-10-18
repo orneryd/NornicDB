@@ -61,7 +61,7 @@ func TestPreparationConfusableReaderCancellation(t *testing.T) {
 		"RETURN '\xff'",
 	} {
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			normalizeCypherSyntaxConfusablesWithCancellation(query, probe)
+			normalizeCypherSyntaxConfusables(query)
 		})
 	}
 }
@@ -80,7 +80,7 @@ func TestPreparationValidatorBudgetBoundaries(t *testing.T) {
 			if p == nil {
 				return e.validateSyntaxNornic(q)
 			}
-			return e.validateSyntaxNornicWithCancellation(q, p)
+			return e.validateSyntaxNornic(q)
 		}},
 		{"antlr", func(e *StorageExecutor, q string, p *pipelineCancellation) error {
 			if p == nil {

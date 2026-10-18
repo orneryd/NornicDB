@@ -38,17 +38,10 @@ var aggregateStartMask = func() uint32 {
 
 // isAggregateFunc reports whether expr is one aggregate call (whitespace
 // tolerant).
-func isAggregateFunc(expr string) bool { return isAggregateFuncWithCancellation(expr, nil) }
-func isAggregateFuncWithCancellation(expr string, probe *pipelineCancellation) bool {
+func isAggregateFunc(expr string) bool {
 	for _, name := range cypherAggregateNames {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		if isFunctionCallWSWithCancellation(expr, name, probe) {
+		if isFunctionCallWS(expr, name) {
 			return true
-		}
-		if probe != nil && probe.err != nil {
-			return false
 		}
 	}
 	return false

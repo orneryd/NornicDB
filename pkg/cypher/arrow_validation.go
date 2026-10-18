@@ -14,27 +14,13 @@ import (
 // expression"; NornicDB wrote the value or failed only when a row was
 // evaluated (#461, #523). Strings and comments are skipped.
 func validateArrowOperators(query string) error {
-	return validateArrowOperatorsWithCancellation(query, nil)
-}
-
-func validateArrowOperatorsWithCancellation(query string, probe *pipelineCancellation) error {
-	if probe != nil && !probe.check() {
-		return probe.err
-	}
-	if !containsTextWithCancellation(query, "->", probe) {
-		if probe != nil {
-			return probe.err
-		}
+	if !strings.Contains(query, "->") {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		if probe != nil && !probe.check() {
-			return probe.err
-		}
 		switch c := query[i]; c {
 		case '\'', '"', '`':
-			end, _ := scanCypherQuotedTextWithCancellation(query, i, c, probe)
-			i = end - 1
+			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
@@ -50,9 +36,6 @@ func validateArrowOperatorsWithCancellation(query string, probe *pipelineCancell
 				localization.CypherCoreInvalidInputExpectedExpression(">"))
 		}
 	}
-	if probe != nil {
-		return probe.err
-	}
 	return nil
 }
 
@@ -63,27 +46,13 @@ func validateArrowOperatorsWithCancellation(query string, probe *pipelineCancell
 // "Invalid input '<': expected an expression". NornicDB's MERGE stored the
 // text as the value and DDL took it as a label (#504, #217).
 func validatePlaceholderOperands(query string) error {
-	return validatePlaceholderOperandsWithCancellation(query, nil)
-}
-
-func validatePlaceholderOperandsWithCancellation(query string, probe *pipelineCancellation) error {
-	if probe != nil && !probe.check() {
-		return probe.err
-	}
-	if indexByteWithCancellation(query, '<', probe) < 0 {
-		if probe != nil {
-			return probe.err
-		}
+	if strings.IndexByte(query, '<') < 0 {
 		return nil
 	}
 	for i := 0; i+1 < len(query); i++ {
-		if probe != nil && !probe.check() {
-			return probe.err
-		}
 		switch c := query[i]; c {
 		case '\'', '"', '`':
-			end, _ := scanCypherQuotedTextWithCancellation(query, i, c, probe)
-			i = end - 1
+			i = skipCypherQuotedText(query, i, c) - 1
 		case '/':
 			if end := queryCommentEnd(query, i); end >= 0 {
 				i = end - 1
@@ -94,9 +63,6 @@ func validatePlaceholderOperandsWithCancellation(query string, probe *pipelineCa
 			}
 			before := i - 1
 			for before >= 0 && isASCIIWhitespace(query[before]) {
-				if probe != nil && !probe.check() {
-					return probe.err
-				}
 				before--
 			}
 			if before >= 0 && strings.IndexByte(":=,([{", query[before]) >= 0 {
@@ -104,9 +70,6 @@ func validatePlaceholderOperandsWithCancellation(query string, probe *pipelineCa
 					localization.CypherCoreInvalidInputExpectedExpression("<"))
 			}
 		}
-	}
-	if probe != nil {
-		return probe.err
 	}
 	return nil
 }

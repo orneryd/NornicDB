@@ -103,18 +103,15 @@ func hasSuffixFold(s, suffix string) bool {
 	return strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
-func containsFold(s, sub string) bool { return containsFoldWithCancellation(s, sub, nil) }
-func containsFoldWithCancellation(s, sub string, probe *pipelineCancellation) bool {
+func containsFold(s, sub string) bool {
 	if len(sub) == 0 {
 		return true
 	}
 	if len(s) < len(sub) {
 		return false
 	}
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if probe != nil && !probe.check() {
-			return false
-		}
+	max := len(s) - len(sub)
+	for i := 0; i <= max; i++ {
 		if strings.EqualFold(s[i:i+len(sub)], sub) {
 			return true
 		}
@@ -175,7 +172,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	// Handle quoted strings with escape sequence support
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
 		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		if decoded, ok := decodeCypherQuotedStringWithCancellation(s, contextPipelineProbe(ctx)); ok {
+		if decoded, ok := decodeCypherQuotedString(s); ok {
 			return decoded
 		}
 	}

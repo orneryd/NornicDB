@@ -32,22 +32,22 @@ func TestQuotedVariableCheckedParity(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			want, legacy := canonicalizeQuotedVariables(query)
 			p := &pipelineCancellation{ctx: context.Background()}
-			got, names := canonicalizeQuotedVariablesWithCancellation(query, p)
+			got, names := canonicalizeQuotedVariables(query)
 			require.NoError(t, p.err)
 			require.Equal(t, want, got)
-			require.Equal(t, scanQuotedTokens(query), scanQuotedTokensWithCancellation(query, p))
+			require.Equal(t, scanQuotedTokens(query), scanQuotedTokens(query))
 			if legacy == nil {
 				require.Nil(t, names)
 				return
 			}
 			require.NotNil(t, names)
 			for _, identifier := range legacy.internalOrder {
-				require.Equal(t, legacy.restoreText(identifier), names.restoreTextWithCancellation(identifier, p))
-				require.Equal(t, legacy.restoreColumn(identifier), names.restoreColumnWithCancellation(identifier, p))
+				require.Equal(t, legacy.restoreText(identifier), names.restoreText(identifier))
+				require.Equal(t, legacy.restoreColumn(identifier), names.restoreColumn(identifier))
 			}
 			for start := 0; start <= len(got); start++ {
 				want, wok := legacy.originalSpan(start, len(got))
-				got, gok := names.originalSpanWithCancellation(start, len(got), p)
+				got, gok := names.originalSpan(start, len(got))
 				require.Equal(t, wok, gok)
 				require.Equal(t, want, got)
 			}
@@ -57,7 +57,7 @@ func TestQuotedVariableCheckedParity(t *testing.T) {
 			for key, value := range legacy.parameterValues(params) {
 				if _, original := params[key]; !original {
 					require.Equal(t, value, bound[key])
-					require.Equal(t, legacy.parameterName(key), names.parameterNameWithCancellation(key, p))
+					require.Equal(t, legacy.parameterName(key), names.parameterName(key))
 				}
 			}
 			if len(legacy.internalOrder) == 0 {
@@ -78,21 +78,21 @@ func TestQuotedVariableCheckedLargeInputs(t *testing.T) {
 	long := strings.Repeat("é x`", 1<<17)
 	for name, run := range map[string]func(*pipelineCancellation){
 		"query without quote": func(p *pipelineCancellation) {
-			canonicalizeQuotedVariablesWithCancellation(strings.Repeat("x", 1<<20), p)
+			canonicalizeQuotedVariables(strings.Repeat("x", 1<<20))
 		},
 		"quoted identifier": func(p *pipelineCancellation) {
-			scanQuotedTokensWithCancellation("WITH 1 AS `"+strings.Repeat("x", 1<<20)+"`", p)
+			scanQuotedTokens("WITH 1 AS `"+strings.Repeat("x", 1<<20)+"`")
 		},
 		"escaped identifier": func(p *pipelineCancellation) {
-			symbolicNameValueWithCancellation("`"+strings.Repeat("``", 1<<19)+"`", p)
+			symbolicNameValue("`"+strings.Repeat("``", 1<<19)+"`")
 		},
-		"name hash": func(p *pipelineCancellation) { internalVariableIdentifierWithCancellation("RETURN 1", long, nil, p) },
+		"name hash": func(p *pipelineCancellation) { internalVariableIdentifier("RETURN 1", long, nil) },
 		"source collision search": func(p *pipelineCancellation) {
-			internalVariableIdentifierWithCancellation(strings.Repeat("x", 1<<20), "a b", nil, p)
+			internalVariableIdentifier(strings.Repeat("x", 1<<20), "a b", nil)
 		},
-		"plain name unicode": func(p *pipelineCancellation) { isPlainVariableNameWithCancellation(strings.Repeat("é", 1<<19), p) },
-		"backward gaps":      func(p *pipelineCancellation) { previousWordWithCancellation(strings.Repeat(" ", 1<<20), 1<<20, p) },
-		"forward gaps":       func(p *pipelineCancellation) { nextSignificantWithCancellation(strings.Repeat(" ", 1<<20), 0, p) },
+		"plain name unicode": func(p *pipelineCancellation) { isPlainVariableName(strings.Repeat("é", 1<<19)) },
+		"backward gaps":      func(p *pipelineCancellation) { previousWord(strings.Repeat(" ", 1<<20), 1<<20) },
+		"forward gaps":       func(p *pipelineCancellation) { nextSignificant(strings.Repeat(" ", 1<<20), 0) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := &pipelineCountingContext{Context: context.Background(), stop: 1}
@@ -106,27 +106,27 @@ func TestQuotedVariableCheckedLargeInputs(t *testing.T) {
 		p := &pipelineCancellation{ctx: context.Background()}
 		query := "RETURN nornicq123v"
 		want := internalVariableIdentifier(query, name, nil)
-		require.Equal(t, want, internalVariableIdentifierWithCancellation(query, name, nil, p))
+		require.Equal(t, want, internalVariableIdentifier(query, name, nil))
 		used := map[string]struct{}{want: {}}
-		require.Equal(t, internalVariableIdentifier(query+want, name, used), internalVariableIdentifierWithCancellation(query+want, name, used, p))
+		require.Equal(t, internalVariableIdentifier(query+want, name, used), internalVariableIdentifier(query+want, name, used))
 		require.NoError(t, p.err)
 	}
 }
 
 func TestQuotedVariableCheckedReplay(t *testing.T) {
 	for _, query := range quotedVariableWorkQueries {
-		replayPrepassWork(t, func(p *pipelineCancellation) { canonicalizeQuotedVariablesWithCancellation(query, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { canonicalizeQuotedVariables(query) })
 	}
-	_, names := canonicalizeQuotedVariablesWithCancellation("WITH 1 AS `a b`, 2 AS `c d` RETURN `a b` + `c d`", &pipelineCancellation{ctx: context.Background()})
+	_, names := canonicalizeQuotedVariables("WITH 1 AS `a b`, 2 AS `c d` RETURN `a b` + `c d`")
 	id := names.internalOrder[0]
 	plan := &ExecutionPlan{Mode: ModeExplain, Query: names.canonical, Root: &PlanOperator{Description: id, Identifiers: []string{id}, Arguments: map[string]interface{}{"key": id}, Children: []*PlanOperator{{Description: id}, nil}}}
 	value := map[string]interface{}{id: []interface{}{id, plan, (*ExecutionPlan)(nil), (*PlanOperator)(nil), [][]interface{}{{id}}}}
 	for _, run := range []func(*pipelineCancellation){
 		func(p *pipelineCancellation) { names.restoreValueWithCancellation(value, p) },
-		func(p *pipelineCancellation) { names.restoreStatementTextWithCancellation(names.canonical, p) },
-		func(p *pipelineCancellation) { names.restoreColumnWithCancellation(id+" + "+id, p) },
-		func(p *pipelineCancellation) { names.originalTextWithCancellation(0, len(names.canonical), p) },
-		func(p *pipelineCancellation) { formatPlanWithCancellation(plan, p) },
+		func(p *pipelineCancellation) { names.restoreStatementText(names.canonical) },
+		func(p *pipelineCancellation) { names.restoreColumn(id+" + "+id) },
+		func(p *pipelineCancellation) { names.originalText(0, len(names.canonical)) },
+		func(p *pipelineCancellation) { formatPlan(plan) },
 	} {
 		replayPrepassWork(t, run)
 	}
@@ -134,7 +134,7 @@ func TestQuotedVariableCheckedReplay(t *testing.T) {
 
 func TestQuotedVariableCheckedRestoreFailureAndPlans(t *testing.T) {
 	exec, _ := newTestExecutor(t)
-	_, names := canonicalizeQuotedVariablesWithCancellation("EXPLAIN WITH 1 AS `a b` RETURN `a b`", &pipelineCancellation{ctx: context.Background()})
+	_, names := canonicalizeQuotedVariables("EXPLAIN WITH 1 AS `a b` RETURN `a b`")
 	id := names.internalOrder[0]
 	for _, mode := range []ExecutionMode{ModeExplain, ModeProfile} {
 		plan := &ExecutionPlan{Mode: mode, Query: names.canonical, Root: &PlanOperator{Description: id, Identifiers: []string{id}}}
@@ -144,7 +144,7 @@ func TestQuotedVariableCheckedRestoreFailureAndPlans(t *testing.T) {
 		got, err := names.restoreWithCancellation(result, nil, exec.parseReturnItems, p)
 		require.NoError(t, err)
 		require.Equal(t, want, got)
-		require.Equal(t, formatPlan(plan), formatPlanWithCancellation(plan, p))
+		require.Equal(t, formatPlan(plan), formatPlan(plan))
 		runPrivacyReaderSamples(t, func(p *pipelineCancellation) interface{} {
 			value, _ := names.restoreWithCancellation(result, nil, exec.parseReturnItems, p)
 			return value
@@ -163,12 +163,12 @@ func TestQuotedVariableCheckedRestoreFailureAndPlans(t *testing.T) {
 	}
 	var absent *quotedVariableNames
 	require.True(t, absent.bindParameterValuesWithCancellation(nil, nil, nil))
-	require.Equal(t, "x", absent.parameterNameWithCancellation("x", nil))
+	require.Equal(t, "x", absent.parameterName("x"))
 }
 
 func TestQuotedVariableCheckedBindingsAndStorage(t *testing.T) {
 	p := &pipelineCancellation{ctx: context.Background()}
-	_, names := canonicalizeQuotedVariablesWithCancellation("RETURN $`a b`, $`c d`", p)
+	_, names := canonicalizeQuotedVariables("RETURN $`a b`, $`c d`")
 	require.NotNil(t, names)
 	require.Nil(t, names.internalIndex.bounded.probe)
 	require.Nil(t, names.parameterIndex.bounded.probe)
@@ -189,9 +189,9 @@ func TestQuotedVariableCheckedBindingsAndStorage(t *testing.T) {
 		require.ErrorIs(t, p.err, context.Canceled)
 	}
 	legacy := &quotedVariableNames{internal: map[string]quotedVariableName{"internal": {name: "a b", written: "`a b`"}}, internalOrder: []string{"internal"}, parameters: map[string]string{"internal": "a b"}}
-	require.Equal(t, "a b", legacy.parameterNameWithCancellation("internal", p))
-	require.Equal(t, "`a b`", legacy.restoreTextWithCancellation("internal", p))
-	require.Equal(t, "missing", legacy.parameterNameWithCancellation("missing", p))
+	require.Equal(t, "a b", legacy.parameterName("internal"))
+	require.Equal(t, "`a b`", legacy.restoreText("internal"))
+	require.Equal(t, "missing", legacy.parameterName("missing"))
 	index := newQuotedVariableIndex[int](p)
 	require.True(t, index.set("first", 1, p))
 	require.True(t, index.set("first", 2, p))
@@ -200,9 +200,9 @@ func TestQuotedVariableCheckedBindingsAndStorage(t *testing.T) {
 	require.Equal(t, 2, value)
 	require.Nil(t, index.bounded.probe)
 	ctx := withQuotedVariableNames(context.Background(), names)
-	require.Same(t, names, quotedVariableNamesForWithCancellation(ctx, names.canonical, p))
-	require.Nil(t, quotedVariableNamesForWithCancellation(ctx, "other", p))
-	require.Nil(t, quotedVariableNamesForWithCancellation(nil, "other", p))
+	require.Same(t, names, quotedVariableNamesFor(ctx, names.canonical))
+	require.Nil(t, quotedVariableNamesFor(ctx, "other"))
+	require.Nil(t, quotedVariableNamesFor(nil, "other"))
 }
 
 func TestQuotedVariableCheckedClassifierBoundaries(t *testing.T) {
@@ -210,27 +210,27 @@ func TestQuotedVariableCheckedClassifierBoundaries(t *testing.T) {
 		p := &pipelineCancellation{ctx: context.Background()}
 		for at := 0; at <= len(query); at++ {
 			want, wi := previousSignificant(query, at)
-			got, gi := previousSignificantWithCancellation(query, at, p)
+			got, gi := previousSignificant(query, at)
 			require.Equal(t, want, got)
 			require.Equal(t, wi, gi)
 			want, wi = nextSignificant(query, at)
-			got, gi = nextSignificantWithCancellation(query, at, p)
+			got, gi = nextSignificant(query, at)
 			require.Equal(t, want, got)
 			require.Equal(t, wi, gi)
-			require.Equal(t, previousWord(query, at), previousWordWithCancellation(query, at, p))
-			require.Equal(t, nextWordAt(query, at), nextWordAtWithCancellation(query, at, p))
-			require.Equal(t, mapProjectionBrace(query, at), mapProjectionBraceWithCancellation(query, at, p))
-			require.Equal(t, inYieldList(query, at), inYieldListWithCancellation(query, at, p))
+			require.Equal(t, previousWord(query, at), previousWord(query, at))
+			require.Equal(t, nextWordAt(query, at), nextWordAt(query, at))
+			require.Equal(t, mapProjectionBrace(query, at), mapProjectionBrace(query, at))
+			require.Equal(t, inYieldList(query, at), inYieldList(query, at))
 		}
 		require.NoError(t, p.err)
 	}
 	for _, text := range []string{"DISTINCT *", "DISTINCT * WHERE x", "DISTINCT * ,x", "DISTINCT * + 1", "DISTINCT {.x}", "DISTINCT .x", "DISTINCT AS x", "DISTINCT IS ::INTEGER", "DISTINCT IS NULL", "DISTINCT (x)", "distinctName", "DISTINCT"} {
 		want, wc := cutDistinct(text)
 		p := &pipelineCancellation{ctx: context.Background()}
-		got, gc := cutDistinctWithCancellation(text, p)
+		got, gc := cutDistinct(text)
 		require.Equal(t, want, got)
 		require.Equal(t, wc, gc)
-		replayPrepassWork(t, func(p *pipelineCancellation) { cutDistinctWithCancellation(text, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { cutDistinct(text) })
 	}
 }
 
@@ -239,11 +239,11 @@ func TestQuotedVariableCheckedColumnSort(t *testing.T) {
 		original := &ExecuteResult{Columns: []string{"z", "a"}, Rows: rows}
 		p := &pipelineCancellation{ctx: context.Background()}
 		got := *original
-		sortColumnsByNameWithCancellation(&got, p)
+		sortColumnsByName(&got)
 		want := *original
 		sortColumnsByName(&want)
 		require.Equal(t, want, got)
-		replayPrepassWork(t, func(p *pipelineCancellation) { copy := *original; sortColumnsByNameWithCancellation(&copy, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { copy := *original; sortColumnsByName(&copy) })
 	}
 }
 
@@ -251,50 +251,50 @@ func TestQuotedVariableCheckedWrapperContracts(t *testing.T) {
 	for _, text := range []string{"", "x", "`a b`", "`a``b`", "a—b", "€a", "ñandú"} {
 		p := &pipelineCancellation{ctx: context.Background()}
 		want, wok := isOneSymbolicName(text)
-		got, gok := isOneSymbolicNameWithCancellation(text, p)
+		got, gok := isOneSymbolicName(text)
 		require.Equal(t, want, got)
 		require.Equal(t, wok, gok)
-		require.Equal(t, isPlainVariableName(text), isPlainVariableNameWithCancellation(text, p))
-		require.Equal(t, isUnquotedName(text), isUnquotedNameWithCancellation(text, p))
-		replayPrepassWork(t, func(p *pipelineCancellation) { isOneSymbolicNameWithCancellation(text, p) })
-		replayPrepassWork(t, func(p *pipelineCancellation) { isPlainVariableNameWithCancellation(text, p) })
+		require.Equal(t, isPlainVariableName(text), isPlainVariableName(text))
+		require.Equal(t, isUnquotedName(text), isUnquotedName(text))
+		replayPrepassWork(t, func(p *pipelineCancellation) { isOneSymbolicName(text) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { isPlainVariableName(text) })
 	}
 	for _, query := range quotedVariableWorkQueries {
 		for _, token := range scanQuotedTokens(query) {
 			want, got := token, token
 			classifyQuotedToken(query, &want, '{')
-			classifyQuotedTokenWithCancellation(query, &got, '{', &pipelineCancellation{ctx: context.Background()})
+			classifyQuotedToken(query, &got, '{')
 			require.Equal(t, want, got)
 		}
 		for at := 0; at < len(query); at++ {
 			p := &pipelineCancellation{ctx: context.Background()}
 			switch query[at] {
 			case '(':
-				require.Equal(t, callParenthesis(query, at), callParenthesisWithCancellation(query, at, p))
+				require.Equal(t, callParenthesis(query, at), callParenthesis(query, at))
 			case '.':
-				require.Equal(t, dottedNameCall(query, at), dottedNameCallWithCancellation(query, at, p))
+				require.Equal(t, dottedNameCall(query, at), dottedNameCall(query, at))
 			case ':':
-				require.Equal(t, isLabelColon(query, at, '{'), isLabelColonWithCancellation(query, at, '{', p))
+				require.Equal(t, isLabelColon(query, at, '{'), isLabelColon(query, at, '{'))
 			case '|', '&', '!':
-				require.Equal(t, inLabelExpression(query, at, '{'), inLabelExpressionWithCancellation(query, at, '{', p))
+				require.Equal(t, inLabelExpression(query, at, '{'), inLabelExpression(query, at, '{'))
 			}
-			require.Equal(t, declaredAt(query, 0, at), declaredAtWithCancellation(query, 0, at, p))
+			require.Equal(t, declaredAt(query, 0, at), declaredAt(query, 0, at))
 		}
-		require.Equal(t, lastKeywordBefore(query, len(query), "RETURN"), lastKeywordBeforeWithCancellation(query, len(query), "RETURN", &pipelineCancellation{ctx: context.Background()}))
+		require.Equal(t, lastKeywordBefore(query, len(query), "RETURN"), lastKeywordBefore(query, len(query), "RETURN"))
 		want, we, wok := finalReturnBody(query)
-		got, ge, gok := finalReturnBodyWithCancellation(query, &pipelineCancellation{ctx: context.Background()})
+		got, ge, gok := finalReturnBody(query)
 		require.Equal(t, want, got)
 		require.Equal(t, we, ge)
 		require.Equal(t, wok, gok)
-		replayPrepassWork(t, func(p *pipelineCancellation) { finalReturnBodyWithCancellation(query, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { finalReturnBody(query) })
 	}
 	for _, query := range []string{":", "{key:1}", "{`a b`:1}", "{n:A|B&C|D}", "n:|A", "n:!A", "n:`A B`|C"} {
 		for at := 0; at < len(query); at++ {
 			if query[at] == ':' {
-				replayPrepassWork(t, func(p *pipelineCancellation) { isLabelColonWithCancellation(query, at, '{', p) })
+				replayPrepassWork(t, func(p *pipelineCancellation) { isLabelColon(query, at, '{') })
 			}
 			if query[at] == '|' || query[at] == '&' || query[at] == '!' {
-				replayPrepassWork(t, func(p *pipelineCancellation) { inLabelExpressionWithCancellation(query, at, '{', p) })
+				replayPrepassWork(t, func(p *pipelineCancellation) { inLabelExpression(query, at, '{') })
 			}
 		}
 	}
@@ -302,10 +302,10 @@ func TestQuotedVariableCheckedWrapperContracts(t *testing.T) {
 	require.True(t, names.touches("x"))
 	require.NotNil(t, names.restoreValue([]interface{}{"x"}))
 	require.Equal(t, names.original, names.restoreStatementText(names.canonical))
-	replayPrepassWork(t, func(p *pipelineCancellation) { names.touchesWithCancellation("x", p) })
+	replayPrepassWork(t, func(p *pipelineCancellation) { names.touches("x") })
 	for _, mode := range []ExecutionMode{ModeExplain, ModeProfile} {
 		plan := &ExecutionPlan{Mode: mode, Root: &PlanOperator{OperatorType: "Projection", Description: "quoted variables", Children: []*PlanOperator{{OperatorType: "Argument"}}}}
-		replayPrepassWork(t, func(p *pipelineCancellation) { formatPlanWithCancellation(plan, p) })
+		replayPrepassWork(t, func(p *pipelineCancellation) { formatPlan(plan) })
 		var out strings.Builder
 		formatOperator(&out, plan.Root, 0, mode == ModeProfile)
 		require.Contains(t, out.String(), "Projection")
@@ -320,7 +320,7 @@ func TestQuotedVariableCheckedRestorePublication(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	// Replay the checked metadata owner: native-map iteration must not vary
 	// the number of reachable polls between discovery and cancellation.
-	_, names := canonicalizeQuotedVariablesWithCancellation("WITH 1 AS `a b`, 2 AS `c d` RETURN `a b`, `c d`", &pipelineCancellation{ctx: context.Background()})
+	_, names := canonicalizeQuotedVariables("WITH 1 AS `a b`, 2 AS `c d` RETURN `a b`, `c d`")
 	result := &ExecuteResult{Columns: append([]string(nil), names.internalOrder...), Metadata: map[string]interface{}{"description": strings.Repeat(names.internalOrder[0], 100)}, Rows: [][]interface{}{{1, 2}}}
 	healthy := &pipelineCountingContext{Context: context.Background()}
 	_, err := names.restoreWithCancellation(result, nil, exec.parseReturnItems, &pipelineCancellation{ctx: healthy})
@@ -354,5 +354,5 @@ func TestQuotedVariableCheckedRestorePublication(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.False(t, params.bindParameterValuesWithCancellation(nil, nil, &pipelineCancellation{ctx: ctx}))
-	require.Nil(t, quotedVariableNamesForWithCancellation(context.Background(), "x", &pipelineCancellation{ctx: ctx}))
+	require.Nil(t, quotedVariableNamesFor(context.Background(), "x"))
 }

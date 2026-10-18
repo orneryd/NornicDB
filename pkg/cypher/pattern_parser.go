@@ -182,16 +182,11 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 	return props
 }
 
-func normalizePropertyKey(key string) string { return normalizePropertyKeyWithCancellation(key, nil) }
-func normalizePropertyKeyWithCancellation(key string, probe *pipelineCancellation) string {
-	if probe != nil && !probe.check() {
-		return ""
-	}
-
-	key = trimSpaceWithCancellation(key, probe)
+func normalizePropertyKey(key string) string {
+	key = strings.TrimSpace(key)
 	if len(key) >= 2 {
 		if strings.HasPrefix(key, "`") && strings.HasSuffix(key, "`") {
-			return symbolicNameValueWithCancellation(key, probe)
+			return symbolicNameValue(key)
 		}
 		if (strings.HasPrefix(key, "'") && strings.HasSuffix(key, "'")) ||
 			(strings.HasPrefix(key, "\"") && strings.HasSuffix(key, "\"")) {
@@ -202,23 +197,12 @@ func normalizePropertyKeyWithCancellation(key string, probe *pipelineCancellatio
 }
 
 func findTopLevelMapKeyValueSeparator(pair string) int {
-	return findTopLevelMapKeyValueSeparatorWithCancellation(pair, nil)
-}
-func findTopLevelMapKeyValueSeparatorWithCancellation(pair string, probe *pipelineCancellation) int {
-	if probe != nil && !probe.check() {
-		return -1
-	}
-
 	depth := 0
 	inSingle := false
 	inDouble := false
 	inBacktick := false
 
 	for i := 0; i < len(pair); i++ {
-		if probe != nil && !probe.check() {
-			return -1
-		}
-
 		ch := pair[i]
 
 		switch {
@@ -276,22 +260,11 @@ func findTopLevelMapKeyValueSeparatorWithCancellation(pair string, probe *pipeli
 }
 
 func isBackslashEscaped(s string, idx int) bool {
-	return isBackslashEscapedWithCancellation(s, idx, nil)
-}
-func isBackslashEscapedWithCancellation(s string, idx int, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	if idx <= 0 {
 		return false
 	}
 	backslashes := 0
 	for i := idx - 1; i >= 0 && s[i] == '\\'; i-- {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		backslashes++
 	}
 	return backslashes%2 == 1
@@ -429,7 +402,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// decoding it as one string produced "a' + 'b" instead of "ab" (#514).
 	if len(valueStr) >= 2 && (valueStr[0] == '\'' || valueStr[0] == '"') {
 		if end := skipCypherQuotedText(valueStr, 0, valueStr[0]); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
-			if decoded, ok := decodeCypherQuotedStringWithCancellation(valueStr, contextPipelineProbe(ctx)); ok {
+			if decoded, ok := decodeCypherQuotedString(valueStr); ok {
 				return decoded
 			}
 		}

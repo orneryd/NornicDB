@@ -21,7 +21,7 @@ func TestPreparationCallFramingCancellation(t *testing.T) {
 	} {
 		body, tail, transaction, batch := executor.parseCallSubquery(query)
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			actualBody, actualTail, actualTx, actualBatch := executor.parseCallSubqueryWithCancellation(query, probe)
+			actualBody, actualTail, actualTx, actualBatch := executor.parseCallSubquery(query)
 			if probe.err == nil {
 				require.Equal(t, body, actualBody)
 				require.Equal(t, tail, actualTail)
@@ -41,7 +41,7 @@ func TestPreparationCallFramingCancellation(t *testing.T) {
 	} {
 		want, wantStripped := stripUnionBranchFinishes(query)
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			actual, stripped := stripUnionBranchFinishesWithCancellation(query, probe)
+			actual, stripped := stripUnionBranchFinishes(query)
 			if probe.err == nil {
 				require.Equal(t, want, actual)
 				require.Equal(t, wantStripped, stripped)
@@ -49,7 +49,7 @@ func TestPreparationCallFramingCancellation(t *testing.T) {
 		})
 		branches, all, mixed, ok := parseTopLevelUnionBranches(query)
 		runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-			actual, a, m, o := parseTopLevelUnionBranchesWithCancellation(query, probe)
+			actual, a, m, o := parseTopLevelUnionBranches(query)
 			if probe.err == nil {
 				require.Equal(t, branches, actual)
 				require.Equal(t, all, a)
@@ -65,7 +65,7 @@ func TestPreparationCallBatchIntegerParity(t *testing.T) {
 		value, err := strconv.Atoi(text)
 		ctx, cancel := context.WithCancel(context.Background())
 		probe := &pipelineCancellation{ctx: ctx}
-		actual, ok := callSubqueryBatchSizeWithCancellation(text, probe)
+		actual, ok := callSubqueryBatchSize(text)
 		require.Equal(t, err == nil && value > 0, ok)
 		if ok {
 			require.Equal(t, value, actual)
@@ -73,6 +73,6 @@ func TestPreparationCallBatchIntegerParity(t *testing.T) {
 		cancel()
 	}
 	runPreparationBudgetSweep(t, func(_ context.Context, probe *pipelineCancellation) {
-		callSubqueryBatchSizeWithCancellation(strings.Repeat("0", 129)+"1", probe)
+		callSubqueryBatchSize(strings.Repeat("0", 129)+"1")
 	})
 }

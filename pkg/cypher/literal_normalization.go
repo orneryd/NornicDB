@@ -30,19 +30,12 @@ import (
 // Returns changed=false when the statement holds nothing to normalize; the
 // caller can then keep using the exact text as its cache key.
 func normalizeLiteralText(s string) (canonical string, changed bool) {
-	return normalizeLiteralTextWithCancellation(s, nil)
-}
-
-func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation) (canonical string, changed bool) {
 	var out strings.Builder
-	out.Grow(pipelineInitialCapacity(len(s), probe))
+	out.Grow(len(s))
 	last := 0
-	flushAt := func(end int) bool {
-		if !appendPipelineString(&out, s[last:end], probe) {
-			return false
-		}
+	flushAt := func(end int) {
+		out.WriteString(s[last:end])
 		last = end
-		return true
 	}
 	inSingle, inDouble, inBacktick := false, false, false
 	inLine, inBlock := false, false
@@ -51,25 +44,18 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 	// canonical form with a plain string.
 	stringHasEscape := false
 	for i := 0; i < len(s); i++ {
-		if probe != nil && !probe.check() {
-			return "", false
-		}
 		c := s[i]
 		switch {
 		case inLine:
 			if c == '\n' || c == '\r' {
 				inLine = false
-				if !flushAt(i) {
-					return "", false
-				}
+				flushAt(i)
 			}
 		case inBlock:
 			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
 				inBlock = false
 				i++
-				if !flushAt(i + 1) {
-					return "", false
-				}
+				flushAt(i + 1)
 			}
 		case inSingle:
 			if c == '\\' && i+1 < len(s) {
@@ -84,14 +70,9 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 				// form with one string.
 				inSingle = false
 				if stringHasEscape {
-					if !flushAt(i + 1) {
-						return "", false
-					}
+					flushAt(i + 1)
 				} else {
-					if !appendPipelineString(&out, normStringMarker, probe) {
-						return "", false
-					}
-
+					out.WriteString(normStringMarker)
 					changed = true
 					last = i + 1
 				}
@@ -106,14 +87,9 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 			if c == '"' {
 				inDouble = false
 				if stringHasEscape {
-					if !flushAt(i + 1) {
-						return "", false
-					}
+					flushAt(i + 1)
 				} else {
-					if !appendPipelineString(&out, normStringMarker, probe) {
-						return "", false
-					}
-
+					out.WriteString(normStringMarker)
 					changed = true
 					last = i + 1
 				}
@@ -126,9 +102,7 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 					continue
 				}
 				inBacktick = false
-				if !flushAt(i + 1) {
-					return "", false
-				}
+				flushAt(i + 1)
 			}
 		default:
 			switch {
@@ -136,54 +110,36 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 				if s[i+1] == '/' {
 					inLine = true
 					i++
-					if !flushAt(i - 1) {
-						return "", false
-					}
+					flushAt(i - 1)
 					continue
 				}
 				if s[i+1] == '*' {
 					inBlock = true
 					i++
-					if !flushAt(i - 1) {
-						return "", false
-					}
+					flushAt(i - 1)
 					continue
 				}
 			case c == '\'':
 				inSingle = true
-				if !flushAt(i) {
-					return "", false
-				}
+				flushAt(i)
 				continue
 			case c == '"':
 				inDouble = true
-				if !flushAt(i) {
-					return "", false
-				}
+				flushAt(i)
 				continue
 			case c == '`':
 				inBacktick = true
-				if !flushAt(i) {
-					return "", false
-				}
+				flushAt(i)
 				continue
 			case c == '$':
 				// $param: names are interchangeable for structural validity.
 				if i+1 < len(s) && (isASCIIDigit(s[i+1]) || isIdentByte(s[i+1])) {
 					j := i + 1
 					for j < len(s) && (isASCIIDigit(s[j]) || isIdentByte(s[j])) {
-						if probe != nil && !probe.check() {
-							return "", false
-						}
 						j++
 					}
-					if !flushAt(i) {
-						return "", false
-					}
-					if !appendPipelineString(&out, normParamMarker, probe) {
-						return "", false
-					}
-
+					flushAt(i)
+					out.WriteString(normParamMarker)
 					changed = true
 					last = j
 					i = j - 1
@@ -194,9 +150,7 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 					closing := findMatchingDelimiter(s, i+1, '(', ')')
 					if closing > 0 {
 						i = closing
-						if !flushAt(i + 1) {
-							return "", false
-						}
+						flushAt(i + 1)
 						continue
 					}
 				}
@@ -211,9 +165,6 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 					k := j + 1
 					digits := 0
 					for k < len(s) && isHexDigit(s[k]) {
-						if probe != nil && !probe.check() {
-							return "", false
-						}
 						k++
 						digits++
 					}
@@ -223,17 +174,11 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 				}
 				if j == i+1 {
 					for j < len(s) && isASCIIDigit(s[j]) {
-						if probe != nil && !probe.check() {
-							return "", false
-						}
 						j++
 					}
 					if j < len(s) && s[j] == '.' && j+1 < len(s) && isASCIIDigit(s[j+1]) {
 						j++
 						for j < len(s) && isASCIIDigit(s[j]) {
-							if probe != nil && !probe.check() {
-								return "", false
-							}
 							j++
 						}
 					}
@@ -245,31 +190,20 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 						if k < len(s) && isASCIIDigit(s[k]) {
 							j = k
 							for j < len(s) && isASCIIDigit(s[j]) {
-								if probe != nil && !probe.check() {
-									return "", false
-								}
 								j++
 							}
 						}
 					}
 				}
-				if !flushAt(i) {
-					return "", false
-				}
+				flushAt(i)
 				// Only normalize numbers whose value cannot change validity:
 				// out-of-range integers and leading-zero forms keep their text
 				// so their canonical form stays distinct from valid ones.
 				if normNumberSafe(s[i:j]) {
-					if containsAnyWithCancellation(s[i:j], ".eE", probe) && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
-						if !appendPipelineString(&out, normFloatMarker, probe) {
-							return "", false
-						}
-
+					if strings.ContainsAny(s[i:j], ".eE") && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
+						out.WriteString(normFloatMarker)
 					} else {
-						if !appendPipelineString(&out, normIntMarker, probe) {
-							return "", false
-						}
-
+						out.WriteString(normIntMarker)
 					}
 					changed = true
 					last = j
@@ -280,12 +214,7 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 			}
 		}
 	}
-	if !flushAt(len(s)) {
-		return "", false
-	}
-	if probe != nil && probe.err != nil {
-		return "", false
-	}
+	flushAt(len(s))
 	return out.String(), changed
 }
 
@@ -293,10 +222,6 @@ func normalizeLiteralTextWithCancellation(s string, probe *pipelineCancellation)
 // value-independent for validity: no leading-zero integer form and a value
 // that parses in range.
 func normNumberSafe(num string) bool {
-	return normNumberSafeWithCancellation(num, nil)
-}
-
-func normNumberSafeWithCancellation(num string, probe *pipelineCancellation) bool {
 	if len(num) == 0 {
 		return false
 	}
@@ -310,7 +235,7 @@ func normNumberSafeWithCancellation(num string, probe *pipelineCancellation) boo
 	if hex {
 		digits = num[2:]
 	}
-	if !containsAnyWithCancellation(num, ".eE", probe) && !hex {
+	if !strings.ContainsAny(num, ".eE") && !hex {
 		// Integer: must fit int64.
 		if len(digits) > 19 {
 			return false
@@ -321,116 +246,10 @@ func normNumberSafeWithCancellation(num string, probe *pipelineCancellation) boo
 		return true
 	}
 	if hex {
-		if digits == "" {
-			return false
-		}
-		for len(digits) > 0 && digits[0] == '0' {
-			if probe != nil && !probe.check() {
-				return false
-			}
-			digits = digits[1:]
-		}
-		if digits == "" {
-			return true
-		}
-		if len(digits) > 16 {
-			return false
-		}
 		_, err := strconv.ParseInt(digits, 16, 64)
 		return err == nil
 	}
-	return floatLiteralInRangeWithCancellation(num, probe)
-}
-
-func containsAnyWithCancellation(text, characters string, probe *pipelineCancellation) bool {
-	return indexAnyWithCancellation(text, characters, probe) >= 0
-}
-
-// Range, rather than the rounded value, is the literal cache's concern. A
-// decimal fallback retains 800 digits. Keep a larger bounded window and a
-// sticky digit, preserving the original decimal-point form: converting an
-// integer mantissa to a fractional one changes the fallback's range verdict
-// for very long tokens near binary64 overflow. Only range is consumed here.
-// The complete token still consumes the statement's probe.
-func floatLiteralInRangeWithCancellation(num string, probe *pipelineCancellation) bool {
-	if len(num) <= 4096 {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		_, err := strconv.ParseFloat(num, 64)
-		return err == nil
-	}
-	var digits strings.Builder
-	sticky := false
-	sawDot := false
-	ordinal, first, before := 0, -1, -1
-	exponent, exponentSign := 0, 1
-	limit := len(num) + 1000
-	for index := 0; index < len(num); index++ {
-		if probe != nil && !probe.check() {
-			return false
-		}
-		character := num[index]
-		switch character {
-		case '.':
-			sawDot = true
-			before = ordinal
-		case 'e', 'E':
-			if before < 0 {
-				before = ordinal
-			}
-			index++
-			if index < len(num) && (num[index] == '+' || num[index] == '-') {
-				if num[index] == '-' {
-					exponentSign = -1
-				}
-				index++
-			}
-			for ; index < len(num); index++ {
-				if probe != nil && !probe.check() {
-					return false
-				}
-				if exponent < limit {
-					exponent = min(limit, exponent*10+int(num[index]-'0'))
-				}
-			}
-		default:
-			if first < 0 && character != '0' {
-				first = ordinal
-			}
-			if first >= 0 {
-				if digits.Len() < 4096 {
-					if !appendPipelineByte(&digits, character, probe) {
-						return false
-					}
-
-				} else if character != '0' {
-					sticky = true
-				}
-			}
-			ordinal++
-		}
-	}
-	if first < 0 {
-		return true
-	}
-	if before < 0 {
-		before = ordinal
-	}
-	if sticky {
-		if !appendPipelineByte(&digits, '1', probe) {
-			return false
-		}
-
-	}
-	coefficient := digits.String()
-	point := digits.Len()
-	if sawDot {
-		point = max(1, min(before-first, digits.Len()))
-		coefficient = coefficient[:point] + "." + coefficient[point:]
-	}
-	exponent = exponentSign*exponent + before - first - point
-	_, err := strconv.ParseFloat(coefficient+"e"+strconv.Itoa(exponent), 64)
+	_, err := strconv.ParseFloat(num, 64)
 	return err == nil
 }
 

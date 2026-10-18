@@ -99,7 +99,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 	}
 	withDistinct := false
-	body, withDistinct = cutDistinctWithCancellation(pipelineClauseBodyWithCancellation(body, "WITH", probe), probe)
+	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 		for _, row := range rows {
@@ -167,7 +167,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			return nil, false
 		}
 		projection := withProjection{expr: expr, alias: alias}
-		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregateWithCancellation(expr, probe); aggregate {
+		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
 			if !containsFold(item, " AS ") {
 				return nil, false
 			}
@@ -507,56 +507,22 @@ func orderedProjectionExpressions(terms []orderByTerm, count int, item func(inde
 // the whitespace between tokens don't change an expression. Terms are
 // returned unchanged (not copied) when nothing differs.
 func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
-	return alignOrderTermsWithCancellation(terms, expressions, nil)
-}
-func alignOrderTermsWithCancellation(terms []orderByTerm, expressions []string, probe *pipelineCancellation) []orderByTerm {
-	lookup := aggregateCallLookupWithCancellation(expressions, probe)
-	if probe != nil && probe.err != nil {
-		return nil
-	}
+	spellings := aggregateCallSpellings(expressions)
 	var aligned []orderByTerm
 	for index, term := range terms {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-		column := respellAggregateCallsWithLookup(term.column, lookup, probe)
-		key := stripExpressionWhitespaceWithCancellation(column, probe)
-		if probe != nil && probe.err != nil {
-			return nil
-		}
+		column := respellAggregateCalls(term.column, spellings)
+		key := stripExpressionWhitespace(column)
 		for _, expression := range expressions {
-			if probe != nil && !probe.check() {
-				return nil
-			}
-			if comparePipelineStrings(expression, column, probe) != 0 {
-				normalized := stripExpressionWhitespaceWithCancellation(expression, probe)
-				if probe != nil && probe.err != nil {
-					return nil
-				}
-				if comparePipelineStrings(normalized, key, probe) == 0 {
-					column = expression
-					break
-				}
-			}
-			if probe != nil && probe.err != nil {
-				return nil
+			if expression != column && stripExpressionWhitespace(expression) == key {
+				column = expression
+				break
 			}
 		}
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-		same := comparePipelineStrings(column, term.column, probe) == 0
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-		if same {
+		if column == term.column {
 			continue
 		}
 		if aligned == nil {
-			aligned = appendPipelineItems([]orderByTerm(nil), terms, probe)
-			if probe != nil && probe.err != nil {
-				return nil
-			}
+			aligned = append([]orderByTerm(nil), terms...)
 		}
 		aligned[index].column = column
 	}
@@ -584,7 +550,7 @@ func readAggregateCallSpellings(expressions []string, put func(string, string) b
 		if probe != nil && !probe.check() {
 			return false
 		}
-		calls := semanticAggregateCallsWithCancellation(expression, probe)
+		calls := semanticAggregateCalls(expression)
 		if probe != nil && probe.err != nil {
 			return false
 		}
@@ -592,7 +558,7 @@ func readAggregateCallSpellings(expressions []string, put func(string, string) b
 			if probe != nil && !probe.check() {
 				return false
 			}
-			key := aggregateCallKeyWithCancellation(call, probe)
+			key := aggregateCallKey(call)
 			if probe != nil && probe.err != nil {
 				return false
 			}
@@ -603,15 +569,6 @@ func readAggregateCallSpellings(expressions []string, put func(string, string) b
 	}
 	return true
 }
-func aggregateCallLookupWithCancellation(expressions []string, probe *pipelineCancellation) func(string) (string, bool) {
-	if probe == nil {
-		spellings := aggregateCallSpellings(expressions)
-		return func(key string) (string, bool) { value, ok := spellings[key]; return value, ok }
-	}
-	var spellings pipelineStringMap[string]
-	readAggregateCallSpellings(expressions, func(key, call string) bool { return spellings.SetWithCancellation(key, call, probe) }, probe)
-	return func(key string) (string, bool) { return spellings.GetWithCancellation(key, probe) }
-}
 
 // respellAggregateCalls writes each aggregate call of text that spellings
 // holds as spellings spells it: COUNT(distinct n) as count(DISTINCT n).
@@ -619,12 +576,12 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 	return respellAggregateCallsWithLookup(text, func(key string) (string, bool) { value, ok := spellings[key]; return value, ok }, nil)
 }
 func respellAggregateCallsWithLookup(text string, lookup func(string) (string, bool), probe *pipelineCancellation) string {
-	calls := semanticAggregateCallsWithCancellation(text, probe)
+	calls := semanticAggregateCalls(text)
 	for _, call := range calls {
 		if probe != nil && !probe.check() {
 			return ""
 		}
-		key := aggregateCallKeyWithCancellation(call, probe)
+		key := aggregateCallKey(call)
 		if probe != nil && probe.err != nil {
 			return ""
 		}
@@ -637,7 +594,7 @@ func respellAggregateCallsWithLookup(text string, lookup func(string) (string, b
 				return ""
 			}
 			// Replace only the first occurrence, as the original semantic reader did.
-			index := indexTextWithCancellation(text, call, probe)
+			index := strings.Index(text, call)
 			if probe != nil && probe.err != nil {
 				return ""
 			}
@@ -656,39 +613,27 @@ func respellAggregateCallsWithLookup(text string, lookup func(string) (string, b
 // leading DISTINCT upper-cased and whitespace outside quotes removed: two
 // calls with one key are one expression. call is a call semanticAggregateCalls
 // found: a name, then its parenthesized arguments.
-func aggregateCallKey(call string) string { return aggregateCallKeyWithCancellation(call, nil) }
-func aggregateCallKeyWithCancellation(call string, probe *pipelineCancellation) string {
-	open := indexByteWithCancellation(call, '(', probe)
-	arguments := trimSpaceWithCancellation(call[open+1:], probe)
+func aggregateCallKey(call string) string {
+	open := strings.IndexByte(call, '(')
+	arguments := strings.TrimSpace(call[open+1:])
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
-		arguments = concatPipelineStrings("DISTINCT ", arguments[len("DISTINCT"):], probe)
+		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
 	}
-	name := upperASCII(trimSpaceWithCancellation(call[:open], probe))
-	normalized := stripExpressionWhitespace(arguments)
-	return concatPipelineStrings(concatPipelineStrings(name, "(", probe), normalized, probe)
+	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
 }
 
 // stripExpressionWhitespace removes the whitespace outside quoted text, but
 // for one space between two identifier characters, so NOT a stays apart
 // from NOTa.
 func stripExpressionWhitespace(expression string) string {
-	return stripExpressionWhitespaceWithCancellation(expression, nil)
-}
-func stripExpressionWhitespaceWithCancellation(expression string, probe *pipelineCancellation) string {
-	expression = trimSpaceWithCancellation(expression, probe)
-	if indexAnyWithCancellation(expression, " \t\n\r", probe) < 0 {
+	expression = strings.TrimSpace(expression)
+	if strings.IndexAny(expression, " \t\n\r") < 0 {
 		return expression
 	}
 	var stripped strings.Builder
-	stripped.Grow(pipelineInitialCapacity(len(expression), probe))
+	stripped.Grow(len(expression))
 	var quote byte
 	for index := 0; index < len(expression); index++ {
-		if probe != nil && !probe.check() {
-			return ""
-		}
-		if probe != nil && !reservePipelineString(&stripped, 2, probe) {
-			return ""
-		}
 		current := expression[index]
 		switch {
 		case quote != 0:
@@ -704,9 +649,6 @@ func stripExpressionWhitespaceWithCancellation(expression string, probe *pipelin
 		case isASCIIWhitespace(current):
 			next := index + 1
 			for next < len(expression) && isASCIIWhitespace(expression[next]) {
-				if probe != nil && !probe.check() {
-					return ""
-				}
 				next++
 			}
 			if isIdentByte(expression[index-1]) && isIdentByte(expression[next]) {
@@ -878,31 +820,28 @@ func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	return parsePipelineAggregateWithCancellation(expr, nil)
-}
-func parsePipelineAggregateWithCancellation(expr string, probe *pipelineCancellation) (name, inner string, distinct, ok bool) {
-	open := indexByteWithCancellation(expr, '(', probe)
-	if open < 0 || !isAggregateFunc(expr) {
+	// An aggregate is a function call: without a parenthesis there is none.
+	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
 		return "", "", false, false
 	}
-	name = lowerASCII(trimSpaceWithCancellation(expr[:open], probe))
-	inner = trimSpaceWithCancellation(extractFuncInner(expr), probe)
-	inner, distinct = cutDistinctArgumentWithCancellation(inner, probe)
-	if inner == "" || probe != nil && probe.err != nil {
+	open := strings.Index(expr, "(")
+	if open < 0 {
+		return "", "", false, false
+	}
+	name = lowerASCII(strings.TrimSpace(expr[:open]))
+	inner = strings.TrimSpace(extractFuncInner(expr))
+	inner, distinct = cutDistinctArgument(inner)
+	if inner == "" {
 		return "", "", false, false
 	}
 	return name, inner, distinct, true
 }
 
 func pipelineExpressionContainsAggregate(expr string) bool {
-	return pipelineExpressionContainsAggregateWithCancellation(expr, nil)
-}
-func pipelineExpressionContainsAggregateWithCancellation(expr string, probe *pipelineCancellation) bool {
-	if indexByteWithCancellation(expr, '(', probe) < 0 {
+	if strings.IndexByte(expr, '(') < 0 {
 		return false
 	}
-	spans := findAggregateSpansWithCancellation(trimSpaceWithCancellation(expr, probe), probe)
-	return len(spans) > 0 && (probe == nil || probe.err == nil)
+	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
@@ -920,8 +859,8 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 	if !probe.check() {
 		return nil, false
 	}
-	expr = trimSpaceWithCancellation(expr, probe)
-	if name, inner, distinct, ok := parsePipelineAggregateWithCancellation(expr, probe); ok {
+	expr = strings.TrimSpace(expr)
+	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
 		return e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
@@ -929,7 +868,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if inner == "" {
 			return result, true
 		}
-		for _, pair := range splitTopLevelCommaWithCancellation(inner, probe) {
+		for _, pair := range splitTopLevelComma(inner) {
 			if probe != nil && !probe.check() {
 				return nil, false
 			}
@@ -937,7 +876,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			if separator <= 0 {
 				return nil, false
 			}
-			key := normalizePropertyKey(trimSpaceWithCancellation(pair[:separator], probe))
+			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
 			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, pair[separator+1:])
 			if !ok {
 				return nil, false
@@ -950,9 +889,9 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if inner == "" {
 			return []interface{}{}, true
 		}
-		if _, _, _, _, comprehension := parseListComprehensionWithCancellation(inner, probe); !comprehension {
+		if _, _, _, _, comprehension := parseListComprehension(inner); !comprehension {
 			result := make([]interface{}, 0)
-			for _, item := range splitTopLevelCommaWithCancellation(inner, probe) {
+			for _, item := range splitTopLevelComma(inner) {
 				if probe != nil && !probe.check() {
 					return nil, false
 				}
@@ -965,7 +904,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			return result, true
 		}
 	}
-	if spans := findAggregateSpansWithCancellation(expr, probe); len(spans) > 0 {
+	if spans := findAggregateSpans(expr); len(spans) > 0 {
 		values := make(pipelineRow, len(spans))
 		// Mixed aggregate expressions are evaluated after isolating aggregate
 		// calls, but their non-aggregate terms still resolve against the group's
@@ -986,7 +925,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			if probe != nil && !probe.check() {
 				return nil, false
 			}
-			name, inner, distinct, ok := parsePipelineAggregateWithCancellation(expr[span.start:span.end], probe)
+			name, inner, distinct, ok := parsePipelineAggregate(expr[span.start:span.end])
 			if !ok {
 				return nil, false
 			}
@@ -1109,41 +1048,62 @@ type returnProjectionPlan struct {
 // unbounded distinct query texts.
 var returnProjectionPlans = struct {
 	sync.RWMutex
-	plans pipelineStringMap[*returnProjectionPlan]
-}{}
+	plans map[string]*returnProjectionPlan
+}{plans: make(map[string]*returnProjectionPlan)}
 
 const returnProjectionPlanLimit = 4096
 
 func returnProjectionPlanFor(clause string) *returnProjectionPlan {
-	return returnProjectionPlanForWithCancellation(clause, nil)
+	returnProjectionPlans.RLock()
+	plan, cached := returnProjectionPlans.plans[clause]
+	returnProjectionPlans.RUnlock()
+	if cached {
+		return plan
+	}
+	plan = parseReturnProjectionPlan(clause)
+	returnProjectionPlans.Lock()
+	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
+		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
+	}
+	returnProjectionPlans.plans[clause] = plan
+	returnProjectionPlans.Unlock()
+	return plan
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	return parseReturnProjectionPlanWithCancellation(clause, nil)
+	// The clause is scanned with its keyword, which tells a keyword-named
+	// first item from a clause (RETURN by ORDER BY by, #894).
+	body := strings.TrimSpace(clause)
+	modifierStart := len(body)
+	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
+		modifierStart = cut
+	}
+	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
+	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
+	items := splitTopLevelComma(body)
+	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
+		plan.valid, plan.star = true, true
+		for _, item := range items[1:] {
+			plan.starItems = append(plan.starItems, strings.TrimSpace(item))
+		}
+		return plan
+	}
+	for _, rawItem := range items {
+		// Semantic validation rejects an empty item (RETURN 1,,2).
+		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
+		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
+		plan.addProjection(expr, alias)
+	}
+	plan.valid = len(plan.projections) > 0
+	return plan
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out
 // (starProjectionItems, #883).
 func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
-	return plan.withStarExpandedWithCancellation(columns, nil)
-}
-func (plan *returnProjectionPlan) withStarExpandedWithCancellation(columns []string, probe *pipelineCancellation) *returnProjectionPlan {
 	expanded := &returnProjectionPlan{valid: true, distinct: plan.distinct, modifiers: plan.modifiers}
-	items := starProjectionItemsWithCancellation(columns, plan.starItems, probe)
-	if probe != nil && probe.err != nil {
-		return &returnProjectionPlan{}
-	}
-	for _, item := range items {
-		if probe != nil && !probe.check() {
-			return &returnProjectionPlan{}
-		}
-		expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
-		if probe != nil && probe.err != nil {
-			return &returnProjectionPlan{}
-		}
-		if !expanded.addProjectionWithCancellation(expr, alias, probe) {
-			return &returnProjectionPlan{}
-		}
+	for _, item := range starProjectionItems(columns, plan.starItems) {
+		expanded.addProjection(parseProjectionExprAlias(item))
 	}
 	return expanded
 }
@@ -1181,56 +1141,28 @@ func pipelineNameReturnColumns(ctx context.Context, final *ExecuteResult, clause
 // the given (name) order, as a variable item, except a column one of items
 // names (`RETURN *, a + 1 AS a` has the one column a), then items.
 func starProjectionItems(columns, items []string) []string {
-	return starProjectionItemsWithCancellation(columns, items, nil)
-}
-func starProjectionItemsWithCancellation(columns, items []string, probe *pipelineCancellation) []string {
-	named := pipelineStringMap[struct{}]{}
+	named := make(map[string]bool, len(items))
 	for _, item := range items {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-		_, alias := parseProjectionExprAliasWithCancellation(item, probe)
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-		if !named.SetWithCancellation(alias, struct{}{}, probe) {
-			return nil
-		}
+		_, alias := parseProjectionExprAlias(item)
+		named[alias] = true
 	}
-	out := make([]string, 0, pipelineInitialCapacity(len(columns)+len(items), probe))
+	out := make([]string, 0, len(columns)+len(items))
 	for _, column := range columns {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-		_, exists := named.GetWithCancellation(column, probe)
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-		if !exists {
+		if !named[column] {
 			variable := projectionVariableText(column)
-			item := concatPipelineStrings(concatPipelineStrings(variable, " AS ", probe), variable, probe)
-			if probe != nil && probe.err != nil {
-				return nil
-			}
-			out = appendPipelineItem(out, item, probe)
+			out = append(out, variable+" AS "+variable)
 		}
 	}
-	return appendPipelineItems(out, items, probe)
+	return append(out, items...)
 }
 
 // projectionVariableText is a variable as an expression: backtick-quoted when
 // it isn't a plain identifier.
 func projectionVariableText(name string) string {
-	return projectionVariableTextWithCancellation(name, nil)
-}
-func projectionVariableTextWithCancellation(name string, probe *pipelineCancellation) string {
-	if isSimpleIdentifierWithCancellation(name, probe) && !containsTextWithCancellation(name, "`", probe) {
+	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
 		return name
 	}
-	if probe != nil && probe.err != nil {
-		return ""
-	}
-	return concatPipelineStrings(concatPipelineStrings("`", replaceTextWithCancellation(name, "`", "``", probe), probe), "`", probe)
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 func (plan *returnProjectionPlan) addProjection(expr, alias string) {
@@ -1263,7 +1195,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	plan := returnProjectionPlanForWithCancellation(clause, probe)
+	plan := returnProjectionPlanFor(clause)
 	if probe.err != nil {
 		return nil, false
 	}
@@ -1725,36 +1657,26 @@ func pipelineWildcardColumns(ctx context.Context, rows []pipelineRow) []string {
 }
 
 func pipelineColumns(ctx context.Context, rows []pipelineRow, includeInternal bool) []string {
-	ctx = withPipelineCancellation(ctx)
-	probe := pipelineCancellationForContext(ctx)
-	seen := pipelineStringSet{probe: probe}
-	columns := make([]string, 0)
+	// A row's columns are the statement's variables; the rows are data, one
+	// unit of work each.
+	probe := contextPipelineProbe(ctx)
+	seen := make(map[string]struct{})
 	for _, row := range rows {
-		if !probe.check() {
+		if probe.stopped() {
 			return nil
 		}
 		for column := range row {
-			if !probe.check() {
-				return nil
-			}
 			if !includeInternal && (strings.HasPrefix(column, "$") || isGeneratedVariable(column)) {
 				continue
 			}
-			exists := seen.add(column)
-			if probe.err != nil {
-				return nil
-			}
-			if !exists {
-				columns = appendPipelineItem(columns, column, probe)
-				if probe.err != nil {
-					return nil
-				}
-			}
+			seen[column] = struct{}{}
 		}
 	}
-	if !probe.sort(columns, func(i, j int) bool { return comparePipelineStrings(columns[i], columns[j], probe) < 0 }, false) {
-		return nil
+	columns := make([]string, 0, len(seen))
+	for column := range seen {
+		columns = append(columns, column)
 	}
+	sort.Strings(columns)
 	return columns
 }
 

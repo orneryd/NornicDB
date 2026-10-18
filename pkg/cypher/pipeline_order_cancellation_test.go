@@ -80,7 +80,7 @@ func TestPipelineOrderPreparationBudgetBoundaries(t *testing.T) {
 	terms := []orderByTerm{{column: "COUNT(distinct x)"}, {column: "x+1"}, {column: "sum(x)", descending: true}}
 	want := alignOrderTerms(terms, expressions)
 	runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-		actual := alignOrderTermsWithCancellation(terms, expressions, p)
+		actual := alignOrderTerms(terms, expressions)
 		if p.err == nil {
 			require.Equal(t, want, actual)
 		}
@@ -88,7 +88,7 @@ func TestPipelineOrderPreparationBudgetBoundaries(t *testing.T) {
 	for _, text := range []string{"", "x", "x ", "x + 1", "'a  b'", "`a b`", "'a\\' b'", "a" + strings.Repeat(" ", 129) + "b"} {
 		want := stripExpressionWhitespace(text)
 		runPreparationBudgetSweep(t, func(_ context.Context, p *pipelineCancellation) {
-			actual := stripExpressionWhitespaceWithCancellation(text, p)
+			actual := stripExpressionWhitespace(text)
 			if p.err == nil {
 				require.Equal(t, want, actual)
 			}

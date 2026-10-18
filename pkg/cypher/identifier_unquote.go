@@ -11,14 +11,7 @@ import (
 // the name as written (quotes included; normalizeProjectionColumnName removes
 // them), the offset after it, and whether a name starts there.
 func scanSymbolicName(s string, start int) (string, int, bool) {
-	return scanSymbolicNameWithCancellation(s, start, nil)
-}
-func scanSymbolicNameWithCancellation(s string, start int, probe *pipelineCancellation) (string, int, bool) {
-	if probe != nil && !probe.check() {
-		return "", start, false
-	}
-
-	_, end, ok := scanIdentifierTokenWithCancellation(s, start, probe)
+	_, end, ok := scanIdentifierToken(s, start)
 	if !ok {
 		return "", end, false
 	}

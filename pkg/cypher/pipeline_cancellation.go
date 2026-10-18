@@ -218,6 +218,22 @@ func (probe *pipelineCancellation) check() bool {
 	return probe.poll()
 }
 
+// stopped is one unit of a statement's data work: true once the statement
+// has ended (its probe.err says how). Every loop whose trip count grows
+// with rows, values or the graph calls it once per iteration. A nil probe
+// (no statement) never stops.
+func (probe *pipelineCancellation) stopped() bool {
+	return probe != nil && !probe.check()
+}
+
+// failed is the error a stopped statement ends with (nil for a nil probe).
+func (probe *pipelineCancellation) failed() error {
+	if probe == nil {
+		return nil
+	}
+	return probe.err
+}
+
 // pipelineTextCostUnit is the number of string bytes one probe unit stands
 // for when a native map hashes or compares a string.
 const pipelineTextCostUnit = 4096
@@ -249,9 +265,10 @@ func (probe *pipelineCancellation) poll() bool {
 	}
 	probe.err = probe.ctx.Err()
 	if probe.err != nil {
-		probe.observed.Store(true)
-		if probe.parent != nil {
-			probe.parent.observed.Store(true)
+		// Every probe above learns of it: the statement settles its outcome
+		// on the one it was prepared under.
+		for owner := probe; owner != nil; owner = owner.parent {
+			owner.observed.Store(true)
 		}
 		probe.remaining = 0
 		recordExpressionFailure(probe.ctx, probe.err)

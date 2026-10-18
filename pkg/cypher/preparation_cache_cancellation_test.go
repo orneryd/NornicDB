@@ -20,16 +20,16 @@ func TestCanonicalRewriteMemoCancellation(t *testing.T) {
 				memo := canonicalRewriteMemo{seed: maphash.MakeSeed()}
 				switch stage {
 				case "load":
-					memo.storeWithCancellation(query, rewrite, nil)
-					memo.loadWithCancellation(query, probe)
+					memo.store(query, rewrite)
+					memo.load(query)
 				case "store":
-					memo.storeWithCancellation(query, rewrite, probe)
+					memo.store(query, rewrite)
 				case "scan_hit":
-					canonicalRewrites.storeWithCancellation(query, rewrite, nil)
-					canonicalizeQueryTextWithCancellation(query, probe)
+					canonicalRewrites.store(query, rewrite)
+					canonicalizeQueryText(query)
 				case "scan_miss":
 					canonicalRewrites.slot(query).Store(nil)
-					canonicalizeQueryTextWithCancellation(query, probe)
+					canonicalizeQueryText(query)
 				}
 				return probe.err
 			})
@@ -39,13 +39,13 @@ func TestCanonicalRewriteMemoCancellation(t *testing.T) {
 	defer cancel()
 	probe := pipelineCancellationForContext(ctx)
 	memo := canonicalRewriteMemo{seed: maphash.MakeSeed()}
-	require.Nil(t, memo.loadWithCancellation(query, probe))
-	memo.storeWithCancellation(query, rewrite, probe)
-	require.Same(t, rewrite, memo.loadWithCancellation(query, probe))
-	require.Same(t, rewrite, memo.loadWithCancellation(query, nil))
+	require.Nil(t, memo.load(query))
+	memo.store(query, rewrite)
+	require.Same(t, rewrite, memo.load(query))
+	require.Same(t, rewrite, memo.load(query))
 	memo.slot("RETURN other").Store(&queryRewrite{original: "different"})
-	require.Nil(t, memo.loadWithCancellation("RETURN other", probe))
-	require.Nil(t, memo.loadWithCancellation("RETURN other", nil))
+	require.Nil(t, memo.load("RETURN other"))
+	require.Nil(t, memo.load("RETURN other"))
 	require.NoError(t, probe.err)
 }
 
@@ -57,9 +57,9 @@ func TestRewriteFreeCacheCancellation(t *testing.T) {
 				probe := pipelineCancellationForContext(ctx)
 				if stage == "get" {
 					markRewriteFree(rewriteFreeFunctionAliases, false, query)
-					rewriteFreeWithCancellation(rewriteFreeFunctionAliases, false, query, probe)
+					rewriteFree(rewriteFreeFunctionAliases, false, query)
 				} else {
-					markRewriteFreeWithCancellation(rewriteFreeCypher25Expressions, true, query, probe)
+					markRewriteFree(rewriteFreeCypher25Expressions, true, query)
 				}
 				return probe.err
 			})
@@ -70,11 +70,11 @@ func TestRewriteFreeCacheCancellation(t *testing.T) {
 	probe := pipelineCancellationForContext(ctx)
 	for _, version := range []bool{false, true} {
 		for _, pass := range []rewriteFreePass{rewriteFreeFunctionAliases, rewriteFreeCypher25Expressions, rewriteFreeQueryStructure} {
-			markRewriteFreeWithCancellation(pass, version, "RETURN cache_mask", probe)
-			require.True(t, rewriteFreeWithCancellation(pass, version, "RETURN cache_mask", probe))
+			markRewriteFree(pass, version, "RETURN cache_mask")
+			require.True(t, rewriteFree(pass, version, "RETURN cache_mask"))
 		}
 	}
-	require.False(t, rewriteFreeWithCancellation(rewriteFreeQueryStructure, false, "RETURN absent_mask", probe))
+	require.False(t, rewriteFree(rewriteFreeQueryStructure, false, "RETURN absent_mask"))
 	require.NoError(t, probe.err)
 }
 
@@ -90,7 +90,7 @@ func TestFunctionAliasReaderCancellation(t *testing.T) {
 	} {
 		runPipelineCancelPointStage(t, func(ctx context.Context) error {
 			probe := pipelineCancellationForContext(ctx)
-			canonicalizeFunctionAliasesWithCancellation(query, probe)
+			canonicalizeFunctionAliases(query)
 			return probe.err
 		})
 	}
@@ -105,7 +105,7 @@ func TestFunctionAliasReaderHealthyParity(t *testing.T) {
 	for _, query := range []string{"RETURN 1", "RETURN ceiling(2), ln(2)", "RETURN property_exists(n,foo)", "RETURN property_exists(n,`a'\\b`)", "RETURN property_exists(n)", "RETURN property_exists(1,x)", "RETURN property_exists(n,x+1)", "RETURN n.ln(2),$ln,x.ln", "RETURN _not_alias(2),ln_value,ln", "RETURN 'ln(2)', `ln`, /* ln(2) */ ln(2)", "RETURN " + strings.Repeat("x", 8192) + "(1)"} {
 		want, wantRewrite := canonicalizeFunctionAliases(query)
 		probe := pipelineCancellationForContext(ctx)
-		actual, rewrite := canonicalizeFunctionAliasesWithCancellation(query, probe)
+		actual, rewrite := canonicalizeFunctionAliases(query)
 		require.NoError(t, probe.err)
 		require.Equal(t, want, actual)
 		if wantRewrite == nil {

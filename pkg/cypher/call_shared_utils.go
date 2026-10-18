@@ -10,12 +10,7 @@ import (
 // splitTopLevelComma splits a comma-separated string while respecting nested
 // (), [], {} groups and quoted strings. The parts are trimmed substrings of
 // input, so splitting copies no text.
-func splitTopLevelComma(input string) []string { return splitTopLevelCommaWithCancellation(input, nil) }
-func splitTopLevelCommaWithCancellation(input string, probe *pipelineCancellation) []string {
-	if probe != nil && !probe.check() {
-		return nil
-	}
-
+func splitTopLevelComma(input string) []string {
 	var buffer [8]string
 	parts := appendTopLevelComma(buffer[:0], input)
 	if len(parts) == 0 {
@@ -23,21 +18,7 @@ func splitTopLevelCommaWithCancellation(input string, probe *pipelineCancellatio
 	}
 	// One allocation of the exact size, as the compiler gives a slice built
 	// locally and returned.
-	if probe == nil {
-		return append([]string(nil), parts...)
-	}
-	var copied []string
-	for _, part := range parts {
-		if !probe.check() {
-			return nil
-		}
-		copied = appendPipelineItem(copied, part, probe)
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-
-	}
-	return copied
+	return append([]string(nil), parts...)
 }
 
 // appendTopLevelComma appends input's comma-separated parts outside quotes
@@ -45,14 +26,7 @@ func splitTopLevelCommaWithCancellation(input string, probe *pipelineCancellatio
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
-	return appendTopLevelCommaWithCancellation(parts, input, nil)
-}
-func appendTopLevelCommaWithCancellation(parts []string, input string, probe *pipelineCancellation) []string {
-	if probe != nil && !probe.check() {
-		return nil
-	}
-
-	if trimSpaceWithCancellation(input, probe) == "" {
+	if strings.TrimSpace(input) == "" {
 		return parts
 	}
 
@@ -60,10 +34,6 @@ func appendTopLevelCommaWithCancellation(parts []string, input string, probe *pi
 	depth := 0
 
 	for i := 0; i < len(input); i++ {
-		if probe != nil && !probe.check() {
-			return nil
-		}
-
 		switch input[i] {
 		case '\'', '"', '`':
 			i = skipCypherQuotedText(input, i, input[i]) - 1
@@ -75,22 +45,14 @@ func appendTopLevelCommaWithCancellation(parts []string, input string, probe *pi
 			}
 		case ',':
 			if depth == 0 {
-				parts = appendPipelineItem(parts, trimSpaceWithCancellation(input[start:i], probe), probe)
-				if probe != nil && probe.err != nil {
-					return nil
-				}
-
+				parts = append(parts, strings.TrimSpace(input[start:i]))
 				start = i + 1
 			}
 		}
 	}
 
-	if s := trimSpaceWithCancellation(input[start:], probe); s != "" {
-		parts = appendPipelineItem(parts, s, probe)
-		if probe != nil && probe.err != nil {
-			return nil
-		}
-
+	if s := strings.TrimSpace(input[start:]); s != "" {
+		parts = append(parts, s)
 	}
 	return parts
 }

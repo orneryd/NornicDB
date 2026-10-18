@@ -16,13 +16,6 @@ import (
 // isIdentifierStartRune where a name starts, isIdentifierPartRune after its
 // first character. €a and a· are "Invalid input" as in Neo4j.
 func validateUnicodeOperators(query string) error {
-	return validateUnicodeOperatorsWithCancellation(query, nil)
-}
-
-func validateUnicodeOperatorsWithCancellation(query string, probe *pipelineCancellation) error {
-	if probe != nil && !probe.check() {
-		return probe.err
-	}
 	const unicodeMinus = '−'
 	if isLikelyPlainASCIICypher(query) {
 		return nil
@@ -32,9 +25,6 @@ func validateUnicodeOperatorsWithCancellation(query string, probe *pipelineCance
 	inLineComment := false
 	inBlockComment := false
 	for offset := 0; offset < len(query); {
-		if probe != nil && !probe.check() {
-			return probe.err
-		}
 		if inLineComment {
 			if query[offset] == '\n' || query[offset] == '\r' {
 				inLineComment = false
@@ -110,9 +100,6 @@ func validateUnicodeOperatorsWithCancellation(query string, probe *pipelineCance
 		}
 		offset += size
 	}
-	if probe != nil {
-		return probe.err
-	}
 	return nil
 }
 
@@ -121,16 +108,7 @@ func validateUnicodeOperatorsWithCancellation(query string, probe *pipelineCance
 // rules validateUnicodeOperators checks. ASCII is isIdentStartByte /
 // isIdentByte's business.
 func isUnquotedName(name string) bool {
-	return isUnquotedNameWithCancellation(name, nil)
-}
-func isUnquotedNameWithCancellation(name string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
 	for offset, r := range name {
-		if probe != nil && !probe.check() {
-			return false
-		}
 		if r < utf8.RuneSelf {
 			continue
 		}

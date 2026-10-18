@@ -16,15 +16,9 @@ func (e *StorageExecutor) findMatchingBrace(s string, startIdx int) int {
 
 // splitBySemicolon splits a string by semicolons, respecting quotes.
 func (e *StorageExecutor) splitBySemicolon(s string) []string {
-	return e.splitBySemicolonWithCancellation(s, nil)
-}
-func (e *StorageExecutor) splitBySemicolonWithCancellation(s string, probe *pipelineCancellation) []string {
 	var result []string
 	start := 0
 	for position := 0; position < len(s); position++ {
-		if probe != nil && !probe.check() {
-			return nil
-		}
 		switch s[position] {
 		case '\'', '"', '`':
 			position = skipCypherQuotedText(s, position, s[position]) - 1
@@ -33,12 +27,12 @@ func (e *StorageExecutor) splitBySemicolonWithCancellation(s string, probe *pipe
 				position = queryCommentEnd(s, position) - 1
 			}
 		case ';':
-			result = appendPipelineItem(result, s[start:position], probe)
+			result = append(result, s[start:position])
 			start = position + 1
 		}
 	}
 	if start < len(s) {
-		result = appendPipelineItem(result, s[start:], probe)
+		result = append(result, s[start:])
 	}
 	return result
 }

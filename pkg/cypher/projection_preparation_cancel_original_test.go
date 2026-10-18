@@ -19,7 +19,7 @@ func TestProjectionPreparationCanceledOriginal(t *testing.T) {
 	if checked, ok := interface{}(executor).(interface {
 		parseReturnItemsWithCancellation(string, *pipelineCancellation) []returnItem
 	}); ok {
-		checked.parseReturnItemsWithCancellation(clause, probe)
+		checked.parseReturnItems(clause)
 	} else {
 		executor.parseReturnItems(clause)
 	}

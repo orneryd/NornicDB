@@ -18,13 +18,6 @@ import (
 )
 
 func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
-	return prevWordEqualsIgnoreCaseWithCancellation(s, pos, word, nil)
-}
-func prevWordEqualsIgnoreCaseWithCancellation(s string, pos int, word string, probe *pipelineCancellation) bool {
-	if probe != nil && !probe.check() {
-		return false
-	}
-
 	if pos <= 0 {
 		return false
 	}
@@ -34,10 +27,6 @@ func prevWordEqualsIgnoreCaseWithCancellation(s string, pos int, word string, pr
 	}
 	end := i + 1
 	for i >= 0 && isIdentByte(s[i]) {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		i--
 	}
 	start := i + 1
@@ -45,10 +34,6 @@ func prevWordEqualsIgnoreCaseWithCancellation(s string, pos int, word string, pr
 		return false
 	}
 	for j := 0; j < len(word); j++ {
-		if probe != nil && !probe.check() {
-			return false
-		}
-
 		if asciiUpper(s[start+j]) != asciiUpper(word[j]) {
 			return false
 		}
@@ -1817,7 +1802,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	splitProbe := contextPipelineProbe(ctx)
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesWithCancellation(cypher, splitProbe)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if splitProbe != nil && splitProbe.err != nil {
 		return nil, splitProbe.err
 	}
