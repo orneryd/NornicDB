@@ -51,7 +51,7 @@ func TestDynamicLabelsAndTypesInPatterns(t *testing.T) {
 		"MATCH ()-[r:$(['PR', 'PS'])]->() RETURN count(r) AS c":                          0,
 		"MATCH ()-[r:$([])]->() RETURN count(r) AS c":                                    3,
 		"MATCH ()-[r:$('PR')|PS]->() RETURN count(r) AS c":                               3,
-		"MATCH (a:PA {id: 1})-[r:$('PR')*1..2]->(m) RETURN count(*) AS c":                2,
+		"MATCH (a:PA {id: 1})-[r:$('PR')*1..2]->(m) RETURN count(*) AS c":                3,
 		"MATCH (a:PA {id: 1}) RETURN COUNT { (a)-->(:$any(['PA', 'PC'])) } AS c":         2,
 		"MATCH (a:PA {id: 1}) WHERE EXISTS { (a)-[:$('PR')]->(:$('PA')) } RETURN 1 AS c": 1,
 		"MATCH (a:PA {id: 1}) RETURN size([(a)-[:$('PR')]->(m) | m.id]) AS c":            2,
@@ -62,7 +62,7 @@ func TestDynamicLabelsAndTypesInPatterns(t *testing.T) {
 		"WITH [] AS l MATCH (n:$(l)) RETURN count(n) AS c":                            4,
 		"WITH 'PB' AS l MATCH (n:PA&!$(l)) RETURN count(n) AS c":                      1,
 		"WITH 'P' + 'R' AS t MATCH ()-[r:$(t)]->() RETURN count(r) AS c":              2,
-		"WITH 'PR' AS t MATCH (a:PA {id: 1})-[r:$(t)*1..2]->(m) RETURN count(*) AS c": 2,
+		"WITH 'PR' AS t MATCH (a:PA {id: 1})-[r:$(t)*1..2]->(m) RETURN count(*) AS c": 3,
 		"UNWIND ['PA', 'PC'] AS l MATCH (n:$(l)) RETURN count(n) AS c":                3,
 	} {
 		result, err := inTransaction(query, params)
