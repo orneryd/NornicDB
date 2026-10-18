@@ -169,3 +169,30 @@ func appendFloatEquivalenceKey(key *strings.Builder, number float64) {
 		key.WriteString(new(big.Float).SetFloat64(number).Text('f', 0))
 	}
 }
+
+// cypherValueSet is a set of values under equivalence (cypherEquivalenceKey),
+// for the apoc.coll functions that compare items as APOC's sets of AnyValues
+// do: 1 and 1.0 are one item, a null is one item, and every NaN is its own.
+type cypherValueSet map[string]struct{}
+
+// add adds value; existed reports an equivalent value already there.
+func (set cypherValueSet) add(value interface{}) (existed bool) {
+	key := cypherEquivalenceKey(value)
+	if _, existed = set[key]; !existed {
+		set[key] = struct{}{}
+	}
+	return existed
+}
+
+// has reports whether the set holds a value equivalent to value.
+func (set cypherValueSet) has(value interface{}) bool {
+	_, found := set[cypherEquivalenceKey(value)]
+	return found
+}
+
+// cypherValueEquals is APOC's value equality (Util.valueEquals, used by
+// apoc.coll.contains, containsAll, indexOf, occurrences and split):
+// equivalence, except that a null equals nothing.
+func cypherValueEquals(left, right interface{}) bool {
+	return left != nil && right != nil && cypherEquivalenceKey(left) == cypherEquivalenceKey(right)
+}
