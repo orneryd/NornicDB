@@ -29,9 +29,13 @@ func TestSearchStreamLifecycleNativeGRPC(t *testing.T) {
 	dropped := false
 	api, err := NewService(Config{
 		ResolveContinuationDatabase: registry.ResolveDatabase,
-		DiscardContinuation: func(owner, qid, database string) error { return registry.Discard(resultstream.Scope{Owner: owner, Database: database}, qid) },
+		DiscardContinuation: func(owner, qid, database string) error {
+			return registry.Discard(resultstream.Scope{Owner: owner, Database: database}, qid)
+		},
 		ResolveDatabase: func(context.Context, string) (DatabaseDependencies, error) {
-			if dropped { return DatabaseDependencies{}, errors.New("database dropped") }
+			if dropped {
+				return DatabaseDependencies{}, errors.New("database dropped")
+			}
 			return DatabaseDependencies{Searcher: svc}, nil
 		},
 	}, nil, nil, svc)
