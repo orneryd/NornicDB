@@ -13,6 +13,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Compile-time interface assertion.
@@ -72,7 +73,8 @@ type remoteStatement struct {
 }
 
 // NewRemoteEngine creates a remote engine. Transport is auto-detected from the URI scheme.
-func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
+func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
+	defer func() { err = observability.RedactError(err, remoteDisplayCredentials(cfg)...) }()
 	uri := strings.TrimSpace(cfg.URI)
 	database := strings.TrimSpace(cfg.Database)
 	if uri == "" {
@@ -83,7 +85,6 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	}
 
 	var transport remoteTransport
-	var err error
 
 	lower := strings.ToLower(uri)
 	switch {
@@ -105,7 +106,7 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	}
 
 	return &RemoteEngine{
-		transport: transport,
+		transport: &remoteDisplayTransport{remoteTransport: transport, credentials: remoteDisplayCredentials(cfg)},
 		schema:    NewSchemaManager(),
 	}, nil
 }

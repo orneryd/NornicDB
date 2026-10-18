@@ -50,6 +50,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // OAuthManager manages OAuth 2.0 authentication flow and token validation.
@@ -192,18 +194,18 @@ func (m *OAuthManager) ExchangeCode(code string) (*OAuthTokenData, error) {
 
 	tokenResp, err := http.PostForm(tokenURL, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to exchange token: %w", err)
+		return nil, fmt.Errorf("failed to exchange token: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, code))
 	}
 	defer tokenResp.Body.Close()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(tokenResp.Body)
-		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", tokenResp.StatusCode, string(body))
+		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", tokenResp.StatusCode, observability.RedactText(string(body), config.ClientSecret, config.Issuer, code))
 	}
 
 	var tokenData OAuthTokenData
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
+		return nil, fmt.Errorf("failed to parse token response: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, code))
 	}
 
 	return &tokenData, nil
@@ -220,24 +222,24 @@ func (m *OAuthManager) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
 	userinfoURL := fmt.Sprintf("%s/oauth2/v1/userinfo", config.Issuer)
 	userinfoReq, err := http.NewRequest(http.MethodGet, userinfoURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create userinfo request: %w", err)
+		return nil, fmt.Errorf("failed to create userinfo request: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, accessToken))
 	}
 	userinfoReq.Header.Set("Authorization", fmt.Sprintf("Bearer %s", accessToken))
 
 	userinfoResp, err := http.DefaultClient.Do(userinfoReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get userinfo: %w", err)
+		return nil, fmt.Errorf("failed to get userinfo: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, accessToken))
 	}
 	defer userinfoResp.Body.Close()
 
 	if userinfoResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(userinfoResp.Body)
-		return nil, fmt.Errorf("userinfo request failed: status %d, body: %s", userinfoResp.StatusCode, string(body))
+		return nil, fmt.Errorf("userinfo request failed: status %d, body: %s", userinfoResp.StatusCode, observability.RedactText(string(body), config.ClientSecret, config.Issuer, accessToken))
 	}
 
 	var userInfo OAuthUserInfo
 	if err := json.NewDecoder(userinfoResp.Body).Decode(&userInfo); err != nil {
-		return nil, fmt.Errorf("failed to parse userinfo: %w", err)
+		return nil, fmt.Errorf("failed to parse userinfo: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, accessToken))
 	}
 
 	return &userInfo, nil
@@ -411,18 +413,18 @@ func (m *OAuthManager) RefreshOAuthToken(user *User, refreshToken string) error 
 
 	tokenResp, err := http.PostForm(tokenURL, reqBody)
 	if err != nil {
-		return fmt.Errorf("failed to refresh OAuth token: %w", err)
+		return fmt.Errorf("failed to refresh OAuth token: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, refreshToken))
 	}
 	defer tokenResp.Body.Close()
 
 	if tokenResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(tokenResp.Body)
-		return fmt.Errorf("OAuth token refresh failed: status %d, body: %s", tokenResp.StatusCode, string(body))
+		return fmt.Errorf("OAuth token refresh failed: status %d, body: %s", tokenResp.StatusCode, observability.RedactText(string(body), config.ClientSecret, config.Issuer, refreshToken))
 	}
 
 	var tokenData OAuthTokenData
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
-		return fmt.Errorf("failed to parse refresh token response: %w", err)
+		return fmt.Errorf("failed to parse refresh token response: %w", observability.RedactError(err, config.ClientSecret, config.Issuer, refreshToken))
 	}
 
 	// Calculate new expiry

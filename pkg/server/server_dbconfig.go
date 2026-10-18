@@ -13,6 +13,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -316,7 +317,9 @@ func redactDatabaseSettings(values map[string]string) map[string]string {
 	for key := range redacted {
 		definition, ok := dbconfig.LookupSetting(key)
 		if ok && definition.Redacted {
-			redacted[key] = "<REDACTED>"
+			redacted[key] = observability.RedactedPlaceholder()
+		} else {
+			redacted[key] = observability.DisplayValue(key, redacted[key])
 		}
 	}
 	return redacted

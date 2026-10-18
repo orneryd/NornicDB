@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
@@ -74,7 +76,11 @@ func NewPprofListener(cfg PprofConfig) (*pprofListener, error) {
 	mux := http.NewServeMux()
 	// Explicit registration — see godoc above for the rationale.
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/cmdline", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write([]byte(strings.Join(DisplayArgs(os.Args), "\x00")))
+	})
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
