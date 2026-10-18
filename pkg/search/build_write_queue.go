@@ -1,7 +1,6 @@
 package search
 
 import (
-	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -73,21 +72,48 @@ func (s *Service) endBuildWrites() {
 }
 
 // queueBuildWrite hands write to the build that owns or awaits buildMu and
-// reports whether it did. Outside a build it costs one atomic load.
-func (s *Service) queueBuildWrite(write deferredIndexWrite) bool {
+// reports whether it did. Outside a build it costs one atomic load. A write is
+// acknowledged only after the checks the live path would report: an error
+// from them is returned and nothing is queued, as a write that waited would
+// have failed. The queued copy owns everything the build later reads.
+func (s *Service) queueBuildWrite(write deferredIndexWrite) (bool, error) {
 	q := &s.buildWrites
 	if !q.open.Load() || !s.buildDefersWrites() {
-		return false
+		return false, nil
 	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.owners == 0 {
-		return false
+	if write.node != nil {
+		if err := s.admitQueuedNode(write.node); err != nil {
+			return false, err
+		}
 	}
 	write.node = copyQueuedNode(write.node)
 	write.edge = copyQueuedEdge(write.edge)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.owners == 0 {
+		return false, nil
+	}
 	q.writes = append(q.writes, write)
-	return true
+	return true, nil
+}
+
+// admitQueuedNode applies the outcome checks of indexNodeOwned that do not
+// depend on the build's progress: the temporal-currency read and the
+// dimension rule. While the index has no vectors and its dimensions are not
+// fixed, the first vector still selects them, so the dimension rule waits for
+// the deferred write.
+func (s *Service) admitQueuedNode(node *storage.Node) error {
+	if !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
+		return nil
+	}
+	shouldIndex, err := s.shouldIndexNode(node)
+	if err != nil || !shouldIndex {
+		return err
+	}
+	if !s.vectorDimensionsFixed.Load() && s.EmbeddingCount() == 0 {
+		return nil
+	}
+	return s.checkEmbeddingDimensions(node)
 }
 
 // readLockOrQueue admits a live write: it queues write on the build that owns
@@ -95,17 +121,17 @@ func (s *Service) queueBuildWrite(write deferredIndexWrite) bool {
 // false (the caller releases it). A failed TryRLock with the queue closed
 // means a short holder (ClearVectorIndex, or a build releasing buildMu), so
 // waiting for it is short.
-func (s *Service) readLockOrQueue(write deferredIndexWrite) bool {
+func (s *Service) readLockOrQueue(write deferredIndexWrite) (queued bool, err error) {
 	for {
-		if s.queueBuildWrite(write) {
-			return true
+		if queued, err := s.queueBuildWrite(write); queued || err != nil {
+			return queued, err
 		}
 		if s.buildMu.TryRLock() {
-			return false
+			return false, nil
 		}
 		if !s.buildWrites.open.Load() || !s.buildDefersWrites() {
 			s.buildMu.RLock()
-			return false
+			return false, nil
 		}
 	}
 }
@@ -131,24 +157,28 @@ func (s *Service) drainBuildWrites() {
 }
 
 // applyBuildWrites applies writes in arrival order through the same bodies the
-// live entry points run, and records each ID as written. Caller owns buildMu.
+// live entry points run. An ID is recorded as written only once its write
+// applied: a write that failed leaves the build's storage copy in force, as a
+// failed write that waited would have. Caller owns buildMu.
 func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 	q := &s.buildWrites
 	for _, write := range writes {
 		var err error
 		switch {
 		case write.node != nil:
-			q.markWritten(&q.writtenNodes, string(write.node.ID))
-			err = s.indexNodeOwned(write.node)
+			if err = s.indexNodeOwned(write.node); err == nil {
+				q.markWritten(&q.writtenNodes, string(write.node.ID))
+			}
 		case write.nodeID != "":
-			q.markWritten(&q.writtenNodes, write.nodeID)
 			s.removeNodeOwned(storage.NodeID(write.nodeID))
+			q.markWritten(&q.writtenNodes, write.nodeID)
 		case write.edge != nil:
-			q.markWritten(&q.writtenEdges, string(write.edge.ID))
-			err = s.indexEdgeOwned(write.edge)
+			if err = s.indexEdgeOwned(write.edge); err == nil {
+				q.markWritten(&q.writtenEdges, string(write.edge.ID))
+			}
 		case write.edgeID != "":
-			q.markWritten(&q.writtenEdges, write.edgeID)
 			s.removeEdgeOwned(storage.EdgeID(write.edgeID))
+			q.markWritten(&q.writtenEdges, write.edgeID)
 		}
 		if err != nil {
 			s.logPrintf("⚠️ Search: queued index write failed: %v", err)
@@ -191,19 +221,32 @@ func (s *Service) edgeWritten(id string) bool {
 	return ok
 }
 
-// copyQueuedNode keeps a queued node independent of a caller that changes its
-// labels or properties after IndexNode returns. Embedding vectors are shared:
-// callers replace them, never modify them in place.
+// copyQueuedNode makes a queued node independent of its caller, who may reuse
+// any buffer once IndexNode returns: the build reads the queued copy later,
+// as the live path read the caller's node before returning. Every value the
+// index reads by reference is copied: labels, embedding vectors, and the
+// slices and maps inside properties (property vectors) and embedding metadata.
+// The struct copy keeps every other field.
 func copyQueuedNode(node *storage.Node) *storage.Node {
 	if node == nil {
 		return nil
 	}
 	copied := *node
 	copied.Labels = slices.Clone(node.Labels)
-	copied.Properties = maps.Clone(node.Properties)
-	copied.NamedEmbeddings = maps.Clone(node.NamedEmbeddings)
-	copied.ChunkEmbeddings = slices.Clone(node.ChunkEmbeddings)
-	copied.EmbedMeta = maps.Clone(node.EmbedMeta)
+	copied.Properties = cloneQueuedMap(node.Properties)
+	copied.EmbedMeta = cloneQueuedMap(node.EmbedMeta)
+	if node.NamedEmbeddings != nil {
+		copied.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
+		for name, embedding := range node.NamedEmbeddings {
+			copied.NamedEmbeddings[name] = slices.Clone(embedding)
+		}
+	}
+	if node.ChunkEmbeddings != nil {
+		copied.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
+		for i, embedding := range node.ChunkEmbeddings {
+			copied.ChunkEmbeddings[i] = slices.Clone(embedding)
+		}
+	}
 	return &copied
 }
 
@@ -212,6 +255,50 @@ func copyQueuedEdge(edge *storage.Edge) *storage.Edge {
 		return nil
 	}
 	copied := *edge
-	copied.Properties = maps.Clone(edge.Properties)
+	copied.Properties = cloneQueuedMap(edge.Properties)
 	return &copied
+}
+
+func cloneQueuedMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	copied := make(map[string]any, len(source))
+	for key, value := range source {
+		copied[key] = cloneQueuedValue(value)
+	}
+	return copied
+}
+
+// cloneQueuedValue copies the mutable containers a property value can hold;
+// scalars and strings are immutable and shared.
+func cloneQueuedValue(value any) any {
+	switch v := value.(type) {
+	case []float32:
+		return slices.Clone(v)
+	case []float64:
+		return slices.Clone(v)
+	case []int:
+		return slices.Clone(v)
+	case []int64:
+		return slices.Clone(v)
+	case []int32:
+		return slices.Clone(v)
+	case []string:
+		return slices.Clone(v)
+	case []bool:
+		return slices.Clone(v)
+	case []byte:
+		return slices.Clone(v)
+	case []any:
+		copied := make([]any, len(v))
+		for i, item := range v {
+			copied[i] = cloneQueuedValue(item)
+		}
+		return copied
+	case map[string]any:
+		return cloneQueuedMap(v)
+	default:
+		return value
+	}
 }
