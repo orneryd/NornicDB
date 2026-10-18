@@ -9,12 +9,19 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
 
+type subscriptionChannel interface {
+	Close()
+	Done() <-chan struct{}
+}
+
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ch     interface{ Close() } // Typed eventchannel owner
+	ch     subscriptionChannel
 	labels []string
 	types  []string
 	id     *string
+
+	watcherDone <-chan struct{}
 }
 
 // EventBroker is a thread-safe pub/sub system for GraphQL subscriptions.
@@ -115,18 +122,12 @@ func matchesFilter(labels []string, types []string, id *string, eventLabels []st
 func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string) <-chan *models.Node {
 	ch := eventchannel.New[*models.Node](10) // Buffered to prevent blocking
 
-	b.mu.Lock()
-	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeCreatedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
-	})
-	b.mu.Unlock()
-
-	// Cleanup on context cancellation
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeCreated(ch)
-	}()
+	})
 
 	return ch.Events()
 }
@@ -136,18 +137,13 @@ func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string)
 func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labels []string) <-chan *models.Node {
 	ch := eventchannel.New[*models.Node](10)
 
-	b.mu.Lock()
-	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeUpdatedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
 		id:     id,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeUpdated(ch)
-	}()
+	})
 
 	return ch.Events()
 }
@@ -157,17 +153,12 @@ func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labe
 func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string) <-chan string {
 	ch := eventchannel.New[string](10)
 
-	b.mu.Lock()
-	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeDeletedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeDeleted(ch)
-	}()
+	})
 
 	return ch.Events()
 }
@@ -177,17 +168,12 @@ func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string)
 func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []string) <-chan *models.Relationship {
 	ch := eventchannel.New[*models.Relationship](10)
 
-	b.mu.Lock()
-	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipCreatedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipCreated(ch)
-	}()
+	})
 
 	return ch.Events()
 }
@@ -197,18 +183,13 @@ func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []
 func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *string, types []string) <-chan *models.Relationship {
 	ch := eventchannel.New[*models.Relationship](10)
 
-	b.mu.Lock()
-	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipUpdatedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
 		id:    id,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipUpdated(ch)
-	}()
+	})
 
 	return ch.Events()
 }
@@ -218,19 +199,33 @@ func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *stri
 func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []string) <-chan string {
 	ch := eventchannel.New[string](10)
 
-	b.mu.Lock()
-	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipDeletedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipDeleted(ch)
-	}()
+	})
 
 	return ch.Events()
+}
+
+// addSubscription registers the owner before starting its cancellation watcher.
+// Closing the owner also ends the watcher, even for a background context.
+func (b *EventBroker) addSubscription(ctx context.Context, subscriptions *[]subscriptionInfo, sub subscriptionInfo, unsubscribe func()) {
+	watcherDone := make(chan struct{})
+	sub.watcherDone = watcherDone
+	b.mu.Lock()
+	*subscriptions = append(*subscriptions, sub)
+	b.mu.Unlock()
+	owner := sub.ch
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			unsubscribe()
+		case <-owner.Done():
+		}
+	}()
 }
 
 // snapshot copies the subscription list; entries retain their channel owner.
@@ -432,14 +427,14 @@ func (b *EventBroker) unsubscribeRelationshipDeleted(ch *eventchannel.Channel[st
 // Close closes all subscription channels and cleans up resources.
 func (b *EventBroker) Close() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	// Close every owner, including channels retained by publisher snapshots.
-	for _, subs := range [][]subscriptionInfo{
+	lists := [][]subscriptionInfo{
 		b.nodeCreatedSubs, b.nodeUpdatedSubs, b.nodeDeletedSubs,
 		b.relationshipCreatedSubs, b.relationshipUpdatedSubs, b.relationshipDeletedSubs,
 		b.searchStreamSubs,
-	} {
+	}
+	for _, subs := range lists {
 		for _, sub := range subs {
 			sub.ch.Close()
 		}
@@ -453,4 +448,15 @@ func (b *EventBroker) Close() {
 	b.relationshipUpdatedSubs = make([]subscriptionInfo, 0)
 	b.relationshipDeletedSubs = make([]subscriptionInfo, 0)
 	b.searchStreamSubs = make([]subscriptionInfo, 0)
+	b.mu.Unlock()
+
+	// A watcher may already be waiting for b.mu to unsubscribe. Join after
+	// releasing that lock so shutdown cannot deadlock with cancellation.
+	for _, subs := range lists {
+		for _, sub := range subs {
+			if sub.watcherDone != nil {
+				<-sub.watcherDone
+			}
+		}
+	}
 }
