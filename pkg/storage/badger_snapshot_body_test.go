@@ -81,6 +81,9 @@ func TestSnapshotOverlayProjectionDoesNotHydrateCachedVectors(t *testing.T) {
 	}
 	_, err = b.CreateNode(&Node{ID: "test:vector", Properties: map[string]any{"v": int64(1)}, ChunkEmbeddings: [][]float32{vector}})
 	require.NoError(t, err)
+	b.nodeCacheMu.Lock()
+	delete(b.nodeCache, "test:vector")
+	b.nodeCacheMu.Unlock()
 	full, err := b.GetNode("test:vector")
 	require.NoError(t, err)
 	require.NotEmpty(t, full.ChunkEmbeddings)
