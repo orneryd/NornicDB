@@ -88,6 +88,23 @@ func (k *KMeansCandidateGen) SetServing(lock sync.Locker, view func(context.Cont
 //
 // If clustering is not available or not clustered, falls back to brute-force.
 func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := k.searchCandidatesWithExhaustion(ctx, query, limit, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is the number of vectors the clustered index holds.
+func (k *KMeansCandidateGen) candidatePopulation(ctx context.Context) int {
+	if population := k.serving.population(ctx, k.clusterIndex); population > 0 {
+		return population
+	}
+	return k.vectorIndex.Count() // not clustered: the brute-force fallback
+}
+
+// searchCandidatesWithExhaustion scores the routed clusters' members exactly.
+// It is exhausted only when every vector of the index was scored (every
+// cluster routed, see routeClusters) and the limit cut none above
+// minSimilarity.
+func (k *KMeansCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]Candidate, bool, error) {
 	// Route on the query's cluster generation: the routing and the routed
 	// members are read in its routing section; scoring follows, on the same
 	// generation's population.
@@ -98,36 +115,29 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 	if view.routing == nil {
 		unlock()
 		// Fall back to brute-force
-		bruteGen := NewBruteForceCandidateGen(k.vectorIndex)
-		return bruteGen.SearchCandidates(ctx, query, limit, minSimilarity)
+		return NewBruteForceCandidateGen(k.vectorIndex).searchCandidatesWithExhaustion(ctx, query, limit, minSimilarity)
 	}
 	if dims := view.index.Dimensions(); dims > 0 && len(query) != dims {
 		unlock()
-		return nil, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
+		return nil, false, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
 	}
 
 	candidateLimit := boundCandidateLimit(limit)
-	clusterIDs := []int(nil)
-	if k.clusterSelector != nil {
-		clusterIDs = k.clusterSelector(ctx, query, view.probes)
-	}
-	if len(clusterIDs) == 0 {
-		// Default nearest-centroid routing.
-		clusterIDs = view.routing.NearestClusters(query, view.probes)
-	}
+	clusterIDs := routeClusters(ctx, query, view, k.clusterSelector, candidateLimit)
 	ids := view.routing.MemberIDsOf(clusterIDs)
 	unlock()
+	scoredAll := len(ids) >= view.index.Count()
 	var results []gpu.SearchResult
 	var err error
 	if len(ids) > 0 {
 		results, err = view.index.ScoreSubset(query, ids)
 	}
 	if err != nil {
-		return nil, localizedError(localization.SearchClusterFailed(err), err)
+		return nil, false, localizedError(localization.SearchClusterFailed(err), err)
 	}
 
 	if len(results) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, scoredAll, nil
 	}
 
 	// Convert SearchResult to Candidate with approximate scores.
@@ -136,7 +146,7 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 	for _, result := range results {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		default:
 		}
 
@@ -148,8 +158,9 @@ func (k *KMeansCandidateGen) SearchCandidates(ctx context.Context, query []float
 		}
 	}
 
+	exhausted := scoredAll && len(candidates) <= candidateLimit
 	if len(candidates) > candidateLimit {
 		candidates = candidates[:candidateLimit]
 	}
-	return candidates, nil
+	return candidates, exhausted, nil
 }

@@ -29,7 +29,8 @@ func TestKMeansCandidateGen_SearchCandidatesMoreBranches(t *testing.T) {
 	t.Run("invalid selected cluster returns empty results", func(t *testing.T) {
 		gen := NewKMeansCandidateGen(clusterIndex, vectorIndex, 1)
 		gen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{99} })
-		out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)
+		// k below the population: a request covering it would route every cluster.
+		out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 1, -1)
 		require.NoError(t, err)
 		require.Empty(t, out)
 	})

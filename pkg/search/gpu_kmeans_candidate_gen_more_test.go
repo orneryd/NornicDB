@@ -26,7 +26,8 @@ func TestGPUKMeansCandidateGen_SearchCandidatesMoreBranches(t *testing.T) {
 	// Selector returns invalid cluster id => no member IDs.
 	gen := NewGPUKMeansCandidateGen(clusterIndex, 1)
 	gen.SetClusterSelector(func(context.Context, []float32, int) []int { return []int{99} })
-	out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)
+	// k below the population: a request covering it would route every cluster.
+	out, err := gen.SearchCandidates(context.Background(), []float32{1, 0}, 1, -1)
 	require.NoError(t, err)
 	require.Empty(t, out)
 
