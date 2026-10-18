@@ -10,7 +10,7 @@ import (
 // reads. Committed revisions cannot represent a transaction's pending writes,
 // including an implicit transaction carried by context or a storage-scoped view.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
-	return !e.inTransaction(ctx) && info.IsReadOnly &&
+	return !e.inTransaction(ctx) && info.IsReadOnly && e.StatementCacheSelectionValid() &&
 		e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) &&
 		// Visibility changes with elapsed time and access metadata, independently
 		// of graph-write revisions. Cache neither raw nor previously stripped rows.

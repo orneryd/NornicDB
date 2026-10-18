@@ -155,6 +155,9 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 	}
 
 	executor := cypher.NewStorageExecutor(storage)
+	if err := executor.UseDatabaseStatementCaches(r.dbManager, effectiveDb); err != nil {
+		return nil, err
+	}
 	executor.SetDatabaseManager(&graphqlDatabaseManagerAdapter{manager: r.dbManager})
 
 	// Copy configuration from base DB's executor if available

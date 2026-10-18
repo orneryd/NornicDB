@@ -156,3 +156,7 @@ func (a *boltDatabaseManagerAdapter) DatabaseIdentity(name string) (string, time
 func (a *boltDatabaseManagerAdapter) SystemDatabaseName() string {
 	return a.manager.SystemDatabaseName()
 }
+
+func (a *boltDatabaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
+	return a.manager.StatementCacheScope(name)
+}

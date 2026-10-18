@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Share syntax-verdict and upper-cased statement caches with Bolt and HTTP
+  transactions, authenticated requests, GraphQL requests, USE and Fabric
+  clones through a stable owner to avoid repeated validation. Release cached
+  statement text after database, alias or constituent removal and shutdown (#1371).
+  Keep live owners warm, evict dropped execution views, and key Fabric results
+  by target identity and selection generation to survive retargeting.
 - Find cgroup memory limits through mountinfo roots and namespaces, including
   inherited v1 limits, without reading unrelated cgroups (#1390).
 - Derive the Go soft memory limit from the container's cgroup limit by default,
