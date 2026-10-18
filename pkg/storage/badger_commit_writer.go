@@ -30,6 +30,13 @@ type commitWriter struct {
 	engine *BadgerEngine
 	db     *managedBadgerDB
 	large  *largeCommit
+	// publish, when set, is the commit's derived-state publication, and
+	// publishKeys the entities and unique values it touches: the writer fills
+	// them before finish, and the ordered stage runs publish after the commit
+	// is visible and after every earlier commit's publication that shares a
+	// key (badger_publication_stage.go).
+	publish     func()
+	publishKeys []any
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -107,13 +114,22 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commit(cw.txn)
+		return cw.db.commitPublishing(cw.txn, cw.publication())
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
+		err = cw.large.finish(&cw.batchWriter, cw.publication())
 	}
 	return err
+}
+
+// publication is what the ordered stage runs for this commit: the writer's
+// publish, ordered on the writer's keys. Nil when there is none.
+func (cw *commitWriter) publication() *commitPublication {
+	if cw.publish == nil {
+		return nil
+	}
+	return &commitPublication{keys: cw.publishKeys, run: cw.publish}
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch

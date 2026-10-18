@@ -463,6 +463,11 @@ func (b *BadgerEngine) DB() *badger.DB {
 }
 
 // OnNodeCreated adds a callback to be invoked when nodes are created.
+//
+// Callbacks run after the commit is published, in commit order, on whichever
+// goroutine drains the notification queue: a write, or a flush, can return
+// before its callbacks have run (FlushWriteBehind). The same holds for every
+// On* callback.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
 	if callback == nil {

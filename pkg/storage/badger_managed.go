@@ -181,14 +181,29 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 // under the shared commit gate, writes, and waits until the published
 // timestamp covers the write so the caller reads its own write afterwards.
 func (m *managedBadgerDB) commit(txn *badger.Txn) error {
-	ts, err := m.commitShared(txn)
+	return m.commitPublishing(txn, nil)
+}
+
+// commitPublishing is commit for a commit with a derived-state publication
+// (nil for none): the publication runs in the ordered stage, and the commit
+// returns once it has run (publicationStage.apply). A commit without one
+// changes no derived state and does not wait for the stage: its caller may
+// hold a lock that another commit's publication takes.
+func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPublication) error {
+	ts, err := m.commitShared(txn, publish)
 	if err != nil {
 		return err
 	}
-	return m.oracle.waitPublished(ts)
+	if err := m.oracle.waitPublished(ts); err != nil {
+		return err
+	}
+	if publish != nil {
+		m.oracle.stage.apply(ts)
+	}
+	return nil
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublication) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
 	m.advanceDiscardTs()
@@ -197,7 +212,12 @@ func (m *managedBadgerDB) commitShared(txn *badger.Txn) (uint64, error) {
 		return 0, err
 	}
 	defer m.oracle.finish(ts)
-	return ts, txn.CommitAt(ts, nil)
+	if err := txn.CommitAt(ts, nil); err != nil {
+		return ts, err
+	}
+	// Registered before finish, so the stage has it once ts is published.
+	m.oracle.stage.register(ts, publish)
+	return ts, nil
 }
 
 // advanceDiscardTs lets compaction drop versions no open read can see any
@@ -462,9 +482,11 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 }
 
 // finish writes the last batch together with the intent's deletion,
-// publishes the whole commit and releases the gate. On error the caller must
-// abort.
-func (lc *largeCommit) finish(w *batchWriter) error {
+// publishes the whole commit and releases the gate. The commit's
+// derived-state publication (nil for none) runs in the ordered stage under
+// the intent's timestamp, and finish returns once it has run. On error the
+// caller must abort.
+func (lc *largeCommit) finish(w *batchWriter, publish *commitPublication) error {
 	// Every earlier batch must be durable before the intent's deletion is.
 	err := lc.db.syncIfPersistent()
 	if err == nil {
@@ -476,7 +498,13 @@ func (lc *largeCommit) finish(w *batchWriter) error {
 	if err != nil {
 		return err
 	}
+	lc.db.oracle.stage.register(lc.intentTs, publish)
 	lc.release()
+	if publish != nil {
+		// The gate was exclusive, so nothing below lastTs is unfinished:
+		// releasing the intent published every batch.
+		lc.db.oracle.stage.apply(lc.intentTs)
+	}
 	return nil
 }
 
@@ -604,6 +632,10 @@ type commitOracle struct {
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
 	readsHeld bool
+
+	// stage runs the written commits' derived-state publications, ordered
+	// by commit timestamp per key (badger_publication_stage.go).
+	stage publicationStage
 }
 
 func newCommitOracle(maxVersion uint64) *commitOracle {

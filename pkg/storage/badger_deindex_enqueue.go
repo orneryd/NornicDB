@@ -22,7 +22,23 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	becameSuppressed := false
 	nodeChanged := false
 	var edgeChanged *Edge
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The rewrite's caches, in commit order (badger_publication_stage.go).
+	publish := func() {
+		if nodeChanged {
+			// Suppression rewrites the persisted body without UpdateNode. Drop
+			// both node caches with their generation guard before indexed reads
+			// reuse it.
+			b.cacheDeleteNode(NodeID(entityID))
+		}
+		if edgeChanged != nil {
+			// A policy transition rewrites the relationship body just like
+			// UpdateEdge. Publish it through the same cache lifecycle so
+			// adjacency/type reads do not retain a suppressed body or an empty
+			// filtered scan after relaxation.
+			b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
+		}
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		if isEdge {
 			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
 			edgeChanged = mutation
@@ -37,18 +53,18 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
+	}, publish, func() []any {
+		// The rewrite changes no property, so it frees and takes no
+		// unique value.
+		if isEdge {
+			return []any{EdgeID(entityID)}
+		}
+		return []any{NodeID(entityID)}
 	})
 	if err == nil && nodeChanged {
-		// Suppression rewrites the persisted body without UpdateNode. Drop both
-		// node caches with their generation guard before indexed reads reuse it.
-		b.cacheDeleteNode(NodeID(entityID))
 		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
 	}
 	if err == nil && edgeChanged != nil {
-		// A policy transition rewrites the relationship body just like UpdateEdge.
-		// Publish it through the same cache lifecycle so adjacency/type reads do
-		// not retain a suppressed body or an empty filtered scan after relaxation.
-		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
 		b.graphMutationVersions.changed(namespaceForEdgeID(edgeChanged.ID))
 	}
 

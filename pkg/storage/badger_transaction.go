@@ -2978,6 +2978,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// commit acquired them before its first batch.
 	tx.acquireCommitPublicationLocked()
 
+	// The caches, counts, indexes and unique-value registry, in commit order
+	// per entity and unique value (badger_publication_stage.go).
+	cw.publish, cw.publishKeys = tx.publication()
+
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.
 	if err := cw.finish(); err != nil {
@@ -3039,91 +3043,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
-	// Apply cache/count updates and fire callbacks after commit.
-	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)
-	// observe transactional writes the same way as non-transactional writes.
-	for _, op := range tx.operations {
-		switch op.Type {
-		case OpCreateNode:
-			tx.engine.cacheOnNodeCreated(op.Node)
-		case OpUpdateNode:
-			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
-			} else {
-				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
-			}
-		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreated(op.Edge)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
-		case OpUpdateEmbedding:
-			// Embeddings are regenerable; no-op for cached counts.
-		}
-	}
-
 	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
-
-	// Update derived unique-constraint caches (in-memory) based on committed operations.
-	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
-	//
-	// All committed ops belong to the transaction's pinned namespace, so the
-	// schema lookup is hoisted out of the loop.
-	//
-	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
-	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
-	}
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -4059,6 +3979,56 @@ func setCommitTailHook(hook func()) func() {
 		commitTailHook = previousHook
 		commitTailHookMu.Unlock()
 	}
+}
+
+// publication is the commit's derived-state publication, which the ordered
+// stage runs once the commit is visible (badger_publication_stage.go): the
+// caches and counts per operation, in operation order, then the unique-value
+// registry; and the keys it is ordered on. All operations belong to the
+// transaction's pinned namespace.
+func (tx *BadgerTransaction) publication() (func(), []any) {
+	engine, ops := tx.engine, tx.operations
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	var schema *SchemaManager
+	if tx.namespace != "" {
+		schema = engine.GetSchemaForNamespace(tx.namespace)
+	}
+	keys := appendOperationPublicationKeys(nil, schema, ops)
+	return func() {
+		for _, op := range ops {
+			switch op.Type {
+			case OpCreateNode:
+				engine.cacheOnNodeCreated(op.Node)
+			case OpUpdateNode:
+				engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			case OpDeleteNode:
+				if op.OldNode != nil {
+					engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
+				} else {
+					engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				}
+			case OpCreateEdge:
+				engine.cacheOnEdgeCreated(op.Edge)
+			case OpUpdateEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.cacheOnEdgeUpdated(oldType, op.Edge)
+			case OpDeleteEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
+			case OpUpdateEmbedding:
+				// Embeddings are regenerable; no-op for cached counts.
+			}
+		}
+		engine.publishUniqueValuesForOps(schema, ops)
+	}, keys
 }
 
 func runCommitTailHook() {

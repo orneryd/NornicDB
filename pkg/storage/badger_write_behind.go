@@ -324,6 +324,26 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// label, edge type, total; callbacks execute after all three unlock.
 	b.totalCountWriteMu.Lock()
 
+	// The caches, indexes and unique-value registry, in commit order
+	// (badger_publication_stage.go). publishCommitOperations advances the
+	// node-cache generation per written node (cacheStoreNode) and
+	// invalidates per deleted node, the same protection the sync tail uses;
+	// clearing the whole cache would only destroy warm entries.
+	schemas := make(map[string]*SchemaManager, 1)
+	for _, c := range commits {
+		if _, known := schemas[c.namespace]; !known && c.namespace != "" {
+			schemas[c.namespace] = b.GetSchemaForNamespace(c.namespace)
+		}
+	}
+	cw.publish = func() {
+		for _, c := range commits {
+			b.publishCommitOperations(c.namespace, schemas[c.namespace], c.ops)
+		}
+	}
+	for _, c := range commits {
+		cw.publishKeys = appendOperationPublicationKeys(cw.publishKeys, schemas[c.namespace], c.ops)
+	}
+
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
 	b.idDict.flushTxnCounters(cw.txn)
@@ -406,28 +426,61 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if holdLabel {
 		b.labelCountWriteMu.Unlock()
 	}
-	// publishCommitOperations below advances the node-cache generation per
-	// written node (cacheStoreNode) and invalidates per deleted node, the
-	// same protection the sync tail uses; clearing the whole cache here
-	// would only destroy warm entries and re-decode work for readers.
-	schemas := make(map[string]*SchemaManager, 1)
+	// The listeners, after the stage published every replayed commit and
+	// after the count locks are released, in commit order: a callback never
+	// runs inside the stage, so one that commits can't wait on it.
 	for _, c := range commits {
-		schema := schemas[c.namespace]
-		if schema == nil && c.namespace != "" {
-			schema = b.GetSchemaForNamespace(c.namespace)
-			schemas[c.namespace] = schema
-		}
-		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
+		b.notifyReplayedOperations(c.ops, c.recovered)
 	}
 	return nil
 }
 
-// publishCommitOperations mirrors the commit tail's callback and unique-value
-// cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
-	// Normal buffered writes already advanced their logical revision at ACK.
-	// Replaying durability must not invalidate stable query results once per row.
-	// Recovery has no prior ACK in this process and still publishes its revision.
+// publishCommitOperations is a replayed commit's publication: the entity
+// caches, indexes and unique-value registry, which the ordered stage runs
+// (badger_publication_stage.go). Its listeners run afterwards, outside the
+// stage (notifyReplayedOperations).
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode:
+			b.cacheOnNodeCreatedWithCounts(op.Node, false)
+		case OpUpdateNode:
+			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+		case OpDeleteNode:
+			if op.OldNode != nil {
+				// The replay's own pre-delete snapshot drives the property
+				// indexes: buffered nodes never entered the engine node cache.
+				b.cacheOnNodeDeletedWithNodeAndCounts(op.NodeID, op.OldNode, op.EdgesDeleted, false)
+			} else {
+				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
+			}
+		case OpCreateEdge:
+			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
+		case OpUpdateEdge:
+			oldType := ""
+			if op.OldEdge != nil {
+				oldType = op.OldEdge.Type
+			}
+			b.cacheOnEdgeUpdated(oldType, op.Edge)
+		case OpDeleteEdge:
+			oldType := ""
+			if op.OldEdge != nil {
+				oldType = op.OldEdge.Type
+			}
+			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
+		}
+	}
+	if namespace != "" {
+		b.publishUniqueValuesForOps(schema, ops)
+	}
+}
+
+// notifyReplayedOperations runs a replayed commit's listeners, in operation
+// order. Normal buffered writes already advanced their logical revision at
+// ACK, so replaying durability must not invalidate stable query results once
+// per row; recovery has no prior ACK in this process and still publishes its
+// revision (publishRevision).
+func (b *BadgerEngine) notifyReplayedOperations(ops []Operation, publishRevision bool) {
 	notifyNodeCreated, notifyNodeUpdated := b.publishNodeCreated, b.publishNodeUpdated
 	notifyNodeDeleted := b.publishNodeDeleted
 	notifyEdgeCreated, notifyEdgeUpdated := b.publishEdgeCreated, b.publishEdgeUpdated
@@ -440,80 +493,20 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
-			b.cacheOnNodeCreatedWithCounts(op.Node, false)
 			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
-			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
-			if op.OldNode != nil {
-				// The replay's own pre-delete snapshot drives the property
-				// indexes: buffered nodes never entered the engine node cache.
-				b.cacheOnNodeDeletedWithNodeAndCounts(op.NodeID, op.OldNode, op.EdgesDeleted, false)
-			} else {
-				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
-			}
 			for _, edgeID := range op.DeletedEdgeIDs {
 				notifyEdgeDeleted(edgeID)
 			}
 			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
-			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
 			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeUpdated(oldType, op.Edge)
 			notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
 			notifyEdgeDeleted(op.EdgeID)
-		}
-	}
-
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
 		}
 	}
 }
@@ -548,6 +541,16 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 
 // FlushWriteBehind drains every buffered generation synchronously. It is a
 // no-op when write-behind is disabled.
+//
+// It is a barrier for the commits acknowledged before it: when it returns,
+// each is durable in Badger, its derived-state publication has run (the
+// caches and indexes hold it, badger_publication_stage.go), and its listener
+// notifications are readied in commit order. It does not wait for listeners
+// to complete, as no write does: readied notifications are dispatched by
+// whichever goroutine drains the queue, and a drain already running elsewhere
+// returns at once (drainCommitNotifications). A listener may therefore flush
+// from its callback, as a BEGIN or a snapshot open in it does. Close waits
+// for every dispatched listener (notifyWG).
 func (b *BadgerEngine) FlushWriteBehind() error {
 	if b.writeBehind == nil {
 		return nil

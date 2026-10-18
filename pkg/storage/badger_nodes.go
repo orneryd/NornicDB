@@ -71,7 +71,14 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The unique-value registry and the caches, in commit order
+	// (badger_publication_stage.go).
+	publish := func() {
+		b.publishUniqueValues(schema, node.ID, nil, node)
+		b.cacheOnNodeCreated(node)
+	}
+	keys := func() []any { return appendNodePublicationKeys(nil, schema, node.ID, nil, node) }
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -127,26 +134,16 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
+	}, publish, keys)
+	releaseUniqueLocks()
 	if err != nil {
-		releaseUniqueLocks()
 		return "", err
 	}
-
-	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-		}
-	}
-	releaseUniqueLocks()
 	if persistSeparateEmbeddings {
 		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
 			return "", err
 		}
 	}
-
-	b.cacheOnNodeCreated(node)
 
 	// Notify listeners (e.g., search service) to index the new node
 	b.notifyNodeCreated(node)
@@ -384,7 +381,20 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The unique-value registry and the caches, in commit order
+	// (badger_publication_stage.go). Both run after the write, which sets
+	// wasInsert and existingNode.
+	publish := func() {
+		if wasInsert {
+			b.publishUniqueValues(schema, node.ID, nil, node)
+			b.cacheOnNodeCreated(node)
+			return
+		}
+		b.publishUniqueValues(schema, node.ID, existingNode, node)
+		b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
+	}
+	keys := func() []any { return appendNodePublicationKeys(nil, schema, node.ID, existingNode, node) }
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -570,40 +580,16 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
+	}, publish, keys)
 	if err == nil && persistSeparateEmbeddings {
 		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
 	}
 
-	// Update cache on successful operation
+	// Notify listeners on successful operation
 	if err == nil {
 		if wasInsert {
-			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
-			b.cacheOnNodeCreated(node)
-			// Notify listeners about the new node
 			b.notifyNodeCreated(node)
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
-			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
-			// Notify listeners to re-index the updated node
 			b.notifyNodeUpdated(node)
 		}
 	}
@@ -680,7 +666,28 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The unique-value registry and the caches, in commit order
+	// (badger_publication_stage.go).
+	var uniqueSchema *SchemaManager
+	if dbName, _, ok := ParseDatabasePrefix(string(id)); ok {
+		uniqueSchema = b.GetSchemaForNamespace(dbName)
+	}
+	publish := func() {
+		if deletedNode == nil {
+			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
+			return
+		}
+		b.publishUniqueValues(uniqueSchema, deletedNode.ID, deletedNode, nil)
+		b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
+	}
+	keys := func() []any {
+		keys := appendNodePublicationKeys(nil, uniqueSchema, id, deletedNode, nil)
+		for _, edgeID := range deletedEdgeIDs {
+			keys = append(keys, edgeID)
+		}
+		return keys
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {
 			return allocErr
@@ -757,28 +764,9 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			}
 		}
 		return nil
-	})
+	}, publish, keys)
 
-	// Invalidate cache on successful delete
 	if err == nil {
-		if deletedNode != nil {
-			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
-			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-
-		if deletedNode != nil {
-			b.cacheOnNodeDeletedWithNode(id, deletedNode, totalEdgesDeleted)
-		} else {
-			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
-		}
-
 		// Notify listeners about deleted edges
 		for _, edgeID := range deletedEdgeIDs {
 			b.notifyEdgeDeleted(edgeID)
