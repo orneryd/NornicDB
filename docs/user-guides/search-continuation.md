@@ -227,3 +227,18 @@ may inspect arbitrary properties. Engines without streaming support use
 `AllNodes` fallback, whose temporary full node slice is outside retained
 descriptor admission; operators using a fallback engine must budget for that
 additional build-time memory.
+
+### Stream lifetime
+
+Reading the last page releases the stream's count and retained-byte capacity
+immediately. Earlier qids then return `continuation_gone` on PULL; deterministic
+replay is available only while the stream is active. DISCARD with any valid
+same-owner/database qid succeeds after completion, a previous discard, expiry,
+invalidation or database drop. It never releases another stream's capacity.
+
+A failed or canceled page request also retires its stream. HTTP detects delivery
+failure outside the timeout middleware's response buffer. Successfully delivered
+qids remain usable across requests/connections until a terminal outcome or their
+fixed TTL. Abandoned catalog cursors invalidated by writes/backfill/policy changes
+are collected by registry maintenance and before a capacity rejection. Database
+reset/drop retires that database's cursors without closing the shared registry.

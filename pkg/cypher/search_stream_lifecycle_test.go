@@ -36,7 +36,9 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 						require.NoError(t, err, "sequential continuation %d", i)
 						page := result.Rows[0][0].(map[string]any)
 						count += len(page["results"].([]any))
-						if !page["has_more"].(bool) { break }
+						if !page["has_more"].(bool) {
+							break
+						}
 						request = map[string]any{"qid": page["qid"], "n": int64(1)}
 					}
 					require.Equal(t, 3, count)

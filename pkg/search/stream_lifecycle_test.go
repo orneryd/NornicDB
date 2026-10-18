@@ -41,7 +41,8 @@ func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 				require.NoError(t, err)
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
 				require.NoError(t, store.UpdateNode(node))
-			case "policy": svc.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 10})
+			case "policy":
+				svc.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 10})
 			}
 			if end != "abandoned_write" {
 				_, err = svc.SearchTextContinuation(context.Background(), "", nil, SearchContinuationRequest{Owner: "alice", QID: first.QID, N: 1}, nil, nil, nil, ChunkedSearchErrorPolicy{})
