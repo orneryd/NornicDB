@@ -692,51 +692,6 @@ func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 	b.namespaceCountsMu.Unlock()
 }
 
-func (b *BadgerEngine) cacheOnNodesDeleted(deletedNodeIDs []NodeID, deletedNodeCount, totalEdgesDeleted int64) {
-	if deletedNodeCount <= 0 {
-		return
-	}
-
-	for _, nodeID := range deletedNodeIDs {
-		b.cacheDeleteNode(nodeID)
-	}
-	b.nodeCount.Add(-deletedNodeCount)
-
-	// Update per-namespace node counts.
-	namespaces := make(map[string]int64)
-	for _, nodeID := range deletedNodeIDs {
-		prefix, ok := namespacePrefixFromID(string(nodeID))
-		if !ok {
-			continue
-		}
-		namespaces[prefix]--
-	}
-	if len(namespaces) > 0 {
-		b.namespaceCountsMu.Lock()
-		for prefix, delta := range namespaces {
-			b.namespaceNodeCounts[prefix] += delta
-		}
-		b.namespaceCountsMu.Unlock()
-	}
-
-	if totalEdgesDeleted > 0 {
-		b.edgeCount.Add(-totalEdgesDeleted)
-
-		// We only have an aggregate edge delete count. If the deleted nodes span
-		// multiple namespaces, we can't attribute edges precisely.
-		if len(namespaces) == 1 {
-			for prefix := range namespaces {
-				b.namespaceCountsMu.Lock()
-				b.namespaceEdgeCounts[prefix] -= totalEdgesDeleted
-				b.namespaceCountsMu.Unlock()
-				break
-			}
-		}
-
-		b.InvalidateEdgeTypeCache()
-	}
-}
-
 func (b *BadgerEngine) addNamespaceNodeCount(id NodeID, delta int64) {
 	prefix, ok := namespacePrefixFromID(string(id))
 	if !ok {
