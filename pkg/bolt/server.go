@@ -410,6 +410,7 @@ type QueryResult struct {
 
 type resultStream struct {
 	result   *QueryResult
+	delivery *resultstream.Delivery
 	index    int
 	isWrite  bool
 	database string
@@ -1514,6 +1515,7 @@ type Session struct {
 	connCtx              context.Context
 	connCancel           context.CancelFunc
 	continuationDelivery resultstream.Delivery
+	lastDelivery         *resultstream.Delivery
 
 	// Database context (from HELLO message)
 	database         string // Database name for this session (defaults to default database)
