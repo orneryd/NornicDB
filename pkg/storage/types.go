@@ -1312,6 +1312,20 @@ func (n *Node) GetDefaultEmbedding() []float32 {
 	return nil
 }
 
+// HasChunkEmbeddings reports whether the node has chunk embedding vectors:
+// loaded ones (a non-empty first chunk), or, when none are loaded, the stored
+// ones its embedding metadata counts (chunk_count), which an embedding-free
+// read (NodeWithoutEmbeddingsReader) leaves in storage.
+func (n *Node) HasChunkEmbeddings() bool {
+	if n == nil {
+		return false
+	}
+	if len(n.ChunkEmbeddings) > 0 {
+		return len(n.ChunkEmbeddings[0]) > 0
+	}
+	return chunkCountFromMeta(n.EmbedMeta) > 0
+}
+
 // =============================================================================
 // STREAMING INTERFACE
 // =============================================================================
