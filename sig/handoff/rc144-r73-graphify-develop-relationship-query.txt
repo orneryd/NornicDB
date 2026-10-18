@@ -1,0 +1,54 @@
+Graph: /tmp/rc144-r73-graph-develop/graphify-out/graph.json (54001 nodes) | Traversal: BFS depth=2 | Start: ['RelationshipEmbedFunc', '.embedPendingRelationships()', '.embedRelationships()'] | Context: call (explicit) | 25 nodes found
+
+NODE RelationshipEmbedFunc [src=pkg/search/relationship_search.go loc=L52 community=]
+NODE .embedPendingRelationships() [src=pkg/search/relationship_search.go loc=L323 community=]
+NODE .embedRelationships() [src=pkg/search/relationship_search.go loc=L292 community=]
+NODE EdgeID [src=pkg/storage/types.go loc=L118 community=]
+NODE .source() [src=pkg/search/relationship_search.go loc=L263 community=]
+NODE .runRelationshipIndex() [src=pkg/search/relationship_search.go loc=L162 community=]
+NODE .saveRelationshipVectors() [src=pkg/search/relationship_search.go loc=L436 community=]
+NODE normalizeVectorCopy() [src=pkg/search/relationship_search.go loc=L396 community=]
+NODE .SearchRelationships() [src=pkg/search/relationship_search.go loc=L480 community=]
+NODE .pipelineAggregateGroups() [src=pkg/cypher/pipeline_aggregate_stream.go loc=L79 community=]
+NODE StreamEdgesWithFallback() [src=pkg/storage/types.go loc=L1455 community=]
+NODE RemoveRootedPath() [src=pkg/security/safepath.go loc=L81 community=]
+NODE CreateRootedFile() [src=pkg/security/safepath.go loc=L31 community=]
+NODE RenameRootedFile() [src=pkg/security/safepath.go loc=L107 community=]
+NODE materializePipelineSource() [src=pkg/cypher/pipeline_row_stream.go loc=L214 community=]
+NODE .pipelineCreateSource() [src=pkg/cypher/create.go loc=L76 community=]
+NODE TestMonster728ProductSourceContracts() [src=pkg/cypher/gh728_where_family_test.go loc=L100 community=]
+NODE TestStreamedNodeMatchSourceFailures() [src=pkg/cypher/result_stream_edge_test.go loc=L170 community=]
+NODE .pipelineProjectPlainReturn() [src=pkg/cypher/pipeline_projection.go loc=L1198 community=]
+NODE relationshipSource() [src=pkg/search/relationship_search.go loc=L273 community=]
+NODE TestRelationshipSearchEdges() [src=pkg/search/relationship_search_test.go loc=L273 community=]
+NODE .indexRelationship() [src=pkg/search/relationship_search.go loc=L188 community=]
+NODE .loadRelationshipVectors() [src=pkg/search/relationship_search.go loc=L419 community=]
+NODE .relationshipVectorsPath() [src=pkg/search/relationship_search.go loc=L412 community=]
+NODE .StartRelationshipIndex() [src=pkg/search/relationship_search.go loc=L152 community=]
+EDGE .runRelationshipIndex() --calls [EXTRACTED context=call]--> .embedRelationships() at=pkg/search/relationship_search.go:L177
+EDGE .embedRelationships() --calls [EXTRACTED context=call]--> .saveRelationshipVectors() at=pkg/search/relationship_search.go:L304
+EDGE .embedPendingRelationships() --calls [EXTRACTED context=call]--> .source() at=pkg/search/relationship_search.go:L347
+EDGE .embedPendingRelationships() --calls [EXTRACTED context=call]--> normalizeVectorCopy() at=pkg/search/relationship_search.go:L370
+EDGE .embedPendingRelationships() --calls [EXTRACTED context=call]--> EdgeID at=pkg/search/relationship_search.go:L348
+EDGE .StartRelationshipIndex() --calls [EXTRACTED context=call]--> .runRelationshipIndex() at=pkg/search/relationship_search.go:L158
+EDGE .runRelationshipIndex() --calls [EXTRACTED context=call]--> .loadRelationshipVectors() at=pkg/search/relationship_search.go:L164
+EDGE .runRelationshipIndex() --calls [EXTRACTED context=call]--> .indexRelationship() at=pkg/search/relationship_search.go:L168
+EDGE .runRelationshipIndex() --calls [EXTRACTED context=call]--> StreamEdgesWithFallback() at=pkg/search/relationship_search.go:L166
+EDGE .pipelineCreateSource() --calls [INFERRED context=call]--> .source() at=pkg/cypher/create.go:L81
+EDGE TestMonster728ProductSourceContracts() --calls [INFERRED context=call]--> .source() at=pkg/cypher/gh728_where_family_test.go:L128
+EDGE .pipelineAggregateGroups() --calls [INFERRED context=call]--> .source() at=pkg/cypher/pipeline_aggregate_stream.go:L135
+EDGE .pipelineProjectPlainReturn() --calls [INFERRED context=call]--> .source() at=pkg/cypher/pipeline_projection.go:L1207
+EDGE materializePipelineSource() --calls [INFERRED context=call]--> .source() at=pkg/cypher/pipeline_row_stream.go:L221
+EDGE TestStreamedNodeMatchSourceFailures() --calls [INFERRED context=call]--> .source() at=pkg/cypher/result_stream_edge_test.go:L181
+EDGE .indexRelationship() --calls [EXTRACTED context=call]--> .source() at=pkg/search/relationship_search.go:L191
+EDGE .source() --calls [EXTRACTED context=call]--> relationshipSource() at=pkg/search/relationship_search.go:L268
+EDGE .SearchRelationships() --calls [EXTRACTED context=call]--> normalizeVectorCopy() at=pkg/search/relationship_search.go:L537
+EDGE TestRelationshipSearchEdges() --calls [INFERRED context=call]--> normalizeVectorCopy() at=pkg/search/relationship_search_test.go:L294
+EDGE .saveRelationshipVectors() --calls [EXTRACTED context=call]--> .relationshipVectorsPath() at=pkg/search/relationship_search.go:L437
+EDGE .saveRelationshipVectors() --calls [EXTRACTED context=call]--> CreateRootedFile() at=pkg/search/relationship_search.go:L450
+EDGE .saveRelationshipVectors() --calls [EXTRACTED context=call]--> RenameRootedFile() at=pkg/search/relationship_search.go:L460
+EDGE .saveRelationshipVectors() --calls [EXTRACTED context=call]--> RemoveRootedPath() at=pkg/search/relationship_search.go:L463
+EDGE TestMonster728ProductSourceContracts() --calls [INFERRED context=call]--> materializePipelineSource() at=pkg/cypher/gh728_where_family_test.go:L119
+EDGE .SearchRelationships() --calls [EXTRACTED context=call]--> EdgeID at=pkg/search/relationship_search.go:L626
+EDGE .embedRelationships() --calls [EXTRACTED context=call]--> .embedPendingRelationships() at=pkg/search/relationship_search.go:L302
+EDGE .loadRelationshipVectors() --calls [EXTRACTED context=call]--> .relationshipVectorsPath() at=pkg/search/relationship_search.go:L420

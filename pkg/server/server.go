@@ -196,6 +196,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -717,7 +718,8 @@ type Server struct {
 	basicAuthCache *auth.BasicAuthCache
 
 	mu      sync.RWMutex
-	closed  atomic.Bool
+	lifetime *lifecycle.Group
+ lifetimeOnce sync.Once
 	started atomic.Pointer[time.Time]
 
 	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
@@ -1150,6 +1152,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	db.SetDatabaseStorageResolver(dbManager.GetStorage)
 
 	s := &Server{
+ lifetime:db.Lifecycle().NewGroup(),
 		config:               config,
 		db:                   db,
 		dbManager:            dbManager,
@@ -1658,7 +1661,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			if s.closed.Load() {
+			if s.isStopped() {
 				return
 			}
 			s.ensureSearchBuildStartedForKnownDatabases()
@@ -1922,7 +1925,7 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
 //	If TLSCertFile and TLSKeyFile are configured, the server automatically
 //	starts with HTTPS. Otherwise, it uses HTTP.
 func (s *Server) Start() error {
-	if s.closed.Load() {
+	if s.isStopped() {
 		return ErrServerClosed
 	}
 
@@ -2010,26 +2013,8 @@ func (s *Server) Start() error {
 }
 
 // Stop gracefully shuts down the server.
-func (s *Server) Stop(ctx context.Context) (err error) {
-	if !s.closed.CompareAndSwap(false, true) {
-		return nil // Already closed
-	}
-
-	// Cancel the background embedder initialisation now and wait for it
-	// before returning, so it can't install an embedder (or log) after Stop.
-	if s.embedderInitCancel != nil {
-		s.embedderInitCancel()
-		defer func() {
-			select {
-			case <-s.embedderInitDone:
-			case <-ctx.Done():
-				if err == nil {
-					err = ctx.Err()
-				}
-			}
-		}()
-	}
-
+func (s *Server) stop(ctx context.Context) (err error) {
+ if s.embedderInitCancel!=nil {s.embedderInitCancel()}
 	s.stopQdrantGRPC()
 
 	// Stop rate limiter cleanup goroutine
@@ -2132,11 +2117,11 @@ type ServerStats struct {
 // return. It runs as a db background task, so closing db cancels it and waits
 // for it too, even without Stop; a closed db refuses the embedder anyway.
 func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
-	ctx, cancel := context.WithCancel(db.LifetimeContext())
+	ctx, cancel := context.WithCancel(s.operationGroup().Context())
 	done := make(chan struct{})
 	s.embedderInitCancel = cancel
 	s.embedderInitDone = done
-	started := db.RunBackgroundTask(func() {
+	started := s.operationGroup().Go(func(_ *lifecycle.Scope) {
 		defer close(done)
 		defer cancel()
 		s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)

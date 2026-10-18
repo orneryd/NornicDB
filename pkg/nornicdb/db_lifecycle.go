@@ -9,20 +9,17 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Close closes the database.
 func (db *DB) Close() error {
 	db.mu.Lock()
-	if db.closed {
-		db.mu.Unlock()
-		return nil
-	}
-	db.closed = true
+	if db.lifetime==nil {db.lifetime=lifecycle.New();db.background=db.lifetime.NewGroup();db.buildCtx=db.lifetime.Context()}
+	owner:=db.lifetime
 	db.mu.Unlock()
-
-	return db.closeInternal()
+	return owner.Close(db.stopResourceProducers,db.closeComponents)
 }
 
 // LifetimeContext returns a context that is cancelled when the database
@@ -68,25 +65,24 @@ func (db *DB) retentionPoliciesPath() string {
 // closeInternal performs cleanup without requiring the lock.
 // Used during initialization failures and normal close.
 func (db *DB) closeInternal() error {
-	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+	return db.Close()
+}
+
+func (db *DB) stopResourceProducers() {
 	db.mu.Lock()
-	db.closed = true
 	embedQueue := db.embedQueue
 	db.mu.Unlock()
-
 	db.stopClusteringTimer()
-	if db.buildCancel != nil {
-		db.buildCancel()
-	}
 	if embedQueue != nil {
 		embedQueue.Close()
 	}
-	db.bgWg.Wait()
-	db.foregroundWg.Wait()
+	db.searchServicesMu.RLock()
+	for _,entry:=range db.searchServices {if entry!=nil&&entry.svc!=nil {entry.svc.StopBackgroundWork()}}
+	db.searchServicesMu.RUnlock()
+}
 
-	// Queue workers, initializers and foreground calls are now quiescent. Release all provider
-	// resources through their one owner, including cached/replaced providers.
-	errs := db.closeOwnedEmbedders()
+func (db *DB) closeComponents() error {
+	var errs []error
 	// Stop every component that can still mutate graph storage before recording
 	// the durable storage boundary. Search snapshots are derived artifacts and
 	// may take much longer to save; they must not delay this marker.

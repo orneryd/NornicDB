@@ -1,0 +1,48 @@
+package server
+
+import (
+ "bytes"
+ "context"
+ "encoding/json"
+ "net/http"
+ "net/http/httptest"
+ "testing"
+ "time"
+ graphqlhandler "github.com/orneryd/nornicdb/pkg/graphql"
+ "github.com/orneryd/nornicdb/pkg/storage"
+ "github.com/stretchr/testify/require"
+)
+type r73MultiChunkProvider struct{*r73RPCProvider}
+func(e *r73MultiChunkProvider) ChunkText(text string,size,overlap int)([]string,error){if text=="multi needle"{return []string{"needle","tail"},nil};return []string{text},nil}
+
+func TestR73HTTPAlternateShutdownPaths(t *testing.T){
+ for _,mode:=range []string{"graphql","continuation_start","multiple_chunks"}{t.Run(mode,func(t *testing.T){
+  s,_:=setupTestServer(t);s.auth=nil;s.db.SetEmbedConfigForDB(nil)
+  dbName:=s.dbManager.DefaultDatabaseName();engine,err:=s.dbManager.GetStorage(dbName);require.NoError(t,err)
+  vector:=make([]float32,1024);vector[0]=1
+  _,err=engine.CreateNode(&storage.Node{ID:"r73-http-seed",Labels:[]string{"Doc"},Properties:map[string]interface{}{"content":"needle"},ChunkEmbeddings:[][]float32{vector}});require.NoError(t,err)
+  require.NoError(t,s.db.BuildSearchIndexes(context.Background()))
+  e:=&r73RPCProvider{countingEmbedder:countingEmbedder{dims:1024},entered:make(chan struct{})}
+  require.True(t,s.db.SetEmbedder(&r73MultiChunkProvider{e}))
+  returned:=make(chan *httptest.ResponseRecorder,1)
+  go func(){
+   if mode=="graphql"{
+    payload,_:=json.Marshal(map[string]any{"query":`{cypher(input:{statement:"CALL db.index.vector.embed('needle') YIELD embedding RETURN embedding"}){columns rows}}`})
+    req:=httptest.NewRequest(http.MethodPost,"/graphql",bytes.NewReader(payload));req.Header.Set("Content-Type","application/json")
+    response:=httptest.NewRecorder();graphqlhandler.NewHandler(s.db,s.dbManager).ServeHTTP(response,req);returned<-response
+   }else{
+    body:=map[string]any{"database":dbName,"query":"needle","limit":1}
+    if mode=="continuation_start"{body["mode"]="ranked";body["n"]=1;body["max_results"]=5}
+    if mode=="multiple_chunks"{body["query"]="multi needle"}
+    returned<-makeRequest(t,s,http.MethodPost,"/nornicdb/search",body,"")
+   }
+  }()
+  select{case <-e.entered:case response:=<-returned:t.Fatalf("path never entered provider: %d %s",response.Code,response.Body.String());case <-time.After(5*time.Second):t.Fatal("provider not reached")}
+  closed:=make(chan error,1);go func(){closed<-s.db.Close()}()
+  var response *httptest.ResponseRecorder
+  select{case response=<-returned:case <-time.After(5*time.Second):t.Fatal("request hung")}
+  select{case err:=<-closed:require.NoError(t,err);case <-time.After(5*time.Second):t.Fatal("Close hung")}
+  t.Logf("path=%s HTTP=%d body=%s",mode,response.Code,response.Body.String());require.False(t,e.unsafe.Load())
+  if mode=="graphql"{var result map[string]any;require.NoError(t,json.Unmarshal(response.Body.Bytes(),&result));require.NotEmpty(t,result["errors"],"GraphQL must report an execution error")}else{require.Equal(t,http.StatusServiceUnavailable,response.Code,"shutdown cannot become successful fallback")}
+ })}
+}

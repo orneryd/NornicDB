@@ -1,0 +1,62 @@
+wt-sol-1465-r4\cmd\nornicdb\main.go:1089:		_ = attachEmbedMetricsToEmbedder(exec.GetEmbedder(), embedMetrics)
+wt-sol-1465-r4\pkg\embed\voyage.go:95:func NewVoyage(config *Config) (*VoyageEmbedder, error) {
+wt-sol-1465-r4\pkg\embed\spans.go:18:func NewTracedEmbedder(inner Embedder) *TracedEmbedder {
+wt-sol-1465-r4\pkg\embed\local_gguf_stub.go:19:// NewLocalGGUF returns an error when localllm is not built in.
+wt-sol-1465-r4\pkg\embed\local_gguf_stub.go:23:func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
+wt-sol-1465-r4\pkg\embed\local_gguf_stub.go:27:// NewLocalGGUFContext returns an error when localllm is not built in.
+wt-sol-1465-r4\pkg\embed\local_gguf_stub.go:28:func NewLocalGGUFContext(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
+wt-sol-1465-r4\pkg\embed\local_gguf.go:22://	embedder, err := embed.NewLocalGGUF(config)
+wt-sol-1465-r4\pkg\embed\local_gguf.go:94:// NewLocalGGUF creates an embedder using the existing Config pattern.
+wt-sol-1465-r4\pkg\embed\local_gguf.go:111://	embedder, err := embed.NewLocalGGUF(config)
+wt-sol-1465-r4\pkg\embed\local_gguf.go:120:func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
+wt-sol-1465-r4\pkg\embed\local_gguf.go:121:	return NewLocalGGUFContext(context.Background(), config)
+wt-sol-1465-r4\pkg\embed\local_gguf.go:124:// NewLocalGGUFContext is NewLocalGGUF for a caller that may stop waiting. The
+wt-sol-1465-r4\pkg\embed\local_gguf.go:128:func NewLocalGGUFContext(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
+wt-sol-1465-r4\pkg\embed\embed.go:17://	embedder := embed.NewOllama(config)
+wt-sol-1465-r4\pkg\embed\embed.go:28://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:70://	embedder = embed.NewOllama(nil) // Uses defaults
+wt-sol-1465-r4\pkg\embed\embed.go:276://	embedder := embed.NewOllama(config)
+wt-sol-1465-r4\pkg\embed\embed.go:307://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:345://	embedder := embed.NewOllama(nil) // Uses defaults
+wt-sol-1465-r4\pkg\embed\embed.go:366://	embedder := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\embed.go:375://	embedder = embed.NewOllama(config)
+wt-sol-1465-r4\pkg\embed\embed.go:382://	embedder := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\embed.go:398://	embedder := embed.NewOllama(config)
+wt-sol-1465-r4\pkg\embed\embed.go:410://	embedder := embed.NewOllama(config)
+wt-sol-1465-r4\pkg\embed\embed.go:420://	embedder := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\embed.go:481:func NewOllama(config *Config) *OllamaEmbedder {
+wt-sol-1465-r4\pkg\embed\embed.go:512://	embedder := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\embed.go:567://	embedder := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\embed.go:637://	embedder := embed.NewOpenAI(embed.DefaultOpenAIConfig(apiKey))
+wt-sol-1465-r4\pkg\embed\embed.go:656://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:661://	embedder = embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:668://	embedder := embed.NewOpenAI(embed.DefaultOpenAIConfig(apiKey))
+wt-sol-1465-r4\pkg\embed\embed.go:684://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:696://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:707://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:730://	embedder := embed.NewOpenAI(config)
+wt-sol-1465-r4\pkg\embed\embed.go:797:func NewOpenAI(config *Config) *OpenAIEmbedder {
+wt-sol-1465-r4\pkg\embed\embed.go:831://	embedder := embed.NewOpenAI(embed.DefaultOpenAIConfig(apiKey))
+wt-sol-1465-r4\pkg\embed\embed.go:863://	embedder := embed.NewOpenAI(embed.DefaultOpenAIConfig(apiKey))
+wt-sol-1465-r4\pkg\embed\embed.go:1055:// ctx has ended (see NewLocalGGUFContext).
+wt-sol-1465-r4\pkg\embed\embed.go:1063:		return NewLocalGGUFContext(ctx, config)
+wt-sol-1465-r4\pkg\embed\embed.go:1065:		return NewOllama(config), nil
+wt-sol-1465-r4\pkg\embed\embed.go:1070:		return NewOpenAI(config), nil
+wt-sol-1465-r4\pkg\embed\embed.go:1075:		return NewOpenAI(config), nil
+wt-sol-1465-r4\pkg\embed\embed.go:1077:		return NewVoyage(config)
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:10://	base := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:11://	cached := embed.NewCachedEmbedder(base, 10000) // Cache 10K embeddings
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:69://	ollama := embed.NewOllama(nil)
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:70://	cached := embed.NewCachedEmbedder(ollama, 10000)
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:73://	cached = embed.NewCachedEmbedder(ollama, 0)
+wt-sol-1465-r4\pkg\embed\cached_embedder.go:74:func NewCachedEmbedder(base Embedder, maxSize int) *CachedEmbedder {
+wt-sol-1465-r4\pkg\heimdall\metrics.go:359:// NewQueryExecutorWithSearch creates a query executor with semantic search support.
+wt-sol-1465-r4\pkg\heimdall\metrics.go:360:func NewQueryExecutorWithSearch(db QueryDatabase, searcher SemanticSearcher, embedder Embedder, timeout time.Duration) *QueryExecutor {
+wt-sol-1465-r4\pkg\nornicdb\db.go:1586:	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+wt-sol-1465-r4\pkg\nornicdb\db.go:1837:	release, accepted := db.OwnEmbedder(newEmbedder)
+wt-sol-1465-r4\pkg\nornicdb\db_embedder_owner.go:66:func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+wt-sol-1465-r4\pkg\server\server.go:2179:		release, accepted := db.OwnEmbedder(embedder)
+wt-sol-1465-r4\pkg\server\server.go:2209:				embedder = embed.NewCachedEmbedder(embedder, embeddingCacheSize)
+wt-sol-1465-r4\pkg\nornicdb\query_embedding.go:189:	return db.cypherExecutor.GetEmbedder()
+wt-sol-1465-r4\pkg\cypher\executor.go:1159:func (e *StorageExecutor) GetEmbedder() QueryEmbedder {
+wt-sol-1465-r4\pkg\search\search.go:1098://	embedder := embed.NewOllama(embed.DefaultOllamaConfig())

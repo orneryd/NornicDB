@@ -1,0 +1,27 @@
+package nornicdb
+import (
+ "fmt"
+ "sync"
+ "sync/atomic"
+ "testing"
+ "github.com/orneryd/nornicdb/pkg/embed"
+ "github.com/stretchr/testify/require"
+)
+type r73AliasModel struct{mockEmbedder;stop,done chan struct{};once sync.Once;closes atomic.Int32}
+func(e *r73AliasModel) Close()error{e.closes.Add(1);e.once.Do(func(){close(e.stop)});<-e.done;return nil}
+func TestR73EveryPublishedAliasReleasesUnderlyingModel(t *testing.T){
+ for _,installed:=range []bool{false,true}{for _,shape:=range []string{"bare","cached","nested_cached","traced","cached_traced","traced_cached"}{t.Run(fmt.Sprintf("installed_%v/%s",installed,shape),func(t *testing.T){
+  db,err:=Open("",nil);require.NoError(t,err)
+  e:=&r73AliasModel{mockEmbedder:mockEmbedder{dims:4},stop:make(chan struct{}),done:make(chan struct{})}
+  go func(){defer close(e.done);<-e.stop}()
+  t.Cleanup(func(){_=e.Close();_=db.Close()})
+  var p embed.Embedder=e
+  switch shape{case "cached":p=embed.NewCachedEmbedder(p,16);case "nested_cached":p=embed.NewCachedEmbedder(embed.NewCachedEmbedder(p,16),16);case "traced":p=embed.NewTracedEmbedder(p);case "cached_traced":p=embed.NewCachedEmbedder(embed.NewTracedEmbedder(p),16);case "traced_cached":p=embed.NewTracedEmbedder(embed.NewCachedEmbedder(p,16))}
+  if installed{require.True(t,db.SetEmbedder(p))}else{_,accepted:=db.OwnEmbedder(p);require.True(t,accepted)}
+  require.NoError(t,db.Close())
+  alive:=true;select{case <-e.done:alive=false;default:}
+  t.Logf("shape=%s installed=%v underlyingCloses=%d modelWorkerAlive=%v",shape,installed,e.closes.Load(),alive)
+  require.False(t,alive,"a supported provider wrapper concealed its model shutdown owner")
+  require.EqualValues(t,1,e.closes.Load())
+ })}}
+}

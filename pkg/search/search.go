@@ -115,6 +115,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
@@ -1030,6 +1031,9 @@ type Service struct {
 	boundDurationFuse  observability.BoundLatencyObserver
 
 	lifecycleCtx    context.Context
+	lifetime *lifecycle.Owner
+	activity *lifecycle.Group
+	workers *lifecycle.Group
 	lifecycleCancel context.CancelFunc
 
 	// relationships holds relationship search's indexes when it is enabled
@@ -1183,6 +1187,7 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 
 // ServiceOptions configures database-specific search service resources.
 type ServiceOptions struct {
+	Lifetime *lifecycle.Owner
 	DatabaseID               string
 	SearchResultCacheEntries int
 	SearchResultCacheTTL     time.Duration
@@ -1216,7 +1221,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
 	}
 	fulltextIndex, selectedBM25Engine := newBM25IndexWithAnalyzer(bm25Engine, analyzer)
-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	owner:=(*lifecycle.Owner)(nil);if options!=nil {owner=options.Lifetime};if owner==nil{owner=lifecycle.New()};activity:=owner.NewGroup();workers:=activity.NewGroup();lifecycleCtx:=activity.Context();lifecycleCancel:=activity.Cancel
 	var resultCache *searchResultCache
 	defaults := DefaultServiceOptions("")
 	cacheEntries := defaults.SearchResultCacheEntries
@@ -1260,6 +1265,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		resultCache:                resultCache,
 		cacheNamespace:             cacheNamespace,
 		lifecycleCtx:               lifecycleCtx,
+ lifetime:owner,activity:activity,workers:workers,
 		lifecycleCancel:            lifecycleCancel,
 	}
 	svc.setFulltext(fulltextIndex)
@@ -2152,6 +2158,7 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 // It is safe to call more than once. PersistIndexesToDisk should be called by owners before
 // Close when shutdown persistence is desired.
 func (s *Service) Close() error {
+ if s!=nil&&s.activity!=nil {_=s.activity.Stop(context.Background(),nil)}
 	if s == nil {
 		return nil
 	}
@@ -4633,6 +4640,7 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+ var operation lifecycle.Scope;if err:=operation.EnterGroup(ctx,s.activity);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,

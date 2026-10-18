@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // QueryEmbedderBinding publishes one query provider to every protocol and scope.
@@ -13,23 +14,25 @@ import (
 type QueryEmbedderBinding struct {
 	current  atomic.Pointer[queryEmbedderState]
 	next     atomic.Uint64
-	beginUse func(context.Context) (context.Context, func(), error)
+	lifetime *lifecycle.Owner
+	prepare func(QueryEmbedder) QueryEmbedder
 }
 
 // SetLifetime binds provider users to their database owner. Configure it during
 // construction, before exposing the binding or sharing it with scoped executors.
-func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
-	b.beginUse = begin
+func (b *QueryEmbedderBinding) SetLifetime(owner *lifecycle.Owner) {
+	b.lifetime = owner
 }
+// SetProviderOwner makes every publication, including callers using a retained
+// executor, transfer its resource to the database's generation owner.
+func(b *QueryEmbedderBinding) SetProviderOwner(prepare func(QueryEmbedder)QueryEmbedder){b.prepare=prepare}
+func(b *QueryEmbedderBinding) Lifetime()*lifecycle.Owner{if b==nil{return nil};return b.lifetime}
 
 // BeginUse admits one provider-using operation and returns its cancellation
 // context and release function. A standalone binding has no lifetime owner.
 // Callers must release before returning, including on errors.
-func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
-	if b != nil && b.beginUse != nil {
-		return b.beginUse(ctx)
-	}
-	return ctx, func() {}, nil
+func (b *QueryEmbedderBinding) BeginUse(ctx context.Context,scope *lifecycle.Scope) error {
+	return scope.Enter(ctx,b.Lifetime())
 }
 
 // Load returns the current provider, or nil while it is unavailable.
@@ -51,6 +54,7 @@ func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
 // may finish using their captured snapshot, but their cached results cannot be
 // served to a query that captured a different publication.
 func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+	if b.prepare!=nil {embedder=b.prepare(embedder)}
 	state := &queryEmbedderState{embedder: embedder, generation: b.next.Add(1)}
 	if embedder != nil {
 		state.cache = make(map[string][]float32, 512)
@@ -95,7 +99,7 @@ type queryEmbeddingStatementKey struct{}
 // adds no context allocation. Nested scopes reuse the outer snapshot, including
 // its nil startup state. Embedding helpers never reload a published provider.
 type queryEmbeddingStatementContext struct {
-	context.Context
+	lifecycle.Scope
 	instant any // Box the statement clock once, rather than on each Value call.
 	binding *QueryEmbedderBinding
 	state   *queryEmbedderState

@@ -1,0 +1,49 @@
+[graphify extract] scanning /repos/nornic-rc144-r73-release
+[graphify] WARNING: PDF text extraction skipped: 'pypdf' is not installed. Install the pdf extra: uv tool install 'graphifyy[pdf]'
+[graphify extract] --code-only: skipping 711 non-code file(s) (677 docs, 2 papers, 32 images) — no LLM extraction
+[graphify extract] found 3917 code, 0 docs, 0 papers, 0 images
+[graphify extract] 354 file(s) not classified (no supported extension or shebang), skipped: .dockerignore, .git, .gitattributes, .gitignore, Aggregation1.feature, Aggregation2.feature (+348 more)
+[graphify extract] 2 file(s) skipped as potentially sensitive (rename or move if wrongly flagged): .npmrc, serviceaccount.yaml
+[graphify extract] AST extraction on 3917 code files...
+  AST extraction: 100/3917 uncached files (2%) [2 workers]
+  AST extraction: 200/3917 uncached files (5%) [2 workers]
+  AST extraction: 300/3917 uncached files (7%) [2 workers]
+  AST extraction: 400/3917 uncached files (10%) [2 workers]
+  AST extraction: 500/3917 uncached files (12%) [2 workers]
+  AST extraction: 600/3917 uncached files (15%) [2 workers]
+  AST extraction: 700/3917 uncached files (17%) [2 workers]
+  AST extraction: 800/3917 uncached files (20%) [2 workers]
+  AST extraction: 900/3917 uncached files (22%) [2 workers]
+  AST extraction: 1000/3917 uncached files (25%) [2 workers]
+  AST extraction: 1100/3917 uncached files (28%) [2 workers]
+  AST extraction: 1200/3917 uncached files (30%) [2 workers]
+  AST extraction: 1300/3917 uncached files (33%) [2 workers]
+  AST extraction: 1400/3917 uncached files (35%) [2 workers]
+  AST extraction: 1500/3917 uncached files (38%) [2 workers]
+  AST extraction: 1600/3917 uncached files (40%) [2 workers]
+  AST extraction: 1700/3917 uncached files (43%) [2 workers]
+  AST extraction: 1800/3917 uncached files (45%) [2 workers]
+  AST extraction: 1900/3917 uncached files (48%) [2 workers]
+  AST extraction: 2000/3917 uncached files (51%) [2 workers]
+  AST extraction: 2100/3917 uncached files (53%) [2 workers]
+  AST extraction: 2200/3917 uncached files (56%) [2 workers]
+  AST extraction: 2300/3917 uncached files (58%) [2 workers]
+  AST extraction: 2400/3917 uncached files (61%) [2 workers]
+  AST extraction: 2500/3917 uncached files (63%) [2 workers]
+  AST extraction: 2600/3917 uncached files (66%) [2 workers]
+  AST extraction: 2700/3917 uncached files (68%) [2 workers]
+  AST extraction: 2800/3917 uncached files (71%) [2 workers]
+  AST extraction: 2900/3917 uncached files (74%) [2 workers]
+  AST extraction: 3000/3917 uncached files (76%) [2 workers]
+  AST extraction: 3100/3917 uncached files (79%) [2 workers]
+  AST extraction: 3200/3917 uncached files (81%) [2 workers]
+  AST extraction: 3300/3917 uncached files (84%) [2 workers]
+  AST extraction: 3400/3917 uncached files (86%) [2 workers]
+  AST extraction: 3500/3917 uncached files (89%) [2 workers]
+  AST extraction: 3600/3917 uncached files (91%) [2 workers]
+  AST extraction: 3700/3917 uncached files (94%) [2 workers]
+  AST extraction: 3800/3917 uncached files (97%) [2 workers]
+  AST extraction: 3900/3917 uncached files (99%) [2 workers]
+  AST extraction: 3917/3917 uncached files (100%) [2 workers]
+  warning: 1 file(s) had syntax errors and may be partially extracted: pkg/simd/neon_simd_arm64.h (first error at line 16, no symbols extracted)
+  warning: 44 code file(s) yielded no symbols (0.22 MB) — a data file, or source this extractor models no symbols for: docs/performance/vector-ann-20261017/audit.py, go.mod, pkg/bolt/performance_norace_test.go, pkg/bolt/performance_race_test.go, pkg/cypher/match_with.go (+39 more)

@@ -1,0 +1,116 @@
+wt-sol-1469-r3/cmd\recall-bench\main.go:241:	embedder, err := embed.NewEmbedder(config)
+wt-sol-1469-r3/cmd\recall-bench\main.go:245:	db.SetEmbedder(embedder)
+wt-sol-1469-r3/cmd\nornicdb\main.go:1542:		executor.ShareEmbedderFrom(baseExec)
+wt-sol-1469-r3/cmd\nornicdb\main.go:1590:		exec.ShareEmbedderFrom(baseExec)
+wt-sol-1469-r3/pkg\mcp\server.go:129:	queryEmbedder *cypher.QueryEmbedderBinding
+wt-sol-1469-r3/pkg\mcp\server.go:236:	binding := &cypher.QueryEmbedderBinding{}
+wt-sol-1469-r3/pkg\mcp\server.go:239:			binding = executor.QueryEmbedderBinding()
+wt-sol-1469-r3/pkg\mcp\server.go:261:// SetEmbedder sets the embedding service.
+wt-sol-1469-r3/pkg\mcp\server.go:262:func (s *Server) SetEmbedder(e Embedder) {
+wt-sol-1469-r3/pkg\nornicdb\db.go:263:	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
+wt-sol-1469-r3/pkg\nornicdb\db.go:265:	// Production uses embed.NewEmbedder.
+wt-sol-1469-r3/pkg\nornicdb\db.go:994:	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1001:	// share it (ShareEmbedderFrom).
+wt-sol-1469-r3/pkg\nornicdb\db.go:1203:	// SetEmbedder(embedder) is called by the server when the model loads.
+wt-sol-1469-r3/pkg\nornicdb\db.go:1420:	// Note: Auto-embed queue is initialized via SetEmbedder() after the server creates
+wt-sol-1469-r3/pkg\nornicdb\db.go:1601:// SetEmbedder configures the auto-embed queue with the given embedder.
+wt-sol-1469-r3/pkg\nornicdb\db.go:1609:func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1613:	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1633:		panic("nornicdb: baseStorage is nil in SetEmbedder")
+wt-sol-1469-r3/pkg\nornicdb\db.go:1639:		db.cypherExecutor.SetEmbedder(embedder)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1647:		db.embedQueue.SetEmbedder(embedder)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1720:// SetDefaultEmbedConfig registers the current global embedder (must have been set via SetEmbedder first)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1722:// has no overrides. Call this after SetEmbedder when per-DB config is available (e.g. server with dbConfigStore).
+wt-sol-1469-r3/pkg\nornicdb\db.go:1723:func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1748:// SetEmbedConfigForDB sets the optional resolver that returns resolved embed config for a database.
+wt-sol-1469-r3/pkg\nornicdb\db.go:1750:func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1759:		queue.SetEmbedderResolver(nil)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1762:	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1830:		create = embed.NewEmbedder
+wt-sol-1469-r3/pkg\nornicdb\db.go:1865:	newEmbedder, createErr := create(cfg)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1866:	release, accepted := db.OwnEmbedder(newEmbedder)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1869:		newEmbedder = nil
+wt-sol-1469-r3/pkg\nornicdb\db.go:1874:	if createErr == nil && newEmbedder != nil {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1876:			// SetDefaultEmbedConfig may publish this key during construction.
+wt-sol-1469-r3/pkg\nornicdb\db.go:1878:			discard = !sameEmbedder(existing, newEmbedder)
+wt-sol-1469-r3/pkg\nornicdb\db.go:1879:			newEmbedder = existing
+wt-sol-1469-r3/pkg\nornicdb\db.go:1881:			db.embedderRegistry[key] = newEmbedder
+wt-sol-1469-r3/pkg\nornicdb\db.go:1894:	if createErr != nil || newEmbedder == nil {
+wt-sol-1469-r3/pkg\nornicdb\db.go:1897:	return newEmbedder
+wt-sol-1469-r3/pkg\nornicdb\db.go:2030:	// Read once under db.mu: StopEmbedQueue and SetEmbedder replace it.
+wt-sol-1469-r3/pkg\embed\orca.go:20://	embedder, err := embed.NewEmbedder(config)
+wt-sol-1469-r3/pkg\embed\embed.go:962://	embedder, err := embed.NewEmbedder(config)
+wt-sol-1469-r3/pkg\embed\embed.go:1009:// NewEmbedder creates an embedder based on the provider specified in config.
+wt-sol-1469-r3/pkg\embed\embed.go:1039://	embedder, err := embed.NewEmbedder(config)
+wt-sol-1469-r3/pkg\embed\embed.go:1049:func NewEmbedder(config *Config) (Embedder, error) {
+wt-sol-1469-r3/pkg\embed\embed.go:1050:	return NewEmbedderContext(context.Background(), config)
+wt-sol-1469-r3/pkg\embed\embed.go:1053:// NewEmbedderContext is NewEmbedder for a caller that may stop waiting, such as
+wt-sol-1469-r3/pkg\embed\embed.go:1056:func NewEmbedderContext(ctx context.Context, config *Config) (Embedder, error) {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:207:// WithQueryEmbeddingSnapshot binds the current global query provider to a text
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:211:func (db *DB) WithQueryEmbeddingSnapshot(ctx context.Context) context.Context {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:226:// When SetEmbedConfigForDB is set, the per-DB embedder registry is used so the query vector matches
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:238:// QueryEmbeddingSnapshot binds chunking and embedding to one provider for a
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:241:type QueryEmbeddingSnapshot struct {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:255:func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:256:	snapshot := QueryEmbeddingSnapshot{db: db, database: dbName, embedder: db.globalEmbedder(), validateSingleDimensions: true}
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:285:func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:294:func (s QueryEmbeddingSnapshot) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+wt-sol-1469-r3/pkg\nornicdb\query_embedding.go:309:func (s QueryEmbeddingSnapshot) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg\nornicdb\db_embedder_owner.go:57:// OwnEmbedder gives the database ownership of a constructed provider before its
+wt-sol-1469-r3/pkg\nornicdb\db_embedder_owner.go:66:func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+wt-sol-1469-r3/pkg\nornicdb\db_embedder_owner.go:72:		provider = cached.Unwrap()
+wt-sol-1469-r3/pkg\nornicdb\db_lifecycle.go:71:	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:200:// If embedder is nil, the worker will wait for SetEmbedder() to be called.
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:272:// SetEmbedder sets or updates the embedder (for async initialization).
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:274:func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:282:// currentEmbedder returns the embedder under ew.mu. SetEmbedder can replace
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:291:// SetEmbedderResolver selects a provider for a fully-qualified node ID. This
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:293:func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+wt-sol-1469-r3/pkg\nornicdb\embed_queue.go:1201:// (retry gate, outcome, persisted metadata), even if SetEmbedder replaces the
+wt-sol-1469-r3/pkg\nornicgrpc\search_service.go:78:	// PrepareQueryEmbedding binds both callbacks once for a new text search.
+wt-sol-1469-r3/pkg\nornicgrpc\search_service.go:80:	PrepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
+wt-sol-1469-r3/pkg\nornicgrpc\search_service.go:117:		prepareQueryEmbedding: cfg.PrepareQueryEmbedding,
+wt-sol-1469-r3/pkg\graphql\resolvers\resolver.go:168:			executor.ShareEmbedderFrom(baseExecutor)
+wt-sol-1469-r3/pkg\cypher\call_embedding_control.go:26:// (ShareEmbedderFrom).
+wt-sol-1469-r3/pkg\server\server.go:723:	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
+wt-sol-1469-r3/pkg\server\server.go:725:	// embedder constructor (embed.NewEmbedderContext) when set; New leaves them unset.
+wt-sol-1469-r3/pkg\server\server.go:728:	newEmbedder                 func(context.Context, *embed.Config) (embed.Embedder, error)
+wt-sol-1469-r3/pkg\server\server.go:1792:			db.SetEmbedConfigForDB(func(dbName string) (*embed.Config, error) {
+wt-sol-1469-r3/pkg\server\server.go:2164:	newEmbedder := embed.NewEmbedderContext
+wt-sol-1469-r3/pkg\server\server.go:2165:	if s.newEmbedder != nil {
+wt-sol-1469-r3/pkg\server\server.go:2166:		newEmbedder = s.newEmbedder
+wt-sol-1469-r3/pkg\server\server.go:2181:		embedder, err := newEmbedder(ctx, embedConfig)
+wt-sol-1469-r3/pkg\server\server.go:2182:		release, accepted := db.OwnEmbedder(embedder)
+wt-sol-1469-r3/pkg\server\server.go:2233:			if !db.SetEmbedder(embedder) {
+wt-sol-1469-r3/pkg\server\server.go:2237:			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
+wt-sol-1469-r3/pkg\server\server.go:2238:			db.SetDefaultEmbedConfig(embedConfig)
+wt-sol-1469-r3/pkg\server\server_db.go:196:		executor.ShareEmbedderFrom(baseExec)
+wt-sol-1469-r3/pkg\server\server_db.go:274:		executor.ShareEmbedderFrom(baseExec)
+wt-sol-1469-r3/pkg\server\server_heimdall.go:129:			exec.ShareEmbedderFrom(baseExecutor)
+wt-sol-1469-r3/pkg\server\server_nornicdb.go:688:	var queryEmbedding nornicdb.QueryEmbeddingSnapshot
+wt-sol-1469-r3/pkg\cypher\executor.go:382:	queryEmbedder *QueryEmbedderBinding
+wt-sol-1469-r3/pkg\cypher\executor.go:772:		queryEmbedder:                  &QueryEmbedderBinding{},
+wt-sol-1469-r3/pkg\cypher\executor.go:1119:// SetEmbedder sets the query embedder for server-side embedding.
+wt-sol-1469-r3/pkg\cypher\executor.go:1126://	executor.SetEmbedder(embedder)
+wt-sol-1469-r3/pkg\cypher\executor.go:1131:func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
+wt-sol-1469-r3/pkg\cypher\executor.go:1133:		e.queryEmbedder = &QueryEmbedderBinding{}
+wt-sol-1469-r3/pkg\cypher\executor.go:1169:// Scoped executors should use ShareEmbedderFrom to observe later readiness.
+wt-sol-1469-r3/pkg\server\server_qdrantgrpc.go:91:		cfg.BindQueryEmbedding = s.db.WithQueryEmbeddingSnapshot
+wt-sol-1469-r3/pkg\server\server_qdrantgrpc.go:144:			PrepareQueryEmbedding: func(_ context.Context, database string) (nornicgrpc.EmbedQueryFunc, nornicgrpc.ChunkQueryFunc) {
+wt-sol-1469-r3/pkg\server\server_qdrantgrpc.go:160:		nil, nil, // PrepareQueryEmbedding binds both callbacks only for text requests.
+wt-sol-1469-r3/pkg\cypher\executor_fabric.go:879:	txExec.ShareEmbedderFrom(c.base)
+wt-sol-1469-r3/pkg\cypher\executor_use.go:79:	cloned.ShareEmbedderFrom(e)
+wt-sol-1469-r3/pkg\bolt\server.go:2441:		executor.ShareEmbedderFrom(baseAdapter.executor)
+wt-sol-1469-r3/pkg\bolt\server.go:2448:			executor.ShareEmbedderFrom(baseExec)
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:9:// QueryEmbedderBinding publishes one query provider to every protocol and scope.
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:13:type QueryEmbedderBinding struct {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:21:func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:28:func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:36:func (b *QueryEmbedderBinding) Load() QueryEmbedder {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:43:func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:53:func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:74:// QueryEmbedderBinding exposes this executor's publication owner for protocol
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:76:func (e *StorageExecutor) QueryEmbedderBinding() *QueryEmbedderBinding {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:80:// ShareEmbedderFrom binds a scoped executor to its parent's current and future
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:82:func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
+wt-sol-1469-r3/pkg\cypher\query_embedder.go:100:	binding *QueryEmbedderBinding

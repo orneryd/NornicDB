@@ -1,0 +1,69 @@
+wt-sol-1469-r3/pkg/server/server_nornicdb.go:174:		go func() {
+wt-sol-1469-r3/pkg/server/server_nornicdb.go:254:		go func() {
+wt-sol-1469-r3/pkg/server/server_nornicdb.go:748:		FatalEmbeddingError: func(err error) bool {
+wt-sol-1469-r3/pkg/server/server_nornicdb.go:751:		FatalSearchError: func(err error) bool {
+wt-sol-1469-r3/pkg/search/chunked_search.go:35:	FatalEmbeddingError func(error) bool
+wt-sol-1469-r3/pkg/search/chunked_search.go:36:	FatalSearchError    func(error) bool
+wt-sol-1469-r3/pkg/search/chunked_search.go:135:	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
+wt-sol-1469-r3/pkg/search/chunked_search.go:147:		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
+wt-sol-1469-r3/pkg/search/chunked_search.go:204:		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
+wt-sol-1469-r3/pkg/search/chunked_search.go:223:		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, err) {
+wt-sol-1469-r3/pkg/search/chunked_search.go:387:	case errors.Is(err, context.Canceled):
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:59:	onEmbedded func(node *storage.Node)
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:62:	onQueueEmpty func(processedCount int)
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:320:	ew.onEmbedded = fn
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:327:	ew.onQueueEmpty = fn
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:739:		if count >= minBatch && ew.onQueueEmpty != nil {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:741:			ew.onQueueEmpty(count)
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:902:				if batchProcessed > 0 && ew.onQueueEmpty != nil {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1408:	if ew.onEmbedded != nil {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1409:		ew.onEmbedded(node)
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1846:		go func() {
+wt-sol-1469-r3/pkg/nornicgrpc\search_service.go:91:			return nil, status.Error(codes.Internal, localization.GRPCLocalizationInitializationFailed(err).Fallback)
+wt-sol-1469-r3/pkg/nornicgrpc\search_service.go:162:		return nil, s.localizedStatus(ctx, codes.Unavailable, localization.SearcherRequired())
+wt-sol-1469-r3/pkg/nornicgrpc\search_service.go:222:		return nil, s.localizedStatus(ctx, codes.Internal, localization.SearchFailed(err))
+wt-sol-1469-r3/pkg/nornicgrpc\search_service.go:250:		code = codes.Unavailable
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:76:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:90:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:111:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:159:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:224:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:244:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDirectoryCreateFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:255:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:261:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:266:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:278:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotSaveFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:315:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotListFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\snapshots_service.go:368:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantSnapshotDeleteFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\server.go:429:	go func() {
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:49:		return nil, nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCollectionStoreNotConfigured())
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:142:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantReadExistingPointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:204:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreatePointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:209:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantUpdatePointFailed(string(node.ID), err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:242:					return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantMissingVectorForPoint(name, string(node.ID)))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:247:				return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:367:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:528:		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetPointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:1231:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:1335:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantEmbedQueryFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\points_service.go:1615:			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantScanPointsFailed(err))
+wt-sol-1469-r3/pkg/qdrantgrpc\collections_service.go:162:		return nil, localizedStatus(ctx, s.localizer, codes.Internal, localization.QdrantListCollectionsFailed(err))
+wt-sol-1469-r3/pkg/cypher\call.go:568:		go func() {
+wt-sol-1469-r3/pkg/cypher\call_rag.go:406:			FatalEmbeddingError: func(error) bool { return failClosed },
+wt-sol-1469-r3/pkg/cypher\call_rag.go:407:			FatalSearchError:    func(error) bool { return failClosed },
+wt-sol-1469-r3/pkg/cypher\parallel.go:134:		go func(workerID int, chunk []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:216:		go func(workerID int, chunk []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:268:		go func(workerID int, chunk []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:320:		go func(workerID int, chunk []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:382:		go func(workerID int, chunk []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:439:		go func(workerID int, chunk []*storage.Edge) {
+wt-sol-1469-r3/pkg/cypher\parallel.go:501:		go func() {
+wt-sol-1469-r3/pkg/cypher\pipeline_aggregate_stream.go:356:			go func() {
+wt-sol-1469-r3/pkg/cypher\result_stream.go:66:	// ResultStreamStarted is called on the statement's goroutine when it
+wt-sol-1469-r3/pkg/cypher\result_stream.go:68:	ResultStreamStarted()
+wt-sol-1469-r3/pkg/cypher\result_stream.go:201:		s.onStart.ResultStreamStarted()
+wt-sol-1469-r3/pkg/cypher\show_admin.go:290:		statement.cancel(context.Canceled)
+wt-sol-1469-r3/pkg/cypher\show_admin.go:332:		statement.cancel(context.Canceled)
+wt-sol-1469-r3/pkg/cypher\show_admin.go:373:	s.statement.cancel(context.Canceled)
+wt-sol-1469-r3/pkg/cypher\traversal.go:1688:		go func(workerNodes []*storage.Node) {
+wt-sol-1469-r3/pkg/cypher\traversal.go:1726:	go func() {

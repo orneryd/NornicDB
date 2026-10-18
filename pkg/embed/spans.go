@@ -19,6 +19,10 @@ func NewTracedEmbedder(inner Embedder) *TracedEmbedder {
 	return &TracedEmbedder{inner: inner}
 }
 
+// Unwrap preserves resource identity when tracing is composed with caches and
+// database-owned provider generations.
+func(t *TracedEmbedder) Unwrap() Embedder {return t.inner}
+
 func (t *TracedEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	ctx, span := otel.Tracer("nornicdb/embed").Start(ctx, "nornicdb.embed.single",
 		trace.WithSpanKind(trace.SpanKindClient),

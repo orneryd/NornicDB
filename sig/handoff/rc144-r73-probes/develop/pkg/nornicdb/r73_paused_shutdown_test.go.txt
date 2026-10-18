@@ -1,0 +1,28 @@
+package nornicdb
+
+import (
+ "context"
+ "sync"
+ "testing"
+ "time"
+ "github.com/stretchr/testify/require"
+)
+
+func TestR73DevelopPausedWorkerShutdown(t *testing.T){
+ for _,mode:=range []string{"before_install","after_install"}{t.Run(mode,func(t *testing.T){
+  cfg:=DefaultConfig();cfg.Memory.EmbeddingEnabled=true;cfg.Memory.SearchRelationshipsEnabled=true;cfg.Memory.EmbeddingDimensions=4;cfg.Memory.DecayEnabled=false;cfg.Memory.AutoLinksEnabled=false;cfg.Database.AsyncWritesEnabled=false;cfg.EmbeddingWorker.NumWorkers=1;cfg.EmbeddingWorker.MaxRetries=1
+  db,err:=Open(t.TempDir(),cfg);require.NoError(t,err)
+  e:=&r73BatchProvider{mockEmbedder:mockEmbedder{dims:4},entered:make(chan struct{}),cancelled:make(chan struct{}),release:make(chan struct{}),finished:make(chan struct{})}
+  var once sync.Once;t.Cleanup(func(){once.Do(func(){close(e.release)});_=db.Close()})
+  if mode=="before_install"{_,err=db.SetEmbeddingPaused(context.Background(),true);require.NoError(t,err)}
+  require.True(t,db.SetEmbedder(e))
+  if mode=="after_install"{_,err=db.SetEmbeddingPaused(context.Background(),true);require.NoError(t,err)}
+  require.True(t,db.GetEmbedQueue().Paused());db.GetEmbedQueue().StartWorkers()
+  _,err=db.GetOrCreateSearchService(db.defaultDatabaseName(),nil);require.NoError(t,err)
+  _,err=db.ExecuteCypher(context.Background(),"CREATE (:Doc {content:'paused a'})-[:CITES {reason:'paused relationship'}]->(:Doc {content:'paused b'})",nil);require.NoError(t,err)
+  select{case <-e.entered:t.Error("paused automatic provider was entered");case <-time.After(650*time.Millisecond):}
+  closed:=make(chan error,1);go func(){closed<-db.Close()}()
+  select{case err:=<-closed:require.NoError(t,err);case <-time.After(5*time.Second):t.Fatal("paused worker or relationship wait prevented shutdown")}
+  require.EqualValues(t,1,e.closes.Load());require.False(t,e.unsafe.Load())
+ })}
+}

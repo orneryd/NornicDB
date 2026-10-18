@@ -1,0 +1,168 @@
+wt-sol-1469-r3/pkg/cypher/query_embed_chunk.go:20:func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string) ([]float32, error) {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:30:type Searcher interface {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:34:type continuationSearcher interface {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:39:type DatabaseDependencies struct {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:46:type Service struct {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:65:type Config struct {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:86:func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc, searcher Searcher) (*Service, error) {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:121:func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*gen.SearchTextResponse, error) {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:240:func (s *Service) continuationStatus(ctx context.Context, err error) error {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:255:func searchOptions(req *gen.SearchTextRequest, maxLimit int, rerank bool) *search.SearchOptions {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:276:func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.Duration) *gen.SearchTextResponse {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:304:func grpcSearchHit(r search.SearchResult) *gen.SearchHit {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:315:func grpcSearchMatches(matches []search.SearchMatch) []*gen.SearchMatch {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:329:func grpcSearchPassages(passages []search.SearchPassage) []*gen.SearchHit {
+wt-sol-1469-r3/pkg/nornicgrpc/search_service.go:337:func (s *Service) localizedStatus(ctx context.Context, code codes.Code, message localization.Message) error {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:27:type heimdallDBRouter struct {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:36:func newHeimdallDBRouter(db *nornicdb.DB, dbManager *multidb.DatabaseManager, features *nornicConfig.FeatureFlagsConfig) *heimdallDBRouter {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:45:func (r *heimdallDBRouter) DefaultDatabaseName() string {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:53:func (r *heimdallDBRouter) ResolveDatabase(nameOrAlias string) (string, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:66:func (r *heimdallDBRouter) ListDatabases() []string {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:82:func (r *heimdallDBRouter) storageForDatabase(database string) (dbName string, engine storage.Engine, err error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:101:func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, exec *cypher.StorageExecutor, engine storage.Engine, err error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:116:func (r *heimdallDBRouter) cachedExecutor(dbName string) *cypher.StorageExecutor {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:125:func (r *heimdallDBRouter) newExecutor(engine storage.Engine) *cypher.StorageExecutor {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:148:func (r *heimdallDBRouter) finishExecutor(dbName string, engine storage.Engine, exec *cypher.StorageExecutor) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:168:func (r *heimdallDBRouter) publishExecutor(dbName string, exec *cypher.StorageExecutor) *cypher.StorageExecutor {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:187:func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database string) (context.Context, *cypher.StorageExecutor, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:218:func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:248:func (r *heimdallDBRouter) databaseForbidden(database string) error {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:260:func (r *heimdallDBRouter) requireNonComposite(dbName string) error {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:267:func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQuery string, params map[string]interface{}) ([]map[string]interface{}, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:296:func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall.DatabaseStats, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:370:func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query string, nodeTypes []string, limit int, depth int) (*heimdall.DiscoverResult, error) {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:451:func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:455:func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:538:func getFirstLabel(labels []string) string {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:546:func getStringProperty(props map[string]interface{}, key string) string {
+wt-sol-1469-r3/pkg/server/server_heimdall.go:559:type heimdallMetricsReader struct{}
+wt-sol-1469-r3/pkg/server/server_heimdall.go:561:func (r *heimdallMetricsReader) Runtime() heimdall.RuntimeMetrics {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:15:func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:80:func (db *DB) embedQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:93:func (db *DB) validateQueryEmbeddingDimensions(dbName string, vec []float32) error {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:110:func (db *DB) validateQueryEmbeddingBatchDimensions(dbName string, embs [][]float32) error {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:119:func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName string, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:132:func (db *DB) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:141:func (db *DB) EmbedQueryChunksForDB(ctx context.Context, dbName string, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:145:func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:166:func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:175:func (db *DB) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:185:func (db *DB) globalEmbedder() cypher.QueryEmbedder {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:192:type queryEmbeddingRequestKey struct{}
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:194:type queryEmbeddingRequestContext struct {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:200:func (c *queryEmbeddingRequestContext) Value(key any) any {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:211:func (db *DB) WithQueryEmbeddingSnapshot(ctx context.Context) context.Context {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:218:func (db *DB) queryEmbedderForRequest(ctx context.Context) cypher.QueryEmbedder {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:229:func (db *DB) EmbedQueryForDB(ctx context.Context, dbName string, query string) ([]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:234:func (db *DB) ChunkQueryForDB(ctx context.Context, dbName string, query string) ([]string, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:241:type QueryEmbeddingSnapshot struct {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:255:func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:285:func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:294:func (s QueryEmbeddingSnapshot) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/query_embedding.go:309:func (s QueryEmbeddingSnapshot) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:13:type QueryEmbedderBinding struct {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:21:func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:28:func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:36:func (b *QueryEmbedderBinding) Load() QueryEmbedder {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:43:func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:53:func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:62:type queryEmbedderState struct {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:70:func (e *StorageExecutor) currentQueryEmbedder() *queryEmbedderState {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:76:func (e *StorageExecutor) QueryEmbedderBinding() *QueryEmbedderBinding {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:82:func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:92:type queryEmbeddingStatementKey struct{}
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:97:type queryEmbeddingStatementContext struct {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:104:func (c *queryEmbeddingStatementContext) Value(key any) any {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:114:func (e *StorageExecutor) queryEmbeddingState(ctx context.Context) *queryEmbedderState {
+wt-sol-1469-r3/pkg/cypher/query_embedder.go:121:func (e *StorageExecutor) queryEmbedderForStatement(ctx context.Context) QueryEmbedder {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:15:func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), error) {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:38:type embedderResource struct {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:44:func sameEmbedder(a, b embed.Embedder) bool {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:48:func (r *embedderResource) close() error {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:66:func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:99:func (db *DB) releaseEmbedder(resource *embedderResource) error {
+wt-sol-1469-r3/pkg/nornicdb/db_embedder_owner.go:114:func (db *DB) closeOwnedEmbedders() []error {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:25:type deterministicTextChunker interface {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:29:type providerRetryState struct {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:36:type EmbedWorker struct {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:131:type EmbedWorkerConfig struct {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:179:func DefaultEmbedWorkerConfig() *EmbedWorkerConfig {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:204:func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *EmbedWorkerConfig) *EmbedWorker {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:249:func (ew *EmbedWorker) StartWorkers() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:274:func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:285:func (ew *EmbedWorker) currentEmbedder() embed.Embedder {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:293:func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:299:func (ew *EmbedWorker) resolveEmbedder(nodeID storage.NodeID) (embed.Embedder, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:319:func (ew *EmbedWorker) SetOnEmbedded(fn func(node *storage.Node)) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:326:func (ew *EmbedWorker) SetOnQueueEmpty(fn func(processedCount int)) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:332:func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:342:func (ew *EmbedWorker) SetPaused(paused bool) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:357:func (ew *EmbedWorker) Paused() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:363:func (ew *EmbedWorker) Trigger() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:396:func (ew *EmbedWorker) TriggerImmediate() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:400:func (ew *EmbedWorker) signalTrigger() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:411:func (ew *EmbedWorker) readinessNotification() <-chan struct{} {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:422:func (ew *EmbedWorker) signalAllWorkers() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:436:type WorkerStats struct {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:449:type EmbeddingFailure struct {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:471:func (ew *EmbedWorker) QueueLen() int {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:478:func (ew *EmbedWorker) Stats() WorkerStats {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:492:func (ew *EmbedWorker) ParkedEmbeddingFailures(ctx context.Context, limit int) ([]EmbeddingFailure, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:510:func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []storage.NodeID) (int, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:565:func (ew *EmbedWorker) scanParkedEmbeddingFailures(ctx context.Context, visit func(EmbeddingFailure) error) (int, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:606:func (ew *EmbedWorker) Reset() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:672:func (ew *EmbedWorker) Close() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:704:func (ew *EmbedWorker) scheduleClusteringDebounced(processedCount int) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:752:func (ew *EmbedWorker) worker() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:848:func (ew *EmbedWorker) waitForWorkDelay(delay time.Duration) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:862:func (ew *EmbedWorker) embeddingPaused() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:874:func (ew *EmbedWorker) processUntilEmpty() embedBatchResult {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:918:func nodeGone(node *storage.Node, err error) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:927:func (ew *EmbedWorker) holdForRestore(wait time.Duration) (release func()) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:945:func (ew *EmbedWorker) processNextBatch() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:958:func (ew *EmbedWorker) processNextBatchResult() embedBatchResult {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:971:func (ew *EmbedWorker) processNextReadyBatch() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:990:func (ew *EmbedWorker) processNextResolvedBatch() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1112:func (ew *EmbedWorker) processNextNode() bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1152:func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1203:func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1267:func (ew *EmbedWorker) embedDocumentBatchIsolated(batcher embed.DocumentBatchChunkEmbedder, texts []string) ([]*embed.DocumentChunkResult, []error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1273:func (ew *EmbedWorker) embedDocumentPropertyBatchIsolated(batcher embed.DocumentPropertyBatchChunkEmbedder, texts []string, properties []map[string]any) ([]*embed.DocumentChunkResult, []error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1285:func (ew *EmbedWorker) embedDocumentResultsIsolated(count int, request func(start, end int) ([]*embed.DocumentChunkResult, error)) ([]*embed.DocumentChunkResult, []error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1320:func (ew *EmbedWorker) waitAfterProviderRequest() {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1330:func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1350:func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1436:func compactWorkerError(err error, maxLen int) string {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1449:type retryableEmbeddingError interface {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1453:func isRetryableEmbeddingError(err error) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1463:func embeddingErrorRetryability(err error) (retryable, classified bool) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1471:func providerRetryKey(provider embed.Embedder) string {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1475:func (ew *EmbedWorker) waitForProviderRetry(provider embed.Embedder) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1498:func (ew *EmbedWorker) recordProviderBatchOutcome(provider embed.Embedder, errs []error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1510:func (ew *EmbedWorker) recordProviderFailure(provider embed.Embedder, err error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1541:func (ew *EmbedWorker) clearProviderFailure(provider embed.Embedder) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1550:func retryDelay(err error) (time.Duration, bool) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1562:func (ew *EmbedWorker) markRecentlyProcessed(nodeID storage.NodeID) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1574:func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1611:type EmbeddingFinder interface {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1617:type EmbeddingIndexManager interface {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1625:func (ew *EmbedWorker) claimNextNode() *storage.Node {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1632:func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1674:func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1684:func (ew *EmbedWorker) wasRecentlyProcessed(nodeID storage.NodeID) bool {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1713:func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1726:func (ew *EmbedWorker) refreshEmbeddingIndex() int {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1736:func (ew *EmbedWorker) refreshEmbeddingIndexIfDue(force bool) int {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1748:func (ew *EmbedWorker) markNodeEmbedded(nodeID storage.NodeID) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1755:func (ew *EmbedWorker) addNodeToPendingEmbeddings(nodeID storage.NodeID) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1763:func (ew *EmbedWorker) embedChunksInBatches(chunks []string, nodeID storage.NodeID) ([][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1767:func (ew *EmbedWorker) embedChunksInBatchesWith(provider embed.Embedder, chunks []string, nodeID storage.NodeID) ([][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1794:func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1833:func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1837:func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []string) ([][]float32, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1884:func averageEmbeddings(embeddings [][]float32) []float32 {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1912:func (s WorkerStats) MarshalJSON() ([]byte, error) {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1931:func copyNodeForEmbedding(src *storage.Node) *storage.Node {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1972:func DefaultEmbedQueueConfig() *EmbedQueueConfig {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1976:func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *EmbedQueueConfig) *EmbedQueue {
+wt-sol-1469-r3/pkg/nornicdb/embed_queue.go:1986:func (ew *EmbedWorker) Enqueue(nodeID string) {

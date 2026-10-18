@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 const (
@@ -132,6 +133,7 @@ func searchSingleQueryChunk(
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, error) {
 	embedding, err := embedQuery(ctx, query)
+ err=lifecycle.Error(ctx,err)
 	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
 		return nil, err
 	}
@@ -144,6 +146,7 @@ func searchSingleQueryChunk(
 	}
 	if err == nil && len(embedding) > 0 {
 		response, searchErr := searchQuery(ctx, query, embedding, opts)
+ searchErr=lifecycle.Error(ctx,searchErr)
 		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
 			return nil, searchErr
 		}
@@ -201,6 +204,7 @@ func searchSeveralQueryChunks(
 	)
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
+ err=lifecycle.Error(ctx,err)
 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
 			return nil, 0, err
 		}
@@ -416,7 +420,7 @@ func searchResultID(result SearchResult) string {
 }
 
 func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
-	return predicate != nil && predicate(err)
+	return errors.Is(err,lifecycle.ErrClosed) || (predicate != nil && predicate(err))
 }
 
 // isQueryEmbeddingFallback reports whether reason says the query wasn't

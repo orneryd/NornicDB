@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"errors"
 	"fmt"
 	"strings"
@@ -173,6 +174,8 @@ func (s *Service) SearchTextContinuation(
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchContinuationPage, error) {
+	var operation lifecycle.Scope
+	if err:=operation.EnterGroup(ctx,s.activity);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
 	registry, err := s.searchContinuationRegistry()
 	if err != nil {
 		return nil, err

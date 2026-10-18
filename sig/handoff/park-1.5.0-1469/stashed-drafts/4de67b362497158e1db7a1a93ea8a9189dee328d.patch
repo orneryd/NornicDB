@@ -1,0 +1,249 @@
+diff --git a/pkg/cypher/call_rag.go b/pkg/cypher/call_rag.go
+index 3f0e6f125..e515cf5d5 100644
+--- a/pkg/cypher/call_rag.go
++++ b/pkg/cypher/call_rag.go
+@@ -403,7 +403,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
+ 		// text-only result that reads as "nothing matched".
+ 		errorPolicy := search.ChunkedSearchErrorPolicy{
+ 			Transport:           "cypher",
+-			FatalEmbeddingError: func(error) bool { return failClosed },
++			FatalEmbeddingError: func(error) bool { return failClosed || e.queryEmbedder.IsClosing() },
+ 			FatalSearchError:    func(error) bool { return failClosed },
+ 		}
+ 		if continuationRequested {
+diff --git a/pkg/cypher/executor_entry.go b/pkg/cypher/executor_entry.go
+index 9c8a95b71..d5950417e 100644
+--- a/pkg/cypher/executor_entry.go
++++ b/pkg/cypher/executor_entry.go
+@@ -123,13 +123,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
+ 			}
+ 		}
+ 	}()
+-	// A scoped executor shares the DB's provider lifetime as well as its
+-	// publication. Keep it alive through chunking, inline embedding and RAG.
+-	ctx, finishProviderUse, err := e.queryEmbedder.BeginUse(ctx)
+-	if err != nil {
+-		return nil, err
+-	}
+-	defer finishProviderUse()
+ 	// A result stream the caller passed is for this statement only, not for
+ 	// the statements it runs on its behalf (#939).
+ 	stream, ctx := takeResultStream(ctx)
+diff --git a/pkg/cypher/query_embedder.go b/pkg/cypher/query_embedder.go
+index b0ad8ca12..10efa114c 100644
+--- a/pkg/cypher/query_embedder.go
++++ b/pkg/cypher/query_embedder.go
+@@ -14,12 +14,14 @@ type QueryEmbedderBinding struct {
+ 	current  atomic.Pointer[queryEmbedderState]
+ 	next     atomic.Uint64
+ 	beginUse func(context.Context) (context.Context, func(), error)
++	closing func() bool
+ }
+ 
+ // SetLifetime binds provider users to their database owner. Configure it during
+ // construction, before exposing the binding or sharing it with scoped executors.
+-func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
++func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error), closing ...func() bool) {
+ 	b.beginUse = begin
++	if len(closing) > 0 { b.closing = closing[0] }
+ }
+ 
+ // BeginUse admits one provider-using operation and returns its cancellation
+@@ -51,7 +53,7 @@ func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
+ // may finish using their captured snapshot, but their cached results cannot be
+ // served to a query that captured a different publication.
+ func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+-	state := &queryEmbedderState{embedder: embedder, generation: b.next.Add(1)}
++	state := &queryEmbedderState{embedder: embedder, guarded: b.guard(embedder), generation: b.next.Add(1)}
+ 	if embedder != nil {
+ 		state.cache = make(map[string][]float32, 512)
+ 		state.inflight = make(map[string]*vectorEmbedInflight, 64)
+@@ -61,6 +63,7 @@ func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+ 
+ type queryEmbedderState struct {
+ 	embedder   QueryEmbedder
++	guarded QueryEmbedder
+ 	generation uint64
+ 	mu         sync.Mutex
+ 	cache      map[string][]float32
+@@ -120,7 +123,7 @@ func (e *StorageExecutor) queryEmbeddingState(ctx context.Context) *queryEmbedde
+ 
+ func (e *StorageExecutor) queryEmbedderForStatement(ctx context.Context) QueryEmbedder {
+ 	if state := e.queryEmbeddingState(ctx); state != nil {
+-		return state.embedder
++		return state.forUse()
+ 	}
+ 	return nil
+ }
+diff --git a/pkg/cypher/vector_query_embed_cache.go b/pkg/cypher/vector_query_embed_cache.go
+index 0363ba9bb..0f8eb3efb 100644
+--- a/pkg/cypher/vector_query_embed_cache.go
++++ b/pkg/cypher/vector_query_embed_cache.go
+@@ -35,7 +35,7 @@ func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string)
+ 	}
+ 	key := canonicalizeVectorQueryText(text)
+ 	if key == "" {
+-		return embedQueryChunked(ctx, state.embedder, text)
++		return embedQueryChunked(ctx, state.forUse(), text)
+ 	}
+ 
+ 	state.mu.Lock()
+@@ -60,7 +60,7 @@ func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string)
+ 	state.inflight[key] = in
+ 	state.mu.Unlock()
+ 
+-	vec, err := embedQueryChunked(ctx, state.embedder, key)
++	vec, err := embedQueryChunked(ctx, state.forUse(), key)
+ 	in.vec = cloneFloat32Slice(vec)
+ 	in.err = err
+ 
+diff --git a/pkg/mcp/server.go b/pkg/mcp/server.go
+index 443d988c8..5ff9bc62b 100644
+--- a/pkg/mcp/server.go
++++ b/pkg/mcp/server.go
+@@ -1085,11 +1085,6 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
+ 
+ 	if s.db != nil {
+ 		dbName := DatabaseFromContext(ctx) // empty = default database
+-		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
+-		if err != nil {
+-			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+-		}
+-		defer finishProviderUse()
+ 		engine, err := s.storageForContext(ctx)
+ 		if err != nil {
+ 			return nil, err
+@@ -1107,7 +1102,7 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
+ 
+ 			var chunkQuery search.ChunkQueryFunc
+ 			var embedQuery search.EmbedQueryFunc
+-			embedder := s.queryEmbedder.Load()
++			embedder := s.queryEmbedder.LoadForUse()
+ 			if embedder != nil {
+ 				chunkQuery = func(_ context.Context, text string) ([]string, error) {
+ 					return embedder.ChunkText(text, 512, 50)
+@@ -1117,7 +1112,7 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
+ 
+ 			resp, err := search.SearchTextChunksWithErrorPolicy(
+ 				ctx, query, opts, chunkQuery, embedQuery, svc.Search,
+-				search.ChunkedSearchErrorPolicy{Transport: "mcp"},
++				search.ChunkedSearchErrorPolicy{Transport: "mcp", FatalEmbeddingError: func(error) bool { return s.queryEmbedder.IsClosing() }},
+ 			)
+ 			if err != nil {
+ 				// A failed search is not "no matches": the client gets the
+diff --git a/pkg/nornicdb/db.go b/pkg/nornicdb/db.go
+index 3186c4126..ec1479ec9 100644
+--- a/pkg/nornicdb/db.go
++++ b/pkg/nornicdb/db.go
+@@ -156,6 +156,9 @@ type DB struct {
+ 	config *Config
+ 	mu     sync.RWMutex
+ 	closed bool
++	closeOnce sync.Once
++	closeDone chan struct{}
++	closeErr error
+ 
+ 	// Internal components
+ 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
+@@ -991,7 +994,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 
+ 	// Initialize Cypher executor
+ 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+-	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
++	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse, db.isClosing)
+ 	// The base executor is shared by every embedded caller of DB.Cypher /
+ 	// ExecuteCypher: a statement must never leave it inside a transaction.
+ 	// Embedded callers that want explicit transactions create their own
+diff --git a/pkg/nornicdb/db_lifecycle.go b/pkg/nornicdb/db_lifecycle.go
+index 1bceb1394..0d5748104 100644
+--- a/pkg/nornicdb/db_lifecycle.go
++++ b/pkg/nornicdb/db_lifecycle.go
+@@ -14,17 +14,18 @@ import (
+ 
+ // Close closes the database.
+ func (db *DB) Close() error {
+-	db.mu.Lock()
+-	if db.closed {
+-		db.mu.Unlock()
+-		return nil
+-	}
+-	db.closed = true
+-	db.mu.Unlock()
+-
+-	return db.closeInternal()
++    db.closeOnce.Do(func(){
++        db.closeDone=make(chan struct{})
++        db.closeErr=db.closeResources()
++        close(db.closeDone)
++    })
++    <-db.closeDone
++    return db.closeErr
+ }
+ 
++func (db *DB) isClosing() bool {
++    db.mu.RLock(); defer db.mu.RUnlock(); return db.closed
++}
+ // LifetimeContext returns a context that is cancelled when the database
+ // closes, for background work that must stop with it.
+ func (db *DB) LifetimeContext() context.Context {
+@@ -67,7 +68,10 @@ func (db *DB) retentionPoliciesPath() string {
+ 
+ // closeInternal performs cleanup without requiring the lock.
+ // Used during initialization failures and normal close.
+-func (db *DB) closeInternal() error {
++func (db *DB) closeInternal() error { return db.Close() }
++
++// closeResources is run by the one Close owner; all callers join its completion.
++func (db *DB) closeResources() error {
+ 	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+ 	db.mu.Lock()
+ 	db.closed = true
+diff --git a/pkg/server/server_nornicdb.go b/pkg/server/server_nornicdb.go
+index 18f1b6a7d..2ef954b91 100644
+--- a/pkg/server/server_nornicdb.go
++++ b/pkg/server/server_nornicdb.go
+@@ -493,6 +493,7 @@ func (s *Server) getOrCreateSearchService(dbName string, storageEngine storage.E
+ }
+ 
+ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
++	if s.writeSearchShutdown(w,r) { return }
+ 	reqStart := time.Now()
+ 	searchDiagEnabled := false
+ 	if raw := os.Getenv("NORNICDB_SEARCH_DIAG_TIMINGS"); raw != "" {
+@@ -691,6 +692,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+ 		queryEmbedding = s.db.QueryEmbeddingForDB(dbName)
+ 		queryChunks, err = queryEmbedding.ChunkQuery(ctx, req.Query)
+ 		if err != nil {
++			if s.writeSearchShutdown(w,r) {return}
+ 			s.writeQueryChunkingFailed(w, r)
+ 			return
+ 		}
+@@ -731,6 +733,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+ 
+ 	searchQuery := func(searchCtx context.Context, query string, embedding []float32, searchOpts *search.SearchOptions) (*search.SearchResponse, error) {
+ 		searchCalls++
++		if s.db.GetCypherExecutor().QueryEmbedderBinding().IsClosing() { return nil,nornicdb.ErrClosed }
+ 		if len(embedding) > 0 {
+ 			vectorChunkQueries++
+ 		} else {
+@@ -746,10 +749,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+ 	errorPolicy := search.ChunkedSearchErrorPolicy{
+ 		Transport: "http",
+ 		FatalEmbeddingError: func(err error) bool {
+-			return errors.Is(err, nornicdb.ErrQueryEmbeddingDimensionMismatch)
++			return errors.Is(err, nornicdb.ErrQueryEmbeddingDimensionMismatch) || s.db.GetCypherExecutor().QueryEmbedderBinding().IsClosing()
+ 		},
+ 		FatalSearchError: func(err error) bool {
+-			return errors.Is(err, search.ErrSearchIndexBuilding)
++			return errors.Is(err, search.ErrSearchIndexBuilding) || s.db.GetCypherExecutor().QueryEmbedderBinding().IsClosing()
+ 		},
+ 	}
+ 	var searchResponse *search.SearchResponse
+@@ -780,6 +783,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+ 		)
+ 	}
+ 	chunkLoopDur = time.Since(chunkLoopStart)
++	if s.writeSearchShutdown(w,r) {return}
+ 	if errors.Is(err, nornicdb.ErrQueryEmbeddingDimensionMismatch) {
+ 		s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
+ 		return

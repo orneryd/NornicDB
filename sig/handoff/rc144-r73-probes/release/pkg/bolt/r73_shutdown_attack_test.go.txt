@@ -1,0 +1,33 @@
+package bolt
+import (
+ "context"
+ "sync"
+ "sync/atomic"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/nornicdb"
+ "github.com/stretchr/testify/require"
+)
+type r73BoltProvider struct{entered chan struct{};once sync.Once;active,unsafe atomic.Bool}
+func(e *r73BoltProvider) Embed(ctx context.Context,_ string)([]float32,error){e.active.Store(true);defer e.active.Store(false);e.once.Do(func(){close(e.entered)});<-ctx.Done();return nil,ctx.Err()}
+func(e *r73BoltProvider) EmbedBatch(ctx context.Context,texts []string)([][]float32,error){v,err:=e.Embed(ctx,texts[0]);return [][]float32{v},err}
+func(*r73BoltProvider) ChunkText(text string,_,_ int)([]string,error){return []string{text},nil}
+func(*r73BoltProvider) Dimensions()int{return 4}
+func(*r73BoltProvider) Model()string{return "r73"}
+func(*r73BoltProvider) Backend()string{return "cpu"}
+func(e *r73BoltProvider) Close()error{e.unsafe.Store(e.active.Load());return nil}
+func TestR73BoltShutdown(t *testing.T){
+ db,err:=nornicdb.Open("",nil);require.NoError(t,err);defer db.Close()
+ e:=&r73BoltProvider{entered:make(chan struct{})};require.True(t,db.SetEmbedder(e))
+ server:=New(&Config{Port:0,MaxConnections:1,ReadBufferSize:8192,WriteBufferSize:8192},&cypherQueryExecutor{executor:db.GetCypherExecutor()})
+ port:=startBoltTestServer(t,server);conn:=openBoltTestConn(t,port);_ = conn.SetDeadline(time.Now().Add(8*time.Second))
+ type response struct{kind byte;data []byte;err error};result:=make(chan response,1)
+ go func(){err:=SendRun(t,conn,"CALL db.index.vector.embed('held query') YIELD embedding RETURN embedding",nil,nil);if err!=nil{result<-response{err:err};return};kind,data,err:=ReadMessage(conn);result<-response{kind,data,err}}()
+ select{case <-e.entered:case r:=<-result:t.Fatalf("Bolt did not reach provider: %#v",r);case <-time.After(5*time.Second):t.Fatal("Bolt did not reach provider")}
+ closed:=make(chan error,1);go func(){closed<-db.Close()}()
+ var r response;select{case r=<-result:case <-time.After(6*time.Second):t.Fatal("Bolt did not return")}
+ select{case err:=<-closed:require.NoError(t,err);case <-time.After(6*time.Second):t.Fatal("Close did not join")}
+ require.NoError(t,r.err);fields,_,decodeErr:=decodePackStreamMap(r.data,0)
+ t.Logf("Bolt shutdown kind=%#x decoded=%#v decodeError=%v unsafeRelease=%v",r.kind,fields,decodeErr,e.unsafe.Load())
+ require.Equal(t,byte(MsgFailure),r.kind);require.False(t,e.unsafe.Load())
+}

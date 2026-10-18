@@ -1,0 +1,48 @@
+wt-sol-1465-r4/cmd\recall-bench\main.go:107:		queryEmbedding, embedErr := r.db.EmbedQuery(ctx, query)
+wt-sol-1465-r4/pkg\heimdall\metrics.go:405:	var chunkQuery search.ChunkQueryFunc
+wt-sol-1465-r4/pkg\heimdall\metrics.go:406:	var embedQuery search.EmbedQueryFunc
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:1177:		emb, err := s.config.EmbedQuery(ctx, v.Document.Text)
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:1281:		emb, err := s.config.EmbedQuery(ctx, doc.Text)
+wt-sol-1465-r4/pkg\server\server_qdrantgrpc.go:146:			PrepareQueryEmbedding: func(_ context.Context, database string) (nornicgrpc.EmbedQueryFunc, nornicgrpc.ChunkQueryFunc) {
+wt-sol-1465-r4/pkg\server\server_qdrantgrpc.go:162:		nil, nil, // PrepareQueryEmbedding binds both callbacks only for text requests.
+wt-sol-1465-r4/pkg\server\server_nornicdb.go:539:		queryChunks, err = queryEmbedding.ChunkQuery(ctx, req.Query)
+wt-sol-1465-r4/pkg\server\server_nornicdb.go:559:	var embedQuery search.EmbedQueryFunc
+wt-sol-1465-r4/pkg\server\server_nornicdb.go:569:				return queryEmbedding.EmbedQuery(embedCtx, query)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:22:// EmbedQueryFunc embeds a query string into a vector.
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:24:type EmbedQueryFunc func(ctx context.Context, query string) ([]float32, error)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:26:// ChunkQueryFunc splits a query string into embedder-safe chunks.
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:27:type ChunkQueryFunc func(ctx context.Context, query string) ([]string, error)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:35:	SearchTextContinuation(context.Context, string, *search.SearchOptions, search.SearchContinuationRequest, search.ChunkQueryFunc, search.EmbedQueryFunc, search.SearchQueryFunc, search.ChunkedSearchErrorPolicy) (*search.SearchContinuationPage, error)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:41:	EmbedQuery EmbedQueryFunc
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:42:	ChunkQuery ChunkQueryFunc
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:53:	embedQuery       EmbedQueryFunc
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:54:	chunkQuery       ChunkQueryFunc
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:62:	prepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:78:	// PrepareQueryEmbedding binds both callbacks once for a new text search.
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:80:	PrepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:86:func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc, searcher Searcher) (*Service, error) {
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:117:		prepareQueryEmbedding: cfg.PrepareQueryEmbedding,
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:188:			search.ChunkQueryFunc(dependencies.ChunkQuery), search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search,
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:204:	chunkQuery := search.ChunkQueryFunc(nil)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:207:			chunks, err := dependencies.ChunkQuery(ctx, query)
+wt-sol-1465-r4/pkg\nornicgrpc\search_service.go:215:		ctx, req.Query, opts, chunkQuery, search.EmbedQueryFunc(dependencies.EmbedQuery), dependencies.Searcher.Search,
+wt-sol-1465-r4/pkg\mcp\server.go:1108:			var chunkQuery search.ChunkQueryFunc
+wt-sol-1465-r4/pkg\mcp\server.go:1109:			var embedQuery search.EmbedQueryFunc
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:230:	return db.QueryEmbeddingForDB(dbName).EmbedQuery(ctx, query)
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:235:	return db.QueryEmbeddingForDB(dbName).ChunkQuery(ctx, query)
+wt-sol-1465-r4/pkg\search\chunked_search.go:24:// ChunkQueryFunc splits a text query into embedding-safe chunks.
+wt-sol-1465-r4/pkg\search\chunked_search.go:25:type ChunkQueryFunc func(ctx context.Context, query string) ([]string, error)
+wt-sol-1465-r4/pkg\search\chunked_search.go:27:// EmbedQueryFunc embeds one query chunk. A nil or empty vector is unavailable.
+wt-sol-1465-r4/pkg\search\chunked_search.go:28:type EmbedQueryFunc func(ctx context.Context, query string) ([]float32, error)
+wt-sol-1465-r4/pkg\search\chunked_search.go:47:	chunkQuery ChunkQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:48:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:60:	chunkQuery ChunkQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:61:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:114:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:130:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\search\chunked_search.go:169:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\cypher\call_rag.go:368:		var embedQuery search.EmbedQueryFunc
+wt-sol-1465-r4/pkg\search\text_continuation.go:171:	chunkQuery ChunkQueryFunc,
+wt-sol-1465-r4/pkg\search\text_continuation.go:172:	embedQuery EmbedQueryFunc,
+wt-sol-1465-r4/pkg\search\text_continuation.go:451:func (p *cachedTextPreparation) chunker(chunkQuery ChunkQueryFunc) ChunkQueryFunc {
+wt-sol-1465-r4/pkg\search\text_continuation.go:464:func (p *cachedTextPreparation) embedder(embedQuery EmbedQueryFunc) EmbedQueryFunc {

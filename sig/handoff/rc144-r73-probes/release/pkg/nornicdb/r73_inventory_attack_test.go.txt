@@ -1,0 +1,83 @@
+package nornicdb
+
+import (
+ "context"
+ "errors"
+ "fmt"
+ "os"
+ "os/exec"
+ "strings"
+ "sync"
+ "sync/atomic"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/storage"
+ "github.com/stretchr/testify/require"
+)
+
+type r73BatchProvider struct {
+ mockEmbedder
+ entered,cancelled,release,finished chan struct{}
+ once sync.Once
+ active,unsafe atomic.Bool
+ closes atomic.Int32
+ fail error
+}
+func(e *r73BatchProvider) EmbedBatch(ctx context.Context,texts []string)([][]float32,error){
+ e.active.Store(true);defer e.active.Store(false);defer close(e.finished)
+ e.once.Do(func(){close(e.entered)})
+ <-ctx.Done();close(e.cancelled);<-e.release
+ out:=make([][]float32,len(texts));for i:=range out{out[i]=[]float32{1,0,0,0}};return out,nil
+}
+func(e *r73BatchProvider) Close()error{e.closes.Add(1);e.unsafe.Store(e.active.Load());return e.fail}
+func r73Wait(t *testing.T,c <-chan struct{},label string){t.Helper();select{case <-c:case <-time.After(12*time.Second):t.Fatalf("did not reach %s",label)}}
+func TestR73BackgroundProviderOutlivesDBClose(t *testing.T){
+ cfg:=DefaultConfig();cfg.Memory.EmbeddingEnabled=true;cfg.Memory.DecayEnabled=false;cfg.Memory.AutoLinksEnabled=false;cfg.Database.AsyncWritesEnabled=false;cfg.EmbeddingWorker.NumWorkers=1;cfg.EmbeddingWorker.MaxRetries=1;cfg.EmbeddingWorker.ScanInterval=10*time.Millisecond;cfg.EmbeddingWorker.TriggerDebounceDelay=0;cfg.EmbeddingWorker.BatchDelay=0
+ db,err:=Open("",cfg);require.NoError(t,err)
+ if flags,ok:=db.GetBaseStorageForManager().(interface{SetEmbeddingsEnabled(bool)});ok{flags.SetEmbeddingsEnabled(true)}
+ e:=&r73BatchProvider{mockEmbedder:mockEmbedder{dims:4},entered:make(chan struct{}),cancelled:make(chan struct{}),release:make(chan struct{}),finished:make(chan struct{})}
+ var unblock sync.Once;release:=func(){unblock.Do(func(){close(e.release)})}
+ t.Cleanup(func(){release();_=db.Close()})
+ require.True(t,db.SetEmbedder(e));if flags,ok:=db.GetBaseStorageForManager().(interface{SetEmbeddingsEnabled(bool)});ok{flags.SetEmbeddingsEnabled(true)}
+  q:=db.GetEmbedQueue();require.NotNil(t,q);q.StartWorkers()
+ node,err:=db.CreateNode(context.Background(),[]string{"Doc"},map[string]interface{}{"content":"r73 worker child must be joined"});require.NoError(t,err);q.Enqueue(node.ID);q.TriggerImmediate()
+ r73Wait(t,e.entered,"public queue provider entry")
+ closed:=make(chan error,1);go func(){closed<-db.Close()}()
+ r73Wait(t,e.cancelled,"queue cancellation")
+ returned:=false;select{case err:=<-closed:require.NoError(t,err);returned=true;case <-time.After(1200*time.Millisecond):}
+ unsafe:=e.unsafe.Load();release();r73Wait(t,e.finished,"provider child exit")
+ if !returned{select{case err:=<-closed:require.NoError(t,err);case <-time.After(5*time.Second):t.Fatal("Close did not finish")}}
+ t.Logf("DB.Close returned before provider child=%v, provider released while active=%v",returned,unsafe)
+ require.False(t,returned,"DB.Close left an actual queue provider child running")
+ require.False(t,unsafe,"queue provider was freed while the detached batch child was active")
+}
+
+func TestR73CloseErrorSharedWithLaterCaller(t *testing.T){
+ db,err:=Open("",nil);require.NoError(t,err)
+ failure:=errors.New("r73 provider release failure")
+ if flags,ok:=db.GetBaseStorageForManager().(interface{SetEmbeddingsEnabled(bool)});ok{flags.SetEmbeddingsEnabled(true)}
+ e:=&r73BatchProvider{mockEmbedder:mockEmbedder{dims:4},fail:failure}
+ require.True(t,db.SetEmbedder(e))
+ first:=db.Close();second:=db.Close()
+ t.Logf("first Close=%v; second Close=%v; releases=%d",first,second,e.closes.Load())
+ require.ErrorIs(t,first,failure);require.ErrorIs(t,second,failure,"every Close caller must observe the same completed release result")
+}
+
+func TestR73QueueNotificationReentrantClose(t *testing.T){
+ if os.Getenv("R73_QUEUE_CLOSE_CHILD")=="1"{
+  cfg:=DefaultConfig();cfg.Memory.EmbeddingEnabled=true;cfg.Memory.DecayEnabled=false;cfg.Memory.AutoLinksEnabled=false;cfg.Database.AsyncWritesEnabled=false;cfg.EmbeddingWorker.NumWorkers=1;cfg.EmbeddingWorker.MaxRetries=1;cfg.EmbeddingWorker.ScanInterval=10*time.Millisecond;cfg.EmbeddingWorker.TriggerDebounceDelay=0;cfg.EmbeddingWorker.BatchDelay=0
+  db,err:=Open("",cfg);require.NoError(t,err)
+  if flags,ok:=db.GetBaseStorageForManager().(interface{SetEmbeddingsEnabled(bool)});ok{flags.SetEmbeddingsEnabled(true)}
+  q:=db.GetEmbedQueue();require.NotNil(t,q)
+  q.SetOnEmbedded(func(*storage.Node){fmt.Println("R73_QUEUE_CALLBACK_ENTERED_CLOSE");_=db.Close();fmt.Println("R73_QUEUE_CALLBACK_RETURNED")})
+  require.True(t,db.SetEmbedder(&mockEmbedder{dims:4}));q.StartWorkers()
+  node,err:=db.CreateNode(context.Background(),[]string{"Doc"},map[string]interface{}{"content":"r73 callback"});require.NoError(t,err);q.Enqueue(node.ID);q.TriggerImmediate()
+  time.Sleep(10*time.Second);return
+ }
+ ctx,cancel:=context.WithTimeout(context.Background(),6*time.Second);defer cancel()
+ cmd:=exec.CommandContext(ctx,os.Args[0],"-test.run=^TestR73QueueNotificationReentrantClose$","-test.timeout=12s","-test.v")
+ cmd.Env=append(os.Environ(),"R73_QUEUE_CLOSE_CHILD=1")
+ out,err:=cmd.CombinedOutput()
+ if !strings.Contains(string(out),"R73_QUEUE_CALLBACK_ENTERED_CLOSE"){t.Fatalf("fixture did not enter notification callback: %v\n%s",err,out)}
+ if !strings.Contains(string(out),"R73_QUEUE_CALLBACK_RETURNED"){t.Fatalf("queue callback Close self-joined its worker; child killed and joined: %v\n%s",err,out)}
+}

@@ -1,0 +1,10 @@
+wt-sol-1465-r4/pkg/embed\cached_embedder.go:377:	if closer, ok := c.base.(interface{ Close() error }); ok {
+wt-sol-1465-r4/pkg/embed\cached_embedder.go:378:		return closer.Close()
+wt-sol-1465-r4/pkg/embed\embed.go:545:	defer resp.Body.Close()
+wt-sol-1465-r4/pkg/embed\embed.go:904:	defer resp.Body.Close()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:26://	defer embedder.Close()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:116://	defer embedder.Close()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:185:		model.Close()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:191:		model.Close()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:231:	defer ticker.Stop()
+wt-sol-1465-r4/pkg/embed\local_gguf.go:500:			e.closeErr = e.model.Close()

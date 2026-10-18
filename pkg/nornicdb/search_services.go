@@ -71,7 +71,7 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 		return true
 	}
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.isClosed()
 	db.mu.RUnlock()
 	return closed
 }
@@ -285,6 +285,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// database managed by this service, including services created before the
 	// server installs its per-database options resolver.
 	resolvedOptions.DatabaseID = dbName
+ resolvedOptions.Lifetime=db.lifetime
 	selectedStemmer := stemmer.NormalizeSelection(resolvedOptions.BM25StemmerID)
 	if selectedStemmer != stemmer.NoneID {
 		reg, ok := stemmer.Lookup(selectedStemmer)
@@ -512,7 +513,7 @@ func (db *DB) SetRerankerResolver(fn func(dbName string) search.Reranker) {
 // a NamespacedEngine for dbName.
 func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.isClosed()
 	db.mu.RUnlock()
 	if closed {
 		return nil, ErrClosed

@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-18T12:55:36.878Z",
+  "ownedJobCount": 72,
+  "ownedQueued": 0,
+  "ownedRunning": 0,
+  "cancelledIds": [],
+  "additionalTerminalRecords": "evidence/park-1469-additional-terminal-results.json",
+  "oldTerminalRecords": "evidence/rc144-r73-and-1472-terminal-results.json",
+  "note": "No owned queued jobs to cancel. Reader-closed client i20261018124053-43900-8ad2 was terminal DONE exit 0 and its complete raw output was collected. Other owners jobs untouched."
+}

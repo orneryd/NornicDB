@@ -1,0 +1,141 @@
+[
+  {
+    "path": "pkg/cypher/executor_entry.go",
+    "state": "present",
+    "sha256": "A124260C1473B8BDD0A05B7B9B67CBB56C512265DD556F561716A2F4C66C723B"
+  },
+  {
+    "path": "pkg/cypher/query_embedder.go",
+    "state": "present",
+    "sha256": "F2677CCB2FB4BCDB7F711E5C8BD5422765C3165B45535F772336213C0D1E5C39"
+  },
+  {
+    "path": "pkg/cypher/result_stream.go",
+    "state": "present",
+    "sha256": "B86D9C0D03868CFE3E9790B4B435560B6A9A41C3A5B8BA5EDB3EE9A663238DB8"
+  },
+  {
+    "path": "pkg/embed/spans.go",
+    "state": "present",
+    "sha256": "6701163C6B900CAD09EA5730D15399517EF3805FE0FA398B3176F753A9521E6B"
+  },
+  {
+    "path": "pkg/mcp/server.go",
+    "state": "present",
+    "sha256": "242DDA0A9E24FED4E899D18E7BB2CA76F0FEB391C55999A2681F25DA36C0E52C"
+  },
+  {
+    "path": "pkg/nornicdb/db.go",
+    "state": "present",
+    "sha256": "26D748AEF0D2B49C45DA77FFBA7AFD0404F710254DF7470F49E4F10131234E7A"
+  },
+  {
+    "path": "pkg/nornicdb/db_admin.go",
+    "state": "present",
+    "sha256": "3FC2DD52923BDFFC852331C637A2C86F32608553AA51FDC2FC466DE79BEBB35B"
+  },
+  {
+    "path": "pkg/nornicdb/db_embedder_owner.go",
+    "state": "deleted"
+  },
+  {
+    "path": "pkg/nornicdb/db_lifecycle.go",
+    "state": "present",
+    "sha256": "A43B040AB5547331375483F8F274C20C9B1634A1101F1EF088F695629CBE0A20"
+  },
+  {
+    "path": "pkg/nornicdb/db_privacy.go",
+    "state": "present",
+    "sha256": "37CA2672B35C0695CAA530BD7951CB4C1913DB4DEDF2588806B6938B8ACB39D9"
+  },
+  {
+    "path": "pkg/nornicdb/embed_queue.go",
+    "state": "present",
+    "sha256": "AE8C9FCD2407D343D2C40FD7A6B98A4B386562EC72ADA6E94F21A958752B9DBE"
+  },
+  {
+    "path": "pkg/nornicdb/inference_services.go",
+    "state": "present",
+    "sha256": "CCA21AAEA2946CB1DA4F95EE67E17BC896FB1689106098EB9D348AB83699E8A8"
+  },
+  {
+    "path": "pkg/nornicdb/query_embedding.go",
+    "state": "present",
+    "sha256": "308A52FFA77D01A0D10B6EB1A186FA3DDD54E859A5DA0B4975930D6283C32403"
+  },
+  {
+    "path": "pkg/nornicdb/search_services.go",
+    "state": "present",
+    "sha256": "18E0B95504E3E690C8DDB3459D87A3F1EC99406B8994144726A11493610988FF"
+  },
+  {
+    "path": "pkg/search/chunked_search.go",
+    "state": "present",
+    "sha256": "7D99E5360C7E7A6F3D9900F32635014ECB6F48954C20C6981BC6ED94A97DBFE1"
+  },
+  {
+    "path": "pkg/search/relationship_search.go",
+    "state": "present",
+    "sha256": "2DC31C3FCF4E82C81AA06CFE704254D52536ED5458363FFACCB459997BEC76B3"
+  },
+  {
+    "path": "pkg/search/search.go",
+    "state": "present",
+    "sha256": "B895FE4148DD69407DB616E834F46C754E15CE08150B9A9A93563C5BF23BC434"
+  },
+  {
+    "path": "pkg/search/text_continuation.go",
+    "state": "present",
+    "sha256": "EDBE8218929339B128C1AA4DF29159DAE3EF8DF6EE676DCCD6096CD3BB3D0290"
+  },
+  {
+    "path": "pkg/server/server.go",
+    "state": "present",
+    "sha256": "53F7866B0A46B5071BE6FF38CCD2538FED9B9BAD6375D9DC94D02EECBB4DF47E"
+  },
+  {
+    "path": "pkg/server/server_helpers.go",
+    "state": "present",
+    "sha256": "1853261B2C6F28D4C76FC3437C74C1D88222FCE800441A5F9CDCC489168DD697"
+  },
+  {
+    "path": "pkg/lifecycle/format_export_test.go",
+    "state": "present",
+    "sha256": "DCFDC0193515951BC1E87D29233FECC4CC33DF01945D82F9BC13EE7A65DA548E"
+  },
+  {
+    "path": "pkg/lifecycle/owner.go",
+    "state": "present",
+    "sha256": "B0A67764EA64B5D242BEFA7460BC4240F820A17489FEC6F09B3D01312E79909A"
+  },
+  {
+    "path": "pkg/lifecycle/scope.go",
+    "state": "present",
+    "sha256": "B02B5580D3D1A8DA74D3F721AA7D8C4FE45805165F36B6B15A6A314EEDC84CB1"
+  },
+  {
+    "path": "pkg/nornicdb/db_lifetime.go",
+    "state": "present",
+    "sha256": "FB038CF44A1F02A3FF5B92AA93A34D1628E6B68049A75753859A88FB258C6790"
+  },
+  {
+    "path": "pkg/nornicdb/lifetime_provider.go",
+    "state": "present",
+    "sha256": "7AB52755708B589760A22C5E8356C3B76A7ED0E3DF3576C4F4D42A75A3B65B4E"
+  },
+  {
+    "path": "pkg/nornicdb/lifetime_provider_forms.go",
+    "state": "present",
+    "sha256": "C7E8C43E3E3A037848D488984357B5C1EA97B9F695D551A8A538B5462BE1AF7E"
+  },
+  {
+    "path": "pkg/search/resource_lifetime.go",
+    "state": "present",
+    "sha256": "7936D3BF1BA3DC8476C3181B13A3243E4783FC0A1ECC2669B0F6417975F0F799"
+  },
+  {
+    "path": "pkg/server/resource_lifetime.go",
+    "state": "present",
+    "sha256": "CBEF41F410B12DB0591E1C336B69E63D81D0D09764A45DEA40D27C4019479BCF"
+  }
+]

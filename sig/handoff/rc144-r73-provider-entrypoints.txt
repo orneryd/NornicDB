@@ -1,0 +1,87 @@
+wt-rc144-embed-lifecycle-fix/pkg/mcp\server.go:129:	queryEmbedder *cypher.QueryEmbedderBinding
+wt-rc144-embed-lifecycle-fix/pkg/mcp\server.go:236:	binding := &cypher.QueryEmbedderBinding{}
+wt-rc144-embed-lifecycle-fix/pkg/mcp\server.go:239:			binding = executor.QueryEmbedderBinding()
+wt-rc144-embed-lifecycle-fix/pkg/mcp\server.go:261:// SetEmbedder sets the embedding service.
+wt-rc144-embed-lifecycle-fix/pkg/mcp\server.go:262:func (s *Server) SetEmbedder(e Embedder) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:254:	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:256:	// Production uses embed.NewEmbedder.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:980:	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1186:	// SetEmbedder(embedder) is called by the server when the model loads.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1399:	// Note: Auto-embed queue is initialized via SetEmbedder() after the server creates
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1574:// SetEmbedder configures the auto-embed queue with the given embedder.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1582:func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1586:	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1606:		panic("nornicdb: baseStorage is nil in SetEmbedder")
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1612:		db.cypherExecutor.SetEmbedder(embedder)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1620:		db.embedQueue.SetEmbedder(embedder)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1691:// SetDefaultEmbedConfig registers the current global embedder (must have been set via SetEmbedder first)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1693:// has no overrides. Call this after SetEmbedder when per-DB config is available (e.g. server with dbConfigStore).
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1694:func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1719:// SetEmbedConfigForDB sets the optional resolver that returns resolved embed config for a database.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1721:func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error)) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1730:		queue.SetEmbedderResolver(nil)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1733:	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1801:		create = embed.NewEmbedder
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1837:	release, accepted := db.OwnEmbedder(newEmbedder)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1847:			// SetDefaultEmbedConfig may publish this key during construction.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:71:	// SetEmbedder refuses once closed is set, so embedQueue is final here.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:57:// OwnEmbedder gives the database ownership of a constructed provider before its
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:66:func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:72:		provider = cached.Unwrap()
+wt-rc144-embed-lifecycle-fix/pkg/server\server_db.go:200:		executor.ShareEmbedderFrom(baseExec)
+wt-rc144-embed-lifecycle-fix/pkg/server\server_db.go:273:		executor.ShareEmbedderFrom(baseExec)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:142:	return db.QueryEmbeddingForDB(dbName).EmbedQueryChunks(ctx, query)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:189:	return db.cypherExecutor.GetEmbedder()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:207:// WithQueryEmbeddingSnapshot binds the current global query provider to a text
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:211:func (db *DB) WithQueryEmbeddingSnapshot(ctx context.Context) context.Context {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:226:// When SetEmbedConfigForDB is set, the per-DB embedder registry is used so the query vector matches
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:230:	return db.QueryEmbeddingForDB(dbName).EmbedQuery(ctx, query)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:235:	return db.QueryEmbeddingForDB(dbName).ChunkQuery(ctx, query)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:251:// QueryEmbeddingForDB resolves the query provider once. Capture the returned
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\query_embedding.go:255:func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:722:	// embedder constructor (embed.NewEmbedderContext) when set; New leaves them unset.
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:1789:			db.SetEmbedConfigForDB(func(dbName string) (*embed.Config, error) {
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2161:	newEmbedder := embed.NewEmbedderContext
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2179:		release, accepted := db.OwnEmbedder(embedder)
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2230:			if !db.SetEmbedder(embedder) {
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2234:			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2235:			db.SetDefaultEmbedConfig(embedConfig)
+wt-rc144-embed-lifecycle-fix/pkg/server\server_nornicdb.go:538:		queryEmbedding = s.db.QueryEmbeddingForDB(dbName)
+wt-rc144-embed-lifecycle-fix/pkg/server\server_qdrantgrpc.go:92:		cfg.BindQueryEmbedding = s.db.WithQueryEmbeddingSnapshot
+wt-rc144-embed-lifecycle-fix/pkg/server\server_qdrantgrpc.go:147:				queryEmbedding := s.db.QueryEmbeddingForDB(database)
+wt-rc144-embed-lifecycle-fix/pkg/server\server_heimdall.go:119:			exec.ShareEmbedderFrom(baseExecutor)
+wt-rc144-embed-lifecycle-fix/cmd\recall-bench\main.go:241:	embedder, err := embed.NewEmbedder(config)
+wt-rc144-embed-lifecycle-fix/cmd\recall-bench\main.go:245:	db.SetEmbedder(embedder)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:179:// If embedder is nil, the worker will wait for SetEmbedder() to be called.
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:250:// SetEmbedder sets or updates the embedder (for async initialization).
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:252:func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:260:// currentEmbedder returns the embedder under ew.mu. SetEmbedder can replace
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:269:// SetEmbedderResolver selects a provider for a fully-qualified node ID. This
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:271:func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\embed_queue.go:1070:// (retry gate, outcome, persisted metadata), even if SetEmbedder replaces the
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1089:		_ = attachEmbedMetricsToEmbedder(exec.GetEmbedder(), embedMetrics)
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1515:		executor.ShareEmbedderFrom(baseExec)
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1563:		exec.ShareEmbedderFrom(baseExec)
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor_fabric.go:879:	txExec.ShareEmbedderFrom(c.base)
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:376:	queryEmbedder *QueryEmbedderBinding
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:761:		queryEmbedder:                  &QueryEmbedderBinding{},
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1108:// SetEmbedder sets the query embedder for server-side embedding.
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1115://	executor.SetEmbedder(embedder)
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1120:func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1122:		e.queryEmbedder = &QueryEmbedderBinding{}
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1157:// GetEmbedder returns the current query embedder, or nil during startup.
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1158:// Scoped executors should use ShareEmbedderFrom to observe later readiness.
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor.go:1159:func (e *StorageExecutor) GetEmbedder() QueryEmbedder {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\executor_use.go:79:	cloned.ShareEmbedderFrom(e)
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:9:// QueryEmbedderBinding publishes one query provider to every protocol and scope.
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:13:type QueryEmbedderBinding struct {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:21:func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:28:func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:36:func (b *QueryEmbedderBinding) Load() QueryEmbedder {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:43:func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:53:func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:74:// QueryEmbedderBinding exposes this executor's publication owner for protocol
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:76:func (e *StorageExecutor) QueryEmbedderBinding() *QueryEmbedderBinding {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:80:// ShareEmbedderFrom binds a scoped executor to its parent's current and future
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:82:func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
+wt-rc144-embed-lifecycle-fix/pkg/cypher\query_embedder.go:96:	binding *QueryEmbedderBinding

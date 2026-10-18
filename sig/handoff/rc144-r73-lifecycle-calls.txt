@@ -1,0 +1,56 @@
+wt-rc144-embed-lifecycle-fix/cmd\recall-bench\main.go:388:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/cmd\recall-bench\main.go:525:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\adapter_bolt.go:25:// On Shutdown we call srv.Close(); listener.Close() may return its own
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\adapter_bolt.go:52:		_ = a.srv.Close()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\adapter_bolt.go:70:	if err := a.srv.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\adapter_http.go:19:// On Shutdown, srv.Stop(ctx) drains in-flight requests using the
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\adapter_http.go:51:	return a.srv.Stop(ctx)
+wt-rc144-embed-lifecycle-fix/pkg/embed\local_gguf.go:68:	warmupStarted bool
+wt-rc144-embed-lifecycle-fix/pkg/embed\local_gguf.go:206:	embedder.startWarmup(config.WarmupInterval)
+wt-rc144-embed-lifecycle-fix/pkg/embed\local_gguf.go:212:func (e *LocalGGUFEmbedder) startWarmup(warmupInterval time.Duration) {
+wt-rc144-embed-lifecycle-fix/pkg/embed\local_gguf.go:218:		e.warmupStarted = true
+wt-rc144-embed-lifecycle-fix/pkg/embed\local_gguf.go:484:		started := e.warmupStarted
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:55://	server.Stop(ctx)
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:641://	server.Stop(ctx)
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:727:	// embedderInitCancel and embedderInitDone own the background embedder
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:729:	// embedderInitDone, so it never outlives the server, and DB.Close waits
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:731:	embedderInitCancel context.CancelFunc
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:732:	embedderInitDone   chan struct{}
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2017:	if s.embedderInitCancel != nil {
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2018:		s.embedderInitCancel()
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2021:			case <-s.embedderInitDone:
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2134:	s.embedderInitCancel = cancel
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2135:	s.embedderInitDone = done
+wt-rc144-embed-lifecycle-fix/pkg/server\server.go:2136:	started := db.RunBackgroundTask(func() {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:18://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:148://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:204:	buildCancel context.CancelFunc
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:253:	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:388://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:412://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:431://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:434://	// Data lost when db.Close() or process exits
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:489://	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:572://   - Must close the library when done (db.Close())
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1279:	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1775:	db.bgWg.Add(1)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1777:	defer db.bgWg.Done()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1968:	db.bgWg.Add(1)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1972:		defer db.bgWg.Done()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1978:// RunBackgroundTask runs fn in a goroutine that Close waits for, so work
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db.go:1982:func (db *DB) RunBackgroundTask(fn func()) bool {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:78:	if db.buildCancel != nil {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:79:		db.buildCancel()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:84:	db.bgWg.Wait()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:85:	db.foregroundWg.Wait()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_lifecycle.go:89:	errs := db.closeOwnedEmbedders()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:668:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1742:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1844:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\main.go:1921:	defer db.Close()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:25:	db.foregroundWg.Add(1)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:32:		db.foregroundWg.Done()
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:63:// Initialization must run through RunBackgroundTask so Close also joins model
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_embedder_owner.go:114:func (db *DB) closeOwnedEmbedders() []error {
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_admin.go:137:	db.bgWg.Add(1)
+wt-rc144-embed-lifecycle-fix/pkg/nornicdb\db_admin.go:141:		defer db.bgWg.Done()

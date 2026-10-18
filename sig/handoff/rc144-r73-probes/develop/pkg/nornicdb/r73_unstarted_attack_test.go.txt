@@ -1,0 +1,23 @@
+package nornicdb
+import (
+ "context"
+ "testing"
+ "github.com/stretchr/testify/require"
+)
+func TestR73NoProviderStillRejectsLateEmbeddingCalls(t *testing.T){
+ db,err:=Open("",nil);require.NoError(t,err)
+ snapshot:=db.QueryEmbeddingForDB("nornic")
+ request:=db.WithQueryEmbeddingSnapshot(context.Background())
+ require.NoError(t,db.Close())
+ checks:=[]struct{name string;call func()error}{
+ {"global_embed",func()error{_,err:=db.EmbedQuery(context.Background(),"late");return err}},
+ {"global_chunk",func()error{_,err:=db.ChunkQuery(context.Background(),"late");return err}},
+ {"global_chunks",func()error{_,_,err:=db.EmbedQueryChunks(context.Background(),"late");return err}},
+ {"snapshot_embed",func()error{_,err:=snapshot.EmbedQuery(context.Background(),"late");return err}},
+ {"snapshot_chunk",func()error{_,err:=snapshot.ChunkQuery(context.Background(),"late");return err}},
+ {"snapshot_chunks",func()error{_,_,err:=snapshot.EmbedQueryChunks(context.Background(),"late");return err}},
+ {"context_snapshot",func()error{_,err:=db.EmbedQuery(request,"late");return err}},
+ {"per_database",func()error{_,err:=db.EmbedQueryForDB(context.Background(),"nornic","late");return err}},
+ }
+ for _,check:=range checks{t.Run(check.name,func(t *testing.T){err:=check.call();t.Logf("late empty-provider operation error=%v",err);require.ErrorIs(t,err,ErrClosed)})}
+}

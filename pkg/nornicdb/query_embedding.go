@@ -6,6 +6,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/search"
 )
 
@@ -13,14 +14,11 @@ import (
 // Callers that can score multiple query vectors should use this shape and keep
 // the best result across chunks instead of collapsing the query into a centroid.
 func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+	var operation lifecycle.Scope
+	if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,nil,err};defer operation.Finish();ctx=&operation
 	if emb == nil {
 		return nil, nil, nil
 	}
-	ctx, finish, err := db.beginProviderUse(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer finish()
 	chunks, err := db.chunkQueryWithEmbedder(ctx, emb, query)
 	if err != nil {
 		return nil, nil, err
@@ -117,6 +115,7 @@ func (db *DB) validateQueryEmbeddingBatchDimensions(dbName string, embs [][]floa
 }
 
 func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName string, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+ var operation lifecycle.Scope; if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,nil,err};defer operation.Finish();ctx=&operation
 	chunks, embs, err := db.embedQueryChunksWithEmbedder(ctx, emb, query)
 	if err != nil {
 		return nil, nil, err
@@ -130,6 +129,7 @@ func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName stri
 // EmbedQueryChunks returns embedder-safe query chunks and one embedding per chunk.
 // This is the preferred API for search paths that should compare best-of chunks.
 func (db *DB) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
+	if db.isClosed(){return nil,nil,ErrClosed}
 	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return nil, nil, nil
@@ -143,14 +143,11 @@ func (db *DB) EmbedQueryChunksForDB(ctx context.Context, dbName string, query st
 }
 
 func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, error) {
+	var operation lifecycle.Scope
+	if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
 	if emb == nil {
 		return nil, nil
 	}
-	_, finish, err := db.beginProviderUse(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer finish()
 	const (
 		queryChunkSize    = 512
 		queryChunkOverlap = 50
@@ -164,6 +161,7 @@ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedd
 // EmbedQuery generates an embedding for a search query.
 // Returns nil if embeddings are not enabled or embedder is not yet set (e.g. still loading).
 func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	if db.isClosed(){return nil,ErrClosed}
 	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return nil, nil // Not an error - just no embedding available
@@ -173,6 +171,7 @@ func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 
 // ChunkQuery splits a search query using the configured global embedder.
 func (db *DB) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+	if db.isClosed(){return nil,ErrClosed}
 	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return []string{query}, nil
@@ -254,6 +253,8 @@ type QueryEmbeddingSnapshot struct {
 // models continue using the model registry shared with document embedding.
 func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
 	snapshot := QueryEmbeddingSnapshot{db: db, database: dbName, embedder: db.globalEmbedder(), validateSingleDimensions: true}
+	var operation lifecycle.Scope
+	if err:=operation.Enter(context.Background(),db.lifetime);err!=nil{return snapshot};defer operation.Finish()
 	if snapshot.embedder == nil {
 		return snapshot
 	}
@@ -283,6 +284,7 @@ func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
 // ChunkQuery splits text using this request's provider, or leaves it intact
 // while embedding is unavailable.
 func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+	if s.db.isClosed(){return nil,ErrClosed}
 	if s.embedder == nil {
 		return []string{query}, nil
 	}
@@ -292,6 +294,8 @@ func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([
 // EmbedQuery embeds text with this request's provider, preserving the database's
 // single-vector dimension-check policy. Use EmbedQueryChunks to validate all chunks.
 func (s QueryEmbeddingSnapshot) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	var operation lifecycle.Scope
+	if err:=operation.Enter(ctx,s.db.lifetime);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
 	vec, err := s.db.embedQueryWithEmbedder(ctx, s.embedder, query)
 	if err != nil {
 		return nil, err

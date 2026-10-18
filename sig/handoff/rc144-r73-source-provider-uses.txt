@@ -1,0 +1,314 @@
+wt-sol-1465-r4/cmd\recall-bench\main.go:236:	config.Model = model
+wt-sol-1465-r4/cmd\recall-bench\main.go:237:	config.Dimensions = dimensions
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:38:			vec, err = typed.EmbedWithInputType(ctx, chunks[0], embed.InputTypeQuery)
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:40:			vec, err = emb.Embed(ctx, chunks[0])
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:52:		embs, err = typed.EmbedBatchWithInputType(ctx, chunks, embed.InputTypeQuery)
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:56:		embs, err = batch.EmbedBatch(ctx, chunks)
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:60:			embs[i], err = emb.Embed(ctx, chunk)
+wt-sol-1465-r4/pkg\nornicdb\query_embedding.go:161:	return emb.ChunkText(query, queryChunkSize, queryChunkOverlap)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1042:		result, err = propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1136:		return batcher.EmbedDocumentBatchChunks(ew.ctx, texts[start:end], ew.config.ChunkSize, ew.config.ChunkOverlap)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1142:		return batcher.EmbedDocumentPropertyBatchChunks(
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1225:	embeddingutil.ApplyManagedEmbedding(node, embeddings, provider.Model(), provider.Dimensions(), time.Now())
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1650:		result, err := documentEmbedder.EmbedDocumentChunks(ew.ctx, text, ew.config.ChunkSize, ew.config.ChunkOverlap)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1675:	chunks, err := chunker.ChunkText(text, ew.config.ChunkSize, ew.config.ChunkOverlap)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1704:				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
+wt-sol-1465-r4/pkg\nornicdb\embed_queue.go:1706:				embs, embedErr = provider.EmbedBatch(ew.ctx, chunks)
+wt-sol-1465-r4/pkg\nornicdb\db.go:296:	return cfg.Provider + "|" + cfg.Mode + "|" + cfg.Model + "|" + strconv.Itoa(cfg.Dimensions) + "|" +
+wt-sol-1465-r4/pkg\nornicdb\db.go:1622:			embedder.Model(), embedder.Dimensions())
+wt-sol-1465-r4/pkg\nornicdb\db.go:1669:		embedder.Model(), embedder.Dimensions())
+wt-sol-1465-r4/pkg\voyage\reranker.go:76:	if strings.TrimSpace(cfg.Model) == "" {
+wt-sol-1465-r4/pkg\voyage\reranker.go:77:		cfg.Model = DefaultRerankModel
+wt-sol-1465-r4/pkg\voyage\reranker.go:120:		Model: r.config.Model, TopK: topK, ReturnDocuments: false, Truncation: !r.config.DisableTruncation,
+wt-sol-1465-r4/pkg\voyage\client.go:143:	model := strings.TrimSpace(opts.Model)
+wt-sol-1465-r4/pkg\voyage\client.go:163:	return &EmbeddingResponse{Data: wire.Data, Model: wire.Model, Usage: wire.Usage}, nil
+wt-sol-1465-r4/pkg\voyage\client.go:214:	model := strings.TrimSpace(opts.Model)
+wt-sol-1465-r4/pkg\voyage\client.go:243:		Model:          wire.Model,
+wt-sol-1465-r4/pkg\voyage\client.go:266:	model := strings.TrimSpace(opts.Model)
+wt-sol-1465-r4/pkg\voyage\client.go:283:	return &EmbeddingResponse{Data: wire.Data, Model: wire.Model, Usage: wire.Usage}, nil
+wt-sol-1465-r4/pkg\voyage\client.go:335:	model := strings.TrimSpace(opts.Model)
+wt-sol-1465-r4/pkg\voyage\client.go:366:	return &RerankResponse{Data: out, Model: wire.Model, Usage: wire.Usage}, nil
+wt-sol-1465-r4/pkg\vectorspace\registry.go:134:		Backend:     vs.Backend,
+wt-sol-1465-r4/cmd\nornicdb\main.go:325:		cfg.EmbeddingExplicit.Model = true
+wt-sol-1465-r4/cmd\nornicdb\main.go:340:		cfg.EmbeddingExplicit.Dimensions = true
+wt-sol-1465-r4/cmd\nornicdb\main.go:680:		commandPrintln(cmd, localization.NornicDBCLIGPUEnabled(device.Name, string(device.Backend), device.MemoryMB))
+wt-sol-1465-r4/cmd\nornicdb\main.go:1301:		Model:      cfg.EmbeddingExplicit.Model,
+wt-sol-1465-r4/cmd\nornicdb\main.go:1302:		Dimensions: cfg.EmbeddingExplicit.Dimensions,
+wt-sol-1465-r4/cmd\nornicdb\main.go:1306:	cfg.Memory.EmbeddingModel = resolved.Model
+wt-sol-1465-r4/cmd\nornicdb\main.go:1307:	cfg.Memory.EmbeddingDimensions = resolved.Dimensions
+wt-sol-1465-r4/pkg\config\dbconfig\resolver.go:145:		Model:      global.EmbeddingExplicit.Model || hasOverride(modelKey),
+wt-sol-1465-r4/pkg\config\dbconfig\resolver.go:146:		Dimensions: global.EmbeddingExplicit.Dimensions || hasOverride(dimensionsKey),
+wt-sol-1465-r4/pkg\config\dbconfig\resolver.go:151:	resolved.EmbeddingDimensions = providerConfig.Dimensions
+wt-sol-1465-r4/pkg\config\dbconfig\resolver.go:154:	resolved.Effective[modelKey] = providerConfig.Model
+wt-sol-1465-r4/pkg\config\dbconfig\resolver.go:155:	resolved.Effective[dimensionsKey] = strconv.Itoa(providerConfig.Dimensions)
+wt-sol-1465-r4/pkg\config\config.go:2638:		config.EmbeddingExplicit.Model = true
+wt-sol-1465-r4/pkg\config\config.go:2652:		config.EmbeddingExplicit.Dimensions = true
+wt-sol-1465-r4/pkg\config\config.go:3680:	if yamlCfg.Embedding.Model != "" {
+wt-sol-1465-r4/pkg\config\config.go:3681:		config.Memory.EmbeddingModel = yamlCfg.Embedding.Model
+wt-sol-1465-r4/pkg\config\config.go:3682:		config.EmbeddingExplicit.Model = true
+wt-sol-1465-r4/pkg\config\config.go:3694:	if yamlCfg.Embedding.Dimensions > 0 {
+wt-sol-1465-r4/pkg\config\config.go:3695:		config.Memory.EmbeddingDimensions = yamlCfg.Embedding.Dimensions
+wt-sol-1465-r4/pkg\config\config.go:3696:		config.EmbeddingExplicit.Dimensions = true
+wt-sol-1465-r4/pkg\config\config.go:3877:	if yamlCfg.Heimdall.Model != "" {
+wt-sol-1465-r4/pkg\config\config.go:3878:		config.Features.HeimdallModel = yamlCfg.Heimdall.Model
+wt-sol-1465-r4/pkg\config\config.go:3937:	if yamlCfg.SearchRerank.Model != "" {
+wt-sol-1465-r4/pkg\config\config.go:3938:		config.Features.SearchRerankModel = yamlCfg.SearchRerank.Model
+wt-sol-1465-r4/pkg\storage\schema_persistence.go:217:				Dimensions:     idx.Dimensions,
+wt-sol-1465-r4/pkg\storage\schema_persistence.go:461:			Dimensions:     idx.Dimensions,
+wt-sol-1465-r4/pkg\storage\schema.go:1872:			"dimensions":     idx.Dimensions,
+wt-sol-1465-r4/pkg\heimdall\types.go:325:	cfg.Model = flags.GetHeimdallModel()
+wt-sol-1465-r4/pkg\heimdall\scheduler.go:150:	modelName := cfg.Model
+wt-sol-1465-r4/pkg\heimdall\scheduler.go:343:		Model:   m.config.Model,
+wt-sol-1465-r4/pkg\heimdall\metrics.go:409:			return e.embedder.ChunkText(text, 512, 50)
+wt-sol-1465-r4/pkg\heimdall\metrics.go:411:		embedQuery = e.embedder.Embed
+wt-sol-1465-r4/pkg\heimdall\handler.go:183:	if strings.TrimSpace(h.config.Model) != "" {
+wt-sol-1465-r4/pkg\heimdall\handler.go:184:		return strings.TrimSpace(h.config.Model)
+wt-sol-1465-r4/pkg\heimdall\handler.go:651:		Model:   h.config.Model,
+wt-sol-1465-r4/pkg\heimdall\handler.go:699:	req.Model = h.announcedModel()
+wt-sol-1465-r4/pkg\heimdall\handler.go:794:			h.handleStreamingWithTools(w, ctx, prompt, params, req.Model, lifecycleCtx)
+wt-sol-1465-r4/pkg\heimdall\handler.go:796:			h.handleStreamingResponse(w, ctx, prompt, params, req.Model, lifecycleCtx)
+wt-sol-1465-r4/pkg\heimdall\handler.go:799:		h.handleNonStreamingResponse(w, ctx, prompt, params, req.Model, lifecycleCtx)
+wt-sol-1465-r4/pkg\heimdall\generator_orca.go:39:	model := strings.TrimSpace(cfg.Model)
+wt-sol-1465-r4/pkg\heimdall\generator_openai.go:132:	model := strings.TrimSpace(cfg.Model)
+wt-sol-1465-r4/pkg\heimdall\generator_openai.go:157:	model := strings.TrimSpace(cfg.Model)
+wt-sol-1465-r4/pkg\heimdall\generator_ollama.go:105:	model := cfg.Model
+wt-sol-1465-r4/pkg\heimdall\generator_litellm.go:50:	model := strings.TrimSpace(cfg.Model)
+wt-sol-1465-r4/pkg\inference\inference.go:503://		Embedding: embedder.Embed("Machine learning algorithms"),
+wt-sol-1465-r4/pkg\search\build_settings.go:172:		profile.Dimensions,
+wt-sol-1465-r4/pkg\mcp\server.go:1113:					return embedder.ChunkText(text, 512, 50)
+wt-sol-1465-r4/pkg\mcp\server.go:1115:				embedQuery = embedder.Embed
+wt-sol-1465-r4/pkg\observability\catalog_embed.go:65:// D-06a. Mirrors the Embedder.Backend() return values declared in
+wt-sol-1465-r4/pkg\qdrantgrpc\collections_service.go:143:								Size:     uint64(meta.Dimensions),
+wt-sol-1465-r4/pkg\embed\ffi_recover.go:19://	    defer recoverFFI(e.metrics, e.Backend(), &err)
+wt-sol-1465-r4/pkg\embed\backend_default.go:6:// `localGGUFBackend` is the value LocalGGUFEmbedder.Backend() returns. The
+wt-sol-1465-r4/pkg\embed\embed.go:19://	embedding, err := embedder.Embed(ctx, "graph database")
+wt-sol-1465-r4/pkg\embed\embed.go:32://	embeddings, err := embedder.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\embed.go:73://	vec, err := embedder.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\embed\embed.go:76://	vecs, err := embedder.EmbedBatch(ctx, []string{"one", "two", "three"})
+wt-sol-1465-r4/pkg\embed\embed.go:278://	embedding, err := embedder.Embed(ctx, "test")
+wt-sol-1465-r4/pkg\embed\embed.go:309://	embedding, err := embedder.Embed(ctx, "test")
+wt-sol-1465-r4/pkg\embed\embed.go:347://	vec, err := embedder.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\embed\embed.go:353://		embedder.Model(), embedder.Dimensions())
+wt-sol-1465-r4/pkg\embed\embed.go:384://	vec, err := embedder.Embed(ctx, "Hello world")
+wt-sol-1465-r4/pkg\embed\embed.go:395://	config.Model = "nomic-embed-text"
+wt-sol-1465-r4/pkg\embed\embed.go:396://	config.Dimensions = 768
+wt-sol-1465-r4/pkg\embed\embed.go:401://	vec, _ := embedder.Embed(ctx, "The quick brown fox")
+wt-sol-1465-r4/pkg\embed\embed.go:413://	vec, err := embedder.Embed(ctx, "distributed embeddings")
+wt-sol-1465-r4/pkg\embed\embed.go:429://	embeddings, err := embedder.EmbedBatch(ctx, documents)
+wt-sol-1465-r4/pkg\embed\embed.go:514://	vec, err := embedder.Embed(ctx, "machine learning")
+wt-sol-1465-r4/pkg\embed\embed.go:525:		Model:  e.config.Model,
+wt-sol-1465-r4/pkg\embed\embed.go:575://	vecs, err := embedder.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\embed.go:588:		embedding, err := e.Embed(ctx, text)
+wt-sol-1465-r4/pkg\embed\embed.go:608:	return e.config.Dimensions
+wt-sol-1465-r4/pkg\embed\embed.go:613:	return e.config.Model
+wt-sol-1465-r4/pkg\embed\embed.go:639://	vec, err := embedder.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\embed\embed.go:659://	config.Model = "text-embedding-3-large"
+wt-sol-1465-r4/pkg\embed\embed.go:660://	config.Dimensions = 3072
+wt-sol-1465-r4/pkg\embed\embed.go:670://	vec, err := embedder.Embed(ctx, "artificial intelligence")
+wt-sol-1465-r4/pkg\embed\embed.go:681://	config.Model = "text-embedding-3-large"
+wt-sol-1465-r4/pkg\embed\embed.go:682://	config.Dimensions = 3072 // Maximum quality
+wt-sol-1465-r4/pkg\embed\embed.go:687://	vec, _ := embedder.Embed(ctx, "complex semantic meaning")
+wt-sol-1465-r4/pkg\embed\embed.go:693://	config.Model = "text-embedding-3-small"
+wt-sol-1465-r4/pkg\embed\embed.go:694://	config.Dimensions = 1536
+wt-sol-1465-r4/pkg\embed\embed.go:700://	vec, _ := embedder.Embed(ctx, "cost effective")
+wt-sol-1465-r4/pkg\embed\embed.go:710://	embeddings, err := embedder.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\embed.go:715://			embeddings, err = embedder.EmbedBatch(ctx, texts) // Retry
+wt-sol-1465-r4/pkg\embed\embed.go:733://	embeddings, _ := embedder.EmbedBatch(ctx, []string{
+wt-sol-1465-r4/pkg\embed\embed.go:833://	vec, err := embedder.Embed(ctx, "artificial intelligence")
+wt-sol-1465-r4/pkg\embed\embed.go:843:	embeddings, err := e.EmbedBatch(ctx, []string{text})
+wt-sol-1465-r4/pkg\embed\embed.go:871://	vecs, err := embedder.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\embed.go:883:		Model: e.config.Model,
+wt-sol-1465-r4/pkg\embed\embed.go:939:	return e.config.Dimensions
+wt-sol-1465-r4/pkg\embed\embed.go:944:	return e.config.Model
+wt-sol-1465-r4/pkg\embed\embed.go:999:		if !explicit.Model && strings.TrimSpace(cfg.Model) == "bge-m3" {
+wt-sol-1465-r4/pkg\embed\embed.go:1000:			cfg.Model = ""
+wt-sol-1465-r4/pkg\embed\embed.go:1002:		if !explicit.Dimensions && cfg.Dimensions == 1024 {
+wt-sol-1465-r4/pkg\embed\embed.go:1003:			cfg.Dimensions = 0
+wt-sol-1465-r4/pkg\embed\embed.go:1045://	vec, err := embedder.Embed(ctx, "test")
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:14://	vec, err := cached.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:15://	vec2, err := cached.Embed(ctx, "hello world") // Cache hit!
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:133:	embedding, err := c.base.Embed(ctx, text)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:137:	if err := CheckEmbeddings([][]float32{embedding}, 1, c.base.Dimensions()); err != nil {
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:170:		return c.base.EmbedBatch(ctx, misses)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:177:	vecs, err := c.EmbedBatchWithInputType(ctx, []string{text}, inputType)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:189:		return c.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:192:		return typed.EmbedBatchWithInputType(ctx, misses, inputType)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:230:		if err := CheckEmbeddings(embeddings, len(missTexts), c.base.Dimensions()); err != nil {
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:261:		chunks, err := c.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:265:		embeddings, err := c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:269:		return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: c.Model()}, nil
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:271:	return chunker.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:284:		return provider.EmbedDocumentPropertyChunks(ctx, fallbackText, properties, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:286:	return c.EmbedDocumentChunks(ctx, fallbackText, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:294:		return provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:296:	return embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, c.EmbedDocumentPropertyChunks)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:303:		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:305:	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, c.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:306:		return c.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:307:	}, c.Model())
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:312:	return c.base.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:317:	return c.base.Dimensions()
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:322:	return c.base.Model()
+wt-sol-1465-r4/pkg\embed\cached_embedder.go:330:	return c.base.Backend()
+wt-sol-1465-r4/pkg\embed\local_gguf.go:28://	vec, err := embedder.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\embed\local_gguf.go:59:	model     *localllm.Model
+wt-sol-1465-r4/pkg\embed\local_gguf.go:96:// Model resolution: config.Model → {NORNICDB_MODELS_DIR}/{model}.gguf
+wt-sol-1465-r4/pkg\embed\local_gguf.go:118://	vec, _ := embedder.Embed(ctx, "semantic search")
+wt-sol-1465-r4/pkg\embed\local_gguf.go:136:	modelFile := config.Model
+wt-sol-1465-r4/pkg\embed\local_gguf.go:147:			config.Model, modelPath)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:190:	if config.Dimensions > 0 && model.Dimensions() != config.Dimensions {
+wt-sol-1465-r4/pkg\embed\local_gguf.go:193:			model.Dimensions(), config.Dimensions)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:196:	fmt.Printf("✅ Model loaded: %s (%d dimensions)\n", config.Model, model.Dimensions())
+wt-sol-1465-r4/pkg\embed\local_gguf.go:200:		modelName:     config.Model,
+wt-sol-1465-r4/pkg\embed\local_gguf.go:273:				e.metrics.FFIPanicTotal.WithLabelValues(e.Backend()).Inc()
+wt-sol-1465-r4/pkg\embed\local_gguf.go:302:	embedding, err = model.Embed(ctx, text)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:359://	vec, err := embedder.Embed(ctx, "graph database")
+wt-sol-1465-r4/pkg\embed\local_gguf.go:378://	vecs, err := embedder.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:390:		emb, err := e.Embed(ctx, t)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:417:	return e.model.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\local_gguf.go:432:	return e.model.Dimensions()
+wt-sol-1465-r4/pkg\embed\orca.go:47:	if strings.TrimSpace(cfg.Model) == "" {
+wt-sol-1465-r4/pkg\embed\orca.go:48:		cfg.Model = defaults.Model
+wt-sol-1465-r4/pkg\embed\orca.go:50:	if cfg.Dimensions <= 0 {
+wt-sol-1465-r4/pkg\embed\orca.go:51:		cfg.Dimensions = defaults.Dimensions
+wt-sol-1465-r4/pkg\embed\provider_error.go:56:		return fmt.Sprintf("embedding provider returned %d vectors for %d inputs", e.Dimensions, e.Want)
+wt-sol-1465-r4/pkg\embed\provider_error.go:57:	case e.Dimensions == 0:
+wt-sol-1465-r4/pkg\embed\provider_error.go:60:	return fmt.Sprintf("embedding provider returned %d dimensions for input %d; the embedder has %d", e.Dimensions, e.Input, e.Want)
+wt-sol-1465-r4/pkg\embed\voyage.go:66:	if strings.TrimSpace(cfg.Model) == "" {
+wt-sol-1465-r4/pkg\embed\voyage.go:69:			cfg.Model = voyageapi.DefaultContextModel
+wt-sol-1465-r4/pkg\embed\voyage.go:71:			cfg.Model = voyageapi.DefaultMultimodalModel
+wt-sol-1465-r4/pkg\embed\voyage.go:73:			cfg.Model = defaults.Model
+wt-sol-1465-r4/pkg\embed\voyage.go:76:	if cfg.Dimensions <= 0 {
+wt-sol-1465-r4/pkg\embed\voyage.go:77:		cfg.Dimensions = defaults.Dimensions
+wt-sol-1465-r4/pkg\embed\voyage.go:111:	model := strings.TrimSpace(cfg.Model)
+wt-sol-1465-r4/pkg\embed\voyage.go:121:		cfg.Model = model
+wt-sol-1465-r4/pkg\embed\voyage.go:133:	if cfg.Dimensions <= 0 {
+wt-sol-1465-r4/pkg\embed\voyage.go:134:		cfg.Dimensions = voyageapi.DefaultOutputDimension
+wt-sol-1465-r4/pkg\embed\voyage.go:155:	return e.EmbedWithInputType(ctx, text, InputTypeQuery)
+wt-sol-1465-r4/pkg\embed\voyage.go:160:	return e.EmbedBatchWithInputType(ctx, texts, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\voyage.go:164:	vecs, err := e.EmbedBatchWithInputType(ctx, []string{text}, inputType)
+wt-sol-1465-r4/pkg\embed\voyage.go:181:			Model: e.config.Model, InputType: inputType, Truncation: false, OutputDimension: e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:192:		OutputDimension: e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:224:		return e.EmbedDocumentChunks(ctx, fallbackText, 0, 0)
+wt-sol-1465-r4/pkg\embed\voyage.go:226:	results, err := e.EmbedDocumentPropertyBatchChunks(ctx, []string{fallbackText}, []map[string]any{properties}, 0, 0)
+wt-sol-1465-r4/pkg\embed\voyage.go:240:		return e.EmbedDocumentBatchChunks(ctx, fallbackTexts, 0, 0)
+wt-sol-1465-r4/pkg\embed\voyage.go:267:		Model: e.config.Model, InputType: InputTypeDocument, Truncation: false, OutputDimension: e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:275:		results[index] = &DocumentChunkResult{Chunks: textChunks[index], Embeddings: [][]float32{embeddings[index]}, Model: e.Model()}
+wt-sol-1465-r4/pkg\embed\voyage.go:282:		chunks, err := e.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\voyage.go:286:		embeddings, err := e.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\voyage.go:290:		return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: e.Model()}, nil
+wt-sol-1465-r4/pkg\embed\voyage.go:301:		OutputDimension:    e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:323:			result, err := e.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\voyage.go:383:		OutputDimension:    e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:418:			OutputDimension:    e.config.Dimensions,
+wt-sol-1465-r4/pkg\embed\voyage.go:502:	return e.config.Dimensions
+wt-sol-1465-r4/pkg\embed\voyage.go:506:	return e.config.Model
+wt-sol-1465-r4/pkg\embed\voyage.go:516:	return fmt.Sprintf("voyage:%s:%s:%d:%s", e.mode, e.Model(), e.Dimensions(), strings.TrimRight(e.config.APIURL, "/"))
+wt-sol-1465-r4/pkg\embed\spans.go:26:			attribute.String("embed.model", t.inner.Model()),
+wt-sol-1465-r4/pkg\embed\spans.go:27:			attribute.String("embed.backend", t.inner.Backend()),
+wt-sol-1465-r4/pkg\embed\spans.go:33:	result, err := t.inner.Embed(ctx, text)
+wt-sol-1465-r4/pkg\embed\spans.go:45:			attribute.String("embed.model", t.inner.Model()),
+wt-sol-1465-r4/pkg\embed\spans.go:46:			attribute.String("embed.backend", t.inner.Backend()),
+wt-sol-1465-r4/pkg\embed\spans.go:52:	result, err := t.inner.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\spans.go:62:		return typed.EmbedWithInputType(ctx, text, inputType)
+wt-sol-1465-r4/pkg\embed\spans.go:64:	return t.Embed(ctx, text)
+wt-sol-1465-r4/pkg\embed\spans.go:69:		return typed.EmbedBatchWithInputType(ctx, texts, inputType)
+wt-sol-1465-r4/pkg\embed\spans.go:71:	return t.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\embed\spans.go:76:		return chunker.EmbedDocumentChunks(ctx, text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:78:	chunks, err := t.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:82:	embeddings, err := t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\spans.go:86:	return &DocumentChunkResult{Chunks: chunks, Embeddings: embeddings, Model: t.Model()}, nil
+wt-sol-1465-r4/pkg\embed\spans.go:98:		return provider.EmbedDocumentPropertyChunks(ctx, fallbackText, properties, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:100:	return t.EmbedDocumentChunks(ctx, fallbackText, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:109:			attribute.String("embed.model", t.inner.Model()),
+wt-sol-1465-r4/pkg\embed\spans.go:110:			attribute.String("embed.backend", t.inner.Backend()),
+wt-sol-1465-r4/pkg\embed\spans.go:119:		results, err = provider.EmbedDocumentPropertyBatchChunks(ctx, fallbackTexts, properties, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:121:		results, err = embedDocumentPropertyBatchFallback(ctx, fallbackTexts, properties, maxTokens, overlap, t.EmbedDocumentPropertyChunks)
+wt-sol-1465-r4/pkg\embed\spans.go:134:		return batcher.EmbedDocumentBatchChunks(ctx, texts, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:136:	return embedLocallyChunkedDocuments(ctx, texts, maxTokens, overlap, t.ChunkText, func(ctx context.Context, chunks []string) ([][]float32, error) {
+wt-sol-1465-r4/pkg\embed\spans.go:137:		return t.EmbedBatchWithInputType(ctx, chunks, InputTypeDocument)
+wt-sol-1465-r4/pkg\embed\spans.go:138:	}, t.Model())
+wt-sol-1465-r4/pkg\embed\spans.go:142:	return t.inner.ChunkText(text, maxTokens, overlap)
+wt-sol-1465-r4/pkg\embed\spans.go:146:	return t.inner.Dimensions()
+wt-sol-1465-r4/pkg\embed\spans.go:150:	return t.inner.Model()
+wt-sol-1465-r4/pkg\embed\spans.go:154:	return t.inner.Backend()
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:38://	embedding, err := model.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:308://	fmt.Printf("Model loaded: %d dimensions, GPU: %v\n", model.Dimensions(), model.UsingGPU())
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:406://	vec, err := model.Embed(ctx, "graph database")
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:501://	vecs, err := model.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:517:		vec, err := m.Embed(ctx, text)
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:585:	qVec, err := r.model.Embed(ctx, query)
+wt-sol-1465-r4/pkg\localllm\yzma_bindings.go:589:	dVec, err := r.model.Embed(ctx, document)
+wt-sol-1465-r4/pkg\localllm\llama.go:30://	embedding, err := model.Embed(ctx, "hello world")
+wt-sol-1465-r4/pkg\localllm\llama.go:767://	fmt.Printf("Model loaded: %d dimensions\n", model.Dimensions())
+wt-sol-1465-r4/pkg\localllm\llama.go:834://	vec, err := model.Embed(ctx, "graph database")
+wt-sol-1465-r4/pkg\localllm\llama.go:1023://	vecs, err := model.EmbedBatch(ctx, texts)
+wt-sol-1465-r4/pkg\localllm\llama.go:1038:		emb, err := m.Embed(ctx, t)
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:165:			if len(v) != meta.Dimensions {
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:166:				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:376:	if len(req.Vector) != meta.Dimensions {
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:377:		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(req.Vector), meta.Dimensions))
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:729:			if len(v) != meta.Dimensions {
+wt-sol-1465-r4/pkg\qdrantgrpc\points_service.go:730:				return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantVectorDimensionMismatch(len(v), meta.Dimensions))
+wt-sol-1465-r4/pkg\search\hnsw_index.go:913:	if snap.Dimensions <= 0 || snap.InternalToID == nil {
+wt-sol-1465-r4/pkg\search\hnsw_index.go:920:	quantized, validQuantization := restoreHNSWQuantization(snap.Quantization, snap.Dimensions, len(snap.InternalToID))
+wt-sol-1465-r4/pkg\search\hnsw_index.go:928:	h := NewHNSWIndex(snap.Dimensions, config)
+wt-sol-1465-r4/pkg\search\hnsw_index.go:1093:		if m.Dimensions == 0 {
+wt-sol-1465-r4/pkg\search\hnsw_index.go:1094:			m.Dimensions = snap.Dimensions
+wt-sol-1465-r4/pkg\search\hnsw_index.go:1097:	if m.Dimensions == 0 {
+wt-sol-1465-r4/pkg\gpu\gpu.go:287://		fmt.Printf("Using GPU: %s (%s)\n", device.Name, device.Backend)
+wt-sol-1465-r4/pkg\gpu\gpu.go:694:		switch device.Backend {
+wt-sol-1465-r4/pkg\gpu\gpu.go:734:		switch vi.manager.device.Backend {
+wt-sol-1465-r4/pkg\gpu\gpu.go:1330:		dimensions:  config.Dimensions,
+wt-sol-1465-r4/pkg\gpu\gpu.go:1333:		cpuVectors:  make([]float32, 0, util.SafePreallocProduct(config.InitialCap, config.Dimensions)),
+wt-sol-1465-r4/pkg\gpu\gpu.go:1338:				return DefaultEmbeddingIndexConfig(config.Dimensions).BatchThreshold
+wt-sol-1465-r4/pkg\gpu\gpu.go:1630:		switch ei.manager.device.Backend {
+wt-sol-1465-r4/pkg\gpu\gpu.go:1891:	switch ei.manager.device.Backend {
+wt-sol-1465-r4/pkg\gpu\gpu.go:2048:		switch ei.manager.device.Backend {
+wt-sol-1465-r4/pkg\server\server.go:1303:		if ceConfig.Model == "" && provider == "ollama" {
+wt-sol-1465-r4/pkg\server\server.go:1304:			ceConfig.Model = "reranker"
+wt-sol-1465-r4/pkg\server\server.go:1414:				localization.ServerHeimdallReadyEvent(heimdallCfg.Model, len(plugins), len(actions),
+wt-sol-1465-r4/pkg\server\server.go:1547:				if ceConfig.Model == "" && provider == "ollama" {
+wt-sol-1465-r4/pkg\server\server.go:1548:					ceConfig.Model = "reranker"
+wt-sol-1465-r4/pkg\server\server.go:1606:			localization.ServerEmbeddingModelLoadingEvent(embedConfig.Model, embedConfig.Provider,
+wt-sol-1465-r4/pkg\server\server.go:2186:			_, healthErr := embedder.Embed(healthCtx, "health check")
+wt-sol-1465-r4/pkg\server\server.go:2212:						embeddingCacheMemoryMB(embeddingCacheSize, embedConfig.Dimensions)))
+wt-sol-1465-r4/pkg\server\server.go:2217:					localization.ServerEmbeddingsReadyLocalEvent(embedConfig.Model, embedConfig.Dimensions))
+wt-sol-1465-r4/pkg\server\server.go:2221:						embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
+wt-sol-1465-r4/pkg\server\server.go:2241:				localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embedConfig.Model, err))
+wt-sol-1465-r4/pkg\server\server.go:2245:					embedConfig.Provider, embedConfig.Model, embedConfig.APIURL, err))
+wt-sol-1465-r4/pkg\search\hnsw_quantization_persist.go:27:	if s.Dimensions != dim || dim <= 0 {
+wt-sol-1465-r4/pkg\search\ivfpq_build.go:25:	if profile.Dimensions <= 0 {
+wt-sol-1465-r4/pkg\search\ivfpq_build.go:28:	if profile.PQSegments <= 0 || profile.Dimensions%profile.PQSegments != 0 {
+wt-sol-1465-r4/pkg\search\ivfpq_build.go:29:		return nil, nil, localizedError(localization.SearchIVFPQSegmentsInvalid(profile.Dimensions, profile.PQSegments), nil)
+wt-sol-1465-r4/pkg\search\ivfpq_build.go:108:		BytesPerVector:      ivfpqBytesPerVector(profile) + ivfpqOverflowBytesPerVector(len(overflow), vectorCount, profile.Dimensions),
+wt-sol-1465-r4/pkg\search\ivfpq_build.go:174:	subDim := profile.Dimensions / profile.PQSegments
+wt-sol-1465-r4/pkg\search\ivfpq_types.go:115:	return have.Dimensions == want.Dimensions &&
+wt-sol-1465-r4/pkg\server\server_gpu.go:55:			"backend":       device.Backend,
+wt-sol-1465-r4/pkg\search\kmeans_candidate_gen.go:104:	if dims := view.index.Dimensions(); dims > 0 && len(query) != dims {
+wt-sol-1465-r4/pkg\search\rerank.go:222:		"model":     ce.config.Model,
+wt-sol-1465-r4/pkg\search\search.go:26://	embedding := embedder.Embed(ctx, query) // Get from embed package
+wt-sol-1465-r4/pkg\search\search.go:1109://			Embedding: embedder.Embed(ctx, doc.Content),
+wt-sol-1465-r4/pkg\search\search.go:4543:	case manifest.Dimensions == s.VectorIndexDimensions():
+wt-sol-1465-r4/pkg\search\search.go:4598://	embedding, _ := embedder.Embed(ctx, query)
+wt-sol-1465-r4/pkg\search\search.go:6092:		Dimensions:          profile.Dimensions,
+wt-sol-1465-r4/pkg\search\search.go:6359:		buildStats.Strategy, buildStats.Backend, buildStats.Batches, buildStats.KernelErrors, buildStats.Fallback, buildStats.Duration)
+wt-sol-1465-r4/pkg\cypher\call_rag.go:138:			model = resp.Model
+wt-sol-1465-r4/pkg\cypher\call_rag.go:371:				embedding, embedErr := embedder.Embed(ctx, chunk)
+wt-sol-1465-r4/pkg\cypher\call_rag.go:399:			return embedder.ChunkText(text, 512, 50)
+wt-sol-1465-r4/pkg\cypher\call_rag.go:678:		return sized.Dimensions()
+wt-sol-1465-r4/pkg\cypher\call_vector.go:167:			if vectorIdx.Dimensions > 0 {
+wt-sol-1465-r4/pkg\cypher\call_vector.go:168:				wantDims = vectorIdx.Dimensions
+wt-sol-1465-r4/pkg\search\vector_file_store.go:688:	if meta.Dimensions != v.dimensions {
+wt-sol-1465-r4/pkg\search\vector_file_store.go:689:		return localizedError(localization.SearchVectorMetaDimensionsMismatch(meta.Dimensions, v.dimensions), nil)
+wt-sol-1465-r4/pkg\search\vector_index.go:578:	if snap.Dimensions <= 0 || snap.Dimensions != v.dimensions {
+wt-sol-1465-r4/pkg\cypher\executor.go:1911:		chunks, err := embedder.ChunkText(text, e.inlineEmbeddingChunkSize, e.inlineEmbeddingChunkOverlap)
+wt-sol-1465-r4/pkg\cypher\executor.go:1923:				emb, err = typedEmbedder.EmbedWithInputType(ctx, chunk, "document")
+wt-sol-1465-r4/pkg\cypher\executor.go:1925:				emb, err = embedder.Embed(ctx, chunk)
+wt-sol-1465-r4/pkg\cypher\executor.go:1938:			if v := strings.TrimSpace(named.Model()); v != "" {
+wt-sol-1465-r4/pkg\cypher\executor.go:1943:			if v := d.Dimensions(); v > 0 {
+wt-sol-1465-r4/pkg\cypher\executor_match_vector_cosine_fastpath.go:835:			if vectorIdx.Dimensions > 0 {
+wt-sol-1465-r4/pkg\cypher\executor_match_vector_cosine_fastpath.go:836:				wantDims = vectorIdx.Dimensions
+wt-sol-1465-r4/pkg\cypher\query_embed_chunk.go:30:	chunks, err := embedder.ChunkText(text, queryChunkSize, queryChunkOverlap)
+wt-sol-1465-r4/pkg\cypher\query_embed_chunk.go:43:		return embedder.Embed(ctx, text)
+wt-sol-1465-r4/pkg\cypher\query_embed_chunk.go:48:		emb, err := embedder.Embed(ctx, c)

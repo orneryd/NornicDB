@@ -1,0 +1,42 @@
+package nornicdb
+
+import (
+ "context"
+ "sync"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/embed"
+ "github.com/stretchr/testify/require"
+)
+
+type r73RelationshipDocumentProvider struct{ *r73BatchProvider }
+func(e *r73RelationshipDocumentProvider) EmbedDocumentChunks(ctx context.Context,text string,size,overlap int)(*embed.DocumentChunkResult,error){
+ vectors,err:=e.EmbedBatch(ctx,[]string{text})
+ if err!=nil{return nil,err}
+ return &embed.DocumentChunkResult{Chunks:[]string{text},Embeddings:vectors},nil
+}
+
+func TestR73PublicRelationshipWorkerShutdown(t *testing.T){
+ for _,mode:=range []string{"ordinary_batch","document_chunks"}{t.Run(mode,func(t *testing.T){
+  cfg:=DefaultConfig();cfg.Memory.EmbeddingEnabled=true;cfg.Memory.SearchRelationshipsEnabled=true;cfg.Memory.EmbeddingDimensions=4;cfg.Memory.DecayEnabled=false;cfg.Memory.AutoLinksEnabled=false;cfg.Database.AsyncWritesEnabled=false;cfg.EmbeddingWorker.NumWorkers=0;cfg.EmbeddingWorker.MaxRetries=1
+  db,err:=Open(t.TempDir(),cfg);require.NoError(t,err)
+  e:=&r73BatchProvider{mockEmbedder:mockEmbedder{dims:4},entered:make(chan struct{}),cancelled:make(chan struct{}),release:make(chan struct{}),finished:make(chan struct{})}
+  var unblock sync.Once;release:=func(){unblock.Do(func(){close(e.release)})}
+  t.Cleanup(func(){release();_=db.Close()})
+  var provider embed.Embedder=e
+  if mode=="document_chunks"{provider=&r73RelationshipDocumentProvider{e}}
+  require.True(t,db.SetEmbedder(provider))
+  _,err=db.GetOrCreateSearchService(db.defaultDatabaseName(),nil);require.NoError(t,err)
+  _,err=db.ExecuteCypher(context.Background(),"CREATE (:Doc {name:'a'})-[:CITES {reason:'r73 held relationship'}]->(:Doc {name:'b'})",nil);require.NoError(t,err)
+  r73Wait(t,e.entered,"relationship worker provider entry")
+  closed:=make(chan error,1);go func(){closed<-db.Close()}()
+  r73Wait(t,e.cancelled,"relationship provider cancellation")
+  earlyReturn:=false
+  select{case err:=<-closed:require.NoError(t,err);earlyReturn=true;case <-time.After(200*time.Millisecond):}
+  unsafe:=e.unsafe.Load();release();r73Wait(t,e.finished,"relationship provider exit")
+  if !earlyReturn{select{case err:=<-closed:require.NoError(t,err);case <-time.After(5*time.Second):t.Fatal("Close did not finish")}}
+  t.Logf("relationship shape=%s provider released while active=%v",mode,unsafe)
+  require.False(t,unsafe,"relationship search's worker is joined after its model is released")
+  require.False(t,earlyReturn,"Close must join actual relationship provider work")
+ })}
+}

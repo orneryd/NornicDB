@@ -1,0 +1,13 @@
+Node: .OwnEmbedder()
+  ID:        nornicdb_db_ownembedder
+  Source:    pkg/nornicdb/db_embedder_owner.go L66
+  Type:      code
+  Community: 
+  Degree:    5
+
+Connections (5):
+  --> Embedder [references] [EXTRACTED] pkg/nornicdb/db_embedder_owner.go:L66
+  --> sameEmbedder() [calls] [EXTRACTED] pkg/nornicdb/db_embedder_owner.go:L81
+  --> .releaseEmbedder() [calls] [EXTRACTED] pkg/nornicdb/db_embedder_owner.go:L84
+  --> .close() [calls] [EXTRACTED] pkg/nornicdb/db_embedder_owner.go:L94
+  <-- DB [method] [EXTRACTED] pkg/nornicdb/db_embedder_owner.go:L66

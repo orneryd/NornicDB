@@ -1,0 +1,68 @@
+package server
+
+import (
+ "context"
+ "sync"
+ "sync/atomic"
+ "testing"
+ "time"
+ nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+ nornicpb "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
+ "github.com/orneryd/nornicdb/pkg/storage"
+ qpb "github.com/qdrant/go-client/qdrant"
+ "github.com/stretchr/testify/require"
+ "google.golang.org/grpc"
+ "google.golang.org/grpc/codes"
+ "google.golang.org/grpc/credentials/insecure"
+ "google.golang.org/grpc/status"
+)
+type r73RPCProvider struct{
+ countingEmbedder
+ entered chan struct{}
+ once sync.Once
+ active,unsafe atomic.Bool
+}
+func(e *r73RPCProvider) Embed(ctx context.Context,text string)([]float32,error){
+ if text!="needle"{return e.countingEmbedder.Embed(ctx,text)}
+ e.active.Store(true);defer e.active.Store(false);e.once.Do(func(){close(e.entered)})
+ <-ctx.Done();return nil,ctx.Err()
+}
+func(e *r73RPCProvider) Close()error{e.unsafe.Store(e.active.Load());return nil}
+func TestR73NativeRPCShutdownContract(t *testing.T){
+ for _,mode:=range []string{"native_search","qdrant_query","qdrant_recommend"}{t.Run(mode,func(t *testing.T){
+  s,_:=setupTestServer(t);s.auth=nil;s.db.SetEmbedConfigForDB(nil)
+  s.config.EmbeddingEnabled=true
+  s.config.Features=&nornicConfig.FeatureFlagsConfig{QdrantGRPCEnabled:true,QdrantGRPCListenAddr:"127.0.0.1:0"}
+  require.NoError(t,s.startQdrantGRPC())
+  dbName:=s.dbManager.DefaultDatabaseName()
+  engine,err:=s.dbManager.GetStorage(dbName);require.NoError(t,err)
+  vector:=make([]float32,1024);vector[0]=1
+  _,err=engine.CreateNode(&storage.Node{ID:"r73-seed",Labels:[]string{"Doc"},Properties:map[string]interface{}{"content":"needle"},ChunkEmbeddings:[][]float32{vector}});require.NoError(t,err)
+  require.NoError(t,s.db.BuildSearchIndexes(context.Background()))
+  const collection="r73-rpc"
+  require.NoError(t,s.qdrantCollectionStore.Create(context.Background(),collection,1024,qpb.Distance_Cosine))
+  collectionEngine,_,err:=s.qdrantCollectionStore.Open(context.Background(),collection);require.NoError(t,err)
+  _,err=s.db.EnsureSearchIndexesBuilt(context.Background(),collection,collectionEngine);require.NoError(t,err)
+  e:=&r73RPCProvider{countingEmbedder:countingEmbedder{dims:1024},entered:make(chan struct{})}
+  require.True(t,s.db.SetEmbedder(e))
+  conn,err:=grpc.NewClient(s.qdrantGRPCServer.Addr(),grpc.WithTransportCredentials(insecure.NewCredentials()));require.NoError(t,err);defer conn.Close()
+  ctx,cancel:=context.WithTimeout(context.Background(),8*time.Second);defer cancel()
+  response:=make(chan error,1)
+  go func(){
+   var err error
+   switch mode{
+   case "native_search":_,err=nornicpb.NewNornicSearchClient(conn).SearchText(ctx,&nornicpb.SearchTextRequest{Query:"needle",Limit:1})
+   case "qdrant_query":_,err=qpb.NewPointsClient(conn).Query(ctx,&qpb.QueryPoints{CollectionName:collection,Query:&qpb.Query{Variant:&qpb.Query_Nearest{Nearest:&qpb.VectorInput{Variant:&qpb.VectorInput_Document{Document:&qpb.Document{Text:"needle"}}}}}})
+   default:_,err=qpb.NewPointsClient(conn).Recommend(ctx,&qpb.RecommendPoints{CollectionName:collection,Limit:1,PositiveVectors:[]*qpb.Vector{{Vector:&qpb.Vector_Document{Document:&qpb.Document{Text:"needle"}}}}})
+   };response<-err
+  }()
+  select{case <-e.entered:case err:=<-response:t.Fatalf("RPC never entered provider: %v",err);case <-time.After(5*time.Second):t.Fatal("RPC did not reach provider")}
+  closed:=make(chan error,1);go func(){closed<-s.db.Close()}()
+  var rpcErr error;select{case rpcErr=<-response:case <-time.After(6*time.Second):t.Fatal("RPC did not return")}
+  select{case err:=<-closed:require.NoError(t,err);case <-time.After(6*time.Second):t.Fatal("Close did not finish")}
+  t.Logf("transport=%s shutdown status=%s error=%v unsafeRelease=%v",mode,status.Code(rpcErr),rpcErr,e.unsafe.Load())
+  require.False(t,e.unsafe.Load())
+  require.Error(t,rpcErr,"RPC must not report successful degraded search after DB shutdown")
+  if rpcErr!=nil{require.Contains(t,[]codes.Code{codes.Canceled,codes.Unavailable},status.Code(rpcErr),"record shutdown as cancellation/unavailability rather than an internal/client error")}
+ })}
+}

@@ -434,6 +434,7 @@ func (s *Server) readJSON(r *http.Request, v interface{}) error {
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
+ if s.db!=nil&&s.db.Lifecycle()!=nil&&s.db.Lifecycle().Closing(){status=http.StatusServiceUnavailable;v=map[string]any{"error":"database is closed","http_code":http.StatusServiceUnavailable,"retryable":true}}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)

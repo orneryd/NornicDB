@@ -1,0 +1,1782 @@
+diff --git a/pkg/cypher/executor_entry.go b/pkg/cypher/executor_entry.go
+index cb9e9d725..87fa97315 100644
+--- a/pkg/cypher/executor_entry.go
++++ b/pkg/cypher/executor_entry.go
+@@ -125,11 +125,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
+ 	}()
+ 	// A scoped executor shares the DB's provider lifetime as well as its
+ 	// publication. Keep it alive through chunking, inline embedding and RAG.
+-	ctx, finishProviderUse, err := e.queryEmbedder.BeginUse(ctx)
+-	if err != nil {
++	statement:=&queryEmbeddingStatementContext{}
++	var err error
++	if err := e.queryEmbedder.BeginUse(ctx,&statement.Scope);err!=nil {
+ 		return nil, err
+ 	}
+-	defer finishProviderUse()
++	defer statement.Finish()
+ 	// A result stream the caller passed is for this statement only, not for
+ 	// the statements it runs on its behalf (#939).
+ 	stream, ctx := takeResultStream(ctx)
+@@ -142,6 +143,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
+ 			e.recordMaterializedResultAccess(result)
+ 		}
+ 	}()
++	defer func(){if ended:=statement.Check();ended!=nil{retErr=ended;result=nil}}()
+ 
+ 	// TRC-15: top-level cypher execute span. Started before timing so the
+ 	// span duration matches the metric observation window exactly. The span
+@@ -164,7 +166,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
+ 	if embeddingState != nil {
+ 		embeddingGeneration = embeddingState.generation
+ 	}
+-	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
++	statement.Scope.Context=ctx
++	statement.instant=slowStart.UTC();statement.binding=e.queryEmbedder;statement.state=embeddingState
++	ctx = statement
+ 	originalCypher := cypher
+ 	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
+ 	defer func() {
+diff --git a/pkg/cypher/query_embedder.go b/pkg/cypher/query_embedder.go
+index fec5fd79b..b60e80ae1 100644
+--- a/pkg/cypher/query_embedder.go
++++ b/pkg/cypher/query_embedder.go
+@@ -4,6 +4,7 @@ import (
+ 	"context"
+ 	"sync"
+ 	"sync/atomic"
++	"github.com/orneryd/nornicdb/pkg/lifecycle"
+ )
+ 
+ // QueryEmbedderBinding publishes one query provider to every protocol and scope.
+@@ -13,23 +14,25 @@ import (
+ type QueryEmbedderBinding struct {
+ 	current  atomic.Pointer[queryEmbedderState]
+ 	next     atomic.Uint64
+-	beginUse func(context.Context) (context.Context, func(), error)
++	lifetime *lifecycle.Owner
++	prepare func(QueryEmbedder) QueryEmbedder
+ }
+ 
+ // SetLifetime binds provider users to their database owner. Configure it during
+ // construction, before exposing the binding or sharing it with scoped executors.
+-func (b *QueryEmbedderBinding) SetLifetime(begin func(context.Context) (context.Context, func(), error)) {
+-	b.beginUse = begin
++func (b *QueryEmbedderBinding) SetLifetime(owner *lifecycle.Owner) {
++	b.lifetime = owner
+ }
++// SetProviderOwner makes every publication, including callers using a retained
++// executor, transfer its resource to the database's generation owner.
++func(b *QueryEmbedderBinding) SetProviderOwner(prepare func(QueryEmbedder)QueryEmbedder){b.prepare=prepare}
++func(b *QueryEmbedderBinding) Lifetime()*lifecycle.Owner{if b==nil{return nil};return b.lifetime}
+ 
+ // BeginUse admits one provider-using operation and returns its cancellation
+ // context and release function. A standalone binding has no lifetime owner.
+ // Callers must release before returning, including on errors.
+-func (b *QueryEmbedderBinding) BeginUse(ctx context.Context) (context.Context, func(), error) {
+-	if b != nil && b.beginUse != nil {
+-		return b.beginUse(ctx)
+-	}
+-	return ctx, func() {}, nil
++func (b *QueryEmbedderBinding) BeginUse(ctx context.Context,scope *lifecycle.Scope) error {
++	return scope.Enter(ctx,b.Lifetime())
+ }
+ 
+ // Load returns the current provider, or nil while it is unavailable.
+@@ -51,6 +54,7 @@ func (b *QueryEmbedderBinding) snapshot() *queryEmbedderState {
+ // may finish using their captured snapshot, but their cached results cannot be
+ // served to a query that captured a different publication.
+ func (b *QueryEmbedderBinding) Store(embedder QueryEmbedder) {
++	if b.prepare!=nil {embedder=b.prepare(embedder)}
+ 	state := &queryEmbedderState{embedder: embedder, generation: b.next.Add(1)}
+ 	if embedder != nil {
+ 		state.cache = make(map[string][]float32, 512)
+@@ -91,7 +95,7 @@ type queryEmbeddingStatementKey struct{}
+ // adds no context allocation. Nested scopes reuse the outer snapshot, including
+ // its nil startup state. Embedding helpers never reload a published provider.
+ type queryEmbeddingStatementContext struct {
+-	context.Context
++	lifecycle.Scope
+ 	instant any // Box the statement clock once, rather than on each Value call.
+ 	binding *QueryEmbedderBinding
+ 	state   *queryEmbedderState
+diff --git a/pkg/cypher/result_stream.go b/pkg/cypher/result_stream.go
+index b2a2d9842..9032c0b3e 100644
+--- a/pkg/cypher/result_stream.go
++++ b/pkg/cypher/result_stream.go
+@@ -2,6 +2,7 @@ package cypher
+ 
+ import (
+ 	"context"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ )
+ 
+ // ResultStream lets a caller consume the rows of an auto-commit read as the
+@@ -33,6 +34,8 @@ import (
+ // over rows the pipeline produces one at a time. Every other statement runs
+ // as before and returns its whole result.
+ type ResultStream struct {
++	ctx context.Context
++	callbackErr error
+ 	threshold int
+ 	onStart   ResultStreamStarter
+ 
+@@ -109,6 +112,7 @@ type armedResultStreamKey struct{}
+ // the ones the client sees; recordAccess records the access to the nodes
+ // and relationships of rows handed to the client.
+ func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func([]string) []string, recordAccess func([][]interface{})) context.Context {
++	stream.ctx=ctx
+ 	stream.statement = statement
+ 	stream.mapColumns = mapColumns
+ 	stream.recordAccess = recordAccess
+@@ -159,6 +163,7 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
+ 		s.buffered = append(s.buffered, row)
+ 		if len(s.buffered) > s.threshold {
+ 			s.start()
++			if s.callbackErr!=nil{return false}
+ 		}
+ 		return true
+ 	}
+@@ -198,7 +203,8 @@ func (s *ResultStream) start() {
+ 	s.started = true
+ 	close(s.startedSignal)
+ 	if s.onStart != nil {
+-		s.onStart.ResultStreamStarted()
++		ctx:=s.ctx;if ctx==nil{ctx=context.Background()}
++		s.callbackErr=lifecycle.Callback(ctx,s.onStart.ResultStreamStarted)
+ 	}
+ }
+ 
+diff --git a/pkg/embed/spans.go b/pkg/embed/spans.go
+index f5a1dd3fe..8265e1a7c 100644
+--- a/pkg/embed/spans.go
++++ b/pkg/embed/spans.go
+@@ -19,6 +19,10 @@ func NewTracedEmbedder(inner Embedder) *TracedEmbedder {
+ 	return &TracedEmbedder{inner: inner}
+ }
+ 
++// Unwrap preserves resource identity when tracing is composed with caches and
++// database-owned provider generations.
++func(t *TracedEmbedder) Unwrap() Embedder {return t.inner}
++
+ func (t *TracedEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+ 	ctx, span := otel.Tracer("nornicdb/embed").Start(ctx, "nornicdb.embed.single",
+ 		trace.WithSpanKind(trace.SpanKindClient),
+diff --git a/pkg/mcp/server.go b/pkg/mcp/server.go
+index 443d988c8..9dd5531be 100644
+--- a/pkg/mcp/server.go
++++ b/pkg/mcp/server.go
+@@ -60,6 +60,7 @@ import (
+ 
+ 	"github.com/orneryd/nornicdb/pkg/auth"
+ 	"github.com/orneryd/nornicdb/pkg/cypher"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
+ 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+@@ -1085,11 +1086,12 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
+ 
+ 	if s.db != nil {
+ 		dbName := DatabaseFromContext(ctx) // empty = default database
+-		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
++		var operation lifecycle.Scope
++		err := s.queryEmbedder.BeginUse(ctx,&operation)
+ 		if err != nil {
+ 			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+ 		}
+-		defer finishProviderUse()
++		defer operation.Finish();ctx=&operation
+ 		engine, err := s.storageForContext(ctx)
+ 		if err != nil {
+ 			return nil, err
+diff --git a/pkg/nornicdb/db.go b/pkg/nornicdb/db.go
+index b8780fb19..b77b4574d 100644
+--- a/pkg/nornicdb/db.go
++++ b/pkg/nornicdb/db.go
+@@ -50,6 +50,7 @@ import (
+ 	"github.com/orneryd/nornicdb/pkg/encryption"
+ 	"github.com/orneryd/nornicdb/pkg/inference"
+ 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
++	lifetime "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
+ 	"github.com/orneryd/nornicdb/pkg/observability"
+ 	"github.com/orneryd/nornicdb/pkg/replication"
+@@ -68,7 +69,7 @@ import (
+ var (
+ 	ErrNotFound     = localizedError(localization.NornicDBCoreNotFound(), nil)
+ 	ErrInvalidID    = localizedError(localization.NornicDBCoreInvalidID(), nil)
+-	ErrClosed       = localizedError(localization.NornicDBCoreDatabaseClosed(), nil)
++	ErrClosed       = lifetime.ErrClosed
+ 	ErrInvalidInput = localizedError(localization.NornicDBCoreInvalidInput(), nil)
+ 
+ 	// ErrQueryEmbeddingDimensionMismatch is returned when the query is embedded
+@@ -155,7 +156,7 @@ func DefaultConfig() *Config {
+ type DB struct {
+ 	config *Config
+ 	mu     sync.RWMutex
+-	closed bool
++	lifetime *lifetime.Owner
+ 
+ 	// Internal components
+ 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
+@@ -197,11 +198,10 @@ type DB struct {
+ 	encryptionEnabled bool
+ 
+ 	// Background goroutine tracking
+-	bgWg sync.WaitGroup
++	background *lifetime.Group
+ 
+ 	// buildCtx is cancelled when the DB closes so startup index build stops promptly.
+ 	buildCtx    context.Context
+-	buildCancel context.CancelFunc
+ 	// derivedIndexesHealthy is false when startup reconstruction failed. A
+ 	// failed startup must not leave a clean-shutdown marker that would suppress
+ 	// reconstruction on the next restart.
+@@ -249,8 +249,6 @@ type DB struct {
+ 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
+ 	embedderRegistryMu sync.RWMutex
+ 	embedderRegistry   map[string]embed.Embedder
+-	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
+-	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
+ 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
+ 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
+ 	// Production uses embed.NewEmbedder.
+@@ -618,6 +616,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 		config:            config,
+ 		searchWarmupReady: make(chan struct{}),
+ 	}
++	db.lifetime=lifetime.New()
++	db.background=db.lifetime.NewGroup()
++	db.buildCtx=db.lifetime.Context()
+ 
+ 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
+ 	if dataDir != "" {
+@@ -977,7 +978,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 
+ 	// Initialize Cypher executor
+ 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+-	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
++	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.lifetime)
++	db.cypherExecutor.QueryEmbedderBinding().SetProviderOwner(db.ownQueryProvider)
+ 	// The base executor is shared by every embedded caller of DB.Cypher /
+ 	// ExecuteCypher: a statement must never leave it inside a transaction.
+ 	// Embedded callers that want explicit transactions create their own
+@@ -1134,9 +1136,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 		db.inferenceServices = make(map[string]*inference.Engine)
+ 		// Eagerly create default DB inference for parity with prior behavior.
+ 		if _, err := db.getOrCreateInferenceService(db.defaultDatabaseName(), db.storage); err != nil {
+-			db.mu.Lock()
+-			db.closed = true
+-			db.mu.Unlock()
+ 			_ = db.closeInternal()
+ 			return nil, localizedError(localization.NornicDBCoreInferenceInitializeFailed(err), err)
+ 		}
+@@ -1152,6 +1151,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 		config.EmbeddingWorker.ChunkOverlapSet,
+ 	)
+ 	db.embedWorkerConfig = &EmbedWorkerConfig{
++		Lifetime: db.lifetime,
+ 		NumWorkers:              config.EmbeddingWorker.NumWorkers,
+ 		ScanInterval:            config.EmbeddingWorker.ScanInterval,
+ 		BatchDelay:              config.EmbeddingWorker.BatchDelay,
+@@ -1276,7 +1276,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
+ 	// This ensures search is ready before first query and k-means runs after indexes exist.
+ 	// Use a context cancelled on DB close so the build stops when the process is killed.
+ 	defaultDBName := db.defaultDatabaseName()
+-	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+ 	if db.accessFlusher != nil {
+ 		db.accessFlusher.Start(db.buildCtx)
+ 	}
+@@ -1583,12 +1582,13 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
+ 	if embedder == nil {
+ 		return false
+ 	}
+-	if _, accepted := db.OwnEmbedder(embedder); !accepted {
++	resource,accepted:=db.ownProvider(embedder); if !accepted {
+ 		return false
+ 	}
+ 
++	embedder=newManagedProvider(embedder,resource)
+ 	db.mu.Lock()
+-	if db.closed {
++	if db.isClosed() {
+ 		// Close has stopped, or is stopping, the queue and timers this
+ 		// would start.
+ 		db.mu.Unlock()
+@@ -1640,7 +1640,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
+ 	// Set callback to update search index after embedding and run inference.
+ 	// Note: IndexNode is idempotent (uses map keyed by node ID), so if the storage
+ 	// OnNodeUpdated callback also calls IndexNode, no double-counting occurs.
+-	db.embedQueue.SetOnEmbedded(func(node *storage.Node) {
++	db.embedQueue.setOnEmbeddedInternal(func(node *storage.Node) {
+ 		db.onNodeEmbedded(node)
+ 	})
+ 
+@@ -1697,7 +1697,7 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
+ 	}
+ 	db.mu.Lock()
+ 	eq := db.embedQueue
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.Unlock()
+ 	if eq == nil || closed {
+ 		return
+@@ -1768,13 +1768,13 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+ 	// Per-database model construction is also part of the DB lifetime. In
+ 	// particular, a constructor ignoring cancellation cannot outlive Close.
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil
+ 	}
+-	db.bgWg.Add(1)
++	scope,scopeErr:=db.backgroundScope();if scopeErr!=nil{db.mu.RUnlock();return nil}
+ 	db.mu.RUnlock()
+-	defer db.bgWg.Done()
++	defer scope.Finish()
+ 
+ 	key := embedConfigKey(cfg)
+ 	db.embedderRegistryMu.RLock()
+@@ -1834,12 +1834,14 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+ 	db.embedderCreateMu.Unlock()
+ 
+ 	newEmbedder, createErr := create(cfg)
+-	release, accepted := db.OwnEmbedder(newEmbedder)
++	resource, accepted := db.ownProvider(newEmbedder)
++ release:=func()error{if resource!=nil{return resource.Release()};return nil}
+ 	if createErr != nil || !accepted {
+ 		_ = release()
+ 		newEmbedder = nil
+ 	}
+ 
++	if newEmbedder!=nil {newEmbedder=newManagedProvider(newEmbedder,resource)}
+ 	discard := false
+ 	db.embedderRegistryMu.Lock()
+ 	if createErr == nil && newEmbedder != nil {
+@@ -1881,7 +1883,7 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+ // each call rebuilds the indexes.
+ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
+ 	db.mu.RLock()
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.RUnlock()
+ 	if closed {
+ 		return ErrClosed
+@@ -1961,15 +1963,15 @@ func (db *DB) StopEmbedQueue() {
+ // from being launched once shutdown has started.
+ func (db *DB) startBackgroundTask(fn func()) bool {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return false
+ 	}
+-	db.bgWg.Add(1)
++	scope,scopeErr:=db.backgroundScope();if scopeErr!=nil{db.mu.RUnlock();return false}
+ 	db.mu.RUnlock()
+ 
+ 	go func() {
+-		defer db.bgWg.Done()
++		defer scope.Finish()
+ 		fn()
+ 	}()
+ 	return true
+@@ -2345,7 +2347,7 @@ func (db *DB) GetReplicator() replication.Replicator {
+ // Cypher executes a Cypher query.
+ func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil, ErrClosed
+ 	}
+diff --git a/pkg/nornicdb/db_admin.go b/pkg/nornicdb/db_admin.go
+index b5f7500c5..60d27fc0c 100644
+--- a/pkg/nornicdb/db_admin.go
++++ b/pkg/nornicdb/db_admin.go
+@@ -96,7 +96,7 @@ func (db *DB) GetGPUManager() interface{} {
+ // Returns nil if clustering is not enabled or there are too few embeddings.
+ func (db *DB) TriggerSearchClustering() error {
+ 	db.mu.RLock()
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.RUnlock()
+ 	if closed {
+ 		return ErrClosed
+@@ -126,7 +126,7 @@ func (db *DB) TriggerSearchClustering() error {
+ // finishes rather than up to an interval later.
+ func (db *DB) startClusteringTimer(interval time.Duration) {
+ 	db.mu.Lock()
+-	if db.clusterTicker != nil || db.closed {
++	if db.clusterTicker != nil || db.isClosed() {
+ 		db.mu.Unlock()
+ 		return
+ 	}
+@@ -134,11 +134,11 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
+ 	stopCh := make(chan struct{})
+ 	db.clusterTicker = ticker
+ 	db.clusterTickerStop = stopCh
+-	db.bgWg.Add(1)
++	scope,scopeErr:=db.backgroundScope();if scopeErr!=nil{ticker.Stop();db.clusterTicker=nil;db.clusterTickerStop=nil;db.mu.Unlock();return}
+ 	db.mu.Unlock()
+ 
+ 	go func(t *time.Ticker, stop <-chan struct{}) {
+-		defer db.bgWg.Done()
++		defer scope.Finish()
+ 		log.Printf("🔬 K-means clustering timer started (interval: %v)", interval)
+ 
+ 		// Use buildCtx so clustering stops when DB is closed (e.g. SIGINT/SIGTERM).
+@@ -248,7 +248,7 @@ type CypherResult struct {
+ // ExecuteCypher runs a Cypher query and returns structured results.
+ func (db *DB) ExecuteCypher(ctx context.Context, query string, params map[string]interface{}) (*CypherResult, error) {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil, ErrClosed
+ 	}
+@@ -469,7 +469,7 @@ func (db *DB) ListNodes(ctx context.Context, label string, limit, offset int) ([
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -527,7 +527,7 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -564,7 +564,7 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string,
+ 
+ func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil, ErrClosed
+ 	}
+@@ -623,7 +623,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
+ // UpdateNode updates a node's properties.
+ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]interface{}) (*Node, error) {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil, ErrClosed
+ 	}
+@@ -690,7 +690,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
+ // DeleteNode deletes a node.
+ func (db *DB) DeleteNode(ctx context.Context, id string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+@@ -722,7 +722,7 @@ func (db *DB) ListEdges(ctx context.Context, relType string, limit, offset int)
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -769,7 +769,7 @@ func (db *DB) GetEdge(ctx context.Context, id string) (*GraphEdge, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -794,7 +794,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -841,7 +841,7 @@ func (db *DB) GetEdgesForNode(ctx context.Context, nodeID string) ([]*GraphEdge,
+ // CreateEdge creates a new edge.
+ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, properties map[string]interface{}) (*GraphEdge, error) {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return nil, ErrClosed
+ 	}
+@@ -885,7 +885,7 @@ func (db *DB) CreateEdge(ctx context.Context, source, target, edgeType string, p
+ // DeleteEdge deletes an edge.
+ func (db *DB) DeleteEdge(ctx context.Context, id string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+@@ -986,7 +986,7 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1033,7 +1033,7 @@ func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEm
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1062,7 +1062,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 	if limit <= 0 {
+@@ -1146,7 +1146,7 @@ func (db *DB) GetLabels(ctx context.Context) ([]string, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1166,7 +1166,7 @@ func (db *DB) GetRelationshipTypes(ctx context.Context) ([]string, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1205,7 +1205,7 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1242,7 +1242,7 @@ func (db *DB) GetIndexes(ctx context.Context) ([]*IndexInfo, error) {
+ // Supported types: "property", "fulltext", "vector", "range"
+ func (db *DB) CreateIndex(ctx context.Context, label, property, indexType string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+@@ -1299,7 +1299,7 @@ func (db *DB) RebuildTemporalIndexes(ctx context.Context) error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 	return db.rebuildTemporalIndexesNoLock(ctx)
+@@ -1310,7 +1310,7 @@ func (db *DB) PruneTemporalHistory(ctx context.Context, opts storage.TemporalPru
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return 0, ErrClosed
+ 	}
+ 	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
+@@ -1324,7 +1324,7 @@ func (db *DB) RebuildMVCCHeads(ctx context.Context) error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+@@ -1338,7 +1338,7 @@ func (db *DB) PruneMVCCVersions(ctx context.Context, opts storage.MVCCPruneOptio
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return 0, ErrClosed
+ 	}
+ 	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+@@ -1352,7 +1352,7 @@ func (db *DB) LifecycleStatus() (map[string]interface{}, error) {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+@@ -1366,7 +1366,7 @@ func (db *DB) TriggerLifecyclePrune(ctx context.Context) error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+@@ -1380,7 +1380,7 @@ func (db *DB) PauseLifecycle() error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+@@ -1394,7 +1394,7 @@ func (db *DB) ResumeLifecycle() error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+@@ -1410,7 +1410,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 
+@@ -1467,7 +1467,7 @@ const restoreEmbeddingDrainTimeout = 30 * time.Second
+ //	err := db.Restore(ctx, "backup-20241201.json")
+ func (db *DB) Restore(ctx context.Context, path string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+@@ -1489,7 +1489,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
+ 		}
+ 		if !isJSON {
+ 			db.mu.Lock()
+-			if db.closed {
++			if db.isClosed() {
+ 				db.mu.Unlock()
+ 				return ErrClosed
+ 			}
+@@ -1544,7 +1544,7 @@ legacyJSONRestore:
+ 	}
+ 
+ 	db.mu.Lock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.Unlock()
+ 		return ErrClosed
+ 	}
+@@ -1633,7 +1633,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+@@ -1748,7 +1748,7 @@ func escapeCSV(s string) string {
+ // Uses streaming iteration to avoid loading all nodes into memory.
+ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+@@ -1787,7 +1787,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
+ // Uses streaming iteration to avoid loading all nodes into memory.
+ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
+ 	db.mu.RLock()
+-	if db.closed {
++	if db.isClosed() {
+ 		db.mu.RUnlock()
+ 		return ErrClosed
+ 	}
+diff --git a/pkg/nornicdb/db_embedder_owner.go b/pkg/nornicdb/db_embedder_owner.go
+deleted file mode 100644
+index 384684d69..000000000
+--- a/pkg/nornicdb/db_embedder_owner.go
++++ /dev/null
+@@ -1,126 +0,0 @@
+-package nornicdb
+-
+-import (
+-	"context"
+-	"reflect"
+-	"sync"
+-
+-	"github.com/orneryd/nornicdb/pkg/embed"
+-)
+-
+-// beginProviderUse is the admission/cancellation owner for foreground provider
+-// users. Close seals admission under the same lock before cancelling the DB
+-// lifetime, and waits outside that lock. Providers which honor context cancel
+-// promptly; an uncancellable call retains its model until it actually returns.
+-func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), error) {
+-	db.mu.RLock()
+-	if db.closed {
+-		db.mu.RUnlock()
+-		return nil, nil, ErrClosed
+-	}
+-	if err := ctx.Err(); err != nil {
+-		db.mu.RUnlock()
+-		return nil, nil, err
+-	}
+-	db.foregroundWg.Add(1)
+-	db.mu.RUnlock()
+-	ctx, cancel := context.WithCancel(ctx)
+-	stop := context.AfterFunc(db.LifetimeContext(), cancel)
+-	return ctx, func() {
+-		stop()
+-		cancel()
+-		db.foregroundWg.Done()
+-	}, nil
+-}
+-
+-// embedderResource is the single release path for a provider, whether it is
+-// still being checked, installed, replaced, or shared through a cache/registry.
+-type embedderResource struct {
+-	provider embed.Embedder
+-	once     sync.Once
+-	err      error
+-}
+-
+-func sameEmbedder(a, b embed.Embedder) bool {
+-	return a != nil && reflect.TypeOf(a).Comparable() && a == b
+-}
+-
+-func (r *embedderResource) close() error {
+-	r.once.Do(func() {
+-		if closer, ok := r.provider.(interface{ Close() error }); ok {
+-			r.err = closer.Close()
+-		}
+-	})
+-	return r.err
+-}
+-
+-// OwnEmbedder gives the database ownership of a constructed provider before its
+-// health check or installation. The returned idempotent release function frees
+-// an unsuccessful attempt before retrying. Successful attempts leave release to
+-// DB.Close, after initialization and queue workers have joined. Cache wrappers
+-// and registry aliases share the underlying provider's owner.
+-//
+-// Initialization must run through RunBackgroundTask so Close also joins model
+-// construction and health checks. A closing DB refuses and releases new models;
+-// an already owned provider remains under its existing shutdown owner.
+-func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+-	for {
+-		cached, ok := provider.(*embed.CachedEmbedder)
+-		if !ok {
+-			break
+-		}
+-		provider = cached.Unwrap()
+-	}
+-	if provider == nil {
+-		return func() error { return nil }, false
+-	}
+-	db.mu.Lock()
+-	// Comparable identities cover pointer-backed model providers without making
+-	// a non-comparable custom value panic when used as an interface/map key.
+-	for _, resource := range db.ownedEmbedders {
+-		if sameEmbedder(provider, resource.provider) {
+-			accepted = !db.closed
+-			db.mu.Unlock()
+-			return func() error { return db.releaseEmbedder(resource) }, accepted
+-		}
+-	}
+-	resource := &embedderResource{provider: provider}
+-	accepted = !db.closed
+-	if accepted {
+-		db.ownedEmbedders = append(db.ownedEmbedders, resource)
+-	}
+-	db.mu.Unlock()
+-	if !accepted {
+-		_ = resource.close()
+-	}
+-	return func() error { return db.releaseEmbedder(resource) }, accepted
+-}
+-
+-func (db *DB) releaseEmbedder(resource *embedderResource) error {
+-	err := resource.close()
+-	db.mu.Lock()
+-	for i, owned := range db.ownedEmbedders {
+-		if owned == resource {
+-			db.ownedEmbedders = append(db.ownedEmbedders[:i], db.ownedEmbedders[i+1:]...)
+-			break
+-		}
+-	}
+-	db.mu.Unlock()
+-	return err
+-}
+-
+-// Called only after cancellation and joining every DB-owned model user. Retain
+-// replaced providers until here: an in-flight query may still hold its snapshot.
+-func (db *DB) closeOwnedEmbedders() []error {
+-	db.mu.Lock()
+-	resources := db.ownedEmbedders
+-	db.ownedEmbedders = nil
+-	db.mu.Unlock()
+-	var errs []error
+-	for _, resource := range resources {
+-		if err := resource.close(); err != nil {
+-			errs = append(errs, err)
+-		}
+-	}
+-	return errs
+-}
+diff --git a/pkg/nornicdb/db_lifecycle.go b/pkg/nornicdb/db_lifecycle.go
+index 1bceb1394..3941c3dc9 100644
+--- a/pkg/nornicdb/db_lifecycle.go
++++ b/pkg/nornicdb/db_lifecycle.go
+@@ -9,20 +9,17 @@ import (
+ 	"strings"
+ 
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++	"github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/storage"
+ )
+ 
+ // Close closes the database.
+ func (db *DB) Close() error {
+ 	db.mu.Lock()
+-	if db.closed {
+-		db.mu.Unlock()
+-		return nil
+-	}
+-	db.closed = true
++	if db.lifetime==nil {db.lifetime=lifecycle.New();db.background=db.lifetime.NewGroup();db.buildCtx=db.lifetime.Context()}
++	owner:=db.lifetime
+ 	db.mu.Unlock()
+-
+-	return db.closeInternal()
++	return owner.Close(db.stopResourceProducers,db.closeComponents)
+ }
+ 
+ // LifetimeContext returns a context that is cancelled when the database
+@@ -68,25 +65,24 @@ func (db *DB) retentionPoliciesPath() string {
+ // closeInternal performs cleanup without requiring the lock.
+ // Used during initialization failures and normal close.
+ func (db *DB) closeInternal() error {
+-	// SetEmbedder refuses once closed is set, so embedQueue is final here.
++	return db.Close()
++}
++
++func (db *DB) stopResourceProducers() {
+ 	db.mu.Lock()
+-	db.closed = true
+ 	embedQueue := db.embedQueue
+ 	db.mu.Unlock()
+-
+ 	db.stopClusteringTimer()
+-	if db.buildCancel != nil {
+-		db.buildCancel()
+-	}
+ 	if embedQueue != nil {
+ 		embedQueue.Close()
+ 	}
+-	db.bgWg.Wait()
+-	db.foregroundWg.Wait()
++	db.searchServicesMu.RLock()
++	for _,entry:=range db.searchServices {if entry!=nil&&entry.svc!=nil {entry.svc.StopBackgroundWork()}}
++	db.searchServicesMu.RUnlock()
++}
+ 
+-	// Queue workers, initializers and foreground calls are now quiescent. Release all provider
+-	// resources through their one owner, including cached/replaced providers.
+-	errs := db.closeOwnedEmbedders()
++func (db *DB) closeComponents() error {
++	var errs []error
+ 	// Stop every component that can still mutate graph storage before recording
+ 	// the durable storage boundary. Search snapshots are derived artifacts and
+ 	// may take much longer to save; they must not delay this marker.
+diff --git a/pkg/nornicdb/db_privacy.go b/pkg/nornicdb/db_privacy.go
+index 33bd9b7bc..2619ad710 100644
+--- a/pkg/nornicdb/db_privacy.go
++++ b/pkg/nornicdb/db_privacy.go
+@@ -40,7 +40,7 @@ func (db *DB) RecordConsent(ctx context.Context, consent *Consent) error {
+ 	db.mu.Lock()
+ 	defer db.mu.Unlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 
+@@ -106,7 +106,7 @@ func (db *DB) HasConsent(ctx context.Context, userID, purpose string) (bool, err
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return false, ErrClosed
+ 	}
+ 
+@@ -137,7 +137,7 @@ func (db *DB) RevokeConsent(ctx context.Context, userID, purpose string) error {
+ 	db.mu.Lock()
+ 	defer db.mu.Unlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return ErrClosed
+ 	}
+ 
+@@ -177,7 +177,7 @@ func (db *DB) GetUserConsents(ctx context.Context, userID string) ([]Consent, er
+ 	db.mu.RLock()
+ 	defer db.mu.RUnlock()
+ 
+-	if db.closed {
++	if db.isClosed() {
+ 		return nil, ErrClosed
+ 	}
+ 
+diff --git a/pkg/nornicdb/embed_queue.go b/pkg/nornicdb/embed_queue.go
+index 5cd9aa63c..1ef45dde7 100644
+--- a/pkg/nornicdb/embed_queue.go
++++ b/pkg/nornicdb/embed_queue.go
+@@ -14,6 +14,7 @@ import (
+ 	"github.com/orneryd/nornicdb/pkg/embed"
+ 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/storage"
+ )
+ 
+@@ -41,7 +42,9 @@ type EmbedWorker struct {
+ 
+ 	ctx         context.Context
+ 	cancel      context.CancelFunc
+-	wg          sync.WaitGroup
++	owner *lifecycle.Owner
++ queueGroup *lifecycle.Group
++ workers *lifecycle.Group
+ 	lifecycleMu sync.Mutex
+ 
+ 	// Trigger channel to wake up worker immediately
+@@ -53,6 +56,7 @@ type EmbedWorker struct {
+ 
+ 	// Callback after embedding a node (for search index update)
+ 	onEmbedded func(node *storage.Node)
++ onEmbeddedInternal func(node *storage.Node)
+ 
+ 	// Callback when queue becomes empty (for triggering k-means clustering)
+ 	onQueueEmpty func(processedCount int)
+@@ -64,7 +68,6 @@ type EmbedWorker struct {
+ 	failed    atomic.Int64
+ 	parked    atomic.Int64
+ 	inFlight  atomic.Int64
+-	closed    atomic.Bool // Set to true when Close() is called
+ 	// restoreHolds counts the restores holding the worker (holdForRestore);
+ 	// while one does, it claims no nodes and doesn't scan the store.
+ 	restoreHolds atomic.Int32
+@@ -112,6 +115,8 @@ const minRefreshOnEmptyInterval = 30 * time.Second
+ 
+ // EmbedWorkerConfig holds configuration for the embedding worker.
+ type EmbedWorkerConfig struct {
++ // Lifetime attaches worker generations and inference children to the DB owner.
++ Lifetime *lifecycle.Owner
+ 	// Worker settings
+ 	NumWorkers   int           // Number of concurrent workers (default: 1, 0 disables background workers)
+ 	ScanInterval time.Duration // How often to scan for nodes without embeddings (default: 5s)
+@@ -192,10 +197,12 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
+ 		config.EmbedBatchSize = 32
+ 	}
+ 
+-	ctx, cancel := context.WithCancel(context.Background())
++	owner:=config.Lifetime;if owner==nil {owner=lifecycle.New()}
++ queueGroup:=owner.NewGroup();workers:=queueGroup.NewGroup();ctx:=workers.Context();cancel:=workers.Cancel
+ 
+ 	ew := &EmbedWorker{
+ 		embedder:          embedder,
++ owner:owner,queueGroup:queueGroup,workers:workers,
+ 		storage:           storage,
+ 		config:            config,
+ 		ctx:               ctx,
+@@ -211,8 +218,7 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
+ 	if !config.DeferWorkerStart {
+ 		numWorkers := config.NumWorkers
+ 		for i := 0; i < numWorkers; i++ {
+-			ew.wg.Add(1)
+-			go ew.worker()
++			ew.workers.Go(func(scope *lifecycle.Scope){ew.worker(scope)})
+ 		}
+ 		if numWorkers > 1 {
+ 			fmt.Printf("🧠 Started %d embedding workers for parallel processing\n", numWorkers)
+@@ -229,14 +235,13 @@ func (ew *EmbedWorker) StartWorkers() {
+ 	defer ew.lifecycleMu.Unlock()
+ 	ew.mu.Lock()
+ 	defer ew.mu.Unlock()
+-	if ew.closed.Load() || ew.workersStarted {
++	if ew.isClosed() || ew.workersStarted {
+ 		return
+ 	}
+ 	ew.workersStarted = true
+ 	numWorkers := ew.config.NumWorkers
+ 	for i := 0; i < numWorkers; i++ {
+-		ew.wg.Add(1)
+-		go ew.worker()
++		ew.workers.Go(func(scope *lifecycle.Scope){ew.worker(scope)})
+ 	}
+ 	if numWorkers == 0 {
+ 		fmt.Println("🧠 Embed queue workers disabled (configured workers=0)")
+@@ -316,7 +321,7 @@ func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
+ // Trigger wakes up the worker to check for nodes without embeddings.
+ // Call this after creating a new node.
+ func (ew *EmbedWorker) Trigger() {
+-	if ew.closed.Load() {
++	if ew.isClosed() {
+ 		return
+ 	}
+ 	delay := time.Duration(0)
+@@ -334,7 +339,7 @@ func (ew *EmbedWorker) Trigger() {
+ 		ew.triggerDebounceTimer.Stop()
+ 	}
+ 	ew.triggerDebounceTimer = time.AfterFunc(delay, func() {
+-		if ew.closed.Load() {
++		if ew.isClosed() {
+ 			return
+ 		}
+ 		// Debounce reset behavior: only latest schedule fires.
+@@ -353,7 +358,7 @@ func (ew *EmbedWorker) TriggerImmediate() {
+ }
+ 
+ func (ew *EmbedWorker) signalTrigger() {
+-	if ew.closed.Load() {
++	if ew.isClosed() {
+ 		return
+ 	}
+ 	select {
+@@ -535,7 +540,7 @@ func (ew *EmbedWorker) Reset() {
+ 	defer ew.lifecycleMu.Unlock()
+ 
+ 	ew.mu.Lock()
+-	if ew.closed.Load() {
++	if ew.isClosed() {
+ 		ew.mu.Unlock()
+ 		return
+ 	}
+@@ -559,8 +564,8 @@ func (ew *EmbedWorker) Reset() {
+ 	// Wait synchronously for previous workers to exit before reusing the WaitGroup.
+ 	// This avoids "WaitGroup is reused before previous Wait has returned" panics
+ 	// when Reset and Close overlap under load.
+-	ew.wg.Wait()
+-	if ew.closed.Load() {
++	_ = ew.workers.Stop(context.Background(),nil)
++	if ew.isClosed() {
+ 		return
+ 	}
+ 
+@@ -579,7 +584,7 @@ func (ew *EmbedWorker) Reset() {
+ 	ew.inFlight.Store(0)
+ 
+ 	// Create new context (don't recreate trigger channel - just drain it)
+-	ew.ctx, ew.cancel = context.WithCancel(context.Background())
++	ew.workers=ew.queueGroup.NewGroup();ew.ctx=ew.workers.Context();ew.cancel=ew.workers.Cancel
+ 
+ 	// Drain any pending triggers
+ 	select {
+@@ -588,8 +593,7 @@ func (ew *EmbedWorker) Reset() {
+ 	}
+ 
+ 	// Restart worker
+-	ew.wg.Add(1)
+-	go ew.worker()
++	ew.workers.Go(func(scope *lifecycle.Scope){ew.worker(scope)})
+ 
+ 	_ = wasRunning // suppress unused warning
+ 	fmt.Println("✅ Embed worker reset complete, starting fresh scan")
+@@ -600,7 +604,7 @@ func (ew *EmbedWorker) Close() {
+ 	ew.lifecycleMu.Lock()
+ 	defer ew.lifecycleMu.Unlock()
+ 
+-	ew.closed.Store(true)
++	
+ 
+ 	// Stop pending debounced trigger timer.
+ 	ew.triggerMu.Lock()
+@@ -618,11 +622,11 @@ func (ew *EmbedWorker) Close() {
+ 	}
+ 	ew.clusterDebounceMu.Unlock()
+ 
+-	ew.cancel()
++	ew.queueGroup.Cancel()
+ 	// Do NOT close trigger channel: Trigger() can still race and send, which would panic.
+ 	// Context cancellation is enough to stop workers.
+ 	// Wait synchronously for worker shutdown to complete.
+-	ew.wg.Wait()
++	_ = ew.queueGroup.Stop(context.Background(),nil)
+ }
+ 
+ // scheduleClusteringDebounced accumulates embedding counts and debounces the k-means trigger.
+@@ -676,8 +680,8 @@ func (ew *EmbedWorker) scheduleClusteringDebounced(processedCount int) {
+ }
+ 
+ // worker runs the embedding loop.
+-func (ew *EmbedWorker) worker() {
+-	defer ew.wg.Done()
++func (ew *EmbedWorker) worker(scopes ...*lifecycle.Scope) {
++ scope:=queueScope(scopes);if scope==nil {scope=new(lifecycle.Scope);if err:=scope.EnterTask(ew.ctx,ew.owner);err!=nil{return}};defer scope.Finish();scopes=[]*lifecycle.Scope{scope}
+ 
+ 	fmt.Println("🧠 Embed worker started")
+ 
+@@ -693,7 +697,7 @@ func (ew *EmbedWorker) worker() {
+ 				fmt.Println("✅ Embedding model loaded, worker active")
+ 				break
+ 			}
+-			if ew.closed.Load() {
++			if ew.isClosed() {
+ 				return
+ 			}
+ 
+@@ -727,7 +731,8 @@ func (ew *EmbedWorker) worker() {
+ 		}
+ 	}
+ 
+-	ew.processUntilEmpty()
++	ew.processUntilEmpty(scopes...)
++ if err:=scope.Check();err!=nil{return}
+ 
+ 	ticker := time.NewTicker(ew.config.ScanInterval)
+ 	defer ticker.Stop()
+@@ -740,18 +745,20 @@ func (ew *EmbedWorker) worker() {
+ 
+ 		case <-ew.trigger:
+ 			// Immediate trigger - process until queue is empty
+-			ew.processUntilEmpty()
++			ew.processUntilEmpty(scopes...)
++ if err:=scope.Check();err!=nil{return}
+ 
+ 		case <-ticker.C:
+ 			// Regular interval scan
+-			ew.processNextBatch()
++			ew.processNextBatch(scopes...)
++ if err:=scope.FlushCallbacks();err!=nil{return}
+ 		}
+ 	}
+ }
+ 
+ // processUntilEmpty keeps processing nodes until no more need embeddings.
+ // When the queue becomes empty, it schedules a debounced k-means clustering trigger.
+-func (ew *EmbedWorker) processUntilEmpty() {
++func (ew *EmbedWorker) processUntilEmpty(scopes ...*lifecycle.Scope) {
+ 	batchProcessed := 0
+ 	consecutiveEmptyCount := 0
+ 	maxConsecutiveEmpty := 3 // Stop after 3 consecutive empty checks
+@@ -766,7 +773,8 @@ func (ew *EmbedWorker) processUntilEmpty() {
+ 		default:
+ 			// processNextBatch returns true if it actually processed or skipped a node
+ 			// It returns false if there was nothing to process
+-			didWork := ew.processNextBatch()
++			didWork := ew.processNextBatch(scopes...)
++ if scope:=queueScope(scopes);scope!=nil {if err:=scope.FlushCallbacks();err!=nil{return}}
+ 			if !didWork {
+ 				consecutiveEmptyCount++
+ 				if consecutiveEmptyCount == 1 {
+@@ -826,7 +834,7 @@ func (ew *EmbedWorker) holdForRestore(wait time.Duration) (release func()) {
+ // Returns true if it did useful work (processed or permanently skipped a node).
+ // Returns false if there was nothing to process, if a node was temporarily
+ // skipped, or while a restore holds the worker.
+-func (ew *EmbedWorker) processNextBatch() bool {
++func (ew *EmbedWorker) processNextBatch(scopes ...*lifecycle.Scope) bool {
+ 	if ew.restoreHolds.Load() > 0 {
+ 		return false
+ 	}
+@@ -835,20 +843,20 @@ func (ew *EmbedWorker) processNextBatch() bool {
+ 	embedder := ew.embedder
+ 	ew.mu.Unlock()
+ 	if hasResolver {
+-		return ew.processNextResolvedBatch()
++		return ew.processNextResolvedBatch(scopes...)
+ 	}
+ 	if provider, ok := embedder.(embed.DocumentPropertyChunkEmbedder); ok && provider.UsesDocumentProperties() {
+-		return ew.processNextNode()
++		return ew.processNextNode(scopes...)
+ 	}
+ 	if batcher, ok := embedder.(embed.DocumentBatchChunkEmbedder); ok && ew.config.EmbedBatchSize > 1 {
+ 		if _, indexed := ew.storage.(EmbeddingIndexManager); indexed {
+-			return ew.processNextDocumentBatch(embedder, batcher)
++			return ew.processNextDocumentBatch(embedder, batcher, scopes...)
+ 		}
+ 	}
+-	return ew.processNextNode()
++	return ew.processNextNode(scopes...)
+ }
+ 
+-func (ew *EmbedWorker) processNextResolvedBatch() bool {
++func (ew *EmbedWorker) processNextResolvedBatch(scopes ...*lifecycle.Scope) bool {
+ 	limit := ew.config.EmbedBatchSize
+ 	if limit < 1 {
+ 		limit = 1
+@@ -886,7 +894,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
+ 		if structured, ok := provider.(embed.DocumentPropertyChunkEmbedder); ok && structured.UsesDocumentProperties() {
+ 			propertyBatcher, batchOK := provider.(embed.DocumentPropertyBatchChunkEmbedder)
+ 			if !batchOK || limit == 1 {
+-				ew.processClaimedNode(node, provider)
++				ew.processClaimedNode(node, provider, scopes...)
+ 				continue
+ 			}
+ 			key := fmt.Sprintf("%T:%p", provider, provider)
+@@ -900,7 +908,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
+ 		}
+ 		batcher, ok := provider.(embed.DocumentBatchChunkEmbedder)
+ 		if !ok || limit == 1 {
+-			ew.processClaimedNode(node, provider)
++			ew.processClaimedNode(node, provider, scopes...)
+ 			continue
+ 		}
+ 		key := fmt.Sprintf("%T:%p", provider, provider)
+@@ -960,7 +968,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
+ 				ew.releaseNodeClaim(node.ID)
+ 				continue
+ 			}
+-			ew.persistEmbeddedNode(node, sources[index], results[index].Chunks, results[index].Embeddings, documentResultMeta(results[index]), group.provider)
++			ew.persistEmbeddedNode(node, sources[index], results[index].Chunks, results[index].Embeddings, documentResultMeta(results[index]), group.provider, scopes...)
+ 			ew.releaseNodeClaim(node.ID)
+ 		}
+ 	}
+@@ -968,7 +976,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
+ 	return true
+ }
+ 
+-func (ew *EmbedWorker) processNextNode() bool {
++func (ew *EmbedWorker) processNextNode(scopes ...*lifecycle.Scope) bool {
+ 	// Check for cancellation at the start
+ 	select {
+ 	case <-ew.ctx.Done():
+@@ -980,7 +988,9 @@ func (ew *EmbedWorker) processNextNode() bool {
+ 	ew.mu.Lock()
+ 	shouldYield := ew.shouldYield
+ 	ew.mu.Unlock()
+-	if shouldYield != nil && shouldYield() {
++	yield:=false
++ if shouldYield!=nil {if scope:=queueScope(scopes);scope!=nil {if err:=scope.Callback(func(){yield=shouldYield()});err!=nil{return false}}else{yield=shouldYield()}}
++ if yield {
+ 		time.Sleep(25 * time.Millisecond)
+ 		ew.signalTrigger()
+ 		return false
+@@ -1015,10 +1025,10 @@ func (ew *EmbedWorker) processNextNode() bool {
+ 		ew.releaseNodeClaim(node.ID)
+ 		return true
+ 	}
+-	return ew.processClaimedNode(node, provider)
++	return ew.processClaimedNode(node, provider, scopes...)
+ }
+ 
+-func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
++func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder, scopes ...*lifecycle.Scope) bool {
+ 	defer ew.releaseNodeClaim(node.ID)
+ 	if !ew.waitForProviderRetry(provider) {
+ 		ew.addNodeToPendingEmbeddings(node.ID)
+@@ -1062,14 +1072,14 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
+ 	}
+ 	ew.clearProviderFailure(provider)
+ 
+-	return ew.persistEmbeddedNode(node, source, chunks, embeddings, providerMeta, provider)
++	return ew.persistEmbeddedNode(node, source, chunks, embeddings, providerMeta, provider, scopes...)
+ }
+ 
+ // processNextDocumentBatch embeds a batch of nodes with batcher, the batch
+ // interface of provider. The whole batch is attributed to that one provider
+ // (retry gate, outcome, persisted metadata), even if SetEmbedder replaces the
+ // worker's embedder meanwhile.
+-func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder) bool {
++func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder, scopes ...*lifecycle.Scope) bool {
+ 	select {
+ 	case <-ew.ctx.Done():
+ 		return false
+@@ -1124,7 +1134,7 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
+ 			ew.releaseNodeClaim(node.ID)
+ 			continue
+ 		}
+-		ew.persistEmbeddedNode(node, sources[i], result.Chunks, result.Embeddings, documentResultMeta(result), provider)
++		ew.persistEmbeddedNode(node, sources[i], result.Chunks, result.Embeddings, documentResultMeta(result), provider, scopes...)
+ 		ew.releaseNodeClaim(node.ID)
+ 	}
+ 	ew.signalTrigger()
+@@ -1214,7 +1224,7 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
+ // persistEmbeddedNode writes node's embedding: its chunk vectors, and
+ // metadata including where each chunk (cut from source) lies in node's
+ // string properties (#1060).
+-func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
++func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder, scopes ...*lifecycle.Scope) bool {
+ 	if len(embeddings) == 0 || embeddings[0] == nil || len(embeddings[0]) == 0 {
+ 		fmt.Printf("⚠️  Failed to generate embedding for node %s: empty embedding\n", node.ID)
+ 		ew.failed.Add(1)
+@@ -1272,9 +1282,8 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
+ 	}
+ 
+ 	// Call callback to update search index
+-	if ew.onEmbedded != nil {
+-		ew.onEmbedded(node)
+-	}
++	if ew.onEmbeddedInternal!=nil {ew.onEmbeddedInternal(node)}
++ if cb:=ew.onEmbedded;cb!=nil {if scope:=queueScope(scopes);scope!=nil {scope.DeferCallback(func(){cb(node)})}else{cb(node)}}
+ 
+ 	ew.processed.Add(1)
+ 	// Track this node as recently processed to prevent re-processing before DB commit is visible
+@@ -1697,13 +1706,15 @@ func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []
+ 			err        error
+ 		}
+ 		resultCh := make(chan embedResult, 1)
++ child:=new(lifecycle.Scope);if err:=child.EnterTask(ew.ctx,ew.owner);err!=nil{return nil,err}
+ 		go func() {
++ defer child.Finish()
+ 			var embs [][]float32
+ 			var embedErr error
+ 			if typed, ok := provider.(embed.TypedEmbedder); ok {
+-				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
++				embs, embedErr = typed.EmbedBatchWithInputType(child, chunks, embed.InputTypeDocument)
+ 			} else {
+-				embs, embedErr = provider.EmbedBatch(ew.ctx, chunks)
++				embs, embedErr = provider.EmbedBatch(child, chunks)
+ 			}
+ 			resultCh <- embedResult{embeddings: embs, err: embedErr}
+ 		}()
+@@ -1830,6 +1841,10 @@ func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *Embe
+ 	return NewEmbedWorker(embedder, storage, config)
+ }
+ 
++func(ew *EmbedWorker) isClosed()bool{return ew.queueGroup!=nil&&ew.queueGroup.Closing()}
++func queueScope(scopes []*lifecycle.Scope)*lifecycle.Scope{if len(scopes)>0{return scopes[0]};return nil}
++func(ew *EmbedWorker) setOnEmbeddedInternal(fn func(*storage.Node)){ew.onEmbeddedInternal=fn}
++
+ // Enqueue is now just a trigger - tells worker to check for work.
+ //
+ // A write to the node ends its recently-processed wait (wasRecentlyProcessed):
+diff --git a/pkg/nornicdb/inference_services.go b/pkg/nornicdb/inference_services.go
+index d767b2f3e..56dbaf22c 100644
+--- a/pkg/nornicdb/inference_services.go
++++ b/pkg/nornicdb/inference_services.go
+@@ -115,7 +115,7 @@ func (db *DB) resolveDatabaseStorage(dbName string) (storage.Engine, error) {
+ // GetOrCreateInferenceService is the public wrapper that checks closed state.
+ func (db *DB) GetOrCreateInferenceService(dbName string, storageEngine storage.Engine) (*inference.Engine, error) {
+ 	db.mu.RLock()
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.RUnlock()
+ 	if closed {
+ 		return nil, ErrClosed
+diff --git a/pkg/nornicdb/query_embedding.go b/pkg/nornicdb/query_embedding.go
+index 0b5f3ad54..81b9a5b1a 100644
+--- a/pkg/nornicdb/query_embedding.go
++++ b/pkg/nornicdb/query_embedding.go
+@@ -6,6 +6,7 @@ import (
+ 	"github.com/orneryd/nornicdb/pkg/cypher"
+ 	"github.com/orneryd/nornicdb/pkg/embed"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++	"github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/search"
+ )
+ 
+@@ -13,14 +14,11 @@ import (
+ // Callers that can score multiple query vectors should use this shape and keep
+ // the best result across chunks instead of collapsing the query into a centroid.
+ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
++	var operation lifecycle.Scope
++	if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,nil,err};defer operation.Finish();ctx=&operation
+ 	if emb == nil {
+ 		return nil, nil, nil
+ 	}
+-	ctx, finish, err := db.beginProviderUse(ctx)
+-	if err != nil {
+-		return nil, nil, err
+-	}
+-	defer finish()
+ 	chunks, err := db.chunkQueryWithEmbedder(ctx, emb, query)
+ 	if err != nil {
+ 		return nil, nil, err
+@@ -117,6 +115,7 @@ func (db *DB) validateQueryEmbeddingBatchDimensions(dbName string, embs [][]floa
+ }
+ 
+ func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName string, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
++ var operation lifecycle.Scope; if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,nil,err};defer operation.Finish();ctx=&operation
+ 	chunks, embs, err := db.embedQueryChunksWithEmbedder(ctx, emb, query)
+ 	if err != nil {
+ 		return nil, nil, err
+@@ -130,6 +129,7 @@ func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName stri
+ // EmbedQueryChunks returns embedder-safe query chunks and one embedding per chunk.
+ // This is the preferred API for search paths that should compare best-of chunks.
+ func (db *DB) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
++	if db.isClosed(){return nil,nil,ErrClosed}
+ 	emb := db.queryEmbedderForRequest(ctx)
+ 	if emb == nil {
+ 		return nil, nil, nil
+@@ -143,14 +143,11 @@ func (db *DB) EmbedQueryChunksForDB(ctx context.Context, dbName string, query st
+ }
+ 
+ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, error) {
++	var operation lifecycle.Scope
++	if err:=operation.Enter(ctx,db.lifetime);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
+ 	if emb == nil {
+ 		return nil, nil
+ 	}
+-	_, finish, err := db.beginProviderUse(ctx)
+-	if err != nil {
+-		return nil, err
+-	}
+-	defer finish()
+ 	const (
+ 		queryChunkSize    = 512
+ 		queryChunkOverlap = 50
+@@ -164,6 +161,7 @@ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedd
+ // EmbedQuery generates an embedding for a search query.
+ // Returns nil if embeddings are not enabled or embedder is not yet set (e.g. still loading).
+ func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
++	if db.isClosed(){return nil,ErrClosed}
+ 	emb := db.queryEmbedderForRequest(ctx)
+ 	if emb == nil {
+ 		return nil, nil // Not an error - just no embedding available
+@@ -173,6 +171,7 @@ func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+ 
+ // ChunkQuery splits a search query using the configured global embedder.
+ func (db *DB) ChunkQuery(ctx context.Context, query string) ([]string, error) {
++	if db.isClosed(){return nil,ErrClosed}
+ 	emb := db.queryEmbedderForRequest(ctx)
+ 	if emb == nil {
+ 		return []string{query}, nil
+@@ -254,6 +253,8 @@ type QueryEmbeddingSnapshot struct {
+ // models continue using the model registry shared with document embedding.
+ func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+ 	snapshot := QueryEmbeddingSnapshot{db: db, database: dbName, embedder: db.globalEmbedder(), validateSingleDimensions: true}
++	var operation lifecycle.Scope
++	if err:=operation.Enter(context.Background(),db.lifetime);err!=nil{return snapshot};defer operation.Finish()
+ 	if snapshot.embedder == nil {
+ 		return snapshot
+ 	}
+@@ -283,6 +284,7 @@ func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+ // ChunkQuery splits text using this request's provider, or leaves it intact
+ // while embedding is unavailable.
+ func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([]string, error) {
++	if s.db.isClosed(){return nil,ErrClosed}
+ 	if s.embedder == nil {
+ 		return []string{query}, nil
+ 	}
+@@ -292,6 +294,8 @@ func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([
+ // EmbedQuery embeds text with this request's provider, preserving the database's
+ // single-vector dimension-check policy. Use EmbedQueryChunks to validate all chunks.
+ func (s QueryEmbeddingSnapshot) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
++	var operation lifecycle.Scope
++	if err:=operation.Enter(ctx,s.db.lifetime);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
+ 	vec, err := s.db.embedQueryWithEmbedder(ctx, s.embedder, query)
+ 	if err != nil {
+ 		return nil, err
+diff --git a/pkg/nornicdb/search_services.go b/pkg/nornicdb/search_services.go
+index 0534ff0ef..df560fc04 100644
+--- a/pkg/nornicdb/search_services.go
++++ b/pkg/nornicdb/search_services.go
+@@ -74,7 +74,7 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
+ 		return true
+ 	}
+ 	db.mu.RLock()
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.RUnlock()
+ 	return closed
+ }
+@@ -288,6 +288,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
+ 	// database managed by this service, including services created before the
+ 	// server installs its per-database options resolver.
+ 	resolvedOptions.DatabaseID = dbName
++ resolvedOptions.Lifetime=db.lifetime
+ 	selectedStemmer := stemmer.NormalizeSelection(resolvedOptions.BM25StemmerID)
+ 	if selectedStemmer != stemmer.NoneID {
+ 		reg, ok := stemmer.Lookup(selectedStemmer)
+@@ -515,7 +516,7 @@ func (db *DB) SetRerankerResolver(fn func(dbName string) search.Reranker) {
+ // a NamespacedEngine for dbName.
+ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engine) (*search.Service, error) {
+ 	db.mu.RLock()
+-	closed := db.closed
++	closed := db.isClosed()
+ 	db.mu.RUnlock()
+ 	if closed {
+ 		return nil, ErrClosed
+diff --git a/pkg/search/chunked_search.go b/pkg/search/chunked_search.go
+index cf0de3a47..dd73e07cb 100644
+--- a/pkg/search/chunked_search.go
++++ b/pkg/search/chunked_search.go
+@@ -11,6 +11,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ )
+ 
+ const (
+@@ -132,6 +133,7 @@ func searchSingleQueryChunk(
+ 	errorPolicy ChunkedSearchErrorPolicy,
+ ) (*SearchResponse, error) {
+ 	embedding, err := embedQuery(ctx, query)
++ err=lifecycle.Error(ctx,err)
+ 	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
+ 		return nil, err
+ 	}
+@@ -144,6 +146,7 @@ func searchSingleQueryChunk(
+ 	}
+ 	if err == nil && len(embedding) > 0 {
+ 		response, searchErr := searchQuery(ctx, query, embedding, opts)
++ searchErr=lifecycle.Error(ctx,searchErr)
+ 		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
+ 			return nil, searchErr
+ 		}
+@@ -193,6 +196,7 @@ func searchSeveralQueryChunks(
+ 	)
+ 	for _, chunk := range chunks {
+ 		embedding, err := embedQuery(ctx, chunk)
++ err=lifecycle.Error(ctx,err)
+ 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
+ 			return nil, 0, err
+ 		}
+@@ -386,7 +390,7 @@ func searchResultID(result SearchResult) string {
+ }
+ 
+ func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
+-	return predicate != nil && predicate(err)
++	return errors.Is(err,lifecycle.ErrClosed) || (predicate != nil && predicate(err))
+ }
+ 
+ // isQueryEmbeddingFallback reports whether reason says the query wasn't
+diff --git a/pkg/search/relationship_search.go b/pkg/search/relationship_search.go
+index fdd36420a..1ea39e9f9 100644
+--- a/pkg/search/relationship_search.go
++++ b/pkg/search/relationship_search.go
+@@ -2,6 +2,7 @@ package search
+ 
+ import (
+ 	"context"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"encoding/gob"
+ 	"errors"
+ 	"hash/fnv"
+@@ -155,12 +156,11 @@ func (s *Service) StartRelationshipIndex() {
+ 		return
+ 	}
+ 	rs.start.Do(func() {
+-		go s.runRelationshipIndex(rs)
++		s.workers.Go(func(scope *lifecycle.Scope){s.runRelationshipIndex(rs,scope)})
+ 	})
+ }
+ 
+-func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
+-	ctx := s.lifecycleCtx
++func (s *Service) runRelationshipIndex(rs *relationshipSearch,ctx context.Context) {
+ 	persisted := s.loadRelationshipVectors()
+ 	seen := make(map[string]bool)
+ 	err := storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
+diff --git a/pkg/search/search.go b/pkg/search/search.go
+index 0dfd12377..e7fe46d8e 100644
+--- a/pkg/search/search.go
++++ b/pkg/search/search.go
+@@ -114,6 +114,7 @@ import (
+ 	"github.com/orneryd/nornicdb/pkg/envutil"
+ 	"github.com/orneryd/nornicdb/pkg/gpu"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/math/vector"
+ 	"github.com/orneryd/nornicdb/pkg/observability"
+ 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
+@@ -1010,6 +1011,9 @@ type Service struct {
+ 	boundDurationFuse  observability.BoundLatencyObserver
+ 
+ 	lifecycleCtx    context.Context
++	lifetime *lifecycle.Owner
++	activity *lifecycle.Group
++	workers *lifecycle.Group
+ 	lifecycleCancel context.CancelFunc
+ 
+ 	// relationships holds relationship search's indexes when it is enabled
+@@ -1174,6 +1178,7 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
+ 
+ // ServiceOptions configures database-specific search service resources.
+ type ServiceOptions struct {
++	Lifetime *lifecycle.Owner
+ 	DatabaseID               string
+ 	SearchResultCacheEntries int
+ 	SearchResultCacheTTL     time.Duration
+@@ -1207,7 +1212,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
+ 		analyzer = NewStemmedTextAnalyzer(*options.BM25Stemmer)
+ 	}
+ 	fulltextIndex, selectedBM25Engine := newBM25IndexWithAnalyzer(bm25Engine, analyzer)
+-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
++	owner:=(*lifecycle.Owner)(nil);if options!=nil {owner=options.Lifetime};if owner==nil{owner=lifecycle.New()};activity:=owner.NewGroup();workers:=activity.NewGroup();lifecycleCtx:=activity.Context();lifecycleCancel:=activity.Cancel
+ 	var resultCache *searchResultCache
+ 	defaults := DefaultServiceOptions("")
+ 	cacheEntries := defaults.SearchResultCacheEntries
+@@ -1250,6 +1255,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
+ 		resultCache:                resultCache,
+ 		cacheNamespace:             cacheNamespace,
+ 		lifecycleCtx:               lifecycleCtx,
++ lifetime:owner,activity:activity,workers:workers,
+ 		lifecycleCancel:            lifecycleCancel,
+ 	}
+ 	svc.setFulltext(fulltextIndex)
+@@ -2205,6 +2211,7 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
+ // It is safe to call more than once. PersistIndexesToDisk should be called by owners before
+ // Close when shutdown persistence is desired.
+ func (s *Service) Close() error {
++ if s!=nil&&s.activity!=nil {_=s.activity.Stop(context.Background(),nil)}
+ 	if s == nil {
+ 		return nil
+ 	}
+@@ -4616,6 +4623,7 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
+ //
+ // Returns a SearchResponse with ranked results and metadata about the search method used.
+ func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
++ var operation lifecycle.Scope;if err:=operation.EnterGroup(ctx,s.activity);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
+ 	start := time.Now()
+ 	// Plan 04-05-05: observe requests_total + candidates_rows at the
+ 	// single Search chokepoint so all internal call paths (vector-only,
+diff --git a/pkg/search/text_continuation.go b/pkg/search/text_continuation.go
+index c7390ce61..cc0243f3b 100644
+--- a/pkg/search/text_continuation.go
++++ b/pkg/search/text_continuation.go
+@@ -2,6 +2,7 @@ package search
+ 
+ import (
+ 	"context"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"errors"
+ 	"fmt"
+ 	"strings"
+@@ -173,6 +174,8 @@ func (s *Service) SearchTextContinuation(
+ 	searchQuery SearchQueryFunc,
+ 	errorPolicy ChunkedSearchErrorPolicy,
+ ) (*SearchContinuationPage, error) {
++	var operation lifecycle.Scope
++	if err:=operation.EnterGroup(ctx,s.activity);err!=nil{return nil,err};defer operation.Finish();ctx=&operation
+ 	registry, err := s.searchContinuationRegistry()
+ 	if err != nil {
+ 		return nil, err
+diff --git a/pkg/server/server.go b/pkg/server/server.go
+index d2abfbea6..b0e322a33 100644
+--- a/pkg/server/server.go
++++ b/pkg/server/server.go
+@@ -193,6 +193,7 @@ import (
+ 	"github.com/orneryd/nornicdb/pkg/graphql"
+ 	"github.com/orneryd/nornicdb/pkg/heimdall"
+ 	"github.com/orneryd/nornicdb/pkg/localization"
++ "github.com/orneryd/nornicdb/pkg/lifecycle"
+ 	"github.com/orneryd/nornicdb/pkg/localllm"
+ 	"github.com/orneryd/nornicdb/pkg/mcp"
+ 	"github.com/orneryd/nornicdb/pkg/multidb"
+@@ -714,7 +715,8 @@ type Server struct {
+ 	basicAuthCache *auth.BasicAuthCache
+ 
+ 	mu      sync.RWMutex
+-	closed  atomic.Bool
++	lifetime *lifecycle.Group
++ lifetimeOnce sync.Once
+ 	started atomic.Pointer[time.Time]
+ 
+ 	// embedderRetryInitialBackoff, embedderRetryMaxBackoff and newEmbedder
+@@ -1147,6 +1149,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
+ 	db.SetDatabaseStorageResolver(dbManager.GetStorage)
+ 
+ 	s := &Server{
++ lifetime:db.Lifecycle().NewGroup(),
+ 		config:               config,
+ 		db:                   db,
+ 		dbManager:            dbManager,
+@@ -1655,7 +1658,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
+ 		ticker := time.NewTicker(2 * time.Second)
+ 		defer ticker.Stop()
+ 		for {
+-			if s.closed.Load() {
++			if s.isStopped() {
+ 				return
+ 			}
+ 			s.ensureSearchBuildStartedForKnownDatabases()
+@@ -1919,7 +1922,7 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
+ //	If TLSCertFile and TLSKeyFile are configured, the server automatically
+ //	starts with HTTPS. Otherwise, it uses HTTP.
+ func (s *Server) Start() error {
+-	if s.closed.Load() {
++	if s.isStopped() {
+ 		return ErrServerClosed
+ 	}
+ 
+@@ -2007,26 +2010,8 @@ func (s *Server) Start() error {
+ }
+ 
+ // Stop gracefully shuts down the server.
+-func (s *Server) Stop(ctx context.Context) (err error) {
+-	if !s.closed.CompareAndSwap(false, true) {
+-		return nil // Already closed
+-	}
+-
+-	// Cancel the background embedder initialisation now and wait for it
+-	// before returning, so it can't install an embedder (or log) after Stop.
+-	if s.embedderInitCancel != nil {
+-		s.embedderInitCancel()
+-		defer func() {
+-			select {
+-			case <-s.embedderInitDone:
+-			case <-ctx.Done():
+-				if err == nil {
+-					err = ctx.Err()
+-				}
+-			}
+-		}()
+-	}
+-
++func (s *Server) stop(ctx context.Context) (err error) {
++ if s.embedderInitCancel!=nil {s.embedderInitCancel()}
+ 	s.stopQdrantGRPC()
+ 
+ 	// Stop rate limiter cleanup goroutine
+@@ -2129,11 +2114,11 @@ type ServerStats struct {
+ // return. It runs as a db background task, so closing db cancels it and waits
+ // for it too, even without Stop; a closed db refuses the embedder anyway.
+ func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
+-	ctx, cancel := context.WithCancel(db.LifetimeContext())
++	ctx, cancel := context.WithCancel(s.operationGroup().Context())
+ 	done := make(chan struct{})
+ 	s.embedderInitCancel = cancel
+ 	s.embedderInitDone = done
+-	started := db.RunBackgroundTask(func() {
++	started := s.operationGroup().Go(func(_ *lifecycle.Scope) {
+ 		defer close(done)
+ 		defer cancel()
+ 		s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+diff --git a/pkg/server/server_helpers.go b/pkg/server/server_helpers.go
+index 9040aa52e..f0b4a3b83 100644
+--- a/pkg/server/server_helpers.go
++++ b/pkg/server/server_helpers.go
+@@ -407,6 +407,7 @@ func (s *Server) readJSON(r *http.Request, v interface{}) error {
+ }
+ 
+ func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
++ if s.db!=nil&&s.db.Lifecycle()!=nil&&s.db.Lifecycle().Closing(){status=http.StatusServiceUnavailable;v=map[string]any{"error":"database is closed","http_code":http.StatusServiceUnavailable,"retryable":true}}
+ 	w.Header().Set("Content-Type", "application/json")
+ 	w.WriteHeader(status)
+ 	json.NewEncoder(w).Encode(v)

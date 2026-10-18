@@ -1,0 +1,70 @@
+wt-rc144-embed-lifecycle-fix/cmd\recall-bench\main.go:241:	embedder, err := embed.NewEmbedder(config)
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\embed_search_metrics.go:52:// The input is `any` to tolerate both pkg/embed.Embedder and the
+wt-rc144-embed-lifecycle-fix/cmd\nornicdb\embed_search_metrics.go:53:// pkg/cypher.QueryEmbedder minimal interface — the cypher executor
+wt-rc144-embed-lifecycle-fix/pkg\mcp\server.go:129:	queryEmbedder *cypher.QueryEmbedderBinding
+wt-rc144-embed-lifecycle-fix/pkg\mcp\server.go:236:	binding := &cypher.QueryEmbedderBinding{}
+wt-rc144-embed-lifecycle-fix/pkg\embed\orca.go:20://	embedder, err := embed.NewEmbedder(config)
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:69://	var embedder embed.Embedder
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:962://	embedder, err := embed.NewEmbedder(config)
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1009:// NewEmbedder creates an embedder based on the provider specified in config.
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1039://	embedder, err := embed.NewEmbedder(config)
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1049:func NewEmbedder(config *Config) (Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1050:	return NewEmbedderContext(context.Background(), config)
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1053:// NewEmbedderContext is NewEmbedder for a caller that may stop waiting, such as
+wt-rc144-embed-lifecycle-fix/pkg\embed\embed.go:1056:func NewEmbedderContext(ctx context.Context, config *Config) (Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg\server\server_qdrantgrpc.go:92:		cfg.BindQueryEmbedding = s.db.WithQueryEmbeddingSnapshot
+wt-rc144-embed-lifecycle-fix/pkg\server\server_nornicdb.go:535:	var queryEmbedding nornicdb.QueryEmbeddingSnapshot
+wt-rc144-embed-lifecycle-fix/pkg\server\server.go:722:	// embedder constructor (embed.NewEmbedderContext) when set; New leaves them unset.
+wt-rc144-embed-lifecycle-fix/pkg\server\server.go:725:	newEmbedder                 func(context.Context, *embed.Config) (embed.Embedder, error)
+wt-rc144-embed-lifecycle-fix/pkg\server\server.go:2161:	newEmbedder := embed.NewEmbedderContext
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:15:func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:80:func (db *DB) embedQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:119:func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName string, emb cypher.QueryEmbedder, query string) ([]string, [][]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:145:func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedder, query string) ([]string, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:185:func (db *DB) globalEmbedder() cypher.QueryEmbedder {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:197:	embedder cypher.QueryEmbedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:207:// WithQueryEmbeddingSnapshot binds the current global query provider to a text
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:211:func (db *DB) WithQueryEmbeddingSnapshot(ctx context.Context) context.Context {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:218:func (db *DB) queryEmbedderForRequest(ctx context.Context) cypher.QueryEmbedder {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:238:// QueryEmbeddingSnapshot binds chunking and embedding to one provider for a
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:241:type QueryEmbeddingSnapshot struct {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:244:	embedder cypher.QueryEmbedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:255:func (db *DB) QueryEmbeddingForDB(dbName string) QueryEmbeddingSnapshot {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:256:	snapshot := QueryEmbeddingSnapshot{db: db, database: dbName, embedder: db.globalEmbedder(), validateSingleDimensions: true}
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:285:func (s QueryEmbeddingSnapshot) ChunkQuery(ctx context.Context, query string) ([]string, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:294:func (s QueryEmbeddingSnapshot) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\query_embedding.go:309:func (s QueryEmbeddingSnapshot) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:37:	embedder         embed.Embedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:38:	embedderResolver func(storage.NodeID) (embed.Embedder, error)
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:183:func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *EmbedWorkerConfig) *EmbedWorker {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:252:func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:263:func (ew *EmbedWorker) currentEmbedder() embed.Embedder {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:271:func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:277:func (ew *EmbedWorker) resolveEmbedder(nodeID storage.NodeID) (embed.Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:869:		provider        embed.Embedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1021:func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1072:func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1217:func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1338:func providerRetryKey(provider embed.Embedder) string {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1342:func (ew *EmbedWorker) waitForProviderRetry(provider embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1365:func (ew *EmbedWorker) recordProviderBatchOutcome(provider embed.Embedder, errs []error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1377:func (ew *EmbedWorker) recordProviderFailure(provider embed.Embedder, err error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1408:func (ew *EmbedWorker) clearProviderFailure(provider embed.Embedder) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1621:func (ew *EmbedWorker) embedChunksInBatchesWith(provider embed.Embedder, chunks []string, nodeID storage.NodeID) ([][]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1648:func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, nodeID storage.NodeID) ([]string, [][]float32, map[string]any, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1691:func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []string) ([][]float32, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\embed_queue.go:1829:func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *EmbedQueueConfig) *EmbedQueue {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db_embedder_owner.go:39:	provider embed.Embedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db_embedder_owner.go:44:func sameEmbedder(a, b embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db_embedder_owner.go:66:func (db *DB) OwnEmbedder(provider embed.Embedder) (release func() error, accepted bool) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db_embedder_owner.go:72:		provider = cached.Unwrap()
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:251:	embedderRegistry   map[string]embed.Embedder
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:256:	// Production uses embed.NewEmbedder.
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:257:	embedderFactory func(cfg *embed.Config) (embed.Embedder, error)
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1582:func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1712:		db.embedderRegistry = make(map[string]embed.Embedder)
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1733:	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1743:func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1767:func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1791:		db.embedderRegistry = make(map[string]embed.Embedder)
+wt-rc144-embed-lifecycle-fix/pkg\nornicdb\db.go:1801:		create = embed.NewEmbedder

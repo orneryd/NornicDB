@@ -1,0 +1,149 @@
+wt-sol-1469-r3/cmd\metrics-doc-gen\main.go:95:	defer f.Close()
+wt-sol-1469-r3/cmd\nornicdb-admin\main.go:316:	defer engine.Close()
+wt-sol-1469-r3/cmd\nornicdb-admin\main.go:361:	defer engine.Close()
+wt-sol-1469-r3/cmd\nornicdb-admin\main.go:382:	defer engine.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:377:	defer queriesFile.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:388:	defer db.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:408:			_ = model.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:415:		defer rerankerModelCloser.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:434:	closeErr := output.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:525:	defer db.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:535:	defer corpus.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:600:	defer file.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:660:	defer queriesFile.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:671:	defer qrelsFile.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:730:	defer qrelsFile.Close()
+wt-sol-1469-r3/cmd\recall-bench\main.go:739:	defer runFile.Close()
+wt-sol-1469-r3/cmd\nornicdb\adapter_http.go:19:// On Shutdown, srv.Stop(ctx) drains in-flight requests using the
+wt-sol-1469-r3/cmd\nornicdb\adapter_http.go:51:	return a.srv.Stop(ctx)
+wt-sol-1469-r3/cmd\eval\main.go:186:	defer resp.Body.Close()
+wt-sol-1469-r3/cmd\eval\main.go:531:	defer resp.Body.Close()
+wt-sol-1469-r3/cmd\eval\main.go:588:	defer resp.Body.Close()
+wt-sol-1469-r3/cmd\nornicdb\adapter_bolt.go:25:// On Shutdown we call srv.Close(); listener.Close() may return its own
+wt-sol-1469-r3/cmd\nornicdb\adapter_bolt.go:52:		_ = a.srv.Close()
+wt-sol-1469-r3/cmd\nornicdb\adapter_bolt.go:70:	if err := a.srv.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+wt-sol-1469-r3/cmd\nornicdb\main.go:676:	defer db.Close()
+wt-sol-1469-r3/cmd\nornicdb\main.go:868:		_ = httpServer.Stop(stopCtx)
+wt-sol-1469-r3/cmd\nornicdb\main.go:1455:		defer ticker.Stop()
+wt-sol-1469-r3/cmd\nornicdb\main.go:1769:	defer db.Close()
+wt-sol-1469-r3/cmd\nornicdb\main.go:1871:	defer db.Close()
+wt-sol-1469-r3/cmd\nornicdb\main.go:1948:	defer db.Close()
+wt-sol-1469-r3/pkg/embed\cached_embedder.go:378:		return closer.Close()
+wt-sol-1469-r3/cmd\oauth-provider\main.go:597:	defer ticker.Stop()
+wt-sol-1469-r3/cmd\nornicdb-snowball\package.go:402:	defer in.Close()
+wt-sol-1469-r3/cmd\nornicdb-snowball\package.go:408:		_ = out.Close()
+wt-sol-1469-r3/cmd\nornicdb-snowball\package.go:411:	return out.Close()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:26://	defer embedder.Close()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:68:	warmupStarted bool
+wt-sol-1469-r3/pkg/embed\local_gguf.go:116://	defer embedder.Close()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:185:		model.Close()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:191:		model.Close()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:206:	embedder.startWarmup(config.WarmupInterval)
+wt-sol-1469-r3/pkg/embed\local_gguf.go:212:func (e *LocalGGUFEmbedder) startWarmup(warmupInterval time.Duration) {
+wt-sol-1469-r3/pkg/embed\local_gguf.go:218:		e.warmupStarted = true
+wt-sol-1469-r3/pkg/embed\local_gguf.go:231:	defer ticker.Stop()
+wt-sol-1469-r3/pkg/embed\local_gguf.go:484:		started := e.warmupStarted
+wt-sol-1469-r3/pkg/embed\local_gguf.go:500:			e.closeErr = e.model.Close()
+wt-sol-1469-r3/pkg/embed\embed.go:545:	defer resp.Body.Close()
+wt-sol-1469-r3/pkg/embed\embed.go:904:	defer resp.Body.Close()
+wt-sol-1469-r3/pkg/server\server.go:55://	server.Stop(ctx)
+wt-sol-1469-r3/pkg/server\server.go:237:	defer timer.Stop()
+wt-sol-1469-r3/pkg/server\server.go:644://	server.Stop(ctx)
+wt-sol-1469-r3/pkg/server\server.go:730:	// embedderInitCancel and embedderInitDone own the background embedder
+wt-sol-1469-r3/pkg/server\server.go:732:	// embedderInitDone, so it never outlives the server, and DB.Close waits
+wt-sol-1469-r3/pkg/server\server.go:734:	embedderInitCancel context.CancelFunc
+wt-sol-1469-r3/pkg/server\server.go:735:	embedderInitDone   chan struct{}
+wt-sol-1469-r3/pkg/server\server.go:988:	defer ticker.Stop()
+wt-sol-1469-r3/pkg/server\server.go:1490:					rerankerModel.Close()
+wt-sol-1469-r3/pkg/server\server.go:1659:		defer ticker.Stop()
+wt-sol-1469-r3/pkg/server\server.go:2020:	if s.embedderInitCancel != nil {
+wt-sol-1469-r3/pkg/server\server.go:2021:		s.embedderInitCancel()
+wt-sol-1469-r3/pkg/server\server.go:2024:			case <-s.embedderInitDone:
+wt-sol-1469-r3/pkg/server\server.go:2037:		s.rateLimiter.Stop()
+wt-sol-1469-r3/pkg/server\server.go:2064:			_ = s.httpServer.Close()
+wt-sol-1469-r3/pkg/server\server.go:2068:		_ = s.httpServer.Close()
+wt-sol-1469-r3/pkg/server\server.go:2137:	s.embedderInitCancel = cancel
+wt-sol-1469-r3/pkg/server\server.go:2138:	s.embedderInitDone = done
+wt-sol-1469-r3/pkg/server\server.go:2139:	started := db.RunBackgroundTask(func() {
+wt-sol-1469-r3/pkg/nornicdb\db_retention.go:35:		defer ticker.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:379:		ew.triggerDebounceTimer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:627:		ew.triggerDebounceTimer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:681:		ew.triggerDebounceTimer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:689:		ew.clusterDebounceTimer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:713:		ew.clusterDebounceTimer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:828:			timer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:844:		timer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:850:	defer timer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\embed_queue.go:1491:			timer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:78:	if db.buildCancel != nil {
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:79:		db.buildCancel()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:82:		embedQueue.Close()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:84:	db.bgWg.Wait()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:85:	db.foregroundWg.Wait()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:94:		db.accessFlusher.Stop()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:102:		if err := db.replicationTrans.Close(); err != nil {
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:107:		if err := db.replicationAdapter.Close(); err != nil {
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:139:			if err := entry.svc.Close(); err != nil {
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:147:		db.searchContinuation.Close()
+wt-sol-1469-r3/pkg/nornicdb\db_lifecycle.go:153:		if err := db.baseStorage.Close(); err != nil {
+wt-sol-1469-r3/pkg/nornicdb\db.go:18://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:148://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:213:	buildCancel context.CancelFunc
+wt-sol-1469-r3/pkg/nornicdb\db.go:261:	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
+wt-sol-1469-r3/pkg/nornicdb\db.go:262:	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
+wt-sol-1469-r3/pkg/nornicdb\db.go:397://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:421://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:440://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:443://	// Data lost when db.Close() or process exits
+wt-sol-1469-r3/pkg/nornicdb\db.go:457://	defer userDB.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:463://	defer docsDB.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:498://	defer db.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:510://	defer oldDB.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:519://	defer newDB.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:581://   - Must close the library when done (db.Close())
+wt-sol-1469-r3/pkg/nornicdb\db.go:869:			badgerEngine.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:883:				badgerEngine.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:936:			_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:951:				_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:966:			_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:981:				_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1019:			_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1028:				_ = db.baseStorage.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1300:	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
+wt-sol-1469-r3/pkg/nornicdb\db.go:1563:		_ = adapter.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1574:		_ = adapter.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1588:		_ = transport.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1590:		_ = adapter.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1804:	db.bgWg.Add(1)
+wt-sol-1469-r3/pkg/nornicdb\db.go:1806:	defer db.bgWg.Done()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1987:		q.Close()
+wt-sol-1469-r3/pkg/nornicdb\db.go:1999:	db.bgWg.Add(1)
+wt-sol-1469-r3/pkg/nornicdb\db.go:2003:		defer db.bgWg.Done()
+wt-sol-1469-r3/pkg/nornicdb\db.go:2009:// RunBackgroundTask runs fn in a goroutine that Close waits for, so work
+wt-sol-1469-r3/pkg/nornicdb\db.go:2013:func (db *DB) RunBackgroundTask(fn func()) bool {
+wt-sol-1469-r3/pkg/nornicdb\db.go:2081:	defer ticker.Stop()
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:25:	db.foregroundWg.Add(1)
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:32:		db.foregroundWg.Done()
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:51:			r.err = closer.Close()
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:63:// Initialization must run through RunBackgroundTask so Close also joins model
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:80:	for _, resource := range db.ownedEmbedders {
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:90:		db.ownedEmbedders = append(db.ownedEmbedders, resource)
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:102:	for i, owned := range db.ownedEmbedders {
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:104:			db.ownedEmbedders = append(db.ownedEmbedders[:i], db.ownedEmbedders[i+1:]...)
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:116:	resources := db.ownedEmbedders
+wt-sol-1469-r3/pkg/nornicdb\db_embedder_owner.go:117:	db.ownedEmbedders = nil
+wt-sol-1469-r3/pkg/nornicdb\db_admin.go:130:	db.bgWg.Add(1)
+wt-sol-1469-r3/pkg/nornicdb\db_admin.go:134:		defer db.bgWg.Done()
+wt-sol-1469-r3/pkg/nornicdb\db_admin.go:172:	ticker.Stop()
+wt-sol-1469-r3/pkg/nornicdb\db_admin.go:1587:	defer file.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:261:		_ = newStore.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:265:		_ = newStore.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:272:		_ = newStore.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:303:	defer file.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:322:		_ = file.Close()
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:335:	if err := file.Close(); err != nil {
+wt-sol-1469-r3/pkg/nornicdb\storage_recovery.go:346:	defer dir.Close()
+wt-sol-1469-r3/pkg/server\server_qdrantgrpc.go:211:		s.qdrantGRPCServer.Stop()
+wt-sol-1469-r3/pkg/nornicdb\search_services.go:313:		_ = svc.Close()
+wt-sol-1469-r3/pkg/nornicdb\search_services.go:543:		_ = entry.svc.Close()
+wt-sol-1469-r3/pkg/nornicdb\search_services.go:716:		entry.pendingFlushTimer.Stop()

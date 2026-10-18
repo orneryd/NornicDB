@@ -1,0 +1,116 @@
+[
+  {
+    "path": "pkg/cypher/executor_entry.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/cypher/query_embedder.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/cypher/result_stream.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/embed/spans.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/mcp/server.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/db.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/db_admin.go",
+    "state": "archive-only-develop-differs",
+    "detail": "error: patch failed: pkg/nornicdb/db_admin.go:126\nerror: pkg/nornicdb/db_admin.go: patch does not apply"
+  },
+  {
+    "path": "pkg/nornicdb/db_embedder_owner.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/db_lifecycle.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/db_privacy.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/embed_queue.go",
+    "state": "archive-only-develop-differs",
+    "detail": "error: patch failed: pkg/nornicdb/embed_queue.go:112\nerror: pkg/nornicdb/embed_queue.go: patch does not apply"
+  },
+  {
+    "path": "pkg/nornicdb/inference_services.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/query_embedding.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/search_services.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/search/chunked_search.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/search/relationship_search.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/search/search.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/search/text_continuation.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/server/server.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/server/server_helpers.go",
+    "state": "applied-unchanged"
+  },
+  {
+    "path": "pkg/lifecycle/format_export_test.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/lifecycle/owner.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/lifecycle/scope.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/db_lifetime.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/lifetime_provider.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/nornicdb/lifetime_provider_forms.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/search/resource_lifetime.go",
+    "state": "copied-new-unchanged"
+  },
+  {
+    "path": "pkg/server/resource_lifetime.go",
+    "state": "copied-new-unchanged"
+  }
+]

@@ -1,0 +1,7 @@
+[graphify extract] scanning /tmp/rc144-r73-pinned-release
+[graphify] WARNING: PDF text extraction skipped: 'pypdf' is not installed. Install the pdf extra: uv tool install 'graphifyy[pdf]'
+[graphify extract] --code-only: skipping 711 non-code file(s) (677 docs, 2 papers, 32 images) — no LLM extraction
+[graphify extract] found 3917 code, 0 docs, 0 papers, 0 images
+[graphify extract] 353 file(s) not classified (no supported extension or shebang), skipped: .dockerignore, .gitattributes, .gitignore, Aggregation1.feature, Aggregation2.feature, Aggregation3.feature (+347 more)
+[graphify extract] 2 file(s) skipped as potentially sensitive (rename or move if wrongly flagged): .npmrc, serviceaccount.yaml
+[graphify extract] AST extraction on 3917 code files...

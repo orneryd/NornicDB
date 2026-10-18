@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"encoding/gob"
 	"errors"
 	"hash/fnv"
@@ -155,12 +156,11 @@ func (s *Service) StartRelationshipIndex() {
 		return
 	}
 	rs.start.Do(func() {
-		go s.runRelationshipIndex(rs)
+		s.workers.Go(func(scope *lifecycle.Scope){s.runRelationshipIndex(rs,scope)})
 	})
 }
 
-func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
-	ctx := s.lifecycleCtx
+func (s *Service) runRelationshipIndex(rs *relationshipSearch,ctx context.Context) {
 	persisted := s.loadRelationshipVectors()
 	seen := make(map[string]bool)
 	err := storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {

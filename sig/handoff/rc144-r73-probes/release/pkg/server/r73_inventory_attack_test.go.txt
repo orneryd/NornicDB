@@ -1,0 +1,40 @@
+package server
+
+import (
+ "context"
+ "errors"
+ "log/slog"
+ "sync"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/embed"
+ "github.com/stretchr/testify/require"
+)
+func TestR73ConcurrentServerStopJoinsInitialization(t *testing.T){
+ s,_:=setupTestServer(t)
+ entered,cancelled,release:=make(chan struct{}),make(chan struct{}),make(chan struct{})
+ var once sync.Once;unblock:=func(){once.Do(func(){close(release)})};defer unblock()
+ e:=&closeTrackingEmbedder{countingEmbedder:countingEmbedder{dims:4}}
+ s.newEmbedder=func(ctx context.Context,_ *embed.Config)(embed.Embedder,error){close(entered);<-ctx.Done();close(cancelled);<-release;return e,nil}
+ s.startEmbedderInit(&embed.Config{Provider:"local",Model:"r73",Dimensions:4},0,nil,s.db)
+ select{case <-entered:case <-time.After(5*time.Second):t.Fatal("constructor not reached")}
+ first:=make(chan error,1);go func(){first<-s.Stop(context.Background())}()
+ select{case <-cancelled:case <-time.After(5*time.Second):t.Fatal("Stop did not cancel constructor")}
+ second:=make(chan error,1);go func(){second<-s.Stop(context.Background())}()
+ early:=false;select{case err:=<-second:require.NoError(t,err);early=true;case <-time.After(100*time.Millisecond):}
+ unblock();require.NoError(t,<-first);if !early{require.NoError(t,<-second)}
+ require.NoError(t,s.db.Close());require.True(t,e.closed.Load())
+ t.Logf("second Server.Stop returned while constructor still running: %v",early)
+ require.False(t,early,"concurrent Stop falsely reported completed initialization shutdown")
+}
+func TestR73PartialConstructorFailureReleasesResource(t *testing.T){
+ s,_:=setupTestServer(t)
+ e:=&closeTrackingEmbedder{countingEmbedder:countingEmbedder{dims:4}}
+ s.embedderRetryInitialBackoff=time.Hour;s.embedderRetryMaxBackoff=time.Hour
+ warned:=make(chan struct{});s.log=slog.New(&failedHealthWarningHandler{warned:warned})
+ s.newEmbedder=func(context.Context,*embed.Config)(embed.Embedder,error){return e,errors.New("r73 partial constructor")}
+ s.startEmbedderInit(&embed.Config{Provider:"local",Model:"r73",Dimensions:4},0,nil,s.db)
+ select{case <-warned:case <-time.After(5*time.Second):t.Fatal("failure not reported")}
+ require.True(t,e.closed.Load(),"partial construction resource must be freed before retry")
+ require.NoError(t,s.Stop(context.Background()));require.NoError(t,s.db.Close())
+}

@@ -50,6 +50,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
+	lifetime "github.com/orneryd/nornicdb/pkg/lifecycle"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/replication"
@@ -68,7 +69,7 @@ import (
 var (
 	ErrNotFound     = localizedError(localization.NornicDBCoreNotFound(), nil)
 	ErrInvalidID    = localizedError(localization.NornicDBCoreInvalidID(), nil)
-	ErrClosed       = localizedError(localization.NornicDBCoreDatabaseClosed(), nil)
+	ErrClosed       = lifetime.ErrClosed
 	ErrInvalidInput = localizedError(localization.NornicDBCoreInvalidInput(), nil)
 
 	// ErrQueryEmbeddingDimensionMismatch is returned when the query is embedded
@@ -155,7 +156,7 @@ func DefaultConfig() *Config {
 type DB struct {
 	config *Config
 	mu     sync.RWMutex
-	closed bool
+	lifetime *lifetime.Owner
 
 	// Internal components
 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
@@ -206,11 +207,10 @@ type DB struct {
 	encryptionEnabled bool
 
 	// Background goroutine tracking
-	bgWg sync.WaitGroup
+	background *lifetime.Group
 
 	// buildCtx is cancelled when the DB closes so startup index build stops promptly.
 	buildCtx    context.Context
-	buildCancel context.CancelFunc
 	// derivedIndexesHealthy is false when startup reconstruction failed. A
 	// failed startup must not leave a clean-shutdown marker that would suppress
 	// reconstruction on the next restart.
@@ -258,8 +258,6 @@ type DB struct {
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
-	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
-	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
@@ -632,6 +630,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config:            config,
 		searchWarmupReady: make(chan struct{}),
 	}
+	db.lifetime=lifetime.New()
+	db.background=db.lifetime.NewGroup()
+	db.buildCtx=db.lifetime.Context()
 
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
 	if dataDir != "" {
@@ -991,7 +992,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
-	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
+	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.lifetime)
+	db.cypherExecutor.QueryEmbedderBinding().SetProviderOwner(db.ownQueryProvider)
 	// The base executor is shared by every embedded caller of DB.Cypher /
 	// ExecuteCypher: a statement must never leave it inside a transaction.
 	// Embedded callers that want explicit transactions create their own
@@ -1151,9 +1153,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		db.inferenceServices = make(map[string]*inference.Engine)
 		// Eagerly create default DB inference for parity with prior behavior.
 		if _, err := db.getOrCreateInferenceService(db.defaultDatabaseName(), db.storage); err != nil {
-			db.mu.Lock()
-			db.closed = true
-			db.mu.Unlock()
 			_ = db.closeInternal()
 			return nil, localizedError(localization.NornicDBCoreInferenceInitializeFailed(err), err)
 		}
@@ -1169,6 +1168,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config.EmbeddingWorker.ChunkOverlapSet,
 	)
 	db.embedWorkerConfig = &EmbedWorkerConfig{
+		Lifetime: db.lifetime,
 		NumWorkers:              config.EmbeddingWorker.NumWorkers,
 		ScanInterval:            config.EmbeddingWorker.ScanInterval,
 		BatchDelay:              config.EmbeddingWorker.BatchDelay,
@@ -1297,7 +1297,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// This ensures search is ready before first query and k-means runs after indexes exist.
 	// Use a context cancelled on DB close so the build stops when the process is killed.
 	defaultDBName := db.defaultDatabaseName()
-	db.buildCtx, db.buildCancel = context.WithCancel(context.Background())
 	if db.accessFlusher != nil {
 		db.accessFlusher.Start(db.buildCtx)
 	}
@@ -1610,12 +1609,13 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
 		return false
 	}
-	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+	resource,accepted:=db.ownProvider(embedder); if !accepted {
 		return false
 	}
 
+	embedder=newManagedProvider(embedder,resource)
 	db.mu.Lock()
-	if db.closed {
+	if db.isClosed() {
 		// Close has stopped, or is stopping, the queue and timers this
 		// would start.
 		db.mu.Unlock()
@@ -1669,7 +1669,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	// Set callback to update search index after embedding and run inference.
 	// Note: IndexNode is idempotent (uses map keyed by node ID), so if the storage
 	// OnNodeUpdated callback also calls IndexNode, no double-counting occurs.
-	db.embedQueue.SetOnEmbedded(func(node *storage.Node) {
+	db.embedQueue.setOnEmbeddedInternal(func(node *storage.Node) {
 		db.onNodeEmbedded(node)
 	})
 
@@ -1726,7 +1726,7 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	}
 	db.mu.Lock()
 	eq := db.embedQueue
-	closed := db.closed
+	closed := db.isClosed()
 	db.mu.Unlock()
 	if eq == nil || closed {
 		return
@@ -1797,13 +1797,13 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	// Per-database model construction is also part of the DB lifetime. In
 	// particular, a constructor ignoring cancellation cannot outlive Close.
 	db.mu.RLock()
-	if db.closed {
+	if db.isClosed() {
 		db.mu.RUnlock()
 		return nil
 	}
-	db.bgWg.Add(1)
+	scope,scopeErr:=db.backgroundScope();if scopeErr!=nil{db.mu.RUnlock();return nil}
 	db.mu.RUnlock()
-	defer db.bgWg.Done()
+	defer scope.Finish()
 
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
@@ -1863,12 +1863,14 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	db.embedderCreateMu.Unlock()
 
 	newEmbedder, createErr := create(cfg)
-	release, accepted := db.OwnEmbedder(newEmbedder)
+	resource, accepted := db.ownProvider(newEmbedder)
+ release:=func()error{if resource!=nil{return resource.Release()};return nil}
 	if createErr != nil || !accepted {
 		_ = release()
 		newEmbedder = nil
 	}
 
+	if newEmbedder!=nil {newEmbedder=newManagedProvider(newEmbedder,resource)}
 	discard := false
 	db.embedderRegistryMu.Lock()
 	if createErr == nil && newEmbedder != nil {
@@ -1910,7 +1912,7 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 // each call rebuilds the indexes.
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	db.mu.RLock()
-	closed := db.closed
+	closed := db.isClosed()
 	db.mu.RUnlock()
 	if closed {
 		return ErrClosed
@@ -1992,15 +1994,15 @@ func (db *DB) StopEmbedQueue() {
 // from being launched once shutdown has started.
 func (db *DB) startBackgroundTask(fn func()) bool {
 	db.mu.RLock()
-	if db.closed {
+	if db.isClosed() {
 		db.mu.RUnlock()
 		return false
 	}
-	db.bgWg.Add(1)
+	scope,scopeErr:=db.backgroundScope();if scopeErr!=nil{db.mu.RUnlock();return false}
 	db.mu.RUnlock()
 
 	go func() {
-		defer db.bgWg.Done()
+		defer scope.Finish()
 		fn()
 	}()
 	return true
@@ -2392,7 +2394,7 @@ func (db *DB) GetReplicator() replication.Replicator {
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
-	if db.closed {
+	if db.isClosed() {
 		db.mu.RUnlock()
 		return nil, ErrClosed
 	}

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
 // ResultStream lets a caller consume the rows of an auto-commit read as the
@@ -33,6 +34,8 @@ import (
 // over rows the pipeline produces one at a time. Every other statement runs
 // as before and returns its whole result.
 type ResultStream struct {
+	ctx context.Context
+	callbackErr error
 	threshold int
 	onStart   ResultStreamStarter
 
@@ -109,6 +112,7 @@ type armedResultStreamKey struct{}
 // the ones the client sees; recordAccess records the access to the nodes
 // and relationships of rows handed to the client.
 func armResultStream(ctx context.Context, stream *ResultStream, statement string, mapColumns func([]string) []string, recordAccess func([][]interface{})) context.Context {
+	stream.ctx=ctx
 	stream.statement = statement
 	stream.mapColumns = mapColumns
 	stream.recordAccess = recordAccess
@@ -159,6 +163,7 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {
 			s.start()
+			if s.callbackErr!=nil{return false}
 		}
 		return true
 	}
@@ -198,7 +203,8 @@ func (s *ResultStream) start() {
 	s.started = true
 	close(s.startedSignal)
 	if s.onStart != nil {
-		s.onStart.ResultStreamStarted()
+		ctx:=s.ctx;if ctx==nil{ctx=context.Background()}
+		s.callbackErr=lifecycle.Callback(ctx,s.onStart.ResultStreamStarted)
 	}
 }
 

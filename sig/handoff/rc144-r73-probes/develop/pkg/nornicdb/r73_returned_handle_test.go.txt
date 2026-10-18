@@ -1,0 +1,28 @@
+package nornicdb
+import (
+ "context"
+ "sync"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/embed"
+ "github.com/stretchr/testify/require"
+)
+func TestR73DBReturnedProviderHandleJoinsClose(t *testing.T){
+ for _,cache:=range []bool{false,true}{t.Run(map[bool]string{false:"bare",true:"cached"}[cache],func(t *testing.T){
+  db,err:=Open("",nil);require.NoError(t,err)
+  e:=&solReviewForegroundEmbedder{mockEmbedder:mockEmbedder{dims:4},entered:make(chan struct{}),proceed:make(chan struct{}),closeCalled:make(chan struct{})}
+  var once sync.Once;release:=func(){once.Do(func(){close(e.proceed)})};defer release()
+  t.Cleanup(func(){release();_=db.Close()})
+  var installed embed.Embedder=e;if cache{installed=embed.NewCachedEmbedder(installed,16)}
+  require.True(t,db.SetEmbedder(installed))
+  handle:=db.GetCypherExecutor().GetEmbedder();require.NotNil(t,handle)
+  queried:=make(chan error,1);go func(){_,err:=handle.Embed(context.Background(),"held raw handle");queried<-err}()
+  select{case <-e.entered:case <-time.After(5*time.Second):t.Fatal("returned provider handle not entered")}
+  closed:=make(chan error,1);go func(){closed<-db.Close()}()
+  early:=false;select{case err:=<-closed:require.NoError(t,err);early=true;case <-time.After(1200*time.Millisecond):}
+  unsafe:=e.unsafeCloses.Load();release();require.NoError(t,<-queried);if !early{require.NoError(t,<-closed)}
+  t.Logf("DB-returned provider handle: CloseReturnedWhileActive=%v unsafeCloses=%d",early,unsafe)
+  require.False(t,early,"a provider handle returned by the DB bypassed its shutdown join")
+  require.Zero(t,unsafe)
+ })}
+}

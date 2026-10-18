@@ -1,0 +1,2 @@
+Shortest path (1 hops):
+  .Close() --calls [EXTRACTED]--> .closeInternal()

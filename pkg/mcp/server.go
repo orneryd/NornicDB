@@ -60,6 +60,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+ "github.com/orneryd/nornicdb/pkg/lifecycle"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -1085,11 +1086,12 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 
 	if s.db != nil {
 		dbName := DatabaseFromContext(ctx) // empty = default database
-		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
+		var operation lifecycle.Scope
+		err := s.queryEmbedder.BeginUse(ctx,&operation)
 		if err != nil {
 			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
 		}
-		defer finishProviderUse()
+		defer operation.Finish();ctx=&operation
 		engine, err := s.storageForContext(ctx)
 		if err != nil {
 			return nil, err

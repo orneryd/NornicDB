@@ -1,0 +1,30 @@
+package nornicdb
+import (
+ "context"
+ "testing"
+ "time"
+ "github.com/orneryd/nornicdb/pkg/storage"
+ "github.com/stretchr/testify/require"
+)
+func TestR73CypherOperationShutdown(t *testing.T){
+ cases:=[]struct{name,query string}{
+ {"rag","CALL db.retrieve({query:'held query'})"},
+ {"inline","CREATE (:Doc {content:'held query'}) WITH EMBEDDING RETURN count(*)"},
+ {"vector_nodes","CALL db.index.vector.queryNodes('r73_doc', 1, 'held query') YIELD node, score RETURN node, score"},
+ }
+ for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){
+  cfg:=DefaultConfig();cfg.Memory.DecayEnabled=false;cfg.Memory.AutoLinksEnabled=false;cfg.Memory.EmbeddingDimensions=4;cfg.EmbeddingWorker.NumWorkers=0
+  db,err:=Open("",cfg);require.NoError(t,err);defer db.Close()
+  _,err=db.GetStorage().CreateNode(&storage.Node{ID:"r73-seed",Labels:[]string{"Doc"},Properties:map[string]interface{}{"content":"held query"},ChunkEmbeddings:[][]float32{{1,0,0,0}}});require.NoError(t,err)
+  require.NoError(t,db.BuildSearchIndexes(context.Background()))
+  _,err=db.ExecuteCypher(context.Background(),"CREATE VECTOR INDEX r73_doc FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig:{dimensions:4}}",nil);require.NoError(t,err)
+  e:=&solReviewForegroundEmbedder{mockEmbedder:mockEmbedder{dims:4},entered:make(chan struct{}),proceed:make(chan struct{}),closeCalled:make(chan struct{})}
+  require.True(t,db.SetEmbedder(e))
+  queried:=make(chan error,1);go func(){_,err:=db.ExecuteCypher(context.Background(),tc.query,nil);queried<-err}()
+  select{case <-e.entered:case err:=<-queried:t.Fatalf("consumer did not enter provider: %v",err);case <-time.After(5*time.Second):t.Fatal("consumer did not enter provider")}
+  closed:=make(chan error,1);go func(){closed<-db.Close()}()
+  select{case err:=<-queried:require.ErrorIs(t,err,context.Canceled);case <-time.After(5*time.Second):t.Fatal("consumer hung")}
+  select{case err:=<-closed:require.NoError(t,err);case <-time.After(5*time.Second):t.Fatal("Close hung")}
+  require.Zero(t,e.unsafeCloses.Load())
+ })}
+}
