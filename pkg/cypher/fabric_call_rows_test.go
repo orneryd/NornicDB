@@ -53,12 +53,9 @@ func fabricCallRowsCompositeExecutor(t testing.TB, exec *StorageExecutor) *Stora
 	return composite
 }
 
-// These data-independent queries exercise the public composite path. With --ref
-// neo-ref they also run against Neo4j 5.26.30, omitting only the USE selectors:
-// the reference is a single database and the branch bodies do not read storage.
-func TestFabricCallRowStream(t *testing.T) {
+func fabricCallRowsReference(t *testing.T) neo4j.DriverWithContext {
+	t.Helper()
 	ctx := context.Background()
-	exec := newFabricCallRowsExecutor(t)
 	var driver neo4j.DriverWithContext
 	if uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_URI"); uri != "" {
 		var err error
@@ -69,6 +66,31 @@ func TestFabricCallRowStream(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "5.26.30", version.Records[0].Values[0])
 	}
+	return driver
+}
+
+func fabricCallRowsAssertReference(t *testing.T, tx neo4j.ExplicitTransaction, query, want string) {
+	t.Helper()
+	result, err := tx.Run(context.Background(), query, nil)
+	require.NoError(t, err, "Neo4j query: %s", query)
+	records, err := result.Collect(context.Background())
+	require.NoError(t, err)
+	rows := make([][]interface{}, 0, len(records))
+	for _, record := range records {
+		rows = append(rows, record.Values)
+	}
+	encoded, err := json.Marshal(rows)
+	require.NoError(t, err)
+	require.JSONEq(t, want, string(encoded), "Neo4j reference")
+}
+
+// These data-independent queries exercise the public composite path. With --ref
+// neo-ref they also run against Neo4j 5.26.30, omitting only the USE selectors:
+// the reference is a single database and the branch bodies do not read storage.
+func TestFabricCallRowStream(t *testing.T) {
+	ctx := context.Background()
+	exec := newFabricCallRowsExecutor(t)
+	driver := fabricCallRowsReference(t)
 	call := "USE comp CALL { USE comp.one UNWIND [2, 1, 2] AS k RETURN k } "
 	tests := []struct {
 		name, query, want string
@@ -107,6 +129,8 @@ func TestFabricCallRowStream(t *testing.T) {
 		{"union_inherited_use", "USE comp CALL { USE comp.one RETURN 1 AS k UNION ALL RETURN 2 AS k } RETURN k ORDER BY k", "[[1],[2]]"},
 		{"union_second_use", "USE comp CALL { RETURN 1 AS k UNION ALL USE comp.two RETURN 2 AS k } RETURN k ORDER BY k", "[[1],[2]]"},
 		{"union_top_level_control", "USE comp.one RETURN 1 AS k UNION ALL USE comp.two RETURN 2 AS k", "[[1],[2]]"},
+		{"union_top_same_graph_control", "USE comp.one RETURN 1 AS k UNION ALL USE comp.one RETURN 2 AS k", "[[1],[2]]"},
+		{"union_top_pipeline_control", "USE comp.one UNWIND [1] AS k RETURN k UNION ALL USE comp.two UNWIND [2] AS k RETURN k", "[[1],[2]]"},
 		{"dynamic_inner", "USE comp CALL { USE graph.byName('comp.one') UNWIND [2,1] AS k RETURN k } WITH k ORDER BY k RETURN collect(k) AS ks", "[[[1,2]]]"},
 		{"dynamic_union", "USE comp CALL { USE graph.byName('comp.one') RETURN 1 AS k UNION ALL USE graph.byName('comp.two') RETURN 2 AS k } RETURN k ORDER BY k", "[[1],[2]]"},
 		{"quoted_union_text", "USE comp CALL { USE comp.one RETURN 'UNION ALL' AS k UNION ALL USE comp.two RETURN 'two' AS k } RETURN k ORDER BY k", "[[\"UNION ALL\"],[\"two\"]]"},
@@ -181,9 +205,46 @@ func BenchmarkFabricCallRows(b *testing.B) {
 	}
 }
 
+func BenchmarkFabricCallRowsTransaction(b *testing.B) {
+	for _, tt := range []struct{ name, query string }{
+		{"ordered_aggregate", "USE comp CALL { USE comp.one UNWIND range(1,100) AS k RETURN k } WITH k ORDER BY k DESC RETURN collect(k) AS ks"},
+		{"union_same_participant", "USE comp.one RETURN 1 AS k UNION ALL USE comp.one RETURN 2 AS k UNION ALL USE comp.one RETURN 3 AS k"},
+		{"union_two_participants", "USE comp.one RETURN 1 AS k UNION ALL USE comp.two RETURN 2 AS k"},
+	} {
+		b.Run(tt.name, func(b *testing.B) {
+			exec := fabricCallRowsCompositeExecutor(b, newFabricCallRowsExecutor(b))
+			exec.cache = nil
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "BEGIN", nil)
+			require.NoError(b, err)
+			b.Cleanup(func() {
+				_, err := exec.Execute(ctx, "ROLLBACK", nil)
+				require.NoError(b, err)
+			})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := exec.Execute(ctx, tt.query, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestFabricCallRowsConstituentData(t *testing.T) {
 	exec := newFabricCallRowsExecutor(t)
 	ctx := context.Background()
+	var refTx neo4j.ExplicitTransaction
+	if driver := fabricCallRowsReference(t); driver != nil {
+		session := driver.NewSession(ctx, neo4j.SessionConfig{})
+		t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
+		var err error
+		refTx, err = session.BeginTransaction(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, refTx.Rollback(ctx)) })
+		fabricCallRowsAssertReference(t, refTx, "CREATE (:FabricCallRowsP {db:'one'}), (:FabricCallRowsP {db:'two'}) RETURN 1", "[[1]]")
+	}
 	for _, tt := range []struct{ query, want string }{
 		{"USE comp.one MATCH (n:P) RETURN collect(n.db) AS dbs", "[[[\"one\"]]]"},
 		{"USE comp CALL { USE comp.one MATCH (n:P) RETURN n } RETURN collect(n.db) AS dbs", "[[[\"one\"]]]"},
@@ -191,6 +252,12 @@ func TestFabricCallRowsConstituentData(t *testing.T) {
 		{"USE comp CALL { USE comp.one MATCH (n:P) RETURN n UNION ALL USE comp.two MATCH (n:P) RETURN n } WITH n ORDER BY n.db RETURN collect(n.db) AS dbs", "[[[\"one\",\"two\"]]]"},
 	} {
 		t.Run(tt.query, func(t *testing.T) {
+			if refTx != nil {
+				// Reference constituents share a database, so labels and db values
+				// preserve the two local databases' disjoint fixtures.
+				query := strings.NewReplacer("USE comp.one MATCH (n:P)", "MATCH (n:FabricCallRowsP {db:'one'})", "USE comp.two MATCH (n:P)", "MATCH (n:FabricCallRowsP {db:'two'})", "USE comp ", "").Replace(tt.query)
+				fabricCallRowsAssertReference(t, refTx, query, tt.want)
+			}
 			for _, mode := range []string{"autocommit", "transaction"} {
 				t.Run(mode, func(t *testing.T) {
 					runExec := exec
@@ -227,6 +294,7 @@ func TestFabricCallRowsRemote(t *testing.T) {
 		"USE comp CALL { USE comp.remote UNWIND [2,1] AS k RETURN k } WITH k ORDER BY k RETURN collect(k) AS ks",
 		"USE comp CALL { USE comp.one RETURN 2 AS k UNION ALL USE comp.remote RETURN 1 AS k } WITH k ORDER BY k RETURN collect(k) AS ks",
 		"USE comp CALL { USE comp.remote RETURN 2 AS k UNION ALL USE comp.two RETURN 1 AS k } WITH k ORDER BY k RETURN collect(k) AS ks",
+		"USE comp CALL { USE comp.remote RETURN 2 AS k UNION ALL USE comp.remote RETURN 1 AS k } WITH k ORDER BY k RETURN collect(k) AS ks",
 	} {
 		t.Run(query, func(t *testing.T) {
 			runExec := exec
@@ -245,6 +313,61 @@ func TestFabricCallRowsRemote(t *testing.T) {
 				encoded, err := json.Marshal(result.Rows)
 				require.NoError(t, err)
 				require.JSONEq(t, "[[[1,2]]]", string(encoded))
+			}
+		})
+	}
+}
+
+func TestFabricCallRowsBatchedTransaction(t *testing.T) {
+	exec := newFabricCallRowsExecutor(t)
+	mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
+	store, err := mgr.GetStorage("two")
+	require.NoError(t, err)
+	for _, key := range []int64{1, 513} {
+		_, err := NewStorageExecutor(store).Execute(context.Background(), "CREATE (:Lookup {key: $key})", map[string]interface{}{"key": key})
+		require.NoError(t, err)
+	}
+	var refTx neo4j.ExplicitTransaction
+	if driver := fabricCallRowsReference(t); driver != nil {
+		ctx := context.Background()
+		session := driver.NewSession(ctx, neo4j.SessionConfig{})
+		t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
+		refTx, err = session.BeginTransaction(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, refTx.Rollback(ctx)) })
+		fabricCallRowsAssertReference(t, refTx, "CREATE (:FabricCallRowsLookup {key:1}), (:FabricCallRowsLookup {key:513}) RETURN 1", "[[1]]")
+	}
+	prefix := "USE comp CALL { USE comp.one UNWIND range(1,513) AS k RETURN k } CALL { WITH k USE comp.two MATCH (n:Lookup) WHERE n.key = k "
+	for _, tt := range []struct{ name, body, tail, want string }{
+		{"collect", "RETURN collect(n.key) AS ks", "RETURN count(*) AS rows, sum(size(ks)) AS matches", "[[513,2]]"},
+		{"count", "RETURN count(n) AS c", "RETURN count(*) AS rows, sum(c) AS matches", "[[513,2]]"},
+		{"streamed_rows", "RETURN n.key AS key", "RETURN key ORDER BY key", "[[1],[513]]"},
+		{"materialized_rows", "RETURN n.key AS key ORDER BY key", "RETURN key ORDER BY key", "[[1],[513]]"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if refTx != nil {
+				query := strings.NewReplacer("USE comp ", "", "USE comp.one ", "", "USE comp.two ", "", ":Lookup", ":FabricCallRowsLookup").Replace(prefix + tt.body + " } " + tt.tail)
+				fabricCallRowsAssertReference(t, refTx, query, tt.want)
+			}
+			for _, mode := range []string{"autocommit", "transaction"} {
+				t.Run(mode, func(t *testing.T) {
+					runExec := exec
+					ctx := context.Background()
+					if mode == "transaction" {
+						runExec = fabricCallRowsCompositeExecutor(t, exec)
+						_, err := runExec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						defer func() {
+							_, err := runExec.Execute(ctx, "ROLLBACK", nil)
+							require.NoError(t, err)
+						}()
+					}
+					result, err := runExec.Execute(ctx, prefix+tt.body+" } "+tt.tail, nil)
+					require.NoError(t, err)
+					encoded, err := json.Marshal(result.Rows)
+					require.NoError(t, err)
+					require.JSONEq(t, tt.want, string(encoded))
+				})
 			}
 		})
 	}
