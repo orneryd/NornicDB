@@ -276,44 +276,7 @@ func inferReturnColumnsFromQuery(query string) []string {
 	}
 	// Trim trailing semicolon.
 	clause = strings.TrimSuffix(clause, ";")
-	// Strip top-level ORDER BY / SKIP / LIMIT tails.
-	end := len(clause)
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(clause); i++ {
-		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := clause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(clause, i, "ORDER BY") || hasKeywordAt(clause, i, "SKIP") || hasKeywordAt(clause, i, "LIMIT") {
-			end = i
-			break
-		}
-	}
-	clause = strings.TrimSpace(clause[:end])
+	clause, _ = splitTopLevelResultModifiers(clause)
 	parts := splitTopLevelCSV(clause)
 	cols := make([]string, 0, len(parts))
 	for _, p := range parts {
@@ -334,67 +297,38 @@ func inferReturnColumnsFromQuery(query string) []string {
 }
 
 func lastKeywordIndexFold(s, keyword string) int {
-	if len(keyword) == 0 || len(s) < len(keyword) {
+	if strings.TrimSpace(keyword) == "" {
 		return -1
 	}
-	for i := len(s) - len(keyword); i >= 0; i-- {
-		if hasKeywordAt(s, i, keyword) {
-			return i
+	last := -1
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.is(keywordHead(keyword)) && ClauseKeywordAt(s, token.start, keyword) {
+			last = token.start
 		}
 	}
-	return -1
+	return last
 }
 
 func lastAsIndexFold(s string) int {
-	if len(s) < 4 {
-		return -1
-	}
-	for i := len(s) - 4; i >= 0; i-- {
-		if strings.EqualFold(s[i:i+4], " AS ") {
-			return i
+	last := -1
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.is("AS") && token.start > 0 && token.end < len(s) && s[token.start-1] == ' ' && s[token.end] == ' ' {
+			last = token.start - 1
 		}
 	}
-	return -1
+	return last
 }
 
 func splitTopLevelCSV(s string) []string {
 	var parts []string
 	start := 0
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := s[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		case ',':
-			if paren == 0 && bracket == 0 && brace == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.text == "," {
+			parts = append(parts, s[start:token.start])
+			start = token.end
 		}
 	}
-	parts = append(parts, s[start:])
-	return parts
+	return append(parts, s[start:])
 }
 
 func participantKeyFromLocation(loc Location) string {
@@ -556,19 +490,19 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsQueryTokens(trimmed, "RETURN ") || containsQueryTokens(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
-	m := reApplyLookupRows.FindStringSubmatch(trimmed)
-	if len(m) != 6 {
+	spec, parsed := parseApplyCorrelatedLookupSubquery(trimmed)
+	if !parsed {
 		return nil, false, nil
 	}
-	importCol := strings.TrimSpace(m[1])
-	useClause := strings.TrimSpace(m[2])
-	matchPart := strings.TrimSpace(m[3])
-	wherePart := strings.TrimSpace(m[4])
-	returnPart := strings.TrimSpace(m[5])
+	importCol := spec.importCol
+	useClause := spec.useClause
+	matchPart := spec.matchPart
+	wherePart := spec.wherePart
+	returnPart := strings.TrimSpace(spec.returnProjection + " " + spec.returnModifiers)
 	if importCol == "" || wherePart == "" || returnPart == "" {
 		return nil, false, nil
 	}
@@ -761,8 +695,6 @@ type applyCorrelatedLookupSpec struct {
 	returnModifiers  string
 }
 
-var reApplyLookupRows = regexp.MustCompile(`(?is)^WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s+((?:USE\s+[A-Za-z0-9_.` + "`" + `]+\s+)?)MATCH\s+(.+?)\s+WHERE\s+(.+?)\s+RETURN\s+(.+?)\s*;?\s*$`)
-
 type fabricReturnItem struct {
 	expr  string
 	prop  string
@@ -792,7 +724,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsQueryTokens(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -989,7 +921,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsQueryTokens(trimmed, "RETURN ") || !containsQueryTokens(trimmed, "count(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1227,7 +1159,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsQueryTokens(trimmed, "RETURN ") || containsQueryTokens(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1705,38 +1637,9 @@ func firstToken(s string) (token string, rest string) {
 }
 
 func indexTopLevelKeyword(s string, keyword string) int {
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := s[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(s, i, keyword) {
-			return i
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.is(keywordHead(keyword)) && ClauseKeywordAt(s, token.start, keyword) {
+			return token.start
 		}
 	}
 	return -1
@@ -1826,46 +1729,16 @@ func isImportNotNullGuardTerm(term string, importCol string) bool {
 		strings.EqualFold(parts[3], "NULL")
 }
 
-func splitTopLevelAnd(whereClause string) []string {
-	parts := make([]string, 0, 4)
+func splitTopLevelAnd(s string) []string {
+	var parts []string
 	start := 0
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(whereClause); i++ {
-		if next, quoted := cyphertext.SkipToken(whereClause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := whereClause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(whereClause, i, "AND") {
-			parts = append(parts, strings.TrimSpace(whereClause[start:i]))
-			i += len("AND") - 1
-			start = i + 1
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.is("AND") {
+			parts = append(parts, strings.TrimSpace(s[start:token.start]))
+			start = token.end
 		}
 	}
-	parts = append(parts, strings.TrimSpace(whereClause[start:]))
+	parts = append(parts, strings.TrimSpace(s[start:]))
 	return parts
 }
 
@@ -2226,9 +2099,9 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 	// WITH r, [g IN grouped WHERE g.k = r.textKey128][0] AS hit
 	// RETURN r.textKey AS textKey, r.textKey128 AS textKey128, coalesce(hit.texts, []) AS texts
 	if startsWithFold(trimmed, "WITH rows, collect({k: k, texts: texts}) AS grouped") &&
-		containsFold(trimmed, "UNWIND rows AS r") &&
+		containsQueryTokens(trimmed, "UNWIND rows AS r") &&
 		strings.Contains(trimmed, "g.k = r.textKey128") &&
-		containsFold(trimmed, "COALESCE(hit.texts, []) AS texts") {
+		containsQueryTokens(trimmed, "COALESCE(hit.texts, []) AS texts") {
 		return executeRowsGroupedJoinProjection(inputResult), true
 	}
 
@@ -2251,45 +2124,13 @@ type simpleOrderSpec struct {
 }
 
 func splitTopLevelResultModifiers(clause string) (projection string, modifiers string) {
-	projection = strings.TrimSpace(clause)
-	modifiers = ""
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(clause); i++ {
-		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := clause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(clause, i, "ORDER BY") || hasKeywordAt(clause, i, "SKIP") || hasKeywordAt(clause, i, "LIMIT") {
-			projection = strings.TrimSpace(clause[:i])
-			modifiers = strings.TrimSpace(clause[i:])
-			return projection, modifiers
+	end := len(clause)
+	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if index := indexTopLevelKeyword(clause, keyword); index >= 0 && index < end {
+			end = index
 		}
 	}
-	return projection, modifiers
+	return strings.TrimSpace(clause[:end]), strings.TrimSpace(clause[end:])
 }
 
 func applySimpleResultModifiers(result *ResultStream, modifiers string, aliasToCol map[string]string) {
@@ -2366,23 +2207,14 @@ func parseSimpleResultModifiers(modifiers string, aliasToCol map[string]string) 
 
 func splitLeadingModifierClause(s string, keyword string) (clause string, rest string) {
 	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return "", ""
-	}
 	end := len(trimmed)
-	if strings.EqualFold(keyword, "ORDER BY") {
-		for i := len(keyword); i < len(trimmed); i++ {
-			if hasKeywordAt(trimmed, i, "SKIP") || hasKeywordAt(trimmed, i, "LIMIT") {
-				end = i
-				break
-			}
+	for token := range queryTokens(trimmed) {
+		if token.start < len(keyword) || token.depth != 0 {
+			continue
 		}
-	} else {
-		for i := len(keyword); i < len(trimmed); i++ {
-			if hasKeywordAt(trimmed, i, "ORDER BY") || hasKeywordAt(trimmed, i, "SKIP") || hasKeywordAt(trimmed, i, "LIMIT") {
-				end = i
-				break
-			}
+		if token.is("ORDER") && ClauseKeywordAt(trimmed, token.start, "ORDER BY") || token.is("SKIP") || token.is("LIMIT") {
+			end = token.start
+			break
 		}
 	}
 	return strings.TrimSpace(trimmed[:end]), strings.TrimSpace(trimmed[end:])
@@ -3102,41 +2934,7 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 }
 
 func findLeadingWithClauseEnd(query string) (int, bool) {
-	if query == "" {
-		return 0, false
-	}
-	i := skipLeadingSpace(query, 0)
-	if !hasKeywordAt(query, i, "WITH") {
-		return 0, false
-	}
-	i += len("WITH")
-	i = skipLeadingSpace(query, i)
-
-	depth := 0
-
-	for idx := i; idx < len(query); idx++ {
-		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
-			idx = next - 1
-			continue
-		}
-		ch := query[idx]
-		switch ch {
-		case '(', '[', '{':
-			depth++
-			continue
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
-		}
-
-		if depth == 0 && isCypherClauseStart(query, idx) {
-			return idx, true
-		}
-	}
-
-	return len(query), true
+	return LeadingWithClauseEnd(query)
 }
 
 func isCypherClauseStart(query string, idx int) bool {
@@ -3171,27 +2969,7 @@ var clauseStartKeywords = [...]string{
 }
 
 func hasKeywordAt(query string, idx int, keyword string) bool {
-	if idx < 0 || idx+len(keyword) > len(query) {
-		return false
-	}
-	if idx > 0 {
-		prev := rune(query[idx-1])
-		if unicode.IsLetter(prev) || unicode.IsDigit(prev) || prev == '_' {
-			return false
-		}
-	}
-	segment := query[idx : idx+len(keyword)]
-	if !strings.EqualFold(segment, keyword) {
-		return false
-	}
-	end := idx + len(keyword)
-	if end < len(query) {
-		next := rune(query[end])
-		if unicode.IsLetter(next) || unicode.IsDigit(next) || next == '_' {
-			return false
-		}
-	}
-	return true
+	return ClauseKeywordAt(query, idx, keyword)
 }
 
 func skipLeadingSpace(s string, idx int) int {

@@ -33,6 +33,10 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 		if useIdx < 0 {
 			break
 		}
+		if !fabric.ClauseKeywordAt(cypher, useIdx, "USE") {
+			searchFrom = useIdx + len("USE")
+			continue
+		}
 		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
 		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
 			return true
@@ -680,14 +684,14 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 		return query
 	}
 	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
+	if !fabric.ClauseKeywordAt(trimmed, 0, "WITH") {
 		return query
 	}
 	withEnd := findLeadingWithEndLocal(trimmed)
 	if withEnd <= 0 || withEnd >= len(trimmed) {
 		return query
 	}
-	withClause := strings.TrimSpace(trimmed[len("WITH "):withEnd])
+	withClause := strings.TrimSpace(trimmed[len("WITH"):withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
 	if rest == "" {
 		return query
@@ -725,25 +729,21 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 }
 
 func findLeadingWithEndLocal(query string) int {
-	const prefix = "WITH "
-	if len(query) <= len(prefix) {
+	end, ok := fabric.LeadingWithClauseEnd(query)
+	if !ok || end == len(query) {
 		return -1
 	}
-	body := query[len(prefix):]
-	end := -1
-	for _, keyword := range [...]string{
-		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
-		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
-	} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
-			end = index
-		}
-	}
-	if end < 0 {
-		return -1
-	}
-	return len(prefix) + end
+	return end
 }
+
+func startsWithKeywordAtLocal(s string, i int, kw string) bool {
+	return fabric.ClauseKeywordAt(s, i, kw)
+}
+
+func splitCommaTopLevelLocal(s string) []string {
+	return splitTopLevelComma(s)
+}
+
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
