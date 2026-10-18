@@ -23,7 +23,7 @@ func tracingDisabled() bool {
 
 // startExecuteSpan begins the top-level nornicdb.cypher.execute span. The
 // returned context carries the span; callers must defer span.End().
-func startExecuteSpan(ctx context.Context, opType string, query string) (context.Context, trace.Span) {
+func (e *StorageExecutor) startExecuteSpan(ctx context.Context, opType string, query string) (context.Context, trace.Span) {
 	if tracingDisabled() {
 		return ctx, trace.SpanFromContext(ctx)
 	}
@@ -31,7 +31,7 @@ func startExecuteSpan(ctx context.Context, opType string, query string) (context
 		internalSpanStartOptions[0],
 		trace.WithAttributes(
 			attribute.String("cypher.op_type", opType),
-			attribute.String("cypher.query", truncateQuery(query, 512)),
+			attribute.String("cypher.query", truncateQuery(e.redactForLog(query), 512)),
 		),
 	)
 	return ctx, span

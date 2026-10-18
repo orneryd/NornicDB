@@ -23,8 +23,10 @@ import (
 var DefaultRedactKeys = []string{
 	"password", "token", "authorization", "secret", "api_key", "credentials",
 	"embedding_key", "private_key", "encryption_key", "master_key", "access_key",
-	"tls_key", "secret_key", "jwt_key", "client_key",
-	"credential", "access_key_id", "url_query_key", "url_query_signature", "url_query_sig", "url_query_code", "url_query_state",
+	"tls_key", "secret_key", "jwt_key", "client_key", "sign_key", "signing_key",
+	"auth.token", "auth.password", "auth.credentials", "db.password", "bolt.auth_token",
+	"http.authorization", "user.password", "user.token", "access_token", "refresh_token", "session_token",
+	"credential", "access_key_id", "url_query_key", "url_query_signature", "url_query_sig", "url_query_code", "url_query_state", "url_query_auth",
 }
 
 var builtInRedactSet = defaultRedactSet()
@@ -160,7 +162,10 @@ func isSensitiveKeyName(name string, names *sensitiveNames) bool {
 	}
 	for i := range parts {
 		for j := i + 1; j <= len(parts); j++ {
-			if _, sensitive := names.keys[strings.Join(parts[i:j], "")]; sensitive {
+			key := strings.Join(parts[i:j], "")
+			// URL-only aliases name a query value, not metadata describing it
+			// (auth_provider, for example). Generic credential names still nest.
+			if _, sensitive := names.keys[key]; sensitive && (!strings.HasPrefix(key, "urlquery") || j == len(parts)) {
 				return true
 			}
 		}

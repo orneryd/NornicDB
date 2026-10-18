@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -41,10 +42,10 @@ type discoveryBody struct {
 func validateDiscoveryURL(field, s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, err)
+		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, observability.RedactError(err, observability.ClientCredentials(s)...))
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, s)
+		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, observability.RedactURL(s))
 	}
 	return nil
 }
@@ -73,14 +74,14 @@ func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 				ID:                      "nornic-oauth",
 				Name:                    "OAuth",
 				AuthProvider:            "oauth",
-				AuthEndpoint:            issuer + "/oauth2/v1/authorize",
-				TokenEndpoint:           issuer + "/oauth2/v1/token",
+				AuthEndpoint:            observability.RedactURL(issuer + "/oauth2/v1/authorize"),
+				TokenEndpoint:           observability.RedactURL(issuer + "/oauth2/v1/token"),
 				AuthFlow:                "pkce",
 				ClientID:                oauthCfg.ClientID,
-				RedirectURI:             oauthCfg.CallbackURL,
+				RedirectURI:             observability.RedactURL(oauthCfg.CallbackURL),
 				Scopes:                  []string{"openid", "profile", "email"},
 				Audience:                "nornic",
-				WellKnownDiscoveryURI:   issuer + "/.well-known/openid-configuration",
+				WellKnownDiscoveryURI:   observability.RedactURL(issuer + "/.well-known/openid-configuration"),
 				TokenTypePrincipal:      "id_token",
 				TokenTypeAuthentication: "id_token",
 			},

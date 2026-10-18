@@ -137,7 +137,7 @@ func (s *Session) handleRun(data []byte) error {
 		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
 		// chain via DefaultRedactKeys.
 		s.server.logEvent(context.Background(), slog.LevelDebug,
-			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(query, 200), params))
+			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), params))
 	}
 
 	// Resolve effective database name (Neo4j-compatible precedence):

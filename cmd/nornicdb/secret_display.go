@@ -10,7 +10,7 @@ import (
 // pflag's typed getters depend on its real String representation.
 func protectFlagDefaults(cmd *cobra.Command) {
 	project := func(flag *pflag.Flag) {
-		flag.DefValue = observability.DisplayValue(flag.Name, flag.DefValue)
+		flag.DefValue = observability.DisplayFlagDefault(flag.Name, flag.DefValue)
 	}
 	cmd.LocalNonPersistentFlags().VisitAll(project)
 	cmd.PersistentFlags().VisitAll(project)

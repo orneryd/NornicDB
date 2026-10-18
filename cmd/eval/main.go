@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/eval"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // safeClient wraps http.Client with SSRF-safe methods that only allow validated URLs.
@@ -50,17 +51,19 @@ func newSafeClient(timeout time.Duration) *safeClient {
 // Get performs a GET request after validating the URL is localhost-only.
 func (s *safeClient) Get(rawURL string) (*http.Response, error) {
 	if err := validateURL(rawURL); err != nil {
-		return nil, fmt.Errorf("SSRF protection: %w", err)
+		return nil, fmt.Errorf("SSRF protection: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
-	return s.client.Get(rawURL)
+	response, err := s.client.Get(rawURL)
+	return response, observability.RedactError(err, observability.ClientCredentials(rawURL)...)
 }
 
 // Post performs a POST request after validating the URL is localhost-only.
 func (s *safeClient) Post(rawURL, contentType string, body io.Reader) (*http.Response, error) {
 	if err := validateURL(rawURL); err != nil {
-		return nil, fmt.Errorf("SSRF protection: %w", err)
+		return nil, fmt.Errorf("SSRF protection: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
-	return s.client.Post(rawURL, contentType, body)
+	response, err := s.client.Post(rawURL, contentType, body)
+	return response, observability.RedactError(err, observability.ClientCredentials(rawURL)...)
 }
 
 func main() {
@@ -74,7 +77,7 @@ func main() {
 	flag.Parse()
 
 	// Check server health
-	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", *serverURL)
+	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", observability.RedactURL(*serverURL))
 	if err := checkHealth(*serverURL); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Server not reachable: %v\n", err)
 		os.Exit(1)
@@ -521,7 +524,7 @@ func isLoopbackHost(hostname string) bool {
 func checkHealth(serverURL string) error {
 	healthURL, err := url.JoinPath(serverURL, "health")
 	if err != nil {
-		return fmt.Errorf("failed to construct health URL: %w", err)
+		return fmt.Errorf("failed to construct health URL: %w", observability.RedactError(err, observability.ClientCredentials(serverURL)...))
 	}
 	client := newSafeClient(5 * time.Second)
 	resp, err := client.Get(healthURL)
