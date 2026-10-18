@@ -12,15 +12,21 @@ func getNodePropertyValue(node *storage.Node, propName string) (any, bool) {
 		return nil, false
 	}
 	if propName == "has_embedding" {
-		if node.EmbedMeta != nil {
-			if val, ok := node.EmbedMeta["has_embedding"]; ok {
-				return val, true
-			}
-		}
-		return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0, true
+		return nodeHasEmbeddingValue(node), true
 	}
 	val, ok := node.Properties[propName]
 	return val, ok
+}
+
+// nodeHasEmbeddingValue is n.has_embedding: the flag the managed embedding
+// system keeps in EmbedMeta, else whether the node has chunk embeddings,
+// counted from its metadata when a query read left the vectors in storage
+// (storage.Node.HasChunkEmbeddings).
+func nodeHasEmbeddingValue(node *storage.Node) any {
+	if val, ok := node.EmbedMeta["has_embedding"]; ok {
+		return val
+	}
+	return node.HasChunkEmbeddings()
 }
 
 func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {

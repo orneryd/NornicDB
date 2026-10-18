@@ -7,10 +7,10 @@ import (
 )
 
 func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	return b.getNodeVisibleAtWithView(id, version, b.withView)
+	return b.getNodeVisibleAtWithView(id, version, true, b.withView)
 }
 
-func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Node, error) {
+func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, vectors bool, view func(func(*badger.Txn) error) error) (*Node, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -19,7 +19,7 @@ func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, 
 	var node *Node
 	err = view(func(txn *badger.Txn) error {
 		var loadErr error
-		node, loadErr = b.getNodeVisibleAtInTxn(txn, id, version)
+		node, loadErr = b.getNodeVisibleAtInTxn(txn, id, version, vectors)
 		return loadErr
 	})
 	return node, err
@@ -28,7 +28,11 @@ func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, 
 // getNodeVisibleAtInTxn resolves one logical MVCC version using the supplied
 // physical Badger snapshot. Callers that scan an index in the same snapshot
 // use this helper to avoid opening nested views or scanning unrelated nodes.
-func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (*Node, error) {
+//
+// With vectors false the node reads as GetNodeWithoutEmbeddings returns it:
+// its embedding metadata is settled, but no separately stored chunk vector
+// is read (loadNodeEmbeddingState).
+func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool) (*Node, error) {
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -42,7 +46,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 		if getErr == nil {
 			itemVersion := item.Version()
 			if cached, ok := b.cacheLoadNodeBody(id, itemVersion); ok {
-				cached, loadErr := b.loadNodeEmbeddings(txn, cached, id)
+				cached, loadErr := b.loadNodeEmbeddingState(txn, cached, id, vectors)
 				if loadErr != nil {
 					return nil, loadErr
 				}
@@ -62,7 +66,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 					return ErrNotFound
 				}
 				b.cacheStoreNodeBody(id, itemVersion, decoded)
-				node, decodeErr = b.loadNodeEmbeddings(txn, decoded, id)
+				node, decodeErr = b.loadNodeEmbeddingState(txn, decoded, id, vectors)
 				return decodeErr
 			}); err != nil {
 				return nil, err
@@ -284,7 +288,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version)
+			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, true)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}

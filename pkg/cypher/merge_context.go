@@ -152,7 +152,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		if !hit {
 			continue
 		}
-		n, err := store.GetNode(id)
+		n, err := getQueryNode(store, id)
 		if err != nil || n == nil {
 			continue
 		}
