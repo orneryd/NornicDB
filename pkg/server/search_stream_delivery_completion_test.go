@@ -34,7 +34,7 @@ func TestSearchStreamDeliveryHTTPCompletion(t *testing.T) {
 					<-resume
 				}
 				ctx := resultstream.WithDelivery(context.Background(), resultstream.DeliveryFromContext(r.Context()))
-				_, err := registry.Start(ctx, scope, stream, 1)
+				page, err := registry.Start(ctx, scope, stream, 1)
 				if err != nil {
 					panic(err)
 				}
@@ -44,7 +44,7 @@ func TestSearchStreamDeliveryHTTPCompletion(t *testing.T) {
 				case "panic":
 					panic("response aborted")
 				default:
-					_, _ = w.Write([]byte("page"))
+					_, _ = w.Write([]byte(page.QID))
 				}
 			})
 			var next http.Handler = handler
