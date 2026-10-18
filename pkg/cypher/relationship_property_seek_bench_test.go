@@ -52,6 +52,23 @@ func BenchmarkRelationshipPropertyIndex(b *testing.B) {
 			}
 		}
 	})
+	for _, control := range []struct {
+		name, query string
+		count       int64
+	}{
+		{"RelationshipScan", "MATCH ()-[r:KEYED]->() WHERE r._ci_key IS NOT NULL RETURN count(r)", 1024},
+		{"NodeOnly", "MATCH (n) RETURN count(n)", 2048},
+	} {
+		b.Run(control.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				result, err := exec.Execute(ctx, control.query, nil)
+				if err != nil || len(result.Rows) != 1 || result.Rows[0][0] != control.count {
+					b.Fatalf("control: result=%v err=%v", result, err)
+				}
+			}
+		})
+	}
 	b.Run("WriteMaintenance", func(b *testing.B) {
 		edge, err := store.GetEdge("e0")
 		if err != nil {

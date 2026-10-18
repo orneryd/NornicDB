@@ -394,7 +394,7 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool, observers ...func(pipelineClause, typeScope)) (typeScope, error) {
 	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
 		return nil, nil
@@ -409,7 +409,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		if scoped {
 			body.visible = initial
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body, observers...)
 		if err != nil {
 			if !scoped {
 				// An old-style CALL { … } keeps NornicDB's implicit imports
