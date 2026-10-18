@@ -288,11 +288,13 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	var state bufferedEntityState
 	var meta map[string]any
 	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
-  if state.found {
-   if state.deleted { return ErrNotFound }
-   meta = copyNode(state.node).EmbedMeta
-   return nil
-  }
+		if state.found {
+			if state.deleted {
+				return ErrNotFound
+			}
+			meta = copyNode(state.node).EmbedMeta
+			return nil
+		}
 		item, err := txn.Get(nodeKey(id))
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound

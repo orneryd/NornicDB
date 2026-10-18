@@ -55,7 +55,14 @@ func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
-	return b.withReadView(nil, fn)
+	db, err := b.beginHelperTxn()
+	if err != nil {
+		return err
+	}
+	defer b.txnWG.Done()
+	return recoverBadgerClosedPanic(func() error {
+		return db.View(fn)
+	})
 }
 
 func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {

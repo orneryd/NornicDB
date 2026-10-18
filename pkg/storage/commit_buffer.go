@@ -798,17 +798,9 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 	defer w.mu.Unlock()
 	if w.pendingIndex == nil {
 		w.pendingIndex = newPendingNodeIndex()
-		// List every buffered node that has not reached the store yet;
-		// applied generations are already in the committed index.
-		for _, buf := range w.draining {
-			if buf.IsApplied() {
-				continue
-			}
-			for _, node := range buf.nodes {
-				w.pendingIndex.add(node)
-			}
-		}
-		for _, node := range w.active.nodes {
+		// Pending indexes share entity visibility until locked retirement.
+		nodes, _ := w.allNodesOverlayLocked()
+		for _, node := range nodes {
 			w.pendingIndex.add(node)
 		}
 	}
@@ -828,7 +820,7 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 // pending value index (the pair is tracked from its first use) instead of by
 // copying every buffered node of the label: constraint validation calls it on
 // every write of a bulk load.
-func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
+func (w *WriteBehindBuffer) ensurePendingValueTracked(label, property string) {
 	pair := pendingPropertyKey{label: label, property: property}
 	w.mu.RLock()
 	tracked := slices.Contains(w.trackedPairs, pair)
@@ -836,6 +828,10 @@ func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey inter
 	if !tracked {
 		w.trackPendingValues([]pendingPropertyKey{pair})
 	}
+}
+
+func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
+	w.ensurePendingValueTracked(label, property)
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.keyCandidatesLocked(label, property, valueKey)
@@ -1261,8 +1257,9 @@ func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing b
 // sourceDeleted / targetDeleted report buffered deletes of the endpoints,
 // which hide all committed between results for them.
 func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
- w.mu.RLock(); defer w.mu.RUnlock()
- return w.edgesBetweenOverlayLocked(source, target)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.edgesBetweenOverlayLocked(source, target)
 }
 
 func (w *WriteBehindBuffer) edgesBetweenOverlayLocked(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
