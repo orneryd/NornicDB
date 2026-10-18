@@ -151,6 +151,13 @@ Fresh verification on the combined tuned source:
   TCK, differential, UI and documentation checks, did not run. The independent
   storage/race/benchmark results above do not substitute for those checks.
 
+The installed live pre-commit hook passed for the source commit: 17 added or
+rewritten functions, no duplicates found, repository `orneryd/NornicDB`, database
+`nornicdbcode`, RRF floor 0.01. Ranked analysis took 241.18 s. Its indexed corpus
+was ingested at `7e90401c6`, older than the PR base; the hook reported that
+staleness limitation. Graphify also warned about an unchanged NEON header;
+the affected Go functions were extracted and analyzed.
+
 The verifier fixture issue remains open; this report does not claim a full
 verification pass or merge readiness.
 
