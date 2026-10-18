@@ -542,3 +542,70 @@ func TestHNSWPopulationWideScanResolvesEachVectorOnceWithoutPerVectorAllocations
 		require.Less(t, allocs, float64(32), "allocations per population-wide search of %d vectors", live)
 	})
 }
+
+var continuationNoThreshold = -1.0
+
+// A live document that no graph link reaches (insert pruning can leave one)
+// must still come back from a ranked continuation, which must end exactly.
+func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
+	for _, docs := range []int{40, 200, 1000} {
+		t.Run(fmt.Sprintf("docs=%d", docs), func(t *testing.T) {
+			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			service := NewServiceWithDimensions(engine, 2)
+			t.Cleanup(func() { _ = service.Close() })
+			for i := 0; i < docs; i++ {
+				angle := math.Pi * float64(i) / float64(docs) / 2
+				node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{{float32(math.Cos(angle)), float32(math.Sin(angle))}}}
+				_, err := engine.CreateNode(node)
+				require.NoError(t, err)
+				require.NoError(t, service.IndexNode(node))
+			}
+			graph, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil)
+			require.NoError(t, err)
+			require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
+
+			// Cut every link into one live, non-entry node, at every level.
+			graph.mu.Lock()
+			orphan := uint32(len(graph.nodeLevel) / 2)
+			if orphan == graph.entryPoint {
+				orphan++
+			}
+			for node := range graph.nodeLevel {
+				for level := 0; level <= int(graph.nodeLevel[node]); level++ {
+					neighbors, _ := graph.neighborsAtLevelLocked(uint32(node), level)
+					kept := make([]uint32, 0, len(neighbors))
+					for _, n := range neighbors {
+						if n != orphan {
+							kept = append(kept, n)
+						}
+					}
+					graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
+				}
+			}
+			orphanID := normalizeVectorResultIDToNodeID(graph.internalToID[orphan])
+			graph.mu.Unlock()
+
+			embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
+			request := SearchContinuationRequest{Owner: "alice", N: 7}
+			page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 7, MinSimilarity: &continuationNoThreshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+			require.NoError(t, err)
+			ids := map[string]bool{}
+			for {
+				require.True(t, strings.HasPrefix(page.SearchMethod, "vector_hnsw"), "search method %q", page.SearchMethod)
+				for _, result := range page.Results {
+					ids[searchResultID(result)] = true
+				}
+				if !page.HasMore {
+					break
+				}
+				request.QID = page.QID
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+			}
+			t.Logf("docs=%d orphan=%s: %d returned, completion %s", docs, orphanID, len(ids), page.Completion)
+			require.True(t, ids[orphanID], "orphan %s missing (%s after %d)", orphanID, page.Completion, len(ids))
+			require.Len(t, ids, docs)
+		})
+	}
+}
