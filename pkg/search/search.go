@@ -2837,8 +2837,8 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	// Population and checkpoint restoration must not be overtaken by a live
 	// mutation; their snapshots may contain older node state. During a build
 	// the write is handed to the build (build_write_queue.go).
-	if s.readLockOrQueue(deferredIndexWrite{node: node}) {
-		return nil
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node}); queued || err != nil {
+		return err
 	}
 	defer s.buildMu.RUnlock()
 	return s.indexNodeOwned(node)
@@ -3068,6 +3068,30 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // When skipFulltext is true, removeNodeLocked is also skipped so we don't remove the doc just added by IndexBatch.
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
+// checkEmbeddingDimensions rejects a node whose explicit embeddings do not
+// have the index's dimensions. It is the one dimension rule for live writes,
+// applied by indexNodeLocked and, for a write handed to a build, before the
+// write is acknowledged (queueBuildWrite).
+func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
+	if !s.vectorEnabled.Load() {
+		return nil
+	}
+	dims := s.VectorIndexDimensions()
+	for _, embedding := range node.NamedEmbeddings {
+		if len(embedding) > 0 && len(embedding) != dims {
+			return ErrDimensionMismatch
+		}
+	}
+	if s.managedEmbeddingEligible(node) {
+		for _, embedding := range node.ChunkEmbeddings {
+			if len(embedding) > 0 && len(embedding) != dims {
+				return ErrDimensionMismatch
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
@@ -3076,19 +3100,9 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
-	if shouldIndex && s.vectorEnabled.Load() {
-		dims := s.VectorIndexDimensions()
-		for _, embedding := range node.NamedEmbeddings {
-			if len(embedding) > 0 && len(embedding) != dims {
-				return ErrDimensionMismatch
-			}
-		}
-		if s.managedEmbeddingEligible(node) {
-			for _, embedding := range node.ChunkEmbeddings {
-				if len(embedding) > 0 && len(embedding) != dims {
-					return ErrDimensionMismatch
-				}
-			}
+	if shouldIndex {
+		if err := s.checkEmbeddingDimensions(node); err != nil {
+			return err
 		}
 	}
 	defer s.indexChanged()
@@ -3525,8 +3539,8 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	// Like IndexNode: during a build the removal is handed to the build.
-	if s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}) {
-		return nil
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(nodeID)}); queued || err != nil {
+		return err
 	}
 	defer s.buildMu.RUnlock()
 	s.removeNodeOwned(nodeID)
@@ -3560,8 +3574,8 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	// Like node writes: the explicit build's relationship stream applies a
 	// snapshot of stored edges, so during a build a live edge write is handed
 	// to the build, which applies it after the stream's copy.
-	if s.readLockOrQueue(deferredIndexWrite{edge: edge}) {
-		return nil
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge}); queued || err != nil {
+		return err
 	}
 	defer s.buildMu.RUnlock()
 	return s.indexEdgeOwned(edge)
@@ -3664,8 +3678,8 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	}
 	// Like node writes (see IndexEdge): during a build the removal is handed
 	// to the build, so its relationship stream cannot re-add the edge.
-	if s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}) {
-		return nil
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(edgeID)}); queued || err != nil {
+		return err
 	}
 	defer s.buildMu.RUnlock()
 	s.removeEdgeOwned(edgeID)
