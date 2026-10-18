@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and detach completed parsers so idle validators and kept trees release retired
   prediction state (#1382).
 
+- Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
+
 - Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
   macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
   tests retain their assertions and debug information (#1366).
