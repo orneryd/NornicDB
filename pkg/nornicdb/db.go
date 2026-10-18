@@ -249,6 +249,7 @@ type DB struct {
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
+	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
 	defaultEmbedKey    string // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
@@ -1580,15 +1581,16 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
 		return false
 	}
+	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+		return false
+	}
 
 	db.mu.Lock()
 	if db.closed {
 		// Close has stopped, or is stopping, the queue and timers this
 		// would start.
 		db.mu.Unlock()
-		if closer, ok := embedder.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		// Ownership was already registered; Close releases it after joining users.
 		return false
 	}
 	// Relationships whose embedding failed for want of an embedder are
@@ -1761,6 +1763,17 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 // embedderForConfig shares the model registry and single-flight creation between
 // document workers and query snapshots. The caller owns its fallback provider.
 func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+	// Per-database model construction is also part of the DB lifetime. In
+	// particular, a constructor ignoring cancellation cannot outlive Close.
+	db.mu.RLock()
+	if db.closed {
+		db.mu.RUnlock()
+		return nil
+	}
+	db.bgWg.Add(1)
+	db.mu.RUnlock()
+	defer db.bgWg.Done()
+
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
 	if db.embedderRegistry != nil {
@@ -1819,16 +1832,28 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	db.embedderCreateMu.Unlock()
 
 	newEmbedder, createErr := create(cfg)
+	release, accepted := db.OwnEmbedder(newEmbedder)
+	if createErr != nil || !accepted {
+		_ = release()
+		newEmbedder = nil
+	}
 
+	discard := false
 	db.embedderRegistryMu.Lock()
 	if createErr == nil && newEmbedder != nil {
 		if existing, ok := db.embedderRegistry[key]; ok {
+			// SetDefaultEmbedConfig may publish this key during construction.
+			// The unused model still has to be released.
+			discard = !sameEmbedder(existing, newEmbedder)
 			newEmbedder = existing
 		} else {
 			db.embedderRegistry[key] = newEmbedder
 		}
 	}
 	db.embedderRegistryMu.Unlock()
+	if discard {
+		_ = release()
+	}
 
 	db.embedderCreateMu.Lock()
 	close(ch)
