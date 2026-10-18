@@ -1143,10 +1143,12 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 		affectedClusters[u.newCluster] = true
 	}
 
-	ci.mu.RLock()
+	// Lock order as PublishClustering: clusterMu, mu, then the clustering's
+	// own lock. Taking mu first deadlocks against a concurrent publication.
 	ci.clusterMu.Lock()
-	defer ci.mu.RUnlock()
+	ci.mu.RLock()
 	defer ci.clusterMu.Unlock()
+	defer ci.mu.RUnlock()
 	routing := ci.routing
 	if routing == nil {
 		return
