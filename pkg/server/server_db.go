@@ -585,9 +585,9 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 		return
 	}
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	// Database information reads stored counts and derived search state, so it
+	// needs the same direct-read decision as graph/search routes.
+	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
 
@@ -597,6 +597,11 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 	// For composite databases, return constituent info instead of size stats.
 	if s.dbManager.IsCompositeDatabase(dbName) {
 		constituents, _ := s.dbManager.GetCompositeConstituents(dbName)
+		for _, constituent := range constituents {
+			if !s.authorizeDatabaseRead(w, r, dbName+"."+constituent.Alias) {
+				return
+			}
+		}
 		sort.Slice(constituents, func(i, j int) bool {
 			return strings.ToLower(constituents[i].Alias) < strings.ToLower(constituents[j].Alias)
 		})

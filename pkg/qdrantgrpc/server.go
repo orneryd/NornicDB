@@ -249,11 +249,22 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 		roles = claims.Roles
 	}
 	mode := s.databaseAccessModeResolver(roles)
-	if mode == nil || !mode.CanAccessDatabase(database) {
+	if mode == nil {
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	}
+	var resolve func(string) auth.ResolvedAccess
+	if s.resolvedAccessResolver != nil {
+		resolve = func(database string) auth.ResolvedAccess { return s.resolvedAccessResolver(roles, database) }
+	}
+	accessible, readable := auth.ResolveDatabaseReadAccess(mode, resolve, database)
+	if !accessible {
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	}
+	if !write && !readable {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
 	if write && s.resolvedAccessResolver != nil {
-		ra := s.resolvedAccessResolver(roles, database)
+		ra := resolve(database)
 		if !ra.Write {
 			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
 		}
