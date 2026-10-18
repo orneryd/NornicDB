@@ -2063,7 +2063,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 // compiled pattern owner with the whole row, so bound relationships, row
 // values in property maps and rows without a node binding are all seen.
 func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
-	matched, err := planPatternPredicate(pattern).evaluate(e, ctx, compiledRowScope{values: &values})
+	matched, err := planPatternPredicate(pattern).evaluate(e, ctx, compiledRowScope{values: values})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 	}

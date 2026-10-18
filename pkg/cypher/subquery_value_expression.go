@@ -486,6 +486,9 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
+	if count, expanded := e.boundExpandCount(ctx, matches, seed, where, values, first); expanded {
+		return count, true
+	}
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
 		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
