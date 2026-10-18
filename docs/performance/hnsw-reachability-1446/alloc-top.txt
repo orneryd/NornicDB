@@ -1,0 +1,22 @@
+File: nornic-1446-tuned-final.test
+Type: alloc_space
+Time: 2026-10-18 16:03:13 MST
+Showing nodes accounting for 112.86MB, 98.63% of 114.43MB total
+Dropped 15 nodes (cum <= 0.57MB)
+Showing top 15 nodes out of 34
+      flat  flat%   sum%        cum   cum%
+  100.51MB 87.84% 87.84%   102.01MB 89.15%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).addLocked
+    5.56MB  4.86% 92.70%    44.85MB 39.19%  github.com/orneryd/nornicdb/pkg/search.BenchmarkHNSWChurn.func1
+       3MB  2.62% 95.32%        3MB  2.62%  runtime.mallocgc
+    1.78MB  1.56% 96.88%     1.78MB  1.56%  github.com/orneryd/nornicdb/pkg/search.newHNSWIndex
+    1.50MB  1.31% 98.19%     1.50MB  1.31%  sync.(*Pool).pinSlow
+    0.50MB  0.44% 98.63%   109.86MB 96.00%  github.com/orneryd/nornicdb/pkg/search.BenchmarkHNSWChurn.func3
+         0     0% 98.63%   102.01MB 89.15%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).Add (inline)
+         0     0% 98.63%     1.50MB  1.31%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchLayer
+         0     0% 98.63%     1.50MB  1.31%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).searchLayerHeap (inline)
+         0     0% 98.63%     1.78MB  1.56%  github.com/orneryd/nornicdb/pkg/search.NewHNSWIndex (inline)
+         0     0% 98.63%     1.50MB  1.31%  github.com/orneryd/nornicdb/pkg/search.searchLayerHeapKernel[go.shape.struct {}]
+         0     0% 98.63%        1MB  0.87%  runtime.(*timer).maybeAdd
+         0     0% 98.63%        1MB  0.87%  runtime.(*timer).modify
+         0     0% 98.63%        1MB  0.87%  runtime.(*timer).reset
+         0     0% 98.63%        1MB  0.87%  runtime.(*timers).addHeap

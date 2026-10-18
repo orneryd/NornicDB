@@ -2,6 +2,7 @@ package util
 
 import (
 	"math"
+	"strconv"
 	"testing"
 )
 
@@ -31,7 +32,11 @@ func TestSafeIntToUint16RejectsOverflow(t *testing.T) {
 }
 
 func TestSafeIntToInt32RejectsOverflow(t *testing.T) {
-	if _, ok := SafeIntToInt32(math.MaxInt32 + 1); ok {
+	if strconv.IntSize == 32 {
+		t.Skip("every int value fits in int32")
+	}
+	overflow := int64(math.MaxInt32) + 1
+	if _, ok := SafeIntToInt32(int(overflow)); ok {
 		t.Fatal("expected overflowing int to fail int32 conversion")
 	}
 }

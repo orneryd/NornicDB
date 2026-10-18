@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-selected) and a "Select all" box.
 ### Changed
 
+- Reduce HNSW insertion allocation traffic by retaining spare capacity in the pooled
+  visited-generation buffer and performing checked unsigned conversions without text
+  formatting. Preserve reachability, lexical seeding and continuation completeness (#1446).
+
 - Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
   wake the worker pool; skipping deleted candidates continues draining pending work (#1230).

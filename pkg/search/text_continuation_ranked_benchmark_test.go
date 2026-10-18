@@ -15,8 +15,29 @@ import (
 // Each case runs with the complete-response cache on (repeated identical
 // searches are cache hits) and off (every search retrieves).
 func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
+	benchmarkSearchTextContinuationRanked(b, false)
+}
+
+// BenchmarkSearchTextContinuationRankedIVFHNSW measures the full continuation,
+// including the widening needed to prove exhaustion across all cluster graphs.
+// docs/op records completeness alongside latency, including on older controls
+// that can stop before searching every cluster.
+func BenchmarkSearchTextContinuationRankedIVFHNSW(b *testing.B) {
+	benchmarkSearchTextContinuationRanked(b, true)
+}
+
+func benchmarkSearchTextContinuationRanked(b *testing.B, clustered bool) {
 	const docs = 2000
 	b.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
+	if clustered {
+		b.Setenv("NORNICDB_GPU_BACKEND", "cpu")
+		b.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
+		b.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
+		b.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
+		b.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "8")
+		b.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "8")
+		b.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "5")
+	}
 	build := func(b *testing.B, cache bool) *Service {
 		b.Helper()
 		b.Setenv(EnvSearchResultCacheEnabled, fmt.Sprint(cache))
@@ -29,14 +50,40 @@ func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
 			if _, err := engine.CreateNode(node); err != nil {
 				b.Fatal(err)
 			}
-			if err := service.IndexNode(node); err != nil {
-				b.Fatal(err)
+			if !clustered {
+				if err := service.IndexNode(node); err != nil {
+					b.Fatal(err)
+				}
 			}
 		}
-		if _, err := service.getOrCreateHNSWIndex(context.Background(), 2); err != nil {
-			b.Fatal(err)
-		}
-		for service.hnswRebuildInFlight.Load() {
+		if clustered {
+			service.EnableClustering(nil, 8)
+			service.SetMinEmbeddingsForClustering(1)
+			if err := service.BuildIndexes(context.Background()); err != nil {
+				b.Fatal(err)
+			}
+			pipeline, err := service.getOrCreateVectorPipeline(context.Background())
+			if err != nil {
+				b.Fatal(err)
+			}
+			generator, ok := pipeline.candidateGen.(*IVFHNSWCandidateGen)
+			if !ok {
+				b.Fatalf("expected IVF-HNSW, got %T", pipeline.candidateGen)
+			}
+			if clusters := generator.clusterIndex.NumClusters(); clusters != 8 {
+				b.Fatalf("expected 8 clusters, got %d", clusters)
+			}
+			for cluster := 0; cluster < 8; cluster++ {
+				if len(generator.clusterIndex.GetClusterMemberIDsForCluster(cluster)) == 0 {
+					b.Fatalf("cluster %d has no members", cluster)
+				}
+			}
+		} else {
+			if _, err := service.getOrCreateHNSWIndex(context.Background(), 2); err != nil {
+				b.Fatal(err)
+			}
+			for service.hnswRebuildInFlight.Load() {
+			}
 		}
 		return service
 	}

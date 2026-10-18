@@ -1,0 +1,8 @@
+- [x] Read current #1446, superseding design decisions and review findings.
+- [x] Profile current remove/reinsert, churn search and population-wide continuation.
+- [x] Compare current PR with develop using the same workload and benchmark harness.
+- [x] Fix only remaining measured in-scope costs; preserve recall and exhaustion proofs.
+- [x] Verify mutation/reload reachability and continuation across candidate generators.
+- [x] Run package tests, focused race checks and applicable make verification; report skips.
+- [ ] Resolve or route the pre-existing GPU transition failure and verifier/live-hook fixture blocker before claiming full readiness.
+- [ ] Publish measured findings and any validated changes to #1446.

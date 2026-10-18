@@ -1,9 +1,9 @@
 package util
 
 import (
-	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
 const minIntValue = -maxIntValue - 1
@@ -70,18 +70,18 @@ func SafeInt32ToInt(v int32) (int, bool) {
 
 // SafeIntToUint32 converts a non-negative int to uint32 when it fits.
 func SafeIntToUint32(v int) (uint32, bool) {
-	var parsed uint32
-	if _, err := fmt.Sscan(strconv.Itoa(v), &parsed); err != nil {
+	// Widen before comparing: negative ints also exceed uint32's maximum,
+	// including when int is only 32 bits wide.
+	if uint64(v) > uint64(^uint32(0)) {
 		return 0, false
 	}
-	return parsed, true
+	return uint32(v), true
 }
 
 // SafeIntToUint16 converts a non-negative int to uint16 when it fits.
 func SafeIntToUint16(v int) (uint16, bool) {
-	var parsed uint16
-	if _, err := fmt.Sscan(strconv.Itoa(v), &parsed); err != nil {
+	if v < 0 || v > int(^uint16(0)) {
 		return 0, false
 	}
-	return parsed, true
+	return uint16(v), true
 }
