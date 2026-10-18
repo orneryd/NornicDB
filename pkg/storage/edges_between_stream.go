@@ -82,7 +82,11 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	if b.writeBehind == nil {
 		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
-	live, suppressed, sourceDeleted, targetDeleted := b.writeBehind.EdgesBetweenOverlay(startID, endID)
+	var live []*Edge
+ var suppressed map[EdgeID]struct{}
+ var sourceDeleted, targetDeleted bool
+ view, err := b.captureReadView(func(w *WriteBehindBuffer) { live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID) })
+ if err != nil { return nil, err }; defer view.Close()
 	if sourceDeleted || targetDeleted {
 		return nil, nil
 	}
@@ -91,7 +95,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 			return false
 		}
 		return match(edge)
-	})
+	}, view.withView)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +115,9 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 // only the requested properties, and returns the accepted ones whole. A pair with no set-index entry at all may
 // predate the index: its legacy outgoing index is read as GetEdgesBetween
 // reads it.
-func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool, views ...func(func(*badger.Txn) error) error) ([]*Edge, error) {
+ withView := b.withView
+ if len(views) > 0 { withView = views[0] }
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
@@ -129,7 +135,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 	include := propertyProjectionSet(properties)
 	var matched []*Edge
 	indexed := false
-	err := b.withView(func(txn *badger.Txn) error {
+	err := withView(func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
 		prefix := typedEdgeBetweenIndexPrefix(startNum, endNum, edgeType)
@@ -154,7 +160,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 			// A cached body is the committed edge GetEdge would return:
 			// match it without reading or decoding (the cache is read-only;
 			// a match is returned as a copy).
-			if cached, hit := b.cacheLoadEdge(edgeID); hit {
+			if cached, hit := b.cacheLoadEdge(edgeID); hit && b.writeBehind == nil {
 				if cached.StartNode != startID || cached.EndNode != endID || cached.Type != edgeType ||
 					b.filterEdgeByDecay(cached, nowNanos) || !match(cached) {
 					continue
@@ -203,7 +209,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 	if err != nil || indexed {
 		return matched, err
 	}
-	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType)
+	legacy, err := b.edgesBetweenFromLegacyOutgoingIndex(startID, endID, edgeType, withView)
 	if err != nil {
 		return nil, err
 	}

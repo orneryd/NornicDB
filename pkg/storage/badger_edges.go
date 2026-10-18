@@ -230,8 +230,14 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 		return nil, err
 	}
 
+	var state bufferedEntityState
 	var edge *Edge
-	err := b.withView(func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
+  if state.found {
+   if state.deleted { return ErrNotFound }
+   edge = copyEdge(state.edge)
+   return nil
+  }
 		var ok bool
 		var readErr error
 		edge, ok, readErr = b.readEdgeBodyInTxn(txn, id)
