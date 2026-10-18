@@ -746,6 +746,9 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 		}
 	}
 	if len(w.draining) > 0 && w.draining[0] == buf {
+		// Reslicing alone leaves the retired generation reachable through
+		// the backing array, even when the queue becomes empty.
+		w.draining[0] = nil
 		w.draining = w.draining[1:]
 	}
 	// A burst fills the pending index with map buckets Go never shrinks;
