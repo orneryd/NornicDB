@@ -219,12 +219,10 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			}
 
 			var node *Node
-			if err := item.Value(func(val []byte) error {
-				var decodeErr error
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decodeErr
-			}); err != nil {
-				return err
+			var readErr error
+			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
+			if readErr != nil {
+				return readErr
 			}
 
 			if b.filterNodeByDecay(node, nowNanos) {
@@ -293,11 +291,20 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	var covers bool
 	coversDecided := false
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
-		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
+		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if properties == nil {
-				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
+				return b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
 			}
-			return b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+			if cached, ok := b.cacheLoadNodeBody(nodeID, item.Version()); ok {
+				return projectCachedNodeForRead(cached, properties), nil
+			}
+			var node *Node
+			err := item.Value(func(value []byte) error {
+				var err error
+				node, err = b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
+				return err
+			})
+			return node, err
 		}
 		cachedNode := func(nodeID NodeID) (*Node, bool) {
 			b.nodeCacheMu.RLock()
@@ -327,11 +334,8 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 				if err != nil {
 					return err
 				}
-				if err := item.Value(func(value []byte) error {
-					var decodeErr error
-					node, decodeErr = decodeValue(nodeID, value)
-					return decodeErr
-				}); err != nil {
+				node, err = readItem(nodeID, item)
+				if err != nil {
 					return err
 				}
 			}
@@ -394,14 +398,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		}
 		if err := readNodeRecordsInOnePass(txn, scope, ids, func(nodeID NodeID, item *badger.Item) error {
 			index := positions[nodeID]
-			pending[index].err = item.Value(func(value []byte) error {
-				node, err := decodeValue(nodeID, value)
-				if err != nil {
-					return err
-				}
-				pending[index].node = node
-				return nil
-			})
+			pending[index].node, pending[index].err = readItem(nodeID, item)
 			// Report record errors in visit order, so an early stop does not
 			// surface corruption in a record the caller never reaches.
 			return nil
@@ -524,12 +521,10 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			b.nodeCacheMu.RUnlock()
 
 			var node *Node
-			if err := it.Item().Value(func(val []byte) error {
-				var decodeErr error
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decodeErr
-			}); err != nil {
-				return err
+			var readErr error
+			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, b.loadNodeEmbeddings)
+			if readErr != nil {
+				return readErr
 			}
 
 			if b.filterNodeByDecay(node, nowNanos) {
@@ -835,12 +830,10 @@ func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 			}
 
 			var node *Node
-			if err := item.Value(func(val []byte) error {
-				var decodeErr error
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
-				return decodeErr
-			}); err != nil {
-				return err
+			var readErr error
+			node, readErr = b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
+			if readErr != nil {
+				return readErr
 			}
 			if b.filterNodeByDecay(node, nowNanos) {
 				continue
@@ -928,13 +921,10 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 				return err
 			}
 			var node *Node
-			if err := item.Value(func(val []byte) error {
-				namespace := namespaceForNodeID(id)
-				var decodeErr error
-				node, decodeErr = b.decodeNode(namespace, val)
-				return decodeErr
-			}); err != nil {
-				return err
+			var readErr error
+			node, readErr = b.readNodeItemInTxn(txn, item, id, nil)
+			if readErr != nil {
+				return readErr
 			}
 			if b.filterNodeByDecay(node, nowNanos) {
 				continue
@@ -1294,6 +1284,9 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	if err != nil {
 		return nil, err
 	}
+	if cached, ok := b.cacheLoadEdgeAtVersion(edgeID, item.Version()); ok {
+		return cached, nil
+	}
 	var edge *Edge
 	if err := item.Value(func(val []byte) error {
 		var decodeErr error
@@ -1302,9 +1295,7 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 	}); err != nil {
 		return nil, err
 	}
-	if b.writeBehind == nil {
-		b.cacheFillEdge(gen, edge)
-	}
+	b.cacheFillEdgeAtVersion(gen, edge, item.Version())
 	return edge, nil
 }
 

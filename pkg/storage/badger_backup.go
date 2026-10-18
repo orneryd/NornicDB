@@ -196,6 +196,7 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.edgeCacheMu.Lock()
 	b.edgeCacheGen.advance()
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCacheVersions = nil
 	b.edgeCacheMu.Unlock()
 
 	b.adjCacheMu.Lock()
