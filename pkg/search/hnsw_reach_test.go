@@ -623,3 +623,85 @@ func TestHNSWPopulationWideScanResolvesEachVectorOnceWithoutPerVectorAllocations
 		require.Less(t, allocs, float64(32), "allocations per population-wide search of %d vectors", live)
 	})
 }
+
+// Review r2 of #1471/#1446: a ranked continuation whose only matching
+// document no graph link reaches. Every other document is below the
+// similarity threshold, so narrow searches return nothing and stop growing
+// long before the beam covers the population. The continuation must keep
+// deepening to the population-wide scan, return the document and end exactly,
+// not stop on that plateau with candidate_pool_exhausted.
+func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
+	const docs = 1000
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	service := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { _ = service.Close() })
+	for i := 0; i < docs; i++ {
+		vec := []float32{0, 1}
+		if i == docs/2 {
+			vec = []float32{1, 0}
+		}
+		node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", i)), ChunkEmbeddings: [][]float32{vec}}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
+
+	// Cut every link into the matching document, at every level; move the
+	// entry point off it first.
+	target := fmt.Sprintf("doc-%d", docs/2)
+	graph.mu.Lock()
+	orphan, found := uint32(0), false
+	for id, external := range graph.internalToID {
+		if normalizeVectorResultIDToNodeID(external) == target {
+			orphan, found = uint32(id), true
+			break
+		}
+	}
+	require.True(t, found)
+	if graph.entryPoint == orphan {
+		for id := range graph.nodeLevel {
+			if uint32(id) != orphan && !graph.deleted[id] {
+				graph.entryPoint, graph.maxLevel = uint32(id), int(graph.nodeLevel[id])
+				break
+			}
+		}
+	}
+	for node := range graph.nodeLevel {
+		for level := 0; level <= int(graph.nodeLevel[node]); level++ {
+			neighbors, _ := graph.neighborsAtLevelLocked(uint32(node), level)
+			kept := make([]uint32, 0, len(neighbors))
+			for _, n := range neighbors {
+				if n != orphan {
+					kept = append(kept, n)
+				}
+			}
+			graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
+		}
+	}
+	graph.mu.Unlock()
+
+	threshold := 0.9
+	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
+	request := SearchContinuationRequest{Owner: "alice", N: 7}
+	page, err := service.SearchTextContinuation(context.Background(), "", &SearchOptions{Limit: 7, MinSimilarity: &threshold}, request, nil, embed, service.Search, ChunkedSearchErrorPolicy{})
+	require.NoError(t, err)
+	ids := map[string]bool{}
+	for {
+		require.True(t, strings.HasPrefix(page.SearchMethod, "vector_hnsw"), "search method %q", page.SearchMethod)
+		for _, result := range page.Results {
+			ids[searchResultID(result)] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		request.QID = page.QID
+		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+		require.NoError(t, err)
+	}
+	require.Equal(t, map[string]bool{target: true}, ids, "ended with %s", page.Completion)
+	require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+}
