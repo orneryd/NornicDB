@@ -496,6 +496,75 @@ func TestHNSWDescentEndingOnRemovedVector(t *testing.T) {
 	})
 }
 
+// pollCountingContext counts how often a search polls it for cancellation.
+type pollCountingContext struct {
+	context.Context
+	polls int
+}
+
+func (c *pollCountingContext) Err() error {
+	c.polls++
+	return nil
+}
+
+// TestHNSWPopulationWideScanVisitsOnlyLiveVectors: the scan's work follows the
+// live population, not the index's history. With one live vector, 65,535
+// tombstone slots left by removals add no work (bot review of #1471: they
+// raised the scan's cancellation polls from 2 to 65).
+func TestHNSWPopulationWideScanVisitsOnlyLiveVectors(t *testing.T) {
+	index := NewHNSWIndex(2, DefaultHNSWConfig())
+	require.NoError(t, index.Add("live", []float32{1, 0}))
+	baseline := &pollCountingContext{Context: context.Background()}
+	results, err := index.Search(baseline, []float32{1, 0}, 1, -1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	// Tombstone slots as removals leave them: deleted, with no live ID.
+	for len(index.deleted) < 1<<16 {
+		index.deleted = append(index.deleted, true)
+	}
+	churned := &pollCountingContext{Context: context.Background()}
+	results, err = index.Search(churned, []float32{1, 0}, 1, -1)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, baseline.polls, churned.polls, "scan work must follow the live IDs, not the tombstone slots")
+}
+
+// BenchmarkHNSWPopulationWideScan is a search as wide as the live population
+// (the scan) over 10,000 live vectors, on a dense index and on one where as
+// many removals left tombstone slots.
+func BenchmarkHNSWPopulationWideScan(b *testing.B) {
+	const live, dims = 10000, 32
+	for _, tombstones := range []int{0, live} {
+		b.Run(fmt.Sprintf("tombstones=%d", tombstones), func(b *testing.B) {
+			rng := rand.New(rand.NewSource(1))
+			next := func() []float32 {
+				v := make([]float32, dims)
+				for i := range v {
+					v[i] = rng.Float32()*2 - 1
+				}
+				return v
+			}
+			index := NewHNSWIndex(dims, DefaultHNSWConfig())
+			for i := 0; i < live; i++ {
+				require.NoError(b, index.Add(fmt.Sprintf("v-%05d", i), next()))
+			}
+			for len(index.deleted) < live+tombstones {
+				index.deleted = append(index.deleted, true)
+			}
+			query := next()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				results, err := index.SearchWithEf(context.Background(), query, 10, -1, live)
+				if err != nil || len(results) != 10 {
+					b.Fatalf("results=%d err=%v", len(results), err)
+				}
+			}
+		})
+	}
+}
+
 // A population-wide search resolves each live vector once (a file-backed
 // store copies the coordinates on every lookup) and allocates a fixed
 // amount, not per vector.
