@@ -18,7 +18,7 @@ import (
 // lists, the accumulator appended to itself or nested in itself, CASE and
 // nested reduce operands, allReduce, and steps that have no plan.
 func TestReduceAppendPlanMatchesWholeStep(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:N {id: 1, tags: ['a', 'b']}), (:N {id: 2, tags: ['c']})", nil)
 	require.NoError(t, err)
@@ -112,6 +112,11 @@ func TestReduceAppendPlanShapes(t *testing.T) {
 		"other + [x]":                                  nil,
 		"acc.list + [x]":                               nil,
 		"acc":                                          nil,
+		"acc + [x] + [acc]":                            nil,
+		"acc + [size(acc)]":                            nil,
+		"acc + [`acc`]":                                nil,
+		"acc + [reduce(b = acc, y IN [] | b)]":         nil,
+		"acc + [x.acc]":                                {"[x.acc]"},
 	} {
 		form := reduceForm{accumulator: "acc", variable: "x", step: step}
 		plan := form.appendPlan()
@@ -126,4 +131,110 @@ func TestReduceAppendPlanShapes(t *testing.T) {
 	form := reduceForm{accumulator: "acc", variable: "x", step: "acc + [x]"}
 	require.False(t, form.appendPlan().usable(map[string]interface{}{"acc + [x]": 1}))
 	require.True(t, form.appendPlan().usable(map[string]interface{}{"acc": 1}))
+}
+
+// TestReduceAppendFoldSharesNothing: the list a fold appends to is shared
+// with nothing it hands out (reduceAppendPlan). An operand naming the
+// accumulator (a + [x] + [a]) would keep a view of the list the fold goes
+// on appending to, so the step has no plan; and the result is a list of its
+// own length, so its next owner counts the allocation it holds. On the row
+// evaluator, its compiled programs and the context evaluator.
+func TestReduceAppendFoldSharesNothing(t *testing.T) {
+	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:N {id: 1, tags: ['a', 'b', 'c']})", nil)
+	require.NoError(t, err)
+	base := make([]interface{}, 2000)
+	for i := range base {
+		base[i] = int64(i)
+	}
+	params := map[string]interface{}{"base": base}
+	// Every list in a value, nested ones included.
+	var lists func(value interface{}, out *[][]interface{})
+	lists = func(value interface{}, out *[][]interface{}) {
+		if list, ok := value.([]interface{}); ok {
+			*out = append(*out, list)
+			for _, item := range list {
+				lists(item, out)
+			}
+		}
+	}
+	for _, query := range []string{
+		"RETURN reduce(a = [], x IN [1, 2, 3] | a + [x] + [a]) AS v",
+		"RETURN reduce(a = [], x IN [1, 2, 3] | a + [x] + [`a`]) AS v",
+		"RETURN reduce(a = [], x IN [1, 2, 3] | a + [x] + [reduce(b = a, y IN [] | b)]) AS v",
+		"WITH 1 AS one RETURN reduce(a = [], x IN range(1, 40) | a + [x] + x) AS v",
+		"RETURN reduce(a = $base, x IN [1] | a + x) AS v",
+		"RETURN [i IN range(1, 5) | reduce(a = $base, x IN [i] | a + x)] AS v",
+		"MATCH (n:N) RETURN reduce(a = [], t IN n.tags | a + [t] + n.id) AS v",
+		"MATCH (n:N) RETURN reduce(a = [], t IN n.tags | a + [t] + [a]) AS v",
+	} {
+		for _, programs := range []bool{true, false} {
+			rowValueProgramsDisabled.Store(!programs)
+			for round := 0; round < 3; round++ { // the third run reads compiled programs
+				reduceAppendDisabled.Store(true)
+				want, err := exec.Execute(ctx, query, params)
+				require.NoError(t, err, query)
+				reduceAppendDisabled.Store(false)
+				got, err := exec.Execute(ctx, query, params)
+				require.NoError(t, err, query)
+				require.Equal(t, want.Rows, got.Rows, "programs %v: %s", programs, query)
+
+				var all [][]interface{}
+				lists(got.Rows[0][len(got.Rows[0])-1], &all)
+				// One list may appear twice (a value is immutable); two lists
+				// of different lengths on one backing array are a view of the
+				// list the fold appended to.
+				backing := map[*interface{}]int{}
+				for index, list := range all {
+					require.Equal(t, len(list), cap(list), "programs %v: %s: list %d has spare capacity", programs, query, index)
+					if len(list) == 0 {
+						continue
+					}
+					if other, shared := backing[&list[0]]; shared && len(all[other]) != len(list) {
+						t.Fatalf("programs %v: %s: lists %d and %d share a backing array", programs, query, other, index)
+					}
+					backing[&list[0]] = index
+				}
+			}
+		}
+	}
+	rowValueProgramsDisabled.Store(false)
+	require.Equal(t, int64(0), base[0])
+	require.Len(t, base, 2000)
+}
+
+// TestReduceAppendResultHandoff: runReduceForm hands its list over at its
+// own length, apart from the list it appended to (which has spare
+// capacity: a result on it would hide that capacity from its next owner,
+// whose estimate reads the result's own capacity), and gives back what the
+// budget held for the fold.
+func TestReduceAppendResultHandoff(t *testing.T) {
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(1<<40, TransactionMemoryLimits{})
+	tracker := newTestMemoryTracker("reduce handoff")
+	defer tracker.end()
+	budget := expressionBudget{scope: &tracker.root}
+	base := make([]interface{}, 20000)
+	for i := range base {
+		base[i] = int64(i)
+	}
+	form := reduceForm{accumulator: "a", variable: "x", step: "a + x"}
+	var folding []interface{}
+	result, err := runReduceForm(&budget, form, base, []interface{}{int64(1), int64(2)},
+		func(a, x interface{}) (interface{}, error) { return nil, nil }, nil,
+		&reduceAppender{plan: form.appendPlan(), term: func(_ int, a, x interface{}) (interface{}, error) {
+			folding = a.([]interface{})
+			return x, nil
+		}})
+	require.NoError(t, err)
+	list := result.([]interface{})
+	require.Len(t, list, 20002)
+	require.Equal(t, len(list), cap(list))
+	// The second step saw the fold's own list (copied from base by the first).
+	require.Len(t, folding, 20001)
+	require.NotSame(t, &folding[0], &list[0], "the result is the list the fold appended to")
+	require.Equal(t, estimateValueBytes(append(make([]interface{}, 0, len(list)), list...)), estimateValueBytes(result))
+	require.Zero(t, tracker.root.mark())
+	require.Len(t, base, 20000)
 }
