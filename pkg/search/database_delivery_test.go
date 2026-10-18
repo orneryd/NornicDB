@@ -16,7 +16,8 @@ func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
 		_, err := store.CreateNode(&storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	svc := NewService(store)
+	options := DefaultServiceOptions("one")
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(store, DefaultVectorDimensions, DefaultBM25Engine(), &options)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	registry, err := resultstream.NewRegistry(resultstream.Config{MaxStreams: 1})
 	require.NoError(t, err)
@@ -41,7 +42,7 @@ func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
 	// The old service must stay invalid even if a later request begins after reset.
 	_, err = svc.SearchTextContinuation(context.Background(), "", DefaultSearchOptions(), SearchContinuationRequest{Owner: "alice", Database: "one", Mode: SearchContinuationID, N: 1}, nil, nil, nil, ChunkedSearchErrorPolicy{})
 	require.ErrorIs(t, err, resultstream.ErrInvalidated)
-	fresh := NewService(store)
+	fresh := NewServiceWithDimensionsAndBM25EngineAndOptions(store, DefaultVectorDimensions, DefaultBM25Engine(), &options)
 	t.Cleanup(func() { require.NoError(t, fresh.Close()) })
 	fresh.SetContinuationRegistry(registry)
 	page, err := fresh.SearchTextContinuation(context.Background(), "", DefaultSearchOptions(), SearchContinuationRequest{Owner: "alice", Database: "one", Mode: SearchContinuationID, N: 1}, nil, nil, nil, ChunkedSearchErrorPolicy{})
