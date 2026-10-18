@@ -2322,10 +2322,10 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("point.contains(polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:2,y:2})]), point({x:1,y:1}))", nil, nil, 0); got != true {
 		t.Fatalf("point.contains(...) = %#v", got)
 	}
-	if got := eval("vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nil, nil, 0); got == nil {
+	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.cosine should not be nil")
 	}
-	if got := eval("vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nil, nil, 0); got == nil {
+	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.euclidean should not be nil")
 	}
 	if got := eval("all(x IN [1,2,3] WHERE x > 0)", nil, nil, 0); got != true {

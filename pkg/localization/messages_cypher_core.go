@@ -156,6 +156,7 @@ const (
 	MessageCypherCoreVectorSimilarityInvalidVector          MessageID = "cyphercore.vector_similarity_invalid_vector"
 	MessageCypherCoreVectorSimilarityDimensions             MessageID = "cyphercore.vector_similarity_dimensions"
 	MessageCypherCoreFunctionListArgumentEmpty              MessageID = "cyphercore.function_list_argument_empty"
+	MessageCypherCoreFunctionArgumentNull                   MessageID = "cyphercore.function_argument_null"
 )
 
 func cypherCoreMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -741,6 +742,14 @@ func CypherCoreVectorSimilarityDimensions(function string) Message {
 // Argument are untranslated names.
 func CypherCoreFunctionListArgumentEmpty(function, argument string) Message {
 	return cypherCoreMessage(MessageCypherCoreFunctionListArgumentEmpty, "The argument `"+argument+"` in the `"+function+"()` function must not be empty.", map[string]any{"Function": function, "Argument": argument})
+}
+
+// CypherCoreFunctionArgumentNull is the ProcedureCallFailed of an APOC
+// function given null where it needs a value (apoc.map.removeKeys's map or
+// keys), which Neo4j reports as a NullPointerException. Function and
+// Argument are untranslated names.
+func CypherCoreFunctionArgumentNull(function, argument string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentNull, "Failed to invoke function `"+function+"`: Caused by: the `"+argument+"` argument is null.", map[string]any{"Function": function, "Argument": argument})
 }
 
 func CypherCoreTemporalCallSignature(typeName string, provided string) Message {

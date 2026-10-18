@@ -55,6 +55,7 @@ import (
 	"sync"
 	"time"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -300,22 +301,7 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 // backslash escapes the next character in a string literal; a doubled quote
 // continues the quoted text.
 func skipQuotedText(query string, start int) int {
-	quote := query[start]
-	for i := start + 1; i < len(query); i++ {
-		switch query[i] {
-		case '\\':
-			if quote != '`' {
-				i++
-			}
-		case quote:
-			if i+1 < len(query) && query[i+1] == quote {
-				i++
-				continue
-			}
-			return i + 1
-		}
-	}
-	return len(query)
+	return skipCypherQuotedText(query, start, query[start])
 }
 
 // validateStatementParameters is Neo4j's ParameterMissing check: every
@@ -347,8 +333,8 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 func statementMissingParameters(cypher string, bound func(name string) bool) []string {
 	var missing []string
 	for index := 0; index < len(cypher); index++ {
-		switch cypher[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(cypher[index]) {
+		case cypherQuoteClass:
 			index = skipQuotedSemanticText(cypher, index) - 1
 		case '/':
 			if end := queryCommentEnd(cypher, index); end >= 0 {
@@ -360,7 +346,7 @@ func statementMissingParameters(cypher string, bound func(name string) bool) []s
 			}
 			start := index + 1
 			var name string
-			if start < len(cypher) && cypher[start] == '`' {
+			if start < len(cypher) && isCypherBacktickByte(cypher[start]) {
 				end := skipQuotedSemanticText(cypher, start)
 				name = normalizePropertyKey(cypher[start:end])
 				index = end - 1
@@ -552,6 +538,9 @@ func sameParameterValue(converted, original interface{}) bool {
 
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
+	if value != nil && cypherfn.RuntimeValue(value) == nil {
+		return nil, true
+	}
 	switch typed := value.(type) {
 	case storage.RemotePathValue:
 		if typed == nil {

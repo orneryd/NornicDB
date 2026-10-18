@@ -96,7 +96,7 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 	want := normalizeProjectionColumnName(variable)
 	for index := 0; index < len(expression); {
 		c := expression[index]
-		if c == '\'' || c == '"' {
+		if isCypherStringQuoteByte(c) {
 			index = skipQuotedSemanticText(expression, index)
 			continue
 		}

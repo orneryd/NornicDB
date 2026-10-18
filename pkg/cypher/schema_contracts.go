@@ -70,32 +70,11 @@ func parseCurlySection(s string) (inside string, rest string, ok bool) {
 	if s == "" || s[0] != '{' {
 		return "", s, false
 	}
-	depth := 0
-	quote := byte(0)
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if quote != 0 {
-			if ch == quote {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quote = ch
-			continue
-		}
-		if ch == '{' {
-			depth++
-			continue
-		}
-		if ch == '}' {
-			depth--
-			if depth == 0 {
-				return s[1:i], strings.TrimSpace(s[i+1:]), true
-			}
-		}
+	closing := findMatchingDelimiter(s, 0, '{', '}')
+	if closing < 0 {
+		return "", s, false
 	}
-	return "", s, false
+	return s[1:closing], strings.TrimSpace(s[closing+1:]), true
 }
 
 func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parsedCreateConstraintContractDDL, error) {
@@ -256,7 +235,6 @@ func splitConstraintContractEntries(body string) ([]string, error) {
 	braceDepth := 0
 	bracketDepth := 0
 	parenDepth := 0
-	quote := rune(0)
 
 	flush := func() {
 		entry := strings.TrimSpace(current.String())
@@ -266,52 +244,50 @@ func splitConstraintContractEntries(body string) ([]string, error) {
 		current.Reset()
 	}
 
-	for _, ch := range body {
+	for index := 0; index < len(body); index++ {
+		if end, skipped := skipCypherLexicalToken(body, index); skipped {
+			current.WriteString(body[index:end])
+			index = end - 1
+			continue
+		}
+		ch := body[index]
 		switch {
-		case quote != 0:
-			current.WriteRune(ch)
-			if ch == quote {
-				quote = 0
-			}
-		case ch == '\'' || ch == '"':
-			quote = ch
-			current.WriteRune(ch)
 		case ch == '{':
 			braceDepth++
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == '}':
 			if braceDepth == 0 {
 				return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 			}
 			braceDepth--
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == '[':
 			bracketDepth++
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == '(':
 			parenDepth++
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		case ch == '\n' || ch == ';':
 			if braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 {
 				flush()
 				continue
 			}
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		default:
-			current.WriteRune(ch)
+			current.WriteByte(ch)
 		}
 	}
-	if quote != 0 || braceDepth != 0 || bracketDepth != 0 {
+	if braceDepth != 0 || bracketDepth != 0 || parenDepth != 0 {
 		return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 	}
 	flush()

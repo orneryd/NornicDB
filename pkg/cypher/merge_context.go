@@ -8,6 +8,7 @@ import (
 
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -351,37 +352,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 // the parser leaves as its own text and that reads a bound variable's
 // property (a.id) is evaluated against the bound entities. Null values remain
 // in the map so the shared MERGE validator rejects them before matching.
-func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) map[string]interface{} {
-	props := make(map[string]interface{})
-	propsText = strings.TrimSpace(propsText)
-	if strings.HasPrefix(propsText, "{") && strings.HasSuffix(propsText, "}") {
-		propsText = propsText[1 : len(propsText)-1]
-	}
-	if strings.TrimSpace(propsText) == "" {
-		return props
-	}
-	for _, pair := range e.splitPropertyPairs(propsText) {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			continue
-		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
-		valueText := strings.TrimSpace(pair[colon+1:])
-		value := e.parsePropertyValue(ctx, valueText)
-		if text, unresolved := value.(string); unresolved && text == valueText && !isWholeCypherQuotedString(valueText) {
-			if dot := strings.Index(text, "."); dot > 0 {
-				variable := strings.TrimSpace(text[:dot])
-				_, boundNode := nodeContext[variable]
-				_, boundRel := relContext[variable]
-				_, boundValue := valueBindingsFromContext(ctx)[variable]
-				if boundNode || boundRel || boundValue {
-					value = e.evaluateExpressionWithContext(ctx, text, nodeContext, relContext)
-				}
-			}
-		}
-		props[key] = value
-	}
-	return props
+func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, propsText, entityRow(ctx, nodeContext, relContext), true, false)
 }
 
 // parseMergeNodePattern is parseMergePattern with the property map read by
@@ -396,7 +368,8 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 	if labelErr != nil {
 		return "", nil, nil, labelErr
 	}
-	return variable, labels, e.parseMergeProperties(ctx, props, nodeContext, relContext), nil
+	properties, err := e.parseMergeProperties(ctx, props, nodeContext, relContext)
+	return variable, labels, properties, err
 }
 
 // executeMergeRelationshipWithContext runs a relationship MERGE pattern (see
@@ -673,47 +646,25 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 // $param keeps its declared Go type. A map, entity or nested list is rejected
 // with a TypeError, as in Neo4j (storablePropertyValue).
 func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	if err := requireSetParameter(ctx, expr); err != nil {
-		return nil, err
-	}
-	value, ok := resolveDirectParamRef(ctx, expr)
-	if !ok {
-		var err error
-		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
-			return nil, err
-		}
-	}
-	value, _, err := storablePropertyValue(value)
+	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
 	}
-	return value, nil
+	value, _, err = storablePropertyValue(value)
+	return value, err
 }
 
 // setSourceMap evaluates the right-hand side of SET x = <expr> or
 // SET x += <expr> (operator): a map, or a node / relationship whose
 // properties are copied. Any other value, null included, is a TypeError
 // (setPropertyMapValue, #907), as is a map holding a value a property cannot
-// store. An inline literal the evaluator hands back unresolved, as its own
-// text, goes through the literal parser. Both operators read their source
-// the same way; every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
+// store. Both operators evaluate their source through the checked boundary;
+// every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
 // batch routes) calls this.
 func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
-	if err := requireSetParameter(ctx, expr); err != nil {
+	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+	if err != nil {
 		return nil, err
-	}
-	value, ok := resolveDirectParamRef(ctx, expr)
-	if !ok {
-		value, ok = resolveContextPathRef(ctx, expr)
-	}
-	if !ok {
-		var err error
-		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
-			return nil, err
-		}
-		if text, isText := value.(string); isText && strings.TrimSpace(text) == strings.TrimSpace(expr) {
-			value = e.parseValue(ctx, strings.TrimSpace(expr))
-		}
 	}
 	return setPropertyMapValue(value, operator)
 }
@@ -732,12 +683,8 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 // yields an empty operator.
 func splitSetAssignment(assignment string) (target, property, operator, right string) {
 	assignment = strings.TrimSpace(assignment)
-	eq := strings.IndexByte(assignment, '=')
-	if bracket := strings.IndexByte(assignment, '['); bracket >= 0 && (eq < 0 || bracket < eq) {
-		// A dynamic key's brackets may hold an "=" of their own.
-		eq = findTopLevelByte(assignment, '=')
-	}
-	if colon := strings.IndexByte(assignment, ':'); colon > 0 && (eq < 0 || colon < eq) {
+	eq := findTopLevelOperator(assignment, "=", false, true)
+	if colon := findTopLevelOperator(assignment, ":", false, true); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
 		if target := strings.TrimSpace(assignment[:colon]); isValidIdentifier(target) {
@@ -799,6 +746,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 // (storablePropertyValue), so a map entry is checked as SET x.p = v checks v;
 // the source map is copied only when one of them was rewritten.
 func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
+	value = cypherfn.RuntimeValue(value)
 	typeName := "NULL"
 	if value != nil {
 		typeName = cypherTypeName(value)
@@ -839,11 +787,16 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 // statement's error, which a check of the value it left (null is not a map,
 // a list may not hold null) must not replace.
 func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
-	if failure := getExpressionFailure(ctx); failure != nil {
-		return nil, failure
+	if err := requireSetParameter(ctx, expr); err != nil {
+		return nil, err
 	}
-	return value, nil
+	if value, resolved := resolveDirectParamRef(ctx, expr); resolved {
+		return checkedPropertyResult(ctx, expr, value, true, nil)
+	}
+	if value, resolved := resolveContextPathRef(ctx, expr); resolved {
+		return checkedPropertyResult(ctx, expr, value, true, nil)
+	}
+	return e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in

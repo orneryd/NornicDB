@@ -265,28 +265,18 @@ func mergeClauseBody(clause string) string {
 }
 
 func mergePatternUsesParameterPredicate(pattern string) bool {
-	depth := 0
-	quote := byte(0)
 	for index := 0; index < len(pattern); index++ {
 		character := pattern[index]
-		if quote != 0 {
-			if character == '\\' && quote != '`' {
-				index++
-				continue
+		switch cypherLexicalByte(character) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(pattern, index, character) - 1
+		case '/':
+			if end := queryCommentEnd(pattern, index); end >= 0 {
+				index = end - 1
 			}
-			if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch character {
-		case '\'', '"', '`':
-			quote = character
 		case '{':
-			depth++
-		case '}':
-			if depth > 0 {
-				depth--
+			if end := findMatchingDelimiter(pattern, index, '{', '}'); end > index {
+				index = end
 			}
 		case '$':
 			if dynamicLabelStartsAt(pattern, index) {
@@ -298,7 +288,7 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 				continue
 			}
 			// A $ inside a name (n:L$M) is no parameter.
-			if depth == 0 && isParameterStart(pattern, index) {
+			if isParameterStart(pattern, index) {
 				return true
 			}
 		}
@@ -316,7 +306,7 @@ func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool 
 			return false
 		}
 		for _, entry := range splitTopLevelComma(pattern[cursor+1 : end]) {
-			colon := topLevelColonIndex(entry)
+			colon := findTopLevelMapKeyValueSeparator(entry)
 			if colon >= 0 && strings.EqualFold(strings.TrimSpace(entry[colon+1:]), "null") {
 				return true
 			}

@@ -55,15 +55,11 @@ func findAggregateSpans(expr string) []aggregateSpan {
 	var spans []aggregateSpan
 	i := 0
 	for i < len(expr) {
-		c := expr[i]
-		if c == '\'' || c == '"' || c == '`' {
-			j := i + 1
-			for j < len(expr) && (expr[j] != c || isBackslashEscaped(expr, j)) {
-				j++
-			}
-			i = j + 1
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end
 			continue
 		}
+		c := expr[i]
 		// Only a letter at a word start can begin an aggregate or a subquery
 		// expression. A qualified function whose terminal component happens to
 		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher

@@ -88,15 +88,6 @@ func tokenNameError(name string) error {
 // key in a row's context, as SET evaluates a value: a parameter that wasn't
 // supplied is an error (requireSetParameter).
 func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	if err := requireSetParameter(ctx, expression); err != nil {
-		return nil, err
-	}
-	if value, ok := resolveDirectParamRef(ctx, expression); ok {
-		return value, nil
-	}
-	if value, ok := resolveContextPathRef(ctx, expression); ok {
-		return value, nil
-	}
 	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels)
 }
 
@@ -421,8 +412,8 @@ func hasDynamicToken(text string) bool {
 		return false
 	}
 	for i := 0; i < len(text); i++ {
-		switch c := text[i]; c {
-		case '\'', '"', '`':
+		switch c := text[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, c) - 1
 		case '$':
 			if dynamicLabelStartsAt(text, i) {
@@ -444,8 +435,8 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 	out.Grow(len(pattern))
 	last, brackets := 0, 0
 	for i := 0; i < len(pattern); i++ {
-		switch c := pattern[i]; c {
-		case '\'', '"', '`':
+		switch c := pattern[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '{':
 			if closing := findMatchingDelimiter(pattern, i, '{', '}'); closing > 0 {
@@ -516,8 +507,8 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 		return nil
 	}
 	for i := 0; i < len(text); i++ {
-		switch c := text[i]; c {
-		case '\'', '"', '`':
+		switch c := text[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, c) - 1
 		case '$':
 			if (clause.kind != pipelineClauseCreate && clause.kind != pipelineClauseMerge) || !dynamicLabelStartsAt(text, i) {

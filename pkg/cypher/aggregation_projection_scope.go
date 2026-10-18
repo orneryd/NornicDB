@@ -142,28 +142,13 @@ func maskProjectedExpression(text, expression string) string {
 		return text
 	}
 	var out strings.Builder
-	quote := byte(0)
 	for index := 0; index < len(text); {
+		if end, quoted := skipCypherLexicalToken(text, index); quoted {
+			out.WriteString(text[index:end])
+			index = end
+			continue
+		}
 		c := text[index]
-		if quote != 0 {
-			out.WriteByte(c)
-			if c == '\\' && quote != '`' && index+1 < len(text) {
-				out.WriteByte(text[index+1])
-				index += 2
-				continue
-			}
-			if c == quote {
-				quote = 0
-			}
-			index++
-			continue
-		}
-		if c == '\'' || c == '"' || c == '`' {
-			quote = c
-			out.WriteByte(c)
-			index++
-			continue
-		}
 		end := index + len(expression)
 		if strings.HasPrefix(text[index:], expression) &&
 			(index == 0 || !(isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$')) &&

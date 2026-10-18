@@ -2,6 +2,7 @@ package knowledgepolicy
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 )
@@ -129,6 +130,7 @@ type onAccessTokenType int
 
 const (
 	tokenEOF onAccessTokenType = iota
+	tokenInvalid
 	tokenIdent
 	tokenNumber
 	tokenString
@@ -168,6 +170,10 @@ type onAccessLexer struct {
 
 func (l *onAccessLexer) next() onAccessToken {
 	for l.pos < len(l.input) {
+		if end := cyphertext.CommentEnd(l.input, l.pos); end >= 0 {
+			l.pos = end
+			continue
+		}
 		ch := l.input[l.pos]
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
 			l.pos++
@@ -180,6 +186,19 @@ func (l *onAccessLexer) next() onAccessToken {
 	}
 
 	ch := l.input[l.pos]
+	if cyphertext.IsStringQuote(ch) {
+		start := l.pos
+		end, _, closed := cyphertext.ScanStringToken(l.input, start)
+		l.pos = end
+		if !closed {
+			return onAccessToken{typ: tokenInvalid, text: l.input[start:end]}
+		}
+		value, ok := cyphertext.DecodeString(l.input[start:end])
+		if !ok {
+			return onAccessToken{typ: tokenInvalid, text: l.input[start:end]}
+		}
+		return onAccessToken{typ: tokenString, text: value}
+	}
 	switch ch {
 	case '(':
 		l.pos++
@@ -235,18 +254,7 @@ func (l *onAccessLexer) next() onAccessToken {
 			l.pos++
 		}
 		return onAccessToken{typ: tokenParam, text: l.input[start:l.pos]}
-	case '\'', '"':
-		quote := ch
-		start := l.pos + 1
-		l.pos++
-		for l.pos < len(l.input) && l.input[l.pos] != quote {
-			l.pos++
-		}
-		text := l.input[start:l.pos]
-		if l.pos < len(l.input) {
-			l.pos++
-		}
-		return onAccessToken{typ: tokenString, text: text}
+
 	}
 
 	if isDigit(ch) {

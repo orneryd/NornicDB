@@ -107,9 +107,9 @@ func TestSplitWithDelimiterList(t *testing.T) {
 // are null, not errors.
 func TestTemporalCallDefensiveReturns(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	eval := func(expression string) interface{} {
-		value, _ := parseLiteralValueFromComputedRow(expression)
-		return value
+	eval := func(expression string) (interface{}, bool, error) {
+		value, resolved := parseLiteralValueFromComputedRow(expression)
+		return value, resolved, nil
 	}
 	for _, expression := range []string{
 		"duration.between(1)",

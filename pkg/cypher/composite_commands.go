@@ -14,10 +14,8 @@ func parseCypherValueToken(tok string) (string, error) {
 	if tok == "" {
 		return "", nil
 	}
-	if len(tok) >= 2 {
-		if (tok[0] == '\'' && tok[len(tok)-1] == '\'') || (tok[0] == '"' && tok[len(tok)-1] == '"') {
-			return tok[1 : len(tok)-1], nil
-		}
+	if decoded, quoted := decodeCypherQuotedString(tok); quoted {
+		return decoded, nil
 	}
 	if strings.HasPrefix(tok, "`") {
 		return unquoteBacktickIdentifier(tok)

@@ -77,6 +77,7 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 		{"apoc.map.fromPairs", false},
 		{"apoc.map.merge", false},
 		{"apoc.map.removeKey", false},
+		{"apoc.map.removeKeys", false},
 		{"apoc.map.setKey", false},
 		{"apoc.meta.isType", false},
 		{"apoc.meta.type", false},

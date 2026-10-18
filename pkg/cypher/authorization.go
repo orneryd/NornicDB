@@ -139,30 +139,23 @@ func procedureNameAt(query string, offset int) (string, bool) {
 	var normalized strings.Builder
 	normalizing := false
 	startName, endName, components := offset, offset, 0
+	expectComponent := false
 	for {
 		skipSpace()
 		if i >= len(query) {
 			break
 		}
 		partStart := i
-		quoted := query[i] == '`'
-		var part string
-		if quoted {
-			end := strings.IndexByte(query[i+1:], '`')
-			if end < 0 {
+		part, next, ok := scanIdentifierToken(query, i)
+		if !ok {
+			if expectComponent {
 				return "", false
 			}
-			part = query[i+1 : i+1+end]
-			i += end + 2
-		} else {
-			for i < len(query) && (query[i] == '_' || query[i] == '$' || query[i] >= '0' && query[i] <= '9' || query[i] >= 'a' && query[i] <= 'z' || query[i] >= 'A' && query[i] <= 'Z') {
-				i++
-			}
-			if i == partStart {
-				break
-			}
-			part = query[partStart:i]
+			break
 		}
+		expectComponent = false
+		quoted := isCypherBacktickByte(query[i])
+		i = next
 		if components == 0 {
 			startName = partStart
 		}
@@ -183,6 +176,7 @@ func procedureNameAt(query string, offset int) (string, bool) {
 		skipSpace()
 		if i < len(query) && query[i] == '.' {
 			i++
+			expectComponent = true
 			continue
 		}
 		break
@@ -312,45 +306,9 @@ func firstExecutableCypherOffset(query string) int {
 func queryKeywords(query string) map[string]bool {
 	keywords := make(map[string]bool)
 	for index := 0; index < len(query); {
-		switch query[index] {
-		case '/', '\'', '"', '`':
-			if query[index] == '/' && index+1 < len(query) && query[index+1] == '/' {
-				index += 2
-				for index < len(query) && query[index] != '\n' {
-					index++
-				}
-				continue
-			}
-			if query[index] == '/' && index+1 < len(query) && query[index+1] == '*' {
-				index += 2
-				for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
-					index++
-				}
-				if index+1 < len(query) {
-					index += 2
-				}
-				continue
-			}
-			if query[index] != '/' {
-				quote := query[index]
-				index++
-				for index < len(query) {
-					if query[index] == '\\' && quote != '`' && index+1 < len(query) {
-						index += 2
-						continue
-					}
-					if query[index] == quote {
-						if index+1 < len(query) && query[index+1] == quote {
-							index += 2
-							continue
-						}
-						index++
-						break
-					}
-					index++
-				}
-				continue
-			}
+		if end, quoted := skipCypherLexicalToken(query, index); quoted {
+			index = end
+			continue
 		}
 
 		if !isIdentStartByte(query[index]) {

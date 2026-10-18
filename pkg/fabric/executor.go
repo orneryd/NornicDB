@@ -11,6 +11,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -268,33 +269,13 @@ func inferReturnColumnsFromQuery(query string) []string {
 	// Strip top-level ORDER BY / SKIP / LIMIT tails.
 	end := len(clause)
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := clause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -370,33 +351,13 @@ func splitTopLevelCSV(s string) []string {
 	var parts []string
 	start := 0
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := s[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1736,33 +1697,13 @@ func firstToken(s string) (token string, rest string) {
 
 func indexTopLevelKeyword(s string, keyword string) int {
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := s[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1880,33 +1821,13 @@ func splitTopLevelAnd(whereClause string) []string {
 	parts := make([]string, 0, 4)
 	start := 0
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(whereClause); i++ {
-		ch := whereClause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(whereClause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := whereClause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1940,37 +1861,14 @@ func splitTopLevelAnd(whereClause string) []string {
 }
 
 func splitTopLevelEquality(expr string) (lhs, rhs string, ok bool) {
-	inSingle, inDouble, inBacktick := false, false, false
 	paren, bracket, brace := 0, 0, 0
 	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(expr, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := expr[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			paren++
 			continue
@@ -2035,36 +1933,9 @@ func containsStandaloneIdentifier(s, ident string) bool {
 	if ident == "" || len(s) < len(ident) {
 		return false
 	}
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i+len(ident) <= len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
 		if s[i:i+len(ident)] != ident {
@@ -2374,33 +2245,13 @@ func splitTopLevelResultModifiers(clause string) (projection string, modifiers s
 	projection = strings.TrimSpace(clause)
 	modifiers = ""
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := clause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -3227,53 +3078,13 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 	}
 	var b strings.Builder
 	b.Grow(len(s) + 8)
-	inSingle := false
-	inDouble := false
-	inBacktick := false
 	for i := 0; i < len(s); {
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			b.WriteString(s[i:next])
+			i = next
+			continue
+		}
 		ch := s[i]
-		switch {
-		case inSingle:
-			b.WriteByte(ch)
-			if ch == '\'' {
-				inSingle = false
-			}
-			i++
-			continue
-		case inDouble:
-			b.WriteByte(ch)
-			if ch == '"' {
-				inDouble = false
-			}
-			i++
-			continue
-		case inBacktick:
-			b.WriteByte(ch)
-			if ch == '`' {
-				inBacktick = false
-			}
-			i++
-			continue
-		}
-
-		if ch == '\'' {
-			inSingle = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
 
 		if i+len(ident) <= len(s) && s[i:i+len(ident)] == ident {
 			prevOK := i == 0 || (!isIdentChar(s[i-1]) && s[i-1] != '.')
@@ -3303,45 +3114,14 @@ func findLeadingWithClauseEnd(query string) (int, bool) {
 	i = skipLeadingSpace(query, i)
 
 	depth := 0
-	inSingle := false
-	inDouble := false
-	inBacktick := false
 
 	for idx := i; idx < len(query); idx++ {
-		ch := query[idx]
-
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				if idx+1 < len(query) && query[idx+1] == '\'' {
-					idx++
-					continue
-				}
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
+			idx = next - 1
 			continue
 		}
-
+		ch := query[idx]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(', '[', '{':
 			depth++
 			continue

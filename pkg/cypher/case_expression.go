@@ -54,8 +54,8 @@ func leadingCaseExpressionEnd(expr string) int {
 	}
 	depth := 1
 	for index := firstNext; index < len(expr); {
-		if expr[index] == '\'' || expr[index] == '"' || expr[index] == '`' {
-			index = numericValidationSkipQuoted(expr, index)
+		if isCypherQuoteByte(expr[index]) {
+			index = skipCypherQuotedText(expr, index, expr[index])
 			continue
 		}
 		word, next, ok := scanIdentifierToken(expr, index)
@@ -174,8 +174,8 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
 	for index := start; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' || expression[index] == '`' {
-			index = numericValidationSkipQuoted(expression, index)
+		if isCypherQuoteByte(expression[index]) {
+			index = skipCypherQuotedText(expression, index, expression[index])
 			continue
 		}
 		switch expression[index] {
@@ -398,9 +398,13 @@ func caseTypeParameterCloses(s string, j int) bool {
 				}
 				return false
 			}
-		case '(', ')', '[', ']', '{', '}', '"', '\'':
+		case '(', ')', '[', ']', '{', '}':
 			if depth == 1 {
 				return false // not inside one type's brackets
+			}
+		default:
+			if isCypherStringQuoteByte(s[k]) && depth == 1 {
+				return false
 			}
 		}
 	}
@@ -472,8 +476,8 @@ func caseHasPreviousToken(s string, i int) bool {
 func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 	open, depth := 2, 0
 	for j := i + len("CASE"); j < len(s); j++ {
-		switch c := s[j]; c {
-		case '\'', '"', '`':
+		switch c := s[j]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			j = skipCypherQuotedText(s, j, c) - 1
 			continue
 		case '(', '[', '{':
@@ -617,19 +621,13 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 	stack := make([]int, 0, 2)
 	var delimiters []bool // open ( [ {: true when it opens a scope
 	scopes := 0
-	quote := byte(0)
 	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		if quote != 0 {
-			if ch == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
+			i = end - 1
 			continue
 		}
+		ch := expr[i]
 		switch ch {
-		case '\'', '"', '`':
-			quote = ch
-			continue
 		case '(', '[', '{':
 			scope := caseVariableScopeOpensAt(expr, i)
 			delimiters = append(delimiters, scope)
@@ -814,22 +812,12 @@ func findTopLevelKeyword(s, keyword string) int {
 		return -1
 	}
 	depth := 0
-	inString := false
-	var stringChar byte
 	for i := 0; i+len(keyword) <= len(s); i++ {
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
+			continue
+		}
 		ch := s[i]
-		if ch == '\'' || ch == '"' {
-			if !inString {
-				inString = true
-				stringChar = ch
-			} else if ch == stringChar {
-				inString = false
-			}
-			continue
-		}
-		if inString {
-			continue
-		}
 		switch ch {
 		case '(', '[', '{':
 			depth++

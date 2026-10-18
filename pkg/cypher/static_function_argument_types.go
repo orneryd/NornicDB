@@ -373,8 +373,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
-		switch text[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(text[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(text, index)
 			continue
 		}
