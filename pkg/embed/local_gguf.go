@@ -65,6 +65,9 @@ type LocalGGUFEmbedder struct {
 	closed        bool
 	stopWarmup    chan struct{}
 	warmupStopped chan struct{}
+	warmupStarted bool
+	closeOnce     sync.Once
+	closeErr      error
 
 	// Stats for monitoring
 	embedCount    atomic.Int64
@@ -200,18 +203,23 @@ func NewLocalGGUFContext(ctx context.Context, config *Config) (*LocalGGUFEmbedde
 		warmupStopped: make(chan struct{}),
 	}
 
-	// Start warmup goroutine to keep model in GPU memory
-	warmupInterval := config.WarmupInterval
+	embedder.startWarmup(config.WarmupInterval)
+
+	return embedder, nil
+}
+
+// Called during construction, before the provider is published.
+func (e *LocalGGUFEmbedder) startWarmup(warmupInterval time.Duration) {
 	if warmupInterval == 0 {
 		warmupInterval = 5 * time.Minute // Default: warmup every 5 minutes
 	}
 
 	if warmupInterval > 0 {
-		go embedder.warmupLoop(warmupInterval)
+		e.warmupStarted = true
+		go e.warmupLoop(warmupInterval)
 		fmt.Printf("🔥 Model warmup enabled: every %v\n", warmupInterval)
 	}
 
-	return embedder, nil
 }
 
 // warmupLoop periodically generates a dummy embedding to keep the model in GPU memory.
@@ -470,31 +478,27 @@ func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
 //
 // After Close is called, the embedder must not be used.
 func (e *LocalGGUFEmbedder) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
+		started := e.warmupStarted
+		if e.stopWarmup != nil {
+			close(e.stopWarmup)
+		}
+		e.mu.Unlock()
 
-	if e.closed {
-		return nil
-	}
-	e.closed = true
-
-	// Stop warmup goroutine
-	close(e.stopWarmup)
-
-	// Wait for warmup to finish (with timeout)
-	select {
-	case <-e.warmupStopped:
-	case <-time.After(5 * time.Second):
-		fmt.Printf("⚠️  Warmup goroutine did not stop in time\n")
-	}
-
-	// Close the model
-	if e.model != nil {
-		fmt.Printf("🧠 Closing embedding model: %s\n", e.modelName)
-		fmt.Printf("   Total embeddings: %d\n", e.embedCount.Load())
-		fmt.Printf("   Total errors: %d\n", e.errorCount.Load())
-		fmt.Printf("   Total panics recovered: %d\n", e.panicCount.Load())
-		return e.model.Close()
-	}
-	return nil
+		// A negative interval never started a worker. A running worker must
+		// finish before its model is freed, without holding its read lock out.
+		if started {
+			<-e.warmupStopped
+		}
+		if e.model != nil {
+			fmt.Printf("🧠 Closing embedding model: %s\n", e.modelName)
+			fmt.Printf("   Total embeddings: %d\n", e.embedCount.Load())
+			fmt.Printf("   Total errors: %d\n", e.errorCount.Load())
+			fmt.Printf("   Total panics recovered: %d\n", e.panicCount.Load())
+			e.closeErr = e.model.Close()
+		}
+	})
+	return e.closeErr
 }

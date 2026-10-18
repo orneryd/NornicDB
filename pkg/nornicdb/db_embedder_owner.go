@@ -1,11 +1,37 @@
 package nornicdb
 
 import (
+	"context"
 	"reflect"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
 )
+
+// beginProviderUse is the admission/cancellation owner for foreground provider
+// users. Close seals admission under the same lock before cancelling the DB
+// lifetime, and waits outside that lock. Providers which honor context cancel
+// promptly; an uncancellable call retains its model until it actually returns.
+func (db *DB) beginProviderUse(ctx context.Context) (context.Context, func(), error) {
+	db.mu.RLock()
+	if db.closed {
+		db.mu.RUnlock()
+		return nil, nil, ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		db.mu.RUnlock()
+		return nil, nil, err
+	}
+	db.foregroundWg.Add(1)
+	db.mu.RUnlock()
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(db.LifetimeContext(), cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+		db.foregroundWg.Done()
+	}, nil
+}
 
 // embedderResource is the single release path for a provider, whether it is
 // still being checked, installed, replaced, or shared through a cache/registry.
