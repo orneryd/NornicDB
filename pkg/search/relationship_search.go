@@ -89,6 +89,12 @@ type relationshipSearch struct {
 	wake   chan struct{}
 	ready  chan struct{}
 	start  sync.Once
+
+	// While the loader (runRelationshipIndex) applies the stored
+	// relationships, live writes record their IDs in live and the loader
+	// leaves those IDs to them: its stored copy may be older. Guarded by mu.
+	loading bool
+	live    map[string]struct{}
 }
 
 type relationshipVectorsFile struct {
@@ -155,6 +161,9 @@ func (s *Service) StartRelationshipIndex() {
 		return
 	}
 	rs.start.Do(func() {
+		rs.mu.Lock()
+		rs.loading, rs.live = true, make(map[string]struct{})
+		rs.mu.Unlock()
 		go s.runRelationshipIndex(rs)
 	})
 }
@@ -165,7 +174,7 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	seen := make(map[string]bool)
 	err := storage.StreamEdgesWithFallback(ctx, s.engine, 0, func(edge *storage.Edge) error {
 		seen[string(edge.ID)] = true
-		s.indexRelationship(rs, edge, persisted[string(edge.ID)])
+		s.indexRelationship(rs, edge, persisted[string(edge.ID)], true)
 		return nil
 	})
 	if err != nil && ctx.Err() == nil {
@@ -173,24 +182,51 @@ func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
 	}
 	// A relationship indexed by a write during the build is kept; one only
 	// in the file is gone.
+	rs.mu.Lock()
+	rs.loading, rs.live = false, nil
+	rs.mu.Unlock()
 	close(rs.ready)
 	s.embedRelationships(ctx, rs)
 }
 
 // IndexRelationship indexes or re-indexes a relationship for relationship
-// search; a no-op when it is off.
+// search; a no-op when it is off. During a population it is ordered with the
+// population sequence (queueOnPopulation).
 func (s *Service) IndexRelationship(edge *storage.Edge) {
 	if rs := s.relationshipSearch(); rs != nil && edge != nil && edge.ID != "" {
-		s.indexRelationship(rs, edge, nil)
+		write := deferredIndexWrite{edge: edge, relationship: true}
+		if queued, _, _ := s.queueOnPopulation(write); !queued {
+			s.indexRelationship(rs, edge, nil, false)
+		}
 	}
 }
 
-func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry) {
+// updateRelationshipNow applies a relationship-search update the population
+// sequence ordered.
+func (s *Service) updateRelationshipNow(write deferredIndexWrite) {
+	rs := s.relationshipSearch()
+	switch {
+	case rs == nil:
+	case write.edge != nil:
+		s.indexRelationship(rs, write.edge, nil, false)
+	default:
+		s.removeRelationship(rs, storage.EdgeID(write.edgeID))
+	}
+}
+
+func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry, fromLoader bool) {
 	id := string(edge.ID)
 	text := s.relationshipSearchableText(edge)
 	source := rs.source(edge)
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	if fromLoader {
+		if _, live := rs.live[id]; live {
+			return
+		}
+	} else if rs.loading {
+		rs.live[id] = struct{}{}
+	}
 	if text == "" {
 		rs.fulltext.Remove(id)
 	} else {
@@ -227,13 +263,23 @@ func (s *Service) WakeRelationshipEmbedding() {
 }
 
 // RemoveRelationship drops a relationship from relationship search; a no-op
-// when it is off.
+// when it is off. During a population it is ordered with the population
+// sequence (queueOnPopulation).
 func (s *Service) RemoveRelationship(id storage.EdgeID) {
 	rs := s.relationshipSearch()
 	if rs == nil {
 		return
 	}
+	if queued, _, _ := s.queueOnPopulation(deferredIndexWrite{edgeID: string(id), relationship: true}); !queued {
+		s.removeRelationship(rs, id)
+	}
+}
+
+func (s *Service) removeRelationship(rs *relationshipSearch, id storage.EdgeID) {
 	rs.mu.Lock()
+	if rs.loading {
+		rs.live[string(id)] = struct{}{}
+	}
 	rs.fulltext.Remove(string(id))
 	delete(rs.entries, string(id))
 	delete(rs.pending, string(id))
@@ -254,9 +300,11 @@ func (s *Service) SetRelationshipEmbedPolicy(policy string) {
 	}
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(policy))
-	rs.mu.Lock()
-	rs.policy = hash.Sum64()
-	rs.mu.Unlock()
+	s.orderWithPopulation(func() {
+		rs.mu.Lock()
+		rs.policy = hash.Sum64()
+		rs.mu.Unlock()
+	})
 }
 
 // source is edge's source under the embedding policy.

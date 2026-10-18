@@ -1484,12 +1484,14 @@ func (s *Service) MarkReadyDisabled() {
 // the construction path in getOrCreateSearchService) can observe whether
 // the swap was a no-op.
 func (s *Service) SetIndexFlags(bm25Enabled, vectorEnabled bool) (changed bool) {
-	prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
-	prevVec := s.vectorEnabled.Swap(vectorEnabled)
-	changed = prevBM25 != bm25Enabled || prevVec != vectorEnabled
-	if changed {
-		s.indexChanged()
-	}
+	changed = s.bm25Enabled.Load() != bm25Enabled || s.vectorEnabled.Load() != vectorEnabled
+	s.orderDimensionChange(func() {
+		prevBM25 := s.bm25Enabled.Swap(bm25Enabled)
+		prevVec := s.vectorEnabled.Swap(vectorEnabled)
+		if prevBM25 != bm25Enabled || prevVec != vectorEnabled {
+			s.indexChanged()
+		}
+	})
 	return changed
 }
 
@@ -2743,7 +2745,7 @@ func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 // vector-shaped value sets the dimension of an empty index (a database with
 // no embedder storing its own vectors).
 func (s *Service) FixVectorDimensions() {
-	s.vectorDimensionsFixed.Store(true)
+	s.orderDimensionChange(func() { s.vectorDimensionsFixed.Store(true) })
 }
 
 func firstVectorDimensions(node *storage.Node) int {
@@ -3217,13 +3219,21 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
+	shouldIndex, err := s.shouldIndexNode(node)
+	if err != nil {
+		defer s.indexChanged()
+		defer s.rememberChunkSpansLocked(string(node.ID), node)
+		return err
+	}
+	return s.indexNodeLockedAs(node, skipFulltext, shouldIndex)
+}
+
+// indexNodeLockedAs is indexNodeLocked with the temporal decision already
+// made: by indexNodeLocked, or at the call for a write queued on a population.
+func (s *Service) indexNodeLockedAs(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
 	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
-	shouldIndex, err := s.shouldIndexNode(node)
-	if err != nil {
-		return err
-	}
 	var fulltext nodeFulltext
 	if !skipFulltext {
 		fulltext.text = s.extractSearchableText(node)
@@ -3856,18 +3866,24 @@ func (s *Service) CountPropertyVectorEntries(propertyKey string) int {
 // propertyKey. Callers are expected to also call DropIndex on the schema
 // to remove the named-index entry that points at this property.
 func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
-	defer s.indexChanged()
 	if s == nil || propertyKey == "" {
 		return
 	}
+	// During a population the removal is queued in order with the writes
+	// acknowledged before it, so it also removes their vectors.
+	s.orderWithPopulation(func() { s.removePropertyVectorIndexLocked(propertyKey) })
+}
+
+// removePropertyVectorIndexLocked is RemovePropertyVectorIndex's removal.
+// Caller holds indexMu.
+func (s *Service) removePropertyVectorIndexLocked(propertyKey string) {
+	defer s.indexChanged()
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
 	for nodeID, props := range s.nodePropVector {
 		propID, ok := props[propertyKey]
 		if !ok {
@@ -3901,7 +3917,7 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodeP
 			return ctx.Err()
 		}
 		s.applyDeferredIndexWrites(job)
-		s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
+		s.adoptPopulationDimensions(job, firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
 		var err error
 		if !job.edgeWrittenLocked(string(edge.ID)) {
@@ -4328,7 +4344,7 @@ func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulat
 			return nil
 		}
 		if count == 0 && len(batch) > 0 {
-			s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
+			s.adoptPopulationDimensions(job, firstVectorDimensions(batch[0]))
 		}
 		// Live writes queued since the last batch are applied first; a node
 		// one of them wrote keeps that write, whether this batch read the
@@ -7134,9 +7150,11 @@ func visitSearchableFields(node *storage.Node, fulltextProperties []string, visi
 // Configure this before building indexes.
 func (s *Service) SetFulltextProperties(properties []string) {
 	normalized := normalizeFulltextProperties(properties)
-	s.mu.Lock()
-	s.fulltextProperties = normalized
-	s.mu.Unlock()
+	s.orderWithPopulation(func() {
+		s.mu.Lock()
+		s.fulltextProperties = normalized
+		s.mu.Unlock()
+	})
 }
 
 // SetRelationshipFulltextProperties limits relationship search's keyword
@@ -7145,9 +7163,11 @@ func (s *Service) SetFulltextProperties(properties []string) {
 // is built.
 func (s *Service) SetRelationshipFulltextProperties(properties []string) {
 	normalized := normalizeFulltextProperties(properties)
-	s.mu.Lock()
-	s.relationshipFulltextProperties = normalized
-	s.mu.Unlock()
+	s.orderWithPopulation(func() {
+		s.mu.Lock()
+		s.relationshipFulltextProperties = normalized
+		s.mu.Unlock()
+	})
 }
 
 // RelationshipFulltextProperties is relationship search's keyword property
@@ -7201,9 +7221,11 @@ func (s *Service) SetFulltextLabels(labels []string) {
 		seen[label] = struct{}{}
 		normalized = append(normalized, label)
 	}
-	s.mu.Lock()
-	s.fulltextLabels = normalized
-	s.mu.Unlock()
+	s.orderWithPopulation(func() {
+		s.mu.Lock()
+		s.fulltextLabels = normalized
+		s.mu.Unlock()
+	})
 }
 
 // FulltextLabels returns the configured BM25 label allowlist.

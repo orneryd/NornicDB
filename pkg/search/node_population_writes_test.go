@@ -362,3 +362,125 @@ func TestPopulationQueuedWriteOwnsItsValues(t *testing.T) {
 	svc.mu.RUnlock()
 	require.Equal(t, []float32{0, 0, 1}, got, "the population indexed the caller's reused edge buffer")
 }
+
+// TestPopulationPropertyIndexRemovalIsOrderedWithQueuedWrites: a
+// property-vector index removal made after a write was acknowledged removes
+// that write's vector too, as the same calls one after another would.
+func TestPopulationPropertyIndexRemovalIsOrderedWithQueuedWrites(t *testing.T) {
+	servingTestEnv(t)
+	engine := newSnapshotGateEngine(t)
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	t.Cleanup(engine.open)
+	svc.FixVectorDimensions()
+	buildDone := make(chan error, 1)
+	go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
+	waitClosed(t, engine.entered, "the population's node snapshot")
+	node := &storage.Node{ID: "nornic:p", Labels: []string{"Doc"}, Properties: map[string]any{"text": "pterm", "p": []float32{1, 0, 0}}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	requireReturnsWhileBlocked(t, "a write with a property vector", func() error { return svc.IndexNode(node) })
+	svc.RemovePropertyVectorIndex("p")
+	engine.open()
+	require.NoError(t, <-buildDone)
+	require.Zero(t, svc.CountPropertyVectorEntries("p"), "an acknowledged write overtook the property-vector index removal")
+	_, ok := svc.getVectorLookup()("nornic:p-prop-p")
+	require.False(t, ok)
+	require.Equal(t, []string{"nornic:p"}, searchIDs(t, svc, "pterm"))
+}
+
+// TestPopulationIndexingSettingIsOrderedWithQueuedWrites: a write acknowledged
+// before an indexing setting changes is indexed under the earlier setting, as
+// the same calls one after another would.
+func TestPopulationIndexingSettingIsOrderedWithQueuedWrites(t *testing.T) {
+	servingTestEnv(t)
+	engine := newSnapshotGateEngine(t)
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	t.Cleanup(engine.open)
+	svc.FixVectorDimensions()
+	buildDone := make(chan error, 1)
+	go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
+	waitClosed(t, engine.entered, "the population's node snapshot")
+	node := &storage.Node{ID: "nornic:t", Labels: []string{"Doc"}, Properties: map[string]any{"title": "titleterm", "other": "otherterm"}}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	requireReturnsWhileBlocked(t, "a write", func() error { return svc.IndexNode(node) })
+	svc.SetFulltextProperties([]string{"other"})
+	engine.open()
+	require.NoError(t, <-buildDone)
+	require.Equal(t, []string{"nornic:t"}, searchIDs(t, svc, "titleterm"), "the write was indexed under a setting made after it")
+}
+
+type queuedTypedStruct struct {
+	Values []uint16
+}
+
+// queuedTypedProperties returns property values of typed containers the
+// deferred apply can read, and a function that rewrites every buffer in them
+// the way a caller reusing its buffers would.
+func queuedTypedProperties() (map[string]any, func(byte)) {
+	u64, i32, nested, arr := []uint64{424242}, []int32{737373}, []uint64{515151}, [2][]int64{{262626}, {0}}
+	ptr, st := &[]int{1}, queuedTypedStruct{Values: []uint16{7}}
+	inner := []uint8{9}
+	props := map[string]any{
+		"text": "typedterm", "u64": u64, "i32": i32,
+		"nested": map[string]any{"deep": map[string][]uint64{"k": nested}},
+		"array":  arr, "ptr": ptr, "struct": st, "list": []map[string]any{{"b": inner}},
+	}
+	rewrite := func(b byte) {
+		u64[0], i32[0], nested[0], arr[0][0] = uint64(b), int32(b), uint64(b), int64(b)
+		(*ptr)[0], st.Values[0], inner[0] = int(b), uint16(b), b
+	}
+	return props, rewrite
+}
+
+// TestQueuedValuesAreOwnedWhateverTheirType: the queued copy of a property
+// value shares no buffer with the caller, for any container type.
+func TestQueuedValuesAreOwnedWhateverTheirType(t *testing.T) {
+	props, rewrite := queuedTypedProperties()
+	copied := cloneQueuedMap(props)
+	want, _ := queuedTypedProperties()
+	rewrite(1)
+	require.Equal(t, want, copied, "the queued copy changed with the caller's buffers")
+}
+
+// TestPopulationQueuedWriteOwnsTypedContainers: a caller rewriting typed
+// property buffers (read by the chunk-span fallback's JSON encoding, among
+// others) after IndexNode returns does not race the population applying it.
+func TestPopulationQueuedWriteOwnsTypedContainers(t *testing.T) {
+	servingTestEnv(t)
+	engine := newSnapshotGateEngine(t)
+	svc := NewServiceWithDimensionsAndBM25EngineAndOptions(engine, 3, "v2", nil)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	t.Cleanup(engine.open)
+	svc.FixVectorDimensions()
+	buildDone := make(chan error, 1)
+	go func() { buildDone <- svc.BuildIndexes(context.Background()) }()
+	waitClosed(t, engine.entered, "the population's node snapshot")
+	props, rewrite := queuedTypedProperties()
+	node := &storage.Node{ID: "nornic:typed", Labels: []string{"Doc"}, Properties: props, ChunkEmbeddings: [][]float32{{0, 1, 0}}}
+	// The stored copy only has to exist (the population removes orphans).
+	_, err := engine.CreateNode(&storage.Node{ID: node.ID, Labels: []string{"Doc"}, Properties: map[string]any{"text": "typedterm"}})
+	require.NoError(t, err)
+	requireReturnsWhileBlocked(t, "a write with typed containers", func() error { return svc.IndexNode(node) })
+	stop := make(chan struct{})
+	rewriting := make(chan struct{})
+	go func() {
+		defer close(rewriting)
+		for b := byte(0); ; b++ {
+			select {
+			case <-stop:
+				return
+			default:
+				rewrite(b)
+			}
+		}
+	}()
+	engine.open()
+	require.NoError(t, <-buildDone)
+	close(stop)
+	<-rewriting
+	require.Equal(t, []string{"nornic:typed"}, searchIDs(t, svc, "typedterm"))
+	requireVector(t, svc, "nornic:typed", []float32{0, 1, 0})
+}

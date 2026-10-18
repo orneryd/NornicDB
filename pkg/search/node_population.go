@@ -115,6 +115,12 @@ type nodePopulationAdmission struct {
 	queued       atomic.Bool
 	writtenNodes map[string]struct{}
 	writtenEdges map[string]struct{}
+	// pendingOps counts queued dimension-changing operations not applied yet;
+	// dimsAdopted is set once the population chose the index dimensions from
+	// a stored vector; populated once its batches and stream are complete.
+	pendingOps  int
+	dimsAdopted bool
+	populated   bool
 }
 
 func (s *Service) nodeSourcesCompleteLocked() bool {
@@ -167,7 +173,7 @@ func (s *Service) publishNodeAdmission(job *nodePopulationAdmission, err error, 
 	s.indexMu.Lock()
 	s.baseBuildControlMu.Lock()
 	if !nodeAdmissionClosed(job) {
-		s.applyDeferredIndexWritesLocked(job, job.takeDeferredLocked())
+		job.pendingOps -= s.applyDeferredIndexWritesLocked(job, job.takeDeferredLocked(true))
 		if err == nil && parkPath != "" {
 			parked = s.parkFulltextLocked(parkPath)
 		}
@@ -220,7 +226,8 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 // the saved node images stale before a population.
 func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferredIndexWrite) (release func(), queued bool, err error) {
 	for {
-		if queued, err := s.queueOnPopulation(write); queued || err != nil {
+		queued, mustWait, err := s.queueOnPopulation(write)
+		if queued || err != nil {
 			return nil, queued, err
 		}
 		s.indexMu.Lock()
@@ -288,7 +295,7 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferre
 			s.indexMu.Unlock()
 			return nil, false, ErrSearchIndexBuilding
 		}
-		if s.populationDefersWrites() {
+		if s.populationDefersWrites() && !mustWait {
 			// The population began after queueOnPopulation looked: queue on it.
 			s.indexMu.Unlock()
 			continue
@@ -467,6 +474,7 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	}
 	s.indexMu.Unlock()
 	if !explicit {
+		s.completePopulationSequence(job)
 		s.finishNodeAdmission(job, nil)
 		return nil
 	}
@@ -492,6 +500,9 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// The population is complete: every queued operation, administrative ones
+	// included, is applied before the base save.
+	s.completePopulationSequence(job)
 	if !plan.nodesRebuilt {
 		s.finishNodeAdmission(job, nil)
 		return s.completeBaseIndexBuild(ctx)
