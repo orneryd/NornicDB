@@ -465,9 +465,9 @@ func registerAllFunctions() error {
 	// Util Functions (apoc.util.*)
 	// ========================================
 	register("apoc.util.sleep", "util", util.Sleep, "Sleep", []string{"apoc.util.sleep(1000) => (waits 1s)"})
-	register("apoc.util.md5", "util", util.MD5, "MD5 hash", []string{"apoc.util.md5('hello') => '5d41402abc4b2a76b9719d911017c592'"})
-	register("apoc.util.sha1", "util", util.SHA1, "SHA1 hash", []string{"apoc.util.sha1('hello') => 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'"})
-	register("apoc.util.sha256", "util", util.SHA256, "SHA256 hash", []string{"apoc.util.sha256('hello') => '2cf24dba5fb0a30e...'"})
+	register("apoc.util.md5", "util", util.MD5, "MD5 hash", []string{"apoc.util.md5(['hello']) => '5d41402abc4b2a76b9719d911017c592'"})
+	register("apoc.util.sha1", "util", util.SHA1, "SHA1 hash", []string{"apoc.util.sha1(['hello']) => 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d'"})
+	register("apoc.util.sha256", "util", util.SHA256, "SHA256 hash", []string{"apoc.util.sha256(['hello']) => '2cf24dba5fb0a30e...'"})
 	register("apoc.util.compress", "util", util.Compress, "Compress data", []string{"apoc.util.compress('data') => compressed"})
 	register("apoc.util.decompress", "util", util.Decompress, "Decompress data", []string{"apoc.util.decompress(compressed) => 'data'"})
 	register("apoc.util.validate", "util", util.Validate, "Validate value", []string{"apoc.util.validate(value, predicate) => bool"})
