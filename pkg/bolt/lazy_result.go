@@ -151,7 +151,10 @@ func (s *Session) closeLazyResult() {
 		return
 	}
 	lazy := s.lastLazy
-	if s.lastDelivery != nil { s.lastDelivery.Fail(); s.lastDelivery = nil }
+	if s.lastDelivery != nil {
+		s.lastDelivery.Fail()
+		s.lastDelivery = nil
+	}
 	s.lastLazy = nil
 	s.lastResult = nil
 	s.resultIndex = 0
