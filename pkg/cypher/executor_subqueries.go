@@ -377,6 +377,32 @@ func branchDeclaresVariable(branch, variable string) bool {
 	return false
 }
 
+// unscopedBodyReadsVariable reports whether an unscoped CALL body reads the
+// outer variable, so NornicDB's implicit import applies: a mention outside
+// the body's EXISTS / COUNT / COLLECT subqueries, or one inside a subquery
+// that doesn't declare the name itself (branchDeclaresVariable). A name a
+// nested subquery declares (EXISTS { (m)-->(n) }) is a new variable of that
+// subquery, as in Cypher, so it is no import (#1317 S08); one a nested
+// subquery only reads (COLLECT { RETURN n.id }) is the body's read.
+func unscopedBodyReadsVariable(body, variable string) bool {
+	if !mayContainSubqueryExpression(body) {
+		return isIdentifierReferenced(body, variable)
+	}
+	if isIdentifierReferenced(maskSubqueryBodies(body), variable) {
+		return true
+	}
+	for _, subquery := range findSubqueryExpressions(body) {
+		nested := subquery.body
+		if strings.HasPrefix(nested, "(") {
+			nested = "MATCH " + nested
+		}
+		if !branchDeclaresVariable(nested, variable) && unscopedBodyReadsVariable(nested, variable) {
+			return true
+		}
+	}
+	return false
+}
+
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
 // at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
 func patternPartEnd(clause pipelineClause) int {
