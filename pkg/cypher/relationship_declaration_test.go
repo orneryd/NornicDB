@@ -88,7 +88,13 @@ func TestRelationshipDeclarationOf(t *testing.T) {
 		{":A|:`B c`", relationshipDeclaration{hasColon: true, typeText: "A|:`B c`", types: []string{"A", "B c"}}},
 		{"r:`a|b`*1..2 {k: '*'}", relationshipDeclaration{variable: "r", hasColon: true, typeText: "`a|b`", types: []string{"a|b"}, hasLength: true, length: "1..2", properties: "{k: '*'}"}},
 		{":$(t)", relationshipDeclaration{hasColon: true, typeText: "$(t)", types: []string{"$(t)"}}},
-		{"r*2..5:KNOWS", relationshipDeclaration{variable: "r", hasColon: true, typeText: "KNOWS", types: []string{"KNOWS"}, hasLength: true, length: "2..5"}},
+		// A length before the types reads, but MATCH rejects it as Neo4j does
+		// (Invalid input ':').
+		{"r*2..5:KNOWS", relationshipDeclaration{variable: "r", hasColon: true, typeText: "KNOWS", types: []string{"KNOWS"}, hasLength: true, length: "2..5", lengthInvalid: true}},
+		{"r:T*x", relationshipDeclaration{variable: "r", hasColon: true, typeText: "Tx", types: []string{"Tx"}, hasLength: true, lengthInvalid: true}},
+		{"r:T..", relationshipDeclaration{variable: "r", hasColon: true, typeText: "T..", types: []string{"T.."}, invalidType: "T..", lengthInvalid: true}},
+		{":$(t * 2)*1..2", relationshipDeclaration{hasColon: true, typeText: "$(t * 2)", types: []string{"$(t * 2)"}, hasLength: true, length: "1..2"}},
+		{":$(ts[0..1][0]) {w: 1}", relationshipDeclaration{hasColon: true, typeText: "$(ts[0..1][0])", types: []string{"$(ts[0..1][0])"}, properties: "{w: 1}"}},
 		{"r:R $p", relationshipDeclaration{variable: "r", hasColon: true, typeText: "R", types: []string{"R"}, properties: "$p"}},
 		{":$(a:b)|C", relationshipDeclaration{hasColon: true, typeText: "$(a:b)|C", types: []string{"$(a:b)", "C"}}},
 		{":Ts R", relationshipDeclaration{hasColon: true, typeText: "Ts R", types: []string{"Ts R"}, invalidType: "Ts R"}},
