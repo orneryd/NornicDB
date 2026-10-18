@@ -61,7 +61,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 	for index := start; index < end; {
 		character := query[index]
 		switch {
-		case character == '\'' || character == '"' || character == '`':
+		case isCypherQuoteByte(character):
 			index = skipCypherQuotedText(query, index, character)
 			previousWord, last = "", character
 			continue
@@ -253,8 +253,8 @@ func standaloneClausePosition(previousWord string, last byte) bool {
 func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelRewriteEdit) {
 	braces := newSubqueryBraceScanner(query, start)
 	for index := start; index < end; index++ {
-		switch query[index] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(query[index]) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(query, index, query[index]) - 1
 		case '/':
 			if next := queryCommentEnd(query, index); next > index {

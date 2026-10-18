@@ -23,7 +23,7 @@ func classifyPatternComprehensions(query string) (pattern, singleton bool) {
 	previous := -1
 	for index := 0; index < len(query); index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			previous = index
 			continue
@@ -43,7 +43,7 @@ func classifyPatternComprehensions(query string) (pattern, singleton bool) {
 			if candidate && previous > 0 {
 				before := query[previous-1]
 				// Adjacent atom[(...)] is a subscript, not a comprehension.
-				candidate = isASCIISpace(before) || !(isIdentByte(before) || before == ']' || before == ')' || before == '\'' || before == '"' || before == '`' || before == '$')
+				candidate = isASCIISpace(before) || !(isIdentByte(before) || before == ']' || before == ')' || isCypherQuoteByte(before) || before == '$')
 			}
 			parents = append(parents, candidate)
 		case ')':
@@ -76,7 +76,7 @@ func mayHavePatternComprehension(query string) bool {
 	}
 	for index := 0; index < len(query); index++ {
 		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
+		if isCypherQuoteByte(c) {
 			index = skipCypherQuotedText(query, index, c) - 1
 			continue
 		}

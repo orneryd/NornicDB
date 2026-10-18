@@ -492,12 +492,12 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 // hasLabelExpressionOperator reports whether a label chain uses the label
 // expression operators rather than the plain A:B form.
 func hasLabelExpressionOperator(chain string) bool {
-	inBacktick := false
 	for i := 0; i < len(chain); i++ {
+		if end, quoted := scanCypherQuotedText(chain, i, chain[i]); quoted {
+			i = end - 1
+			continue
+		}
 		switch c := chain[i]; {
-		case c == '`':
-			inBacktick = !inBacktick
-		case inBacktick:
 		case c == '|' || c == '&' || c == '!' || c == '%' || c == '(':
 			return true
 		}
@@ -515,19 +515,24 @@ func labelExpressionBarAt(s string, start, at int) bool {
 		return false
 	}
 	before, after := s[at-1], s[at+1]
-	if !(isIdentByte(before) || before == '`' || before == ')' || before == '%') ||
-		!(isIdentByte(after) || after == '`' || after == '(' || after == '!' || after == '%') {
+	if !(isIdentByte(before) || isCypherBacktickByte(before) || before == ')' || before == '%') ||
+		!(isIdentByte(after) || isCypherBacktickByte(after) || after == '(' || after == '!' || after == '%') {
 		return false
 	}
 	for i := at - 1; i >= start; i-- {
 		switch c := s[i]; {
-		case c == '`':
+		case isCypherBacktickByte(c):
 			// A quoted name: back to its opening backtick.
 			open := strings.LastIndexByte(s[start:i], '`')
 			if open < 0 {
 				return false
 			}
-			i = start + open
+			open += start
+			_, end, ok := scanIdentifierToken(s, open)
+			if !ok || end != i+1 {
+				return false
+			}
+			i = open
 		case isIdentByte(c) || c == '|' || c == '&' || c == '!' || c == '%' || c == '(' || c == ')':
 		case c == ':':
 			return i > start && isIdentByte(s[i-1])

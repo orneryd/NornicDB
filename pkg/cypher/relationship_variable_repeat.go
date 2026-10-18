@@ -49,8 +49,8 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	places := make(map[string][]relationshipPlace)
 	var order []string
 	for i := start; i < end; i++ {
-		switch c := q[i]; c {
-		case '\'', '"', '`':
+		switch c := q[i]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
 			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {

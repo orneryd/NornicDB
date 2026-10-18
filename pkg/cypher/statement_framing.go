@@ -181,7 +181,7 @@ func stripCypherPreamble(query string) (string, bool) {
 		}
 		// Option tokens until the next clause keyword starts the statement.
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			if rest[0] == '\'' || rest[0] == '"' {
+			if isCypherStringQuoteByte(rest[0]) {
 				end := skipCypherQuotedText(rest, 0, rest[0])
 				rest = strings.TrimSpace(rest[end:])
 				continue
@@ -279,43 +279,14 @@ func endsInFinish(ctx context.Context, statement string) bool {
 // topLevelUnionCut returns the offset of the first top-level UNION keyword
 // (outside quotes, comments and nested delimiters), or -1.
 func topLevelUnionCut(s string) int {
-	inQuote := byte(0)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if inQuote != 0 {
-			if c == '\\' && inQuote != '`' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == inQuote {
-				if i+1 < len(s) && s[i+1] == inQuote {
-					i++
-					continue
-				}
-				inQuote = 0
-			}
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
 			continue
 		}
+		c := s[i]
 		switch c {
-		case '\'', '"', '`':
-			inQuote = c
-			continue
-		case '/':
-			if i+1 < len(s) && s[i+1] == '/' {
-				for i < len(s) && s[i] != '\n' && s[i] != '\r' {
-					i++
-				}
-				continue
-			}
-			if i+1 < len(s) && s[i+1] == '*' {
-				end := strings.Index(s[i+2:], "*/")
-				if end < 0 {
-					return -1
-				}
-				i += 2 + end + 1
-				continue
-			}
 		case '(':
 			parenDepth++
 		case ')':

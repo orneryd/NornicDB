@@ -18,9 +18,9 @@ func validateNumericLiterals(cypher string) error {
 		return nil
 	}
 	for index := 0; index < len(cypher); {
-		switch cypher[index] {
-		case '\'', '"', '`':
-			index = numericValidationSkipQuoted(cypher, index)
+		switch cypherLexicalByte(cypher[index]) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(cypher, index, cypher[index])
 			continue
 		case '/':
 			if index+1 < len(cypher) && cypher[index+1] == '/' {
@@ -219,25 +219,6 @@ func numericLiteralHasUnaryMinus(cypher string, numberStart int) bool {
 		}
 	}
 	return false
-}
-
-func numericValidationSkipQuoted(cypher string, start int) int {
-	quote := cypher[start]
-	for index := start + 1; index < len(cypher); index++ {
-		if cypher[index] == '\\' {
-			index++
-			continue
-		}
-		if cypher[index] != quote {
-			continue
-		}
-		if index+1 < len(cypher) && cypher[index+1] == quote {
-			index++
-			continue
-		}
-		return index + 1
-	}
-	return len(cypher)
 }
 
 func numericLiteralError(detail, literal string) error {

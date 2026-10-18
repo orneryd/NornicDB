@@ -317,7 +317,12 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 			candidateCtx := ctx
 			candidatesBound := false
 			for index, template := range templates {
-				pattern, ok := template.node(ctx, e, input)
+				pattern, ok, evalErr := template.node(ctx, e, input)
+				if evalErr != nil {
+					recordExpressionFailure(ctx, evalErr)
+					valid = false
+					return false
+				}
 				if !ok {
 					pipelineItemUnevaluable(ctx, template.pattern)
 					valid = false
@@ -434,7 +439,12 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 			for name, value := range input {
 				current[name] = value
 			}
-			pattern, ok := template.node(ctx, e, input)
+			pattern, ok, evalErr := template.node(ctx, e, input)
+			if evalErr != nil {
+				recordExpressionFailure(ctx, evalErr)
+				valid = false
+				return false
+			}
 			if !ok {
 				pipelineItemUnevaluable(ctx, template.pattern)
 				valid = false
@@ -563,10 +573,8 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		if !local {
 			break
 		}
-		if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil, 0, false
-		}
+		// The projection reads the rows produced by UNWIND and earlier WITHs.
+		// pipelineWithRowSource validates it against those actual rows.
 		plans = append(plans, plan)
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {

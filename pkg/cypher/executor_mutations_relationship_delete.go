@@ -46,7 +46,10 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		return nil, false, nil
 	}
 
-	sourcePattern := e.parseNodePattern(ctx, clauses[0])
+	sourcePattern, parseErr := e.parseNodePattern(ctx, clauses[0])
+	if parseErr != nil {
+		return nil, true, parseErr
+	}
 	if sourcePattern.variable == "" {
 		return nil, false, nil
 	}

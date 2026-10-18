@@ -26,35 +26,36 @@ func splitTopLevelComma(input string) []string {
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
+	return appendTopLevelCommaParts(parts, input, false)
+}
+
+// splitTopLevelCommaKeepEmpty preserves the final empty entry for strict
+// grammar consumers, using the same tokens as every other comma reader.
+func splitTopLevelCommaKeepEmpty(input string) []string {
+	return appendTopLevelCommaParts(nil, input, true)
+}
+
+// appendTopLevelCommaParts separates expressions through the canonical token
+// reader used for operators. Quoted names, strings, comments and nested groups
+// have one lexical owner. Only the caller's trailing-entry policy differs.
+func appendTopLevelCommaParts(parts []string, input string, keepEmpty bool) []string {
+	if strings.Contains(input, "/") {
+		input = StripComments(input)
+	}
 	if strings.TrimSpace(input) == "" {
 		return parts
 	}
-
-	start := 0
-	depth := 0
-
-	for i := 0; i < len(input); i++ {
-		switch input[i] {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(input, i, input[i]) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
+	for {
+		comma := findTopLevelOperator(input, ",", false, true)
+		if comma < 0 {
+			if last := strings.TrimSpace(input); last != "" || keepEmpty {
+				parts = append(parts, last)
 			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, strings.TrimSpace(input[start:i]))
-				start = i + 1
-			}
+			return parts
 		}
+		parts = append(parts, strings.TrimSpace(input[:comma]))
+		input = input[comma+1:]
 	}
-
-	if s := strings.TrimSpace(input[start:]); s != "" {
-		parts = append(parts, s)
-	}
-	return parts
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {

@@ -44,7 +44,7 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 	for index := 0; index < len(query); {
 		c := query[index]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			index = skipCypherQuotedText(query, index, c)
 			continue
 		case c == '/':

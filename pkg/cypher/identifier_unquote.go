@@ -38,7 +38,7 @@ func isPatternVariableName(name string) bool {
 // validated elsewhere.
 func unquoteBacktickIdentifier(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
-	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' {
+	if len(s) < 2 || !isCypherBacktickByte(s[0]) || !isCypherBacktickByte(s[len(s)-1]) {
 		return s, nil
 	}
 	written, end, ok := scanSymbolicName(s, 0)

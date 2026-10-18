@@ -61,7 +61,7 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 			start = end + 1
 			continue
 		}
-		if index < len(chain) && chain[index] == '`' {
+		if index < len(chain) && isCypherBacktickByte(chain[index]) {
 			name, end, ok := scanQuotedName(chain, index)
 			if !ok {
 				return false
@@ -198,15 +198,13 @@ func splitNodeHead(head string) (variable, chain string, hasLabels bool) {
 // indexByteOutsideBackticks returns the index of the first b in s that is not
 // inside a backtick-quoted name, or -1.
 func indexByteOutsideBackticks(s string, b byte) int {
-	inBacktick := false
 	for index := 0; index < len(s); index++ {
-		switch s[index] {
-		case '`':
-			inBacktick = !inBacktick // a doubled backtick toggles twice
-		case b:
-			if !inBacktick {
-				return index
-			}
+		if end, quoted := scanCypherQuotedText(s, index, s[index]); quoted {
+			index = end - 1
+			continue
+		}
+		if s[index] == b {
+			return index
 		}
 	}
 	return -1
@@ -235,31 +233,14 @@ func strictNodeHeadLabels(head string) (variable string, labels []string, ok boo
 	return variable, labels, true
 }
 
-// scanQuotedName reads a backtick-quoted name starting at s[start] == '`'
+// scanQuotedName reads a backtick-quoted name starting at isCypherBacktickByte(s[start])
 // and returns it unquoted (a doubled backtick is one backtick) with the index
 // after the closing backtick. The name is a slice of s unless it contains a
 // doubled backtick.
 func scanQuotedName(s string, start int) (name string, end int, ok bool) {
-	var unescaped *strings.Builder
-	segment := start + 1
-	for index := start + 1; index < len(s); index++ {
-		if s[index] != '`' {
-			continue
-		}
-		if index+1 < len(s) && s[index+1] == '`' {
-			if unescaped == nil {
-				unescaped = &strings.Builder{}
-			}
-			unescaped.WriteString(s[segment : index+1])
-			index++
-			segment = index + 1
-			continue
-		}
-		if unescaped == nil {
-			return s[start+1 : index], index + 1, true
-		}
-		unescaped.WriteString(s[segment:index])
-		return unescaped.String(), index + 1, true
+	end, closed := scanCypherQuotedText(s, start, s[start])
+	if !closed || !isCypherBacktickByte(s[start]) {
+		return "", start, false
 	}
-	return "", start, false
+	return strings.ReplaceAll(s[start+1:end-1], "``", "`"), end, true
 }

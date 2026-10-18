@@ -303,7 +303,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 	}
 	for index := 0; index < len(text); index++ {
 		switch c := text[index]; {
-		case c == '\'' || c == '"':
+		case isCypherStringQuoteByte(c):
 			end := skipQuotedSemanticText(text, index)
 			if propertyAccessFollows(text, end) {
 				if err := propertyAccessMismatch("String", ""); err != nil {
@@ -311,7 +311,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				}
 			}
 			index = end - 1
-		case c == '`':
+		case isCypherBacktickByte(c):
 			if _, next, ok := scanSymbolicName(text, index); ok {
 				index = next - 1
 			}
@@ -398,7 +398,7 @@ func propertyAccessFollows(text string, index int) bool {
 		return false
 	}
 	next := queryGapEnd(text, index+1)
-	return next < len(text) && (isIdentStartByte(text[next]) || text[next] == '`')
+	return next < len(text) && (isIdentStartByte(text[next]) || isCypherBacktickByte(text[next]))
 }
 
 // namespacedCallFollows reports whether text[index:] continues a namespaced
@@ -428,8 +428,8 @@ func isSubqueryBrace(text string, index int) bool {
 // cypher.
 func parameterMayRejectPropertyAccess(cypher string, params map[string]interface{}) bool {
 	for index := 0; index < len(cypher); index++ {
-		switch cypher[index] {
-		case '\'', '"':
+		switch cypherStringLexicalByte(cypher[index]) {
+		case cypherStringQuoteClass:
 			index = skipQuotedSemanticText(cypher, index) - 1
 			continue
 		case '/':

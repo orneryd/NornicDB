@@ -81,10 +81,10 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return e.generateUUID(), true, true, nil
 	case "toupper", "tolower", "tostring", "tostringornull", "tointeger", "toint", "tointegerornull", "tofloat", "tofloatornull", "toboolean", "tobooleanornull":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "substring", "left", "right", "replace", "split", "tail":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "lpad", "rpad":
 		arguments, ok := args()
@@ -106,7 +106,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return padRowString(text, length, padding, name == "lpad"), true, true, nil
 	case "format":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil
@@ -162,8 +162,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		result, decoded := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
-		return result, true, decoded, nil
+		result, err := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
+		return result, true, err == nil, err
 	case "apoc.meta.type":
 		value, ok := one()
 		return apocValueTypeName(value), true, ok, nil
@@ -174,18 +174,6 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		typeName, typeOK := values[1].(string)
 		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
-	case "apoc.map.merge", "apoc.map.fromlists":
-		values, ok := args()
-		if !ok || len(values) != 2 {
-			return nil, true, false, nil
-		}
-		if name == "apoc.map.merge" {
-			return mergeMaps(values[0], values[1]), true, true, nil
-		}
-		return fromLists(values[0], values[1]), true, true, nil
-	case "apoc.map.frompairs":
-		value, ok := one()
-		return fromPairs(value), true, ok, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
 		if strings.TrimSpace(argument) != "" {

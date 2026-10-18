@@ -130,7 +130,11 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	}
 	value := ""
 	if !remove {
-		if value, err = databaseOptionValue(key, e.parseValue(ctx, valueText)); err != nil {
+		parsed, parseErr := e.parseValue(ctx, valueText)
+		if parseErr != nil {
+			return nil, true, parseErr
+		}
+		if value, err = databaseOptionValue(key, parsed); err != nil {
 			return nil, true, err
 		}
 	} else if _, err := databaseOptionValue(key, "OFF"); err != nil {

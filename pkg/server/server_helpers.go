@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -440,8 +441,8 @@ func parseCreatedDatabaseName(statement string) (dbName string, ok bool) {
 			return "", false
 		}
 		// Unquote backticks if present
-		if len(rest) >= 2 && rest[0] == '`' && rest[len(rest)-1] == '`' {
-			rest = rest[1 : len(rest)-1]
+		if end, closed := cyphertext.ScanQuotedText(rest, 0); closed && end == len(rest) && cyphertext.IsBacktick(rest[0]) {
+			rest = strings.ReplaceAll(rest[1:end-1], "``", "`")
 		}
 		return rest, rest != ""
 	}

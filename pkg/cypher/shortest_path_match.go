@@ -81,8 +81,20 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return e.parseSelectedPathMatchContext(ctx, inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
-	traversal := e.parseTraversalPattern(ctx, inner)
-	if !ok || traversal == nil || traversal.IsChained {
+	if !ok {
+		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
+			localization.CypherMatchingShortestPathSingleRelationship(funcName))
+	}
+	// Planning reads only endpoint syntax. Their property expressions belong
+	// to shortestPathEndpointPairs, after the incoming row is bound.
+	startHead, _ := splitNodePatternProperties(startPattern)
+	endHead, _ := splitNodePatternProperties(endPattern)
+	relationship := inner[len(startPattern) : len(inner)-len(endPattern)]
+	traversal := e.parseTraversalPattern(ctx, "("+startHead+")"+relationship+"("+endHead+")")
+	if err := getExpressionFailure(ctx); err != nil {
+		return nil, true, err
+	}
+	if traversal == nil || traversal.IsChained {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
 			localization.CypherMatchingShortestPathSingleRelationship(funcName))
 	}
@@ -412,7 +424,7 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 	}
 	text = maskSubqueryBodies(text)
 	for at := 0; at < len(text); at++ {
-		if text[at] == '\'' || text[at] == '"' || text[at] == '`' {
+		if isCypherQuoteByte(text[at]) {
 			at = skipCypherQuotedText(text, at, text[at]) - 1
 			continue
 		}

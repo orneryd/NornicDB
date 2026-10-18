@@ -53,28 +53,32 @@ func TestCreatePipelineTemplateMatchesGeneralRoute(t *testing.T) {
 	}
 }
 
-// TestCreatePipelineTemplatePlanIsAtomic pins the per-row fallback contract:
-// when a later pattern in the clause needs the general route (here b reads
-// a.missing, which the row evaluator cannot resolve), everything the earlier
-// patterns already staged is rolled back so the general route replans the
-// whole clause — never a partial plan.
+// An applicable template owns evaluation failure and discards its whole plan.
+// A successful NULL from an earlier staged binding remains a valid value.
 func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	exec := &StorageExecutor{}
 	ctx := context.Background()
-	tpl := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})")
+	tpl := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: properties(1)})")
 	require.NotNil(t, tpl)
 	require.True(t, tpl.usable)
 
 	plan := acquireCreatePlan()
 	nodes, edges := plan.bindings()
 	paths, planned, err := tpl.plan(ctx, exec, pipelineRow{}, nodes, edges, plan)
-	require.False(t, planned, "the unresolved expression defers the row")
-	require.NoError(t, err)
+	require.True(t, planned, "an evaluation failure never retries another route")
+	require.Error(t, err)
 	require.Nil(t, paths)
 	require.Empty(t, plan.nodes, "no partial node plan may survive a deferred row")
 	require.Empty(t, plan.edges, "no partial edge plan may survive a deferred row")
 	require.Empty(t, nodes)
 	require.Empty(t, edges)
+
+	nullTemplate := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})")
+	paths, planned, err = nullTemplate.plan(ctx, exec, pipelineRow{}, nodes, edges, plan)
+	require.NoError(t, err)
+	require.True(t, planned)
+	require.Len(t, plan.nodes, 2)
+	require.NotContains(t, nodes["b"].Properties, "name")
 
 	// A row that resolves completely plans all patterns.
 	okTemplate := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: name})")

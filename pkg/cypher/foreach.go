@@ -24,7 +24,7 @@ func parsePipelineForeach(clause string) (string, string, []pipelineClause, erro
 		return "", "", nil, invalid()
 	}
 	remainder := inner[inIndex+len("IN"):]
-	pipeIndex := findTopLevelByte(remainder, '|')
+	pipeIndex := findTopLevelOperator(remainder, "|", false, true)
 	if pipeIndex < 0 {
 		return "", "", nil, invalid()
 	}

@@ -111,6 +111,7 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 	}
 	var terms, texts []string
 	for node != nil {
+		node = rowValueShape(node)
 		if bound, ok := node.(*rowBoundNode); ok {
 			texts = append(texts, bound.text)
 			node = bound.inner

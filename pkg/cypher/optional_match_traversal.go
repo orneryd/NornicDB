@@ -149,7 +149,11 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if closeIdx < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.source = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	var parseErr error
+	eps.source, parseErr = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	if parseErr != nil {
+		return eps, parseErr
+	}
 
 	rest := pattern[closeIdx+1:]
 	if relOpen, relClose := firstRelationshipBracket(rest); relOpen >= 0 {
@@ -187,7 +191,10 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if tClose < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.target = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	eps.target, parseErr = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	if parseErr != nil {
+		return eps, parseErr
+	}
 	return eps, nil
 }
 

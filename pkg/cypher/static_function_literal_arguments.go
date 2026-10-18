@@ -85,13 +85,13 @@ func visitStaticMapLiteralKeys(expression string, visit func(key string)) bool {
 	}
 	var buffer [8]string
 	for _, entry := range appendTopLevelComma(buffer[:0], expression[1:len(expression)-1]) {
-		colon := strings.IndexByte(entry, ':')
+		colon := findTopLevelMapKeyValueSeparator(entry)
 		if colon < 0 {
 			return false
 		}
-		key := strings.TrimSpace(entry[:colon])
-		if len(key) >= 2 && key[0] == '`' && key[len(key)-1] == '`' {
-			key = strings.ReplaceAll(key[1:len(key)-1], "``", "`")
+		key, valid := isOneSymbolicName(entry[:colon])
+		if !valid {
+			return false
 		}
 		visit(key)
 	}

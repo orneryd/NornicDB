@@ -231,14 +231,8 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	if match.bindingVar != "" {
 		values[match.bindingVar] = bindingValue
 	}
-	value := e.evaluateExpressionFromValues(expr, values)
-	if literal, ok := value.(string); ok && literal == expr {
-		if parsed, parsedOK := parseLiteralValueFromComputedRow(expr); parsedOK {
-			return normalizePropValue(parsed), true
-		}
-		return nil, false
-	}
-	return normalizePropValue(value), true
+	value, resolved, err := e.evaluateExpressionFromValuesResult(rowStatementContextOrBackground(values), expr, values)
+	return normalizePropValue(value), resolved && err == nil
 }
 
 func (e *StorageExecutor) evaluateBatchLookupExprFast(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {

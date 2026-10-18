@@ -701,7 +701,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 		startsWithKeywordFold(rest, "USE")) {
 		return query
 	}
-	imports := splitCommaTopLevelLocal(withClause)
+	imports := splitTopLevelComma(withClause)
 	if len(imports) == 0 {
 		return query
 	}
@@ -724,134 +724,25 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 }
 
 func findLeadingWithEndLocal(query string) int {
-	inSingle, inDouble, inBacktick := false, false, false
-	depth := 0
-	for i := len("WITH "); i < len(query); i++ {
-		ch := query[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		}
-		if depth != 0 {
-			continue
-		}
-		if startsWithKeywordAtLocal(query, i, "MATCH") ||
-			startsWithKeywordAtLocal(query, i, "OPTIONAL MATCH") ||
-			startsWithKeywordAtLocal(query, i, "RETURN") ||
-			startsWithKeywordAtLocal(query, i, "WHERE") ||
-			startsWithKeywordAtLocal(query, i, "USE") ||
-			startsWithKeywordAtLocal(query, i, "WITH") ||
-			startsWithKeywordAtLocal(query, i, "CALL") ||
-			startsWithKeywordAtLocal(query, i, "CREATE") ||
-			startsWithKeywordAtLocal(query, i, "MERGE") ||
-			startsWithKeywordAtLocal(query, i, "UNWIND") ||
-			startsWithKeywordAtLocal(query, i, "SET") ||
-			startsWithKeywordAtLocal(query, i, "DELETE") ||
-			startsWithKeywordAtLocal(query, i, "DETACH DELETE") {
-			return i
+	const prefix = "WITH "
+	if len(query) <= len(prefix) {
+		return -1
+	}
+	body := query[len(prefix):]
+	end := -1
+	for _, keyword := range [...]string{
+		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
+		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
+	} {
+		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
+			end = index
 		}
 	}
-	return -1
+	if end < 0 {
+		return -1
+	}
+	return len(prefix) + end
 }
-
-func startsWithKeywordAtLocal(s string, i int, kw string) bool {
-	if i < 0 || i+len(kw) > len(s) {
-		return false
-	}
-	if i > 0 {
-		prev := s[i-1]
-		if isIdentByte(prev) {
-			return false
-		}
-	}
-	if !strings.EqualFold(s[i:i+len(kw)], kw) {
-		return false
-	}
-	j := i + len(kw)
-	if j < len(s) {
-		next := s[j]
-		if isIdentByte(next) {
-			return false
-		}
-	}
-	return true
-}
-
-func splitCommaTopLevelLocal(s string) []string {
-	var parts []string
-	start := 0
-	depth := 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
-}
-
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -21,19 +21,13 @@ func nextRelationshipBracket(text string, from int) (open, close int) {
 // relationship bracket that is not closed: its '[' and -1.
 func scanRelationshipBracket(text string, from int) (open, close int) {
 	for index := from; index < len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"':
-			end := index + 1
-			for end < len(text) && (text[end] != c || isBackslashEscaped(text, end)) {
-				end++
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(text, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(text, index); end >= 0 {
+				index = end - 1
 			}
-			index = end
-		case '`':
-			end := index + 1
-			for end < len(text) && text[end] != '`' {
-				end++
-			}
-			index = end
 		case '{':
 			if end := findMatchingDelimiter(text, index, '{', '}'); end > index {
 				index = end
@@ -58,19 +52,13 @@ func scanRelationshipBracket(text string, from int) (open, close int) {
 // part of the pattern.
 func patternHasRelationship(pattern string) bool {
 	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; c {
-		case '\'', '"':
-			end := index + 1
-			for end < len(pattern) && (pattern[end] != c || isBackslashEscaped(pattern, end)) {
-				end++
+		switch c := pattern[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
+			index = skipCypherQuotedText(pattern, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(pattern, index); end >= 0 {
+				index = end - 1
 			}
-			index = end
-		case '`':
-			end := index + 1
-			for end < len(pattern) && pattern[end] != '`' {
-				end++
-			}
-			index = end
 		case '{':
 			if end := findMatchingDelimiter(pattern, index, '{', '}'); end > index {
 				index = end

@@ -27,35 +27,8 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 		return "", "", false
 	}
 
-	// Find matching closing paren.
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-	closeIdx := -1
-	for i := openIdx; i < len(expr); i++ {
-		ch := rune(expr[i])
-		if inQuote {
-			if ch == quoteChar && !isBackslashEscaped(expr, i) {
-				inQuote = false
-				quoteChar = 0
-			}
-			continue
-		}
-		switch ch {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = ch
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				closeIdx = i
-				i = len(expr) // break
-			}
-		}
-	}
-	if closeIdx == -1 {
+	closeIdx := findMatchingDelimiter(expr, openIdx, '(', ')')
+	if closeIdx < 0 {
 		return "", "", false
 	}
 
@@ -83,7 +56,7 @@ func functionNameStartsAt(text string, at int) bool {
 				index = end
 				continue
 			}
-			if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+			if isCypherQuoteByte(text[index]) {
 				index = skipQuotedSemanticText(text, index)
 				previous = index - 1
 				continue

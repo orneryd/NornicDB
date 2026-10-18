@@ -145,7 +145,7 @@ func procedurePrivilegeSyntaxError(detail string) error {
 func unquoteProcedureGlob(written string) string {
 	var name strings.Builder
 	for i := 0; i < len(written); {
-		if written[i] == '`' {
+		if isCypherBacktickByte(written[i]) {
 			if value, end, ok := scanIdentifierToken(written, i); ok {
 				name.WriteString(value)
 				i = end

@@ -43,38 +43,40 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		"SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if topLevelKeywordIndex(trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	orderIdx := topLevelKeywordIndex(trimmed, "ORDER BY")
+	limitIdx := topLevelKeywordIndex(trimmed, "LIMIT")
 	if returnIdx <= 0 || orderIdx <= returnIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
 
 	matchPart := strings.TrimSpace(trimmed[len("MATCH"):returnIdx])
 	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(matchPart, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := topLevelKeywordIndex(matchPart, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(matchPart[preWhereIdx+len("WHERE"):])
 		matchPart = strings.TrimSpace(matchPart[:preWhereIdx])
 		if preWhereClause == "" {
 			return nil, false
 		}
 	}
+	if !e.isSingleNodePattern(matchPart) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(matchPart, "{") {
-		nodePattern := e.parseNodePattern(ctx, matchPart)
+		nodePattern := nodePatternStructure(matchPart)
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
 		}
 		label = nodePattern.labels[0]
-		matchProps = nodePattern.properties
 	} else {
 		parsedVar, labels, ok := parseSimpleMatchSingleNodePattern(matchPart)
 		if !ok || len(labels) != 1 {
@@ -124,6 +126,15 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	if !hasIndex {
 		return nil, false
+	}
+
+	if strings.Contains(matchPart, "{") {
+		nodePattern, err := e.parseNodePattern(ctx, matchPart)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, true
+		}
+		matchProps = nodePattern.properties
 	}
 
 	scoreExprIsAlias := make([]bool, len(returnItems))
@@ -207,15 +218,15 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		"SKIP", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if topLevelKeywordIndex(trimmed, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	withIdx := findKeywordIndex(trimmed, "WITH")
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	withIdx := topLevelKeywordIndex(trimmed, "WITH")
+	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
+	orderIdx := topLevelKeywordIndex(trimmed, "ORDER BY")
+	limitIdx := topLevelKeywordIndex(trimmed, "LIMIT")
 	if withIdx <= 0 || returnIdx <= withIdx || orderIdx <= withIdx || limitIdx <= orderIdx {
 		return nil, false
 	}
@@ -225,7 +236,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	}
 	preWithSegment := strings.TrimSpace(trimmed[len("MATCH"):withIdx])
 	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(preWithSegment, "WHERE"); preWhereIdx > 0 {
+	if preWhereIdx := topLevelKeywordIndex(preWithSegment, "WHERE"); preWhereIdx > 0 {
 		preWhereClause = strings.TrimSpace(preWithSegment[preWhereIdx+len("WHERE"):])
 		preWithSegment = strings.TrimSpace(preWithSegment[:preWhereIdx])
 		if preWhereClause == "" {
@@ -236,17 +247,19 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if strings.Count(preWithSegment, "(") != 1 || strings.Count(preWithSegment, ")") != 1 || strings.Contains(preWithSegment, "-") || strings.Contains(preWithSegment, ",") {
 		return nil, false
 	}
+	if !e.isSingleNodePattern(preWithSegment) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(preWithSegment, "{") {
-		nodePattern := e.parseNodePattern(ctx, preWithSegment)
+		nodePattern := nodePatternStructure(preWithSegment)
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
 		}
 		label = nodePattern.labels[0]
-		matchProps = nodePattern.properties
 	} else {
 		parsedVar, labels, ok := parseSimpleMatchSingleNodePattern(preWithSegment)
 		if !ok || len(labels) != 1 {
@@ -263,7 +276,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	withToReturn := strings.TrimSpace(trimmed[withIdx+len("WITH") : withEndIdx])
 	postWhereClause := ""
 	withProjectionRaw := withToReturn
-	if postWhereIdx := findKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
+	if postWhereIdx := topLevelKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
 		postWhereClause = strings.TrimSpace(withToReturn[postWhereIdx+len("WHERE"):])
 		withProjectionRaw = strings.TrimSpace(withToReturn[:postWhereIdx])
 		if postWhereClause == "" {
@@ -337,6 +350,15 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
+	}
+
+	if strings.Contains(preWithSegment, "{") {
+		nodePattern, err := e.parseNodePattern(ctx, preWithSegment)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, true
+		}
+		matchProps = nodePattern.properties
 	}
 
 	needsExactCandidates := (e.searchService == nil || e.searchService.IsReady()) &&
@@ -983,17 +1005,16 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 		if j >= len(expr) {
 			return false
 		}
-		if expr[j] == '`' {
-			k := strings.IndexByte(expr[j+1:], '`')
-			if k < 0 {
+		if isCypherBacktickByte(expr[j]) {
+			prop, end, ok := scanIdentifierToken(expr, j)
+			if !ok || end <= j {
 				return false
 			}
-			prop := expr[j+1 : j+1+k]
 			if prop == "" {
 				return false
 			}
 			props[prop] = struct{}{}
-			offset = j + 1 + k + 1
+			offset = end
 			continue
 		}
 		if !isIdentByte(expr[j]) {
@@ -1290,7 +1311,7 @@ func parseVarPropertyRef(expr string) (string, string, bool) {
 	v := strings.TrimSpace(expr[:dot])
 	rawProperty := strings.TrimSpace(expr[dot+1:])
 	p := normalizePropertyKey(rawProperty)
-	delimited := len(rawProperty) >= 2 && rawProperty[0] == '`' && rawProperty[len(rawProperty)-1] == '`'
+	delimited := len(rawProperty) >= 2 && isCypherBacktickByte(rawProperty[0]) && isCypherBacktickByte(rawProperty[len(rawProperty)-1])
 	if v == "" || p == "" || strings.Contains(v, " ") || (!delimited && (strings.Contains(p, " ") || strings.Contains(p, "."))) {
 		return "", "", false
 	}
@@ -1423,7 +1444,11 @@ func (e *StorageExecutor) buildNegatedCosineQueryExpr(ctx context.Context, query
 }
 
 func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExpr string) ([]float32, bool) {
-	value := e.parseValue(ctx, strings.TrimSpace(queryExpr))
+	value, err := e.parseValue(ctx, strings.TrimSpace(queryExpr))
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
 	switch v := value.(type) {
 	case []float32:
 		return append([]float32(nil), v...), len(v) > 0
@@ -1652,7 +1677,11 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 		return "", 0, false
 	}
 
-	raw := e.parseValue(ctx, cmpExpr)
+	raw, err := e.parseValue(ctx, cmpExpr)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return "", 0, false
+	}
 	f, ok := toFloat64(raw)
 	if !ok {
 		return "", 0, false

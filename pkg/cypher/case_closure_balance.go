@@ -13,8 +13,8 @@ func casePrefixEndRequired(text string, candidate int) bool {
 	var parents [][]string
 	candidateDepth := -1
 	for i := 0; i < len(text); {
-		switch text[i] {
-		case '\'', '"', '`':
+		switch cypherLexicalByte(text[i]) {
+		case cypherQuoteClass:
 			i = skipCypherQuotedText(text, i, text[i])
 			continue
 		case '/':

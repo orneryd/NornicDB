@@ -92,30 +92,11 @@ func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entit
 
 // cutSchemaName reads a leading plain or backtick-quoted schema object name.
 func cutSchemaName(text string) (string, string, bool) {
-	if strings.HasPrefix(text, "`") {
-		var name strings.Builder
-		for i := 1; i < len(text); i++ {
-			if text[i] != '`' {
-				name.WriteByte(text[i])
-				continue
-			}
-			if i+1 < len(text) && text[i+1] == '`' {
-				name.WriteByte('`')
-				i++
-				continue
-			}
-			return name.String(), strings.TrimSpace(text[i+1:]), name.Len() > 0
-		}
+	name, end, ok := scanIdentifierToken(text, 0)
+	if !ok || name == "" {
 		return "", "", false
 	}
-	end := 0
-	for end < len(text) && isIdentByte(text[end]) {
-		end++
-	}
-	if end == 0 {
-		return "", "", false
-	}
-	return text[:end], strings.TrimSpace(text[end:]), true
+	return name, strings.TrimSpace(text[end:]), true
 }
 
 // showLookupIndexCreateStatement is the statement that recreates a lookup

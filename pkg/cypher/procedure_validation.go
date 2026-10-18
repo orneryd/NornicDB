@@ -181,7 +181,7 @@ func explicitProcedureArgumentTexts(callCypher string) []string {
 	if body == "" {
 		return []string{}
 	}
-	parts := splitProcedureTopLevelComma(body)
+	parts := splitTopLevelComma(body)
 	for index := range parts {
 		parts[index] = strings.TrimSpace(parts[index])
 	}

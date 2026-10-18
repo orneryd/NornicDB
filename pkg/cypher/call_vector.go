@@ -371,51 +371,15 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
 	}
 
-	// Find matching closing parenthesis (while respecting quoted strings).
-	parenContent := rest[parenIdx+1:]
-	depth := 1
-	endIdx := -1
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-	for i, c := range parenContent {
-		if inQuote {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			inQuote = true
-			quoteChar = c
-			continue
-		}
-		if c == '(' || c == '[' {
-			depth++
-		} else if c == ')' || c == ']' {
-			depth--
-			if depth == 0 {
-				endIdx = i
-				break
-			}
-		}
-	}
-	if endIdx == -1 {
+	endIdx := findMatchingDelimiter(rest, parenIdx, '(', ')')
+	if endIdx < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
 	}
 
-	params := parenContent[:endIdx]
+	params := rest[parenIdx+1 : endIdx]
 
 	// Split parameters (careful with nested brackets)
-	parts := splitParamsCarefully(params)
+	parts := splitTopLevelComma(params)
 
 	if len(parts) >= 1 {
 		// First param is index name (quoted string)
@@ -456,56 +420,6 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	}
 
 	return indexName, k, input, nil
-}
-
-// splitParamsCarefully splits comma-separated parameters while respecting
-// brackets and quoted strings.
-func splitParamsCarefully(params string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-
-	for _, c := range params {
-		if inQuote {
-			current.WriteRune(c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			inQuote = true
-			quoteChar = c
-			current.WriteRune(c)
-		} else if c == '[' || c == '(' || c == '{' {
-			depth++
-			current.WriteRune(c)
-		} else if c == ']' || c == ')' || c == '}' {
-			depth--
-			current.WriteRune(c)
-		} else if c == ',' && depth == 0 {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-
-	return result
 }
 
 // parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]; nil for

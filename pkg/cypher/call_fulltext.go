@@ -289,42 +289,10 @@ func buildFulltextDocFromProperties(properties map[string]interface{}, content s
 // `Cloud\Trail` reaches the Lucene parser as `Cloud\\Trail`, defeating the
 // escape rule.
 func decodeCypherStringLiteral(s string) string {
-	if len(s) < 2 {
-		return s
+	if decoded, quoted := decodeCypherQuotedString(s); quoted {
+		return decoded
 	}
-	first, last := s[0], s[len(s)-1]
-	if (first != '\'' && first != '"') || first != last {
-		return s
-	}
-	inner := s[1 : len(s)-1]
-	var b strings.Builder
-	b.Grow(len(inner))
-	for i := 0; i < len(inner); i++ {
-		c := inner[i]
-		if c == '\\' && i+1 < len(inner) {
-			next := inner[i+1]
-			switch next {
-			case '\\', '\'', '"':
-				b.WriteByte(next)
-			case 'n':
-				b.WriteByte('\n')
-			case 't':
-				b.WriteByte('\t')
-			case 'r':
-				b.WriteByte('\r')
-			default:
-				// Unknown escape — preserve both characters so the Lucene
-				// parser can apply its own rules (e.g. `\T` should still be
-				// literal T after Lucene-level decoding).
-				b.WriteByte('\\')
-				b.WriteByte(next)
-			}
-			i++
-			continue
-		}
-		b.WriteByte(c)
-	}
-	return b.String()
+	return s
 }
 
 type fulltextQueryOptions struct {
@@ -474,7 +442,7 @@ func extractQuotedPhrasesAndStrip(s string) (stripped string, phrases []string) 
 
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if ch == '"' && !isBackslashEscaped(s, i) {
+		if isCypherDoubleQuoteByte(ch) && !isBackslashEscaped(s, i) {
 			if !inQuote {
 				inQuote = true
 				phraseStart = i + 1

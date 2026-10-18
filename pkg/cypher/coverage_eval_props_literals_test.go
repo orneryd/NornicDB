@@ -222,12 +222,14 @@ func TestEvaluateExpressionWithContextFullPropsLiterals_EveryBranch(t *testing.T
 		}
 	})
 
-	t.Run("unknown string falls through as itself", func(t *testing.T) {
+	t.Run("unknown expression records an error", func(t *testing.T) {
+		ctx := withExpressionFailureSlot(context.Background())
 		got := e.evaluateExpressionWithContextFullPropsLiterals(
 			ctx, "?? weirdsymbols", "?? weirdsymbols",
 			nil, nil, nil, nil, nil, 0,
 		)
-		require.Equal(t, "?? weirdsymbols", got)
+		require.Nil(t, got)
+		require.Error(t, getExpressionFailure(ctx))
 	})
 
 	// ====================== fabric record bindings ======================

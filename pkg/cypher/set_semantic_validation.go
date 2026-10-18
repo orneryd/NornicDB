@@ -157,7 +157,7 @@ func trailingWordAfterOperand(expression string) (string, bool) {
 	for i := 0; i < len(expression); {
 		c := expression[i]
 		switch {
-		case c == '\'' || c == '"' || c == '`':
+		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(expression, i, c)
 			operandEnded = depth == 0
 			continue
@@ -340,24 +340,8 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote := character
-			index++
-			for index < len(expression) {
-				if expression[index] == quote {
-					if quote == '`' && index+1 < len(expression) && expression[index+1] == '`' {
-						index += 2
-						continue
-					}
-					index++
-					break
-				}
-				if expression[index] == '\\' && quote != '`' && index+1 < len(expression) {
-					index += 2
-					continue
-				}
-				index++
-			}
+		if end, skipped := skipCypherLexicalToken(expression, index); skipped {
+			index = end
 			continue
 		}
 		if character == '(' {
@@ -493,8 +477,8 @@ func expressionFreeVariables(expression string) []string {
 func expressionLocalBindings(expression string) map[string]struct{} {
 	locals := make(map[string]struct{})
 	for index := 0; index < len(expression); index++ {
-		switch c := expression[index]; c {
-		case '\'', '"', '`':
+		switch c := expression[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(expression, index, c) - 1
 		case '/':
 			if end := queryCommentEnd(expression, index); end >= 0 {

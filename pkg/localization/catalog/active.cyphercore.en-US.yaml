@@ -272,6 +272,8 @@
   other: "Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions."
 - id: cyphercore.function_list_argument_empty
   other: "The argument `{{.Argument}}` in the `{{.Function}}()` function must not be empty."
+- id: cyphercore.function_argument_null
+  other: "Failed to invoke function `{{.Function}}`: Caused by: the `{{.Argument}}` argument is null."
 - id: cyphercore.temporal_call_signature
   other: "Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}]"
 - id: cyphercore.temporal_procedure_call_signature

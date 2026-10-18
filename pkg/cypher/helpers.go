@@ -48,97 +48,12 @@ func containsOutsideStrings(s, substr string) bool {
 		return false
 	}
 	first := substr[0]
-
-	var (
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
-	)
-
 	for i := 0; i < len(s); i++ {
+		if end, quoted := skipCypherLexicalToken(s, i); quoted {
+			i = end - 1
+			continue
+		}
 		c := s[i]
-
-		if inLineComment {
-			if c == '\n' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-
-		if inSingleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '\'' {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		}
-		if inDoubleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '"' {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		}
-		if inBacktick {
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-			continue
-		}
-
-		if c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
-				continue
-			}
-		}
-
-		if c == '\'' {
-			inSingleQuote = true
-			continue
-		}
-		if c == '"' {
-			inDoubleQuote = true
-			continue
-		}
-		if c == '`' {
-			inBacktick = true
-			continue
-		}
-
 		if c != first {
 			continue
 		}

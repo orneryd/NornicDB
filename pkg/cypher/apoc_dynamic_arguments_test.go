@@ -33,6 +33,9 @@ func TestApocDynamicProceduresReadEvaluatedArguments(t *testing.T) {
 	result, err = exec.Execute(ctx, "WITH 'UNWIND range(1, 5) AS i RETURN i' AS iterate, {batchSize: 2} AS config CALL apoc.periodic.iterate(iterate, 'CREATE (:Batch {v: i})', config) YIELD batches, total RETURN batches, total", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(3), int64(5)}}, result.Rows)
+	result, err = exec.Execute(ctx, "MATCH (n:Batch) RETURN n.v ORDER BY n.v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}, {int64(4)}, {int64(5)}}, result.Rows)
 
 	_, err = exec.Execute(ctx, "CALL apoc.cypher.run(null, {})", nil)
 	require.ErrorContains(t, err, "argument statement is null")

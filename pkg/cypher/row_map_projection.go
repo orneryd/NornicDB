@@ -3,6 +3,7 @@ package cypher
 import (
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -56,7 +57,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	if !resolved {
 		return nil, true, false, nil
 	}
-	if base == nil || isNilRemoteEntity(base) {
+	if cypherfn.RuntimeValue(base) == nil {
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)

@@ -44,19 +44,9 @@ func validateListOperands(cypher string, params map[string]interface{}) error {
 // offset of that IN, stopping at the first error.
 func forEachListOperand(text string, visit func(start, in int) error) error {
 	for i := 0; i < len(text); i++ {
-		switch text[i] {
-		case '\'', '"', '`':
-			quote := text[i]
-			i++
-			for i < len(text) && (text[i] != quote || (quote != '`' && isBackslashEscaped(text, i))) {
-				i++
-			}
+		if end, quoted := skipCypherLexicalToken(text, i); quoted {
+			i = end - 1
 			continue
-		case '/':
-			if end := queryCommentEnd(text, i); end >= 0 {
-				i = end - 1
-				continue
-			}
 		}
 		if (text[i] != 'I' && text[i] != 'i') || i+1 >= len(text) || (text[i+1] != 'N' && text[i+1] != 'n') || (i > 0 && (isIdentByte(text[i-1]) || text[i-1] == ':' || text[i-1] == '.')) ||
 			i+2 >= len(text) || isIdentByte(text[i+2]) {
@@ -234,7 +224,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		if !ok {
 			return binding, false
 		}
-		comma := open + 1 + findTopLevelByte(text[open+1:binding.close], ',')
+		comma := open + 1 + findTopLevelOperator(text[open+1:binding.close], ",", false, true)
 		binding.scope = localScopeStart(text, comma+1, binding.close, true, false)
 		accumulator := queryGapEnd(text, open+1)
 		equals := open + 1 + strings.IndexByte(text[open+1:comma], '=')
@@ -309,8 +299,8 @@ func bindingDeclaration(text string, from int) (name string, at, list int, ok bo
 func localScopeStart(text string, from, close int, pipe, where bool) int {
 	depth := 0
 	for index := from; index < close; index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
+		switch c := text[index]; cypherLexicalByte(c) {
+		case cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
 			continue
 		case '/':
@@ -384,11 +374,7 @@ func localBindingOf(text string, operand int, name string) (localBinding, int, b
 // than the byte c at its offset; the walks step over any other byte
 // themselves.
 func localBindingStepReads(c byte) bool {
-	switch c {
-	case '\'', '"', '`', '/', '[', '(':
-		return true
-	}
-	return false
+	return isCypherQuoteByte(c) || c == '/' || c == '[' || c == '('
 }
 
 // localBindingStep is one step of the walk that finds the bindings of name
@@ -399,8 +385,8 @@ func localBindingStepReads(c byte) bool {
 // passed over without being read whole. It is called only at a byte
 // localBindingStepReads reads.
 func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
-	switch text[open] {
-	case '\'', '"', '`':
+	switch cypherLexicalByte(text[open]) {
+	case cypherQuoteClass:
 		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
 	case '/':
 		if end := queryCommentEnd(text, open); end >= 0 {
@@ -707,7 +693,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 			typeName = "Map, Node or Relationship"
 		}
 		return end, typeName, name
-	case c == '\'' || c == '"':
+	case isCypherStringQuoteByte(c):
 		end = start + 1
 		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
 			end++
@@ -811,8 +797,13 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if value, literal := parseLiteralValueFromComputedRow(expression); literal {
 		return value, true
 	}
+	if len(expressionVariables(expression)) > 0 {
+		return nil, false
+	}
 	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") {
-		return e.evaluateMapLiteralFromValues(expression, nil), true
+		value, err := e.evaluateMapLiteralFromValues(ctx, expression, nil)
+		recordExpressionFailure(ctx, err)
+		return value, err == nil
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND ", "<=", ">=", "<>", "!=", "=", "<", ">"} {
 		if _, _, found := splitByOperatorWithOptions(expression, operator, true, true); found {
@@ -827,9 +818,6 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if !defined {
 		return nil, false
 	}
-	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedString(expression) {
-		return nil, false
-	}
 	return value, true
 }
 
@@ -837,7 +825,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 // Cypher requires a local iterator name, including nested projections.
 func validateListComprehensionVariables(text string) error {
 	for index := 0; index < len(text); index++ {
-		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+		if isCypherQuoteByte(text[index]) {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
 			continue
 		}

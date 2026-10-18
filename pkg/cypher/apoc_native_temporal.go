@@ -222,7 +222,7 @@ func nativeAPOCDurationFormat(duration *CypherDuration, pattern string) string {
 	quoted := false
 	for i := 0; i < len(pattern); {
 		c := pattern[i]
-		if c == '\'' {
+		if isCypherSingleQuoteByte(c) {
 			quoted = !quoted
 			i++
 			continue

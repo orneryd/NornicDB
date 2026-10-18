@@ -104,27 +104,15 @@ func isDeleteTargetValue(value interface{}) bool {
 }
 
 func hasTopLevelDeleteLabelQualifier(expression string) bool {
+	expression = strings.TrimSpace(expression)
 	depth := 0
-	quote := rune(0)
-	escaped := false
-	for _, character := range strings.TrimSpace(expression) {
-		if quote != 0 {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if character == '\\' && quote != '`' {
-				escaped = true
-				continue
-			}
-			if character == quote {
-				quote = 0
-			}
+	for index := 0; index < len(expression); index++ {
+		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
+			index = end - 1
 			continue
 		}
+		character := expression[index]
 		switch character {
-		case '\'', '"', '`':
-			quote = character
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -155,7 +143,7 @@ func deleteExpressionRootIdentifier(expression string) string {
 	if !ok || (end < len(expression) && expression[end] == '(') {
 		return ""
 	}
-	if expression[0] != '`' {
+	if !strings.HasPrefix(expression, "`") {
 		switch lowerASCII(name) {
 		case "null", "true", "false":
 			return ""
