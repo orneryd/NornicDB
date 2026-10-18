@@ -288,26 +288,18 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 			done := make(chan error, 1)
 			go func() { done <- svc.BuildIndexes(ctx) }()
 			waitClosed(t, gate.entered, "the build's relationship stream")
-			live, writerID := make(chan error, 1), make(chan string, 1)
+			// The live edge write is queued on the population and returns
+			// while the stream holds its older snapshot.
 			if removal {
 				require.NoError(t, engine.DeleteEdge(edge.ID))
-				go func() { writerID <- serviceTestGoroutineID(); live <- svc.RemoveEdge(edge.ID) }()
+				requireReturnsWhileBlocked(t, "a live edge removal", func() error { return svc.RemoveEdge(edge.ID) })
 			} else {
 				updated := &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode, Type: edge.Type, Properties: map[string]any{"v": []float32{0, 1, 0}}}
 				require.NoError(t, engine.UpdateEdge(updated))
-				go func() { writerID <- serviceTestGoroutineID(); live <- svc.IndexEdge(updated) }()
+				requireReturnsWhileBlocked(t, "a live edge update", func() error { return svc.IndexEdge(updated) })
 			}
-			writer := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(writer, "awaitNodeAdmission") }, 5*time.Second, time.Millisecond,
-				"the live edge write waits for the build's node admission while the stream runs")
 			gate.open()
 			require.NoError(t, <-done)
-			select {
-			case err := <-live:
-				require.NoError(t, err)
-			case <-time.After(10 * time.Second):
-				t.Fatal("the live edge write did not finish after the stream")
-			}
 			svc.mu.RLock()
 			got, present := svc.edgePropVector[string(edge.ID)]
 			svc.mu.RUnlock()

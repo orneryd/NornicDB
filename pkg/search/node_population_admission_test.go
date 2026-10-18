@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -200,21 +199,13 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
 			_, err = engine.CreateNode(b)
 			require.NoError(t, err)
-			writeDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() { writerID <- serviceTestGoroutineID(); writeDone <- svc.IndexNode(b) }()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			// The write is queued on the population and never waits for it.
+			requireReturnsWhileBlocked(t, "a write during the node phase", func() error { return svc.IndexNode(b) })
 			releaseSource()
 			select {
 			case <-graphStarted:
 			case <-time.After(5 * time.Second):
 				t.Fatal("ANN did not reach retained hook")
-			}
-			select {
-			case err := <-writeDone:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("NODE waiter waited for ANN/buildMu tail")
 			}
 			removeDone := make(chan error, 1)
 			require.NoError(t, engine.DeleteNode(a.ID))
@@ -271,37 +262,29 @@ func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("missing node gate")
 			}
-			mutationDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() {
-				writerID <- serviceTestGoroutineID()
-				mutationDone <- svc.IndexNode(admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named"))
-			}()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "awaitNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			// The write is queued on the population and returns at once; the
+			// population applies it on every exit, also a cancelled one.
+			requireReturnsWhileBlocked(t, "a write during the node phase", func() error {
+				return svc.IndexNode(admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named"))
+			})
 			closed := make(chan error, 1)
 			if closeOwner {
 				go func() { closed <- svc.Close() }()
 			} else {
 				cancel()
 			}
-			if closeOwner {
-				select {
-				case err := <-mutationDone:
-					require.True(t, errors.Is(err, context.Canceled))
-				case <-time.After(5 * time.Second):
-					t.Fatal("Close did not wake NODE waiter")
-				}
-			}
 			release()
 			require.Error(t, <-buildDone)
 			if closeOwner {
 				require.NoError(t, <-closed)
-			} else {
-				require.ErrorIs(t, <-mutationDone, context.Canceled)
 			}
 			assert.False(t, svc.IsReady())
-			assert.Empty(t, svc.fulltext().Search("bterm", 10))
-			assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
+			if !closeOwner {
+				assert.NotEmpty(t, svc.fulltext().Search("bterm", 10), "a cancelled population dropped the queued write")
+				svc.indexMu.RLock()
+				assert.Contains(t, svc.nodeNamedVector, "nornic:b")
+				svc.indexMu.RUnlock()
+			}
 			svc.persistMu.Lock()
 			timer := svc.persistTimer
 			svc.persistMu.Unlock()
