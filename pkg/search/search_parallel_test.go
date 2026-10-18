@@ -84,6 +84,14 @@ func (g *overlapCandidateGenerator) SearchCandidates(context.Context, []float32,
 	return nil, nil
 }
 
+// searchCandidatesWithExhaustion reports the empty page as the whole
+// population: the stand-in for an exact generator over an empty index, so the
+// search doesn't widen and call it again.
+func (g *overlapCandidateGenerator) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, err := g.SearchCandidates(ctx, query, k, minSimilarity)
+	return candidates, true, err
+}
+
 func TestRRFHybridSearch_ParallelRetrievalOverlaps(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
 	bm25Started := make(chan struct{})
