@@ -126,7 +126,7 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 func toSet(val interface{}) []interface{} {
 	items, _ := cypherListValue(val)
 	result := make([]interface{}, 0, len(items))
-	seen := cypherValueSet{}
+	seen := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range items {
 		if !seen.add(item) {
 			result = append(result, item)
@@ -457,7 +457,7 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	if !ok1 || !ok2 {
 		return result
 	}
-	in2, seen := cypherValueSet{}, cypherValueSet{}
+	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
 		in2.add(item)
 	}
@@ -495,7 +495,7 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 	if !ok1 || !ok2 {
 		return result
 	}
-	in2, seen := cypherValueSet{}, cypherValueSet{}
+	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
 		in2.add(item)
 	}
@@ -578,7 +578,7 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 // apocValueSet is a list's non-null items as a set, for lookups by APOC's
 // value equality (cypherValueEquals): a null finds nothing.
 func apocValueSet(list []interface{}) cypherValueSet {
-	set := cypherValueSet{}
+	set := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range list {
 		if item != nil {
 			set.add(item)
@@ -819,15 +819,13 @@ func apocSameValue(value, listed interface{}) bool {
 func apocCollFrequencies(val interface{}) []interface{} {
 	list, _ := val.([]interface{})
 	result := make([]interface{}, 0, len(list))
-	positions := make(map[string]int, len(list))
+	positions := cypherValueSet{encoded: make(map[string]int, len(list))}
 	for _, item := range list {
-		key := cypherEquivalenceKey(item)
-		if position, seen := positions[key]; seen {
+		if position, seen := positions.addPosition(item); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1
 			continue
 		}
-		positions[key] = len(result)
 		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
 	}
 	return result

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"encoding/binary"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/big"
@@ -134,15 +135,26 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		}
 		return
 	}
-	if kind, parts, temporal := temporalEqualityParts(value); temporal {
-		// The equality owner discards incidental Go representations (pointers,
-		// clock/date fields a type does not use, and duration unit choices).
-		// Reuse it for scalar keys and every recursively nested collection key.
-		key.WriteString(fmt.Sprintf("T%s:%#v", kind, parts))
+	if parts, temporal := temporalEqualityParts(value); temporal {
+		appendTemporalEquivalenceKey(key, parts)
 		return
 	}
 	key.WriteByte('T')
 	key.WriteString(fmt.Sprintf("%T:%#v", value, value))
+}
+
+// Encoded keys are needed by older grouping paths and nested encoded values.
+// Serialize the same typed identity without reflection or per-field formatting.
+func appendTemporalEquivalenceKey(key *strings.Builder, parts temporalEqualityKey) {
+	var buffer [1 + 7*8 + 8]byte
+	buffer[0] = parts.kind
+	for i, part := range parts.parts {
+		binary.LittleEndian.PutUint64(buffer[1+i*8:], uint64(part))
+	}
+	binary.LittleEndian.PutUint64(buffer[1+7*8:], uint64(parts.offset))
+	key.WriteByte('T')
+	key.Write(buffer[:])
+	key.WriteString(parts.zone)
 }
 
 // appendNestedEquivalenceKey writes a list or map element's key preceded by
@@ -181,20 +193,52 @@ func appendFloatEquivalenceKey(key *strings.Builder, number float64) {
 // cypherValueSet is a set of values under equivalence (cypherEquivalenceKey),
 // for the apoc.coll functions that compare items as APOC's sets of AnyValues
 // do: 1 and 1.0 are one item, a null is one item, and every NaN is its own.
-type cypherValueSet map[string]struct{}
+type cypherValueSet struct {
+	encoded  map[string]int
+	temporal map[temporalEqualityKey]int
+	count    int
+}
 
 // add adds value; existed reports an equivalent value already there.
-func (set cypherValueSet) add(value interface{}) (existed bool) {
-	key := cypherEquivalenceKey(value)
-	if _, existed = set[key]; !existed {
-		set[key] = struct{}{}
-	}
+func (set *cypherValueSet) add(value interface{}) (existed bool) {
+	_, existed = set.addPosition(value)
 	return existed
 }
 
+// addPosition shares first-occurrence lookup with frequencies. Typed temporal
+// keys avoid allocating a serialized key for every scalar item.
+func (set *cypherValueSet) addPosition(value interface{}) (position int, existed bool) {
+	if key, temporal := temporalEqualityParts(value); temporal {
+		if position, existed = set.temporal[key]; existed {
+			return position, true
+		}
+		if set.temporal == nil {
+			set.temporal = make(map[temporalEqualityKey]int)
+		}
+		position = set.count
+		set.temporal[key] = position
+	} else {
+		key := cypherEquivalenceKey(value)
+		if position, existed = set.encoded[key]; existed {
+			return position, true
+		}
+		if set.encoded == nil {
+			set.encoded = make(map[string]int)
+		}
+		position = set.count
+		set.encoded[key] = position
+	}
+	set.count++
+	return position, false
+}
+
 // has reports whether the set holds a value equivalent to value.
-func (set cypherValueSet) has(value interface{}) bool {
-	_, found := set[cypherEquivalenceKey(value)]
+func (set *cypherValueSet) has(value interface{}) bool {
+	if key, temporal := temporalEqualityParts(value); temporal {
+		_, found := set.temporal[key]
+		return found
+	}
+	_, found := set.encoded[cypherEquivalenceKey(value)]
 	return found
 }
 
@@ -202,5 +246,8 @@ func (set cypherValueSet) has(value interface{}) bool {
 // apoc.coll.contains, containsAll, indexOf, occurrences and split):
 // equivalence, except that a null equals nothing.
 func cypherValueEquals(left, right interface{}) bool {
+	if equal, temporal := compareTemporalValues(left, right); temporal {
+		return equal
+	}
 	return left != nil && right != nil && cypherEquivalenceKey(left) == cypherEquivalenceKey(right)
 }
