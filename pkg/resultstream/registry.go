@@ -26,8 +26,8 @@ var (
 
 // Scope binds a stream to one authenticated owner and canonical database.
 type Scope struct {
-	Owner    string
-	Database string
+	Owner         string
+	Database      string
 	databaseEpoch *databaseEpoch
 }
 
@@ -82,8 +82,8 @@ type Registry struct {
 	scopeMAC    sync.Pool
 	scopeInput  sync.Pool
 	admissionMu sync.Mutex
-	databaseMu sync.RWMutex
-	databases map[string]*databaseEpoch
+	databaseMu  sync.RWMutex
+	databases   map[string]*databaseEpoch
 	owners      map[[32]byte]ownerUsage
 	observer    atomic.Pointer[observerHolder]
 	stop        chan struct{}
@@ -596,7 +596,9 @@ func (r *Registry) DiscardDatabase(database string) {
 		shard.mu.Unlock()
 	}
 	r.databaseMu.Unlock()
-	for _, entry := range removed { r.release(entry) }
+	for _, entry := range removed {
+		r.release(entry)
+	}
 }
 
 // Close releases every retained stream and rejects future operations.
