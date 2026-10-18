@@ -238,7 +238,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 		return nil, err
 	}
 	executor.ShareQueryStatisticsFrom(base)
-	executor.ShareStatementCachesFrom(base)
+	executor.UseStatementCaches(base.StatementCaches())
 	return executor, nil
 }
 

@@ -119,8 +119,10 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				if len(requiredPart) >= len("OPTIONAL MATCH") {
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
 				}
-				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
-				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
+				// The seed travels as a parameter: an internal text holds
+				// only statement text (executeInternal).
+				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = $__seed_id %s RETURN %s", seedVar, seedVar, requiredPart, importVar)
+				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, map[string]interface{}{"__seed_id": seedID})
 				if fallbackErr != nil {
 					return nil, false, localizedError(localization.CypherSubqueriesOptionalImportFallbackFailed(importVar, fallbackErr), fallbackErr)
 				}

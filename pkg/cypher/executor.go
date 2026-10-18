@@ -452,6 +452,11 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
+	// statementCaches is the handle on the two caches above that
+	// UseStatementCaches installed or StatementCaches made.
+	statementCaches     *StatementCaches
+	statementCachesOnce sync.Once
+
 	// log is the structured logger used for slow-query and operational log
 	// emission. Threaded via SetLogger after construction (D-01 non-breaking
 	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
@@ -1452,13 +1457,14 @@ func isLikelyPlainASCIICypher(query string) bool {
 func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 	e.upperQueryCacheOnce.Do(func() {
 		if e.upperQueryCache == nil {
-			e.upperQueryCache = &upperQueryCache{
-				cache: make(map[string]string, 1024),
-				max:   4096,
-			}
+			e.upperQueryCache = newUpperQueryCache()
 		}
 	})
 	return e.upperQueryCache
+}
+
+func newUpperQueryCache() *upperQueryCache {
+	return &upperQueryCache{cache: make(map[string]string, 1024), max: 4096}
 }
 
 func (e *StorageExecutor) cachedUpperQuery(query string) string {

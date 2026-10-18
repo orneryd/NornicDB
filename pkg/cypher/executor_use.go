@@ -102,6 +102,9 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned.vectorIndexSpaces = e.vectorIndexSpaces
 	cloned.txContext = e.txContext
 	cloned.fabricPlanCache = e.fabricPlanCache
+	// The statement caches depend only on the text: a fabric fragment run
+	// per record on a fresh clone is validated once, not once per clone.
+	cloned.UseStatementCaches(e.StatementCaches())
 	cloned.hotPathTraceState = e.hotPathTraceState
 
 	e.shellParamsMu.RLock()

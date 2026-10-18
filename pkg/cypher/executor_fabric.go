@@ -674,7 +674,10 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	result, err := exec.executeInternal(ctx, query, params)
+	// The Fabric entry checks only an EXPLAIN or PROFILE statement's syntax
+	// itself; for any other statement its fragments get the configured
+	// parser's check here, as a user's statement does.
+	result, err := exec.executeInternal(withUserStatement(ctx), query, params)
 	if err != nil {
 		return nil, nil, err
 	}

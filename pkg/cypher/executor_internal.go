@@ -40,7 +40,24 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		}
 		return nil, e.failTransaction(ctx, statementTypeError(statement, "Administration", "Data", transaction))
 	}
-	return e.executeInternal(withStatementText(ctx, statement), statement, params)
+	return e.executeInternal(withUserStatement(withStatementText(ctx, statement)), statement, params)
+}
+
+// internalTextChecked, when set (tests only), sees every internal text
+// executeInternal checks without the grammar.
+var internalTextChecked func(text string)
+
+// userStatementKey marks a context whose next executeInternal text is a
+// user's statement, which gets the configured parser's syntax check.
+type userStatementKey struct{}
+
+func withUserStatement(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userStatementKey{}, true)
+}
+
+func userStatementPending(ctx context.Context) bool {
+	pending, _ := ctx.Value(userStatementKey{}).(bool)
+	return pending
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
@@ -117,8 +134,23 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
-	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	// Basic syntax validation to preserve existing error behavior. A user's
+	// statement (executeUserStatement, a shell :param value) and a Fabric
+	// fragment (whose statement the Fabric entry doesn't check) get the
+	// configured parser's check. A text NornicDB built from a statement it
+	// already validated (a CALL body per row, a UNION branch, a subquery
+	// seed) gets the Nornic validator even under
+	// NORNICDB_PARSER=antlr: the grammar check adds nothing for it, and a
+	// large statement's internal texts cost several cold ANTLR parses and
+	// most of its prediction state. The mark is cleared here, so texts built
+	// while this one runs are internal.
+	userStatement := userStatementPending(ctx)
+	if userStatement {
+		ctx = context.WithValue(ctx, userStatementKey{}, false)
+	} else if internalTextChecked != nil {
+		internalTextChecked(cypher)
+	}
+	if err := e.validateSyntaxWith(cypher, cypherVersionFromContext(ctx) == "25", userStatement && config.IsANTLRParser()); err != nil {
 		return nil, err
 	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
