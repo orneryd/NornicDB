@@ -173,11 +173,15 @@ func searchSeveralQueryChunks(
 	searched := 0
 	// vectorRank and bm25Rank are the best (lowest positive) rank any chunk
 	// gave the result by that method; 0 means no chunk found it that way.
+	// vectorSimilarity is the best similarity of a chunk that found it by
+	// vector, valid while vectorRank is positive.
 	type fusedResult struct {
 		best       *SearchResult
 		score      float64
 		vectorRank int
 		bm25Rank   int
+
+		vectorSimilarity float64
 	}
 
 	chunkOpts := *opts
@@ -262,6 +266,10 @@ func searchSeveralQueryChunks(
 				fusedResult.best = result
 			}
 			fusedResult.score += 1.0 / (outerRRFK + float64(rank+1))
+			if result.VectorRank > 0 && (fusedResult.vectorRank == 0 || result.Similarity > fusedResult.vectorSimilarity) {
+				// This chunk found it by vector, so its Similarity is a vector score.
+				fusedResult.vectorSimilarity = result.Similarity
+			}
 			fusedResult.vectorRank = bestChunkRank(fusedResult.vectorRank, result.VectorRank)
 			fusedResult.bm25Rank = bestChunkRank(fusedResult.bm25Rank, result.BM25Rank)
 		}
@@ -328,6 +336,11 @@ func searchSeveralQueryChunks(
 		// fusion score is not derivable from them alone.
 		result.VectorRank = fusedResult.vectorRank
 		result.BM25Rank = fusedResult.bm25Rank
+		if fusedResult.vectorRank > 0 {
+			// The representative chunk may have found it by keyword only;
+			// a vector-found result's Similarity is always a vector score.
+			result.Similarity = fusedResult.vectorSimilarity
+		}
 		response.Results = append(response.Results, result)
 	}
 	return response, searched, nil
