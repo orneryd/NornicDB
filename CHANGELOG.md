@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound slow-query log redaction to avoid parsing large statements, reuse
+  exact-text grammar verdicts, and redact hex/octal integer literals (#1358).
 - Share syntax-verdict and upper-cased statement caches with Bolt and HTTP
   transactions, authenticated requests, GraphQL requests, USE and Fabric
   clones through a stable owner to avoid repeated validation. Release cached
