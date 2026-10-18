@@ -21,7 +21,6 @@ var (
 	// inferCacheTrueRe enables db.infer cache only when the request explicitly opts in:
 	//   CALL db.infer({..., cache: true})
 	inferCacheTrueRe = regexp.MustCompile(`(?is)\bcache\s*:\s*true\b`)
-	retrieveCallRe   = regexp.MustCompile(`(?is)\bCALL\s+DB\.R?RETRIEVE\s*\(`)
 )
 
 // isCacheableReadQuery returns true if it's safe to cache a read-only query result.
@@ -68,12 +67,9 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		return false
 	}
 
-	// db.retrieve and db.rretrieve can start, pull, or discard durable cursors. Their
-	// stateful lifecycle and owner checks must always reach the continuation
-	// registry, including when qid/discard fields are hidden in parameters.
-	// (The pattern needs the text RETRIEVE, so any other statement skips
-	// the regular expression.)
-	if strings.Contains(upper, "RETRIEVE") && retrieveCallRe.MatchString(cypher) {
+	// Stateful retrieval must reach the registry, including requests hidden
+	// in parameters. Ordinary literal db.rretrieve searches keep their cache.
+	if strings.Contains(upper, "RETRIEVE") && !cacheableRetrievalCalls(cypher) {
 		return false
 	}
 
@@ -108,6 +104,48 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		}
 	}
 
+	return true
+}
+
+func cacheableRetrievalCalls(query string) bool {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			break
+		}
+		from = at + len("CALL")
+		name, ok := procedureNameAt(query, queryGapEnd(query, from))
+		if !ok {
+			continue
+		}
+		switch lowerASCII(name) {
+		case "db.retrieve":
+			return false
+		case "db.rretrieve":
+			args := explicitProcedureArgumentTexts(query[at:])
+			if len(args) != 1 {
+				return false
+			}
+			if isWholeCypherQuotedString(args[0]) {
+				continue
+			}
+			stateful := false
+			literal := visitStaticMapLiteralKeys(args[0], func(key string) {
+				if isWholeCypherQuotedString(key) {
+					key, _ = decodeCypherQuotedString(key)
+				}
+				switch key {
+				case "qid", "discard", "n", "mode", "groupBy", "group_by", "rankedLimit", "ranked_limit":
+					stateful = true
+				}
+			})
+			if !literal || stateful {
+				return false
+			}
+		}
+	}
 	return true
 }
 
