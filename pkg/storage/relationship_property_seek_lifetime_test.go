@@ -59,7 +59,3 @@ func TestRelationshipEqualitySeekSnapshotOwnerLifetime(t *testing.T) {
 		})
 	}
 }
-// Package storage - BadgerDB transaction wrapper with ACID guarantees.
-//
-// This file implements atomic transactions for BadgerDB with full constraint
-// validation and rollback support.
