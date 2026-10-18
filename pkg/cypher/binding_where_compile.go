@@ -810,6 +810,7 @@ func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map
 	if !unchanged {
 		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
 		cache.hasNull = listHasNull(items)
+		clear(cache.snapshot)
 		cache.snapshot = append(cache.snapshot[:0], items...)
 	}
 	return cache.comparable, cache.nonComparable, cache.hasNull

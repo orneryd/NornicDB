@@ -5651,6 +5651,7 @@ func (s *Service) launchScheduledStrategyTransition() {
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionInProgress = true
 	s.strategyTransitionStarts++
+	clear(s.strategyTransitionDeltas)
 	s.strategyTransitionDeltas = s.strategyTransitionDeltas[:0]
 	s.strategyTransitionMu.Unlock()
 
@@ -5984,6 +5985,7 @@ func getTransitionDeltaVector(id string, vi *VectorIndex, vfs *VectorFileStore) 
 func (s *Service) clearTransitionDeltaLogLocked(applied uint64) {
 	s.strategyTransitionMu.Lock()
 	if applied == 0 || len(s.strategyTransitionDeltas) == 0 {
+		clear(s.strategyTransitionDeltas)
 		s.strategyTransitionDeltas = s.strategyTransitionDeltas[:0]
 		s.strategyTransitionMu.Unlock()
 		return
@@ -5994,6 +5996,7 @@ func (s *Service) clearTransitionDeltaLogLocked(applied uint64) {
 			dst = append(dst, d)
 		}
 	}
+	clear(s.strategyTransitionDeltas[len(dst):])
 	s.strategyTransitionDeltas = dst
 	s.strategyTransitionMu.Unlock()
 }

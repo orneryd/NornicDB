@@ -459,6 +459,7 @@ func (re *RelationshipEvolution) evictOldest() {
 		return
 	}
 	oldest := re.accessOrder[0]
+	re.accessOrder[0] = ""
 	re.accessOrder = re.accessOrder[1:]
 	delete(re.edges, oldest)
 }

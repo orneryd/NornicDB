@@ -354,6 +354,7 @@ func (qc *QueryCache) Invalidate() {
 	// Clear entire cache on write operations
 	// Future optimization: smart invalidation based on labels/patterns
 	qc.cache = make(map[string]*cachedResult)
+	clear(qc.lruList)
 	qc.lruList = qc.lruList[:0]
 }
 
@@ -435,6 +436,7 @@ func (qc *QueryCache) evictOldest() {
 
 	oldest := qc.lruList[len(qc.lruList)-1]
 	delete(qc.cache, oldest)
+	qc.lruList[len(qc.lruList)-1] = ""
 	qc.lruList = qc.lruList[:len(qc.lruList)-1]
 }
 
