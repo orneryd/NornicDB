@@ -494,6 +494,9 @@ func (v *VectorFileStore) putScoreScratch(s *vfsScoreScratch) {
 	if s == nil || v.scoreScratchPool.New == nil {
 		return
 	}
+	// Scoring and mapped compaction write through local slice headers.
+	// The pool owns the full allocation, including their hidden tails.
+	clear(s.offsets[:cap(s.offsets)])
 	s.offsets = s.offsets[:0]
 	v.scoreScratchPool.Put(s)
 }

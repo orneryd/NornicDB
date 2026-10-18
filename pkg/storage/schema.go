@@ -1253,7 +1253,7 @@ func appendUnique(slice []NodeID, nodeID NodeID) []NodeID {
 func removeNodeID(slice []NodeID, nodeID NodeID) []NodeID {
 	for i, existing := range slice {
 		if existing == nodeID {
-			return append(slice[:i], slice[i+1:]...)
+			return slices.Delete(slice, i, i+1)
 		}
 	}
 	return slice
