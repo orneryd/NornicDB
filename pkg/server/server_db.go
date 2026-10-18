@@ -134,9 +134,10 @@ func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {
 //   - Subsequent requests reuse the cached executor (zero allocation overhead)
 //   - Storage engines are cached by DatabaseManager for efficiency
 func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
+	s.bindStatementCacheIndex()
 	// Check cache first (read lock for fast path)
 	s.executorsMu.RLock()
-	if executor, ok := s.executors[dbName]; ok {
+	if executor, ok := s.executors[dbName]; ok && executor.StatementCacheSelectionValid() {
 		s.executorsMu.RUnlock()
 		return executor, nil
 	}
@@ -155,9 +156,13 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	// Cache the executor (write lock for cache update)
 	s.executorsMu.Lock()
 	// Double-check in case another goroutine created it while we were waiting
-	if existing, ok := s.executors[dbName]; ok {
+	if existing, ok := s.executors[dbName]; ok && existing.StatementCacheSelectionValid() {
 		s.executorsMu.Unlock()
 		return existing, nil
+	}
+	if !executor.StatementCacheSelectionValid() {
+		s.executorsMu.Unlock()
+		return nil, multidb.ErrDatabaseNotFound
 	}
 	s.executors[dbName] = executor
 	s.executorsMu.Unlock()
@@ -180,6 +185,9 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
+	if err := executor.UseDatabaseStatementCaches(s.dbManager, dbName); err != nil {
+		return nil, err
+	}
 	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
 		overrides := s.dbConfigStore.GetOverrides(dbName)
@@ -256,6 +264,9 @@ func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecut
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
+	if err := executor.UseDatabaseStatementCaches(s.dbManager, dbName); err != nil {
+		return nil, err
+	}
 	executor.SetLocalizationRenderer(s.localizer)
 	executor.SetDatabaseManager(s.databaseManager())
 
@@ -2045,4 +2056,20 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 	}
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+func (a *databaseManagerAdapter) StatementCacheScope(name string) (*multidb.StatementCacheScope, error) {
+	return a.manager.StatementCacheScope(name)
+}
+
+func (s *Server) bindStatementCacheIndex() {
+	s.statementCacheIndex.Bind(s.dbManager, func() {
+		s.executorsMu.Lock()
+		defer s.executorsMu.Unlock()
+		for name, executor := range s.executors {
+			if !executor.StatementCacheSelectionValid() {
+				delete(s.executors, name)
+			}
+		}
+	})
 }

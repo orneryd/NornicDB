@@ -1514,6 +1514,7 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 	// Keep query embedding and search behavior consistent with the base DB executor.
 	if baseExec := db.GetCypherExecutor(); baseExec != nil {
 		executor.ShareQueryStatisticsFrom(baseExec)
+		executor.ShareStatementCachesFrom(baseExec)
 		executor.ShareEmbedderFrom(baseExec)
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
