@@ -467,15 +467,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 	// name is a constituent graph reference, not a top-level database metadata key.
 	if ref, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
 		if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			runtimeRef := ref
-			if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-				decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-				if decErr != nil {
-					return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-				}
-				runtimeRef.Password = decrypted
-			}
-			return m.getRemoteStorageInternal(runtimeRef, authToken)
+			return m.getRemoteStorageInternal(ref, authToken)
 		}
 		return m.getStorageInternal(resolvedName)
 	}
@@ -499,20 +491,12 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 
 		for _, ref := range info.Constituents {
 			var constituentStorage storage.Engine
-			runtimeRef := ref
 			actualName := ref.DatabaseName
 			var err error
 
 			switch ref.Type {
 			case "remote":
-				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-					if decErr != nil {
-						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-					}
-					runtimeRef.Password = decrypted
-				}
-				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
+				constituentStorage, err = m.getRemoteStorageInternal(ref, authToken)
 				if err != nil {
 					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
 				}
@@ -621,7 +605,11 @@ func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken
 	if m.remoteEngineFactory == nil {
 		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.Alias), nil)
 	}
-	engine, err := m.remoteEngineFactory(ref, authToken)
+	runtimeRef, err := m.resolveRemoteCredentials(ref, authToken)
+	if err != nil {
+		return nil, err
+	}
+	engine, err := m.remoteEngineFactory(runtimeRef, authToken)
 	if err != nil {
 		return nil, err
 	}
