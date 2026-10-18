@@ -47,3 +47,26 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchStreamLifecycleCachePolicy(t *testing.T) {
+	for _, query := range []string{
+		"CALL db.rretrieve($request)",
+		"WITH $request AS request CALL db.rretrieve(request)",
+		"CALL db.rretrieve({query: 'x', n: 1})",
+		"CALL `db`.`rretrieve`({`qid`: $qid, n: 1})",
+		"CALL { CALL db.rretrieve({query: 'x', 'mode': 'ranked', n: 1}) } RETURN 1",
+		"CALL db.rretrieve({qid: $qid, discard: true})",
+		"CALL db.rretrieve({query: 'x', group_by: $group})",
+		"CALL db.rretrieve({query: 'x', rankedLimit: 2})",
+	} {
+		require.False(t, isCacheableReadQuery(query), query)
+	}
+	for _, query := range []string{
+		"CALL db.rretrieve('query')",
+		"CALL db.rretrieve({query: $query, limit: 5})",
+		"CALL db.rretrieve({query: 'n: qid', filters: {n: 1}})",
+		"CALL `db`.`rretrieve`({query: 'x', limit: 5})",
+	} {
+		require.True(t, isCacheableReadQuery(query), query)
+	}
+}
