@@ -58,6 +58,11 @@ func configDisplayError(err error, data []byte, defaults *Config) error {
 			}
 		}
 		collect(&document, "", false)
+	} else {
+		// Syntax/composition errors can quote source data (for example an
+		// unknown YAML alias) before credential fields can be recovered. Keep
+		// the parser cause, and project its opaque detail through the owner.
+		return observability.RedactError(err, err.Error())
 	}
 	// yaml.v3 abbreviates a scalar longer than ten bytes to seven plus "..."
 	// in TypeError text. Supply that parser-owned representation as well.

@@ -31,3 +31,25 @@ func TestConfigDisplaySecretDecode(t *testing.T) {
 		t.Error("YAML diagnostic disclosed a credential (details withheld)")
 	}
 }
+
+func TestConfigDisplaySecretSyntaxAndCause(t *testing.T) {
+	const credential = "synthetic-yaml-syntax-credential-314159"
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("embedding:\n  api_key: *"+credential+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadFromFile(path)
+	if err == nil || !strings.Contains(err.Error(), "failed to parse config file") {
+		t.Fatal("configuration parser failure was not preserved")
+	}
+	if strings.Contains(err.Error(), credential) {
+		t.Error("parser diagnostic disclosed credential (details withheld)")
+	}
+	cause := err
+	for errors.Unwrap(cause) != nil {
+		cause = errors.Unwrap(cause)
+	}
+	if !strings.Contains(cause.Error(), credential) {
+		t.Error("original parser cause was not preserved")
+	}
+}
