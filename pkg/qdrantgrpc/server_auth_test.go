@@ -203,6 +203,57 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestServer_DatabaseReadsRequireResolvedRead(t *testing.T) {
+	base := storage.NewMemoryEngine()
+	store, vec := newTestCollectionStore(t)
+	require.NoError(t, store.Create(context.Background(), "tenant_read", 4, qpb.Distance_Cosine))
+	require.NoError(t, store.Create(context.Background(), "tenant_write_only", 4, qpb.Distance_Cosine))
+
+	for _, tc := range []struct {
+		name     string
+		database string
+		read     bool
+	}{
+		{name: "default allowed", database: "nornic", read: true},
+		{name: "default denied", database: "nornic", read: false},
+		{name: "named allowed", database: "tenant_read", read: true},
+		{name: "named denied", database: "tenant_write_only", read: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.DatabaseAccessModeResolver = func([]string) auth.DatabaseAccessMode { return auth.FullDatabaseAccessMode }
+			cfg.ResolvedAccessResolver = func([]string, string) auth.ResolvedAccess {
+				return auth.ResolvedAccess{Read: tc.read, Write: true}
+			}
+			srv, err := NewServer(cfg, store, base, nil, nil)
+			require.NoError(t, err)
+			err = srv.AllowDatabaseAccess(context.Background(), tc.database, false)
+			if tc.read {
+				require.NoError(t, err)
+			} else {
+				require.Equal(t, codes.PermissionDenied, status.Code(err))
+				// A write-only principal still retains its write operation.
+				require.NoError(t, srv.AllowDatabaseAccess(context.Background(), tc.database, true))
+			}
+			if tc.database != "nornic" {
+				response, callErr := NewCollectionsService(store, vec, srv).Get(context.Background(), &qpb.GetCollectionInfoRequest{CollectionName: tc.database})
+				if tc.read {
+					require.NoError(t, callErr)
+					require.NotNil(t, response)
+				} else {
+					require.Nil(t, response)
+					require.Equal(t, codes.PermissionDenied, status.Code(callErr))
+				}
+			}
+		})
+	}
+
+	// With no RBAC resolver, the compatibility service remains open.
+	open, err := NewServer(DefaultConfig(), store, base, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, open.AllowDatabaseAccess(context.Background(), "nornic", false))
+}
+
 func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	t.Parallel()
 

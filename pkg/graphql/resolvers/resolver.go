@@ -198,18 +198,30 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 	return resolved, nil
 }
 
-// readDatabase is the database a search or similarity request reads and its
-// storage: the database the request selects, resolved as executeCypher
-// resolves it (resolveCypherDatabase), on which the principal must hold read
-// (the request's entitlement resolver), as a Cypher read there needs.
-func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
+// readableDatabase is the database a direct GraphQL reader selects, resolved
+// as executeCypher resolves it, after the shared direct-read decision.
+func (r *Resolver) readableDatabase(ctx context.Context) (string, error) {
 	database, err := r.resolveCypherDatabase(ctx, "")
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
-	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil && !allows(database, auth.PermRead) {
+	_, readable := auth.ResolveDatabaseReadAccess(
+		auth.RequestDatabaseAccessModeFromContext(ctx),
+		auth.RequestResolvedAccessResolverFromContext(ctx),
+		database,
+	)
+	if !readable {
 		denied := localization.DatabaseAccessDenied(database)
-		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+		return "", localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	}
+	return database, nil
+}
+
+// readDatabase is readableDatabase and its storage for search and similarity.
+func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return "", nil, err
 	}
 	// A composite's storage reads every constituent, which this one decision
 	// on the composite does not cover; the REST search and similarity routes
