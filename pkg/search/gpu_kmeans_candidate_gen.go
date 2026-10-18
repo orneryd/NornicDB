@@ -53,13 +53,19 @@ func (g *GPUKMeansCandidateGen) candidatePopulation(context.Context) int {
 	return g.clusterIndex.Count()
 }
 
-// searchCandidatesWithExhaustion scores the routed clusters' members. A
-// request as wide as the population routes every populated cluster. It is
-// exhausted only when every vector of the index was scored and the limit cut
-// none above minSimilarity.
 func (g *GPUKMeansCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, evidence, err := g.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEvidence scores the routed clusters' members. A request
+// as wide as the population routes every populated cluster. The pass is
+// routing-bound when the limit cut none above minSimilarity: a wider limit on
+// the same clusters scores the same members. It is exhausted only when,
+// besides, every vector of the index was scored.
+func (g *GPUKMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
 	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, false, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
+		return nil, candidateEvidence{}, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
 	}
 
 	limit := boundCandidateLimit(k)
@@ -76,24 +82,24 @@ func (g *GPUKMeansCandidateGen) searchCandidatesWithExhaustion(ctx context.Conte
 		}
 	}
 	if len(clusterIDs) == 0 {
-		return []Candidate{}, population == 0, nil
+		return []Candidate{}, candidateEvidence{exhausted: population == 0, routedComplete: true}, nil
 	}
 
 	ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
 	scoredAll := len(ids) >= population
 	if len(ids) == 0 {
-		return []Candidate{}, scoredAll, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
 	}
 
 	results, err := g.clusterIndex.ScoreSubset(query, ids)
 	if err != nil {
-		return nil, false, err
+		return nil, candidateEvidence{}, err
 	}
 	if len(results) == 0 {
-		return []Candidate{}, scoredAll, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
 	}
 
-	exhausted := scoredAll && len(results) <= limit
+	routed := len(results) <= limit
 	if limit > len(results) {
 		limit = len(results)
 	}
@@ -102,16 +108,16 @@ func (g *GPUKMeansCandidateGen) searchCandidatesWithExhaustion(ctx context.Conte
 	for i := 0; i < limit; i++ {
 		select {
 		case <-ctx.Done():
-			return nil, false, ctx.Err()
+			return nil, candidateEvidence{}, ctx.Err()
 		default:
 		}
 		score := float64(results[i].Score)
 		if score < minSimilarity {
-			exhausted = exhausted || scoredAll // best first: the rest score lower
+			routed = true // best first: the rest score lower
 			continue
 		}
 		out = append(out, Candidate{ID: results[i].ID, Score: score})
 	}
 
-	return out, exhausted, nil
+	return out, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}, nil
 }
