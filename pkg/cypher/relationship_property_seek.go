@@ -40,21 +40,26 @@ func (e *StorageExecutor) relationshipPropertySeek(ctx context.Context, match *T
 	for key, value := range rel.Properties {
 		values[key] = value
 	}
+	seekContext := ctx
+	if len(unknown) > 0 {
+		// EXPLAIN has incoming variable names but no row values. Use the
+		// existing release equality reader with symbolic incoming bindings.
+		bindings := valueBindingsLayer(ctx, len(unknown))
+		for variable := range unknown {
+			bindings[variable] = "<incoming value>"
+		}
+		seekContext = withValueBindings(ctx, bindings)
+	}
 	if rel.Variable != "" {
 		for _, conjunct := range splitTopLevelAndConjuncts(where) {
-			shape := parseSimpleIndexedEqualityShape(rel.Variable, conjunct)
-			if !shape.ok || !relationshipSeekExactProperty(rel.Variable, shape.property, conjunct) {
+			property, value, constant := e.parseSimpleIndexedEquality(seekContext, rel.Variable, conjunct)
+			if !constant || !relationshipSeekExactProperty(rel.Variable, property, conjunct) {
 				continue
 			}
-			if _, exists := values[shape.property]; exists {
+			if _, exists := values[property]; exists {
 				continue
 			}
-			if value, ok := e.indexSeekConstant(ctx, shape.constant); ok {
-				values[shape.property] = value
-			} else if relationshipSeekIncomingExpression(shape.constant, unknown) {
-				// EXPLAIN knows an incoming row's variables, not their values.
-				values[shape.property] = "<incoming value>"
-			}
+			values[property] = value
 		}
 	}
 	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(rel.Types[0]) {
@@ -98,7 +103,6 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 	traversal := e.newTraversalContext(ctx, nil, &match.Relationship)
 	// The traversal's projection hints describe only the far endpoint. A
 	// relationship seek loads both ends here, so use full query-node reads.
-	defer traversal.memory.close()
 	seedAllows := func(seeds []*storage.Node, id storage.NodeID) bool {
 		if len(seeds) == 0 {
 			return true
@@ -151,9 +155,6 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 			if !ok || !e.matchesEndPattern(end, &match.EndNode) {
 				continue
 			}
-			if err := traversal.memoryRetention().reservePath(2, 1); err != nil {
-				return nil, true, err
-			}
 			paths = append(paths, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1})
 		}
 	}
@@ -165,19 +166,6 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 	}
 	recordRelationshipSeek(ctx, match.Relationship.Variable, seek, int64(len(edges)), int64(len(paths)))
 	return paths, true, nil
-}
-
-func relationshipSeekIncomingExpression(expr string, unknown map[string]bool) bool {
-	variables := expressionFreeVariables(expr)
-	if len(variables) == 0 {
-		return false
-	}
-	for _, variable := range variables {
-		if !unknown[variable] {
-			return false
-		}
-	}
-	return true
 }
 
 // The generic node equality shape reader folds variable case. Relationship

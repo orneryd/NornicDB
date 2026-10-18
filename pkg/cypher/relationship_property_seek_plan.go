@@ -67,12 +67,17 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 		if clause.kind != pipelineClauseMatch {
 			continue
 		}
-		split := splitPipelineMatchWhere(clause.text)
-		if len(splitTopLevelComma(split.pattern)) != 1 {
+		pattern := strings.TrimSpace(clause.text[len("MATCH"):])
+		where := ""
+		if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+			where = normalizePipelineWhitespace(pattern[index+len("WHERE"):])
+			pattern = strings.TrimSpace(pattern[:index])
+		}
+		if len(splitTopLevelComma(pattern)) != 1 {
 			return
 		}
-		match := e.parseTraversalPattern(ctx, split.pattern)
-		seek, eligible := e.relationshipPropertySeek(ctx, match, split.where, unknown)
+		match := e.parseTraversalPattern(ctx, pattern)
+		seek, eligible := e.relationshipPropertySeek(ctx, match, where, unknown)
 		if !eligible {
 			return
 		}
