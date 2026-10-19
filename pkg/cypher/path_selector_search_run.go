@@ -97,6 +97,7 @@ type pathSearchEdgeKey struct {
 // pathSearch is the search of one selected pattern for one row.
 type pathSearch struct {
 	e          *StorageExecutor
+	access     *relationshipAccessExecution
 	ctx        context.Context
 	a          *pathSearchAutomaton
 	row        pipelineRow

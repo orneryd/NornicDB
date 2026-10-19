@@ -28,6 +28,9 @@ type relationshipVectorProbe struct {
 }
 
 func (e *StorageExecutor) relationshipExecutionFor(ctx context.Context, pattern, where string) relationshipAccessExecution {
+	if pattern == "" {
+		return relationshipAccessExecution{executor: e, access: &relationshipAccess{}}
+	}
 	physicalWhere := where
 	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
 		where = original.where
@@ -38,7 +41,8 @@ func (e *StorageExecutor) relationshipExecutionFor(ctx context.Context, pattern,
 func (e *StorageExecutor) relationshipExecutionForQuery(ctx context.Context, query string) (relationshipAccessExecution, bool) {
 	program := relationshipProgramFromContext(ctx, query)
 	if len(program.sites) != 1 || len(program.graphQueries) != 0 {
-		return relationshipAccessExecution{}, false
+		var empty relationshipAccessExecution
+		return empty, false
 	}
 	template := program.sites[0]
 	return e.relationshipExecutionFor(ctx, template.pattern, template.where), true
@@ -102,7 +106,56 @@ func (run relationshipAccessExecution) idSeedNodes(ctx context.Context) (nodes [
 
 func (run relationshipAccessExecution) selectedPaths(ctx context.Context, plan *selectedPathPlan, automaton *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
 	recordRelationshipSeekFallback(ctx, run.pattern, run.where, run.access.variable)
-	return run.executor.scanSelectedPaths(ctx, plan, automaton, reversed, row, maxLength, source, target, ends, count, groups)
+	e := run.executor
+	bind := func(path pathSearchPath) (pipelineRow, bool) {
+		return e.bindSelectedPath(ctx, plan, automaton, reversed, row, path)
+	}
+	search := e.newPathSearch(ctx, automaton, row, maxLength, source)
+	search.access = &run
+	var rows []pipelineRow
+	if target != nil {
+		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
+		for _, variable := range plan.listVariables {
+			if _, bound := row[variable]; bound {
+				direct = false
+			}
+		}
+		rows = search.pair(source, target, count, groups, direct, bind)
+	} else {
+		if ends != nil {
+			search.ends = make(map[storage.NodeID]bool, len(ends))
+			search.retain(int64(len(ends)) * searchEntryBytes)
+			for _, node := range ends {
+				search.ends[node.ID] = true
+			}
+		}
+		rows = search.run(source, count, groups, bind)
+	}
+	// The search's state goes back whether it found paths, none, or was
+	// cancelled; the rows it found count before they are kept (#1343).
+	search.releaseMemory()
+	if retention := trackedRetention(ctx); retention != nil {
+		defer retention.close()
+		for _, found := range rows {
+			if retention.reserveRow(found) != nil {
+				return nil
+			}
+		}
+		retention.owned(rows)
+	}
+	return rows
+}
+
+func (run relationshipAccessExecution) incidentEdgeLists(ctx context.Context, store storage.Engine, node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+	return incidentEdgeListsContext(ctx, store, node, direction)
+}
+
+func (run relationshipAccessExecution) undirectedIncidentEdges(ctx context.Context, store storage.Engine, node storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := run.incidentEdgeLists(ctx, store, node, "both")
+	if err != nil {
+		return nil, err
+	}
+	return combineIncidentEdges(ctx, node, outgoing, incoming)
 }
 
 func (run relationshipAccessExecution) anchoredCount(ctx context.Context, match *TraversalMatch, seed *storage.Node, values map[string]interface{}, first bool) (int64, bool) {

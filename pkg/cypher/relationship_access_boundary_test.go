@@ -314,10 +314,10 @@ import (
 )
 
 func (e *StorageExecutor) relationshipBoundaryFixture(ctx context.Context, id storage.NodeID) {
-	_, _, _ = relationshipAccessIncidentEdgeListsContext(ctx, e.storage, id, "both")
+	_, _, _ = incidentEdgeListsContext(ctx, e.storage, id, "both")
 }
 `
 	violations := relationshipBoundaryViolations(t, fixture)
 	require.Len(t, violations, 1)
-	require.Contains(t, violations[0], "relationshipBoundaryFixture bypasses relationshipAccessExecution via relationshipAccessIncidentEdgeListsContext")
+	require.Contains(t, violations[0], "relationshipBoundaryFixture bypasses relationshipAccessExecution via incidentEdgeListsContext")
 }

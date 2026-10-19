@@ -1047,49 +1047,6 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 	return maxLength, true
 }
 
-// scanSelectedPaths runs one search of a plan's automaton a (the
-// reversed pattern when reversed) from source for row and returns the rows
-// of the count shortest paths (count lengths for groups) to each end node:
-// to target only when it is given, to the nodes of ends only when they are.
-func (e *StorageExecutor) scanSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
-	bind := func(path pathSearchPath) (pipelineRow, bool) {
-		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
-	}
-	s := e.newPathSearch(ctx, a, row, maxLength, source)
-	var rows []pipelineRow
-	if target != nil {
-		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
-		for _, variable := range plan.listVariables {
-			if _, bound := row[variable]; bound {
-				direct = false
-			}
-		}
-		rows = s.pair(source, target, count, groups, direct, bind)
-	} else {
-		if ends != nil {
-			s.ends = make(map[storage.NodeID]bool, len(ends))
-			s.retain(int64(len(ends)) * searchEntryBytes)
-			for _, node := range ends {
-				s.ends[node.ID] = true
-			}
-		}
-		rows = s.run(source, count, groups, bind)
-	}
-	// The search's state goes back whether it found paths, none, or was
-	// cancelled; the rows it found count before they are kept (#1343).
-	s.releaseMemory()
-	if retention := trackedRetention(ctx); retention != nil {
-		defer retention.close()
-		for _, found := range rows {
-			if retention.reserveRow(found) != nil {
-				return nil
-			}
-		}
-		retention.owned(rows)
-	}
-	return rows
-}
-
 // pathLengthLimit is the longest length a length(p) <= value (strict: <)
 // conjunct allows; known is false for a value that isn't a number.
 func pathLengthLimit(value interface{}, strict bool) (int, bool) {
