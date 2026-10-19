@@ -14,6 +14,8 @@ type cypherEmptyTupleKey struct{}
 type cypherEntityKey struct {
 	kind byte
 	id   string
+
+	database string
 }
 
 // cypherComparableKey normalizes scalars without formatting numbers or
@@ -27,12 +29,12 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'n', string(value.ID)}, true
+		return cypherEntityKey{kind: 'n', id: string(value.ID), database: value.Database}, true
 	case *storage.Edge:
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'r', string(value.ID)}, true
+		return cypherEntityKey{kind: 'r', id: string(value.ID), database: value.Database}, true
 	case storage.RemoteEntityValue:
 		if value == nil {
 			return nil, true
