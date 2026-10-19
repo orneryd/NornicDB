@@ -35,7 +35,7 @@ class InstallerPreservationTests(unittest.TestCase):
             for name in ["chown", "launchctl", "open", "pkill"]:
                 (commands / name).write_text("#!/bin/sh\nexit 0\n")
             (commands / "sudo").write_text('#!/bin/sh\nif [ "$1" = "-u" ]; then shift 2; fi\nexec "$@"\n')
-            (commands / "launchctl").write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$COMMAND_LOG"\nexit 0\n')
+            (commands / "launchctl").write_text('#!/bin/sh\nif [ "$1" = "bootstrap" ] && [ ! -f "$REVIEW_MARKER" ]; then exit 99; fi\nprintf "%s\\n" "$*" >> "$COMMAND_LOG"\nexit 0\n')
             (commands / "id").write_text("#!/bin/sh\necho 501\n")
             for command in commands.iterdir():
                 command.chmod(0o755)
@@ -45,12 +45,16 @@ class InstallerPreservationTests(unittest.TestCase):
             text = text.replace('/Applications/', str(root / 'Applications') + '/')
             script = root / "postinstall"
             script.write_text(text)
-            result = subprocess.run(["bash", str(script)], env={**os.environ, "USER": "fixture", "COMMAND_LOG": str(root / "launchctl.log"), "PATH": str(commands) + ":" + os.environ["PATH"]}, capture_output=True, text=True)
+            result = subprocess.run(["bash", str(script)], env={**os.environ, "USER": "fixture", "COMMAND_LOG": str(root / "launchctl.log"), "REVIEW_MARKER": str(config / ".setup_review"), "PATH": str(commands) + ":" + os.environ["PATH"]}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             launch_calls = (root / "launchctl.log").read_text()
+            self.assertTrue((config / ".setup_review").exists())
+            self.assertNotIn("com.nornicdb.server", launch_calls)
+            self.assertIn("bootstrap gui/501 " + str(agents / "com.nornicdb.menubar.plist"), launch_calls)
+            import plistlib
+            menu_agent = plistlib.loads((agents / "com.nornicdb.menubar.plist").read_bytes())
+            self.assertEqual(menu_agent["ProgramArguments"], [str(application)])
             if existing:
-                self.assertIn("bootstrap gui/501 " + str(agents / "com.nornicdb.server.plist"), launch_calls)
-                self.assertIn("kickstart gui/501/com.nornicdb.server", launch_calls)
                 for path, content in original.items():
                     self.assertEqual(path.read_bytes(), content)
                 self.assertFalse((config / ".first_run").exists())

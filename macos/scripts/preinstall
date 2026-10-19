@@ -1,87 +1,52 @@
 #!/bin/bash
-
-# NornicDB Pre-Install Script
-# Runs before installation to gracefully stop existing installation
-
-set -e
-
-# Get the actual user (installer runs as root)
+# Stop installed services before replacing executable payloads. Never remove data,
+# models, configuration, credentials, or startup settings.
+set -euo pipefail
 ACTUAL_USER="${USER}"
-if [ "$ACTUAL_USER" = "root" ]; then
+if [ "$ACTUAL_USER" = root ]; then
     ACTUAL_USER=$(ls -l /dev/console | awk '{print $3}')
 fi
-
 USER_HOME=$(eval echo ~$ACTUAL_USER)
-USER_UID=$(id -u $ACTUAL_USER)
+USER_UID=$(id -u "$ACTUAL_USER")
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  NornicDB Installer - Pre-Install"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-# Check if this is an upgrade or fresh install
-EXISTING_INSTALL=false
-if [ -f "/usr/local/bin/nornicdb" ] || [ -d "/Applications/NornicDB.app" ]; then
-    EXISTING_INSTALL=true
-    echo "📦 Existing installation detected"
-    echo "   This will be upgraded while preserving your data"
-    echo ""
-fi
-
-# Stop existing service if running - use bootout to forcefully remove even if plist is gone
-echo "🛑 Stopping NornicDB service..."
-
-# Try to stop gracefully first
-sudo -u $ACTUAL_USER launchctl stop com.nornicdb.server 2>/dev/null || true
-sleep 1
-
-# Forcefully remove from launchd (works even if plist was deleted)
-sudo -u $ACTUAL_USER launchctl bootout gui/$USER_UID/com.nornicdb.server 2>/dev/null || true
-
-# Also try unload if plist exists
-if [ -f "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" ]; then
-    sudo -u $ACTUAL_USER launchctl unload "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" 2>/dev/null || true
-fi
-
-# Kill any remaining nornicdb processes
-pkill -9 -f "nornicdb serve" 2>/dev/null || true
-sleep 0.5
-
-echo "   ✓ Service stopped"
-
-# Quit menu bar app if running
-if pgrep -x "NornicDB" > /dev/null; then
-    echo "🛑 Quitting menu bar app..."
-    
-    # Try graceful quit first (sends quit event)
-    osascript -e 'tell application "NornicDB" to quit' 2>/dev/null || true
-    sleep 0.5
-    
-    # Force quit if still running
-    if pgrep -x "NornicDB" > /dev/null; then
-        killall NornicDB 2>/dev/null || true
-        sleep 0.5
+# Unload both launch owners first so an old agent cannot respawn its app while
+# the package replaces it. Explicit GUI targets work from the root installer.
+for label in com.nornicdb.menubar com.nornicdb.server; do
+    sudo -u "$ACTUAL_USER" launchctl bootout "gui/$USER_UID/$label" 2>/dev/null || true
+done
+for executable in NornicDB nornicdb; do
+    pkill -TERM -u "$USER_UID" -x "$executable" 2>/dev/null || true
+    for attempt in {1..100}; do
+        if ! pgrep -u "$USER_UID" -x "$executable" >/dev/null; then break; fi
+        sleep 0.1
+    done
+    if [ "$executable" = NornicDB ] && pgrep -u "$USER_UID" -x "$executable" >/dev/null; then
+        pkill -KILL -u "$USER_UID" -x "$executable" 2>/dev/null || true
+        for attempt in {1..20}; do
+            if ! pgrep -u "$USER_UID" -x "$executable" >/dev/null; then break; fi
+            sleep 0.1
+        done
     fi
-    
-    echo "   ✓ App quit"
+    if pgrep -u "$USER_UID" -x "$executable" >/dev/null; then
+        echo "ERROR: $executable did not stop; refusing to replace running binaries." >&2
+        exit 1
+    fi
+done
+
+# Replace the whole installed bundle, rather than merging new payloads over old
+# executables/resources. A source/build copy is not an installer-owned location.
+if [ -L /Applications/NornicDB.app ]; then
+    echo "ERROR: /Applications/NornicDB.app is a symlink; resolve it before installation." >&2
+    exit 1
 fi
+rm -rf /Applications/NornicDB.app
+rm -f /usr/local/bin/nornicdb
 
-# Verify everything is stopped
-if pgrep -x "nornicdb" > /dev/null 2>&1; then
-    echo "⚠️  Warning: nornicdb process still running, force stopping..."
-    killall -9 nornicdb 2>/dev/null || true
+# Retire the old direct install location only when its bundle identifies it as
+# our menu bar app. Do not delete other applications or source-tree artifacts.
+legacy_app="$USER_HOME/Applications/NornicDB.app"
+if [ -d "$legacy_app" ] && [ ! -L "$legacy_app" ]; then
+    bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$legacy_app/Contents/Info.plist" 2>/dev/null || true)
+    if [ "$bundle_id" = com.nornicdb.menubar ]; then rm -rf "$legacy_app"; fi
 fi
-
-if $EXISTING_INSTALL; then
-    echo ""
-    echo "💾 Preserving user data:"
-    echo "   ✓ Configuration files"
-    echo "   ✓ Database data"
-    echo "   ✓ Logs"
-fi
-
-echo ""
-echo "✅ Ready for installation"
-echo ""
-
-exit 0
+echo "Old installed executable payloads removed; user configuration and data preserved."

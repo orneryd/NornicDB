@@ -87,3 +87,25 @@ all arguments after the binary, including the existing position of `serve`.
 Maintainer layout correction: the shared one-time storage upgrade control is at
 the front of the first setup page and on Review, never under Advanced. Layout
 captures above reflect this correction.
+
+## Live installer lifecycle follow-up
+
+A live report exposed two independently running tray copies and an upgrade without
+setup review. The observed running app was inside an older installer staging
+folder, not `/Applications/NornicDB.app`. The initial installer intentionally
+preserved the old first-run state and resumed the server, which did not meet the
+maintainer's requested review flow.
+
+The correction stops both GUI agents before payload replacement, removes only
+known installed executable locations, launches the canonical app executable once,
+and creates `.setup_review` before that launch. It does not auto-start the server.
+The app holds a kernel-backed per-user lock before creating its tray item, retires
+legacy copies when it is the installed owner, and presents pending setup when
+reopened. Completing review clears its marker after successful server health.
+
+The updated postinstall tests fail on the preceding source (missing review marker).
+Preinstall regression tests also fail on the preceding source. Corrected source
+passes seven isolated script tests and thirteen Swift tests, including lock
+exclusion/release, symlink refusal, and preserving YAML while completing upgrade
+review. Actual privileged reinstall and two-launch tray acceptance are still
+pending; earlier installer success does not prove this latest correction.
