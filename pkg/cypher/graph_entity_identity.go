@@ -415,14 +415,14 @@ func graphAlgorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntit
 // Projection builders receive keys and payloads together from this boundary.
 // They cannot reconstruct an endpoint or property key from a native local ID.
 type projectionNodeInput struct {
-	key string
-	labels []string
+	key        string
+	labels     []string
 	properties map[string]interface{}
 }
 
 type projectionEdgeInput struct {
 	key, source, target, relationshipType string
-	properties map[string]interface{}
+	properties                            map[string]interface{}
 }
 
 func (p *GraphProjection) nativeNodeInput(node *storage.Node) projectionNodeInput {
@@ -431,7 +431,7 @@ func (p *GraphProjection) nativeNodeInput(node *storage.Node) projectionNodeInpu
 
 func (p *GraphProjection) nativeEdgeInput(edge *storage.Edge) projectionEdgeInput {
 	return projectionEdgeInput{
-		key: edge.Identity().InDatabase(p.Database),
+		key:    edge.Identity().InDatabase(p.Database),
 		source: edge.StartIdentity().InDatabase(p.Database), target: edge.EndIdentity().InDatabase(p.Database),
 		relationshipType: edge.Type, properties: edge.Properties,
 	}
