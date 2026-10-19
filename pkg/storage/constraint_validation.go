@@ -121,7 +121,7 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 	for _, label := range labels {
 		properties := propertiesByLabel[label]
 		var violation error
-		err := streamNodesByLabelForValidation(engine, label, properties, func(node *Node) error {
+		err := StreamStoredNodesByLabelProjected(engine, label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -181,7 +181,7 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 
 	property := c.Properties[0]
 
-	nodes, err := engine.GetNodesByLabel(c.Label)
+	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
@@ -213,7 +213,7 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 	seen := make(constraintCreationValues)
 
 	// Scan all nodes with this label
-	nodes, err := engine.GetNodesByLabel(c.Label)
+	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
@@ -242,7 +242,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 
 	seen := make(constraintCreationValues)
 
-	nodes, err := engine.GetNodesByLabel(c.Label)
+	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
@@ -290,7 +290,7 @@ func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint
 
 	property := c.Properties[0]
 
-	nodes, err := engine.GetNodesByLabel(c.Label)
+	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
@@ -315,7 +315,7 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
 
-	nodes, err := engine.GetNodesByLabel(c.Label)
+	nodes, err := GetStoredNodesByLabel(engine, c.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}
@@ -655,7 +655,7 @@ func ValidatePropertyTypeConstraintOnCreationForEngine(engine Engine, ptc Proper
 		return validateRelPropertyTypeOnCreationForEngine(engine, ptc)
 	}
 
-	nodes, err := engine.GetNodesByLabel(ptc.Label)
+	nodes, err := GetStoredNodesByLabel(engine, ptc.Label)
 	if err != nil {
 		return localizedError(localization.StorageValidationScanNodesFailed(err), err)
 	}

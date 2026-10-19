@@ -255,14 +255,21 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err))
 		}
 	} else {
-		// Fallback: export all nodes and edges as a snapshot.
-		nodes, err := s.baseStorage.AllNodes()
-		if err != nil {
+		// Fallback: export all nodes and edges as a snapshot, those the
+		// visibility layer hides from reads included.
+		var nodes []*storage.Node
+		if err := storage.StreamStoredNodes(ctx, s.baseStorage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
+			nodes = append(nodes, node)
+			return nil
+		}); err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err))
 		}
 
-		edges, err := s.baseStorage.AllEdges()
-		if err != nil {
+		var edges []*storage.Edge
+		if err := storage.StreamStoredEdgesByType(ctx, s.baseStorage, "", func(edge *storage.Edge) error {
+			edges = append(edges, edge)
+			return nil
+		}); err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err))
 		}
 

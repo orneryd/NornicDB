@@ -1103,9 +1103,10 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 		return 0, fmt.Errorf("error scanning nodes: %w", err)
 	}
 
-	// Now update each node to clear its embedding
+	// Now update each node to clear its embedding, hidden ones included: they
+	// must not keep an embedding of the model being replaced.
 	for _, id := range nodeIDs {
-		node, err := b.GetNode(id)
+		node, err := b.GetStoredNode(id)
 		if err != nil {
 			continue // Skip if node no longer exists
 		}

@@ -172,10 +172,10 @@ const (
 )
 
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
-// miss decode via decode, decay filter and optional cache store. GetNode and
+// miss decode via decode, per-read visibility and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), cacheMode nodeReadCacheMode) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), cacheMode nodeReadCacheMode) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -239,7 +239,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		// capture so copying does not extend either read lock or its hot frame.
 		node = hitCopy(node)
 	}
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	if b.hidesNode(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	if loaded {
@@ -255,7 +255,16 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
-	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNode(id, visibleRead)
+}
+
+// GetStoredNode returns the physical body through the same captured read view.
+func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
+	return b.getNode(id, storedRead)
+}
+
+func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
+	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
 	}, copyNode, b.cacheFillNode, nodeReadCacheFull)
 }
@@ -267,7 +276,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	return b.getNodeByID(id,
+	return b.getNodeByID(id, visibleRead,
 		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 			return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
 				return b.loadNodeEmbeddingState(txn, node, id, false)
@@ -334,7 +343,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 		return b.GetNode(id)
 	}
 	include := propertyProjectionSet(properties)
-	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(id, visibleRead, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
 	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, nodeReadCacheFull)
 }
