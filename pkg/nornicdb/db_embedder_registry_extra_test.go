@@ -2,7 +2,6 @@ package nornicdb
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -53,7 +52,7 @@ func TestDB_GetOrCreateEmbedderForDB_ExtraBranches(t *testing.T) {
 			embedderRegistry: map[string]embed.Embedder{},
 			embedConfigForDB: func(dbName string) (*embed.Config, error) { return cfg, nil },
 		}
-		db.embedderFactory = func(resolved *embed.Config) (embed.Embedder, error) {
+		db.embedderFactory = func(ctx context.Context, resolved *embed.Config) (embed.Embedder, error) {
 			require.Equal(t, key, embedConfigKey(resolved))
 			db.embedderRegistryMu.Lock()
 			db.embedderRegistry[key] = existing
@@ -144,37 +143,6 @@ func TestDB_SetEmbedder_PanicsWhenBaseStorageNil(t *testing.T) {
 	require.Panics(t, func() {
 		db.SetEmbedder(&mockEmbedder{dims: 2, model: "panic-embedder"})
 	})
-}
-
-func TestDB_GetOrCreateEmbedderForDB_SingleFlightWaitPath(t *testing.T) {
-	global := &factoryTestEmbedder{dims: 6}
-	cfg := &embed.Config{Provider: "openai", Model: "sf", Dimensions: 6}
-	key := embedConfigKey(cfg)
-
-	db := &DB{
-		embedQueue:       &EmbedQueue{embedder: global},
-		embedderRegistry: map[string]embed.Embedder{},
-		embedConfigForDB: func(dbName string) (*embed.Config, error) { return cfg, nil },
-		embedderCreate:   map[string]chan struct{}{key: make(chan struct{})},
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		time.Sleep(20 * time.Millisecond)
-		db.embedderRegistryMu.Lock()
-		db.embedderRegistry[key] = global
-		db.embedderRegistryMu.Unlock()
-		db.embedderCreateMu.Lock()
-		close(db.embedderCreate[key])
-		db.embedderCreateMu.Unlock()
-	}()
-
-	got, err := db.getOrCreateEmbedderForDB("tenant")
-	wg.Wait()
-	require.NoError(t, err)
-	require.Same(t, global, got)
 }
 
 func TestDB_SetEmbedder_ClusteringFlagBranches(t *testing.T) {

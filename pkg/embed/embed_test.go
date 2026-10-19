@@ -385,7 +385,7 @@ func TestOrcaEmbedderUsesOpenAIWireFormat(t *testing.T) {
 	}))
 	defer server.Close()
 
-	embedder, err := NewEmbedder(&Config{
+	embedder, err := NewEmbedder(context.Background(), &Config{
 		Provider:   "orca",
 		APIURL:     server.URL + "/v1",
 		APIKey:     "test-key",
@@ -459,7 +459,7 @@ func TestOpenAIEmbedderNoEmbedding(t *testing.T) {
 
 func TestNewEmbedder(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
-		_, err := NewEmbedder(nil)
+		_, err := NewEmbedder(context.Background(), nil)
 		if err == nil {
 			t.Error("expected error for nil config")
 		}
@@ -469,7 +469,7 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "ollama",
 		}
-		embedder, err := NewEmbedder(config)
+		embedder, err := NewEmbedder(context.Background(), config)
 		if err != nil {
 			t.Fatalf("NewEmbedder() error = %v", err)
 		}
@@ -484,7 +484,7 @@ func TestNewEmbedder(t *testing.T) {
 			Provider: "openai",
 			APIKey:   "test-key",
 		}
-		embedder, err := NewEmbedder(config)
+		embedder, err := NewEmbedder(context.Background(), config)
 		if err != nil {
 			t.Fatalf("NewEmbedder() error = %v", err)
 		}
@@ -498,14 +498,14 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "openai",
 		}
-		_, err := NewEmbedder(config)
+		_, err := NewEmbedder(context.Background(), config)
 		if err == nil {
 			t.Error("expected error for missing API key")
 		}
 	})
 
 	t.Run("orca without key", func(t *testing.T) {
-		_, err := NewEmbedder(&Config{Provider: "orca"})
+		_, err := NewEmbedder(context.Background(), &Config{Provider: "orca"})
 		if err == nil {
 			t.Error("expected error for missing API key")
 		}
@@ -515,7 +515,7 @@ func TestNewEmbedder(t *testing.T) {
 		config := &Config{
 			Provider: "unknown",
 		}
-		_, err := NewEmbedder(config)
+		_, err := NewEmbedder(context.Background(), config)
 		if err == nil {
 			t.Error("expected error for unknown provider")
 		}

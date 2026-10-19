@@ -157,7 +157,7 @@ if provider == "openai" {
     config = embed.DefaultOllamaConfig()
 }
 
-embedder, err := embed.NewEmbedder(config)
+embedder, err := embed.NewEmbedder(context.Background(), config)
 ```
 
 ## Performance Considerations
