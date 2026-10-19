@@ -232,6 +232,17 @@ class CandidateTests(unittest.TestCase):
         self.assertIn("greet()", labels)
         self.assertNotIn("tiny()", labels)
 
+    def test_rewritten_tiny_wrapper_still_retires_its_old_implementation(self):
+        touched = set()
+        candidates = self.select(range(1, 20), touched_ids=touched)
+        self.assertNotIn("n_tiny", {candidate.id for candidate in candidates})
+        self.assertIn("n_tiny", touched)
+        candidate = candidates[0]
+        old = pd.Hit("n_tiny", "tiny()", "app/new.py", 9, "function", "o/r",
+                     candidate.body, 0.03, 1, 1)
+        self.assertEqual(pd.evaluate(candidate, [old], repo="o/r", retired=set(),
+                                    touched=touched, min_similarity=0.8), (None, False))
+
     def test_small_edit_to_a_long_function_is_not_a_candidate(self):
         self.assertEqual([c.label for c in self.select([3])], [])
 
@@ -471,6 +482,24 @@ class AnalyzeTests(unittest.TestCase):
         self.assertEqual(report.analyzed, 1)
         self.assertEqual(len(report.refactor_targets[0].matches), 2)
         self.assertTrue(any("merge base" in w for w in report.warnings))
+
+    def test_old_body_of_new_forwarding_wrapper_is_not_a_duplicate(self):
+        source = Path(self.root, "app/new.py")
+        existing = source.read_text()
+        line = len(existing.splitlines()) + 2
+        source.write_text(existing + "\ndef old_api(items):\n    return order_total(items)\n")
+        graph = json.loads(self.graph.read_text())
+        graph["nodes"].append(node("old-api", "old_api()", "app/new.py", line))
+        self.graph.write_text(json.dumps(graph))
+        self.diff["app/new.py"].added.update(range(line, line + 2))
+        server = FakeServer(search_hits=[hit_json("old-api", "old_api()", "app/new.py", FUNC_A)],
+                            cypher={"CodeRepository": [{"commit": "b" * 40}]})
+        try:
+            report = self.run_analysis(server)
+        finally:
+            server.close()
+        self.assertEqual(report.analyzed, 1)
+        self.assertEqual(report.findings, [])
 
     def test_repository_never_ingested(self):
         server = FakeServer()

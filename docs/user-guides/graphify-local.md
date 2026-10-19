@@ -299,3 +299,9 @@ thresholds or silence findings. Similarity requires source inspection; a proven
 detector/indexing defect must itself be corrected with regression evidence rather
 than merging unrelated behavior. Stage the correction and rerun the mandatory
 check; unresolved findings prevent check-in.
+
+Forwarding wrappers are not a completed refactor: migrate every caller to the
+canonical API and delete redundant wrappers, compatibility aliases, shims and
+obsolete entry points. Do not retain a tiny delegating function merely to keep
+the old call shape. Deletion/rewriting exclusions prevent comparison with old
+bodies removed by the same commit; they do not justify keeping wrapper cruft.
