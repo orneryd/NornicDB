@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -200,15 +200,17 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 					t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v", procedure.Name, composite, explicit, reject), func(t *testing.T) {
 						exec, shard := newProcedureAdmissionExecutor(t, composite)
 						ctx := context.Background()
-						file := filepath.Join(t.TempDir(), "import.json")
-						require.NoError(t, os.WriteFile(file, []byte(`{"nodes":[{"id":"imported1","labels":["U5AdmissionMatrix"]},{"id":"4:foreign:opaque","labels":["U5AdmissionMatrix"]}],"relationships":[{"id":"rel:1","type":"R","startNode":"imported1","endNode":"4:foreign:opaque"}]}`), 0600))
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,_ *http.Request) {
+							_,_ = w.Write([]byte(`{"nodes":[{"id":"imported1","labels":["U5AdmissionMatrix"]},{"id":"4:foreign:opaque","labels":["U5AdmissionMatrix"]}],"relationships":[{"id":"rel:1","type":"R","startNode":"imported1","endNode":"4:foreign:opaque"}]}`))
+						}))
+						t.Cleanup(server.Close)
 						if explicit {
 							_, err := exec.Execute(ctx, "BEGIN", nil)
 							require.NoError(t, err)
 						}
 						_, err := exec.Execute(ctx, admissionMatrixQuery(call, composite, reject), map[string]interface{}{
 							"statement": "CREATE (:U5AdmissionMatrix) RETURN 1 AS value",
-							"merge":     "MERGE (:U5AdmissionMatrix {id:1}) RETURN 1 AS value", "file": file,
+							"merge":     "MERGE (:U5AdmissionMatrix {id:1}) RETURN 1 AS value", "file": server.URL,
 						})
 						if reject {
 							require.ErrorContains(t, err, failure.Error())
