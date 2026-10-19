@@ -71,10 +71,15 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 			tb.Fatal(err)
 		}
 	case "gpu_kmeans_cpu":
-		if err := clusters.Cluster(); err != nil {
+		// As resolveClusteredVectorStrategy builds it: on the Service's
+		// published clustering, routing through its serving views.
+		if err := svc.TriggerClustering(context.Background()); err != nil {
 			tb.Fatal(err)
 		}
-		pipeline = NewVectorSearchPipeline(NewGPUKMeansCandidateGen(clusters, 1), NewCPUExactScorer(svc.vectorIndex))
+		generator := NewGPUKMeansCandidateGen(nil, 0).
+			SetClusterSelector(svc.selectHybridClustersLocked).
+			SetServing(svc.clusterStateMu.RLocker(), svc.clusterQueryView)
+		pipeline = NewVectorSearchPipeline(generator, NewCPUExactScorer(svc.vectorIndex))
 	case "ivfpq":
 		index, _, err := BuildIVFPQFromVectorStore(context.Background(), store, IVFPQProfile{Dimensions: dims, IVFLists: 8, PQSegments: 4, PQBits: 4, NProbe: 1, RerankTopK: 40, TrainingSampleMax: count, KMeansMaxIterations: 10}, nil)
 		if err != nil {
@@ -118,6 +123,9 @@ func BenchmarkSelectiveClusteredServiceSearch(b *testing.B) {
 			}
 			b.StopTimer()
 			b.ReportMetric(float64(rows), "docs/op")
+			if response.Metrics != nil {
+				b.ReportMetric(float64(response.Metrics.VectorOverfetchRetries), "retries/op")
+			}
 		})
 	}
 }
