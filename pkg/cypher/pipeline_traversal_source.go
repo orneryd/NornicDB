@@ -52,6 +52,13 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		endpointValues := &endpointPropertyCache{}
 		current := make(pipelineRow)
 		completed := input(func(row pipelineRow) bool {
+			// Validate the common MATCH contract before choosing either a scan
+			// or its runtime seeded continuation, as the materializing dispatcher does.
+			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
+				recordExpressionFailure(ctx, err)
+				valid = false
+				return false
+			}
 			plan := planPipelineTraversalScan(shape, where, row)
 			if plan.access == traversalSeededAccess {
 				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
@@ -71,11 +78,6 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			match := e.parseTraversalPattern(rowCtx, pattern)
 			match.PathVariable = pathVariable
 			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)
-			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
-				recordExpressionFailure(ctx, err)
-				valid = false
-				return false
-			}
 			startProperties := traversalSourceProperties(match.StartNode, where, hint.readTail, pathVariable)
 			endProperties := traversalSourceProperties(match.EndNode, where, hint.readTail, pathVariable)
 			// Only metadata-only nodes enter this fixed-size cache; arbitrary
