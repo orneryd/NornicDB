@@ -1,5 +1,7 @@
 package cypher
 
+import "sync"
+
 // countCreatedEntity records the properties and labels of a node or
 // relationship a statement created, as Neo4j's result summary does
 // (#651): every non-null property it was created with counts as a property
@@ -49,3 +51,29 @@ func addQueryStats(total, delta *QueryStats) {
 	total.ConstraintsAdded += delta.ConstraintsAdded
 	total.ConstraintsRemoved += delta.ConstraintsRemoved
 }
+
+// queryStatsAccumulator combines completed nested summaries across concurrent evaluators.
+type queryStatsAccumulator struct {
+	mu    sync.Mutex
+	stats QueryStats
+}
+
+func (a *queryStatsAccumulator) add(in *QueryStats) {
+	if a == nil || in == nil {
+		return
+	}
+	a.mu.Lock()
+	addQueryStats(&a.stats, in)
+	a.mu.Unlock()
+}
+
+func (a *queryStatsAccumulator) snapshot() QueryStats {
+	if a == nil {
+		return QueryStats{}
+	}
+	a.mu.Lock()
+	out := a.stats
+	a.mu.Unlock()
+	return out
+}
+

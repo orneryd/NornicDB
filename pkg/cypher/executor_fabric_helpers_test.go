@@ -9,7 +9,7 @@ import (
 )
 
 func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
-	acc := &fabricStatsAccumulator{}
+	acc := &queryStatsAccumulator{}
 	acc.add(&QueryStats{NodesCreated: 1, RelationshipsCreated: 2})
 	acc.add(&QueryStats{NodesDeleted: 3, PropertiesSet: 4})
 	s := acc.snapshot()

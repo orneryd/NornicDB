@@ -55,6 +55,16 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if scoped := e.withStatementPropertyViews(cypher); scoped != nil {
 		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
+	if mayContainSubqueryExpression(cypher) && len(findSubqueryExpressions(cypher)) > 0 {
+		scope := &expressionStatsContext{Context: ctx}
+		ctx = scope
+		defer func() {
+			if err == nil && result != nil {
+				stats := scope.snapshot()
+				result.Stats = mergeQueryStats(result.Stats, &stats)
+			}
+		}()
+	}
 	defer func() { e.projectQueryResultProperties(result) }()
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && err == nil {
