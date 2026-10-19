@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 type fabricStatsAccumulatorKey struct{}
@@ -165,6 +166,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	}
 	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
 	if autoCommit {
+		if _, err := txphase.CommitContext(ctx); err != nil {
+			_ = tx.Rollback(nil)
+			return nil, err
+		}
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
 		}
@@ -655,7 +660,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	defer func() { exec.fabricRecordBindings = previousBindings }()
 	var result *ExecuteResult
 	var err error
-	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && embedding {
+	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (embedding || fabric.ReadQueryStructure(query).HasEmbeddingCandidate()) {
 		// Inline embeddings use the normal mutation/transaction owner. Internal
 		// fragment execution alone deliberately does not start an implicit tx.
 		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
