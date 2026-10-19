@@ -27,19 +27,29 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			if !ok {
 				return nil, nil, nil, procedureArgumentTypeError(procedure, "relationshipTypes", "LIST<STRING>", second)
 			}
-			if name == "*" { all = true }
+			if name == "*" {
+				all = true
+			}
 			types[name] = struct{}{}
 		}
-		if all { types = nil }
+		if all {
+			types = nil
+		}
 	}
 	if len(args) > 2 && args[2] != nil {
 		var ok bool
 		config, ok = args[2].(map[string]interface{})
-		if !ok { return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2]) }
+		if !ok {
+			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
+		}
 	}
 	nodes, err := e.algorithmNodes(procedure, args)
-	if err != nil { return nil, nil, nil, err }
-	if types == nil { return e, nodes, config, nil }
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if types == nil {
+		return e, nodes, config, nil
+	}
 	return e.cloneWithStorage(&algorithmRelationshipReader{Engine: e.storage, types: types}), nodes, config, nil
 }
 
@@ -52,10 +62,14 @@ type algorithmRelationshipReader struct {
 }
 
 func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	selected := make([]*storage.Edge, 0, len(edges))
 	for _, edge := range edges {
-		if _, allowed := r.types[edge.Type]; allowed { selected = append(selected, edge) }
+		if _, allowed := r.types[edge.Type]; allowed {
+			selected = append(selected, edge)
+		}
 	}
 	return selected, nil
 }
