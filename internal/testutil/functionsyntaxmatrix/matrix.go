@@ -83,5 +83,42 @@ func Cases() []Case {
 	add("leading-line", "// } { ' \"\nRETURN 'ok' AS v", `[["ok"]]`)
 	add("escaped-string", `RETURN substring('it\'s range(\'bad\')',0,2) AS v`, `[["it"]]`)
 	add("quoted-data", `RETURN substring('/*literal,*/',0,2) AS v`, `[["/*"]]`)
+	cases = append(cases, MapAggregateCases()...)
+	return cases
+}
+
+// MapAggregateCases exercises expression colons independently of label/type
+// colons, including quoted keys and trivia on both sides of the separator.
+func MapAggregateCases() []Case {
+	aggregates := []struct{ name, args, value string }{
+		{"count", "x", "2"}, {"sum", "x", "3"}, {"avg", "x", "1.5"},
+		{"collect", "x", "[1,2]"}, {"min", "x", "1"}, {"max", "x", "2"},
+		{"percentileCont", "x,0.5", "1.5"},
+	}
+	contents := []string{"don't split", `a "quote"`, "commas,,", " ) ( [ ] { } ", "count('bad'), range('bad')", "`odd,name`", `escaped \' and \"`}
+	var cases []Case
+	for _, aggregate := range aggregates {
+		for _, key := range []string{"c", "`c`"} {
+			rows := `[[{"c":` + aggregate.value + `}]]`
+			add := func(id, body string) {
+				cases = append(cases, Case{"map-aggregate/" + aggregate.name + "/" + key + "/" + id, "UNWIND [1,2] AS x RETURN {" + body + "} AS v", rows})
+			}
+			call := aggregate.name + "(" + aggregate.args + ")"
+			add("plain", key+":"+call)
+			for contentIndex, content := range contents {
+				for _, style := range []string{"block", "line"} {
+					comment := "/* " + content + " */ "
+					if style == "line" { comment = "// " + content + "\n" }
+					prefix := fmt.Sprintf("%s/%d/", style, contentIndex)
+					add(prefix+"before-key", comment+key+":"+call)
+					add(prefix+"after-key", key+comment+":"+call)
+					add(prefix+"after-colon", key+":"+comment+call)
+					add(prefix+"name-gap", key+":"+aggregate.name+comment+"("+aggregate.args+")")
+					add(prefix+"argument", key+":"+aggregate.name+"("+comment+aggregate.args+")")
+					add(prefix+"after-call", key+":"+call+comment)
+				}
+			}
+		}
+	}
 	return cases
 }
