@@ -98,6 +98,21 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	return e.execute(ctx, cypher, params, nil)
+}
+
+// executeRouted continues the same semantic statement through a transparent
+// dispatcher. Public Execute, including independent reentrant calls made by
+// consumers, always starts a fresh outcome instead.
+func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	var outcome *statementOutcome
+	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok {
+		outcome = statement.outcome
+	}
+	return e.execute(ctx, cypher, params, outcome)
+}
+
+func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome) (result *ExecuteResult, retErr error) {
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
@@ -152,12 +167,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the original query text — by the time the deferred emission fires,
 	// `cypher` has been normalized; we want to log what the client submitted.
 	slowStart := time.Now()
-	embeddingState := e.queryEmbeddingState(ctx)
+	statement := e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
+	embeddingState := statement.state
 	var embeddingGeneration uint64
 	if embeddingState != nil {
 		embeddingGeneration = embeddingState.generation
 	}
-	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
+	ctx = statement
 	// Logging is part of the statement's deadline. Release registry and query
 	// limit contexts after its deferred emission, so normal completion does
 	// not look like cancellation to the redactor.
@@ -169,7 +185,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	defer func() {
 		statementErr := ctx.Err()
 		terminated := running.done()
-		if running.tx == nil || !running.tx.committed.Load() {
+		if !statement.outcome.committed.Load() {
 			if terminated {
 				result, retErr = nil, transactionTerminatedError()
 			} else if retErr == nil && statementErr != nil {
@@ -367,7 +383,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		if routed != e {
-			return routed.Execute(ctx, cypher, params)
+			return routed.executeRouted(ctx, cypher, params)
 		}
 	}
 	// A cached per-database executor is shared by every auto-commit client of
@@ -817,6 +833,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err
+		}
+		// This owner executes metadata/schema effects directly, with no
+		// implicit transaction to publish their completed outcome.
+		if !info.IsReadOnly && !e.inTransaction(ctx) {
+			publishStatementCommit(ctx)
 		}
 		return result, nil
 	}

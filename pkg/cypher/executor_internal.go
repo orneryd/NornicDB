@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -141,7 +142,16 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	// Otherwise, stay on the caller's execution path (no implicit tx starts here).
-	return e.executeWithoutTransaction(ctx, cypher, upper)
+	result, retErr = e.executeWithoutTransaction(ctx, cypher, upper)
+	if retErr == nil && !e.inTransaction(ctx) {
+		// An opaque procedure argument can contain a write even when its
+		// caller opened no implicit transaction. Those effects apply directly.
+		// A Fabric fragment instead belongs to the coordinator's commit.
+		if _, pending := fabric.FabricTransactionFromContext(ctx); !pending {
+			e.publishDirectStatementCommit(ctx, cypher)
+		}
+	}
+	return result, retErr
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
