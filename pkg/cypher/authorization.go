@@ -129,6 +129,17 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 	return procedures
 }
 
+// callsDataWriteProcedure uses the registered contract shared with authorization
+// to decide whether procedure calls need statement-level write atomicity.
+func callsDataWriteProcedure(query string) bool {
+	for _, procedure := range registeredProceduresForCalls(query) {
+		if procedure.Mode == ProcedureModeWrite {
+			return true
+		}
+	}
+	return false
+}
+
 // procedureNameAt parses the dotted procedure name after a CALL keyword
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
