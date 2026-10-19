@@ -85,7 +85,8 @@ func TestManagedReplicationModesPreserveNativeJournal(t *testing.T) {
 	for _, mode := range []string{"standalone", "ha", "raft"} {
 		t.Run(mode, func(t *testing.T) {
 			base := storage.NewMemoryEngine()
-			wal, err := storage.NewWAL(t.TempDir(), storage.DefaultWALConfig())
+			journalDir := t.TempDir()
+			wal, err := storage.NewWAL(journalDir, storage.DefaultWALConfig())
 			require.NoError(t, err)
 			journal := storage.NewWALEngine(base, wal)
 			defer journal.Close()
@@ -128,7 +129,34 @@ func TestManagedReplicationModesPreserveNativeJournal(t *testing.T) {
 			require.NoError(t, view.UpdateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"payload": "changed"}}))
 			require.NoError(t, view.DeleteEdge("e"))
 			require.NoError(t, view.DeleteNode("n"))
-			require.Equal(t, before+7, wal.Sequence(), "one native WAL envelope per admitted direct write")
+			require.NoError(t, wal.Sync())
+			entries, err := storage.ReadWALEntriesAfterFromDir(journalDir, before)
+			require.NoError(t, err)
+			committed := make(map[string]bool)
+			bodies := 0
+			for _, entry := range entries {
+				if entry.Operation == storage.OpTxCommit {
+					committed[storage.GetEntryTxID(entry)] = true
+				}
+			}
+			for _, entry := range entries {
+				switch entry.Operation {
+				case storage.OpCreateNode, storage.OpUpdateNode, storage.OpDeleteNode, storage.OpCreateEdge, storage.OpUpdateEdge, storage.OpDeleteEdge, storage.OpBulkNodes:
+					require.True(t, committed[storage.GetEntryTxID(entry)], "every accepted redo body has a successful outcome")
+					bodies++
+				}
+			}
+			require.Len(t, committed, 7)
+			require.Equal(t, 7, bodies, "one redo envelope per accepted command, with separate outcome markers")
+			recovered := storage.NewMemoryEngine()
+			defer recovered.Close()
+			require.False(t, storage.ReplayWALEntries(recovered, entries).HasCriticalErrors())
+			recoveredView := storage.NewNamespacedEngine(recovered, "mode_writes")
+			count, err := recoveredView.NodeCount()
+			require.NoError(t, err)
+			require.Equal(t, int64(2), count)
+			_, err = recoveredView.GetNode("n")
+			require.ErrorIs(t, err, storage.ErrNotFound)
 			tracked, _, _ := manager.GetStorageSize("mode_writes")
 			recount, err := multidb.NewDatabaseManager(journal, nil)
 			require.NoError(t, err)
@@ -157,20 +185,17 @@ func TestManagedDirectWritesPreserveReplication(t *testing.T) {
 					local := NewStandaloneReplicator(DefaultConfig(), adapter)
 					require.NoError(t, local.Start(context.Background()))
 					r := &managedRouteReplicator{Replicator: local, peer: remote}
-					manager, err := multidb.NewDatabaseManager(NewReplicatedEngine(base, r, time.Second), nil)
+					manager, err := multidb.NewDatabaseManager(storage.NewTracedEngine(NewReplicatedEngine(base, r, time.Second)), nil)
 					require.NoError(t, err)
+					defer manager.Close()
 					require.NoError(t, manager.CreateDatabase("routed"))
 					view, err := manager.GetStorage("routed")
 					require.NoError(t, err)
-					// Seed both copies independently, so the first assertion tests
-					// the selected managed route rather than a preceding create.
-					for _, owner := range []storage.Engine{base, peer} {
-						for _, id := range []storage.NodeID{"routed:a", "routed:b", "routed:n"} {
-							_, err = owner.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}})
-							require.NoError(t, err)
-						}
-						require.NoError(t, owner.CreateEdge(&storage.Edge{ID: "routed:e", StartNode: "routed:a", EndNode: "routed:b", Type: "LINK"}))
-					}
+					// Both copies start from the same accepted command history.
+					// Reset admission observations below so this still checks the
+					// selected route's one replication call, including rejection.
+					require.NoError(t, view.BulkCreateNodes([]*storage.Node{{ID: "a", Labels: []string{"Doc"}}, {ID: "b", Labels: []string{"Doc"}}, {ID: "n", Labels: []string{"Doc"}}}))
+					require.NoError(t, view.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "LINK"}))
 					manager.GetStorageSize("routed")
 					before, _, _ := manager.GetStorageSize("routed")
 					r.reject, r.calls = reject, 0

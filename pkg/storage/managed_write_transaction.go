@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 // ManagedWriteTransaction stages a direct Engine write using the transaction
@@ -15,25 +13,49 @@ import (
 // storage boundary, rather than being reimplemented by quota callers.
 type ManagedWriteTransaction struct {
 	*BadgerTransaction
-	engine    Engine
-	namespace string
-	journal   *WALEngine
-	op        Operation
-	batch     []Operation
-	router    ManagedWriteRouter
+	engine                  Engine
+	namespace               string
+	journal                 *WALEngine
+	op                      Operation
+	batch                   []Operation
+	router                  ManagedWriteRouter
+	journalAttempt          *commandJournal
+	transaction             bool
+	skipRouting             bool
+	lifetime                ManagedCommandLifetime
+	commitPending           bool
+	replaySchema            *SchemaDefinition
+	replaySchemaTransaction bool
+	replayImplicit          bool
+	replayConditions        *ReplayConditions
 }
 
 // ManagedWriteRouter preserves non-transparent write wrappers. The callback is
 // the already-admitted local transaction, invoked only at local command apply;
 // a forwarded command instead uses the remote engine's accounting owner.
 type ManagedWriteRouter interface {
-	CommitManagedWrite(context.Context, []Operation, bool, func() error) error
+	CommitManagedWrite(context.Context, []Operation, bool, func(context.Context, func()) error) error
+	CommitManagedTransaction(context.Context, ManagedReplay, func(context.Context, func()) error) error
 }
 
 // A replication wait can end before its admitted command is applied. The
 // accounting owner must preserve that outcome instead of marking a timeout as
 // a known rollback of the logical write.
-func (m *ManagedWriteTransaction) CommitMayBePending() bool { return m.router != nil }
+func (m *ManagedWriteTransaction) CommitMayBePending() bool { return m.commitPending }
+
+func (m *ManagedWriteTransaction) SetCommandLifetime(lifetime ManagedCommandLifetime) {
+	m.lifetime = lifetime
+}
+
+func (m *ManagedWriteTransaction) CanCommitNative() bool {
+	return m.BadgerTransaction == nil && m.batch == nil && !m.transaction && m.replayConditions == nil && SupportsNativeCommand(m.engine)
+}
+
+func (m *ManagedWriteTransaction) CommitNative(ctx context.Context) error {
+	return ExecuteNativeCommand(ctx, m.engine, m.op, CommandPublicationFromContext(ctx))
+}
+
+func (m *ManagedWriteTransaction) RoutesManagedCommand() bool { return m.router != nil }
 
 // NewManagedWrite defers a direct write's snapshot and staging until the commit
 // owner holds admission. Direct calls retain their serialized write semantics;
@@ -56,7 +78,7 @@ func (m *ManagedWriteTransaction) PendingChanges(includeEntities bool) Transacti
 		if m.batch != nil {
 			operations = len(m.batch)
 		}
-		return TransactionChanges{Namespace: m.namespace, Operations: operations}
+		return TransactionChanges{Namespace: m.namespace, Operations: operations, HasSchemaChanges: m.replaySchema != nil}
 	}
 	return m.BadgerTransaction.PendingChanges(includeEntities)
 }
@@ -71,11 +93,20 @@ func (m *ManagedWriteTransaction) Rollback() error {
 
 // PrepareChanges is called by the accounting owner under exclusive admission,
 // after database validation and before reading any prior entity.
-func (m *ManagedWriteTransaction) PrepareChanges() error {
+func (m *ManagedWriteTransaction) PrepareChanges() (result error) {
+	defer func() {
+		if result == nil && m.BadgerTransaction != nil {
+			if m.router != nil && !m.skipRouting && m.replayConditions == nil {
+				result = m.captureReplayConditions()
+			} else {
+				m.BadgerTransaction.replayConditions = m.replayConditions
+			}
+		}
+	}()
 	engine := m.engine
 	var journal *WALEngine
 	for engine != nil {
-		if router, ok := engine.(ManagedWriteRouter); ok && m.router == nil {
+		if router, ok := engine.(ManagedWriteRouter); ok && m.router == nil && !m.skipRouting {
 			m.router = router
 		}
 		if wal, ok := engine.(*WALEngine); ok {
@@ -84,6 +115,10 @@ func (m *ManagedWriteTransaction) PrepareChanges() error {
 		if beginner, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
 		}); ok {
+			if m.BadgerTransaction != nil {
+				m.journal = journal
+				return nil
+			}
 			tx, err := beginner.BeginTransaction()
 			if err != nil {
 				return err
@@ -94,7 +129,27 @@ func (m *ManagedWriteTransaction) PrepareChanges() error {
 				_ = tx.Rollback()
 				return err
 			}
+			// Direct operations have the same coalesced durability contract as
+			// native direct writes, rather than an explicit user COMMIT's Sync.
+			if err := tx.SetImplicit(true); err != nil {
+				return err
+			}
+			if m.transaction || (m.skipRouting && m.batch != nil) {
+				if err := tx.SetImplicit(m.replayImplicit); err != nil {
+					return err
+				}
+				for _, op := range m.batch {
+					if err := m.stageReplay(op); err != nil {
+						return err
+					}
+				}
+				if m.replaySchema != nil {
+					return tx.stageReplaySchema(m.replaySchema, m.replaySchemaTransaction)
+				}
+				return nil
+			}
 			if m.batch == nil {
+				tx.managedDirect = true
 				return m.stage(m.op)
 			}
 			// Engine bulk calls already use an implicit transaction, including
@@ -130,6 +185,13 @@ func (m *ManagedWriteTransaction) PrepareChanges() error {
 			break
 		}
 		engine = wrapper.GetInnerEngine()
+	}
+	if m.BadgerTransaction != nil {
+		// A supplied raw transaction already owns its snapshot. Its read
+		// decorator need not also expose BeginTransaction; retain that seam
+		// for admission and use the supplied transaction for publication.
+		m.journal = journal
+		return nil
 	}
 	return ErrNotImplemented
 }
@@ -235,6 +297,12 @@ func (m *ManagedWriteTransaction) stage(op Operation) error {
 }
 
 func namespacedManagedOperation(ns *NamespacedEngine, op Operation) Operation {
+	if op.NodeID != "" || op.Type == OpDeleteNode {
+		op.NodeID = ns.prefixNodeID(op.NodeID)
+	}
+	if op.EdgeID != "" || op.Type == OpDeleteEdge {
+		op.EdgeID = ns.prefixEdgeID(op.EdgeID)
+	}
 	if op.Node != nil {
 		op.Node = copyNode(op.Node)
 		op.Node.ID = ns.prefixNodeID(op.Node.ID)
@@ -254,7 +322,7 @@ func namespacedManagedOperation(ns *NamespacedEngine, op Operation) Operation {
 // and before attempting a physical commit. Its release covers publication;
 // an error here is still a known pre-commit failure at the accounting owner.
 func (m *ManagedWriteTransaction) PrepareCommit(ctx context.Context) (func(), error) {
-	if m.router != nil {
+	if m.router != nil && !IsManagedLocalApply(ctx) {
 		// Native WAL belongs to local apply, after wrapper admission, rather
 		// than a proposal that replication might reject or forward elsewhere.
 		return func() {}, nil
@@ -263,75 +331,45 @@ func (m *ManagedWriteTransaction) PrepareCommit(ctx context.Context) (func(), er
 }
 
 func (m *ManagedWriteTransaction) CommitContextWithPublication(ctx context.Context, published func()) error {
-	if m.router == nil {
-		return m.BadgerTransaction.CommitContextWithPublication(ctx, published)
+	if m.router == nil || IsManagedLocalApply(ctx) {
+		return m.journalAttempt.result(m.BadgerTransaction.CommitContextWithPublication(ctx, published))
 	}
-	ops := m.batch
-	if ops == nil {
-		ops = []Operation{m.op}
-	}
-	return m.router.CommitManagedWrite(ctx, ops, m.batch != nil, func() error {
-		// Replication invokes local apply only after its command admission.
-		// Ending the caller's ACK wait cannot cancel that committed command.
-		applyContext := context.WithoutCancel(ctx)
+	ctx = WithManagedCommandLifetime(ctx, m.lifetime)
+	local := func(applyContext context.Context, replicationPublication func()) error {
+		applyContext = context.WithoutCancel(applyContext)
 		release, err := m.prepareJournal(applyContext)
 		if err != nil {
 			return err
 		}
 		defer release()
-		return m.BadgerTransaction.CommitContextWithPublication(applyContext, published)
-	})
+		applyContext = WithCommandPublication(applyContext, replicationPublication)
+		return m.journalAttempt.result(m.BadgerTransaction.CommitContextWithPublication(applyContext, published))
+	}
+	err := m.router.CommitManagedTransaction(ctx, m.ReplayCommand(), local)
+	m.commitPending = MutationPending(err)
+	return err
 }
 
 func (m *ManagedWriteTransaction) prepareJournal(ctx context.Context) (func(), error) {
 	if m.journal == nil {
 		return func() {}, nil
 	}
-	w := m.journal
-	id := string(m.op.NodeID)
-	if id == "" {
-		id = string(m.op.EdgeID)
+	// Journal the same final physical operations that replication carries,
+	// including hidden-record replacements accepted by a bulk or MERGE.
+	ops := []Operation{m.op}
+	if m.transaction || m.batch != nil {
+		m.mu.Lock()
+		ops = append([]Operation(nil), m.physicalOperationsLocked()...)
+		if m.knowledgeSchemaDirty {
+			ops = append(ops, Operation{Type: OpSchemaDefinition, Schema: m.knowledgeSchemaDefinition, SchemaTransaction: m.schemaRuntime != nil})
+		}
+		m.mu.Unlock()
 	}
-	release, err := w.admitJournalIDs(id)
+	journal, release, err := m.journal.prepareCommandJournal(m.namespace, ops, m.batch != nil && !m.transaction, CommandVersionFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
-	w.mutationMu.RLock()
-	cleanup := func() {
-		w.mutationMu.RUnlock()
-		release()
-	}
-	if config.IsWALEnabled() {
-		var data any
-		operation := m.op.Type
-		switch m.op.Type {
-		case OpCreateNode, OpUpdateNode:
-			data = WALNodeData{Node: cloneNodeForWAL(m.namespace, m.op.Node)}
-		case OpCreateEdge, OpUpdateEdge:
-			data = WALEdgeData{Edge: cloneEdgeForWAL(m.namespace, m.op.Edge)}
-		case OpDeleteNode, OpDeleteEdge:
-			data = WALDeleteData{ID: StripDatabasePrefix(m.namespace, id)}
-		}
-		if m.batch != nil {
-			switch m.op.Type {
-			case OpCreateNode:
-				nodes := make([]*Node, len(m.batch))
-				for i, op := range m.batch {
-					nodes[i] = cloneNodeForWAL(m.namespace, op.Node)
-				}
-				operation, data = OpBulkNodes, WALBulkNodesData{Nodes: nodes}
-			case OpCreateEdge:
-				edges := make([]*Edge, len(m.batch))
-				for i, op := range m.batch {
-					edges[i] = cloneEdgeForWAL(m.namespace, op.Edge)
-				}
-				operation, data = OpBulkEdges, WALBulkEdgesData{Edges: edges}
-			}
-		}
-		if err := w.wal.AppendWithDatabase(operation, data, m.namespace); err != nil {
-			cleanup()
-			return nil, err
-		}
-	}
-	return cleanup, nil
+	m.journalAttempt = journal
+	m.BadgerTransaction.setCommandPublication([]nativePublication{{Publish: journal.publish, Token: CommandVersionFromContext(ctx)}})
+	return release, nil
 }

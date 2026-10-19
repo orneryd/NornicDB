@@ -4,10 +4,11 @@ package storage
 // namespace-prefixed IDs. A nil value means deletion. Operations counts the
 // buffered storage operations (the same count as OperationCount).
 type TransactionChanges struct {
-	Namespace  string
-	Nodes      map[NodeID]*Node
-	Edges      map[EdgeID]*Edge
-	Operations int
+	Namespace        string
+	Nodes            map[NodeID]*Node
+	Edges            map[EdgeID]*Edge
+	Operations       int
+	HasSchemaChanges bool
 	// HoldsMergeKey means admission must not wait behind a writer that could
 	// need this transaction's unique MERGE key lock.
 	HoldsMergeKey bool
@@ -60,9 +61,10 @@ func (tx *BadgerTransaction) AccountingChanges() TransactionChanges {
 
 func (tx *BadgerTransaction) pendingChangesLocked(includeEntities bool) TransactionChanges {
 	changes := TransactionChanges{
-		Namespace:     tx.namespace,
-		Operations:    len(tx.operations) + len(tx.connectedDeletes),
-		HoldsMergeKey: tx.mergeKeyRelease != nil,
+		Namespace:        tx.namespace,
+		Operations:       len(tx.operations) + len(tx.connectedDeletes),
+		HasSchemaChanges: tx.knowledgeSchemaDirty,
+		HoldsMergeKey:    tx.mergeKeyRelease != nil,
 	}
 	if !includeEntities {
 		return changes

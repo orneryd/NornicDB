@@ -27,6 +27,7 @@ type ReplicatedEngine struct {
 }
 
 func NewReplicatedEngine(inner storage.Engine, replicator Replicator, timeout time.Duration) *ReplicatedEngine {
+	storage.EnableReplicatedVersions(inner)
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}

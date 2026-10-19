@@ -21,6 +21,40 @@ type StoredAccountingPairs struct {
 // A failed image read is reported to this same owner, never guessed as absence.
 type AccountingOwner func() func(StoredAccountingPairs, error)
 
+// AccountingPreparation selects the projection before a physical commit. A
+// revision-only delivery still fences a recount that overtook that commit.
+type AccountingPreparation struct {
+	Images  bool
+	Publish func(StoredAccountingPairs, error)
+}
+
+type ProjectedAccountingOwner func() AccountingPreparation
+
+func RegisterProjectedAccountingOwner(engine Engine, namespace string, owner ProjectedAccountingOwner) {
+	for engine != nil {
+		if b, ok := engine.(*BadgerEngine); ok {
+			b.accountingOwners.Store(namespace, owner)
+			return
+		}
+		if m, ok := engine.(*MemoryEngine); ok {
+			m.BadgerEngine.accountingOwners.Store(namespace, owner)
+			return
+		}
+		wrapper, ok := engine.(EngineUnwrapper)
+		if !ok {
+			return
+		}
+		engine = wrapper.GetInnerEngine()
+	}
+}
+
+func prepareAccountingOwner(owner any) AccountingPreparation {
+	if projected, ok := owner.(ProjectedAccountingOwner); ok {
+		return projected()
+	}
+	return AccountingPreparation{Images: true, Publish: owner.(AccountingOwner)()}
+}
+
 // RegisterAccountingOwner binds one database accounting owner to the physical
 // engine. Namespace wrappers forward registration to their underlying engine.
 func RegisterAccountingOwner(engine Engine, namespace string, owner AccountingOwner) {
@@ -50,6 +84,7 @@ func (tx *BadgerTransaction) UseManagedAccounting(publish func()) {
 }
 
 type bufferedAccountingPublication struct {
+	images  bool
 	pairs   StoredAccountingPairs
 	publish func(StoredAccountingPairs, error)
 	err     error
@@ -63,7 +98,12 @@ func (tx *BadgerTransaction) prepareBufferedAccountingLocked() (*bufferedAccount
 	if !ok {
 		return nil, nil
 	}
-	publication := &bufferedAccountingPublication{publish: owner.(AccountingOwner)(), pairs: StoredAccountingPairs{Final: tx.pendingChangesLocked(true)}}
+	prepared := prepareAccountingOwner(owner)
+	publication := &bufferedAccountingPublication{publish: prepared.Publish, images: prepared.Images}
+	if !prepared.Images {
+		return publication, nil
+	}
+	publication.pairs.Final = tx.pendingChangesLocked(true)
 	for id, node := range publication.pairs.Final.Nodes {
 		if node == nil {
 			continue
@@ -91,6 +131,9 @@ func (tx *BadgerTransaction) prepareBufferedAccountingLocked() (*bufferedAccount
 // indivisible accounting transition. Codec normalization only references keys
 // already tokenized by the writes that produced those buffered images.
 func (p *bufferedAccountingPublication) capturePriorLocked(tx *BadgerTransaction) {
+	if !p.images {
+		return
+	}
 	p.pairs.Prior = TransactionChanges{Nodes: make(map[NodeID]*Node), Edges: make(map[EdgeID]*Edge)}
 	for id := range p.pairs.Final.Nodes {
 		node, err := tx.engine.GetStoredNode(id)
@@ -123,7 +166,16 @@ func (p *bufferedAccountingPublication) capturePriorLocked(tx *BadgerTransaction
 }
 
 func (cw *commitWriter) attachAccounting(publication *commitPublication) {
-	groups := make(map[string][]any)
+	type delivery struct {
+		namespace string
+		keys      []any
+		publish   func(StoredAccountingPairs, error)
+		images    bool
+	}
+	// Most commits touch one namespace. Select the owner's projection before
+	// collecting keys, so revision-only publication allocates no entity batch.
+	var first [1]delivery
+	deliveries := first[:0]
 	for _, key := range publication.keys {
 		var namespace string
 		switch id := key.(type) {
@@ -134,21 +186,28 @@ func (cw *commitWriter) attachAccounting(publication *commitPublication) {
 		default:
 			continue
 		}
-		if _, ok := cw.engine.accountingOwners.Load(namespace); ok {
-			groups[namespace] = append(groups[namespace], key)
+		index := -1
+		for i := range deliveries {
+			if deliveries[i].namespace == namespace {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			owner, ok := cw.engine.accountingOwners.Load(namespace)
+			if !ok {
+				continue
+			}
+			prepared := prepareAccountingOwner(owner)
+			index = len(deliveries)
+			deliveries = append(deliveries, delivery{namespace: namespace, publish: prepared.Publish, images: prepared.Images})
+		}
+		if deliveries[index].images {
+			deliveries[index].keys = append(deliveries[index].keys, key)
 		}
 	}
-	if len(groups) == 0 {
+	if len(deliveries) == 0 {
 		return
-	}
-	type delivery struct {
-		keys    []any
-		publish func(StoredAccountingPairs, error)
-	}
-	deliveries := make([]delivery, 0, len(groups))
-	for namespace, keys := range groups {
-		owner, _ := cw.engine.accountingOwners.Load(namespace)
-		deliveries = append(deliveries, delivery{keys: keys, publish: owner.(AccountingOwner)()})
 	}
 	publish := publication.run
 	publication.run = func() {
@@ -158,6 +217,10 @@ func (cw *commitWriter) attachAccounting(publication *commitPublication) {
 			finalTs = cw.large.lastTs
 		}
 		for _, delivery := range deliveries {
+			if !delivery.images {
+				delivery.publish(StoredAccountingPairs{}, nil)
+				continue
+			}
 			prior, err := cw.engine.accountingImagesAt(publication.ts-1, delivery.keys)
 			var final TransactionChanges
 			if err == nil {
@@ -238,12 +301,14 @@ func (b *BadgerEngine) captureAccountingReset(prefix string, replacement bool) (
 		namespace string
 		prior     TransactionChanges
 		publish   func(StoredAccountingPairs, error)
+		images    bool
 	}
 	var deliveries []delivery
 	b.accountingOwners.Range(func(key, value any) bool {
 		namespace := key.(string)
 		if strings.HasPrefix(prefix, namespace+":") || strings.HasPrefix(namespace+":", prefix) {
-			deliveries = append(deliveries, delivery{namespace: namespace, publish: value.(AccountingOwner)()})
+			prepared := prepareAccountingOwner(value)
+			deliveries = append(deliveries, delivery{namespace: namespace, publish: prepared.Publish, images: prepared.Images})
 		}
 		return true
 	})
@@ -251,6 +316,9 @@ func (b *BadgerEngine) captureAccountingReset(prefix string, replacement bool) (
 		return func() {}, nil
 	}
 	for i := range deliveries {
+		if !deliveries[i].images {
+			continue
+		}
 		err := b.db.View(func(txn *badger.Txn) error {
 			var err error
 			deliveries[i].prior, err = b.accountingSnapshotInTxn(txn, prefix, deliveries[i].namespace)
@@ -264,7 +332,7 @@ func (b *BadgerEngine) captureAccountingReset(prefix string, replacement bool) (
 		for _, delivery := range deliveries {
 			var final TransactionChanges
 			var err error
-			if replacement {
+			if replacement && delivery.images {
 				// Restore holds ordinary readers off until its dictionaries and
 				// counts are ready; use its exclusive offline view here.
 				txn := b.db.newTxnAt(b.db.oracle.published.Load(), false)

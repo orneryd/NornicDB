@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -158,12 +159,13 @@ const (
 // WALEntry represents a single write-ahead log entry.
 // Each mutating operation is recorded as an entry before execution.
 type WALEntry struct {
-	Sequence  uint64        `json:"seq"`                // Monotonically increasing sequence number
-	Timestamp time.Time     `json:"ts"`                 // When the operation occurred
-	Operation OperationType `json:"op"`                 // Operation type (create_node, update_node, etc.)
-	Data      []byte        `json:"data"`               // JSON-serialized operation data
-	Checksum  uint32        `json:"checksum"`           // CRC32 checksum for integrity
-	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
+	Sequence      uint64        `json:"seq"`                // Monotonically increasing sequence number
+	Timestamp     time.Time     `json:"ts"`                 // When the operation occurred
+	Operation     OperationType `json:"op"`                 // Operation type (create_node, update_node, etc.)
+	Data          []byte        `json:"data"`               // JSON-serialized operation data
+	Checksum      uint32        `json:"checksum"`           // CRC32 checksum for integrity
+	Database      string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
+	ReplicationID [16]byte      `json:"-"`                  // Reconstructed from the atomic attempt's begin marker.
 }
 
 // WALNodeData holds node data for WAL entries with optional undo support.
@@ -2250,10 +2252,19 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 
 	// Wrap base engine with NamespacedEngine for the entry's database.
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
+	if entry.ReplicationID != ([16]byte{}) {
+		return replayVersionedEntry(WithCommandVersion(context.Background(), entry.ReplicationID), namespacedEngine, entry)
+	}
 
 	switch entry.Operation {
 	case OpNamespaceLifecycle:
 		return replayNamespaceLifecycle(baseEngine, entry)
+	case OpSchemaDefinition:
+		var data WALSchemaData
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
+			return err
+		}
+		return ApplyManagedReplay(context.Background(), baseEngine, ManagedReplay{Namespace: dbName, Transaction: true, Schema: data.Schema, SchemaTransaction: data.SchemaTransaction})
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
@@ -2547,6 +2558,11 @@ func GetEntryTxID(entry WALEntry) string {
 	var txID string
 
 	switch entry.Operation {
+	case OpSchemaDefinition:
+		var data WALSchemaData
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
+			txID = data.TxID
+		}
 	case OpCreateNode, OpUpdateNode:
 		var data WALNodeData
 		if decodeRecoveryPayload(entry.Data, &data) == nil {
@@ -2599,6 +2615,7 @@ type TransactionState struct {
 	Started bool       // True if we saw TxBegin
 	Done    bool       // True if we saw TxCommit or TxAbort
 	Aborted bool       // True if explicitly aborted
+	Atomic  bool       // Publication-owned attempt; incomplete bodies never redo.
 }
 
 // RecoverWithTransactions performs transaction-aware WAL recovery.
@@ -2658,6 +2675,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 				TxID:    data.TxID,
 				Entries: []WALEntry{},
 				Started: true,
+				Atomic:  data.Metadata["publication"] == "atomic",
 			}
 
 		case OpTxCommit:
@@ -2695,16 +2713,8 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 	// Each entry will use its own database name (stored in entry.Database)
 
 	// Phase 2: Apply committed transactions
-	for txID, tx := range result.Transactions {
+	for _, tx := range result.Transactions {
 		if tx.Done && !tx.Aborted {
-			// Transaction committed - apply all its entries
-			for _, entry := range tx.Entries {
-				if err := ReplayWALEntry(engine, entry); err != nil {
-					if !errors.Is(err, ErrAlreadyExists) {
-						result.FailedTransactions = append(result.FailedTransactions, txID)
-					}
-				}
-			}
 			result.CommittedTransactions++
 		}
 	}
@@ -2712,6 +2722,10 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 	// Roll back incomplete transactions.
 	for txID, tx := range result.Transactions {
 		if !tx.Done {
+			if tx.Atomic {
+				result.RolledBackTransactions++
+				continue
+			}
 			// Transaction incomplete - needs rollback
 			// First apply forward (in case partially applied before crash)
 			for _, entry := range tx.Entries {
@@ -2733,13 +2747,19 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 	}
 
 	// Phase 4: Apply non-transactional entries
-	for _, entry := range nonTxEntries {
+	for _, entry := range committedReplayEntries(entries) {
 		if err := ReplayWALEntry(engine, entry); err != nil {
-			if !errors.Is(err, ErrAlreadyExists) {
-				result.NonTxErrors = append(result.NonTxErrors, err.Error())
+			if !expectedReplayError(entry.Operation, err) {
+				if id := GetEntryTxID(entry); result.Transactions[id] != nil {
+					result.FailedTransactions = append(result.FailedTransactions, id)
+				} else {
+					result.NonTxErrors = append(result.NonTxErrors, err.Error())
+				}
 			}
 		}
-		result.NonTxApplied++
+		if result.Transactions[GetEntryTxID(entry)] == nil {
+			result.NonTxApplied++
+		}
 	}
 
 	return engine, result, nil
@@ -2939,6 +2959,7 @@ func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
 // Expected errors (duplicates, checkpoints) are counted as skipped.
 // Unexpected errors (corruption, constraint violations) are counted as failed.
 func ReplayWALEntries(engine Engine, entries []WALEntry) ReplayResult {
+	entries = committedReplayEntries(entries)
 	result := ReplayResult{
 		Errors: make([]ReplayError, 0),
 	}
@@ -2957,7 +2978,7 @@ func ReplayWALEntries(engine Engine, entries []WALEntry) ReplayResult {
 		}
 
 		// Classify the error
-		if errors.Is(err, ErrAlreadyExists) {
+		if expectedReplayError(entry.Operation, err) {
 			// Duplicate during replay - expected (idempotency)
 			result.Skipped++
 		} else {
@@ -2971,5 +2992,48 @@ func ReplayWALEntries(engine Engine, entries []WALEntry) ReplayResult {
 		}
 	}
 
+	return result
+}
+
+func expectedReplayError(operation OperationType, err error) bool {
+	return errors.Is(err, ErrAlreadyExists) || ((operation == OpDeleteNode || operation == OpDeleteEdge) && errors.Is(err, ErrNotFound))
+}
+
+// Commit markers establish redo order. Transaction bodies are never standalone
+// writes, including a body whose owner was rejected or died before publication.
+func committedReplayEntries(entries []WALEntry) []WALEntry {
+	pending := make(map[string][]WALEntry)
+	versions := make(map[string][16]byte)
+	result := make([]WALEntry, 0, len(entries))
+	for _, entry := range entries {
+		id := GetEntryTxID(entry)
+		switch entry.Operation {
+		case OpTxBegin:
+			pending[id] = nil
+			var data WALTxData
+			if decodeRecoveryPayload(entry.Data, &data) == nil {
+				if token, err := uuid.Parse(data.Metadata["replication_id"]); err == nil {
+					versions[id] = [16]byte(token)
+				}
+			}
+		case OpTxCommit:
+			for i := range pending[id] {
+				pending[id][i].ReplicationID = versions[id]
+			}
+			result = append(result, pending[id]...)
+			delete(pending, id)
+			delete(versions, id)
+		case OpTxAbort:
+			delete(pending, id)
+			delete(versions, id)
+		default:
+			_, began := pending[id]
+			if id == "" || entry.Operation == OpBufferedCommit || (!began && !strings.HasPrefix(id, "atomic-")) {
+				result = append(result, entry)
+			} else {
+				pending[id] = append(pending[id], entry)
+			}
+		}
+	}
 	return result
 }

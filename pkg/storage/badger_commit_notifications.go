@@ -5,8 +5,11 @@ package storage
 // are released. A buffered ACK reserves its place until replay retires the
 // read overlay. Failed commits make their reserved place ready without ops.
 type commitNotification struct {
-	ops             []Operation
-	ready, reserved bool
+	publication      func()
+	afterPublication func()
+	published        bool
+	ops              []Operation
+	ready, reserved  bool
 	// Buffered commits advance the logical revision at ACK, not again on flush.
 	revisionPublished bool
 	next              *commitNotification
@@ -33,13 +36,23 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 
 // beginNotifyingWrite gives nodes and edges the same lifetime transfer. The
 // returned finish must be deferred before taking any other publication locks.
-func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error) {
+func (b *BadgerEngine) beginNotifyingWrite(publication ...nativePublication) (*commitNotification, func(), error) {
 	release, err := b.beginWrite()
 	if err != nil {
 		return nil, nil, err
 	}
 	n := &commitNotification{}
-	return n, func() { release(); b.completeCommitNotification(n) }, nil
+	if len(publication) != 0 {
+		n.publication = publication[0].Publish
+		n.afterPublication = publication[0].After
+	}
+	return n, func() {
+		release()
+		if n.published && n.afterPublication != nil {
+			n.afterPublication()
+		}
+		b.completeCommitNotification(n)
+	}, nil
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {

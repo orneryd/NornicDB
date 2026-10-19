@@ -1,11 +1,50 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+// Replay rebuilds a fresh schema view through the stored-reader owner. Unlike
+// the startup loader's held physical view, this includes acknowledged buffered
+// nodes and never observes a partially published large commit. The schema
+// transaction's namespace guard validates the rebuild before publication.
+func (b *BadgerEngine) rebuildReplaySchemaValues(namespace string, schema *SchemaManager) error {
+	view := NewNamespacedEngine(b, namespace)
+	if err := StreamStoredNodes(context.Background(), view, StreamNodesOptions{}, func(node *Node) error {
+		id := view.prefixNodeID(node.ID)
+		for _, label := range node.Labels {
+			for property, value := range node.Properties {
+				if err := schema.CheckUniqueConstraint(label, property, value, id); err != nil {
+					return err
+				}
+				schema.RegisterUniqueValue(label, property, value, id)
+			}
+			for _, index := range schema.GetCompositeIndexesForLabel(label) {
+				if err := index.IndexNode(id, node.Properties); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	schema.mu.RLock()
+	defer schema.mu.RUnlock()
+	for _, constraint := range schema.uniqueConstraints {
+		constraint.mu.Lock()
+		constraint.valuesCacheComplete = true
+		constraint.mu.Unlock()
+	}
+	for _, index := range schema.compositeIndexes {
+		index.unfilled.Store(false)
+	}
+	return nil
+}
 
 // loadPersistedSchemas loads all persisted schema definitions from Badger into memory.
 //

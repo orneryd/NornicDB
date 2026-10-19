@@ -653,7 +653,21 @@ func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, ti
 	applyDur := time.Since(start)
 
 	// Honor write-ack mode: optionally wait for standby acknowledgement.
-	walPos, _ := r.storage.GetWALPosition()
+	// Accepted command records enter the async WAL queue during ordered
+	// publication. A quorum ACK must target this command, never the stale
+	// position preceding it. Async mode retains its non-blocking contract;
+	// lifecycle commands already expose their durable journal position.
+	if r.config.HAStandby.SyncMode == SyncQuorum && !isNamespaceLifecycle(cmd) {
+		if flusher, ok := r.storage.(interface{ FlushWAL() error }); ok {
+			if err := flusher.FlushWAL(); err != nil {
+				return &storage.AppliedMutationError{Cause: err}
+			}
+		}
+	}
+	walPos, err := r.storage.GetWALPosition()
+	if err != nil {
+		return &storage.AppliedMutationError{Cause: err}
+	}
 	if isNamespaceLifecycle(cmd) {
 		op := storage.NamespaceDropFromContext(ctx)
 		if op == nil {

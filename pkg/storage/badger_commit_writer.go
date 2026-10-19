@@ -143,7 +143,10 @@ func (cw *commitWriter) finish() error {
 // publish, ordered on the writer's keys. Nil when there is none.
 func (cw *commitWriter) publication() *commitPublication {
 	if cw.publish == nil {
-		return nil
+		if cw.notification == nil || (cw.notification.publication == nil && cw.notification.afterPublication == nil) {
+			return nil
+		}
+		cw.publish = func() {}
 	}
 	p := &commitPublication{keys: cw.publishKeys, run: cw.publish}
 	if cw.accounting != nil {
@@ -151,6 +154,16 @@ func (cw *commitWriter) publication() *commitPublication {
 		p.run = func() { publish(); cw.accounting() }
 	} else if !cw.replay {
 		cw.attachAccounting(p)
+	}
+	if cw.notification != nil && (cw.notification.publication != nil || cw.notification.afterPublication != nil) {
+		publish, complete := p.run, cw.notification.publication
+		p.run = func() {
+			publish()
+			if complete != nil {
+				complete()
+			}
+			cw.notification.published = true
+		}
 	}
 	return p
 }

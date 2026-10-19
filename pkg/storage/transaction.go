@@ -62,13 +62,14 @@ const (
 type OperationType string
 
 const (
-	OpCreateNode      OperationType = "create_node"
-	OpUpdateNode      OperationType = "update_node"
-	OpDeleteNode      OperationType = "delete_node"
-	OpCreateEdge      OperationType = "create_edge"
-	OpUpdateEdge      OperationType = "update_edge"
-	OpDeleteEdge      OperationType = "delete_edge"
-	OpUpdateEmbedding OperationType = "update_embedding" // Safe to skip on corruption - regenerable
+	OpCreateNode       OperationType = "create_node"
+	OpUpdateNode       OperationType = "update_node"
+	OpDeleteNode       OperationType = "delete_node"
+	OpCreateEdge       OperationType = "create_edge"
+	OpUpdateEdge       OperationType = "update_edge"
+	OpDeleteEdge       OperationType = "delete_edge"
+	OpUpdateEmbedding  OperationType = "update_embedding" // Safe to skip on corruption - regenerable
+	OpSchemaDefinition OperationType = "schema_definition"
 )
 
 // Operation represents a single operation within a transaction.
@@ -76,8 +77,10 @@ const (
 // It is also JSON-serialized into the WAL buffered-commit payload, so every
 // field carries a tag.
 type Operation struct {
-	Type      OperationType `json:"type"`
-	Timestamp time.Time     `json:"timestamp,omitempty"`
+	Schema            *SchemaDefinition `json:"schema,omitempty"`
+	SchemaTransaction bool              `json:"schema_transaction,omitempty"`
+	Type              OperationType     `json:"type"`
+	Timestamp         time.Time         `json:"timestamp,omitempty"`
 
 	// For node operations
 	NodeID  NodeID `json:"node_id,omitempty"`

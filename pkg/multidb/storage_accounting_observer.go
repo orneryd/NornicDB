@@ -2,6 +2,16 @@ package multidb
 
 import "github.com/orneryd/nornicdb/pkg/storage"
 
+func (t *sizeTrackingEngine) prepareBaseAccountingProjection() storage.AccountingPreparation {
+	initialized, err := t.manager.storageSizeInitialized(t.dbName)
+	if err != nil || !initialized {
+		return storage.AccountingPreparation{Publish: func(storage.StoredAccountingPairs, error) {
+			t.manager.markStorageSizeDirty(t.dbName)
+		}}
+	}
+	return storage.AccountingPreparation{Images: true, Publish: t.prepareBaseAccounting()}
+}
+
 // Base maintenance uses the same stored-pair calculation and publication owner
 // as admitted commits. It never takes write admission while holding storage
 // locks. The epoch fence makes lazy recounts safe without reversing lock order.

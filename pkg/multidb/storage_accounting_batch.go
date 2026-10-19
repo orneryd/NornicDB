@@ -103,16 +103,21 @@ func storedEntityAccounting[K comparable, V any](pending map[K]*V, read func(K) 
 	return delta, nil
 }
 
-func (b accountingBatch) admit(t *sizeTrackingEngine, limits *Limits, currentBytes int64) error {
+func (b accountingBatch) admit(t *sizeTrackingEngine, limits *Limits, currentBytes int64, except ...*accountingReservation) error {
 	if limits == nil {
 		return nil
 	}
+	var omitted *accountingReservation
+	if len(except) != 0 {
+		omitted = except[0]
+	}
+	reserved := t.reservedExcept(omitted)
 	if b.nodes.count > 0 && limits.Storage.MaxNodes > 0 {
 		count, err := t.Engine.NodeCount()
 		if err != nil {
 			return err
 		}
-		if count+b.nodes.count > limits.Storage.MaxNodes {
+		if count+b.nodes.count+reserved.nodes.count > limits.Storage.MaxNodes {
 			return localizedError(localization.MultidbMaxNodesReached(t.dbName, count+b.nodes.count, limits.Storage.MaxNodes), ErrStorageLimitExceeded)
 		}
 	}
@@ -121,11 +126,11 @@ func (b accountingBatch) admit(t *sizeTrackingEngine, limits *Limits, currentByt
 		if err != nil {
 			return err
 		}
-		if count+b.edges.count > limits.Storage.MaxEdges {
+		if count+b.edges.count+reserved.edges.count > limits.Storage.MaxEdges {
 			return localizedError(localization.MultidbMaxEdgesReached(t.dbName, count+b.edges.count, limits.Storage.MaxEdges), ErrStorageLimitExceeded)
 		}
 	}
-	if delta := b.nodes.bytes + b.edges.bytes; delta > 0 && limits.Storage.MaxBytes > 0 && currentBytes+delta > limits.Storage.MaxBytes {
+	if delta := b.nodes.bytes + b.edges.bytes; delta > 0 && limits.Storage.MaxBytes > 0 && currentBytes+delta+reserved.nodes.bytes+reserved.edges.bytes > limits.Storage.MaxBytes {
 		return localizedError(localization.MultidbMaxBytesExceeded(t.dbName, currentBytes, limits.Storage.MaxBytes, delta), ErrStorageLimitExceeded)
 	}
 	return nil

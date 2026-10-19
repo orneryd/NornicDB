@@ -157,6 +157,8 @@ const (
 
 	// CmdNamespaceCatalog publishes one database's CREATE/ALTER catalog delta.
 	CmdNamespaceCatalog
+	// CmdTransaction carries one atomic storage transaction, never per-op apply.
+	CmdTransaction
 )
 
 // HealthStatus represents the health state of the replicator.

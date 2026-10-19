@@ -368,10 +368,23 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 //	size, err := calculateNodeSize(node)
 //	// size is the exact byte count that will be stored
 func calculateNodeSize(node *storage.Node) (int64, error) {
-	if node != nil && node.Properties != nil && len(node.Properties) == 0 {
-		canonical := *node
-		canonical.Properties = nil
-		node = &canonical
+	if node != nil {
+		properties, changed, err := quotaTypedProperties(node.Properties)
+		if err != nil {
+			return 0, localizedError(localization.MultidbStorageEncodeNodeFailed(err), err)
+		}
+		metadata, metadataChanged, err := quotaTypedProperties(node.EmbedMeta)
+		if err != nil {
+			return 0, localizedError(localization.MultidbStorageEncodeNodeFailed(err), err)
+		}
+		if changed || metadataChanged || (node.Properties != nil && len(node.Properties) == 0) {
+			canonical := *node
+			canonical.Properties, canonical.EmbedMeta = properties, metadata
+			if len(properties) == 0 {
+				canonical.Properties = nil
+			}
+			node = &canonical
+		}
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -398,10 +411,19 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 //	size, err := calculateEdgeSize(edge)
 //	// size is the exact byte count that will be stored
 func calculateEdgeSize(edge *storage.Edge) (int64, error) {
-	if edge != nil && edge.Properties != nil && len(edge.Properties) == 0 {
-		canonical := *edge
-		canonical.Properties = nil
-		edge = &canonical
+	if edge != nil {
+		properties, changed, err := quotaTypedProperties(edge.Properties)
+		if err != nil {
+			return 0, localizedError(localization.MultidbStorageEncodeEdgeFailed(err), err)
+		}
+		if changed || (edge.Properties != nil && len(edge.Properties) == 0) {
+			canonical := *edge
+			canonical.Properties = properties
+			if len(properties) == 0 {
+				canonical.Properties = nil
+			}
+			edge = &canonical
+		}
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)

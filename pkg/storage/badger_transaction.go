@@ -110,8 +110,13 @@ type BadgerTransaction struct {
 	badgerReadHeld bool
 
 	// commitW is the commit writer while Commit writes (see commitWriter).
-	commitW           *commitWriter
-	managedAccounting func()
+	commitW                 *commitWriter
+	managedAccounting       func()
+	commandPublication      func()
+	commandAfterPublication func()
+	commandVersion          [16]byte
+	replayConditions        *ReplayConditions
+	managedDirect           bool
 	// commitReleaseWrite releases the write barrier Commit holds until it
 	// returns. commitCountsHeld and commitEdgeTypeCounts record the count
 	// locks it holds while publishing (acquireCommitPublicationLocked).
@@ -2850,11 +2855,14 @@ func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
 func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
-	notification := &commitNotification{}
+	notification := &commitNotification{publication: tx.commandPublication}
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
+		}
+		if commitErr == nil && tx.commandAfterPublication != nil {
+			tx.commandAfterPublication()
 		}
 		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
@@ -2944,6 +2952,9 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		}
 		return err
 	}
+	if err := tx.validateReplayConditionsLocked(); err != nil {
+		return tx.abortCommitLocked(err)
+	}
 
 	temporalTargets, err := tx.bufferTemporalIndexWrites()
 	if err != nil {
@@ -2993,7 +3004,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 			return err
 		}
 		defer tx.endChangeCaptureLocked(false)
-		version, err = tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now())
+		version, err = tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now(), tx.commandVersion)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return fmt.Errorf("allocating mvcc commit version: %w", err)

@@ -543,8 +543,9 @@ func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
 		TxID: "tx-orphan",
 	}, "test"))
 
-	// Explicit non-transactional failure path.
-	require.NoError(t, wal.AppendWithDatabase(OpDeleteNode, WALDeleteData{ID: "missing-delete"}, "test"))
+	// A missing delete is an idempotent redo, not a recovery failure. Keep
+	// this error-accounting seam genuinely invalid with missing endpoints.
+	require.NoError(t, wal.AppendWithDatabase(OpCreateEdge, WALEdgeData{Edge: &Edge{ID: "invalid-non-tx", StartNode: "missing-left", EndNode: "missing-right", Type: "REL"}}, "test"))
 
 	require.NoError(t, wal.Close())
 
