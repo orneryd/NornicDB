@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 	"time"
@@ -644,31 +645,15 @@ func parseRetrieveEmbedding(raw interface{}, failClosed bool) ([]float32, error)
 }
 
 func strictNumericEmbedding(raw interface{}) ([]float32, error) {
-	switch val := raw.(type) {
-	case []float32:
-		return val, nil
-	case []float64:
-		out := make([]float32, len(val))
-		for i, f := range val {
-			out[i] = float32(f)
-		}
-		return out, nil
-	case []interface{}:
-		out := make([]float32, len(val))
-		for i, item := range val {
-			if _, isString := item.(string); isString {
-				return nil, errRetrieveEmbeddingNotAVector
-			}
-			f, ok := ragToFloat64(item)
-			if !ok {
-				return nil, errRetrieveEmbeddingNotAVector
-			}
-			out[i] = float32(f)
-		}
-		return out, nil
-	default:
+	list, ok := valueconvert.ReadList(raw)
+	if !ok {
 		return nil, errRetrieveEmbeddingNotAVector
 	}
+	values, issue := list.Numbers32()
+	if issue != nil {
+		return nil, errRetrieveEmbeddingNotAVector
+	}
+	return values, nil
 }
 
 // queryEmbedderDimensions is the embedder's vector dimension when it reports

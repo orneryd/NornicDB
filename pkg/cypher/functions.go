@@ -144,6 +144,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
 	}
+	if open := rowSubscriptStart(expr); open > 0 {
+		value, _, err := e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+			value := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(ctx)
+		})
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+		}
+		return value
+	}
+
 	// Direct $param resolution preserves declared types end-to-end.
 	// substituteParams's type-preserving short-circuit leaves "$name" as
 	// a literal here for composite values; without this branch the
@@ -157,7 +168,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	// Resolve dotted/bracketed parameter map paths like $d.uuid and
 	// $d['uuid'] as typed values.
 	if v, ok := resolveParamPathRef(ctx, expr); ok {
-		return normalizePropValue(v)
+		return normalizeExpressionValue(v)
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
 		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)

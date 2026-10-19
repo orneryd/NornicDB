@@ -11,6 +11,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"strings"
 	"unicode"
@@ -870,34 +871,7 @@ func compareValues(a, b interface{}) bool {
 }
 
 func strictNumericValue(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), true
-	case int8:
-		return float64(number), true
-	case int16:
-		return float64(number), true
-	case int32:
-		return float64(number), true
-	case int64:
-		return float64(number), true
-	case uint:
-		return float64(number), true
-	case uint8:
-		return float64(number), true
-	case uint16:
-		return float64(number), true
-	case uint32:
-		return float64(number), true
-	case uint64:
-		return float64(number), true
-	case float32:
-		return float64(number), true
-	case float64:
-		return number, true
-	default:
-		return 0, false
-	}
+	return valueconvert.NumericFloat64(value)
 }
 
 // indexCaseInsensitive finds the index of a keyword in a case-insensitive manner.

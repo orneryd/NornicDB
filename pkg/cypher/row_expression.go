@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -561,8 +562,6 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return rowStringPredicateValue(leftValue, rightValue, predicate.match), true, nil
 	}
 
-	// The subscript is the bracket group that closes expr (rowSubscriptStart):
-	// its key may hold brackets of its own (m[r[k]], m[l[0].id]).
 	if open := rowSubscriptStart(expr); open > 0 {
 		return e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
 			return e.evaluateRowValue(part, values)
@@ -1425,13 +1424,9 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {
-	if number, ok := cypherSignedInteger(value); ok {
-		return int(number), true
-	}
-	if number, ok := cypherUnsignedInteger(value); ok {
-		return int(number), true
-	}
-	return 0, false
+	// Out-of-bounds integer magnitudes clamp before a native-int conversion;
+	// the list owner then returns null or clips a slice, never a wrapped index.
+	return valueconvert.ToInt(value, valueconvert.IntegerClampBounds)
 }
 
 // evaluateRowPredicate evaluates a WHERE predicate against a row.

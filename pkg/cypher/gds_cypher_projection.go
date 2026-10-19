@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strconv"
 	"strings"
@@ -287,7 +288,10 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
 	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
 	if isIntegerProcedureValue(value) {
-		number := gdsInteger(value)
+		number, fits := valueconvert.IntegerValue(value)
+		if !fits {
+			return "", false, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "NumericOutOfRange", localization.CypherCoreFunctionArgumentInvalid("gds.graph.project", "a signed 64-bit node identifier", neo4jValueRepr(value)))
+		}
 		if number < 0 {
 			return "", false, localizedError(localization.CypherGraphProceduresNodeIDNegative(strconv.FormatInt(number, 10)), nil)
 		}

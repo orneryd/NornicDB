@@ -3,6 +3,7 @@ package cypher
 import (
 	"strings"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -53,7 +54,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 	}
 	// Only a list is indexed by an integer: n.big[0] on a number is a
 	// TypeError wherever it is read, a WHERE included (#907).
-	items, isList := cypherListValue(base)
+	items, isList := valueconvert.ReadList(base)
 	if !isList {
 		return nil, false, subscriptReceiverError(base, indexValue)
 	}
@@ -62,12 +63,12 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		return nil, false, listSubscriptIndexError(base, indexValue)
 	}
 	if index < 0 {
-		index += len(items)
+		index += items.Len()
 	}
-	if index < 0 || index >= len(items) {
+	if index < 0 || index >= items.Len() {
 		return nil, true, nil
 	}
-	return items[index], true, nil
+	return items.At(index), true, nil
 }
 
 func listSubscriptIndexError(base, index interface{}) error {

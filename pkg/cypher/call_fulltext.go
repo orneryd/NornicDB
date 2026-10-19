@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -368,21 +368,7 @@ func fulltextQueryArguments(procedure string, args []interface{}) (string, strin
 }
 
 func fulltextOptionToInt(v interface{}) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case int64:
-		return int(t), true
-	case float64:
-		return int(t), float64(int(t)) == t
-	case float32:
-		return int(t), float32(int(t)) == t
-	case string:
-		i, err := strconv.Atoi(strings.TrimSpace(t))
-		return i, err == nil
-	default:
-		return 0, false
-	}
+	return valueconvert.ToInt(v, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings)
 }
 
 func applyFulltextOptions(result *ExecuteResult, opts fulltextQueryOptions) {

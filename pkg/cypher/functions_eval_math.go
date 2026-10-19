@@ -927,7 +927,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pointList, ok := pointsVal.([]interface{}); ok {
+		if pointList, ok := cypherListValue(pointsVal); ok {
 			if len(pointList) < 3 {
 				return nil
 			}
@@ -969,7 +969,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 		// Otherwise try evaluating as variable or expression
 		pointsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pointList, ok := pointsVal.([]interface{}); ok {
+		if pointList, ok := cypherListValue(pointsVal); ok {
 			if len(pointList) < 2 {
 				return nil
 			}
@@ -1079,7 +1079,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	for _, function := range []string{"filter", "extract"} {
 		if matchFuncStartAndSuffix(expr, function) {
 			comprehension := "[" + extractFuncArgs(expr, function) + "]"
-			if list, ok := e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
+			if list, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
 				return list
 			}
 			return []interface{}{}
@@ -1253,7 +1253,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 	if list == nil {
 		return nil
 	}
-	items, isList := list.([]interface{})
+	items, isList := cypherListValue(list)
 	if !isList {
 		items = []interface{}{list}
 	}

@@ -5,6 +5,7 @@
 package stats
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 
@@ -173,8 +174,11 @@ func Percentile(values []float64, p float64) float64 {
 	sort.Float64s(sorted)
 
 	index := p * float64(len(sorted)-1)
-	lower := int(math.Floor(index))
-	upper := int(math.Ceil(index))
+	lower, lowerFits := valueconvert.ToInt(math.Floor(index), valueconvert.IntegerFloat)
+	upper, upperFits := valueconvert.ToInt(math.Ceil(index), valueconvert.IntegerFloat)
+	if !lowerFits || !upperFits || lower < 0 || upper >= len(sorted) {
+		return 0
+	}
 
 	if lower == upper {
 		return sorted[lower]
@@ -446,9 +450,17 @@ func Histogram(values []float64, bins int) []int {
 	binWidth := (max - min) / float64(bins)
 
 	histogram := make([]int, bins)
+	// Equal coordinates occupy the first bin; no zero-width division is needed.
+	if min == max {
+		histogram[0] = len(values)
+		return histogram
+	}
 
 	for _, v := range values {
-		binIndex := int((v - min) / binWidth)
+		binIndex, fits := valueconvert.ToInt((v-min)/binWidth, valueconvert.IntegerFloat)
+		if !fits || binIndex < 0 {
+			return []int{}
+		}
 		if binIndex >= bins {
 			binIndex = bins - 1
 		}

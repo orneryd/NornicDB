@@ -5,6 +5,7 @@
 package math
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
 )
@@ -452,8 +453,11 @@ func Percentile(values []float64, percentile float64) float64 {
 
 	// Calculate percentile
 	index := (percentile / 100.0) * float64(len(sorted)-1)
-	lower := int(math.Floor(index))
-	upper := int(math.Ceil(index))
+	lower, lowerFits := valueconvert.ToInt(math.Floor(index), valueconvert.IntegerFloat)
+	upper, upperFits := valueconvert.ToInt(math.Ceil(index), valueconvert.IntegerFloat)
+	if !lowerFits || !upperFits || lower < 0 || upper >= len(sorted) {
+		return 0
+	}
 
 	if lower == upper {
 		return sorted[lower]

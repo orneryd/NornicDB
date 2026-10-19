@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -712,6 +712,34 @@ func normalizePropValue(value interface{}) interface{} {
 // too. A container is copied only when a descendant changes; rewritten
 // describes a value conversion, independently of a writer's ownership copy.
 func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
+	return normalizedCypherValue(value, true)
+}
+
+// normalizeExpressionValue admits a runtime value without storage's numeric
+// coercion. Both boundaries share container, temporal and null normalization.
+func normalizeExpressionValue(value interface{}) interface{} {
+	normalized, _ := normalizedCypherValue(value, false)
+	return normalized
+}
+
+func normalizedCypherValue(value interface{}, property bool) (normalized interface{}, rewritten bool) {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if !property {
+			return value, false
+		}
+		if number.IsInteger() {
+			if integer, fits := number.Int64(valueconvert.IntegerOnly); fits {
+				_, canonical := value.(int64)
+				return integer, !canonical
+			}
+		}
+		if _, canonical := value.(float64); canonical {
+			return value, false
+		}
+		// Preserve storage's existing unsigned-overflow-to-Double policy;
+		// a failed signed conversion must never wrap to a negative Long.
+		return number.Float64(), true
+	}
 	switch v := value.(type) {
 	case time.Time:
 		return dateTimeFromGoTime(v), true
@@ -720,35 +748,10 @@ func normalizedPropValue(value interface{}) (normalized interface{}, rewritten b
 			return nil, true
 		}
 		return dateTimeFromGoTime(*v), true
-	case int:
-		return int64(v), true
-	case int8:
-		return int64(v), true
-	case int16:
-		return int64(v), true
-	case int32:
-		return int64(v), true
-	case int64:
-		return v, false
-	case uint:
-		return int64(v), true
-	case uint8:
-		return int64(v), true
-	case uint16:
-		return int64(v), true
-	case uint32:
-		return int64(v), true
-	case uint64:
-		if v > math.MaxInt64 {
-			return float64(v), true
-		}
-		return int64(v), true
-	case float32:
-		return float64(v), true
 	case []interface{}:
 		var out []interface{}
 		for i, item := range v {
-			stored, changed := normalizedPropValue(item)
+			stored, changed := normalizedCypherValue(item, property)
 			if changed && out == nil {
 				out = make([]interface{}, len(v))
 				copy(out, v)
@@ -764,7 +767,7 @@ func normalizedPropValue(value interface{}) (normalized interface{}, rewritten b
 	case map[string]interface{}:
 		var out map[string]interface{}
 		for k, item := range v {
-			stored, changed := normalizedPropValue(item)
+			stored, changed := normalizedCypherValue(item, property)
 			if changed && out == nil {
 				out = cloneStringAnyMap(v)
 			}

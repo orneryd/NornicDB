@@ -1,10 +1,9 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
@@ -91,42 +90,26 @@ func toBool(v interface{}) (bool, bool) {
 }
 
 func toInt(v interface{}) (int, bool) {
-	switch t := v.(type) {
-	case int:
-		return t, true
-	case int64:
-		return util.SafeInt64ToInt(t)
-	case float64:
-		return util.SafeFloat64ToInt(t)
-	case string:
-		i, err := strconv.Atoi(strings.TrimSpace(t))
-		return i, err == nil
-	default:
-		return 0, false
-	}
+	return valueconvert.ToInt(v, valueconvert.IntegerFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings)
 }
 
 func ragToFloat64(v interface{}) (float64, bool) {
-	switch t := v.(type) {
-	case float64:
-		return t, true
-	case float32:
-		return float64(t), true
-	case int:
-		return float64(t), true
-	case int64:
-		return float64(t), true
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
-		return f, err == nil
-	default:
-		return 0, false
+	if text, ok := v.(string); ok {
+		v = strings.TrimSpace(text)
 	}
+	return valueconvert.ToFloat64(v)
 }
 
 func toFloat32(v interface{}) (float32, bool) {
-	f, ok := ragToFloat64(v)
-	return float32(f), ok
+	floating, ok := ragToFloat64(v)
+	if !ok {
+		return 0, false
+	}
+	number, numeric := valueconvert.ReadNumber(floating)
+	if !numeric {
+		return 0, false
+	}
+	return number.Float32()
 }
 
 func toStringSlice(v interface{}) []string {

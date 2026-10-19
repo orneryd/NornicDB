@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"sort"
 	"strconv"
@@ -609,18 +610,11 @@ func countResultRows(result *ExecuteResult) int64 {
 	if result == nil || len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
 		return 0
 	}
-	switch value := result.Rows[0][0].(type) {
-	case int:
-		return int64(value)
-	case int32:
-		return int64(value)
-	case int64:
-		return value
-	case float64:
-		return int64(value)
-	default:
+	integer, ok := valueconvert.Int64(result.Rows[0][0], valueconvert.IntegerFloat)
+	if !ok {
 		return 0
 	}
+	return integer
 }
 
 func splitUnwindMergeChainClauses(input string) ([]string, bool) {

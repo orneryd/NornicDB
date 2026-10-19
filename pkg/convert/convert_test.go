@@ -20,9 +20,13 @@ func TestToFloat64(t *testing.T) {
 		{"int", 42, 42.0, true},
 		{"int64", int64(99), 99.0, true},
 		{"int32", int32(50), 50.0, true},
+		{"int8", int8(-8), -8.0, true},
+		{"int16", int16(-16), -16.0, true},
 		{"uint", uint(10), 10.0, true},
 		{"uint64", uint64(100), 100.0, true},
 		{"uint32", uint32(25), 25.0, true},
+		{"uint8", uint8(8), 8.0, true},
+		{"uint16", uint16(16), 16.0, true},
 
 		// String parsing
 		{"string decimal", "3.14", 3.14, true},

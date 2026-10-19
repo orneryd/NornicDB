@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
 	"strings"
@@ -66,72 +67,9 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool, uses 
 			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType(valueType, gdsJavaValueText(value, true)), nil)
 		}
 	}
-	switch typed := value.(type) {
-	case []int64:
-		exact, kind = typed, "List of Integer"
-	case []float64:
-		exact, kind = typed, "List of Float"
-	default:
-		if isIntegerProcedureValue(value) {
-			exact, kind = gdsInteger(value), "Integer"
-		} else if number, numeric := toFloat64(value); numeric {
-			// Stored strings are not numeric GDS properties, even if parseable.
-			if _, text := value.(string); text {
-				return nil, "", false, nil
-			}
-			exact, kind = number, "Float"
-		} else if items, list := cypherListValue(value); list {
-			if len(items) == 0 {
-				if relationship {
-					return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText([]string{}, true)), nil)
-				}
-				// Extension: native Neo4j stores untyped [] as StringArray
-				// and refuses it. NornicDB's storage erases array element
-				// types, so retain a zero-length numeric array instead of
-				// losing a well-defined property. An existing builder sets
-				// its type; a new empty array defaults to List of Integer.
-				exact, kind = []int64{}, "List of Integer"
-				break
-			}
-			integers := make([]int64, len(items))
-			allIntegers := true
-			for i, item := range items {
-				if _, text := item.(string); text {
-					if relationship {
-						texts := make([]string, len(items))
-						for j, element := range items {
-							texts[j], _ = element.(string)
-						}
-						return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText(texts, true)), nil)
-					}
-					return nil, "", false, localizedError(localization.CypherGraphProceduresUnsupportedArrayType("StringArray"), nil)
-				}
-				if isIntegerProcedureValue(item) {
-					integers[i] = gdsInteger(item)
-				} else {
-					allIntegers = false
-				}
-			}
-			if allIntegers {
-				exact, kind = integers, "List of Integer"
-			} else {
-				floats := make([]float64, len(items))
-				for i, item := range items {
-					if isIntegerProcedureValue(item) {
-						// One list mixing Longs and Doubles is a Double array
-						// before GDS reads it: its Longs round, unbounded.
-						floats[i], _ = gdsLongToDouble(gdsInteger(item), false)
-					} else if number, numeric := toFloat64(item); numeric {
-						floats[i] = number
-					} else {
-						return nil, "", false, nil
-					}
-				}
-				exact, kind = floats, "List of Float"
-			}
-		} else {
-			return nil, "", false, nil
-		}
+	exact, kind, ok, err = gdsNumericInput(value, relationship, false, func(texts []string) string { return gdsJavaValueText(texts, true) })
+	if err != nil || !ok {
+		return nil, "", false, err
 	}
 	if defaultValue && strings.HasPrefix(target, "List") && kind != target {
 		expected := "long[]"
@@ -166,8 +104,8 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool, uses 
 			return exact, "Float", true, nil
 		}
 		number := exact.(float64)
-		if gdsLosslessLong(number) {
-			return int64(number), target, true, nil
+		if integer, fits := valueconvert.Int64(number, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat); fits {
+			return integer, target, true, nil
 		}
 		return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongConversion(gdsNumberText(number, 'f', 2)), nil)
 	case target == "List of Float" && kind == "List of Integer":
@@ -184,10 +122,11 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool, uses 
 		floats := exact.([]float64)
 		integers := make([]int64, len(floats))
 		for i, number := range floats {
-			if !gdsLosslessLong(number) {
+			integer, fits := valueconvert.Int64(number, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
+			if !fits {
 				return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(exact, true), gdsNumberText(number, 'f', 2)), nil)
 			}
-			integers[i] = int64(number)
+			integers[i] = integer
 		}
 		return integers, target, true, nil
 	}
@@ -202,11 +141,6 @@ func gdsLongToDouble(value int64, importing bool) (float64, error) {
 		return 0, localizedError(localization.CypherGraphProceduresUnsafeDoubleConversion(strconv.FormatInt(value, 10)), nil)
 	}
 	return float64(value), nil
-}
-
-// The upper bound is exclusive: float64(MaxInt64) rounds to 2^63.
-func gdsLosslessLong(value float64) bool {
-	return !math.IsNaN(value) && value >= -0x1p63 && value < 0x1p63 && value == math.Trunc(value)
 }
 
 // nodePropertyValue is the typed reader for every projected node property.

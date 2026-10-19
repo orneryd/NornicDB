@@ -14,6 +14,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 
@@ -307,15 +308,8 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 		}
 
 		// Convert to float64
-		var numVal float64
-		switch v := propVal.(type) {
-		case float64:
-			numVal = v
-		case int64:
-			numVal = float64(v)
-		case int:
-			numVal = float64(v)
-		default:
+		numVal, numeric := valueconvert.NumericFloat64(propVal)
+		if !numeric {
 			continue
 		}
 
