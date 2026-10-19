@@ -162,6 +162,7 @@ func canonicalCallableName(text string) (string, bool) {
 type syntaxSpan struct { start, end int }
 type syntaxGroup struct {
  open, close int
+ parent int
  separators []int
  punctuation []int
 }
@@ -182,7 +183,7 @@ func readFunctionSyntax(text string) *functionSyntax {
  }
  syntax := &functionSyntax{text:text, leading:queryGapEnd(text, 0)}
  // Group zero represents the whole input, including argument-only inputs.
- syntax.groups = append(syntax.groups, syntaxGroup{open:-1, close:len(text)})
+ syntax.groups = append(syntax.groups, syntaxGroup{open:-1, close:len(text),parent:-1})
  stack := []int{0}
  pending := make(map[int]functionCallSpan)
  subqueryOpen := make(map[int]int)
@@ -219,7 +220,7 @@ func readFunctionSyntax(text string) *functionSyntax {
   switch text[index] {
   case '(', '[', '{':
    group:=len(syntax.groups)
-   syntax.groups=append(syntax.groups,syntaxGroup{open:index,close:-1})
+   syntax.groups=append(syntax.groups,syntaxGroup{open:index,close:-1,parent:stack[len(stack)-1]})
    stack=append(stack,group)
    if call,ok:=pending[index]; ok {
     call.syntax=syntax; call.group=group
