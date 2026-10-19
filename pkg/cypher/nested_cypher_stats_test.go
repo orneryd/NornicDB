@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/nestedstats"
-"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -44,19 +44,19 @@ func BenchmarkNestedCypherRun(b *testing.B) {
 }
 
 func TestNestedCypherRollbackStats(t *testing.T) {
- store:=storage.NewNamespacedEngine(newTestMemoryEngine(t),"nestedrollback")
- exec:=NewStorageExecutor(store)
- ctx:=context.Background()
- _,err:=exec.Execute(ctx,"BEGIN",nil)
- require.NoError(t,err)
- result,err:=exec.Execute(ctx,"CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value",map[string]any{"body":"CREATE (:NestedRollback) RETURN 1 AS value"})
- require.NoError(t,err)
- require.Equal(t,1,result.Stats.NodesCreated)
- rollback,err:=exec.Execute(ctx,"ROLLBACK",nil)
- require.NoError(t,err)
- require.True(t,rollback.Stats==nil || *rollback.Stats==(QueryStats{}))
- result,err=exec.Execute(ctx,"MATCH (n:NestedRollback) RETURN count(n)",nil)
- require.NoError(t,err)
- require.EqualValues(t,0,result.Rows[0][0])
- require.True(t,result.Stats==nil || *result.Stats==(QueryStats{}))
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nestedrollback")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", map[string]any{"body": "CREATE (:NestedRollback) RETURN 1 AS value"})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Stats.NodesCreated)
+	rollback, err := exec.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	require.True(t, rollback.Stats == nil || *rollback.Stats == (QueryStats{}))
+	result, err = exec.Execute(ctx, "MATCH (n:NestedRollback) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, result.Rows[0][0])
+	require.True(t, result.Stats == nil || *result.Stats == (QueryStats{}))
 }

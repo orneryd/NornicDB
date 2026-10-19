@@ -48,7 +48,9 @@ func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) n
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
 	mode := neo4jdriver.AccessModeWrite
-	if len(modes) > 0 { mode = modes[0] }
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
 		AccessMode:   mode,
 		DatabaseName: "nornic",
