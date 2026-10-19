@@ -45,8 +45,6 @@ func (e *ReplicatedEngine) GetInnerEngine() storage.Engine {
 	return e.Engine
 }
 
-func (e *ReplicatedEngine) LocalCompletionStorage() storage.Engine { return e.Engine }
-
 // Backup delegates a native backup to the local storage chain. Replication
 // writes are already applied locally before their acknowledgement returns.
 func (e *ReplicatedEngine) Backup(path string) error {
