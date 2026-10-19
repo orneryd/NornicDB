@@ -169,8 +169,8 @@ regularQuery
     ;
 
 singleQuery
-    : singlePartQ
-    | multiPartQ
+    : multiPartQ
+    | singlePartQ
     ;
 
 standaloneCall
@@ -196,7 +196,7 @@ callSubquery
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? ({p.ProjectionPartAllowed()}? (readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* embeddingSt? (returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -204,11 +204,11 @@ returnSt
     ;
 
 withSt
-    : WITH projectionBody where?
+    : {!p.EmbeddingOptionAllowed()}? WITH projectionBody where?
     ;
 
 embeddingSt
-    : WITH EMBEDDING
+    : {p.EmbeddingOptionAllowed()}? WITH EMBEDDING
     ;
 
 skipSt
@@ -247,7 +247,7 @@ singlePartQ
     ;
 
 multiPartQ
-    : ((readingStatement | updatingStatement)* withSt)+ singlePartQ
+    : ({p.ProjectionPartAllowed()}? (readingStatement | updatingStatement)* withSt)+ singlePartQ
     ;
 
 matchSt
