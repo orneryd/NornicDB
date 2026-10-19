@@ -94,14 +94,25 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 		return variable, "", true, true
 	}
 	lookupID = strings.TrimSpace(idValue)
-	// A canonical element ID ("<kind>:<db>:<id>") names its ID payload; an
-	// id() lookup that passes an element ID is read the same way.
+	// Equality and IN consume the same qualified reference as graph readers.
 	if kind == "elementId" || strings.HasPrefix(lookupID, elementKind+":") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == elementKind {
-			lookupID = parts[2]
-		}
+		var found bool
+		lookupID, found = e.entitySeekLookup(lookupID,elementKind)
+		if !found { return variable,"",true,true }
 	}
 	return variable, lookupID, false, true
+}
+
+// entitySeekLookup retains the database until the selected engine accepts it.
+// Unqualified strings retain the existing raw-ID extension.
+func (e *StorageExecutor) entitySeekLookup(value, kind string) (string,bool) {
+	actual,database,local,qualified := storage.ParseElementID(value)
+	if !qualified { return value,true }
+	if actual != kind { return "",false }
+	if storage.CompositeDatabaseOf(e.storage) == "" && database != storageDatabaseName(e.storage) {
+		return "",false
+	}
+	return (storage.EntityIdentity{Database: database,LocalID: local}).LookupID(e.storage,kind)
 }
 
 // tryCollectNodesFromIDEquality attempts to satisfy:
@@ -225,17 +236,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	idValue = strings.TrimSpace(idValue)
 
 	lookupID := idValue
-	if kind == "elementId" {
-		parts := strings.SplitN(idValue, ":", 3)
-		if len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
-	}
-	// Permissive: strip canonical element ID prefix for id() lookups too.
-	if strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 {
-			lookupID = parts[2]
-		}
+	if kind == "elementId" || strings.HasPrefix(lookupID,"4:") {
+		var found bool
+		lookupID,found = e.entitySeekLookup(lookupID,"4")
+		if !found { return []*storage.Node{},true,nil }
 	}
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
@@ -930,16 +934,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if lookupID == "" {
 			continue
 		}
-		if kind == "elementId" {
-			parts := strings.SplitN(lookupID, ":", 3)
-			if len(parts) == 3 && parts[0] == "4" {
-				lookupID = parts[2]
-			}
-		}
-		if strings.HasPrefix(lookupID, "4:") {
-			if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 {
-				lookupID = parts[2]
-			}
+		if kind == "elementId" || strings.HasPrefix(lookupID,"4:") {
+			var found bool
+			lookupID,found = e.entitySeekLookup(lookupID,"4")
+			if !found { continue }
 		}
 		if _, exists := seen[lookupID]; exists {
 			continue

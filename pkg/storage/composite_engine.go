@@ -794,6 +794,10 @@ func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // GetOutgoingEdges returns outgoing edges from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
+	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
+		if engine == nil { return nil, nil }
+		return engine.GetOutgoingEdges(NodeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 	var allEdges []*Edge
 
@@ -817,6 +821,10 @@ func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // GetIncomingEdges returns incoming edges from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
+	if engine, local, qualified := c.constituentForElementID("4", string(nodeID)); qualified {
+		if engine == nil { return nil, nil }
+		return engine.GetIncomingEdges(NodeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 	var allEdges []*Edge
 
@@ -840,6 +848,10 @@ func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 // GetEdgesBetween returns edges between two nodes from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+	if engine,start,end,qualified := c.constituentForNodePair(startID,endID); qualified {
+		if engine == nil { return nil,nil }
+		return engine.GetEdgesBetween(start,end)
+	}
 	readConstituents := c.getConstituentsForRead()
 	var allEdges []*Edge
 
@@ -862,6 +874,10 @@ func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error
 
 // GetEdgeBetween returns an edge between two nodes from any constituent.
 func (c *CompositeEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
+	if engine,start,end,qualified := c.constituentForNodePair(startID,endID); qualified {
+		if engine == nil { return nil }
+		return engine.GetEdgeBetween(start,end,edgeType)
+	}
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {

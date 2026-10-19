@@ -302,11 +302,11 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	// embeddings, every chunk, each named embedding with its namesake
 	// (#1186). The source's embeddings are read once.
 	var sourceEmbeddings map[string][][]float32
-	if sourceNode, err := e.storage.GetNode(config.SourceNode); err == nil {
+	if sourceNode, err := config.identityStore.GetNode(config.SourceNode); err == nil {
 		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
 	}
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
-		targetNode, err := e.storage.GetNode(target)
+		targetNode, err := config.identityStore.GetNode(target)
 		if err != nil || source != config.SourceNode {
 			return 0.0
 		}
@@ -318,7 +318,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
-	return e.formatHybridPredictionResults(predictions, config.SourceNode), nil
+	return config.identityRows(e.formatHybridPredictionResults(predictions, config.SourceNode)), nil
 }
 
 // callGdsLinkPredictionTopology runs a topology link prediction algorithm
@@ -338,7 +338,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
 	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return config.identityRows(e.formatLinkPredictionResults(predictions, config.SourceNode)), nil
 }
 
 // linkPredictionGraph is the graph a link prediction reads (#1192): the
@@ -355,6 +355,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		if err != nil {
 			return nil, nil, err
 		}
+		config.bindIdentity(e.storage, projection)
 		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
 			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)
 		}
@@ -385,9 +386,12 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
+		view := graphIdentityView(e.storage)
+		config.bindIdentity(view, nil)
+		reader := e.cloneForStorage(view)
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
-		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, e.storage, build)
+		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, view, build)
 		if err != nil {
 			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 		}
@@ -398,7 +402,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 				return count
 			}
 			seen := make(map[storage.EdgeID]struct{})
-			for _, edge := range e.getNodeEdges(node) {
+			for _, edge := range reader.getNodeEdges(node) {
 				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
 					seen[edge.ID] = struct{}{}
 				}
@@ -469,6 +473,10 @@ type linkPredictionConfig struct {
 	MinThreshold      float64
 	RelationshipTypes []string                // nil: every type
 	TargetNodes       map[storage.NodeID]bool // nil: every candidate
+	sourceValue       interface{}
+	targetValues      []interface{}
+	identityStore     storage.Engine
+	identityOutput    func(storage.NodeID) string
 }
 
 // linkPredictionConfigKeys are the configuration keys link prediction takes.
@@ -513,6 +521,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 			return nil, c.typeError("sourceNode", "Node")
 		}
 		config.SourceNode = source
+		config.sourceValue = value
 	}
 	if value := c.value("targetNodes"); value != nil {
 		targets, isList := cypherListValue(value)
@@ -520,6 +529,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 			targets = []interface{}{value}
 		}
 		config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
+		config.targetValues = targets
 		for _, target := range targets {
 			id, ok := linkPredictionNodeID(target)
 			if !ok {
