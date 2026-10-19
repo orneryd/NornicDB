@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const (
@@ -58,7 +60,7 @@ func ValidateURL(rawURL string, isDevelopment, allowHTTP bool) error {
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrURLInvalid, err)
+		return fmt.Errorf("%w: %v", ErrURLInvalid, observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
 
 	scheme := strings.ToLower(parsedURL.Scheme)

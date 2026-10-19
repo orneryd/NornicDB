@@ -11,6 +11,11 @@ import (
 func remoteDisplayCredentials(cfg RemoteEngineConfig) []string {
 	var credentials []string
 	user, password, token := strings.TrimSpace(cfg.User), strings.TrimSpace(cfg.Password), strings.TrimSpace(cfg.AuthToken)
+	if user != "" {
+		// URI normalization can move a username-only credential into User.
+		// Retain that owned scalar as well as the Basic user:password form.
+		credentials = append(credentials, cfg.User, user)
+	}
 	if password != "" {
 		credentials = append(credentials, cfg.Password, password)
 	}
