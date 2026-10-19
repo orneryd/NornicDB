@@ -331,7 +331,7 @@ func splitNodeFixture(t *testing.T) (*gpu.ClusterIndex, *VectorIndex, int, map[i
 	t.Helper()
 	vectors := exhaustionFixtureVectors()
 	vectors["split"] = []float32{0.2, 1}
-	vectors["split-chunk-1"] = []float32{1, 0.01}
+	vectors[nodeChunkVectorKey("split", 1)] = []float32{1, 0.01}
 	cfg := gpu.DefaultEmbeddingIndexConfig(2)
 	cfg.GPUEnabled, cfg.AutoSync = false, false
 	clusters := gpu.NewClusterIndex(nil, cfg, &gpu.KMeansConfig{NumClusters: 2, MaxIterations: 10, Tolerance: 0.001, InitMethod: "kmeans++"})
@@ -351,7 +351,7 @@ func splitNodeFixture(t *testing.T) (*gpu.ClusterIndex, *VectorIndex, int, map[i
 			switch id {
 			case "split":
 				weakCluster = cluster
-			case "split-chunk-1":
+			case nodeChunkVectorKey("split", 1):
 				strongCluster = cluster
 			}
 		}
@@ -369,7 +369,7 @@ func TestRestrictedPassScoresANodesUnroutedChunks(t *testing.T) {
 		out := map[string][]string{}
 		for _, nodeID := range nodeIDs {
 			if nodeID == "split" {
-				out[nodeID] = []string{"split", "split-chunk-1"}
+				out[nodeID] = []string{"split", nodeChunkVectorKey("split", 1)}
 			} else {
 				out[nodeID] = []string{nodeID}
 			}
@@ -390,7 +390,7 @@ func TestRestrictedPassScoresANodesUnroutedChunks(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, evidence.exhausted, "one cluster of two")
 			require.NotEmpty(t, results)
-			require.Equal(t, "split-chunk-1", results[0].ID, "%+v", results)
+			require.Equal(t, nodeChunkVectorKey("split", 1), results[0].ID, "%+v", results)
 			require.InDelta(t, strong, results[0].Score, 1e-5)
 
 			// Under a threshold the weak chunk is provably below it, so the
@@ -400,7 +400,7 @@ func TestRestrictedPassScoresANodesUnroutedChunks(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, evidence.exhausted)
 			for _, result := range results {
-				if normalizeVectorResultIDToNodeID(result.ID) == "split" {
+				if mustVectorEntryOwner(t, result.ID) == "split" {
 					require.InDelta(t, strong, result.Score, 1e-5)
 				}
 			}
@@ -651,7 +651,7 @@ func TestBoundedStageMatchesFullStage(t *testing.T) {
 		for c, v := range randomUnitVectors(rng, 1+n%4, dims) {
 			id := node
 			if c > 0 {
-				id = fmt.Sprintf("%s-chunk-%d", node, c)
+				id = nodeChunkVectorKey(node, c)
 			}
 			require.NoError(t, index.Add(id, v))
 			members[node] = append(members[node], id)
@@ -688,7 +688,7 @@ func TestBoundedStageMatchesFullStage(t *testing.T) {
 			partial, _, err := pipeline.scoreNodes(ctx, query, some, k, threshold, bound)
 			require.NoError(t, err)
 			for i, result := range partial {
-				node := normalizeVectorResultIDToNodeID(result.ID)
+				node := mustVectorEntryOwner(t, result.ID)
 				require.InDelta(t, best[node], result.Score, 1e-6, "k=%d threshold=%v %s", k, threshold, node)
 				require.GreaterOrEqual(t, result.Score, threshold)
 				if i > 0 {

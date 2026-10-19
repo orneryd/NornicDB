@@ -286,7 +286,7 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 	if n == 0 {
 		switch name {
 		case "nodeMainVectorKey", "nodeNamedVectorKey", "nodePropertyVectorKey", "nodeChunkVectorKey", "NodeChunkVectorKey", "vectorNodeIdentity", "vectorEntryChunkIndex",
-			"Service.nodeVectorIDsLocked", "Service.forEachNodeVectorKeyLocked", "Service.removeNodeEntriesLocked", "Service.removeNodeLocked", "Service.RemoveNode", "Service.beginClusterNodeChangeLocked", "Service.endClusterNodeChangeLocked", "Service.bm25SeedEmbeddingIDs":
+			"Service.vectorMembersOf", "Service.nodeVectorIDsLocked", "Service.forEachNodeVectorKeyLocked", "Service.removeNodeEntriesLocked", "Service.removeNodeLocked", "Service.RemoveNode", "Service.beginClusterNodeChangeLocked", "Service.endClusterNodeChangeLocked", "Service.bm25SeedEmbeddingIDs":
 			return domainNode
 		case "vectorEntryOwner", "decodeVectorEntryKey", "vectorEntryChunkIndexForNode", "lexicalHintForVectorID", "vectorIDInSeedNodeSet", "vectorEntryIdentity", "collapseCandidatesByNodeID", "collapseIndexResultsByNodeID", "collapseIndexResultsByNodeIDSlow", "Service.clusterTextTokens",
 			"Service.addVectorLocked", "Service.removeVectorLocked", "Service.hnswUpdateLive", "Service.hnswRemoveLive", "Service.storedVectorEqualsLocked", "Service.getVectorForCypher", "Service.getVectorForCypherLocked", "getTransitionDeltaVector",
@@ -298,7 +298,7 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 		switch name {
 		case "vectorEntryChunkIndexForNode", "nodeHintForID":
 			return domainNode
-		case "entryHintForVectorID", "putEntryLexicalHint", "vectorEntryChunkIndex":
+		case "entryHintForVectorID", "putEntryLexicalHint", "vectorEntryChunkIndex", "recordStageScore":
 			return domainEntry
 		case "clusterGeneration.graphAdd", "clusterGeneration.graphRemove", "Service.scoreVectorIDDot":
 			return domainEntry
@@ -333,7 +333,7 @@ func domainResult(fn *types.Func) vectorDomain {
 		return domainEntry
 	case "vectorEntryOwner", "vectorNodeIdentity", "vectorNodeID.nodeIDString", "collapseCandidatesByNodeID", "collapseIndexResultsByNodeID", "collapseIndexResultsByNodeIDSlow":
 		return domainNode
-	case "vectorEntryIdentity", "vectorEntryID.entryKeyString", "VectorFileStore.IDs", "lexicalBandIndex.seeds", "loadIVFClusterMemberIDs", "clusterGeneration.members", "Clustering.MemberIDs", "Clustering.MemberIDsOf", "ClusterIndex.GetClusterMemberIDs", "ClusterIndex.GetClusterMemberIDsForCluster", "VectorIndex.GetAllVectors", "VectorIndex.GetAllIDs", "VectorFileStore.GetAllVectors", "VectorFileStore.GetAllIDs":
+	case "Service.vectorMembersOf", "vectorEntryIdentity", "vectorEntryID.entryKeyString", "VectorFileStore.IDs", "lexicalBandIndex.seeds", "loadIVFClusterMemberIDs", "clusterGeneration.members", "Clustering.MemberIDs", "Clustering.MemberIDsOf", "ClusterIndex.GetClusterMemberIDs", "ClusterIndex.GetClusterMemberIDsForCluster", "VectorIndex.GetAllVectors", "VectorIndex.GetAllIDs", "VectorFileStore.GetAllVectors", "VectorFileStore.GetAllIDs":
 		return domainEntry
 	}
 	if fn.Name() == "ScoreCandidates" {
@@ -364,7 +364,7 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 	case *ast.SelectorExpr:
 		recv, field := g.field(x)
 		switch recv + "." + field {
-		case "Node.ID", "vectorEntry.NodeID", "nodeLexicalHint.ID", "LexicalSeedHint.ID":
+		case "Node.ID", "vectorEntry.NodeID", "nodeLexicalHint.ID", "LexicalSeedHint.ID", "stageNode.id":
 			return domainNode
 		case "nodeVectorEntry.key", "hnswBuildPair.id", "HNSWIndex.internalToID", "strategyDelta.id", "strategyDeltaMutation.id", "hnswBuildMutation.id", "annMutation.id", "ScoredCandidate.ID", "Candidate.ID", "ANNResult.ID", "Clustering.Clusters", "annMutationOverlaySnapshot.Tombstones":
 			return domainEntry
@@ -414,6 +414,9 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 					return g.infer(x.Args[0])
 				}
 			}
+		}
+		if domainTypeName(g.p.info.TypeOf(x.Fun)) == "vectorMemberResolver" {
+			return domainEntry // resolver results contain vector-entry keys
 		}
 		if f := g.called(x.Fun); f != nil {
 			if d := domainResult(f); d != 0 {
@@ -496,6 +499,19 @@ func (g *vectorDomainGuard) closeDomains() {
 						g.returns[fn] |= g.infer(x.Results[0])
 					}
 				case *ast.CallExpr:
+					// Function values retain their compiler signature. Derive a
+					// local closure parameter from every actual caller too.
+					if g.called(x.Fun) == nil && !g.p.info.Types[x.Fun].IsType() {
+						if typ := g.p.info.TypeOf(x.Fun); typ != nil {
+							if sig, ok := typ.Underlying().(*types.Signature); ok {
+								for i, arg := range x.Args {
+									if i < sig.Params().Len() {
+										g.env[sig.Params().At(i)] |= g.infer(arg)
+									}
+								}
+							}
+						}
+					}
 					if f := g.called(x.Fun); f != nil {
 						sig := f.Type().(*types.Signature)
 						offset := g.argumentOffset(x, f)
@@ -528,6 +544,12 @@ func (g *vectorDomainGuard) closeDomains() {
 						}
 					}
 				case *ast.FuncLit:
+					if domainFuncName(fn) == "Service.memoizedVectorMembers" {
+						params := g.p.info.TypeOf(x).(*types.Signature).Params()
+						if params.Len() == 1 {
+							g.env[params.At(0)] = domainNode
+						}
+					}
 					if domainEntryReader(g.p.info.TypeOf(x)) {
 						g.env[g.p.info.TypeOf(x).(*types.Signature).Params().At(0)] = domainEntry
 					}
@@ -638,6 +660,12 @@ func (g *vectorDomainGuard) checkKeyCall(where string, call *ast.CallExpr, owner
 		return
 	} // a function-type conversion is not an invocation
 	if fn == nil {
+		if domainTypeName(g.p.info.TypeOf(call.Fun)) == "vectorMemberResolver" {
+			g.population[where+" -> VectorMemberResolver"] = true
+			if len(call.Args) == 0 || g.infer(call.Args[0]) != domainNode {
+				g.flag(where, "member resolver receives an unproved/non-node identity")
+			}
+		}
 		if where == "Service.forEachNodeVectorKeyLocked" && len(call.Args) == 1 {
 			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "visit" && g.infer(call.Args[0]) != domainEntry {
 				g.flag(where, "inventory callback receives a non-entry identity")
