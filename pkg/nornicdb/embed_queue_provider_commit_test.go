@@ -86,3 +86,23 @@ func TestEmbedWorkerProviderChangeRejectsValidatedRetry(t *testing.T) {
 	require.True(t, worker.processNextBatch(), "replacement provider must retain pending ownership")
 	require.Equal(t, 2, queue.attempts[node.ID])
 }
+
+func TestEmbedWorkerProviderChangeDBLockOrder(t *testing.T) {
+	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 1, 0)
+	db := &DB{baseStorage: queue.Engine, embedQueue: worker, config: DefaultConfig()}
+	// A blocked commit owns the provider barrier. DB.SetEmbedder must not
+	// hold db.mu while it waits, since publication is allowed to read db.mu.
+	worker.providerWriteMu.RLock()
+	started, done := make(chan struct{}), make(chan struct{})
+	go func() { close(started); db.SetEmbedder(newMockEmbedder()); close(done) }()
+	<-started
+	select {
+	case <-done: t.Error("DB provider setter bypassed commit barrier")
+	case <-time.After(20*time.Millisecond):
+	}
+	available := db.mu.TryRLock()
+	if available { db.mu.RUnlock() }
+	worker.providerWriteMu.RUnlock()
+	require.True(t, available, "DB lifecycle mutex must be available to blocked publication")
+	<-done
+}

@@ -1605,7 +1605,29 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		return false
 	}
 
-	db.mu.Lock()
+	// Publication callbacks can acquire db.mu. Wait for their provider/write
+	// barrier BEFORE holding db.mu, then recheck the queue under the lifecycle
+	// lock. A concurrently created queue must be admitted through its barrier.
+	var queue *EmbedQueue
+	for {
+		db.mu.RLock()
+		queue = db.embedQueue
+		db.mu.RUnlock()
+		if queue != nil {
+			queue.providerWriteMu.Lock()
+		}
+		db.mu.Lock()
+		if queue == db.embedQueue {
+			break
+		}
+		db.mu.Unlock()
+		if queue != nil {
+			queue.providerWriteMu.Unlock()
+		}
+	}
+	if queue != nil {
+		defer queue.providerWriteMu.Unlock()
+	}
 	if db.closed {
 		// Close has stopped, or is stopping, the queue and timers this
 		// would start.
@@ -1637,7 +1659,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
-		db.embedQueue.SetEmbedder(embedder)
+		db.embedQueue.setEmbedderUnderWriteBarrier(embedder)
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
 			embedder.Model(), embedder.Dimensions())
 		db.mu.Unlock()

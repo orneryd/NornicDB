@@ -288,6 +288,12 @@ func (ew *EmbedWorker) StartWorkers() {
 func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
 	ew.providerWriteMu.Lock()
 	defer ew.providerWriteMu.Unlock()
+	ew.setEmbedderUnderWriteBarrier(embedder)
+}
+
+// setEmbedderUnderWriteBarrier is also used by DB.SetEmbedder, which acquires
+// the provider barrier before db.mu so publication can enter DB locks.
+func (ew *EmbedWorker) setEmbedderUnderWriteBarrier(embedder embed.Embedder) {
 	ew.mu.Lock()
 	ew.embedder = embedder
 	ew.embeddingEpoch.Add(1)
