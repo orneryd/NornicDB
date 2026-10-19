@@ -508,6 +508,7 @@ func (c *CPUExactScorer) scoreCandidateValues(ctx context.Context, query []float
 
 type vectorScoreReader struct {
 	ctx    context.Context
+	done   <-chan struct{}
 	query  []float32
 	index  *VectorIndex
 	getter VectorGetter
@@ -515,7 +516,7 @@ type vectorScoreReader struct {
 
 func (r *vectorScoreReader) score(id string) (float64, bool, error) {
 	select {
-	case <-r.ctx.Done():
+	case <-r.done:
 		return 0, false, r.ctx.Err()
 	default:
 	}
@@ -540,12 +541,15 @@ func (c *CPUExactScorer) withVectorScores(ctx context.Context, query []float32, 
 	if c.getter == nil {
 		return nil
 	}
+	done := ctx.Done()
 	select {
-	case <-ctx.Done():
+	case <-done:
 		return ctx.Err()
 	default:
 	}
-	reader := vectorScoreReader{ctx: ctx, query: vector.Normalize(query), getter: c.getter}
+	// Context's Done channel is stable. Resolve it once instead of walking
+	// the request's value-context chain again for every member vector.
+	reader := vectorScoreReader{ctx: ctx, done: done, query: vector.Normalize(query), getter: c.getter}
 	if index, ok := c.getter.(*VectorIndex); ok {
 		index.mu.RLock()
 		defer index.mu.RUnlock()
