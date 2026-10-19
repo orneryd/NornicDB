@@ -69,7 +69,7 @@ func TestFabricAutoCommitCapturesOnlyPlannedRemotes(t *testing.T) {
 			}
 			require.Len(t, result.Rows, expectedRows)
 			for _, row := range result.Rows {
-				require.Equal(t, int64(7), row[0])
+				require.EqualValues(t, 7, row[0])
 			}
 			require.Equal(t, int64(0), unavailableCalls.Load(), "no request may touch the unrelated constituent")
 			require.Equal(t, int64(2), probes.Load(), "retain logical-BEGIN capture and physical participant validation, once per remote")
