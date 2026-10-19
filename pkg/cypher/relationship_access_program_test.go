@@ -74,38 +74,41 @@ func TestRelationshipAccessProgramIsSharedSource(t *testing.T) {
 		_, err := e.Execute(context.Background(), q, nil)
 		require.NoError(t, err)
 	}
-	for _, tc := range []struct { name, query string; rows [][]interface{} }{
+	for _, tc := range []struct {
+		name, query string
+		rows        [][]interface{}
+	}{
 		{"collect", "WITH $x AS k RETURN COLLECT { MATCH ()-[r:T]->() WHERE r.p=k RETURN r.p }", [][]interface{}{{[]interface{}{"x"}}}},
 		{"anchored_count", "MATCH (a:Key) RETURN COUNT { MATCH (a)-[r:T]->() WHERE r.p=$x }", [][]interface{}{{int64(1)}}},
 		{"anchored_exists", "MATCH (a:Key) RETURN EXISTS { (a)-[r:T {p:$x}]->() }", [][]interface{}{{true}}},
 		{"call", "MATCH (a:Key) CALL (a) { MATCH (a)-[r:T]->() WHERE r.p=$x RETURN r.p AS value } RETURN value", [][]interface{}{{"x"}}},
 		{"all_token", "CREATE (n:$all(head(COLLECT { MATCH ()-[r:T]->() WHERE r.p=$x RETURN r.p }))) RETURN labels(n)", [][]interface{}{{[]interface{}{"x"}}}},
 	} {
-	t.Run(tc.name, func(t *testing.T) {
-	query := tc.query
-	program := relationshipProgramFor(query)
-	require.Len(t, program.sites, 1)
-	for _, populated := range []bool{true, false} {
-		t.Run(map[bool]string{true: "registered", false: "removed"}[populated], func(t *testing.T) {
-			source := program
-			if !populated {
-				source = &relationshipAccessProgram{query: query, byID: map[string]*relationshipAccessTemplate{}}
+		t.Run(tc.name, func(t *testing.T) {
+			query := tc.query
+			program := relationshipProgramFor(query)
+			require.Len(t, program.sites, 1)
+			for _, populated := range []bool{true, false} {
+				t.Run(map[bool]string{true: "registered", false: "removed"}[populated], func(t *testing.T) {
+					source := program
+					if !populated {
+						source = &relationshipAccessProgram{query: query, byID: map[string]*relationshipAccessTemplate{}}
+					}
+					ctx := context.WithValue(context.Background(), relationshipAccessProgramKey{}, source)
+					ctx = withRelationshipSeekProfile(context.WithValue(ctx, profileExecutionKey{}, true))
+					params := map[string]interface{}{"x": "x"}
+					actual, err := e.Execute(ctx, query, params)
+					require.NoError(t, err)
+					require.Equal(t, tc.rows, actual.Rows)
+					profile := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+					require.Equal(t, populated, len(profile.seeks) != 0)
+					require.Equal(t, !populated, len(profile.unregistered) != 0)
+					result, err := e.Execute(ctx, "EXPLAIN "+query, params)
+					require.NoError(t, err)
+					seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
+					require.Equal(t, populated, seek != nil)
+				})
 			}
-			ctx := context.WithValue(context.Background(), relationshipAccessProgramKey{}, source)
-			ctx = withRelationshipSeekProfile(context.WithValue(ctx, profileExecutionKey{}, true))
-			params := map[string]interface{}{"x": "x"}
-			actual, err := e.Execute(ctx, query, params)
-			require.NoError(t, err)
-			require.Equal(t, tc.rows, actual.Rows)
-			profile := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
-			require.Equal(t, populated, len(profile.seeks) != 0)
-			require.Equal(t, !populated, len(profile.unregistered) != 0)
-			result, err := e.Execute(ctx, "EXPLAIN "+query, params)
-			require.NoError(t, err)
-			seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
-			require.Equal(t, populated, seek != nil)
 		})
-	}
-	})
 	}
 }
