@@ -115,3 +115,70 @@ func TestFabricHTTPIdleLocalStorageCleanupBound(t *testing.T) {
 		t.Error("local rollback did not finish after storage lock was released")
 	}
 }
+
+func TestFabricHTTPCommitWaitsForLocalStorageOutcome(t *testing.T) {
+	server, auth := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, auth, "admin")
+	require.NoError(t, server.dbManager.CreateDatabase("idleblocked"))
+	leaf, err := server.dbManager.GetStorage("idleblocked")
+	require.NoError(t, err)
+	_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
+	require.NoError(t, err)
+	require.NoError(t, server.dbManager.CreateCompositeDatabase("commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
+	setter, ok := unwrapInnerStorage(leaf).(interface {
+		SetLifecycleController(storage.MVCCLifecycleController)
+	})
+	require.True(t, ok)
+	controller := &idleSnapshotLock{entered: make(chan struct{}), finished: make(chan struct{})}
+	setter.SetLifecycleController(controller)
+	defer setter.SetLifecycleController(nil)
+	controller.mu.Lock()
+	var release sync.Once
+	defer release.Do(controller.mu.Unlock)
+	server.txSessions = txsession.NewManager(time.Minute, server.newExecutorForDatabase)
+	server.txSessions.SetLifetimeContext(server.requestsCtx)
+	router := server.buildRouter()
+	request := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.Header.Set("Authorization", token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+	begin := request("/db/commitcomp/tx", `{"statements":[{"statement":"USE commitcomp.l CREATE (:CommitOutcome {id:'late'}) RETURN 7 AS k"}]}`)
+	require.Equal(t, http.StatusCreated, begin.Code, begin.Body.String())
+	var opened TransactionResponse
+	require.NoError(t, json.Unmarshal(begin.Body.Bytes(), &opened))
+	require.Empty(t, opened.Errors)
+	committed := make(chan *httptest.ResponseRecorder, 1)
+	go func() { committed <- request(opened.Commit, `{"statements":[]}`) }()
+	select {
+	case <-controller.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("COMMIT did not reach local storage snapshot release")
+	}
+	started := time.Now()
+	var response *httptest.ResponseRecorder
+	select {
+	case response = <-committed:
+		t.Errorf("COMMIT responded before its storage outcome at %s: %s", time.Since(started), response.Body.String())
+	case <-time.After(32 * time.Second):
+		t.Log("COMMIT still waits for the real outcome beyond the idle cleanup bound")
+	}
+	release.Do(controller.mu.Unlock)
+	if response == nil {
+		select {
+		case response = <-committed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("COMMIT did not return after storage unblocked")
+		}
+	}
+	var result TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	if len(result.Errors) != 0 {
+		t.Errorf("COMMIT returned error despite its eventual committed write: %v", result.Errors)
+	}
+	require.Eventually(t, func() bool { nodes, err := leaf.GetNodesByLabel("CommitOutcome"); return err == nil && len(nodes) == 1 }, 5*time.Second, 10*time.Millisecond)
+	t.Logf("local write committed; HTTP outcome returned after %s", time.Since(started))
+}
