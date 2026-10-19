@@ -15,24 +15,10 @@ func (c *CompositeEngine) constituentForElementID(kind, value string) (engine En
 // constituentsForEntity is the shared source selector for ordinary and MVCC
 // identity reads. A qualified reference cannot fall through to another source.
 func (c *CompositeEngine) constituentsForEntity(kind, value string) ([]string, string, bool) {
-	actual, database, local, qualified := ParseElementID(value)
-	aliases := c.getConstituentsForRead()
-	if !qualified {
-		return aliases, value, false
-	}
-	if actual != kind {
-		return nil, local, true
-	}
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if c.constituentDatabase(alias, engine) == database {
-			return []string{alias}, local, true
-		}
-	}
-	return nil, local, true
+    actual, database, local, qualified := ParseElementID(value)
+    if !qualified { return c.constituentsForIdentity(EntityIdentity{LocalID:value}, c.getConstituentsForRead()), value, false }
+    if actual != kind { return nil, local, true }
+    return c.constituentsForIdentity(EntityIdentity{Database:database, LocalID:local}, c.getConstituentsForRead()), local, true
 }
 
 func (c *CompositeEngine) constituentDatabase(alias string, engine Engine) string {

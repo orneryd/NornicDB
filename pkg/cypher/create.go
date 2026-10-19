@@ -226,11 +226,12 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			// Create relationship
 			edge := &storage.Edge{
 				ID:         storage.EdgeID(e.generateID()),
-				StartNode:  startNode.ID,
-				EndNode:    endNode.ID,
+				
+				
 				Type:       relType,
 				Properties: relProps,
 			}
+			if err := storage.BindRelationshipEndpoints(edge, startNode, endNode); err != nil { return nil, err }
 			plan.edges = append(plan.edges, edge)
 			if relVar != "" {
 				createdEdges[relVar] = edge
