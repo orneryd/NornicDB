@@ -552,8 +552,9 @@ func maskPathFunctionCalls(expression string) string {
 		return expression
 	}
 	masked := []byte(expression)
+	syntax:=readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
-		call, ok := nextFunctionCall(expression, index)
+		call, ok := syntax.nextCall(index,true,false,false)
 		if !ok {
 			break
 		}

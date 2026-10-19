@@ -50,9 +50,10 @@ type aggregateSpan struct {
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
+	syntax:=readFunctionSyntax(expr)
 	var spans []aggregateSpan
 	for index := 0; index < len(expr); {
-		call, ok := nextFunctionCallIn(expr, index, false)
+		call, ok := syntax.nextCall(index,false,false,false)
 		if !ok {
 			break
 		}

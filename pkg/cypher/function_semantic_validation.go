@@ -86,8 +86,9 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
+	syntax:=readFunctionSyntax(text)
 	for index := 0; index < len(text); {
-		call, ok := nextFunctionCall(text, index)
+		call, ok := syntax.nextCall(index,true,false,false)
 		if !ok {
 			break
 		}

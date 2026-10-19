@@ -80,8 +80,12 @@ func nextCallSpan(text string, index int, descendSubqueries, includeProcedures b
 }
 
 func nextCallSpanMode(text string, index int, descendSubqueries, includeProcedures, syntaxNames bool) (functionCallSpan, bool) {
-	syntax := readFunctionSyntax(text)
-	for _, call := range syntax.calls {
+ return readFunctionSyntax(text).nextCall(index,descendSubqueries,includeProcedures,syntaxNames)
+}
+
+func (syntax *functionSyntax) nextCall(index int, descendSubqueries, includeProcedures, syntaxNames bool) (functionCallSpan,bool) {
+ text:=syntax.text
+ for _,call:=range syntax.calls[syntax.callIndex(index):] {
 		if call.start < index || call.procedure && !includeProcedures {
 			continue
 		}
@@ -118,12 +122,13 @@ func functionCallBeforeParen(text string, open int) (functionCallSpan, bool) {
 }
 
 func functionCallAt(text string, at int) (functionCallSpan, bool) {
-	for _, call := range readFunctionSyntax(text).calls {
-		if call.start == at && !call.procedure {
-			return call, true
-		}
-	}
-	return functionCallSpan{}, false
+ syntax:=readFunctionSyntax(text)
+ index:=syntax.callIndex(at)
+ if index<len(syntax.calls) {
+  call:=syntax.calls[index]
+  if call.start==at && !call.procedure {return call,true}
+ }
+ return functionCallSpan{},false
 }
 
 // functionNameStartsAt prevents a builtin scanner from matching only the last
@@ -518,4 +523,12 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 		}
 		end = partEnd
 	}
+}
+
+// callIndex finds the first recorded call at or after a byte offset. Walkers
+// retain this structure, including texts too large for the bounded cache.
+func (syntax *functionSyntax) callIndex(offset int) int {
+ low,high:=0,len(syntax.calls)
+ for low<high {middle:=low+(high-low)/2;if syntax.calls[middle].start<offset {low=middle+1} else {high=middle}}
+ return low
 }
