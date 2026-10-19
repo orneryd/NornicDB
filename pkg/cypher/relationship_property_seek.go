@@ -26,7 +26,11 @@ func (run relationshipAccessExecution) tryID(ctx context.Context, match *Travers
 		return nil, false, nil
 	}
 	e := run.executor
-	variable, lookupID, empty, ok := e.idEqualityLookup(ctx, run.physicalWhere, "5")
+	predicate := run.physicalWhere
+	if predicate == "" {
+		predicate = run.where
+	}
+	variable, lookupID, empty, ok := e.idEqualityLookup(ctx, predicate, "5")
 	if !ok || variable != match.Relationship.Variable {
 		return nil, false, nil
 	}
@@ -82,8 +86,8 @@ func (run relationshipAccessExecution) tryID(ctx context.Context, match *Travers
 		}
 		paths = append(paths, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1})
 	}
-	if run.physicalWhere != "" {
-		paths = e.filterPathsByWhere(ctx, paths, match, run.physicalWhere, nil)
+	if predicate != "" {
+		paths = e.filterPathsByWhere(ctx, paths, match, predicate, nil)
 	}
 	if match.TraversalLimit > 0 && len(paths) > match.TraversalLimit {
 		paths = paths[:match.TraversalLimit]

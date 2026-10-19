@@ -236,55 +236,107 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 			}
 		}
 	}
-	// Derive the complete storage-rooted descendant graph of the owner. Generic
-	// expression/procedure dispatch has broad compiler-visible fan-in from
-	// unrelated facilities; that fan-in is a mechanical boundary, not a list
-	// of exempt function names.
-	raw := map[*types.Func]bool{}
-	var includeRaw func(*types.Func)
-	includeRaw = func(object *types.Func) {
-		if object == nil || raw[object] || !reads[object] {
-			return
-		}
-		raw[object] = true
+	// Collapse the compiler graph's strongly connected components, then grow
+	// the kernel only through components whose every production predecessor is
+	// already owned. Shared expression/procedure dispatch therefore forms a
+	// mechanical boundary, while an exclusive storage reader cannot acquire a
+	// new caller without failing this guard.
+	indexes, low := map[*types.Func]int{}, map[*types.Func]int{}
+	onStack := map[*types.Func]bool{}
+	var stack []*types.Func
+	var components [][]*types.Func
+	nextIndex := 1
+	var strongConnect func(*types.Func)
+	strongConnect = func(object *types.Func) {
+		indexes[object], low[object] = nextIndex, nextIndex
+		nextIndex++
+		stack = append(stack, object)
+		onStack[object] = true
 		for callee := range functions[object].calls {
-			includeRaw(callee)
-		}
-	}
-	for _, function := range functions {
-		if function.owner {
-			for callee := range function.calls {
-				includeRaw(callee)
+			if !reads[callee] || functions[callee].owner {
+				continue
+			}
+			if indexes[callee] == 0 {
+				strongConnect(callee)
+				if low[callee] < low[object] {
+					low[object] = low[callee]
+				}
+			} else if onStack[callee] && indexes[callee] < low[object] {
+				low[object] = indexes[callee]
 			}
 		}
+		if low[object] != indexes[object] {
+			return
+		}
+		var component []*types.Func
+		for {
+			last := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[last] = false
+			component = append(component, last)
+			if last == object {
+				break
+			}
+		}
+		components = append(components, component)
 	}
-	outsideCallers := map[*types.Func]int{}
+	for object, function := range functions {
+		if reads[object] && !function.owner && indexes[object] == 0 {
+			strongConnect(object)
+		}
+	}
+	componentOf := map[*types.Func]int{}
+	for component, members := range components {
+		for _, member := range members {
+			componentOf[member] = component
+		}
+	}
+	predecessors := make([]map[int]bool, len(components))
+	ownerPredecessor := make([]bool, len(components))
+	for component := range components {
+		predecessors[component] = map[int]bool{}
+	}
 	for caller, function := range functions {
 		for callee := range function.calls {
-			if raw[callee] && !raw[caller] && !function.owner {
-				outsideCallers[callee]++
+			component, present := componentOf[callee]
+			if !present {
+				continue
+			}
+			if function.owner {
+				ownerPredecessor[component] = true
+				continue
+			}
+			if predecessor, ok := componentOf[caller]; ok && predecessor != component {
+				predecessors[component][predecessor] = true
 			}
 		}
 	}
-
-	// Walk the owner again, stopping at high-fan-in shared dispatch. An
-	// exclusive reader remains in the kernel when one bypass is added, so the
-	// scratch mutation is reported instead of redefining the population.
-	kernel := map[*types.Func]bool{}
-	var include func(*types.Func)
-	include = func(object *types.Func) {
-		if object == nil || kernel[object] || !reads[object] || outsideCallers[object] > 1 {
-			return
-		}
-		kernel[object] = true
-		for callee := range functions[object].calls {
-			include(callee)
+	included := make([]bool, len(components))
+	for changed := true; changed; {
+		changed = false
+		for component := range components {
+			if included[component] {
+				continue
+			}
+			reached, ready := ownerPredecessor[component], true
+			for predecessor := range predecessors[component] {
+				if included[predecessor] {
+					reached = true
+				} else {
+					ready = false
+				}
+			}
+			if reached && ready {
+				included[component] = true
+				changed = true
+			}
 		}
 	}
-	for _, function := range functions {
-		if function.owner {
-			for callee := range function.calls {
-				include(callee)
+	kernel := map[*types.Func]bool{}
+	for component, members := range components {
+		if included[component] {
+			for _, member := range members {
+				kernel[member] = true
 			}
 		}
 	}
@@ -298,10 +350,27 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 	t.Logf("program-owned storage-rooted relationship kernels (%d):\n%s", len(population), strings.Join(population, "\n"))
 
 	violations := structuralViolations
-	for object, function := range functions {
-		for callee := range function.calls {
-			if kernel[callee] && !function.owner && !kernel[object] {
-				violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", function.position, function.name, functions[callee].name))
+	for component := range components {
+		if included[component] {
+			continue
+		}
+		reached := ownerPredecessor[component]
+		var outside []int
+		for predecessor := range predecessors[component] {
+			if included[predecessor] {
+				reached = true
+			} else {
+				outside = append(outside, predecessor)
+			}
+		}
+		if !reached || len(outside) != 1 {
+			continue
+		}
+		for _, caller := range components[outside[0]] {
+			for callee := range functions[caller].calls {
+				if componentOf[callee] == component {
+					violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", functions[caller].position, functions[caller].name, functions[callee].name))
+				}
 			}
 		}
 	}
