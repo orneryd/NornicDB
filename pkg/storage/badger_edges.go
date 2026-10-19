@@ -244,13 +244,8 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 				return true, nil
 			}
 		}
-		if value, ok := b.cacheLoadEdge(id); ok {
-			if b.filterEdgeByDecay(value, DecayScoringTime()) {
-				return true, ErrNotFound
-			}
-			edge = copyEdge(value)
-			return true, nil
-		}
+		// Edge point reads retain the authoritative physical-body kernel.
+		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
 	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
