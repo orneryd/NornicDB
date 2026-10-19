@@ -9,7 +9,7 @@ import (
 // A stored local ID is opaque: only an explicit external element ID is parsed.
 type EntityIdentity struct {
 	Database string
-	LocalID string
+	LocalID  string
 }
 
 func (id EntityIdentity) Key() string { return EntityIdentityKey(id.Database, id.LocalID) }
@@ -23,10 +23,10 @@ func (id EntityIdentity) InDatabase(database string) string {
 	return id.LocalID
 }
 
-func (n *Node) Identity() EntityIdentity { return EntityIdentity{n.Database, string(n.ID)} }
-func (e *Edge) Identity() EntityIdentity { return EntityIdentity{e.Database, string(e.ID)} }
+func (n *Node) Identity() EntityIdentity      { return EntityIdentity{n.Database, string(n.ID)} }
+func (e *Edge) Identity() EntityIdentity      { return EntityIdentity{e.Database, string(e.ID)} }
 func (e *Edge) StartIdentity() EntityIdentity { return EntityIdentity{e.Database, string(e.StartNode)} }
-func (e *Edge) EndIdentity() EntityIdentity { return EntityIdentity{e.Database, string(e.EndNode)} }
+func (e *Edge) EndIdentity() EntityIdentity   { return EntityIdentity{e.Database, string(e.EndNode)} }
 
 // EntityIdentityFromKey decodes only the internal key produced by Key. External
 // string arguments belong to their API's ID domain and must not enter here.
@@ -46,8 +46,8 @@ func EntityIdentityFromKey(key string) EntityIdentity {
 // NodeLookupID preserves source identity at the engine boundary. A qualified
 // foreign value cannot be reinterpreted as a local ID in a namespaced engine.
 func (id EntityIdentity) NodeLookupID(engine Engine) (NodeID, bool) {
-	value,ok := id.LookupID(engine,"4")
-	return NodeID(value),ok
+	value, ok := id.LookupID(engine, "4")
+	return NodeID(value), ok
 }
 
 // LookupID translates an identity for a storage read without dropping a source
@@ -73,7 +73,9 @@ func CompositeDatabaseOf(engine Engine) string {
 			return composite.CompositeName()
 		}
 		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok { break }
+		if !ok {
+			break
+		}
 		engine = wrapper.GetInnerEngine()
 	}
 	return ""

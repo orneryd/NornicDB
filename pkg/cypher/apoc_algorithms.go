@@ -53,7 +53,7 @@ func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
 
 // callApocAlgoDijkstra implements Dijkstra's shortest path.
 func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	e,args = e.graphReadArguments(ctx,args,2)
+	e, args = e.graphReadArguments(ctx, args, 2)
 	const procedure = "apoc.algo.dijkstra"
 	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
 	if err != nil {
@@ -124,7 +124,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 
 // callApocAlgoAStar implements A* pathfinding.
 func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	e,args = e.graphReadArguments(ctx,args,2)
+	e, args = e.graphReadArguments(ctx, args, 2)
 	const procedure = "apoc.algo.aStar"
 	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
 	if err != nil {
@@ -227,7 +227,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 // callApocAlgoAllSimplePaths finds all simple paths of at most maxNodes
 // relationships, as in APOC (#1185): below 1, none.
 func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	e,args = e.graphReadArguments(ctx,args,2)
+	e, args = e.graphReadArguments(ctx, args, 2)
 	const procedure = "apoc.algo.allSimplePaths"
 	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
 	if err != nil {
@@ -463,7 +463,7 @@ func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.No
 
 // callApocNeighborsTohop gets neighbors up to N hops.
 func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	e,args = e.graphReadArguments(ctx,args,1)
+	e, args = e.graphReadArguments(ctx, args, 1)
 	startID, relType, maxHops, err := parseNeighborArguments(args)
 	if err != nil {
 		return nil, err
@@ -494,7 +494,9 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 	}
 	filters := parseApocRelationshipFilter(relType)
 	store := e.getStorage(ctx)
-	if view,ok := e.storage.(*graphIdentityStorage); ok { store = view }
+	if view, ok := e.storage.(*graphIdentityStorage); ok {
+		store = view
+	}
 	visited := make(map[storage.NodeID]bool)
 	visited[startID] = true
 	current := []storage.NodeID{startID}
@@ -553,7 +555,7 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 
 // callApocNeighborsByhop gets neighbors grouped by hop.
 func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	e,args = e.graphReadArguments(ctx,args,1)
+	e, args = e.graphReadArguments(ctx, args, 1)
 	startID, relType, maxHops, err := parseNeighborArguments(args)
 	if err != nil {
 		return nil, err

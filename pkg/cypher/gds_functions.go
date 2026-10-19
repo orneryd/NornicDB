@@ -192,7 +192,9 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 			return nil, err
 		}
 		var store storage.Engine = ctx.Storage
-		if store != nil { store = graphIdentityView(store) }
+		if store != nil {
+			store = graphIdentityView(store)
+		}
 		firstID, secondID := storage.NodeID(first.IdentityKey()), storage.NodeID(second.IdentityKey())
 		left, err := gdsNeighbors(store, firstID, config)
 		if err != nil {
