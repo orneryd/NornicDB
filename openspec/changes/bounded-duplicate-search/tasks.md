@@ -2,4 +2,4 @@
 - [x] Remove cursor continuation/cleanup from the duplicate client and use limit 1000 in the hook.
 - [x] Fail-first request test rejects old limit 25; 23 hook tests and 40 detector tests pass, including score boundaries, duplicate blocking and failures. Six legacy MainTests fixture commits are blocked by the global hook.
 - [x] Update/install the global runtime without disabling hooks.
-- [ ] Retry live source commits, publish source and verification limits, then continue #1472.
+- [x] Live source commits passed; renamed production helper blocked at 100% similarity without changing HEAD. Record evidence and verifier limits for #1449, continuing #1472 in #1538.
