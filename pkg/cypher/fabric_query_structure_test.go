@@ -80,6 +80,7 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 		{"map_value", "WITH 7 AS %[1]s RETURN {v:%[1]s}.v AS k"},
 		{"map_shorthand", "WITH {v:0} AS m,7 AS %[1]s RETURN m{%[1]s}.%[1]s AS k"},
 		{"pattern_comprehension", "CREATE (s)-[:FabricCompRel]->(:FabricCompTarget {v:7}) RETURN [(s)-[:FabricCompRel]->(%[1]s) | %[1]s.v] AS k"},
+		{"named_pattern_comprehension", "CREATE (s)-[:FabricCompRel]->(:FabricCompTarget {v:7}) RETURN [%[1]s = (s)-[:FabricCompRel]->(t) | length(%[1]s)] AS k"},
 		{"property_and_map_key", "WITH {%[1]s:7} AS m RETURN m.%[1]s AS k"},
 		{"map_projection", "WITH {%[1]s:7} AS m RETURN m{.%[1]s}.%[1]s AS k"},
 		{"pattern_binding", "MATCH (%[1]s:FabricStructureName) RETURN %[1]s.v AS k"},
@@ -87,6 +88,9 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 		{"label_name", "CREATE (n:%[1]s {v:7}) RETURN n.v AS k"},
 		{"relationship_type", "CREATE ()-[r:%[1]s {v:7}]->() RETURN r.v AS k"},
 		{"relationship_binding", "CREATE ()-[%[1]s:FabricStructureRel {v:7}]->() RETURN %[1]s.v AS k"},
+		{"set_map_target", "CREATE (%[1]s:FabricNameMutation) SET %[1]s += {v:7} RETURN %[1]s.v AS k"},
+		{"set_label_target", "CREATE (%[1]s {v:7}) SET %[1]s:FabricNameMutation RETURN %[1]s.v AS k"},
+		{"remove_label_target", "CREATE (%[1]s:FabricNameMutation {v:7}) REMOVE %[1]s:FabricNameMutation RETURN %[1]s.v AS k"},
 		{"yield_alias", "CALL db.labels() YIELD label AS %[1]s WITH %[1]s WHERE %[1]s='FabricStructureName' RETURN 7 AS k"},
 		{"order_operand", "WITH 7 AS %[1]s RETURN %[1]s AS k ORDER BY %[1]s DESC SKIP 0 LIMIT 1"},
 	}
