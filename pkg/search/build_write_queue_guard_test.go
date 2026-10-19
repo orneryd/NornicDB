@@ -38,7 +38,7 @@ var buildSequenceExempt = map[string]string{
 	"BuildIndexes":             "the build itself, the sequence's owner",
 	"ClearVectorIndex":         "takes buildMu exclusively, after the build installed its sequence",
 	"ClearIndexes":             "takes buildMu exclusively, after the build installed its sequence",
-	"Close":                    "cancels and joins the build, which installs its sequence on exit",
+	"Close":                    "shutdown cancels lifecycle work and joins HNSW construction before releasing sources",
 	"PersistIndexesToDisk":     "writes files, not index contents",
 	"MarkReadyDisabled":        "service construction, before any build",
 	"EnableRelationshipSearch": "service construction, before any build",

@@ -278,6 +278,7 @@ func TestVectorSearchCandidates_AutoStrategyDefaultsToHNSW(t *testing.T) {
 	candidates, err := svc.VectorSearchCandidates(context.Background(), query, opts)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(candidates), 1)
+	requireHNSWReady(t, svc)
 	_, ok := svc.vectorPipeline.candidateGen.(*HNSWCandidateGen)
 	require.True(t, ok)
 }
