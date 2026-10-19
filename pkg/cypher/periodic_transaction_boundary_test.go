@@ -53,7 +53,14 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 							require.NoError(t, err)
 						}
 						result, err := exec.Execute(context.Background(), call, map[string]interface{}{"body": body})
-						require.Equal(t, 1, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
+						if composite || explicit {
+ require.ErrorContains(t,err,"unsupported query type in transaction")
+ require.Zero(t,calls,"unsupported managed scope must fail before any batch action")
+ if explicit { _,err=exec.Execute(context.Background(),"ROLLBACK",nil); require.NoError(t,err) }
+ nodes,err:=committed.GetNodesByLabel("U5BatchBoundary"); require.NoError(t,err); require.Empty(t,nodes)
+ return
+}
+      require.Equal(t, 1, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
 						require.NoError(t, err)
 						if explicit {
 							_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
@@ -99,6 +106,10 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 					query = "CALL { USE admission_comp.one " + query + " } RETURN *"
 				}
 				result, err := exec.Execute(context.Background(), query, nil)
+				if composite {
+ require.ErrorContains(t,err,"unsupported query type in transaction"); require.Zero(t,calls)
+ nodes,readErr:=committed.GetNodesByLabel("U5BatchAtomic"); require.NoError(t,readErr); require.Empty(t,nodes); return
+ }
 				require.NoError(t, err)
 				require.Equal(t, 2, visible, "first two-row batch committed before next begins")
 				nodes, err := committed.GetNodesByLabel("U5BatchAtomic")

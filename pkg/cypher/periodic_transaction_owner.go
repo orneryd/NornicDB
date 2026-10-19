@@ -1,39 +1,31 @@
 package cypher
 
 import (
-	"context"
+ "context"
+
+ "github.com/orneryd/nornicdb/pkg/fabric"
+ "github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// A periodic operation owns each batch, independently of its caller. Preserve
-// auth/cancellation and Fabric admission, but never adopt the caller's pending
-// storage or poison its expression-error slot when a batch fails.
-func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure string, run func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	store := e.storage
-	for {
-		wrapper, ok := store.(*transactionStorageWrapper)
-		if !ok {
-			break
-		}
-		store = wrapper.underlying
-	}
-	batch := e.cloneForStorage(store)
-	batch.txContext = nil
-	ctx = periodicBatchContext{Context: ctx}
-	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
-	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
-	if admit, ok := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); ok {
-		ctx = context.WithValue(ctx, dynamicWriteAdmissionKey{}, dynamicWriteAdmission(func(inner context.Context, _ *StorageExecutor, statement string) error {
-			return admit(inner, e, statement)
-		}))
-	}
-	return batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
+// Independent commits cannot be absorbed by a caller or undone by a remote
+// coordinator after execution. Refuse the actual resolved batch-owning call
+// before invoking its handler when an atomic transaction already owns it.
+func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, procedure string) error {
+ _,distributed:=fabric.FabricTransactionFromContext(ctx)
+ if e.inTransaction(ctx) || distributed {
+  return localizedStatusError("Neo.ClientError.Transaction.TransactionTypeNotSupported","PeriodicRequiresAutocommit",localization.CypherTransactionsQueryInTransactionUnsupported("CALL "+procedure))
+ }
+ return nil
 }
 
-type periodicBatchContext struct{ context.Context }
-
-func (ctx periodicBatchContext) Value(key interface{}) interface{} {
-	if key == ctxKeyTxStorage {
-		return nil
-	}
-	return ctx.Context.Value(key)
+// Each native autocommit batch uses the existing implicit transaction owner.
+// A failed batch has its own expression-error slot; previous batches remain
+// committed and its error cannot poison the next batch or caller's summary.
+func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure string, run func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+ if err:=e.checkPeriodicTransactionScope(ctx,procedure); err!=nil { return nil,err }
+ batch:=e.cloneForStorage(e.storage)
+ batch.txContext=nil
+ ctx=context.WithValue(ctx,expressionFailureKey{},&expressionFailure{})
+ ctx=context.WithValue(ctx,expressionOperandFailureKey{},&expressionFailure{})
+ return batch.executeWithImplicitTransactionCallback(ctx,"CALL "+procedure,"CALL "+procedure,run)
 }
