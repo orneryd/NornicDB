@@ -217,7 +217,8 @@ func (m *DatabaseManager) DropCompositeDatabase(name string) error {
 // AddConstituent adds a constituent to an existing composite database.
 func (m *DatabaseManager) AddConstituent(compositeName string, constituent ConstituentRef) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	changed := false
+	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	info, exists := m.databases[compositeName]
 	if !exists {
@@ -253,11 +254,22 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 		return err
 	}
 
+	previousAlias := ""
+	for _, previous := range canonicalConstituents(info.Constituents, constituent.Alias) {
+		previousAlias = previous.Alias
+	}
 	// Add constituent
 	info.Constituents = append(info.Constituents, encrypted)
 	info.UpdatedAt = time.Now()
 
-	return m.persistMetadata()
+	if err := m.persistMetadata(); err != nil {
+		return err
+	}
+	if previousAlias != "" {
+		m.invalidateStatementCacheReferenceLocked(compositeName + "." + previousAlias)
+		changed = true
+	}
+	return nil
 }
 
 // RemoveConstituent removes a constituent from a composite database.
@@ -285,7 +297,7 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 		if err := m.persistMetadata(); err != nil {
 			return err
 		}
-		m.invalidateStatementCacheReferenceLocked(compositeName + "." + alias)
+		m.invalidateStatementCacheReferenceLocked(compositeName + "." + ref.Alias)
 		changed = true
 		return nil
 	}
