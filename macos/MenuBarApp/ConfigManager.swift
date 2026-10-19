@@ -71,7 +71,7 @@ class ConfigManager: ObservableObject {
     @Published var boltPortNumber: String = "7687"
     @Published var httpPortNumber: String = "7474"
     @Published var hostAddress: String = "localhost"
-    
+
     // Apple Intelligence embeddings
     @Published var useAppleIntelligence: Bool = false
     static let appleEmbeddingPort: UInt16 = 11435
@@ -86,14 +86,14 @@ class ConfigManager: ObservableObject {
         if let existingKey = KeychainHelper.shared.getAppleIntelligenceAPIKey(), !existingKey.isEmpty {
             return existingKey
         }
-        
+
         // Generate a new random key and save it
         let newKey = UUID().uuidString
         _ = KeychainHelper.shared.saveAppleIntelligenceAPIKey(newKey)
         print("🔐 Generated new Apple Intelligence API key")
         return newKey
     }
-    
+
     /// Suggest embedding dimensions based on known model names
     static func suggestedDimensions(for modelName: String) -> Int {
         let name = modelName.lowercased()
@@ -144,17 +144,17 @@ class ConfigManager: ObservableObject {
         // Default to 1024 for unknown models (common for modern embedding models)
         return 1024
     }
-    
+
     // Authentication settings
     @Published var adminUsername: String = "admin"
     @Published var adminPassword: String = "password"
     @Published var jwtSecret: String = ""
-    
+
     // Encryption settings
     @Published var encryptionEnabled: Bool = false
     @Published var encryptionPassword: String = ""
     @Published var encryptionKeychainAccessDenied: Bool = false  // Track if user denied Keychain access
-    
+
     @Published var embeddingModel: String = ConfigManager.defaultEmbeddingModel
     @Published var searchRerankModel: String = ConfigManager.defaultSearchRerankModel
     @Published var embeddingDimensions: Int = 1024  // Read from config, default 1024 for bge-m3
@@ -162,14 +162,14 @@ class ConfigManager: ObservableObject {
     @Published var embeddingChunkOverlap: Int = ConfigManager.defaultEmbeddingChunkOverlap
     @Published var heimdallModel: String = ConfigManager.defaultHeimdallModel
     @Published var availableModels: [String] = []
-    
+
     // Config path matches server's FindConfigFile priority: ~/.nornicdb/config.yaml
     private let configPath: String
 
     init(configPath: String = NSString(string: "~/.nornicdb/config.yaml").expandingTildeInPath) {
         self.configPath = configPath
     }
-    
+
     // MARK: - YAML Parsing Helpers
 
     private typealias YAMLMap = [String: Any]
@@ -313,7 +313,7 @@ class ConfigManager: ObservableObject {
 
         return normalized
     }
-    
+
     private let firstRunPath = NSString(string: "~/.nornicdb/.first_run").expandingTildeInPath
     private let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
 
@@ -342,11 +342,11 @@ class ConfigManager: ObservableObject {
     func isFirstRun() -> Bool {
         return FileManager.default.fileExists(atPath: firstRunPath)
     }
-    
+
     func completeFirstRun() {
         try? FileManager.default.removeItem(atPath: firstRunPath)
     }
-    
+
     func loadConfig() {
         defer {
             if let data = FileManager.default.contents(atPath: launchAgentPath),
@@ -356,10 +356,10 @@ class ConfigManager: ObservableObject {
         }
         // Scan available models first
         scanModels()
-        
+
         // Reset Keychain access denied flags at startup (to allow retry)
         KeychainHelper.shared.resetAllAccessDenied()
-        
+
         // FIRST: Load secrets from Keychain (preserved across reinstalls)
         // This ensures existing secrets are never lost
         if let keychainJWT = KeychainHelper.shared.getJWTSecret() {
@@ -368,10 +368,10 @@ class ConfigManager: ObservableObject {
         } else if KeychainHelper.shared.isJWTAccessDenied {
             print("⚠️ JWT Keychain access denied - will use config file value")
         }
-        
+
         // Only try to load encryption password if we expect it to exist
         // (we'll do this after loading config to check if encryption was enabled)
-        
+
         guard FileManager.default.fileExists(atPath: configPath) else {
             print("Could not read config file at: \(configPath)")
             // Even without config file, we may have Keychain secrets from previous install
@@ -464,7 +464,7 @@ class ConfigManager: ObservableObject {
         let dbSection = yamlSection(root, "database")
         let configSaysEncryptionEnabled = yamlBool(dbSection["encryption_enabled"]) ?? false
         print("✅ Config says encryption enabled: \(configSaysEncryptionEnabled)")
-        
+
         // NOW try to load encryption password from Keychain (only if encryption was/is enabled)
         if configSaysEncryptionEnabled {
             if let keychainEncryption = KeychainHelper.shared.getEncryptionPassword() {
@@ -483,7 +483,7 @@ class ConfigManager: ObservableObject {
                 encryptionEnabled = configSaysEncryptionEnabled
             }
         }
-        
+
         // Load encryption password from config ONLY if not already loaded from Keychain
         if encryptionPassword.isEmpty && !encryptionKeychainAccessDenied {
             if let password = yamlString(dbSection["encryption_password"]),
@@ -502,22 +502,22 @@ class ConfigManager: ObservableObject {
                 }
             }
         }
-        
+
         // If Keychain access was denied for encryption, make sure it's disabled
         if encryptionKeychainAccessDenied {
             encryptionEnabled = false
             encryptionPassword = ""
         }
-        
+
     }
-    
+
     func scanModels() {
         // Scan models directory for .gguf files
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: modelsPath) else {
             availableModels = []
             return
         }
-        
+
         availableModels = files.filter {
             $0.hasSuffix(".gguf") && isValidGGUFFile(atPath: "\(modelsPath)/\($0)")
         }.sorted()
@@ -624,7 +624,7 @@ class ConfigManager: ObservableObject {
 
         authSection["username"] = adminUsername
         authSection["password"] = adminPassword
-        
+
         // Auto-generate JWT secret only if empty, then save to Keychain
         if jwtSecret.isEmpty {
             jwtSecret = ConfigManager.generateRandomSecret()
@@ -642,7 +642,7 @@ class ConfigManager: ObservableObject {
             print("⚠️ Keychain save failed, storing JWT in config file")
             authSection["jwt_secret"] = jwtSecret
         }
-        
+
         // Update encryption settings
         // If Keychain access was denied, force encryption to be disabled
         let effectiveEncryptionEnabled = encryptionEnabled && !encryptionKeychainAccessDenied
@@ -689,15 +689,15 @@ class ConfigManager: ObservableObject {
             let content = try Yams.dump(object: normalizedRoot)
             try content.write(toFile: configPath, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configPath)
-            
-            
+
+
             return true
         } catch {
             print("Failed to write config: \(error)")
             return false
         }
     }
-    
+
     static func generateRandomSecret() -> String {
         let characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
         return String((0..<32).map { _ in characters.randomElement()! })
