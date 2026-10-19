@@ -47,8 +47,15 @@ type databaseRetriever struct {
 	progress     *benchmarkProgress
 }
 
+// benchmarkBatchReranker scores every candidate for a query in one call, as
+// remote rerank APIs do. search.CrossEncoder satisfies it.
+type benchmarkBatchReranker interface {
+	Rerank(ctx context.Context, query string, candidates []search.RerankCandidate) ([]search.RerankResult, error)
+}
+
 type benchmarkRerankConfig struct {
 	scorer      search.RerankScorer
+	batch       benchmarkBatchReranker
 	topK        int
 	maxDocChars int
 	timeout     time.Duration
@@ -66,6 +73,20 @@ type benchmarkProgress struct {
 func benchmarkConfig() *config.Config {
 	cfg := nornicdb.DefaultConfig()
 	cfg.Memory.SearchBM25Properties = []string{"title", "text"}
+	return cfg
+}
+
+// ingestConfig returns the database configuration for corpus ingestion.
+func ingestConfig(embeddingProvider string, chunkSize, chunkOverlap, workers int) *config.Config {
+	cfg := benchmarkConfig()
+	cfg.EmbeddingWorker.ChunkSize = chunkSize
+	cfg.EmbeddingWorker.ChunkSizeSet = true
+	cfg.EmbeddingWorker.ChunkOverlap = chunkOverlap
+	cfg.EmbeddingWorker.ChunkOverlapSet = true
+	// Embedding is opt-in; without it storage skips the pending-embed marker
+	// on each created node and the embed worker finds nothing to process.
+	cfg.Memory.EmbeddingEnabled = embeddingProvider != ""
+	cfg.EmbeddingWorker.NumWorkers = workers
 	return cfg
 }
 
@@ -157,14 +178,14 @@ func benchmarkRunResults(ctx context.Context, query string, results []*nornicdb.
 		candidates = append(candidates, candidate{documentID: beirID, content: content, score: result.Score})
 	}
 	if reranker != nil {
-		if reranker.scorer == nil {
+		if reranker.scorer == nil && reranker.batch == nil {
 			return nil, fmt.Errorf("reranker scorer is required")
 		}
 		limit := reranker.topK
 		if limit < 1 || limit > len(candidates) {
 			limit = len(candidates)
 		}
-		for index := 0; index < limit; index++ {
+		for index := 0; reranker.batch == nil && index < limit; index++ {
 			document := candidates[index].content
 			if reranker.maxDocChars > 0 && len(document) > reranker.maxDocChars {
 				document = document[:reranker.maxDocChars]
@@ -181,6 +202,37 @@ func benchmarkRunResults(ctx context.Context, query string, results []*nornicdb.
 			}
 			candidates[index].score = float64(score)
 			reranker.progress.candidate(index+1, limit)
+		}
+		if reranker.batch != nil {
+			batch := make([]search.RerankCandidate, limit)
+			for index := range batch {
+				document := candidates[index].content
+				if reranker.maxDocChars > 0 && len(document) > reranker.maxDocChars {
+					document = document[:reranker.maxDocChars]
+				}
+				batch[index] = search.RerankCandidate{ID: candidates[index].documentID, Content: document, Score: candidates[index].score}
+			}
+			rerankCtx := ctx
+			cancel := func() {}
+			if reranker.timeout > 0 {
+				rerankCtx, cancel = context.WithTimeout(ctx, reranker.timeout)
+			}
+			ranked, err := reranker.batch.Rerank(rerankCtx, query, batch)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("rerank query candidates: %w", err)
+			}
+			scores := make(map[string]float64, len(ranked))
+			for _, result := range ranked {
+				scores[result.ID] = result.CrossScore
+			}
+			for index := 0; index < limit; index++ {
+				score, ok := scores[candidates[index].documentID]
+				if !ok {
+					return nil, fmt.Errorf("reranker returned no score for document %q", candidates[index].documentID)
+				}
+				candidates[index].score = score
+			}
 		}
 		sort.SliceStable(candidates[:limit], func(left, right int) bool {
 			return candidates[left].score > candidates[right].score
@@ -222,17 +274,27 @@ func (r databaseRetriever) rrfOptions(query string) (*search.SearchOptions, erro
 	return opts, nil
 }
 
-func configureOllamaEmbedder(db *nornicdb.DB, provider, model, apiURL string, dimensions int) error {
+func configureEmbedder(db *nornicdb.DB, provider, model, apiURL, apiKeyEnv string, dimensions int) error {
 	if provider == "" {
 		return nil
-	}
-	if provider != "ollama" {
-		return fmt.Errorf("unsupported embedding provider %q; benchmark supports ollama", provider)
 	}
 	if model == "" || dimensions < 1 {
 		return fmt.Errorf("embedding model and positive dimensions are required")
 	}
-	config := embed.DefaultOllamaConfig()
+	var config *embed.Config
+	switch provider {
+	case "ollama":
+		config = embed.DefaultOllamaConfig()
+	case "openai":
+		// OpenAI-compatible endpoints, including a LiteLLM proxy in front of Bedrock.
+		apiKey := os.Getenv(apiKeyEnv)
+		if apiKey == "" {
+			return fmt.Errorf("embedding provider openai requires an API key in $%s", apiKeyEnv)
+		}
+		config = embed.DefaultOpenAIConfig(apiKey)
+	default:
+		return fmt.Errorf("unsupported embedding provider %q; benchmark supports ollama or openai", provider)
+	}
 	config.Model = model
 	config.Dimensions = dimensions
 	if apiURL != "" {
@@ -314,12 +376,15 @@ func runRetrieval(args []string) {
 	bm25Weight := flags.Float64("bm25-weight", 0, "Override BM25 RRF weight; 0 keeps the selected preset")
 	minRRFScore := flags.Float64("min-rrf-score", -1, "Override minimum RRF score; -1 keeps the selected preset")
 	tag := flags.String("tag", "nornic-bm25", "TREC run tag")
-	embeddingProvider := flags.String("embedding-provider", "", "Embedding provider required for rrf; currently ollama")
+	embeddingProvider := flags.String("embedding-provider", "", "Embedding provider required for rrf: ollama or openai")
 	embeddingModel := flags.String("embedding-model", "bge-m3:latest", "Embedding model")
-	embeddingURL := flags.String("embedding-url", "http://localhost:11434", "Embedding API URL")
+	embeddingURL := flags.String("embedding-url", "", "Embedding API URL; empty uses the provider default")
+	embeddingAPIKeyEnv := flags.String("embedding-api-key-env", "OPENAI_API_KEY", "Environment variable holding the openai provider API key")
 	embeddingDim := flags.Int("embedding-dim", 1024, "Embedding vector dimensions")
-	rerankerProvider := flags.String("reranker-provider", "none", "Reranker provider: none or local-gguf")
-	rerankerModel := flags.String("reranker-model", "", "Path to a local GGUF reranker model")
+	rerankerProvider := flags.String("reranker-provider", "none", "Reranker provider: none, local-gguf, or http")
+	rerankerModel := flags.String("reranker-model", "", "Path to a local GGUF reranker model, or the http provider's model name")
+	rerankerURL := flags.String("reranker-url", "", "Cohere-compatible rerank endpoint for the http provider")
+	rerankerAPIKeyEnv := flags.String("reranker-api-key-env", "OPENAI_API_KEY", "Environment variable holding the http reranker API key")
 	rerankerPoolingType := flags.Int("reranker-pooling-type", 4, "llama.cpp pooling type for local GGUF reranking; 4 selects the rank head")
 	rerankTopK := flags.Int("rerank-top-k", 100, "Number of first-stage documents to rerank")
 	rerankerMaxDocChars := flags.Int("reranker-max-doc-chars", 32000, "Maximum document characters passed to the reranker")
@@ -335,7 +400,7 @@ func runRetrieval(args []string) {
 		os.Exit(2)
 	}
 	if *mode == "rrf" && *embeddingProvider == "" {
-		fmt.Fprintln(os.Stderr, "run --mode rrf requires --embedding-provider ollama")
+		fmt.Fprintln(os.Stderr, "run --mode rrf requires --embedding-provider ollama or openai")
 		os.Exit(2)
 	}
 	if *topK != 100 {
@@ -352,12 +417,16 @@ func runRetrieval(args []string) {
 		fmt.Fprintln(os.Stderr, "RRF overrides must not be negative")
 		os.Exit(2)
 	}
-	if *rerankerProvider != "none" && *rerankerProvider != "local-gguf" {
-		fmt.Fprintln(os.Stderr, "reranker-provider must be none or local-gguf")
+	if *rerankerProvider != "none" && *rerankerProvider != "local-gguf" && *rerankerProvider != "http" {
+		fmt.Fprintln(os.Stderr, "reranker-provider must be none, local-gguf, or http")
 		os.Exit(2)
 	}
-	if *rerankerProvider == "local-gguf" && *rerankerModel == "" {
-		fmt.Fprintln(os.Stderr, "reranker-provider local-gguf requires --reranker-model")
+	if *rerankerProvider != "none" && *rerankerModel == "" {
+		fmt.Fprintf(os.Stderr, "reranker-provider %s requires --reranker-model\n", *rerankerProvider)
+		os.Exit(2)
+	}
+	if *rerankerProvider == "http" && *rerankerURL == "" {
+		fmt.Fprintln(os.Stderr, "reranker-provider http requires --reranker-url")
 		os.Exit(2)
 	}
 	if *rerankerPoolingType < 1 || *rerankerPoolingType > 4 || *rerankTopK < 1 || *rerankTopK > *topK || *rerankerMaxDocChars < 1 || *rerankerTimeout <= 0 || *progressInterval < 0 {
@@ -386,7 +455,7 @@ func runRetrieval(args []string) {
 		os.Exit(1)
 	}
 	defer db.Close()
-	if err := configureOllamaEmbedder(db, *embeddingProvider, *embeddingModel, *embeddingURL, *embeddingDim); err != nil {
+	if err := configureEmbedder(db, *embeddingProvider, *embeddingModel, *embeddingURL, *embeddingAPIKeyEnv, *embeddingDim); err != nil {
 		fmt.Fprintln(os.Stderr, "configure embedder:", err)
 		os.Exit(1)
 	}
@@ -411,14 +480,30 @@ func runRetrieval(args []string) {
 		}
 		rerankConfig = &benchmarkRerankConfig{scorer: model, topK: *rerankTopK, maxDocChars: *rerankerMaxDocChars, timeout: *rerankerTimeout}
 	}
+	if *rerankerProvider == "http" {
+		crossEncoder := search.NewCrossEncoder(&search.CrossEncoderConfig{
+			Enabled: true,
+			APIURL:  *rerankerURL,
+			APIKey:  os.Getenv(*rerankerAPIKeyEnv),
+			Model:   *rerankerModel,
+			TopK:    *rerankTopK,
+			Timeout: *rerankerTimeout,
+		})
+		rerankConfig = &benchmarkRerankConfig{batch: crossEncoder, topK: *rerankTopK, maxDocChars: *rerankerMaxDocChars, timeout: *rerankerTimeout}
+	}
 	if rerankerModelCloser != nil {
 		defer rerankerModelCloser.Close()
 	}
 	progress := newBenchmarkProgress(len(manifest.QueryIDs), *progressInterval)
 	if rerankConfig != nil {
 		rerankConfig.progress = progress
-		fmt.Fprintf(os.Stderr, "benchmark workload: %d queries x %d candidates = %d serialized reranker scores\n",
-			len(manifest.QueryIDs), *rerankTopK, len(manifest.QueryIDs)**rerankTopK)
+		if rerankConfig.batch != nil {
+			fmt.Fprintf(os.Stderr, "benchmark workload: %d queries x %d candidates in one rerank request per query\n",
+				len(manifest.QueryIDs), *rerankTopK)
+		} else {
+			fmt.Fprintf(os.Stderr, "benchmark workload: %d queries x %d candidates = %d serialized reranker scores\n",
+				len(manifest.QueryIDs), *rerankTopK, len(manifest.QueryIDs)**rerankTopK)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(*outputPath), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "create run directory:", err)
@@ -483,13 +568,15 @@ func runIngest(args []string) {
 	corpusPath := flags.String("corpus", "", "Path to official BEIR corpus.jsonl")
 	dataDir := flags.String("data-dir", "", "Persistent NornicDB data directory")
 	statePath := flags.String("state", "", "Optional resumable ingest checkpoint path")
-	embeddingProvider := flags.String("embedding-provider", "", "Optional embedding provider; currently ollama")
+	embeddingProvider := flags.String("embedding-provider", "", "Optional embedding provider: ollama or openai")
 	embeddingModel := flags.String("embedding-model", "bge-m3:latest", "Embedding model")
-	embeddingURL := flags.String("embedding-url", "http://localhost:11434", "Embedding API URL")
+	embeddingURL := flags.String("embedding-url", "", "Embedding API URL; empty uses the provider default")
+	embeddingAPIKeyEnv := flags.String("embedding-api-key-env", "OPENAI_API_KEY", "Environment variable holding the openai provider API key")
 	embeddingDim := flags.Int("embedding-dim", 1024, "Embedding vector dimensions")
 	embeddingChunkSize := flags.Int("embedding-chunk-size", 512, "Maximum tokens per corpus embedding chunk")
 	embeddingChunkOverlap := flags.Int("embedding-chunk-overlap", 50, "Overlapping tokens between corpus embedding chunks")
 	embeddingTimeout := flags.Duration("embedding-timeout", 30*time.Minute, "Maximum time to wait for corpus embeddings")
+	embeddingWorkers := flags.Int("embedding-workers", 1, "Concurrent corpus embedding workers")
 	_ = flags.Parse(args)
 	if *dataset == "" || *corpusPath == "" || *dataDir == "" {
 		fmt.Fprintln(os.Stderr, "ingest requires --dataset, --corpus, and --data-dir")
@@ -497,6 +584,10 @@ func runIngest(args []string) {
 	}
 	if *statePath == "" {
 		*statePath = filepath.Join(*dataDir, "recall-bench-ingest.json")
+	}
+	if *embeddingWorkers < 1 {
+		fmt.Fprintln(os.Stderr, "embedding workers must be positive")
+		os.Exit(2)
 	}
 	if *embeddingChunkSize < 1 || *embeddingChunkOverlap < 0 || *embeddingChunkOverlap >= *embeddingChunkSize {
 		fmt.Fprintln(os.Stderr, "embedding chunk size must be positive and greater than chunk overlap")
@@ -512,18 +603,14 @@ func runIngest(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	config := benchmarkConfig()
-	config.EmbeddingWorker.ChunkSize = *embeddingChunkSize
-	config.EmbeddingWorker.ChunkSizeSet = true
-	config.EmbeddingWorker.ChunkOverlap = *embeddingChunkOverlap
-	config.EmbeddingWorker.ChunkOverlapSet = true
+	config := ingestConfig(*embeddingProvider, *embeddingChunkSize, *embeddingChunkOverlap, *embeddingWorkers)
 	db, err := nornicdb.Open(*dataDir, config)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open database:", err)
 		os.Exit(1)
 	}
 	defer db.Close()
-	if err := configureOllamaEmbedder(db, *embeddingProvider, *embeddingModel, *embeddingURL, *embeddingDim); err != nil {
+	if err := configureEmbedder(db, *embeddingProvider, *embeddingModel, *embeddingURL, *embeddingAPIKeyEnv, *embeddingDim); err != nil {
 		fmt.Fprintln(os.Stderr, "configure embedder:", err)
 		os.Exit(1)
 	}
@@ -572,6 +659,10 @@ func runIngest(args []string) {
 		cancel()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "wait for embeddings:", err)
+			os.Exit(1)
+		}
+		if db.EmbeddingCount() == 0 {
+			fmt.Fprintln(os.Stderr, "wait for embeddings: no corpus embeddings were stored")
 			os.Exit(1)
 		}
 	}
