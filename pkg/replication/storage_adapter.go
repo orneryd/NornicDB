@@ -760,19 +760,13 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 	// Every stored node and edge: the ones the visibility layer hides from
 	// reads are replicated data too.
-	var nodes []*storage.Node
-	if err := storage.StreamStoredNodes(context.Background(), a.engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
-		nodes = append(nodes, node)
-		return nil
-	}); err != nil {
+	nodes, err := storage.CollectStoredNodes(context.Background(), a.engine)
+	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllNodesFailed(err), err)
 	}
 
-	var edges []*storage.Edge
-	if err := storage.StreamStoredEdgesByType(context.Background(), a.engine, "", func(edge *storage.Edge) error {
-		edges = append(edges, edge)
-		return nil
-	}); err != nil {
+	edges, err := storage.CollectStoredEdges(context.Background(), a.engine)
+	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
 
