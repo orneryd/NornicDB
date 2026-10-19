@@ -7,6 +7,21 @@ import (
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
+// runtimeProcedureResult admits registered/plugin rows before YIELD or a query
+// tail consumes them. A handler can retain its result, so copy its row envelope;
+// FunctionResult copies only rows and nested containers needing normalization.
+func runtimeProcedureResult(result *ExecuteResult) *ExecuteResult {
+	if result == nil {
+		return nil
+	}
+	normalized := *result
+	normalized.Rows = make([][]interface{}, len(result.Rows))
+	for index, row := range result.Rows {
+		normalized.Rows[index] = cypherfn.FunctionResult(row).([]interface{})
+	}
+	return &normalized
+}
+
 // runtimeRowResult preserves all three evaluator outcomes. In particular an
 // unresolved expression's incidental value is never a successfully read map.
 func runtimeRowResult(value interface{}, resolved bool, err error) (interface{}, bool, error) {
