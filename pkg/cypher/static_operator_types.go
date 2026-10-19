@@ -648,26 +648,37 @@ func maskCaseBlocks(expression string) string {
 // property key. ok is false when the operand doesn't end in one at its top
 // level. A '.' between digits belongs to a number.
 func staticPostfixSplit(expression string) (receiver, inner string, subscript, ok bool) {
- syntax:=readFunctionSyntax(expression)
- last:=-1
- var selected syntaxGroup
- for _,group:=range syntax.groups {
-  if group.parent==0 && group.open>0 && expression[group.open]=='[' && group.close>=0 {
-   last=group.open;selected=group;subscript=true
-  }
- }
- for _,at:=range syntax.groups[0].punctuation {
-  if at>last && at>0 && expression[at]=='.' && at+1<len(expression) && isIdentStartByte(expression[at+1]) {last=at;subscript=false}
- }
- if last<=0 {return "","",false,false}
- receiver=syntax.render(syntaxSpan{0,last})
- if subscript {
-  if queryGapEnd(expression,selected.close+1)!=len(expression) {return "","",false,false}
-  return receiver,syntax.render(syntaxSpan{last+1,selected.close}),true,true
- }
- key:=syntax.render(syntaxSpan{last+1,len(expression)})
- if simpleSemanticIdentifier(key)=="" {return "","",false,false}
- return receiver,key,false,true
+	syntax := readFunctionSyntax(expression)
+	last := -1
+	var selected syntaxGroup
+	for _, group := range syntax.groups {
+		if group.parent == 0 && group.open > 0 && expression[group.open] == '[' && group.close >= 0 {
+			last = group.open
+			selected = group
+			subscript = true
+		}
+	}
+	for _, at := range syntax.groups[0].punctuation {
+		if at > last && at > 0 && expression[at] == '.' && at+1 < len(expression) && isIdentStartByte(expression[at+1]) {
+			last = at
+			subscript = false
+		}
+	}
+	if last <= 0 {
+		return "", "", false, false
+	}
+	receiver = syntax.render(syntaxSpan{0, last})
+	if subscript {
+		if queryGapEnd(expression, selected.close+1) != len(expression) {
+			return "", "", false, false
+		}
+		return receiver, syntax.render(syntaxSpan{last + 1, selected.close}), true, true
+	}
+	key := syntax.render(syntaxSpan{last + 1, len(expression)})
+	if simpleSemanticIdentifier(key) == "" {
+		return "", "", false, false
+	}
+	return receiver, key, false, true
 }
 
 // staticSliceBounds splits a subscript's contents at a top-level "..": a

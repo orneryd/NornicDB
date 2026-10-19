@@ -75,14 +75,16 @@ func forEachStrictMapEntry(s string, entry func(key, value string)) error {
 		entry(key, value)
 		return nil
 	}
-	for _,pair:=range readFunctionSyntax(inner).appendArguments(nil,0,true) {
-  if err:=check(pair); err!=nil {return err}
- }
- return nil
+	for _, pair := range readFunctionSyntax(inner).appendArguments(nil, 0, true) {
+		if err := check(pair); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // splitTopLevelCommaKeepEmpty is like splitTopLevelComma but preserves empty
 // entries so strict callers can reject malformed forms such as trailing commas.
 func splitTopLevelCommaKeepEmpty(input string) []string {
- return readFunctionSyntax(input).appendArguments(nil,0,true)
+	return readFunctionSyntax(input).appendArguments(nil, 0, true)
 }

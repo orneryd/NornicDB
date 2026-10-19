@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"strings"
 	"testing"
- "strings"
 
 	"github.com/stretchr/testify/require"
 )

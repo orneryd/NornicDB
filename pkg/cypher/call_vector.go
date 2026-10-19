@@ -355,15 +355,25 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	input = &vectorQueryInput{}
 
 	var call functionCallSpan
- found:=false
- for _,candidate:=range readFunctionSyntax(cypher).calls {
-  if strings.EqualFold(candidate.name,"db.index.vector.queryNodes") || strings.EqualFold(candidate.name,"db.index.vector.queryRelationships") {call=candidate;found=true;break}
- }
- if !found {return "",0,nil,localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(),nil)}
- if call.open<0 {return "",0,nil,localizedError(localization.CypherSpecializedCallsVectorParametersMissing(),nil)}
- if call.close(cypher)<0 {return "",0,nil,localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(),nil)}
- parts:=call.arguments(nil)
- if len(parts) >= 1 {
+	found := false
+	for _, candidate := range readFunctionSyntax(cypher).calls {
+		if strings.EqualFold(candidate.name, "db.index.vector.queryNodes") || strings.EqualFold(candidate.name, "db.index.vector.queryRelationships") {
+			call = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(), nil)
+	}
+	if call.open < 0 {
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
+	}
+	if call.close(cypher) < 0 {
+		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
+	}
+	parts := call.arguments(nil)
+	if len(parts) >= 1 {
 		// First param is index name (quoted string)
 		indexName = strings.Trim(strings.TrimSpace(parts[0]), "'\"")
 	}
@@ -407,7 +417,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 // splitParamsCarefully splits comma-separated parameters while respecting
 // brackets and quoted strings.
 func splitParamsCarefully(params string) []string {
- return readFunctionSyntax(params).appendArguments(nil,0,false)
+	return readFunctionSyntax(params).appendArguments(nil, 0, false)
 }
 
 // parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]

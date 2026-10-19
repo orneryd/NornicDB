@@ -163,5 +163,5 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
- return skipCypherQuotedText(expression,start,expression[start])
+	return skipCypherQuotedText(expression, start, expression[start])
 }
