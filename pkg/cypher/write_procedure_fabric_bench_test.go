@@ -48,7 +48,9 @@ func BenchmarkFabricProcedureAdmission(b *testing.B) {
 				fragment = "CALL apoc.cypher.doIt($statement,{value:$value}) YIELD value RETURN value.value AS value"
 			case "dynamicWrite", "dynamicRead":
 				fragment = "CALL apoc.cypher.run($statement,{value:$value}) YIELD value RETURN value.value AS value"
-				if route == "dynamicRead" { inner = "RETURN $value AS value" }
+				if route == "dynamicRead" {
+					inner = "RETURN $value AS value"
+				}
 			}
 			query := "CALL { USE u5_fabric.shard " + fragment + " } RETURN value"
 			params := map[string]interface{}{"value": 0, "statement": inner}

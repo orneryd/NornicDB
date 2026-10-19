@@ -173,8 +173,8 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 
 func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 	// Fabric participants construct their own executor from runtime settings.
-	// Permit only this fixture's local import path through that same setting.
-	t.Setenv("NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS","true")
+	// Enable local imports for this fixture through that same setting.
+	t.Setenv("NORNICDB_APOC_SECURITY_ALLOW_IMPORT_FILE_ACCESS", "true")
 	ensureBuiltInProceduresRegistered()
 	failure := registerAdmissionMatrixReject(t)
 	profiles := map[string]string{
