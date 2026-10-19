@@ -41,12 +41,22 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 				})
+				t.Run("filtered native nodes/"+proc,func(t *testing.T) {
+					result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo."+proc+"([n,z,m,y],['R'],{}) YIELD node RETURN count(DISTINCT node)",nil)
+					require.NoError(t,err)
+					require.Equal(t,[][]interface{}{{int64(4)}},result.Rows)
+				})
 			}
 			t.Run("community topology", func(t *testing.T) {
 				result, err := exec.Execute(ctx, "USE comp CALL apoc.algo.wcc() YIELD node,componentId RETURN count(DISTINCT componentId)", nil)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 			})
+			for _,tc := range []struct{filter string; components int64}{{"['R']",2},{"[]",4}} {
+				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo.wcc([n,z,m,y],"+tc.filter+") YIELD node,componentId RETURN count(DISTINCT componentId)",nil)
+				require.NoError(t,err)
+				require.Equal(t,[][]interface{}{{tc.components}},result.Rows)
+			}
 			for _, tc := range []struct {
 				proc string
 				want float64
