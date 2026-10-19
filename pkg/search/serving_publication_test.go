@@ -155,9 +155,11 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 		{name: "runtime_transition_swap", setup: graphReady, publish: func(t *testing.T, svc *Service) {
 			graph, err := svc.getOrCreateHNSWIndex(ctx, 2, nil)
 			require.NoError(t, err)
+			svc.pipelineMu.Lock()
 			svc.indexMu.Lock()
 			svc.applyTransitionSwapLocked(strategyModeHNSW, graph, svc.vectorIndex, nil)
 			svc.indexMu.Unlock()
+			svc.pipelineMu.Unlock()
 		}},
 		// The CPU<->GPU brute switch needs a GPU; the CPU-only lab cannot run
 		// it. Its publication is covered by TestServingFieldsAreWrittenOnlyByTheirOwner.

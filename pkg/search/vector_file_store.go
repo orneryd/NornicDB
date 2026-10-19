@@ -536,25 +536,40 @@ func (v *VectorFileStore) GetDimensions() int {
 
 // IterateChunked reads the vector file in chunks and calls fn(ids, vecs) for each chunk.
 // Used to build HNSW without loading all vectors into memory. fn may be called with
-// fewer than chunkSize vectors on the last chunk.
+// fewer than chunkSize vectors on the last chunk. Callbacks run without mu:
+// HNSW construction looks vectors up through Service and this store. An owned
+// read handle and copied ordinals keep this snapshot valid across close or
+// compaction, which replaces the store's handle and file.
 func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, vecs [][]float32) error) error {
 	if chunkSize <= 0 {
 		chunkSize = 10000
 	}
 	v.mu.RLock()
-	defer v.mu.RUnlock()
 	if v.closed {
+		v.mu.RUnlock()
 		return errVecFileClosed
 	}
-	file := v.file
-	if file == nil {
+	if v.file == nil {
+		v.mu.RUnlock()
 		return errVecFileClosed
 	}
+	if _, err := v.file.Stat(); err != nil {
+		v.mu.RUnlock()
+		return err
+	}
+	file, err := security.OpenRootedFile(v.vecPath, os.O_RDONLY, 0)
+	if err != nil {
+		v.mu.RUnlock()
+		return err
+	}
+	defer file.Close()
+	nextOrdinal := v.nextOrdinal
 
 	ids := make([]string, 0, chunkSize)
 	vecs := make([][]float32, 0, chunkSize)
 	vectorBytes, ok := util.SafeIntProduct(v.dimensions, 4)
 	if !ok {
+		v.mu.RUnlock()
 		return fmt.Errorf("vector dimensions overflow iteration buffer size: %d", v.dimensions)
 	}
 	type ordinalID struct {
@@ -565,11 +580,12 @@ func (v *VectorFileStore) IterateChunked(chunkSize int, fn func(ids []string, ve
 	for id, ordinal := range v.idToOrdinal {
 		entries = append(entries, ordinalID{ordinal: ordinal, id: id})
 	}
+	v.mu.RUnlock()
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ordinal < entries[j].ordinal })
 	buf := make([]byte, vectorBytes)
 	for _, entry := range entries {
-		if entry.ordinal < 0 || entry.ordinal >= v.nextOrdinal {
-			return fmt.Errorf("vector ordinal %d for %q is outside %d slots", entry.ordinal, entry.id, v.nextOrdinal)
+		if entry.ordinal < 0 || entry.ordinal >= nextOrdinal {
+			return fmt.Errorf("vector ordinal %d for %q is outside %d slots", entry.ordinal, entry.id, nextOrdinal)
 		}
 		if _, err := file.ReadAt(buf, v.vectorOffset(entry.ordinal)); err != nil {
 			return err
