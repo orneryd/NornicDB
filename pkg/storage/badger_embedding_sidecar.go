@@ -158,11 +158,11 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	notification, release, err := b.beginNotifyingWrite()
+	notification, err := b.beginNotifyingWrite()
 	if err != nil {
 		return err
 	}
-	defer b.finishNotifyingWrite(notification, release)
+	defer b.finishNotifyingWrite(notification)
 	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(node.ID), beginRevision); err != nil {
 		return err
 	}

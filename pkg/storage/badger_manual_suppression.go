@@ -100,11 +100,11 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 }
 
 func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, revision uint64) error {
-	notification, finish, err := b.beginNotifyingWrite()
+	notification, err := b.beginNotifyingWrite()
 	if err != nil {
 		return err
 	}
-	defer b.finishNotifyingWrite(notification, finish)
+	defer b.finishNotifyingWrite(notification)
 	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(id), revision); err != nil {
 		return err
 	}

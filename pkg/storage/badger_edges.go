@@ -31,11 +31,11 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer b.finishNotifyingWrite(notification, release)
+	defer b.finishNotifyingWrite(notification)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -302,11 +302,11 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer b.finishNotifyingWrite(notification, release)
+	defer b.finishNotifyingWrite(notification)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -536,11 +536,11 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer b.finishNotifyingWrite(notification, release)
+	defer b.finishNotifyingWrite(notification)
 	if id == "" {
 		return ErrInvalidID
 	}

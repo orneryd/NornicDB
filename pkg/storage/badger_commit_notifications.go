@@ -39,20 +39,20 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 }
 
 // beginNotifyingWrite gives nodes and edges the same lifetime transfer. The
-// returned finish must be deferred before taking any other publication locks.
-func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error) {
-	release, err := b.beginWrite()
-	if err != nil {
-		return nil, nil, err
+// notification must be deferred through finishNotifyingWrite before taking any
+// other publication locks.
+func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, error) {
+	if err := b.admitPublication(false); err != nil {
+		return nil, err
 	}
 	single := &singleCommitNotification{}
 	n := &single.commitNotification
 	n.ops = single.operation[:0]
-	return n, release, nil
+	return n, nil
 }
 
-func (b *BadgerEngine) finishNotifyingWrite(n *commitNotification, release func()) {
-	release()
+func (b *BadgerEngine) finishNotifyingWrite(n *commitNotification) {
+	b.writeBarrier.RUnlock()
 	b.completeCommitNotification(n)
 }
 
