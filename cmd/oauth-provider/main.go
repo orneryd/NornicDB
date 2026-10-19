@@ -135,7 +135,7 @@ func generateRandomToken(length int) (string, error) {
 func validateLocalRedirectURI(rawURI string) (*url.URL, error) {
 	redirectURL, err := url.Parse(rawURI)
 	if err != nil {
-		return nil, fmt.Errorf("invalid redirect_uri: %w", err)
+		return nil, fmt.Errorf("invalid redirect_uri: %w", observability.RedactError(err, observability.ClientCredentials(rawURI)...))
 	}
 	if redirectURL.Scheme != "http" && redirectURL.Scheme != "https" {
 		return nil, fmt.Errorf("invalid redirect_uri scheme")
