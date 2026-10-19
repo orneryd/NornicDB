@@ -4183,30 +4183,16 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// Commits update the index before releasing the key's commit lock, so a
 	// concurrent commit of the same key is listed or still holds the lock.
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
-		nsPrefix := tx.namespace + ":"
 		candidates, err := tx.engine.keyConstraintNodes(idx, c.Label, c.Properties[0], values)
 		if err != nil {
 			return err
 		}
 		for _, existing := range candidates {
-			id := existing.ID
-			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
+			if existing.ID == node.ID || tx.committedNodeSupersededLocked(existing.ID) || !nodeHoldsKey(existing, tx.namespace, c.Label, c.Properties, node.Properties) {
 				continue
 			}
-			if existing == nil || !hasLabel(existing.Labels, c.Label) {
-				continue
-			}
-			match := true
-			for i, prop := range c.Properties {
-				if v, ok := existing.Properties[prop]; !ok || !compareValues(v, values[i]) {
-					match = false
-					break
-				}
-			}
-			if match {
-				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
-				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
-			}
+			message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 		}
 		return nil
 	}
@@ -4220,6 +4206,38 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	}
 
 	return nil
+}
+
+// committedKeyHolder returns candidate id's committed node when it holds the
+// key (nodeHoldsKey): the MERGE admission read of a composite equality-index
+// candidate.
+func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
+	existing, err := b.GetNode(id)
+	if err != nil || existing == nil || !nodeHoldsKey(existing, namespace, label, properties, props) {
+		return nil
+	}
+	return existing
+}
+
+// nodeHoldsKey reports whether node belongs to namespace, carries label and
+// equals props exactly on every key property: the one test that turns a
+// composite equality-index candidate into the key's holder, for commit
+// validation and MERGE admission alike. The index lists a node under its last
+// indexed values, so the node's current values decide.
+func nodeHoldsKey(node *Node, namespace, label string, properties []string, props map[string]interface{}) bool {
+	id := node.ID
+	if namespace != "" && !(len(id) > len(namespace) && strings.HasPrefix(string(id), namespace) && id[len(namespace)] == ':') {
+		return false
+	}
+	if !hasLabel(node.Labels, label) {
+		return false
+	}
+	for _, prop := range properties {
+		if v, ok := node.Properties[prop]; !ok || !compareValues(v, props[prop]) {
+			return false
+		}
+	}
+	return true
 }
 
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations

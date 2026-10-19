@@ -11,43 +11,15 @@ import (
 )
 
 // compareValues compares two property values for equality.
-// This mirrors Cypher semantics for numeric comparisons across int/float types.
+// This mirrors Cypher semantics for numeric comparisons across int/float types:
+// numbers compare exactly, as list elements do, so adjacent integers above
+// 2^53 stay distinct instead of colliding through float64.
 func compareValues(a, b interface{}) bool {
-	if aNum, ok := numericConstraintValue(a); ok {
-		if bNum, ok := numericConstraintValue(b); ok {
-			return aNum == bNum
-		}
+	if equal, numeric := equalConstraintListNumbers(reflect.ValueOf(a), reflect.ValueOf(b)); numeric {
+		return equal
 	}
 
-	// Handle different numeric types
 	switch v1 := a.(type) {
-	case int:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == v2
-		case int64:
-			return int64(v1) == v2
-		case float64:
-			return float64(v1) == v2
-		}
-	case int64:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == int64(v2)
-		case int64:
-			return v1 == v2
-		case float64:
-			return float64(v1) == v2
-		}
-	case float64:
-		switch v2 := b.(type) {
-		case int:
-			return v1 == float64(v2)
-		case int64:
-			return v1 == float64(v2)
-		case float64:
-			return v1 == v2
-		}
 	case string:
 		if v2, ok := b.(string); ok {
 			return v1 == v2

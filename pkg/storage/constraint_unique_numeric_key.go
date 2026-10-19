@@ -64,7 +64,7 @@ func (v pendingWriteView) uniqueValueMatches(out []NodeID, label, property strin
 		if !v.inNamespace(id) {
 			continue
 		}
-		if node, exists := reader.newestNodeLocked(id); exists && constraintCreationValueEqual(node.Properties[property], value) {
+		if node, exists := reader.newestNodeLocked(id); exists && compareValues(node.Properties[property], value) {
 			out = append(out, id)
 		}
 	}
