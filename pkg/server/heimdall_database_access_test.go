@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -40,6 +41,11 @@ func heimdallPermissions(allowed map[auth.Permission]bool) func(string, auth.Per
 
 func requireHeimdallForbidden(t *testing.T, err error) {
 	t.Helper()
+	var permission *cypher.PermissionDeniedError
+	if errors.As(err, &permission) {
+		require.Equal(t, "Neo.ClientError.Security.Forbidden", permission.BoltErrorCode())
+		return
+	}
 	var localized *localization.LocalizedError
 	require.True(t, errors.As(err, &localized), "want a Forbidden error, got %v", err)
 	require.Equal(t, "Neo.ClientError.Security.Forbidden", localized.Code)
