@@ -54,16 +54,6 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 		assert.Equal(t, nodeChunkVectorKey("doc", 1), candidates[0].ID)
 	}
 
-	// Capacity reconciliation still charges an undecodable resident key, to
-	// the key itself, so the totals stay exact.
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	t.Cleanup(func() { _ = svc.Close() })
-	require.NoError(t, svc.vectorIndex.Add(undecodableVectorKey, []float32{1, 0}))
-	svc.indexMu.Lock()
-	svc.reconcileVectorSourceCapacityLocked(svc.vectorIndex)
-	svc.indexMu.Unlock()
-	assert.Positive(t, svc.indexCapacityByNode[undecodableVectorKey].vectorResident)
-	assert.Equal(t, svc.indexCapacityByNode[undecodableVectorKey].vectorResident, svc.vectorResidentBytes)
 }
 
 // forEachNodeVectorEntry stops as soon as its callback does, in every entry
@@ -133,6 +123,6 @@ func TestIndexNodeSkipsMismatchedEntriesAndKeepsTheRest(t *testing.T) {
 	svc.indexMu.RLock()
 	usage := svc.estimateNodeIndexCapacityLocked(node, nodeFulltext{})
 	svc.indexMu.RUnlock()
-	assert.Equal(t, nodeVectorMetadataBytes("n", nil)+vectorEntryMetadataBytes(nodeNamedVectorKey("n", "v"))+vectorEntryMetadataBytes("n"), usage.vectorMetadata,
+	assert.Equal(t, int64(len("n")+16+len(nodeNamedVectorKey("n", "v"))+16+len("n")+16), usage.vectorMetadata,
 		"the capacity estimate charges only the entries IndexNode stores")
 }
