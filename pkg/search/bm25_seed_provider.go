@@ -145,7 +145,7 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 // creation. Pipeline creation snapshots the node metadata under indexMu
 // before taking pipelineMu and passes those inputs down.
 type vectorBuildSeeds struct {
-	compressedIDs []string                   // IVF-PQ build seeds; nil unless compressed quality
+	compressedIDs []string         // IVF-PQ build seeds; nil unless compressed quality
 	hnswHints     nodeLexicalHints // HNSW build hints; nil while a graph exists
 }
 

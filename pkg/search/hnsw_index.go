@@ -230,12 +230,17 @@ func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
 }
 
 func (h *HNSWIndex) setBuildLexicalHint(key string, hint nodeLexicalHint) {
-	if hint.ID == "" { return }
+	if hint.ID == "" {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.buildLexicalHints == nil { h.buildLexicalHints = make(entryLexicalHints) }
+	if h.buildLexicalHints == nil {
+		h.buildLexicalHints = make(entryLexicalHints)
+	}
 	putEntryLexicalHint(h.buildLexicalHints, key, hint)
 }
+
 // Config returns a copy of the index configuration.
 func (h *HNSWIndex) Config() HNSWConfig {
 	h.mu.RLock()
@@ -1806,7 +1811,9 @@ func (h *HNSWIndex) selectNeighborsInto(query []float32, candidates []uint32, m 
 }
 
 func (h *HNSWIndex) buildLexicalHintLocked(internalID uint32) (nodeLexicalHint, bool) {
-	if !validHNSWIndex(internalID, len(h.internalToID)) { return nodeLexicalHint{}, false }
+	if !validHNSWIndex(internalID, len(h.internalToID)) {
+		return nodeLexicalHint{}, false
+	}
 	return entryHintForVectorID(h.buildLexicalHints, h.internalToID[internalID])
 }
 
