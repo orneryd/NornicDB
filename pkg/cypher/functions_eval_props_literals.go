@@ -116,7 +116,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// Only a complete list literal enters the checked list-value boundary.
 	// Subscripts and expressions over lists stay with the row evaluator.
 	if isListLiteral(expr) {
-		value, err := e.parseArrayValue(ctx, expr)
+		value, err := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		recordExpressionFailure(ctx, err)
 		return value
 	}
