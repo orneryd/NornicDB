@@ -60,14 +60,14 @@ func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 		return nil, nil
 	}
 
-	if err := validateDiscoveryURL("Issuer", oauthCfg.Issuer); err != nil {
+	if err := auth.ValidateOAuthIssuer(oauthCfg.Issuer); err != nil {
 		return nil, err
 	}
 	if err := validateDiscoveryURL("CallbackURL", oauthCfg.CallbackURL); err != nil {
 		return nil, err
 	}
 
-	issuer := strings.TrimRight(oauthCfg.Issuer, "/")
+	issuer := oauthCfg.Issuer
 
 	body := discoveryBody{
 		DefaultProvider: "nornic-oauth",
@@ -76,14 +76,14 @@ func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 				ID:                      "nornic-oauth",
 				Name:                    "OAuth",
 				AuthProvider:            "oauth",
-				AuthEndpoint:            observability.RedactURL(issuer + "/oauth2/v1/authorize"),
-				TokenEndpoint:           observability.RedactURL(issuer + "/oauth2/v1/token"),
+				AuthEndpoint:            issuer + "/oauth2/v1/authorize",
+				TokenEndpoint:           issuer + "/oauth2/v1/token",
 				AuthFlow:                "pkce",
 				ClientID:                oauthCfg.ClientID,
 				RedirectURI:             oauthCfg.CallbackURL,
 				Scopes:                  []string{"openid", "profile", "email"},
 				Audience:                "nornic",
-				WellKnownDiscoveryURI:   observability.RedactURL(issuer + "/.well-known/openid-configuration"),
+				WellKnownDiscoveryURI:   issuer + "/.well-known/openid-configuration",
 				TokenTypePrincipal:      "id_token",
 				TokenTypeAuthentication: "id_token",
 			},

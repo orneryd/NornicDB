@@ -1060,6 +1060,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if db == nil {
 		return nil, fmt.Errorf("database required")
 	}
+	if oauth := auth.GetOAuthConfig(); oauth != nil && oauth.Issuer != "" {
+		if err := auth.ValidateOAuthIssuer(oauth.Issuer); err != nil {
+			return nil, err
+		}
+	}
 	trustedProxyPrefixes, err := parseTrustedProxyPrefixes(config.TrustedProxies)
 	if err != nil {
 		return nil, err

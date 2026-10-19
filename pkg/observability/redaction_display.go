@@ -224,14 +224,18 @@ func RedactURL(raw string) string {
 	if !valid {
 		return redactedPlaceholder
 	}
-	if strings.Contains(u.Fragment, "=") {
-		fragment, fragmentChanged, valid := redactURLQuery(u.Fragment)
+	if escaped := u.EscapedFragment(); strings.Contains(escaped, "=") {
+		fragment, fragmentChanged, valid := redactURLQuery(escaped)
 		if !valid {
 			return redactedPlaceholder
 		}
 		if fragmentChanged {
-			u.Fragment = fragment
-			u.RawFragment = ""
+			decoded, err := url.PathUnescape(fragment)
+			if err != nil {
+				return redactedPlaceholder
+			}
+			u.Fragment = decoded
+			u.RawFragment = fragment
 			changed = true
 		}
 	}
@@ -260,17 +264,27 @@ func redactURLQuery(query string) (string, bool, bool) {
 	changed := false
 	parts := strings.Split(query, "&")
 	for i, part := range parts {
-		key, _, found := strings.Cut(part, "=")
-		decoded, decodeErr := url.QueryUnescape(key)
-		if decodeErr != nil {
+		key, _, sensitive, valid := credentialURLField(part)
+		if !valid {
 			return "", false, false
 		}
-		if found && isSensitiveURLQueryName(decoded) {
+		if sensitive {
 			parts[i] = key + "=" + url.QueryEscape(redactedPlaceholder)
 			changed = true
 		}
 	}
 	return strings.Join(parts, "&"), changed, true
+}
+
+// Interpret one escaped field after splitting on literal '&'. Both URL display
+// and credential extraction use this order so encoded delimiters stay in values.
+func credentialURLField(part string) (key, value string, sensitive, valid bool) {
+	key, value, found := strings.Cut(part, "=")
+	decoded, err := url.QueryUnescape(key)
+	if err != nil {
+		return key, value, false, false
+	}
+	return key, value, found && isSensitiveURLQueryName(decoded), true
 }
 
 // Error bodies can also carry newly issued credentials, whose values were not
@@ -314,20 +328,17 @@ func ClientCredentials(endpoint string, secrets ...string) []string {
 			values = append(values, password, u.User.Username()+":"+password)
 		}
 	}
-	for _, query := range []string{u.RawQuery, u.Fragment} {
+	for _, query := range []string{u.RawQuery, u.EscapedFragment()} {
 		for _, part := range strings.Split(query, "&") {
-			key, value, ok := strings.Cut(part, "=")
-			if !ok {
+			_, value, sensitive, valid := credentialURLField(part)
+			if !valid || !sensitive {
 				continue
 			}
-			key, _ = url.QueryUnescape(key)
-			if isSensitiveURLQueryName(key) {
-				decoded, err := url.QueryUnescape(value)
-				if err != nil {
-					decoded = value
-				}
-				values = append(values, decoded)
+			decoded, err := url.QueryUnescape(value)
+			if err != nil {
+				decoded = value
 			}
+			values = append(values, decoded)
 		}
 	}
 	return values

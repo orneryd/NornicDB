@@ -125,7 +125,7 @@ func TestSolReviewRealBinaries(t *testing.T) {
 		hp, bp := solPort(t), solPort(t)
 		dir := t.TempDir()
 		const callbackURI = "http://127.0.0.1/callback?state=fixed-route&code=public-code&key=public-key&api_key=public-route"
-		solStart(t, solRealBinary, []string{"NORNICDB_BOLT_ENABLED=true", "NORNICDB_AUTH_PROVIDER=oauth", "NORNICDB_OAUTH_CLIENT_ID=public-client-id", "NORNICDB_OAUTH_CLIENT_SECRET=synthetic-oauth-client-secret-0981726354", "NORNICDB_OAUTH_ISSUER=http://probe:" + solSecret + "@127.0.0.1:1/issuer", "NORNICDB_OAUTH_CALLBACK_URL=" + callbackURI}, "serve", "--no-auth", "--headless", "--http-port="+hp, "--bolt-port="+bp, "--data-dir="+filepath.Join(dir, "data"), "--embedding-enabled=false", "--stdio-log-max-kb=0")
+		solStart(t, solRealBinary, []string{"NORNICDB_BOLT_ENABLED=true", "NORNICDB_AUTH_PROVIDER=oauth", "NORNICDB_OAUTH_CLIENT_ID=public-client-id", "NORNICDB_OAUTH_CLIENT_SECRET=synthetic-oauth-client-secret-0981726354", "NORNICDB_OAUTH_ISSUER=http://127.0.0.1:1/issuer", "NORNICDB_OAUTH_CALLBACK_URL=" + callbackURI}, "serve", "--no-auth", "--headless", "--http-port="+hp, "--bolt-port="+bp, "--data-dir="+filepath.Join(dir, "data"), "--embedding-enabled=false", "--stdio-log-max-kb=0")
 		data := solGet(t, "http://127.0.0.1:"+bp+"/")
 		if !bytes.Contains(data, []byte("public-client-id")) {
 			t.Error("public client ID lost")
@@ -157,7 +157,7 @@ func TestSolReviewRealBinaries(t *testing.T) {
 	t.Run("oauth-provider-discovery", func(t *testing.T) {
 		bin := solBuild(t, "./cmd/oauth-provider")
 		port := solPort(t)
-		solStart(t, bin, nil, "-port="+port, "-issuer=http://probe:"+solSecret+"@127.0.0.1:"+port, "-client-secret=synthetic-provider-client-credential-8271649")
+		solStart(t, bin, nil, "-port="+port, "-issuer=http://127.0.0.1:"+port, "-client-secret=synthetic-provider-client-credential-8271649")
 		data := solGet(t, "http://127.0.0.1:"+port+"/.well-known/oauth-authorization-server")
 		solAbsent(t, "oauth-provider discovery", data)
 	})

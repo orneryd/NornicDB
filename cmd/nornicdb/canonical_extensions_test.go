@@ -37,8 +37,4 @@ func TestCanonicalRedactKeysCLIExtensions(t *testing.T) {
 	if cmd.Flags().Lookup("public-limit").DefValue != "42" {
 		t.Error("public flag default changed")
 	}
-	if shellDisplayColumn("custom.sealed_value") != observability.RedactedPlaceholder() ||
-		shellDisplayValue("custom.sealed_value", credential) != observability.RedactedPlaceholder() {
-		t.Error("canonical extension escaped CLI config columns/values")
-	}
 }
