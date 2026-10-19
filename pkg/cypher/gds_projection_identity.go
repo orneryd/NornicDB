@@ -6,7 +6,7 @@ import "github.com/orneryd/nornicdb/pkg/storage"
 // from another database. The same owner keys nodes, properties and endpoints.
 func (p *GraphProjection) nodeIdentity(database string, id storage.NodeID) string {
 	if database != "" && database != p.Database {
-		return storage.NodeElementID(database, id)
+		return storage.SourceNodeElementID(database, id)
 	}
 	return string(id)
 }

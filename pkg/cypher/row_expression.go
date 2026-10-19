@@ -1957,7 +1957,7 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	edgeID := edge.ID
 	if _, composite := e.storage.(*storage.CompositeEngine); composite && edge.Database != "" {
 		edgeID = storage.EdgeID(edge.ElementID(""))
-		id = storage.NodeID(storage.NodeElementID(edge.Database, id))
+		id = storage.NodeID(storage.SourceNodeElementID(edge.Database, id))
 	}
 	// A deleted relationship has no endpoints; full values avoid a second read.
 	if mayBeDeletedRelationshipView(edge) {

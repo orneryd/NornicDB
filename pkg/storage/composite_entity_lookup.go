@@ -39,5 +39,5 @@ func (c *CompositeEngine) constituentNodeElementID(alias string, engine Engine, 
 	if database == "" {
 		database = alias
 	}
-	return NodeID(NodeElementID(database, id))
+	return NodeID(SourceNodeElementID(database, id))
 }
