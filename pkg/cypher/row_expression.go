@@ -1943,16 +1943,7 @@ func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (
 }
 
 func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string) interface{} {
-	if properties != nil {
-		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
-			node, err := reader.GetNodeProjected(id, properties)
-			if err != nil {
-				return nil
-			}
-			return node
-		}
-	}
-	node, err := e.getQueryNode(e.storage, id)
+	node, err := e.newRelationshipEndpointReader(e.storage).read(id, properties)
 	if err != nil {
 		return nil
 	}
