@@ -62,6 +62,21 @@ func TestDynamicLabelGeneratedFunctionContract(t *testing.T) {
 	require.Contains(t, seen, dynamicLabelPredicateFunction)
 }
 
+// Trust of generated text belongs to one dispatch call, not to the context:
+// procedure-supplied statements must still cross the client boundary in PROFILE.
+func TestDynamicLabelRoutedClientBoundary(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dynamic_boundary"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, dynamiclabels.Fixture, nil)
+	require.NoError(t, err)
+	for _, prefix := range []string{"", "PROFILE "} {
+		_, err := exec.Execute(ctx, prefix+"MATCH (n:$any(['A','B'])) CALL apoc.cypher.run('RETURN __nornic_haslabels(null, [], false) AS v', {}) YIELD value RETURN value", nil)
+		require.ErrorContains(t, err, "unknown function: __nornic_haslabels")
+		_, err = exec.Execute(ctx, prefix+"RETURN __nornic_haslabels(null, [], false)", nil)
+		require.ErrorContains(t, err, "unknown function: __nornic_haslabels")
+	}
+}
+
 func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
 	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
