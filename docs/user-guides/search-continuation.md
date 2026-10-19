@@ -245,7 +245,11 @@ reset/drop retires that database's cursors without closing the shared registry.
 
 HTTP transactions, GraphQL and the search endpoint keep delivery ownership until
 the response's cursor references are written and its final page flush succeeds.
-Bolt RUN metadata does not acknowledge a page: PULL must deliver its records.
+Bolt recognizes cursor references in encoded records, including pages returned
+as JSON text or nested values. RUN metadata does not acknowledge a page: PULL
+must deliver its records. A FAILURE requiring RESET immediately retires
+undelivered pages; references already delivered remain resumable. Partial
+DISCARD retires references in the selected records using the same record encoder.
 Projected or selected results that omit a cursor reference release that page's
 admission when the response/result ends. Independent records and statements keep
 separate delivery ownership. A reset/drop also invalidates a service's pending

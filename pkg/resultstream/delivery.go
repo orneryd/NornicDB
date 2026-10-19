@@ -118,17 +118,6 @@ func (d *Delivery) Delivered() {
 	}
 }
 
-// DeliveredValues acknowledges only qids in records whose complete batch was
-// flushed. Other statements and records waiting for a later PULL remain owned.
-func (d *Delivery) DeliveredValues(value any) { d.finishValues(value, false) }
-
-// DiscardValues retires pages in records explicitly discarded by the client.
-func (d *Delivery) DiscardValues(value any) { d.finishValues(value, true) }
-
-func (d *Delivery) finishValues(value any, discard bool) {
-	d.finishWhere(func(cursor deliveryCursor) bool { return deliveryContainsQID(value, cursor.qid) }, discard)
-}
-
 func (d *Delivery) finishWhere(matches func(deliveryCursor) bool, discard bool) {
 	if !d.pending.Load() {
 		return
@@ -152,31 +141,6 @@ func (d *Delivery) finishWhere(matches func(deliveryCursor) bool, discard bool) 
 	for _, cursor := range removed {
 		cursor.discard()
 	}
-}
-func deliveryContainsQID(value any, qid string) bool {
-	switch value := value.(type) {
-	case string:
-		return value == qid
-	case []any:
-		for _, item := range value {
-			if deliveryContainsQID(item, qid) {
-				return true
-			}
-		}
-	case [][]any:
-		for _, row := range value {
-			if deliveryContainsQID(row, qid) {
-				return true
-			}
-		}
-	case map[string]any:
-		for _, item := range value {
-			if deliveryContainsQID(item, qid) {
-				return true
-			}
-		}
-	}
-	return false
 }
 func (r *Registry) trackDelivery(ctx context.Context, scope Scope, qid string) {
 	if delivery := DeliveryFromContext(ctx); delivery != nil {
