@@ -155,7 +155,7 @@ func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (
 	if r.dbManager != nil {
 		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, server: nil})
 	}
-	return exec
+	return exec, nil
 }
 
 // finishExecutor gives exec dbName's search service and the embed queue.
@@ -255,8 +255,11 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 		return nil, "", r.databaseForbidden(database)
 	}
 	dbName, selectable := scope.Resolve(database)
-	if !selectable || !allows(dbName, permission) {
+	if !selectable {
 		return nil, "", r.databaseForbidden(database)
+	}
+	if !allows(dbName, permission) {
+		return nil, "", &cypher.PermissionDeniedError{Permission: string(permission)}
 	}
 	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
 		return allows(database, auth.Permission(permission))

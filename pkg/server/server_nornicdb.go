@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,10 @@ import (
 
 // handleDecay returns memory decay information (NornicDB-specific)
 func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, s.dbManager.DefaultDatabaseName()) {
+		return
+	}
+
 	info := s.db.GetDecayInfo()
 
 	response := map[string]interface{}{
@@ -45,6 +50,10 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 // Query params:
 //   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -140,6 +149,10 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 // handleEmbedStats returns embedding worker statistics.
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
+		return
+	}
+
 	stats := s.db.EmbedQueueStats()
 	// Keep contended stats reads bounded. total_embeddings uses authoritative
 	// aggregate count to avoid false zeros.
@@ -196,6 +209,10 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailures lists durable terminal embedding failures without
 // returning node properties or embedding vectors.
 func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -224,6 +241,10 @@ func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailureRetry restores selected terminal failures to the durable
 // pending queue. An empty request body or node_ids list retries all failures.
 func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -246,6 +267,10 @@ func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request)
 // handleEmbedClear clears all embeddings from nodes (admin only).
 // This allows regeneration with a new model or fixing corrupted embeddings.
 func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+		return
+	}
+
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 		s.writeNeo4jPostOrDeleteRequired(w, r)
 		return
@@ -287,19 +312,12 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	claims := getClaims(r)
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	if !s.authorizeDatabaseOperation(w, r, dbName, auth.PermRead, auth.PermWrite) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
 		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
 			fmt.Sprintf("Search rebuild on composite database '%s' is not supported; target a constituent database explicitly.", dbName))
-		return
-	}
-	// Rebuild is a write to the database; require ResolvedAccess.Write for this DB.
-	if !s.getResolvedAccess(claims, dbName).Write {
-		s.writeNeo4jDatabaseWriteDenied(w, r, dbName)
 		return
 	}
 
