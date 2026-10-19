@@ -78,8 +78,8 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 				key := strings.TrimSpace(entry[:colon])
 				if isWholeCypherQuotedString(key) {
 					key, _ = decodeCypherQuotedString(key)
-				} else if len(key) >= 2 && key[0] == '`' && key[len(key)-1] == '`' {
-					key = strings.ReplaceAll(key[1:len(key)-1], "``", "`")
+				} else {
+					key = symbolicNameValue(key)
 				}
 				value, known := compileExecutionInput(entry[colon+1:], depth+1)
 				if !known {
