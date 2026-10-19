@@ -276,7 +276,11 @@ func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	return b.getNodeByID(id, visibleRead,
+	return b.getQueryNode(id, visibleRead)
+}
+
+func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) {
+	return b.getNodeByID(id, v,
 		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 			return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
 				return b.loadNodeEmbeddingState(txn, node, id, false)
@@ -339,11 +343,15 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 // back to the full GetNode path; an empty non-nil slice returns no user
 // properties.
 func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
+	return b.getNodeProjected(id, properties, visibleRead)
+}
+
+func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVisibility) (*Node, error) {
 	if properties == nil {
-		return b.GetNode(id)
+		return b.getNode(id, v)
 	}
 	include := propertyProjectionSet(properties)
-	return b.getNodeByID(id, visibleRead, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
 	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, nodeReadCacheFull)
 }
@@ -353,7 +361,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 // The decoded node is not cached, so an embedding-free read can never poison
 // the cache for later full reads.
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+	return b.getNodeByID(id, visibleRead, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, nil)
 	}, copyNodeWithoutEmbeddings, nil, nodeReadCacheFull)
 }
