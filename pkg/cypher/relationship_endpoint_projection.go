@@ -24,7 +24,7 @@ type endpointPropertyCache struct {
 
 func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{}) {
 	// Include map/entry overhead and key storage, not just property payloads.
-	size := int64(128 + len(key.id) + len(key.property)) + util.EstimateValueBytes(value)
+	size := int64(128+len(key.id)+len(key.property)) + util.EstimateValueBytes(value)
 	if size > endpointPropertyCacheBytes {
 		return
 	}
