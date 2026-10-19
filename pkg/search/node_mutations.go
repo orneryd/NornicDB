@@ -13,9 +13,6 @@ type NodeMutation struct {
 	service    *Service
 	nodeID     storage.NodeID
 	generation uint64
-	// prev is the reservation this one superseded, restored if this one is
-	// discarded (a write rejected at entry never happened).
-	prev uint64
 }
 
 // ReserveNodeMutation supersedes older work for this node. Reservation and
@@ -24,13 +21,11 @@ type NodeMutation struct {
 func (s *Service) ReserveNodeMutation(nodeID storage.NodeID) NodeMutation {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	s.nextNodeMutation++
 	if s.pendingNodeMutations == nil {
 		s.pendingNodeMutations = make(map[storage.NodeID]uint64)
 	}
-	prev := s.pendingNodeMutations[nodeID]
-	s.pendingNodeMutations[nodeID] = s.nextNodeMutation
-	return NodeMutation{service: s, nodeID: nodeID, generation: s.nextNodeMutation, prev: prev}
+	generation := reserveMutation(&s.mutationReservations, s.pendingNodeMutations, nodeID)
+	return NodeMutation{service: s, nodeID: nodeID, generation: generation}
 }
 
 // RefreshNode makes the node's index entries match storage: indexed while it
@@ -57,43 +52,19 @@ func (s *Service) RefreshNodeWithMutation(mutation NodeMutation) error {
 		return s.RemoveNodeWithMutation(mutation)
 	}
 	if err != nil {
-		s.DiscardNodeMutation(mutation)
-		s.retryRefresh(mutation.nodeID, "", err)
+		s.retryRefresh(RefreshRetry{Node: mutation}, err)
 		return err
 	}
 	return s.IndexNodeWithMutation(node, mutation)
 }
 
-// RefreshRetryFunc receives a node or relationship (the other ID is empty)
-// whose refresh could not read storage. The refresh still has to happen.
-type RefreshRetryFunc func(nodeID storage.NodeID, edgeID storage.EdgeID, err error)
-
-// SetRefreshRetry sets who retries a refresh whose storage read failed, for
-// every caller of RefreshNode and RefreshEdge: the owner of the database's
-// search state queues it again. Without one, the error is only returned.
-func (s *Service) SetRefreshRetry(retry RefreshRetryFunc) {
-	if retry == nil {
-		s.refreshRetry.Store(nil)
-		return
-	}
-	s.refreshRetry.Store(&retry)
-}
-
-func (s *Service) retryRefresh(nodeID storage.NodeID, edgeID storage.EdgeID, err error) {
-	if retry := s.refreshRetry.Load(); retry != nil {
-		(*retry)(nodeID, edgeID, err)
-	}
-}
-
-// nodeMutationRetired reports that no reservation is pending for the node: a
-// newer refresh, which read storage after this one was reserved, has already
-// been applied, so this one has nothing to read. A pending newer reservation
-// does not retire this one, since discarding it would restore this one.
+// nodeMutationRetired reports completion or discard of this reservation. A
+// pending newer reservation does not retire its live predecessors, since its
+// discard can restore one. Completion retires the whole predecessor chain.
 func (s *Service) nodeMutationRetired(mutation NodeMutation) bool {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	_, pending := s.pendingNodeMutations[mutation.nodeID]
-	return !pending
+	return mutationRetired(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID, mutation.generation)
 }
 
 func (s *Service) applyNodeMutation(mutation NodeMutation, apply func() error) error {
@@ -108,7 +79,7 @@ func (s *Service) applyNodeMutation(mutation NodeMutation, apply func() error) e
 	// Completed generations need no tombstone: an older reservation also fails
 	// when the entry is absent. Memory tracks outstanding work, not all IDs ever
 	// indexed, and a later reservation always has a fresh generation.
-	defer delete(s.pendingNodeMutations, mutation.nodeID)
+	defer completeMutation(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID)
 	return apply()
 }
 
@@ -117,12 +88,8 @@ func (s *Service) applyNodeMutation(mutation NodeMutation, apply func() error) e
 func (s *Service) DiscardNodeMutation(mutation NodeMutation) {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	if mutation.service == s && s.pendingNodeMutations[mutation.nodeID] == mutation.generation {
-		if mutation.prev != 0 {
-			s.pendingNodeMutations[mutation.nodeID] = mutation.prev
-		} else {
-			delete(s.pendingNodeMutations, mutation.nodeID)
-		}
+	if mutation.service == s {
+		discardMutation(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID, mutation.generation)
 	}
 }
 
@@ -132,7 +99,6 @@ type EdgeMutation struct {
 	service    *Service
 	edgeID     storage.EdgeID
 	generation uint64
-	prev       uint64
 }
 
 // ReserveEdgeMutation supersedes older work for this relationship. Generations
@@ -140,13 +106,11 @@ type EdgeMutation struct {
 func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID) EdgeMutation {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	s.nextNodeMutation++
 	if s.pendingEdgeMutations == nil {
 		s.pendingEdgeMutations = make(map[storage.EdgeID]uint64)
 	}
-	prev := s.pendingEdgeMutations[edgeID]
-	s.pendingEdgeMutations[edgeID] = s.nextNodeMutation
-	return EdgeMutation{service: s, edgeID: edgeID, generation: s.nextNodeMutation, prev: prev}
+	generation := reserveMutation(&s.mutationReservations, s.pendingEdgeMutations, edgeID)
+	return EdgeMutation{service: s, edgeID: edgeID, generation: generation}
 }
 
 // RefreshEdge makes the relationship's index entries match storage, as
@@ -169,8 +133,7 @@ func (s *Service) RefreshEdgeWithMutation(mutation EdgeMutation) error {
 		return s.removeEdgeWithMutation(mutation)
 	}
 	if err != nil {
-		s.discardEdgeMutation(mutation)
-		s.retryRefresh("", mutation.edgeID, err)
+		s.retryRefresh(RefreshRetry{Edge: mutation}, err)
 		return err
 	}
 	return s.indexEdgeWithMutation(edge, mutation)
@@ -180,8 +143,7 @@ func (s *Service) RefreshEdgeWithMutation(mutation EdgeMutation) error {
 func (s *Service) edgeMutationRetired(mutation EdgeMutation) bool {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	_, pending := s.pendingEdgeMutations[mutation.edgeID]
-	return !pending
+	return mutationRetired(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID, mutation.generation)
 }
 
 // applyEdgeMutation is applyNodeMutation for relationships: the caller has
@@ -192,19 +154,15 @@ func (s *Service) applyEdgeMutation(mutation EdgeMutation, apply func() error) e
 	if mutation.service != s || mutation.generation == 0 || s.pendingEdgeMutations[mutation.edgeID] != mutation.generation {
 		return nil
 	}
-	defer delete(s.pendingEdgeMutations, mutation.edgeID)
+	defer completeMutation(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID)
 	return apply()
 }
 
 func (s *Service) discardEdgeMutation(mutation EdgeMutation) {
 	s.nodeMutationMu.Lock()
 	defer s.nodeMutationMu.Unlock()
-	if mutation.service == s && s.pendingEdgeMutations[mutation.edgeID] == mutation.generation {
-		if mutation.prev != 0 {
-			s.pendingEdgeMutations[mutation.edgeID] = mutation.prev
-		} else {
-			delete(s.pendingEdgeMutations, mutation.edgeID)
-		}
+	if mutation.service == s {
+		discardMutation(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID, mutation.generation)
 	}
 }
 
@@ -225,7 +183,7 @@ func (mutation NodeMutation) claim() bool {
 	if !s.nodeMutationCurrentLocked(mutation) {
 		return false
 	}
-	delete(s.pendingNodeMutations, mutation.nodeID)
+	completeMutation(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID)
 	return true
 }
 
@@ -241,7 +199,7 @@ func (mutation EdgeMutation) claim() bool {
 	if !s.edgeMutationCurrentLocked(mutation) {
 		return false
 	}
-	delete(s.pendingEdgeMutations, mutation.edgeID)
+	completeMutation(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID)
 	return true
 }
 
@@ -279,12 +237,12 @@ func (s *Service) updateRelationshipWithMutation(write deferredIndexWrite, mutat
 // lockNodeMutation with its reservation check, which found it the newest and
 // still holds nodeMutationMu.
 func (s *Service) applyNodeMutationHeld(mutation NodeMutation, apply func() error) error {
-	defer delete(s.pendingNodeMutations, mutation.nodeID)
+	defer completeMutation(&s.mutationReservations, s.pendingNodeMutations, mutation.nodeID)
 	return apply()
 }
 
 // applyEdgeMutationHeld is applyNodeMutationHeld for a relationship.
 func (s *Service) applyEdgeMutationHeld(mutation EdgeMutation, apply func() error) error {
-	defer delete(s.pendingEdgeMutations, mutation.edgeID)
+	defer completeMutation(&s.mutationReservations, s.pendingEdgeMutations, mutation.edgeID)
 	return apply()
 }

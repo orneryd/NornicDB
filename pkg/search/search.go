@@ -852,12 +852,12 @@ type Service struct {
 	// nodeMutationMu orders reservations with their application. Live writes
 	// acquire it after lockNodeMutation finishes population admission.
 	nodeMutationMu       sync.Mutex
-	nextNodeMutation     uint64
+	mutationReservations mutationReservations
 	pendingNodeMutations map[storage.NodeID]uint64
 	pendingEdgeMutations map[storage.EdgeID]uint64
 	// refreshRetry, when set, receives a refresh whose storage read failed
 	// (SetRefreshRetry).
-	refreshRetry atomic.Pointer[RefreshRetryFunc]
+	refreshRetry atomic.Pointer[RefreshRetryOwner]
 
 	buildMu        baseOperationMutex
 	ready          atomic.Bool
