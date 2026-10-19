@@ -492,6 +492,7 @@ func bindingFunctionBeforeParen(text string, open int) string {
 		return ""
 	}
 }
+
 // localBindingNames caches the names a text binds itself
 // (expressionLocalBindings), by text, for localOccurrences.
 var localBindingNames = newBoundedCache[string, map[string]struct{}](1024, boundedCacheStringShardIndex)

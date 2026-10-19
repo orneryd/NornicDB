@@ -515,6 +515,7 @@ func functionCallParenAt(text string, open int) bool {
 	call, ok := functionCallBeforeParen(text, open)
 	return ok && !isNonFunctionSemanticKeyword(lowerASCII(call.name))
 }
+
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery
