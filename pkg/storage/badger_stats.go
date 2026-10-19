@@ -361,6 +361,10 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // Badger batch commits batch by batch, so it always makes progress. Claim
 // serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
+	releaseAdmission, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+	if err != nil { return nil }
+	defer releaseAdmission()
+
 	if b.ensureOpen() != nil {
 		return nil
 	}

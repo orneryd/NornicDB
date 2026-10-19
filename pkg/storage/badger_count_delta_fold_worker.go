@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 )
 
@@ -76,6 +77,9 @@ func (b *BadgerEngine) startCountDeltaFoldWorker() {
 // while the fold runs are not in its snapshot; they remain and the next
 // threshold crossing folds them.
 func (b *BadgerEngine) foldCountDeltasInBackground() {
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+	if err != nil { return }
+	defer release()
 	if err := b.foldAllLabelCountDeltas(); err != nil && b.log != nil {
 		b.log.Warn("background label-count delta fold failed",
 			"subsystem", "storage", "error", err)

@@ -142,6 +142,9 @@ func (b *BadgerEngine) stopEdgeBetweenIndexBackfill() {
 
 // rebuildEdgeBetweenIndex scans stored edges and writes direct lookup entries.
 func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error) {
+ release, admissionErr := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
+ if admissionErr != nil { return 0, admissionErr }
+ defer release()
 	if ctx == nil {
 		ctx = context.Background()
 	}

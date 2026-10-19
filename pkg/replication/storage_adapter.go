@@ -864,6 +864,9 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
+ release, err := storage.AdmitRecoverySnapshot(context.Background(), a.engine)
+ if err != nil { return err }
+ defer release()
 	// Get all nodes and edges
 	nodes, err := a.engine.AllNodes()
 	if err != nil {

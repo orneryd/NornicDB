@@ -635,8 +635,8 @@ type hotPathTraceState struct {
 // This allows the executor to call database management operations without directly
 // depending on the multidb package.
 type DatabaseManagerInterface interface {
-	CreateDatabase(name string) error
-	DropDatabase(name string) error
+	CreateDatabaseContext(ctx context.Context, name string) error
+	DropDatabaseContext(ctx context.Context, name string) error
 	ListDatabases() []DatabaseInfoInterface
 	Exists(name string) bool
 	CreateAlias(alias, databaseName string) error
@@ -646,8 +646,8 @@ type DatabaseManagerInterface interface {
 	SetDatabaseLimits(databaseName string, limits interface{}) error
 	GetDatabaseLimits(databaseName string) (interface{}, error)
 	// Composite database methods
-	CreateCompositeDatabase(name string, constituents []interface{}) error
-	DropCompositeDatabase(name string) error
+	CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error
+	DropCompositeDatabaseContext(ctx context.Context, name string) error
 	AddConstituent(compositeName string, constituent interface{}) error
 	RemoveConstituent(compositeName string, alias string) error
 	GetCompositeConstituents(compositeName string) ([]interface{}, error)

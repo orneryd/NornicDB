@@ -324,7 +324,7 @@ func (a *databaseManagerAdapter) CreateDatabaseContext(ctx context.Context, name
 }
 
 func (a *databaseManagerAdapter) CreateDatabase(name string) error {
-	return a.manager.CreateDatabase(name)
+	return a.manager.CreateDatabaseContext(context.Background(), name)
 }
 
 func (a *databaseManagerAdapter) ServerIdentity() (string, time.Time) {

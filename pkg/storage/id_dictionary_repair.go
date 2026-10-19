@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 
 	"github.com/dgraph-io/badger/v4"
@@ -103,6 +104,9 @@ func numIDsInKeys(txn *badger.Txn, prefix byte) map[uint64]bool {
 // An entity that isn't identified unambiguously (an unlabelled node, two
 // lost relationships alike) is listed as unresolved and left unchanged.
 func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
+ release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+ if err != nil { return nil, err }
+ defer release()
 	report, err := b.CheckIDDictionary()
 	if err != nil {
 		return nil, err

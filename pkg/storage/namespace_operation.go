@@ -99,6 +99,11 @@ func (op *NamespaceDrop) physicalComplete(ctx context.Context, err error) error 
 	// External completion callbacks run later and cannot undo that checkpoint.
 	if err == nil && op.nativeSequence != 0 {
 		err = op.engine.persistNamespaceCompletion(op.namespace, op.nativeSequence)
+		if err == nil {
+			wal := op.nativeWAL
+			if wal == nil { wal = op.engine.bufferedCommitWAL }
+			if wal != nil { wal.setNamespaceObligation(op.nativeSequence, "", true) }
+		}
 	}
 	op.physicalDone, op.err = true, err
 	if (op.consensus || ctx.Value(deferredDropCompletionKey{}) == true) && op.complete != nil {
@@ -238,7 +243,7 @@ func (b *BadgerEngine) PrepareNamespaceDrop(ctx context.Context, prefix string, 
 	if err != nil {
 		return err
 	}
-	release, err = b.beginPrefixDeletion(ctx, prefix)
+	release, err = b.beginPrefixDeletion(ctx, prefix, op)
 	if err != nil {
 		return err
 	}
@@ -274,12 +279,15 @@ func (op *NamespaceDrop) Propose(ctx context.Context, appendLog func() error) er
 	}
 	if err = ctx.Err(); err == nil {
 		op.chooseCatalogRevision()
-		err = appendLog()
-	}
-	if err == nil {
-		op.phase.Store(dropProposed)
 	}
 	release()
+	if err == nil {
+		// Preparation retains target admission. Capture publication metadata
+		// before releasing the barrier, then enter consensus without holding
+		// any storage lock. A replica may apply as soon as append publishes.
+		op.phase.Store(dropProposed)
+		err = appendLog()
+	}
 	if err != nil {
 		op.Abort()
 	}
@@ -397,12 +405,8 @@ func (op *NamespaceDrop) finish(err error) error {
 }
 
 func (b *BadgerEngine) checkNamespaceOperation(namespace string) error {
-	if state := b.namespaceLifetimes.Load(); state != nil && state.active[namespace] != nil {
-		return fmt.Errorf("%w: namespace %q has a lifecycle operation in progress", ErrConflict, namespace)
-	}
-	return nil
+ return b.checkNamespaceAdmission(namespace, b.namespaceLifetimeRevision())
 }
-
 // All namespace-lifetime state has one writer: the exclusive publication owner.
 func (b *BadgerEngine) setNamespaceOperation(namespace string, op *NamespaceDrop) {
 	next := b.copyNamespaceLifetimes()

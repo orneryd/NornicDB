@@ -117,7 +117,7 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 func (b *BadgerEngine) namespaceSchemaPersister(namespace string) func(*SchemaDefinition) error {
 	revision := b.namespaceLifetimeRevision()
 	return func(def *SchemaDefinition) error {
-		release, err := b.beginWrite()
+		release, err := b.beginWrite(namespace)
 		if err != nil {
 			return err
 		}

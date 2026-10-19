@@ -1260,13 +1260,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Create database
-	if manager, ok := e.dbManager.(interface {
-		CreateDatabaseContext(context.Context, string) error
-	}); ok {
-		err = manager.CreateDatabaseContext(ctx, dbName)
-	} else {
-		err = e.dbManager.CreateDatabase(dbName)
-	}
+	err = e.dbManager.CreateDatabaseContext(ctx, dbName)
 	if err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
@@ -1316,11 +1310,11 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 	}
 
 	if e.dbManager.Exists(dbName) {
-		if err := e.dbManager.DropDatabase(dbName); err != nil {
+		if err := e.dbManager.DropDatabaseContext(ctx, dbName); err != nil {
 			return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 		}
 	}
-	if err := e.dbManager.CreateDatabase(dbName); err != nil {
+	if err := e.dbManager.CreateDatabaseContext(ctx, dbName); err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
@@ -1432,7 +1426,7 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	} else if !e.dbManager.Exists(dbName) {
 		err = multidb.ErrDatabaseNotFound
 	} else {
-		err = e.dbManager.DropDatabase(dbName)
+		err = e.dbManager.DropDatabaseContext(ctx, dbName)
 	}
 	if errors.Is(err, multidb.ErrDatabaseNotFound) {
 		if ifExistsIdx >= 0 {

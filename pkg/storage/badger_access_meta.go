@@ -141,7 +141,7 @@ func (b *BadgerEngine) RecordMaterializedAccess(entityID string) {
 		return
 	}
 	revision := b.namespaceLifetimeRevision()
-	release, err := b.beginWrite()
+	release, err := b.beginWrite(namespaceForSideStateID(entityID))
 	if err != nil {
 		return
 	}

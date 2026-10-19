@@ -52,22 +52,16 @@ func (b *BadgerEngine) admitNamespaceTasks(ctx context.Context, namespace string
 }
 
 func (b *BadgerEngine) withNamespaceSideStateWrite(entityID string, write func() error) error {
-	revision := b.namespaceLifetimeRevision()
-	release, err := b.beginWrite()
-	if err != nil {
-		return err
-	}
-	defer release()
-	if err := b.checkNamespaceLifetimeRevision(namespaceForSideStateID(entityID), revision); err != nil {
-		return err
-	}
-	return write()
+ return b.withNamespaceMutation(context.Background(), namespaceForSideStateID(entityID), write)
 }
-
 // Raw index APIs have numeric owners, not a caller-supplied namespace hint.
 // Resolve their point IDs before admission; background batches additionally
 // hold RunNamespaceTask's logical lifetime across loading and follow-up work.
 func (b *BadgerEngine) withNamespaceIndexWrite(keys [][]byte, write func() error) error {
+	return b.withNamespaceIndexWriteContext(context.Background(), keys, write)
+}
+
+func (b *BadgerEngine) withNamespaceIndexWriteContext(ctx context.Context, keys [][]byte, write func() error) error {
 	revision := b.namespaceLifetimeRevision()
 	namespaces := make(map[string]struct{})
 	for _, key := range keys {
@@ -89,6 +83,10 @@ func (b *BadgerEngine) withNamespaceIndexWrite(keys [][]byte, write func() error
 			}
 		}
 		switch key[0] {
+		case prefixMVCCNode, prefixMVCCNodeHead:
+			addNode(1)
+		case prefixMVCCEdge, prefixMVCCEdgeHead:
+			addEdge(1)
 		case prefixLabelIndex:
 			addNode(len(key) - 8)
 		case prefixEdgeTypeIndex:
@@ -105,7 +103,9 @@ func (b *BadgerEngine) withNamespaceIndexWrite(keys [][]byte, write func() error
 			addNode(9)
 		}
 	}
-	release, err := b.beginWrite()
+	scope := make([]string, 0, len(namespaces))
+	for namespace := range namespaces { scope = append(scope, namespace) }
+	release, err := b.beginNamespaceMutation(ctx, scope, &revision, false, namespacePublicationFresh)
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		return false, err
 	}
 	clean := false
-	err := b.db.Update(func(txn *badger.Txn) error {
+	err := b.withNamespaceMaintenance(ctx, func() error { return b.db.Update(func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -37,7 +37,7 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		default:
 			return err
 		}
-	})
+	}) })
 	if err != nil {
 		return false, err
 	}
@@ -76,12 +76,12 @@ func (b *BadgerEngine) MarkCleanShutdown(ctx context.Context) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	if err := b.db.Update(func(txn *badger.Txn) error {
+	if err := b.withNamespaceMaintenance(ctx, func() error { return b.db.Update(func(txn *badger.Txn) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return txn.Set(cleanShutdownMarkerKey, []byte{1})
-	}); err != nil {
+	}) }); err != nil {
 		return err
 	}
 	return b.db.Sync()

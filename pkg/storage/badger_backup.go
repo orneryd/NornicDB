@@ -20,6 +20,9 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	release, err := AdmitRecoverySnapshot(context.Background(), b)
+ if err != nil { return err }
+ defer release()
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -89,18 +92,17 @@ func (b *BadgerEngine) Restore(path string) error {
 // does. It holds the write barrier so Close, which stops the backfills before
 // taking it, can't run in between; a closed engine has nothing to backfill.
 func (b *BadgerEngine) restartIndexBackfills() error {
-	b.writeBarrier.RLock()
-	defer b.writeBarrier.RUnlock()
-	if b.ensureOpen() != nil {
-		return nil
-	}
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+ if err != nil { return err }
+ defer release()
 	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
 }
 
 // restoreOffline is Restore's work with writes and reads held off.
 func (b *BadgerEngine) restoreOffline(path string) error {
-	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, true, namespacePublicationFresh)
+	if err != nil { return err }
+	defer release()
 
 	b.mu.RLock()
 	closed := b.closed

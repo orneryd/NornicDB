@@ -182,6 +182,9 @@ func (b *BadgerEngine) stopLabelIndexBackfill() {
 // dropped first so any stale entries from past dict allocations or
 // half-applied writes don't shadow the rebuilt set.
 func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
+ release, admissionErr := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
+ if admissionErr != nil { return 0, admissionErr }
+ defer release()
 	if ctx == nil {
 		ctx = context.Background()
 	}

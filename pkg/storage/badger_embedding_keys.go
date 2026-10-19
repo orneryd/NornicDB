@@ -23,7 +23,7 @@ func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notificat
 		if err := b.FlushWriteBehind(); err != nil {
 			return err
 		}
-		release, err := b.beginSchemaWrite()
+		release, err := b.beginSchemaWrite(namespaceForNodeID(id))
 		if err != nil {
 			return err
 		}

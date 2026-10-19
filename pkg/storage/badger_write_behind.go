@@ -22,6 +22,7 @@ import (
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 	b.bufferedCommitWAL = w
+	if w != nil { w.reconcileNamespaceObligations(b) }
 }
 
 // bufferedFlushKey is the Badger key that marks one write-behind commit as
