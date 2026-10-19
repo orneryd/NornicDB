@@ -91,7 +91,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	if b.writeBehind == nil {
 		return b.updateNodeEmbeddingSidecar(node)
 	}
-	return b.orderBehindBufferedWrites(nodeEntities(node), func() error { return b.updateNodeEmbeddingSidecar(node) })
+	return b.orderBehindBufferedWrites(func() error { return b.updateNodeEmbeddingSidecar(node) })
 }
 
 func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node) error {

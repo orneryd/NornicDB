@@ -95,7 +95,7 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 	if b.writeBehind == nil {
 		return b.setNodeManuallySuppressed(id, suppressed)
 	}
-	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.setNodeManuallySuppressed(id, suppressed) })
+	return b.orderBehindBufferedWrites(func() error { return b.setNodeManuallySuppressed(id, suppressed) })
 }
 
 func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool) error {
@@ -121,7 +121,7 @@ func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) err
 	if b.writeBehind == nil {
 		return b.setEdgeManuallySuppressed(id, suppressed)
 	}
-	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.setEdgeManuallySuppressed(id, suppressed) })
+	return b.orderBehindBufferedWrites(func() error { return b.setEdgeManuallySuppressed(id, suppressed) })
 }
 
 func (b *BadgerEngine) setEdgeManuallySuppressed(id EdgeID, suppressed bool) error {

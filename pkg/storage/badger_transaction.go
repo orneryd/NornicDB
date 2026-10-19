@@ -2799,7 +2799,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	if err := tx.drainBufferedEntitiesLocked(); err != nil {
+	if err := tx.drainBufferedWritesLocked(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}

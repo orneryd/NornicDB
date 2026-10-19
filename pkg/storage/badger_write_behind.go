@@ -148,25 +148,24 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	return nil
 }
 
-// errBufferedWritePending refuses a synchronous commit of a node or
-// relationship that an acknowledged write-behind commit still holds. The
-// acknowledgement comes first in the logical order, but its replay commits
-// later, at a newer timestamp, and would land the older write (a body, a
-// tombstone, a suppression key's delete) over the newer one.
-var errBufferedWritePending = errors.New("an acknowledged write-behind commit of the same entity is not replayed yet")
+// errBufferedWritePending refuses a synchronous data commit while any
+// acknowledged write awaits replay. Dependencies include reads and cascades,
+// so the barrier cannot be selected from the entities the commit publishes.
+var errBufferedWritePending = errors.New("an acknowledged write-behind commit is not replayed yet")
 
-// orderBehindBufferedWrites runs a synchronous engine write of entities
-// after the acknowledged write-behind commits that hold any of them: it
-// drains the buffer first when they do, and again whenever the commit is
-// refused because an acknowledgement of an entity it writes arrived in the
-// meantime (commitWriter.admit). It drains outside the engine's write
+// orderBehindBufferedWrites runs a synchronous engine write after ALL
+// acknowledged writes in this engine, across namespaces. This covers every
+// read and cascade dependency without requiring a separate dependency model
+// for each writer. An acknowledgement arriving during the write refuses its
+// commit (commitWriter.admit), causing a drain and retry of the entire write.
+// It drains outside the engine's write
 // barrier, which the replay takes, so the write runs from the start again:
 // what it reads then includes the replayed state.
-func (b *BadgerEngine) orderBehindBufferedWrites(entities []any, write func() error) error {
+func (b *BadgerEngine) orderBehindBufferedWrites(write func() error) error {
 	if b.writeBehind == nil {
 		return write()
 	}
-	if b.writeBehind.HoldsEntities(entities) {
+	if b.writeBehind.PendingOps() != 0 {
 		if err := b.FlushWriteBehind(); err != nil {
 			return err
 		}
@@ -193,21 +192,18 @@ func (tx *BadgerTransaction) bufferableLocked() bool {
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
 }
 
-// drainBufferedEntitiesLocked puts the acknowledged write-behind commits
-// that hold an entity this transaction writes into Badger before the
-// transaction commits to Badger itself (orderBehindBufferedWrites). The
-// transaction read those entities through the overlay, so the drain changes
-// nothing it read. It runs before the commit takes the write barrier, which
-// the replay takes too. An acknowledgement of one of them that arrives during
-// the commit is a concurrent writer that committed first: the commit fails
-// with ErrConflict (commitWriter.admit). A commit the buffer acknowledges
-// itself is ordered by the buffer and drains nothing.
-func (tx *BadgerTransaction) drainBufferedEntitiesLocked() error {
+// drainBufferedWritesLocked drains every earlier acknowledgement before a
+// synchronous transaction commits. Its physical snapshot does not move: if
+// replay changes a dependency it read, Badger's conflict check refuses the
+// transaction. An acknowledgement arriving afterward is refused under the
+// commit gate with ErrConflict (commitWriter.admit). Bufferable commits keep
+// their FIFO place in the buffer and do not drain it.
+func (tx *BadgerTransaction) drainBufferedWritesLocked() error {
 	wb := tx.engine.writeBehind
 	if wb == nil || (tx.bufferableLocked() && !tx.writesTemporalConstrainedNodeLocked()) {
 		return nil
 	}
-	if !wb.HoldsEntities(appendOperationPublicationKeys(nil, nil, tx.operations)) {
+	if wb.PendingOps() == 0 {
 		return nil
 	}
 	return tx.engine.FlushWriteBehind()

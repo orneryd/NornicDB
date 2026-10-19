@@ -18,12 +18,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if b.writeBehind == nil {
 		return b.createEdge(edge)
 	}
-	var entities []any
-	if edge != nil {
-		// The endpoints too: the write reads them from Badger.
-		entities = []any{edge.ID, edge.StartNode, edge.EndNode}
-	}
-	return b.orderBehindBufferedWrites(entities, func() error { return b.createEdge(edge) })
+	return b.orderBehindBufferedWrites(func() error { return b.createEdge(edge) })
 }
 
 func (b *BadgerEngine) createEdge(edge *Edge) error {
@@ -270,11 +265,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	if b.writeBehind == nil {
 		return b.updateEdge(edge)
 	}
-	var entities []any
-	if edge != nil {
-		entities = []any{edge.ID}
-	}
-	return b.orderBehindBufferedWrites(entities, func() error { return b.updateEdge(edge) })
+	return b.orderBehindBufferedWrites(func() error { return b.updateEdge(edge) })
 }
 
 func (b *BadgerEngine) updateEdge(edge *Edge) error {
@@ -510,7 +501,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	if b.writeBehind == nil {
 		return b.deleteEdge(id)
 	}
-	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.deleteEdge(id) })
+	return b.orderBehindBufferedWrites(func() error { return b.deleteEdge(id) })
 }
 
 func (b *BadgerEngine) deleteEdge(id EdgeID) error {

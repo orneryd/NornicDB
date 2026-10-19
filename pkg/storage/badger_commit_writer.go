@@ -115,7 +115,10 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 func (cw *commitWriter) finish() error {
 	// admit costs a closure; it can only refuse under write-behind.
 	var admit func() error
-	if cw.engine.writeBehind != nil && !cw.replay {
+	// Data writers declare publication keys; internal metadata commits do
+	// not. Replay and its counter/sequence bookkeeping cannot wait on the
+	// generation they are applying. The keys' VALUES play no role in admission.
+	if cw.engine.writeBehind != nil && !cw.replay && len(cw.publishKeys) != 0 {
 		admit = cw.admit
 	}
 	if cw.large == nil {
@@ -142,11 +145,11 @@ func (cw *commitWriter) publication() *commitPublication {
 }
 
 // admit runs under the commit gate, where no write-behind acknowledgement can
-// interleave: it refuses a synchronous commit of a node or relationship the
-// buffer still holds (errBufferedWritePending), since the replay would land
-// the older acknowledged write over it.
+// interleave: it refuses a synchronous data commit while ANY acknowledged
+// write is still pending, including dependencies absent from publishKeys.
+// The same fence applies to ordinary commits and large-commit publication.
 func (cw *commitWriter) admit() error {
-	if cw.replay || cw.engine.writeBehind == nil || !cw.engine.writeBehind.HoldsEntities(cw.publishKeys) {
+	if cw.engine.writeBehind.PendingOps() == 0 {
 		return nil
 	}
 	return errBufferedWritePending

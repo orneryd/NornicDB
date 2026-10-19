@@ -22,20 +22,11 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		return b.createNode(node)
 	}
 	var id NodeID
-	err := b.orderBehindBufferedWrites(nodeEntities(node), func() (err error) {
+	err := b.orderBehindBufferedWrites(func() (err error) {
 		id, err = b.createNode(node)
 		return err
 	})
 	return id, err
-}
-
-// nodeEntities is the node a write of node names, for
-// orderBehindBufferedWrites.
-func nodeEntities(node *Node) []any {
-	if node == nil {
-		return nil
-	}
-	return []any{node.ID}
 }
 
 func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
@@ -368,7 +359,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	if b.writeBehind == nil {
 		return b.updateNode(node)
 	}
-	return b.orderBehindBufferedWrites(nodeEntities(node), func() error { return b.updateNode(node) })
+	return b.orderBehindBufferedWrites(func() error { return b.updateNode(node) })
 }
 
 func (b *BadgerEngine) updateNode(node *Node) error {
@@ -683,7 +674,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	if b.writeBehind == nil {
 		return b.deleteNode(id)
 	}
-	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.deleteNode(id) })
+	return b.orderBehindBufferedWrites(func() error { return b.deleteNode(id) })
 }
 
 func (b *BadgerEngine) deleteNode(id NodeID) error {

@@ -102,7 +102,7 @@ var commitFunctions = []string{
 	"beginLargeCommit", "waitPublished", "CommitAt", "Commit", "CommitContext",
 	// A publication that drained the write-behind buffer would wait for a
 	// replay that waits for the stage.
-	"FlushWriteBehind", "orderBehindBufferedWrites", "drainBufferedEntitiesLocked",
+	"FlushWriteBehind", "orderBehindBufferedWrites", "drainBufferedWritesLocked",
 }
 
 // stageLockObservers maps every lock in stageLocks to the matrix consumer
