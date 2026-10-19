@@ -802,7 +802,7 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 type Service struct {
 	engine                 storage.Engine
 	vectorIndex            *VectorIndex
-	vectorFileStore        *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
+	vectorFileStore        *VectorFileStore // guarded by mu; snapshots retain a store whose methods check closure
 	bm25MemoryMaxBytes     int64
 	vectorMemoryMaxBytes   int64
 	metadataMemoryMaxBytes int64
@@ -893,7 +893,8 @@ type Service struct {
 	// clusterStateMu guards the cluster generation (clusterGen) and the
 	// cluster index pointer; the generation's owner (cluster_generation.go)
 	// is the only writer. IVF-HNSW queries route and take graphs under its
-	// read lock. Lock order: pipelineMu -> indexMu -> clusterStateMu -> mu
+	// read lock. Lifecycle order: buildMu -> persistRunMu, then
+	// pipelineMu -> indexMu -> clusterStateMu -> mu
 	// -> vectorIndex.mu and vectorFileStore's lock, which are leaves: no path
 	// takes a Service lock while holding one.
 	clusterStateMu sync.RWMutex
@@ -2183,10 +2184,15 @@ func (s *Service) SetHNSWIndexPath(path string) {
 // When false, all persist paths (debounced writes, build checkpoints, and shutdown flush)
 // are treated as no-ops even if index paths are configured.
 func (s *Service) SetPersistenceEnabled(enabled bool) {
-	s.persistEnabled.Store(enabled)
 	if enabled {
+		s.persistEnabled.Store(true)
 		return
 	}
+	// A base build owns its file source until its final checkpoint completes.
+	// Join it before persistence or source locks, which the build also takes.
+	s.buildMu.Lock()
+	defer s.buildMu.Unlock()
+	s.persistEnabled.Store(false)
 	s.persistMu.Lock()
 	if s.persistTimer != nil {
 		s.persistTimer.Stop()
@@ -2237,6 +2243,8 @@ func (s *Service) Close() error {
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
 
+	s.buildMu.Lock()
+	defer s.buildMu.Unlock()
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
 	// The cluster generation and index retire through the owner, leaving no
@@ -2636,7 +2644,7 @@ func (s *Service) VectorIndexDimensions() int {
 // (addVectorLocked): the file-backed store whenever there is one, empty or
 // not, since its records have that size; otherwise the in-memory index. It is
 // the one reader of that dimension for admission, validation and insertion.
-// Caller holds s.mu or s.indexMu.
+// Caller holds s.mu. Index mutation callers use VectorIndexDimensions.
 func (s *Service) activeVectorDimensions() int {
 	if s.vectorFileStore != nil {
 		return s.vectorFileStore.GetDimensions()
@@ -2690,9 +2698,15 @@ func (v *vectorLookupGetter) GetVector(id string) ([]float32, bool) {
 // vector similarity, matching the file-backed vector-store behavior.
 func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getVectorForCypherLocked(vecID)
+}
+
+// getVectorForCypherLocked reads the current source without recursively taking
+// mu. Caller holds mu for the metadata and vector snapshot being scored.
+func (s *Service) getVectorForCypherLocked(vecID string) ([]float32, bool) {
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
-	s.mu.RUnlock()
 	if vfs != nil {
 		return vfs.GetVector(vecID)
 	}
@@ -2911,14 +2925,17 @@ func (s *Service) addVectorLocked(id string, vec []float32) error {
 		return ErrVectorDisabled
 	}
 	var err error
+	s.mu.RLock()
 	if s.vectorFileStore != nil {
 		if s.resumeVectorBuild && s.vectorFileStore.Has(id) {
+			s.mu.RUnlock()
 			return nil
 		}
 		err = s.vectorFileStore.Add(id, vec)
 	} else if s.vectorIndex != nil {
 		err = s.vectorIndex.Add(id, vec)
 	}
+	s.mu.RUnlock()
 	if err == nil {
 		s.appendStrategyDelta(id, true)
 		s.trackIVFPQAdd(id, vec)
@@ -2960,12 +2977,14 @@ func (s *Service) hnswRemoveLive(id string) {
 // removeVectorLocked removes a vector ID from the active stores.
 // Caller holds s.indexMu.
 func (s *Service) removeVectorLocked(id string) {
+	s.mu.RLock()
 	if s.vectorIndex != nil {
 		s.vectorIndex.Remove(id)
 	}
 	if s.vectorFileStore != nil {
 		s.vectorFileStore.Remove(id)
 	}
+	s.mu.RUnlock()
 	s.appendStrategyDelta(id, false)
 	s.trackIVFPQRemove(id)
 }
@@ -3005,20 +3024,17 @@ func (s *Service) ensureVectorFileStore() {
 	if !s.persistEnabled.Load() {
 		return
 	}
-	if s.vectorIndexPath == "" {
+	s.mu.RLock()
+	path, vi, existing := s.vectorIndexPath, s.vectorIndex, s.vectorFileStore
+	s.mu.RUnlock()
+	if path == "" || vi == nil || existing != nil {
 		return
 	}
-	if s.vectorIndex == nil {
-		return
-	}
-	dims := s.vectorIndex.GetDimensions()
+	dims := vi.GetDimensions()
 	if dims <= 0 {
 		return
 	}
-	if s.vectorFileStore != nil {
-		return
-	}
-	vfs, err := NewVectorFileStore(s.vectorIndexPath, dims)
+	vfs, err := NewVectorFileStore(path, dims)
 	if err != nil {
 		s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
 		return
@@ -3033,7 +3049,6 @@ func (s *Service) ensureVectorFileStore() {
 	// before publishing the file store so switching storage cannot lose data.
 	// The caller's indexMu excludes every vector mutation, so a read lock is
 	// enough to copy them.
-	vi := s.vectorIndex
 	vi.mu.RLock()
 	for id, normalized := range vi.vectors {
 		value := normalized
@@ -3063,9 +3078,8 @@ func (s *Service) ensureVectorFileStore() {
 
 // closeVectorFileStoreLocked closes and drops the file-backed vector store.
 // Caller holds s.mu for writing, so a reader holding s.mu never sees the store
-// change or close under it. The caller also holds s.indexMu or buildMu
-// exclusively, which orders the change against index mutations that read the
-// store under indexMu.
+// change or close under it. The caller also holds buildMu exclusively (base
+// build/retirement), or indexMu (clear), to exclude source-owning operations.
 func (s *Service) closeVectorFileStoreLocked() {
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
@@ -3209,7 +3223,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 
 			// Index each named embedding with ID: "node-id-named-{vectorName}"
 			namedID := fmt.Sprintf("%s-named-%s", node.ID, vectorName)
-			expectedDim := s.activeVectorDimensions()
+			expectedDim := s.VectorIndexDimensions()
 			if err := s.addVectorLocked(namedID, embedding); err != nil {
 				if err == ErrDimensionMismatch {
 					s.logPrintf("⚠️ IndexNode %s named[%s]: embedding dimension mismatch (got %d, expected %d)",
@@ -3248,7 +3262,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 		chunkIDs := make([]string, 0, len(node.ChunkEmbeddings)+1)
 		// Always index a main embedding at the node ID (using first chunk)
 		mainEmbedding := node.ChunkEmbeddings[0]
-		expectedDim := s.activeVectorDimensions()
+		expectedDim := s.VectorIndexDimensions()
 		if err := s.addVectorLocked(string(node.ID), mainEmbedding); err != nil {
 			if err == ErrDimensionMismatch {
 				s.logPrintf("⚠️ IndexNode %s main: embedding dimension mismatch (got %d, expected %d)",
@@ -3307,7 +3321,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// Index vector-shaped property values for Cypher compatibility.
 	// These are indexed under IDs: "node-id-prop-{propertyKey}".
 	if indexVectorState && node.Properties != nil {
-		dim := s.activeVectorDimensions()
+		dim := s.VectorIndexDimensions()
 		for key, value := range node.Properties {
 			vec, ok := vectorFromPropertyValue(value, dim)
 			if !ok {
@@ -3345,7 +3359,7 @@ func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 	if node == nil || node.ID == "" {
 		return false
 	}
-	dim := s.activeVectorDimensions()
+	dim := s.VectorIndexDimensions()
 	if dim <= 0 {
 		return false
 	}
@@ -3443,11 +3457,13 @@ func sameStringSlice(expected, indexed []string) bool {
 func (s *Service) storedVectorEqualsLocked(id string, vec []float32) bool {
 	var stored []float32
 	var ok bool
+	s.mu.RLock()
 	if s.vectorFileStore != nil {
 		stored, ok = s.vectorFileStore.GetVector(id)
 	} else if s.vectorIndex != nil {
 		stored, ok = s.vectorIndex.GetVector(id)
 	}
+	s.mu.RUnlock()
 	if !ok {
 		return false
 	}
@@ -3623,7 +3639,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 		s.ensureVectorFileStore()
 	}
 
-	dim := s.activeVectorDimensions()
+	dim := s.VectorIndexDimensions()
 	if dim <= 0 {
 		return nil
 	}
@@ -3836,6 +3852,16 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	defer s.buildMu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if s.lifecycleCtx != nil {
+		if err := s.lifecycleCtx.Err(); err != nil {
+			return err
+		}
+		buildCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(s.lifecycleCtx, cancel)
+		defer cancel()
+		defer stop()
+		ctx = buildCtx
 	}
 	s.buildAttempted.Store(true)
 	// Per-DB master switches: when both indexes are disabled, mark ready
@@ -4086,7 +4112,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	// Decide whether the on-disk vector store is still valid to resume.
 	// Only relevant when we are rebuilding; do not invalidate on skipIteration path.
-	if !skipIteration && vectorPath != "" && s.vectorFileStore != nil {
+	s.mu.RLock()
+	hasFileStore := s.vectorFileStore != nil
+	s.mu.RUnlock()
+	if !skipIteration && vectorPath != "" && hasFileStore {
 		if lastWrite := s.lastWriteTime(); !lastWrite.IsZero() {
 			if info, err := security.RootedStat(vectorPath + ".vec"); err == nil {
 				if lastWrite.After(info.ModTime()) {
@@ -4103,12 +4132,16 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	// Resume vector build when a file-backed store already exists and we're rebuilding.
 	resumeVectors := false
-	if !skipIteration && !restartVectorStore && vectorPath != "" && s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
-		resumeVectors = true
-		s.mu.Lock()
-		s.resumeVectorBuild = true
-		s.mu.Unlock()
-		s.logPrintf("📇 BuildIndexes: resuming vector store with %d existing vectors", s.vectorFileStore.Count())
+	resumeCount := 0
+	s.mu.Lock()
+	if !skipIteration && !restartVectorStore && vectorPath != "" && s.vectorFileStore != nil {
+		resumeCount = s.vectorFileStore.Count()
+		resumeVectors = resumeCount > 0
+	}
+	s.resumeVectorBuild = resumeVectors
+	s.mu.Unlock()
+	if resumeVectors {
+		s.logPrintf("📇 BuildIndexes: resuming vector store with %d existing vectors", resumeCount)
 	}
 	defer func() {
 		s.mu.Lock()
@@ -5520,12 +5553,11 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	}
 
 	// Initial GPU upload must own mutation admission through publication. Do
-	// this before pipelineMu: transition publication takes indexMu first.
+	// this before pipelineMu to keep uploads outside pipeline construction.
 	if err := s.prepareGPUIndexForCurrentStrategy(); err != nil {
 		s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
 	}
-	// Build seeds read the node metadata under indexMu, which ranks before
-	// pipelineMu (ConfigureHNSWQuantization holds it while taking pipelineMu).
+	// Snapshot build seeds before the expensive pipeline construction.
 	seeds := s.pipelineBuildSeeds()
 
 	s.pipelineMu.Lock()
@@ -5538,7 +5570,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 	s.mu.RLock()
 	vectorCount := s.embeddingCountLocked()
-	dimensions := s.VectorIndexDimensions()
+	dimensions := s.activeVectorDimensions()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
@@ -5715,6 +5747,7 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	}
 
 	s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
+	s.pipelineMu.Lock()
 	s.indexMu.Lock()
 	lastSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
 	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
@@ -5727,6 +5760,7 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	}
 	s.clearTransitionDeltaLogLocked(lastSeq)
 	s.indexMu.Unlock()
+	s.pipelineMu.Unlock()
 	s.logPrintf("🔍 Runtime strategy switch complete: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
 }
 
@@ -5735,7 +5769,8 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 }
 
 // swapTransitionServingLocked installs the target strategy's graph and
-// pipeline; applyTransitionSwapLocked publishes it.
+// pipeline; applyTransitionSwapLocked publishes it. Caller holds pipelineMu
+// before indexMu through replay and publication.
 func (s *Service) swapTransitionServingLocked(target strategyMode, targetHNSW *HNSWIndex, vi *VectorIndex, vfs *VectorFileStore) {
 	var hnswForPipeline *HNSWIndex
 	if target == strategyModeHNSW {
@@ -5780,9 +5815,7 @@ func (s *Service) swapTransitionServingLocked(target strategyMode, targetHNSW *H
 			}
 		}
 	}
-	s.pipelineMu.Lock()
 	s.vectorPipeline = p
-	s.pipelineMu.Unlock()
 }
 
 func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *VectorFileStore) *VectorSearchPipeline {
@@ -5814,6 +5847,8 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	if current == target || (current != strategyModeBruteCPU && current != strategyModeBruteGPU) {
 		return false
 	}
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	if target == strategyModeBruteGPU {
@@ -5830,9 +5865,7 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 		}
 		s.hnswMu.Unlock()
 		p := s.buildPipelineForMode(target, vi, vfs)
-		s.pipelineMu.Lock()
 		s.vectorPipeline = p
-		s.pipelineMu.Unlock()
 	}, false)
 	s.logPrintf("🔍 Runtime brute strategy switch: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
 	return true
@@ -6399,8 +6432,8 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int, seed
 // between the replay and the end of recording; changes made after the
 // install reached built directly, and replaying the latest state of each
 // vector again is idempotent. It runs on its own goroutine because the
-// build runs under pipelineMu, and indexMu is taken before pipelineMu
-// elsewhere.
+// build runs under pipelineMu; replay can wait for mutation admission after
+// construction has released that lock.
 func (s *Service) replayHNSWBuildRaces(built *HNSWIndex) {
 	if hnswBeforeReplayHook != nil {
 		hnswBeforeReplayHook()
