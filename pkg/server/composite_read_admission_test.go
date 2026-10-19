@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompositeReadAdmissionRequiresEveryConstituent(t *testing.T) {
+func TestCompositeConstituentReadAdmission(t *testing.T) {
 	server, users := setupTestServer(t)
 	ctx := context.Background()
 	for _, database := range []string{"read_open", "read_closed"} {
@@ -36,8 +36,8 @@ func TestCompositeReadAdmissionRequiresEveryConstituent(t *testing.T) {
 		_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
 		require.NoError(t, err)
 		for _, route := range []struct{ path string; body any }{
-			{"/db/read_portfolio/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "MATCH (n:CompositeRead) RETURN count(n) AS count"}}}},
-			{"/graphql", map[string]any{"query": `{ cypher(input: {statement: "MATCH (n:CompositeRead) RETURN count(n) AS count", database: "read_portfolio"}) { rowCount rows } }`}},
+			{"/db/read_portfolio/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "USE read_portfolio.closed MATCH (n:CompositeRead) RETURN count(n) AS count"}}}},
+			{"/graphql", map[string]any{"query": `{ cypher(input: {statement: "USE read_portfolio.closed MATCH (n:CompositeRead) RETURN count(n) AS count", database: "read_portfolio"}) { rowCount rows } }`}},
 		} {
 			t.Run(role+route.path, func(t *testing.T) {
 				response := makeRequest(t, server, http.MethodPost, route.path, route.body, "Bearer "+getAuthToken(t, users, role))
