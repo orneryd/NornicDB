@@ -78,14 +78,19 @@ func TestSolR3DropJournalPublicationOrder(t *testing.T) {
 
 type solR3CancelAfterApply struct {
 	*StorageAdapter
-	cancel context.CancelFunc
+	cancel     context.CancelFunc
+	cancelType CommandType
 }
 
 func (s *solR3CancelAfterApply) ApplyCommandContext(ctx context.Context, cmd *Command) error {
 	if err := s.StorageAdapter.ApplyCommandContext(ctx, cmd); err != nil {
 		return err
 	}
-	if cmd.Type != CmdDeleteByPrefix {
+	target := s.cancelType
+	if target == CmdUnknown {
+		target = CmdDeleteByPrefix
+	}
+	if cmd.Type != target {
 		return nil
 	}
 	if err := s.FlushWAL(); err != nil {

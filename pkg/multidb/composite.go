@@ -120,11 +120,6 @@ func (m *DatabaseManager) CreateCompositeDatabaseContext(ctx context.Context, na
 		return err
 	}
 	defer finish()
-	release, err := storage.AdmitNamespaceLifecycle(ctx, m.inner, name)
-	if err != nil {
-		return err
-	}
-	defer release()
 	unlock, err := util.LockContext(ctx, m.mu.Lock, m.mu.Unlock)
 	if err != nil {
 		return err
@@ -200,8 +195,7 @@ func (m *DatabaseManager) CreateCompositeDatabaseContext(ctx context.Context, na
 		Constituents:      encrypted,
 	}
 
-	release()
-	return m.persistMetadata()
+	return m.persistMetadataContext(ctx, false)
 }
 
 // DropCompositeDatabase removes a composite database.
@@ -220,6 +214,11 @@ func (m *DatabaseManager) DropCompositeDatabaseContext(ctx context.Context, name
 
 // AddConstituent adds a constituent to an existing composite database.
 func (m *DatabaseManager) AddConstituent(compositeName string, constituent ConstituentRef) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), compositeName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -270,6 +269,11 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 
 // RemoveConstituent removes a constituent from a composite database.
 func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), compositeName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	changed := false
 	defer func() { m.unlockStatementCacheIndexes(changed, false) }()

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -29,6 +30,11 @@ func (m *DatabaseManager) DatabaseOptions(databaseName string) (map[string]strin
 // empty, and persists the database metadata. The caller validates the
 // option.
 func (m *DatabaseManager) SetDatabaseOption(databaseName, key, value string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), databaseName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	info, exists := m.databases[databaseName]
@@ -51,7 +57,6 @@ func (m *DatabaseManager) SetDatabaseOption(databaseName, key, value string) err
 	info.Options = options
 	info.UpdatedAt = time.Now()
 	if err := m.persistMetadata(); err != nil {
-		info.Options = previous
 		return err
 	}
 	m.applyChangeCapture(databaseName, options)

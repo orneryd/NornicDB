@@ -227,6 +227,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 // DeleteByPrefixContext permits cancellation while preparing namespace
 // retirement. Once physical deletion starts, its existing cleanup completes.
 func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
+	if b.namespaceWALOwner != nil && ctx.Value(deferredDropCompletionKey{}) != true {
+		return b.namespaceWALOwner.DeleteByPrefixContext(ctx, prefix)
+	}
 	if prefix == "" {
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}

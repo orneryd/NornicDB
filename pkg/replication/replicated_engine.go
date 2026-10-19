@@ -216,17 +216,15 @@ func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix str
 	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
-	payload, err := encodeGob(struct {
-		Prefix string `json:"prefix"`
-	}{Prefix: prefix})
-	if err != nil {
-		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
-	}
-	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
 	op := storage.NamespaceDropFromContext(ctx)
 	if op == nil {
 		op = storage.NewNamespaceDrop(nil)
 	}
+	payload, err := encodeGob(namespaceDropCommand{Prefix: prefix, Catalog: op.CatalogMutation()})
+	if err != nil {
+		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
+	}
+	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
 	cmd.namespaceDrop = op
 	ctx = storage.WithNamespaceDrop(ctx, op)
 	if replicator, ok := e.replicator.(ContextReplicator); ok {

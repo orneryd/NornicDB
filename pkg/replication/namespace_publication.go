@@ -30,12 +30,20 @@ func (a *StorageAdapter) admitCommand(ctx context.Context, cmd *Command, drop bo
 			releases[i]()
 		}
 	}
+	if !drop {
+		r, err := storage.BeginNamespaceJournalMutation(ctx, a.engine, namespaces)
+		if err != nil {
+			return nil, err
+		}
+		releases = append(releases, r)
+	}
 	lock, unlock := a.commandPublication.RLock, a.commandPublication.RUnlock
 	if global {
 		lock, unlock = a.commandPublication.Lock, a.commandPublication.Unlock
 	}
 	r, err := util.LockContext(ctx, lock, unlock)
 	if err != nil {
+		release()
 		return nil, err
 	}
 	releases = append(releases, r)
@@ -63,6 +71,12 @@ func (a *StorageAdapter) admitCommand(ctx context.Context, cmd *Command, drop bo
 		releases = append(releases, r)
 	}
 	var once sync.Once
+	if !drop {
+		if err := storage.ValidateNamespaceCommandAdmission(a.engine, namespaces); err != nil {
+			release()
+			return nil, err
+		}
+	}
 	return func() { once.Do(release) }, nil
 }
 
@@ -109,7 +123,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 			return nil, err
 		}
 		add(req.EdgeID)
-	case CmdDeleteByPrefix:
+	case CmdDeleteByPrefix, CmdNamespaceCatalog:
 		var req struct{ Prefix string }
 		if err := decodeGob(cmd.Data, &req); err != nil {
 			return nil, err
