@@ -109,12 +109,14 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		if node == nil {
 			continue
 		}
-        identity,_:=nativeEntityIdentity(node)
+		identity, _ := nativeEntityIdentity(node)
 		if _, seen := deletedNodeIDs[identity]; seen {
 			continue
 		}
-        nodeID,ok:=nativeEntityStorageID(store,node)
-        if !ok {continue}
+		nodeID, ok := nativeEntityStorageID(store, node)
+		if !ok {
+			continue
+		}
 		edgesCount := 0
 		if needEdgeStats {
 			outgoingEdges, _ := store.GetOutgoingEdges(storage.NodeID(nodeID))
@@ -286,10 +288,10 @@ type deleteProjectionInfo struct {
 }
 
 type deleteTargetValue struct {
-	kind   deleteProjectionKind
+	kind     deleteProjectionKind
 	identity storage.EntityIdentity
-	nodeID storage.NodeID
-	edgeID storage.EdgeID
+	nodeID   storage.NodeID
+	edgeID   storage.EdgeID
 }
 
 func singleDeleteProjectionInfo(_ string, _ deleteProjectionKind) deleteProjectionInfo {
@@ -300,22 +302,22 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	switch v := val.(type) {
 	case map[string]interface{}:
 		if id, ok := v["_edgeId"].(string); ok && id != "" {
-			return deleteTargetValue{kind: deleteProjectionRelationship, identity:storage.EntityIdentity{LocalID:id}, edgeID: storage.EdgeID(id)}
+			return deleteTargetValue{kind: deleteProjectionRelationship, identity: storage.EntityIdentity{LocalID: id}, edgeID: storage.EdgeID(id)}
 		}
 		if id, ok := v["_nodeId"].(string); ok && id != "" {
-			return deleteTargetValue{kind: deleteProjectionNode, identity:storage.EntityIdentity{LocalID:id}, nodeID: storage.NodeID(id)}
+			return deleteTargetValue{kind: deleteProjectionNode, identity: storage.EntityIdentity{LocalID: id}, nodeID: storage.NodeID(id)}
 		}
 	case *storage.Node:
-		if identity,ok := nativeEntityIdentity(v); ok {
-			return deleteTargetValue{kind: deleteProjectionNode, identity:identity, nodeID:storage.NodeID(identity.LocalID)}
+		if identity, ok := nativeEntityIdentity(v); ok {
+			return deleteTargetValue{kind: deleteProjectionNode, identity: identity, nodeID: storage.NodeID(identity.LocalID)}
 		}
 	case *storage.Edge:
-		if identity,ok := nativeEntityIdentity(v); ok {
-			return deleteTargetValue{kind: deleteProjectionRelationship, identity:identity, edgeID:storage.EdgeID(identity.LocalID)}
+		if identity, ok := nativeEntityIdentity(v); ok {
+			return deleteTargetValue{kind: deleteProjectionRelationship, identity: identity, edgeID: storage.EdgeID(identity.LocalID)}
 		}
 	case string:
 		if v != "" {
-			return deleteTargetValue{kind: deleteProjectionNode, identity:storage.EntityIdentity{LocalID:v}, nodeID: storage.NodeID(v)}
+			return deleteTargetValue{kind: deleteProjectionNode, identity: storage.EntityIdentity{LocalID: v}, nodeID: storage.NodeID(v)}
 		}
 	}
 	return deleteTargetValue{}
@@ -334,7 +336,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		ctx = context.Background()
 	}
 	rows := []pipelineRow{}
-    deleted:=&deletedEntities{}
+	deleted := &deletedEntities{}
 	if info.input != nil {
 		store := e.getStorage(ctx)
 		for _, values := range info.input.Rows {
@@ -346,18 +348,18 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 				switch entity := value.(type) {
 				case *storage.Node:
 					if entity != nil {
-						if id,ok:=nativeEntityStorageID(store,entity); ok {
-                        if _, err := e.getQueryNode(store, storage.NodeID(id)); errors.Is(err, storage.ErrNotFound) {
-                            deleted.addTarget(classifyDeleteTargetValue(entity))
-                        }
+						if id, ok := nativeEntityStorageID(store, entity); ok {
+							if _, err := e.getQueryNode(store, storage.NodeID(id)); errors.Is(err, storage.ErrNotFound) {
+								deleted.addTarget(classifyDeleteTargetValue(entity))
+							}
 						}
 					}
 				case *storage.Edge:
 					if entity != nil {
-						if id,ok:=nativeEntityStorageID(store,entity); ok {
-                        if _, err := store.GetEdge(storage.EdgeID(id)); errors.Is(err, storage.ErrNotFound) {
-                            deleted.addTarget(classifyDeleteTargetValue(entity))
-                        }
+						if id, ok := nativeEntityStorageID(store, entity); ok {
+							if _, err := store.GetEdge(storage.EdgeID(id)); errors.Is(err, storage.ErrNotFound) {
+								deleted.addTarget(classifyDeleteTargetValue(entity))
+							}
 						}
 					}
 				}
@@ -370,7 +372,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					pipelineItemUnevaluable(ctx, target)
 					return
 				}
-				visitDeleteTargetValues(value,deleted.addTarget)
+				visitDeleteTargetValues(value, deleted.addTarget)
 			}
 		}
 	}

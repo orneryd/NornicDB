@@ -15,74 +15,83 @@ import (
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
 type deleteMutationTargets struct {
-    nodes,edges []deleteTargetValue
+	nodes, edges []deleteTargetValue
 }
 
 func collectDeleteMutationTargets(matchResult *ExecuteResult) deleteMutationTargets {
-    targets:=deleteMutationTargets{}
-    seenNodes:=make(map[storage.EntityIdentity]struct{},len(matchResult.Rows))
-    seenEdges:=make(map[storage.EntityIdentity]struct{},len(matchResult.Rows))
-    for _,row:=range matchResult.Rows {
-        for _,value:=range row {
-            visitDeleteTargetValues(value,func(target deleteTargetValue){
-                seen,list:=seenNodes,&targets.nodes
-                if target.kind==deleteProjectionRelationship {seen,list=seenEdges,&targets.edges}
-                if _,exists:=seen[target.identity]; !exists {seen[target.identity]=struct{}{}; *list=append(*list,target)}
-            })
-        }
-    }
-    return targets
+	targets := deleteMutationTargets{}
+	seenNodes := make(map[storage.EntityIdentity]struct{}, len(matchResult.Rows))
+	seenEdges := make(map[storage.EntityIdentity]struct{}, len(matchResult.Rows))
+	for _, row := range matchResult.Rows {
+		for _, value := range row {
+			visitDeleteTargetValues(value, func(target deleteTargetValue) {
+				seen, list := seenNodes, &targets.nodes
+				if target.kind == deleteProjectionRelationship {
+					seen, list = seenEdges, &targets.edges
+				}
+				if _, exists := seen[target.identity]; !exists {
+					seen[target.identity] = struct{}{}
+					*list = append(*list, target)
+				}
+			})
+		}
+	}
+	return targets
 }
 
 // Resolve physical lookup arguments only after the complete provenance-keyed
 // plan exists. Storage access still uses the supplied transaction wrapper.
-func (targets deleteMutationTargets) storageIDs(store storage.Engine) ([]storage.NodeID,[]storage.EdgeID,error) {
-    nodes:=make([]storage.NodeID,0,len(targets.nodes))
-    edges:=make([]storage.EdgeID,0,len(targets.edges))
-    for _,target:=range targets.nodes {
-        id,ok:=target.identity.NodeLookupID(store)
-        if !ok {return nil,nil,storage.ErrNotFound}
-        nodes=append(nodes,id)
-    }
-    for _,target:=range targets.edges {
-        id,ok:=target.identity.LookupID(store,"5")
-        if !ok {return nil,nil,storage.ErrNotFound}
-        edges=append(edges,storage.EdgeID(id))
-    }
-    return nodes,edges,nil
+func (targets deleteMutationTargets) storageIDs(store storage.Engine) ([]storage.NodeID, []storage.EdgeID, error) {
+	nodes := make([]storage.NodeID, 0, len(targets.nodes))
+	edges := make([]storage.EdgeID, 0, len(targets.edges))
+	for _, target := range targets.nodes {
+		id, ok := target.identity.NodeLookupID(store)
+		if !ok {
+			return nil, nil, storage.ErrNotFound
+		}
+		nodes = append(nodes, id)
+	}
+	for _, target := range targets.edges {
+		id, ok := target.identity.LookupID(store, "5")
+		if !ok {
+			return nil, nil, storage.ErrNotFound
+		}
+		edges = append(edges, storage.EdgeID(id))
+	}
+	return nodes, edges, nil
 }
 
 func visitDeleteTargetValues(value interface{}, visit func(deleteTargetValue)) {
 	target := classifyDeleteTargetValue(value)
 	switch target.kind {
-	case deleteProjectionRelationship,deleteProjectionNode:
-        visit(target)
+	case deleteProjectionRelationship, deleteProjectionNode:
+		visit(target)
 		return
 	}
 
 	switch typed := value.(type) {
 	case PathResult:
 		for _, node := range typed.Nodes {
-			visitDeleteTargetValues(node,visit)
+			visitDeleteTargetValues(node, visit)
 		}
 		for _, edge := range typed.Relationships {
-			visitDeleteTargetValues(edge,visit)
+			visitDeleteTargetValues(edge, visit)
 		}
 	case *PathResult:
 		if typed != nil {
-			visitDeleteTargetValues(*typed,visit)
+			visitDeleteTargetValues(*typed, visit)
 		}
 	case []interface{}:
 		for _, item := range typed {
-			visitDeleteTargetValues(item,visit)
+			visitDeleteTargetValues(item, visit)
 		}
 	case map[string]interface{}:
 		if path, ok := typed["_pathResult"]; ok {
-			visitDeleteTargetValues(path,visit)
+			visitDeleteTargetValues(path, visit)
 			return
 		}
 		for _, item := range typed {
-			visitDeleteTargetValues(item,visit)
+			visitDeleteTargetValues(item, visit)
 		}
 	}
 }
@@ -329,8 +338,10 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 		return false, err
 	}
 	for _, edge := range outgoing {
-        id,ok:=nativeEntityStorageID(store,edge)
-        if !ok {return true,nil}
+		id, ok := nativeEntityStorageID(store, edge)
+		if !ok {
+			return true, nil
+		}
 		if _, deleting := beingDeleted[storage.EdgeID(id)]; !deleting {
 			return true, nil
 		}
@@ -340,8 +351,10 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 		return false, err
 	}
 	for _, edge := range incoming {
-        id,ok:=nativeEntityStorageID(store,edge)
-        if !ok {return true,nil}
+		id, ok := nativeEntityStorageID(store, edge)
+		if !ok {
+			return true, nil
+		}
 		if _, deleting := beingDeleted[storage.EdgeID(id)]; !deleting {
 			return true, nil
 		}

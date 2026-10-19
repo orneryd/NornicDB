@@ -225,13 +225,14 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 
 			// Create relationship
 			edge := &storage.Edge{
-				ID:         storage.EdgeID(e.generateID()),
-				
-				
+				ID: storage.EdgeID(e.generateID()),
+
 				Type:       relType,
 				Properties: relProps,
 			}
-			if err := storage.BindRelationshipEndpoints(edge, startNode, endNode); err != nil { return nil, err }
+			if err := storage.BindRelationshipEndpoints(edge, startNode, endNode); err != nil {
+				return nil, err
+			}
 			plan.edges = append(plan.edges, edge)
 			if relVar != "" {
 				createdEdges[relVar] = edge
@@ -282,10 +283,14 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	}
 	store := e.getStorage(ctx)
 	for _, node := range plan.nodes {
-		if err:=bindNativeCreationSource(store,node); err!=nil {return err}
+		if err := bindNativeCreationSource(store, node); err != nil {
+			return err
+		}
 	}
 	for _, edge := range plan.edges {
-		if err:=bindNativeCreationSource(store,edge); err!=nil {return err}
+		if err := bindNativeCreationSource(store, edge); err != nil {
+			return err
+		}
 	}
 	switch len(plan.nodes) {
 	case 0:

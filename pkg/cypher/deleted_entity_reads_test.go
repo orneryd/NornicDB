@@ -215,8 +215,8 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	kept := &storage.Node{ID: "kept"}
 	edge := &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept", Properties: map[string]interface{}{"w": 1}}
 	views := deletedEntityViews{executor: exec,
-		nodes: map[storage.EntityIdentity]struct{}{{LocalID:"gone"}: {}},
-		edges: map[storage.EntityIdentity]struct{}{{LocalID:"e"}: {}}}
+		nodes: map[storage.EntityIdentity]struct{}{{LocalID: "gone"}: {}},
+		edges: map[storage.EntityIdentity]struct{}{{LocalID: "e"}: {}}}
 
 	var nilNode *storage.Node
 	var nilEdge *storage.Edge

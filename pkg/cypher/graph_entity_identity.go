@@ -427,92 +427,120 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 // nativeEntityIdentity also serves relationship consumers whose public graph
 // input is not a node. It never interprets a stored local ID as an element ID.
 func nativeEntityIdentity(value interface{}) (storage.EntityIdentity, bool) {
-    switch entity := value.(type) {
-    case *storage.Node:
-        if entity != nil { return entity.Identity(),true }
-    case *storage.Edge:
-        if entity != nil { return entity.Identity(),true }
-    }
-    return storage.EntityIdentity{},false
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity != nil {
+			return entity.Identity(), true
+		}
+	case *storage.Edge:
+		if entity != nil {
+			return entity.Identity(), true
+		}
+	}
+	return storage.EntityIdentity{}, false
 }
 
 // Native values reach storage only through this adapter. Their local IDs are
 // opaque; the selected source is retained until the engine boundary decides
 // whether a qualified lookup is needed. No operation unwraps its transaction.
 func nativeEntityStorageID(engine storage.Engine, value interface{}) (string, bool) {
-    identity, ok := nativeEntityIdentity(value)
-    if !ok { return "", false }
-    kind := "4"
-    if _, relationship := value.(*storage.Edge); relationship { kind = "5" }
-    return identity.LookupID(engine,kind)
+	identity, ok := nativeEntityIdentity(value)
+	if !ok {
+		return "", false
+	}
+	kind := "4"
+	if _, relationship := value.(*storage.Edge); relationship {
+		kind = "5"
+	}
+	return identity.LookupID(engine, kind)
 }
 
-func nativeEdgeStorageEndpoints(engine storage.Engine, edge *storage.Edge) (storage.NodeID,storage.NodeID,bool) {
-    if edge==nil {return "","",false}
-    start,startOK:=edge.StartIdentity().NodeLookupID(engine)
-    end,endOK:=edge.EndIdentity().NodeLookupID(engine)
-    return start,end,startOK&&endOK
+func nativeEdgeStorageEndpoints(engine storage.Engine, edge *storage.Edge) (storage.NodeID, storage.NodeID, bool) {
+	if edge == nil {
+		return "", "", false
+	}
+	start, startOK := edge.StartIdentity().NodeLookupID(engine)
+	end, endOK := edge.EndIdentity().NodeLookupID(engine)
+	return start, end, startOK && endOK
 }
 
 // A CREATE plan already carries any source selected by bound endpoints.
 // Supply a source only for a fresh unscoped value; a coordinator is never
 // authority to overwrite an existing physical provenance selection.
 func bindNativeCreationSource(engine storage.Engine, value interface{}) error {
-    switch entity:=value.(type) {
-    case *storage.Node:
-        if entity.Database=="" {entity.Database=storage.DatabaseOf(engine)}
-        if _,ok:=entity.Identity().NodeLookupID(engine); !ok {
-            return localizedStatusError("Neo.ClientError.Statement.EntityNotFound","EntityNotFound",localization.CypherProceduresNodeNotFound(entity.ElementID("")))
-        }
-    case *storage.Edge:
-        if entity.Database=="" {entity.Database=storage.DatabaseOf(engine)}
-        if _,ok:=entity.Identity().LookupID(engine,"5"); !ok {
-            return localizedStatusError("Neo.ClientError.Statement.EntityNotFound","EntityNotFound",localization.CypherProceduresRelationshipNotFound(entity.ElementID("")))
-        }
-    }
-    return nil
+	switch entity := value.(type) {
+	case *storage.Node:
+		if entity.Database == "" {
+			entity.Database = storage.DatabaseOf(engine)
+		}
+		if _, ok := entity.Identity().NodeLookupID(engine); !ok {
+			return localizedStatusError("Neo.ClientError.Statement.EntityNotFound", "EntityNotFound", localization.CypherProceduresNodeNotFound(entity.ElementID("")))
+		}
+	case *storage.Edge:
+		if entity.Database == "" {
+			entity.Database = storage.DatabaseOf(engine)
+		}
+		if _, ok := entity.Identity().LookupID(engine, "5"); !ok {
+			return localizedStatusError("Neo.ClientError.Statement.EntityNotFound", "EntityNotFound", localization.CypherProceduresRelationshipNotFound(entity.ElementID("")))
+		}
+	}
+	return nil
 }
 
 // Deleted entity views preserve physical provenance and relationship endpoints
 // while removing visible labels/properties. These are value copies, not keys.
 func nativeDeletedNodeValue(node *storage.Node) *storage.Node {
-    return &storage.Node{ID:node.ID,Database:node.Database}
+	return &storage.Node{ID: node.ID, Database: node.Database}
 }
 
 func nativeDeletedEdgeValue(edge *storage.Edge) *storage.Edge {
-    return &storage.Edge{ID:edge.ID,Database:edge.Database,Type:edge.Type,StartNode:edge.StartNode,EndNode:edge.EndNode}
+	return &storage.Edge{ID: edge.ID, Database: edge.Database, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 func nativeEntityMetadataID(engine storage.Engine, identity storage.EntityIdentity) string {
-    if identity.Database != "" && storage.DatabaseOf(engine) != identity.Database {
-        return identity.Database+":"+identity.LocalID
-    }
-    return storage.QualifiedEntityID(engine,identity.LocalID)
+	if identity.Database != "" && storage.DatabaseOf(engine) != identity.Database {
+		return identity.Database + ":" + identity.LocalID
+	}
+	return storage.QualifiedEntityID(engine, identity.LocalID)
 }
 
 // nativeEntityMetadataTarget shares source selection with storage's identity
 // owner. Metadata reads may inspect a source engine; data operations continue
 // through their transaction/admission wrapper and never use this escape.
-func (e *StorageExecutor) nativeEntityMetadataTarget(ctx context.Context, identity storage.EntityIdentity) (storage.Engine,string) {
-    selected := e.getStorage(ctx)
-    source := func(engine storage.Engine) storage.Engine {
-        if identity.Database == "" || storage.DatabaseOf(engine) == identity.Database { return engine }
-        for depth:=0; engine != nil && depth<16; depth++ {
-            if sources,ok := engine.(interface{EntitySource(storage.EntityIdentity)(storage.Engine,error)}); ok {
-                if selected,err := sources.EntitySource(identity); err == nil { return selected }
-                return nil
-            }
-            wrapper,ok := engine.(storage.EngineUnwrapper)
-            if !ok { break }
-            next:=wrapper.GetInnerEngine()
-            if next==engine { break }
-            engine=next
-        }
-        return nil
-    }
-    if engine:=source(selected); engine != nil { return engine,storage.QualifiedEntityID(engine,identity.LocalID) }
-    if scoped,err:=e.graphFunctionStorage("",selected); err==nil {
-        if engine:=source(scoped); engine != nil { return engine,storage.QualifiedEntityID(engine,identity.LocalID) }
-    }
-    return nil,nativeEntityMetadataID(selected,identity)
+func (e *StorageExecutor) nativeEntityMetadataTarget(ctx context.Context, identity storage.EntityIdentity) (storage.Engine, string) {
+	selected := e.getStorage(ctx)
+	source := func(engine storage.Engine) storage.Engine {
+		if identity.Database == "" || storage.DatabaseOf(engine) == identity.Database {
+			return engine
+		}
+		for depth := 0; engine != nil && depth < 16; depth++ {
+			if sources, ok := engine.(interface {
+				EntitySource(storage.EntityIdentity) (storage.Engine, error)
+			}); ok {
+				if selected, err := sources.EntitySource(identity); err == nil {
+					return selected
+				}
+				return nil
+			}
+			wrapper, ok := engine.(storage.EngineUnwrapper)
+			if !ok {
+				break
+			}
+			next := wrapper.GetInnerEngine()
+			if next == engine {
+				break
+			}
+			engine = next
+		}
+		return nil
+	}
+	if engine := source(selected); engine != nil {
+		return engine, storage.QualifiedEntityID(engine, identity.LocalID)
+	}
+	if scoped, err := e.graphFunctionStorage("", selected); err == nil {
+		if engine := source(scoped); engine != nil {
+			return engine, storage.QualifiedEntityID(engine, identity.LocalID)
+		}
+	}
+	return nil, nativeEntityMetadataID(selected, identity)
 }

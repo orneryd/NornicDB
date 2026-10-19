@@ -71,8 +71,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	mutationTargets := collectDeleteMutationTargets(projected)
 	store := e.getStorage(ctx)
-    nodeIDs,edgeIDs,lookupErr:=mutationTargets.storageIDs(store)
-    if lookupErr!=nil {return nil,true,lookupErr}
+	nodeIDs, edgeIDs, lookupErr := mutationTargets.storageIDs(store)
+	if lookupErr != nil {
+		return nil, true, lookupErr
+	}
 	// A node relationships still connect is deleted for now and checked at
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
 	// store without transactions checks here.
@@ -108,7 +110,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				return nil, true, err
 			}
 			for _, edge := range incident {
-				identity,_:=nativeEntityIdentity(edge)
+				identity, _ := nativeEntityIdentity(edge)
 				deletedEdges[identity] = struct{}{}
 			}
 		}
@@ -132,8 +134,12 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if deleted == nil {
 		deleted = &deletedEntities{}
 	}
-    for _,target:=range mutationTargets.nodes {deleted.addTarget(target)}
-    for identity:=range deletedEdges {deleted.addTarget(deleteTargetValue{kind:deleteProjectionRelationship,identity:identity})}
+	for _, target := range mutationTargets.nodes {
+		deleted.addTarget(target)
+	}
+	for identity := range deletedEdges {
+		deleted.addTarget(deleteTargetValue{kind: deleteProjectionRelationship, identity: identity})
+	}
 	e.replaceDeletedEntityViews(rows, deleted)
 	return stats, true, nil
 }

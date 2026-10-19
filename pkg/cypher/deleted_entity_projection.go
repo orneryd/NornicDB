@@ -50,21 +50,25 @@ func pipelineClausesMayDelete(clauses []pipelineClause) bool {
 // add records deleted nodes and relationships.
 func (d *deletedEntities) add(nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}) {
 	for _, id := range nodeIDs {
-		d.addTarget(deleteTargetValue{kind:deleteProjectionNode,identity:storage.EntityIdentity{LocalID:string(id)}})
+		d.addTarget(deleteTargetValue{kind: deleteProjectionNode, identity: storage.EntityIdentity{LocalID: string(id)}})
 	}
 	for id := range edgeIDs {
-		d.addTarget(deleteTargetValue{kind:deleteProjectionRelationship,identity:storage.EntityIdentity{LocalID:string(id)}})
+		d.addTarget(deleteTargetValue{kind: deleteProjectionRelationship, identity: storage.EntityIdentity{LocalID: string(id)}})
 	}
 }
 
 func (d *deletedEntities) addTarget(target deleteTargetValue) {
-    if target.kind==deleteProjectionNode {
-        if d.nodes==nil {d.nodes=map[storage.EntityIdentity]struct{}{}}
-        d.nodes[target.identity]=struct{}{}
-    } else if target.kind==deleteProjectionRelationship {
-        if d.edges==nil {d.edges=map[storage.EntityIdentity]struct{}{}}
-        d.edges[target.identity]=struct{}{}
-    }
+	if target.kind == deleteProjectionNode {
+		if d.nodes == nil {
+			d.nodes = map[storage.EntityIdentity]struct{}{}
+		}
+		d.nodes[target.identity] = struct{}{}
+	} else if target.kind == deleteProjectionRelationship {
+		if d.edges == nil {
+			d.edges = map[storage.EntityIdentity]struct{}{}
+		}
+		d.edges[target.identity] = struct{}{}
+	}
 }
 
 // empty reports whether nothing is deleted (a nil d included).
@@ -110,7 +114,7 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		if typed == nil {
 			return value, false
 		}
-		identity,_:=nativeEntityIdentity(typed)
+		identity, _ := nativeEntityIdentity(typed)
 		if _, deleted := v.nodes[identity]; deleted {
 			return v.node(typed), true
 		}
@@ -118,7 +122,7 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		if typed == nil {
 			return value, false
 		}
-		identity,_:=nativeEntityIdentity(typed)
+		identity, _ := nativeEntityIdentity(typed)
 		if _, deleted := v.edges[identity]; deleted {
 			return v.edge(typed), true
 		}
@@ -294,14 +298,14 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 		if relationshipOnly || entity == nil {
 			return false
 		}
-		identity,_:=nativeEntityIdentity(entity)
+		identity, _ := nativeEntityIdentity(entity)
 		_, found := d.nodes[identity]
 		return found
 	case *storage.Edge:
 		if entity == nil {
 			return false
 		}
-		identity,_:=nativeEntityIdentity(entity)
+		identity, _ := nativeEntityIdentity(entity)
 		_, found := d.edges[identity]
 		return found
 	default:

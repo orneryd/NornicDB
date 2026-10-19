@@ -91,9 +91,11 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if source == nil {
 			continue
 		}
-        sourceLookup,ok:=nativeEntityStorageID(store,source)
-        if !ok {continue}
-        sourceID:=storage.NodeID(sourceLookup)
+		sourceLookup, ok := nativeEntityStorageID(store, source)
+		if !ok {
+			continue
+		}
+		sourceID := storage.NodeID(sourceLookup)
 		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, sourceID, relMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
@@ -128,12 +130,14 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 					continue
 				}
 			}
-            identity,_:=nativeEntityIdentity(edge)
+			identity, _ := nativeEntityIdentity(edge)
 			if _, exists := seen[identity]; exists {
 				continue
 			}
-            edgeID,ok:=nativeEntityStorageID(store,edge)
-            if !ok {continue}
+			edgeID, ok := nativeEntityStorageID(store, edge)
+			if !ok {
+				continue
+			}
 			seen[identity] = struct{}{}
 			edgeIDs = append(edgeIDs, storage.EdgeID(edgeID))
 			if limit > 0 && len(edgeIDs) >= limit {
@@ -280,8 +284,10 @@ func (e *StorageExecutor) boundRelationshipDeleteTargetNode(
 	edge *storage.Edge,
 	direction string,
 ) (*storage.Node, bool, error) {
-    start,end,ok:=nativeEdgeStorageEndpoints(store,edge)
-    if !ok {return nil,false,nil}
+	start, end, ok := nativeEdgeStorageEndpoints(store, edge)
+	if !ok {
+		return nil, false, nil
+	}
 	var targetID storage.NodeID
 	switch direction {
 	case "outgoing":
