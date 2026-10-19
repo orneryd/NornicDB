@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
+  tests retain their assertions and debug information (#1366).
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 
@@ -35,9 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
 
-- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
-  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
-  tests retain their assertions and debug information (#1366).
 - Enforce database node, relationship, byte and write-rate quotas when committing
   implicit and explicit transactions, including HTTP and Bolt. Reject an entire
   over-quota transaction before publication and keep cached byte usage in sync
