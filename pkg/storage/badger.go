@@ -388,6 +388,7 @@ type BadgerEngine struct {
 	onEdgeCreated         []EdgeEventCallback
 	onEdgeUpdated         []EdgeEventCallback
 	onEdgeDeleted         []EdgeDeleteCallback
+	onNamespaceReset      []NamespaceResetCallback
 	callbackMu            sync.RWMutex
 	graphMutationVersions graphMutationVersions
 
@@ -536,6 +537,38 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
 	b.onEdgeDeleted = append(b.onEdgeDeleted, callback)
+}
+
+// NamespaceResetCallback reports that every node and relationship whose ID
+// starts with prefix was removed at once (DeleteByPrefix), without a per-entity
+// event.
+type NamespaceResetCallback func(prefix string)
+
+// NamespaceResetNotifier is implemented by engines that report DeleteByPrefix.
+// Consumers that derive state from the stored entities (search indexes) drop
+// that state for the namespace.
+type NamespaceResetNotifier interface {
+	OnNamespaceReset(callback NamespaceResetCallback)
+}
+
+// OnNamespaceReset registers a callback for DeleteByPrefix. It is called in
+// commit order with the other storage event callbacks.
+func (b *BadgerEngine) OnNamespaceReset(callback NamespaceResetCallback) {
+	if callback == nil {
+		return
+	}
+	b.callbackMu.Lock()
+	defer b.callbackMu.Unlock()
+	b.onNamespaceReset = append(b.onNamespaceReset, callback)
+}
+
+func (b *BadgerEngine) dispatchNamespaceReset(prefix string) {
+	b.callbackMu.RLock()
+	callbacks := b.onNamespaceReset
+	b.callbackMu.RUnlock()
+	for _, callback := range callbacks {
+		callback(prefix)
+	}
 }
 
 // notifyNodeCreated calls the registered callbacks.

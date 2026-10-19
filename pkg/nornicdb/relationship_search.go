@@ -146,42 +146,40 @@ func (db *DB) wakeRelationshipEmbedding() {
 	}
 }
 
-// indexRelationshipFromEvent indexes a relationship a storage event reports,
-// in its database's relationship search, if that service exists and has it
-// on.
+// indexRelationshipFromEvent queues a refresh of a relationship a storage
+// event reports as written, in its database's search service if that exists.
+// The refresh reads the stored relationship and updates both its property
+// vectors and, when that is on, relationship search.
 func (db *DB) indexRelationshipFromEvent(edge *storage.Edge) {
 	if edge == nil {
 		return
 	}
-	dbName, local, ok := splitQualifiedID(string(edge.ID))
-	if !ok {
-		return
-	}
-	svc := db.relationshipSearchService(dbName)
-	if svc == nil {
-		return
-	}
-	userEdge := storage.CopyEdge(edge)
-	userEdge.ID = storage.EdgeID(local)
-	if _, start, ok := splitQualifiedID(string(edge.StartNode)); ok {
-		userEdge.StartNode = storage.NodeID(start)
-	}
-	if _, end, ok := splitQualifiedID(string(edge.EndNode)); ok {
-		userEdge.EndNode = storage.NodeID(end)
-	}
-	svc.IndexRelationship(userEdge)
+	db.queueRelationshipRefresh(edge.ID)
 }
 
-// removeRelationshipFromEvent drops a deleted relationship from its
-// database's relationship search.
+// removeRelationshipFromEvent queues a refresh of a deleted relationship in
+// its database's search service, which drops its relationship search entry
+// and any vectors indexed from its properties.
 func (db *DB) removeRelationshipFromEvent(edgeID storage.EdgeID) {
+	db.queueRelationshipRefresh(edgeID)
+}
+
+// queueRelationshipRefresh queues the refresh unless the database's service
+// indexes nothing for relationships (vector and relationship search both off).
+// Storage events don't create a service.
+func (db *DB) queueRelationshipRefresh(edgeID storage.EdgeID) {
 	dbName, local, ok := splitQualifiedID(string(edgeID))
 	if !ok {
 		return
 	}
-	if svc := db.relationshipSearchService(dbName); svc != nil {
-		svc.RemoveRelationship(storage.EdgeID(local))
+	db.searchServicesMu.RLock()
+	entry := db.searchServices[dbName]
+	db.searchServicesMu.RUnlock()
+	if entry == nil || entry.svc == nil || (!entry.svc.VectorEnabled() && !entry.svc.RelationshipSearchEnabled()) {
+		return
 	}
+	entry.queueEdgeRefresh(local)
+	db.scheduleQueuedRefreshes(entry)
 }
 
 // relationshipSearchService is dbName's search service if it exists and
