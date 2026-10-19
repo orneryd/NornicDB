@@ -1009,8 +1009,8 @@ func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
 }
 
 func registerBatchProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
- registerProcedure(ProcedureSpec{
-  Name:name,Signature:signature,Description:description,Mode:mode,
-  WorksOnSystem:worksOnSystem,MinArgs:minArgs,MaxArgs:maxArgs,OwnsTransactions:true,
- },handler)
+	registerProcedure(ProcedureSpec{
+		Name: name, Signature: signature, Description: description, Mode: mode,
+		WorksOnSystem: worksOnSystem, MinArgs: minArgs, MaxArgs: maxArgs, OwnsTransactions: true,
+	}, handler)
 }
