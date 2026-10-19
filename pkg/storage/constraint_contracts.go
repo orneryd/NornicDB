@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1165,7 +1166,14 @@ func compareConstraintExpressionValue(actual interface{}, comparator string, exp
 	}
 }
 
+// compareGreaterConstraint and compareLessConstraint order numbers through the
+// exact owner compareValues also uses, so >= and <= (ordering OR equality)
+// never mix rounded order with exact identity. Numeric strings and other
+// values keep their parsed and printed comparisons.
 func compareGreaterConstraint(actual interface{}, expected interface{}) bool {
+	if order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(actual), reflect.ValueOf(expected)); numeric {
+		return ordered && order > 0
+	}
 	actualFloat, actualOK := convert.ToFloat64(actual)
 	expectedFloat, expectedOK := convert.ToFloat64(expected)
 	if actualOK && expectedOK {
@@ -1175,6 +1183,9 @@ func compareGreaterConstraint(actual interface{}, expected interface{}) bool {
 }
 
 func compareLessConstraint(actual interface{}, expected interface{}) bool {
+	if order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(actual), reflect.ValueOf(expected)); numeric {
+		return ordered && order < 0
+	}
 	actualFloat, actualOK := convert.ToFloat64(actual)
 	expectedFloat, expectedOK := convert.ToFloat64(expected)
 	if actualOK && expectedOK {
