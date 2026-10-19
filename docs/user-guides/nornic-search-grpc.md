@@ -120,6 +120,12 @@ passage is also a `SearchHit`, so hit metadata has the same shape at both
 levels. See [Search Continuation](search-continuation.md) for all modes and
 metadata.
 
+If a pull returns a cancellation or deadline-exceeded error while producing its
+page, retry the same `Qid` with a fresh context to resume at the same position
+before its fixed expiry. Other producer errors retire the qid. Failed delivery
+of an already produced page also retires it; see
+[Stream lifetime](search-continuation.md#stream-lifetime) for that distinction.
+
 `include_properties` limits the returned property map and
 `exclude_properties` removes keys from it; exclusion wins when a key appears
 in both. These fields only project responses—they do not change filters,

@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   embeddings, Cohere-compatible HTTP reranking and `--embedding-workers`, and
   record the SciFact Titan V2 + Cohere Rerank 3.5 result in the README.
 
+- Preserve issued search continuation qids when page production is canceled or
+  exceeds a request/search-step deadline, allowing the same position to be
+  retried before the fixed expiry. Other producer errors and failed delivery of
+  a produced page still retire the stream and release capacity (#1580).
+
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 
