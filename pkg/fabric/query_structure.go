@@ -635,16 +635,27 @@ func (q *QueryStructure) Writes() bool {
 	}
 	return false
 }
-func (q *QueryStructure) Uses() []UseClause {
-	var uses []UseClause
+
+// AnyUse visits grammar-owned references until one satisfies matches. Routing
+// can decide its target without materializing a list of every nested graph.
+func (q *QueryStructure) AnyUse(matches func(UseClause) bool) bool {
 	for _, c := range q.Clauses {
-		if c.Use != nil {
-			uses = append(uses, *c.Use)
+		if c.Use != nil && matches(*c.Use) {
+			return true
 		}
-		if c.Nested != nil {
-			uses = append(uses, c.Nested.Uses()...)
+		if c.Nested != nil && c.Nested.AnyUse(matches) {
+			return true
 		}
 	}
+	return false
+}
+
+func (q *QueryStructure) Uses() []UseClause {
+	var uses []UseClause
+	q.AnyUse(func(use UseClause) bool {
+		uses = append(uses, use)
+		return false
+	})
 	return uses
 }
 func (q *QueryStructure) ImportNames() []string {
