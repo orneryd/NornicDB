@@ -410,10 +410,9 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 	if shape.isSubquery {
 		return e.evaluateRowSubqueryValue(ctx, shape.subquery.kind, shape.subquery.body, values)
 	}
-	// id() / elementId() resolve the entity identity at this context-aware
-	// boundary: the allocation-conscious row evaluator below carries no
-	// context and would build the id with the executor's default database,
-	// losing a composite subquery's constituent identity (#745 §3).
+	// Whole id() / elementId() calls resolve directly at this boundary.
+	// Nested registry calls use the same statement identity through the
+	// context bound above, including a composite constituent selection.
 	if shape.identity {
 		if value, resolved := e.evaluateRowEntityIdentity(ctx, shape.function, shape.argument, values); resolved {
 			return value, true

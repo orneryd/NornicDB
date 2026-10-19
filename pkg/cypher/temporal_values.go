@@ -169,16 +169,24 @@ func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length 
 type temporalStatementTimeKey struct{}
 
 // rowStatementContextKey binds the statement's context in a row for the row
-// evaluator, which takes no context: its clock calls read the statement's
-// instant from it, and its subquery expressions run with it (#1055).
+// evaluator, which takes no context argument: function calls retain execution
+// identity and version, clock calls share its instant, and subqueries run in it.
 const rowStatementContextKey = "\x00statement_context"
 
-// needsRowStatementContext reports an expression whose row evaluation reads
-// the statement context: a clock call, a subquery expression, or a
-// relationship pattern, which reads the graph of the statement's transaction.
+// needsRowStatementContext preserves statement state for function dispatch and
+// graph expressions. This applies to nested calls as well as whole expressions:
+// every registry function must see the same execution identity and version.
 func needsRowStatementContext(expression string) bool {
-	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression)
+	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
+		containsRelationshipPattern(expression) || containsContextPluginCall(expression) {
+		return true
+	}
+	called := false
+	_ = forEachFunctionCall(expression, func(string, string) error {
+		called = true
+		return nil
+	})
+	return called
 }
 
 // rowStatementContextOrBackground is the statement context a row carries, or
