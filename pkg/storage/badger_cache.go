@@ -576,6 +576,10 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int6
 		}
 		// We don't know which types were removed cheaply; invalidate whole type cache.
 		b.InvalidateEdgeTypeCache()
+		// Cascaded relationships have no separate delete operation. Clear
+		// their cached bodies and adjacency before the generation retires.
+		b.cacheInvalidateEdges()
+		b.adjCacheInvalidateAll()
 	}
 }
 
@@ -584,24 +588,8 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []stri
 }
 
 func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
-	b.cacheDeleteNode(nodeID)
+	b.cacheOnNodeDeletedWithCounts(nodeID, edgesDeleted, publishCounts)
 	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
-
-	// Decrement cached node count for O(1) stats.
-	if publishCounts {
-		b.nodeCount.Add(-1)
-		b.addNamespaceNodeCount(nodeID, -1)
-	}
-
-	// Decrement cached edge count for edges deleted with this node.
-	if edgesDeleted > 0 {
-		if publishCounts {
-			b.edgeCount.Add(-edgesDeleted)
-			b.addNamespaceEdgeCountFromNode(nodeID, -edgesDeleted)
-		}
-		// We don't know which types were removed cheaply; invalidate whole type cache.
-		b.InvalidateEdgeTypeCache()
-	}
 
 	// Remove stale property-index entries. Without labels + properties of
 	// the deleted node we can't do targeted removal, so the narrower
