@@ -467,7 +467,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
-	if strings.HasPrefix(upperASCII(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
+	if isFunctionCallWS(expr, "coalesce") {
 		return e.evaluateCoalesceInContext(expr, b, edgeRelationshipBindings(rels), nil)
 	}
 

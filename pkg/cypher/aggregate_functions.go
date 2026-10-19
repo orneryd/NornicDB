@@ -51,11 +51,14 @@ func isAggregateFunc(expr string) bool {
 // aggregation computes expr, an upper-case aggregate call: count, sum, avg,
 // min, max and collect. Any other aggregate goes through the pipeline's
 // aggregate projection (aggregateTraversalOptionalRows).
-func traversalComputesAggregate(upper string) bool {
-	for _, prefix := range []string{"COUNT(", "SUM(", "AVG(", "MIN(", "MAX(", "COLLECT("} {
-		if strings.HasPrefix(upper, prefix) {
-			return true
-		}
+func traversalComputesAggregate(expression string) bool {
+	name, _, ok := parseFunctionCallWS(expression)
+	if !ok {
+		return false
+	}
+	switch lowerASCII(name) {
+	case "count", "sum", "avg", "min", "max", "collect":
+		return true
 	}
 	return false
 }
