@@ -353,7 +353,13 @@ func (s *Server) authorizeRequestDatabase(ctx context.Context, req interface{}, 
 	if selected, ok := req.(interface{ GetCollectionName() string }); ok {
 		permission, known := requiredPermissionForMethod(fullMethod)
 		if known {
-			return s.AllowDatabaseAccess(ctx, selected.GetCollectionName(), permission != auth.PermRead && permission != auth.PermAdmin)
+			write := permission != auth.PermRead && permission != auth.PermAdmin
+			// Snapshot deletion has global admin entitlement but a database
+			// write effect; snapshot creation/listing read the collection.
+			if key == "Snapshots/Delete" {
+				write = true
+			}
+			return s.AllowDatabaseAccess(ctx, selected.GetCollectionName(), write)
 		}
 	}
 	return nil
