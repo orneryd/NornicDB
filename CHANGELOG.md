@@ -14,9 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries from the pre-delete snapshot. Reduce publication-key/scheduler allocations and avoid shifting
   index postings for first-entry removal; record paired performance results and remaining update costs
   in [the publication benchmark report](docs/performance/publication-1406/README.md) (#1406).
-- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
-  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
-  tests retain their assertions and debug information (#1366).
 - Avoid allocating and filling an unused predicate scope for streaming WITH
   projections without WHERE; preserve ordered WITH scope handling (#1472).
 
@@ -32,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inherited v1 limits, without reading unrelated cgroups (#1390).
 - Derive the Go soft memory limit from the container's cgroup limit by default,
   and clamp configured limits above it with a startup warning (#1369).
+- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
+  tests retain their assertions and debug information (#1366).
 - Enforce database node, relationship, byte and write-rate quotas when committing
   implicit and explicit transactions, including HTTP and Bolt. Reject an entire
   over-quota transaction before publication and keep cached byte usage in sync
