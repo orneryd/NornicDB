@@ -854,7 +854,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		if caller == nil {
 			caller = context.Background()
 		}
-		if err := r.awaitNamespacePreparationFrontier(caller, future.cmd); err != nil {
+		if err := r.awaitNamespacePreparationFrontier(caller, future.cmd, term); err != nil {
 			if op := future.cmd.namespaceDrop; op != nil {
 				op.Abort()
 			}
