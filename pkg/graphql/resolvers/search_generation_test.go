@@ -5,14 +5,20 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGraphQLExecutorFollowsSearchResetAndSharesCursors(t *testing.T) {
-	db := testDB(t)
+	db, err := nornicdb.Open(t.TempDir(), &nornicdb.Config{
+		Memory: config.MemoryConfig{SearchCursorMax: 2},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	manager := testDBManager(t, db)
 	resolver := NewResolver(db, manager)
 	name := manager.DefaultDatabaseName()
