@@ -294,7 +294,7 @@ func (m *Manager) endLocked(ctx context.Context, session *Session, command strin
 	if command == "COMMIT" {
 		// Storage stops observing cancellation once write application begins.
 		// Wait for its real result instead of retiring an in-flight commit.
-		return session.Executor.Execute(cypher.WithTransactionControl(ctx), command, nil)
+		return session.Executor.Execute(cypher.WithTransactionControl(context.WithoutCancel(ctx)), command, nil)
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalCleanupTimeout)
 	defer cancel()
