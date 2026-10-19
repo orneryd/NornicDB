@@ -81,7 +81,7 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 			}
 			for _, query := range queries {
 				params := map[string]any{
-					"request": map[string]any{"query": "transcript", "where": invocation + " IS NOT NULL"},
+					"request":   map[string]any{"query": "transcript", "where": invocation + " IS NOT NULL"},
 					"statement": "RETURN " + invocation + " AS value",
 				}
 				first, err := exec.Execute(context.Background(), query, params)
