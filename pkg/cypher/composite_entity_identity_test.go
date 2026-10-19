@@ -19,6 +19,9 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}, Properties: map[string]interface{}{"db": db}})
 		require.NoError(t, err)
+		_, err = s.CreateNode(&storage.Node{ID: "target", Labels: []string{"Q"}})
+		require.NoError(t, err)
+		require.NoError(t, s.CreateEdge(&storage.Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
 	}
 	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "one", Type: "local", AccessMode: "read_write"},
@@ -28,13 +31,22 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 	require.NoError(t, err)
 	exec := NewStorageExecutor(s)
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
-	prefix := "USE comp CALL { USE comp.one MATCH (n:P) RETURN n } CALL { USE comp.two MATCH (m:P) RETURN m } "
-	for _, tt := range []struct{ name, query string; want interface{} }{
+	prefix := "USE comp CALL { USE comp.one MATCH p=(n:P)-[r:R]->(z:Q) RETURN n,r,p } CALL { USE comp.two MATCH q=(m:P)-[s:R]->(y:Q) RETURN m,s,q } "
+	for _, tt := range []struct {
+		name, query string
+		want interface{}
+	}{
 		{"element ids", "RETURN elementId(n) = elementId(m)", false},
 		{"equality", "RETURN n = m", false},
 		{"distinct", "UNWIND [n,m,n] AS x RETURN count(DISTINCT x)", int64(2)},
 		{"nested distinct", "UNWIND [[n],[m],[n]] AS x RETURN count(DISTINCT x)", int64(2)},
 		{"same entity", "RETURN n = n", true},
+		{"relationship element ids", "RETURN elementId(r) = elementId(s)", false},
+		{"relationship equality", "RETURN r = s", false},
+		{"relationship distinct", "UNWIND [r,s,r] AS x RETURN count(DISTINCT x)", int64(2)},
+		{"path equality", "RETURN p = q", false},
+		{"path distinct", "UNWIND [p,q,p] AS x RETURN count(DISTINCT x)", int64(2)},
+		{"map distinct", "UNWIND [{n:n},{n:m},{n:n}] AS x RETURN count(DISTINCT x)", int64(2)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := exec.Execute(context.Background(), prefix+tt.query, nil)

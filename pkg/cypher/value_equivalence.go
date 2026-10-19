@@ -38,12 +38,12 @@ func cypherEquivalenceKey(value interface{}) string {
 		return "S" + typed
 	case *storage.Node:
 		if typed != nil {
-			return "n:" + string(typed.ID)
+			return "n:" + typed.IdentityKey()
 		}
 		return "N"
 	case *storage.Edge:
 		if typed != nil {
-			return "r:" + string(typed.ID)
+			return "r:" + typed.IdentityKey()
 		}
 		return "N"
 	case storage.RemotePathValue:

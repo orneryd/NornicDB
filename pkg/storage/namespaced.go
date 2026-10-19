@@ -187,6 +187,7 @@ func (n *NamespacedEngine) toUserNode(node *Node) *Node {
 	}
 	out := *node
 	out.ID = n.unprefixNodeID(out.ID)
+	out.Database = n.namespace
 	return &out
 }
 
@@ -214,6 +215,7 @@ func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
 	}
 	out := *edge
 	out.ID = n.unprefixEdgeID(out.ID)
+	out.Database = n.namespace
 	out.StartNode = n.unprefixNodeID(out.StartNode)
 	out.EndNode = n.unprefixNodeID(out.EndNode)
 	return &out
@@ -1086,6 +1088,7 @@ func (n *NamespacedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error)
 		unprefixedID := n.unprefixNodeID(namespacedID)
 		out := CopyNode(node)
 		out.ID = unprefixedID
+		out.Database = n.namespace
 		unprefixed[unprefixedID] = out
 	}
 	return unprefixed, nil

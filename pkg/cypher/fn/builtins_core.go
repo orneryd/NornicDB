@@ -106,12 +106,12 @@ func entityElementID(value interface{}, database string) (interface{}, error) {
 		if entity == nil {
 			return nil, nil
 		}
-		return storage.NodeElementID(database, entity.ID), nil
+		return entity.ElementID(database), nil
 	case *storage.Edge:
 		if entity == nil {
 			return nil, nil
 		}
-		return storage.RelationshipElementID(database, entity.ID), nil
+		return entity.ElementID(database), nil
 	case storage.RemoteEntityValue:
 		return entity["elementId"], nil
 	default:

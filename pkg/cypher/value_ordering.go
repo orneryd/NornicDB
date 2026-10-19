@@ -175,14 +175,14 @@ func cypherEntityOrderingKey(value interface{}) (cypherEntityOrderKey, bool) {
 		key := cypherEntityOrderKey{kind: valueKindNode}
 		if entity != nil {
 			key.carrier = 1
-			key.identity = string(entity.ID)
+			key.identity = entity.IdentityKey()
 		}
 		return key, true
 	case *storage.Edge:
 		key := cypherEntityOrderKey{kind: valueKindRelationship}
 		if entity != nil {
 			key.carrier = 1
-			key.identity = string(entity.ID)
+			key.identity = entity.IdentityKey()
 		}
 		return key, true
 	case storage.RemoteEntityValue:

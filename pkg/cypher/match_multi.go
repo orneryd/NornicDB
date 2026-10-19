@@ -458,10 +458,10 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
-			return storage.NodeElementID(e.executionDatabaseName(ctx), node.ID)
+			return node.ElementID(e.executionDatabaseName(ctx))
 		}
 		if edge, ok := rels[inner].(*storage.Edge); ok && edge != nil {
-			return storage.RelationshipElementID(e.executionDatabaseName(ctx), edge.ID)
+			return edge.ElementID(e.executionDatabaseName(ctx))
 		}
 		return nil
 	}
