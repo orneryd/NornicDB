@@ -670,7 +670,7 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 		return []*Node{}, nil
 	}
 
-	seen := make(map[NodeID]bool)
+	seen := make(map[string]bool)
 	var allNodes []*Node
 
 	for _, alias := range readConstituents {
@@ -687,8 +687,8 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 		// Deduplicate: only add nodes we haven't seen before
 		for _, node := range nodes {
-			if !seen[node.ID] {
-				seen[node.ID] = true
+			if !seen[node.IdentityKey()] {
+				seen[node.IdentityKey()] = true
 				allNodes = append(allNodes, node)
 			}
 		}
@@ -714,16 +714,16 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		}
 		readers = append(readers, reader)
 	}
-	seen := make(map[NodeID]struct{})
+	seen := make(map[string]struct{})
 	for _, reader := range readers {
 		err := reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
-			if _, exists := seen[node.ID]; exists {
+			if _, exists := seen[node.IdentityKey()]; exists {
 				return nil
 			}
-			seen[node.ID] = struct{}{}
+			seen[node.IdentityKey()] = struct{}{}
 			return visit(node)
 		})
 		if err != nil {
@@ -765,7 +765,7 @@ func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[EdgeID]bool)
+	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -781,8 +781,8 @@ func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 
 		// Deduplicate: only add edges we haven't seen before
 		for _, edge := range edges {
-			if !seen[edge.ID] {
-				seen[edge.ID] = true
+			if !seen[edge.IdentityKey()] {
+				seen[edge.IdentityKey()] = true
 				allEdges = append(allEdges, edge)
 			}
 		}
@@ -795,7 +795,7 @@ func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[EdgeID]bool)
+	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -811,8 +811,8 @@ func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 
 		// Deduplicate: only add edges we haven't seen before
 		for _, edge := range edges {
-			if !seen[edge.ID] {
-				seen[edge.ID] = true
+			if !seen[edge.IdentityKey()] {
+				seen[edge.IdentityKey()] = true
 				allEdges = append(allEdges, edge)
 			}
 		}
@@ -825,7 +825,7 @@ func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 // Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[EdgeID]bool)
+	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -841,8 +841,8 @@ func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error
 
 		// Deduplicate: only add edges we haven't seen before
 		for _, edge := range edges {
-			if !seen[edge.ID] {
-				seen[edge.ID] = true
+			if !seen[edge.IdentityKey()] {
+				seen[edge.IdentityKey()] = true
 				allEdges = append(allEdges, edge)
 			}
 		}
@@ -874,7 +874,7 @@ func (c *CompositeEngine) GetEdgeBetween(startID, endID NodeID, edgeType string)
 // Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[EdgeID]bool)
+	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -890,8 +890,8 @@ func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 
 		// Deduplicate: only add edges we haven't seen before
 		for _, edge := range edges {
-			if !seen[edge.ID] {
-				seen[edge.ID] = true
+			if !seen[edge.IdentityKey()] {
+				seen[edge.IdentityKey()] = true
 				allEdges = append(allEdges, edge)
 			}
 		}
@@ -904,7 +904,7 @@ func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 // Duplicate nodes (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[NodeID]bool)
+	seen := make(map[string]bool)
 	var allNodes []*Node
 
 	for _, alias := range readConstituents {
@@ -920,8 +920,8 @@ func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 
 		// Deduplicate: only add nodes we haven't seen before
 		for _, node := range nodes {
-			if !seen[node.ID] {
-				seen[node.ID] = true
+			if !seen[node.IdentityKey()] {
+				seen[node.IdentityKey()] = true
 				allNodes = append(allNodes, node)
 			}
 		}
@@ -934,7 +934,7 @@ func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 // Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
 func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[EdgeID]bool)
+	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -950,8 +950,8 @@ func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
 
 		// Deduplicate: only add edges we haven't seen before
 		for _, edge := range edges {
-			if !seen[edge.ID] {
-				seen[edge.ID] = true
+			if !seen[edge.IdentityKey()] {
+				seen[edge.IdentityKey()] = true
 				allEdges = append(allEdges, edge)
 			}
 		}

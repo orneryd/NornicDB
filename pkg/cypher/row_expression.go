@@ -1855,7 +1855,7 @@ func normalizeRowIdentityComparison(leftExpr, rightExpr string, leftValue, right
 	if !isRowIdentityExpression(leftExpr) && !isRowIdentityExpression(rightExpr) {
 		return leftValue, rightValue
 	}
-	return rowIdentityPayload(leftValue), rowIdentityPayload(rightValue)
+	return normalizeRowIdentityValues(leftValue, rightValue)
 }
 
 func isRowIdentityExpression(expression string) bool {
@@ -1863,16 +1863,30 @@ func isRowIdentityExpression(expression string) bool {
 	return ok && (strings.EqualFold(name, "id") || strings.EqualFold(name, "elementId"))
 }
 
-func rowIdentityPayload(value interface{}) interface{} {
+// normalizeRowIdentityValues preserves complete element identities. The legacy
+// raw-ID comparison extension applies only when one operand is unqualified;
+// stripping two database-qualified IDs would collapse different constituents.
+func normalizeRowIdentityValues(left, right interface{}) (interface{}, interface{}) {
+	leftPayload, leftElement := rowIdentityPayload(left)
+	rightPayload, rightElement := rowIdentityPayload(right)
+	if leftElement && rightElement {
+		return left, right
+	}
+	return leftPayload, rightPayload
+}
+
+func rowIdentityPayload(value interface{}) (interface{}, bool) {
 	text, ok := value.(string)
 	if !ok {
-		return value
+		return value, false
 	}
-	parts := strings.SplitN(text, ":", 3)
-	if len(parts) == 3 && (parts[0] == "4" || parts[0] == "5") {
-		return parts[2]
+	kind, rest, found := strings.Cut(text, ":")
+	if found && (kind == "4" || kind == "5") {
+		if _, payload, found := strings.Cut(rest, ":"); found {
+			return payload, true
+		}
 	}
-	return text
+	return text, false
 }
 
 // rowRelationshipEndpoint evaluates startNode(r) / endNode(r), reading bound
@@ -2017,9 +2031,9 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	if !identity {
 		return cypherMembership(needle, items)
 	}
-	needle = rowIdentityPayload(needle)
 	return cypherMembershipValues(needle, len(items), func(i int) interface{} {
-		return cypherEquality(needle, rowIdentityPayload(items[i]))
+		left, right := normalizeRowIdentityValues(needle, items[i])
+		return cypherEquality(left, right)
 	}), true
 }
 
