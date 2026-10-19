@@ -291,11 +291,13 @@ func TestSnapshotOverlaySchemaAndCounterRetirement(t *testing.T) {
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()
-	require.NoError(t, b.replayWriteBehind(generation))
-	require.True(t, generation.IsApplied())
+	// Pause at count publication without invoking replay's final retirement.
+	require.NoError(t, b.applyBufferedCommitsWithCountPublication(generation.Commits(), func() { generation.countsApplied.Store(true) }))
+	require.False(t, generation.IsApplied())
 	require.True(t, generation.countsApplied.Load())
 	check()
 	b.writeBehind.removeDrained(generation)
+	require.True(t, generation.IsApplied())
 	check()
 	require.Nil(t, b.writeBehind.pendingIndex, "retirement must not re-add its own applied nodes")
 }
@@ -306,7 +308,7 @@ func TestSnapshotOverlayLateSchemaTracking(t *testing.T) {
 	b.writeBehind.mu.RLock()
 	generation := b.writeBehind.draining[0]
 	b.writeBehind.mu.RUnlock()
-	require.NoError(t, b.replayWriteBehind(generation))
+	require.NoError(t, b.applyBufferedCommitsWithCountPublication(generation.Commits(), func() { generation.countsApplied.Store(true) }))
 	// A newly tracked property must use the same retained entity population.
 	schema := b.GetSchemaForNamespace("test")
 	require.NoError(t, schema.AddPropertyIndex("late_v", "Live", []string{"v"}))
