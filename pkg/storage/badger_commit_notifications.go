@@ -16,7 +16,7 @@ func (b *BadgerEngine) hasCommitListeners() bool {
 }
 
 func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
-	if !b.hasCommitListeners() {
+	if !b.hasCommitListeners() && !b.hasNamespaceCatalogUpdates(ops) {
 		return nil
 	}
 	n := &commitNotification{ops: ops}
@@ -34,6 +34,9 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 
 func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
 	if !b.hasCommitListeners() {
+		if op.Type == OpCreateNode || op.Type == OpUpdateNode {
+			b.publishNamespaceCatalog(op.Node)
+		}
 		return
 	}
 	if op.Node != nil {
@@ -81,6 +84,7 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 	if n == nil {
 		return
 	}
+	b.publishNamespaceCatalogOperations(n.ops)
 	b.notificationMu.Lock()
 	n.ready = true
 	if b.notificationDraining {

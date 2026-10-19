@@ -17,6 +17,10 @@ type testDatabaseManagerAdapter struct {
 	manager *multidb.DatabaseManager
 }
 
+func (a *testDatabaseManagerAdapter) CreateDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.CreateDatabaseContext(ctx, name)
+}
+
 func (a *testDatabaseManagerAdapter) CreateDatabase(name string) error {
 	return a.manager.CreateDatabase(name)
 }
@@ -70,6 +74,10 @@ func (a *testDatabaseManagerAdapter) GetDatabaseLimits(databaseName string) (int
 }
 
 func (a *testDatabaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return a.CreateCompositeDatabaseContext(context.Background(), name, constituents)
+}
+
+func (a *testDatabaseManagerAdapter) CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error {
 	refs := make([]multidb.ConstituentRef, len(constituents))
 	for i, c := range constituents {
 		if m, ok := c.(map[string]interface{}); ok {
@@ -88,11 +96,15 @@ func (a *testDatabaseManagerAdapter) CreateCompositeDatabase(name string, consti
 			return fmt.Errorf("invalid constituent type at index %d", i)
 		}
 	}
-	return a.manager.CreateCompositeDatabase(name, refs)
+	return a.manager.CreateCompositeDatabaseContext(ctx, name, refs)
 }
 
 func (a *testDatabaseManagerAdapter) DropCompositeDatabase(name string) error {
-	return a.manager.DropCompositeDatabase(name)
+	return a.DropCompositeDatabaseContext(context.Background(), name)
+}
+
+func (a *testDatabaseManagerAdapter) DropCompositeDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropCompositeDatabaseContext(ctx, name)
 }
 
 func (a *testDatabaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {

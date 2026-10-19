@@ -197,9 +197,16 @@ type BadgerEngine struct {
 	writeBarrier sync.RWMutex
 	// Immutable publication fences exist only while prefix deletion is active.
 	// Updates use prefixDeleteMu; ordinary commits perform one atomic load.
-	prefixDeleteMu     sync.Mutex
-	deletingPrefixes   atomic.Pointer[[]string]
-	namespaceLifetimes atomic.Pointer[namespaceLifetimes]
+	prefixDeleteMu            sync.Mutex
+	deletingPrefixes          atomic.Pointer[[]string]
+	namespaceLifetimes        atomic.Pointer[namespaceLifetimes]
+	namespaceRetirementHooks  sync.Map
+	namespaceRetirementHookID atomic.Uint64
+	namespaceTaskGates        sync.Map
+	catalogObserversMu        sync.Mutex
+	catalogObservers          atomic.Pointer[namespaceCatalogObservers]
+	catalogObserverID         uint64
+	catalogRevision           atomic.Uint64
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup
@@ -1069,6 +1076,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
 	}
+	if err := engine.loadNamespaceLifetimes(db, false); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load namespace lifetimes: %w", err)
+	}
 
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request
@@ -1304,6 +1315,9 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+	if err := b.checkNamespaceOperation(namespace); err != nil {
+		return MVCCVersion{}, err
+	}
 	if err := b.checkNamespacePublication(namespace); err != nil {
 		return MVCCVersion{}, err
 	}

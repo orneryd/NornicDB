@@ -3,6 +3,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -19,8 +20,11 @@ import (
 // StorageAdapter bridges the replication.Storage interface to storage.Engine.
 // It translates replication commands into storage operations and maintains WAL state.
 type StorageAdapter struct {
-	engine   storage.Engine
-	executor *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
+	commandPublication   sync.RWMutex
+	namespacePublication sync.Map
+	walAdmissionMu       sync.Mutex
+	engine               storage.Engine
+	executor             *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
 
 	// Persistent WAL for replication commands
 	wal         *storage.WAL
@@ -134,8 +138,8 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 }
 
 // ApplyCommandContext lets DROP preparation cancel before physical deletion.
-// Only a completed DROP enters the replication journal: a cancelled preparation
-// must never be streamed to a standby as a command it should execute later.
+// The physical namespace owner admits DROP to the journal at its commit point,
+// before deletion. Cancelled preparation never reaches that point.
 func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) error {
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
@@ -143,12 +147,55 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	op := cmd.namespaceDrop
+	if fromCtx := storage.NamespaceDropFromContext(ctx); fromCtx != nil {
+		op = fromCtx
+	}
+	release := func() {}
+	var payload commandPublicationPayload
+	var err error
+	if op == nil || !op.HasPublicationLease() {
+		release, err = a.admitCommand(ctx, cmd, cmd.Type == CmdDeleteByPrefix, &payload)
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
 	if cmd.Type == CmdDeleteByPrefix {
-		if err := a.applyDeleteByPrefixContext(ctx, cmd.Data); err != nil {
+		if op == nil {
+			op = storage.NewNamespaceDrop(nil)
+		}
+		if !op.HasPublicationLease() {
+			op.SetPublicationRelease(release)
+		}
+		var request namespaceDropCommand
+		if err := decodeGob(cmd.Data, &request); err != nil {
 			return err
 		}
-		_, _, err := a.queueCommandWAL(cmd)
-		return err
+		if request.Retirement != 0 {
+			op.SetCatalogRevision(request.Retirement)
+		}
+		committed := ctx.Value(committedCommandKey{}) == true
+		op.SetJournal(func() (bool, error) {
+			if err := stampNamespaceDrop(cmd, op); err != nil {
+				return committed, err
+			}
+			req, _, err := a.queueCommandWAL(cmd)
+			if err != nil {
+				return committed, err
+			}
+			flushErr := a.FlushWAL()
+			select {
+			case err := <-req.errCh:
+				return committed, errors.Join(err, flushErr)
+			case position := <-req.posCh:
+				op.SetJournalPosition(position)
+				return true, flushErr
+			default:
+				return committed, errors.Join(ErrClosed, flushErr)
+			}
+		})
+		return a.applyDeleteByPrefixContext(storage.WithNamespaceDrop(ctx, op), cmd.Data)
 	}
 
 	req, record, err := a.queueCommandWAL(cmd)
@@ -161,15 +208,15 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	var execErr error
 	switch cmd.Type {
 	case CmdCreateNode:
-		execErr = a.applyCreateNode(cmd.Data)
+		_, execErr = a.engine.CreateNode(payload.node)
 	case CmdUpdateNode:
-		execErr = a.applyUpdateNode(cmd.Data)
+		execErr = a.engine.UpdateNode(payload.node)
 	case CmdDeleteNode:
 		execErr = a.applyDeleteNode(cmd.Data)
 	case CmdCreateEdge:
-		execErr = a.applyCreateEdge(cmd.Data)
+		execErr = a.engine.CreateEdge(payload.edge)
 	case CmdUpdateEdge:
-		execErr = a.applyUpdateEdge(cmd.Data)
+		execErr = a.engine.UpdateEdge(payload.edge)
 	case CmdDeleteEdge:
 		execErr = a.applyDeleteEdge(cmd.Data)
 	case CmdSetProperty:
@@ -213,6 +260,8 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 // queueCommandWAL retains the existing async journal path and synchronous
 // overflow fallback. Non-DROP command ordering is unchanged.
 func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replicationWALRecord, error) {
+	a.walAdmissionMu.Lock()
+	defer a.walAdmissionMu.Unlock()
 	record := replicationWALRecord{Timestamp: cmd.Timestamp.UnixNano(), Command: cmd}
 	req := &walWriteRequest{
 		record: record,
@@ -222,6 +271,11 @@ func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replic
 	select {
 	case a.walQueue <- req:
 	default:
+		// Preserve FIFO when the bounded queue fills. A direct append must
+		// not overtake older acknowledged commands still in the writer queue.
+		if err := a.FlushWAL(); err != nil {
+			return nil, record, err
+		}
 		a.walMu.Lock()
 		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
 			a.walMu.Unlock()
@@ -231,12 +285,20 @@ func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replic
 		a.walPosition.Store(pos)
 		a.walMu.Unlock()
 		a.appendToMemWAL(pos, record, cmd)
+		if cmd.Type == CmdDeleteByPrefix {
+			req.posCh <- pos
+		}
 	}
 	return req, record, nil
 }
 
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
 func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord, cmd *Command) {
+	if cmd.namespaceDrop != nil {
+		copy := *cmd
+		copy.namespaceDrop = nil
+		cmd = &copy
+	}
 	a.memWALMu.Lock()
 	a.memWAL = append(a.memWAL, &WALEntry{
 		Position:  pos,

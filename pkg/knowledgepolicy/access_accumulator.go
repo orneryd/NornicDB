@@ -3,6 +3,7 @@ package knowledgepolicy
 import (
 	"log"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -368,6 +369,20 @@ func (a *AccessAccumulator) ClearEntity(entityID string) {
 	for i := range a.shards {
 		a.shards[i].mu.Lock()
 		delete(a.shards[i].deltas, entityID)
+		a.shards[i].mu.Unlock()
+	}
+}
+
+// ClearNamespace retires pending access, traversal and custom deltas along
+// with the namespace's durable side state. Other namespaces keep their work.
+func (a *AccessAccumulator) ClearNamespace(prefix string) {
+	for i := range a.shards {
+		a.shards[i].mu.Lock()
+		for id := range a.shards[i].deltas {
+			if strings.HasPrefix(id, prefix) {
+				delete(a.shards[i].deltas, id)
+			}
+		}
 		a.shards[i].mu.Unlock()
 	}
 }

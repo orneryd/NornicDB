@@ -29,13 +29,15 @@ func (b *BadgerEngine) WriteIndexTombstones(keys [][]byte) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if err := putIndexTombstoneInTxn(txn, k); err != nil {
-				return err
+	return b.withNamespaceIndexWrite(keys, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			for _, k := range keys {
+				if err := putIndexTombstoneInTxn(txn, k); err != nil {
+					return err
+				}
 			}
-		}
-		return nil
+			return nil
+		})
 	})
 }
 
@@ -46,12 +48,14 @@ func (b *BadgerEngine) DeleteIndexTombstones(keys [][]byte) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if err := txn.Delete(indexTombstoneKey(k)); err != nil && err != badger.ErrKeyNotFound {
-				return err
+	return b.withNamespaceIndexWrite(keys, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			for _, k := range keys {
+				if err := txn.Delete(indexTombstoneKey(k)); err != nil && err != badger.ErrKeyNotFound {
+					return err
+				}
 			}
-		}
-		return nil
+			return nil
+		})
 	})
 }

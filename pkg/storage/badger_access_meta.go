@@ -61,36 +61,40 @@ func (b *BadgerEngine) GetAccessMeta(entityID string) (*knowledgepolicy.AccessMe
 }
 
 func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		current, err := getAccessMetaInTxn(txn, entityID)
-		if err != nil {
-			return err
-		}
-		updated := *entry
-		updated.HasAccessState = len(entityID) > 0 && entityID[0] != 0
-		if current != nil {
-			updated.IndexKeys = current.IndexKeys
-			updated.HasIndexKeys = current.HasIndexKeys
-			updated.Deindexed = current.Deindexed
-		}
-		return putAccessMetaInTxn(txn, entityID, &updated)
+	return b.withNamespaceSideStateWrite(entityID, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			current, err := getAccessMetaInTxn(txn, entityID)
+			if err != nil {
+				return err
+			}
+			updated := *entry
+			updated.HasAccessState = len(entityID) > 0 && entityID[0] != 0
+			if current != nil {
+				updated.IndexKeys = current.IndexKeys
+				updated.HasIndexKeys = current.HasIndexKeys
+				updated.Deindexed = current.Deindexed
+			}
+			return putAccessMetaInTxn(txn, entityID, &updated)
+		})
 	})
 }
 
 func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		entry, err := getAccessMetaInTxn(txn, entityID)
-		if err != nil {
-			return err
-		}
-		if entry != nil && entry.HasIndexKeys {
-			retained := &knowledgepolicy.AccessMetaEntry{
-				TargetID: entry.TargetID, TargetScope: entry.TargetScope,
-				IndexKeys: entry.IndexKeys, HasIndexKeys: true, Deindexed: entry.Deindexed,
+	return b.withNamespaceSideStateWrite(entityID, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			entry, err := getAccessMetaInTxn(txn, entityID)
+			if err != nil {
+				return err
 			}
-			return putAccessMetaInTxn(txn, entityID, retained)
-		}
-		return txn.Delete(accessMetaKey(entityID))
+			if entry != nil && entry.HasIndexKeys {
+				retained := &knowledgepolicy.AccessMetaEntry{
+					TargetID: entry.TargetID, TargetScope: entry.TargetScope,
+					IndexKeys: entry.IndexKeys, HasIndexKeys: true, Deindexed: entry.Deindexed,
+				}
+				return putAccessMetaInTxn(txn, entityID, retained)
+			}
+			return txn.Delete(accessMetaKey(entityID))
+		})
 	})
 }
 
@@ -134,6 +138,19 @@ func (b *BadgerEngine) ScanAccessMeta() ([]*knowledgepolicy.AccessMetaEntry, err
 // fully materialized the entity into a result row.
 func (b *BadgerEngine) RecordMaterializedAccess(entityID string) {
 	if b == nil || b.accumulator == nil || entityID == "" {
+		return
+	}
+	revision := b.namespaceLifetimeRevision()
+	release, err := b.beginWrite()
+	if err != nil {
+		return
+	}
+	defer release()
+	namespace := namespaceForSideStateID(entityID)
+	if b.checkNamespaceOperation(namespace) != nil {
+		return
+	}
+	if state := b.namespaceLifetimes.Load(); state != nil && state.retired[namespace] > revision {
 		return
 	}
 	b.accumulator.IncrementAccess(entityID)

@@ -1057,6 +1057,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				kp.IncReconcile("startup", defaultDBName)
 			}
 
+			schemaLifetime := be.CaptureNamespaceTask()
 			be.GetSchemaForNamespace(defaultDBName).SetKnowledgePolicyChangedHook(func() {
 				// Wrap schema-change reconcile in a span + counter so the
 				// (usually rare) churn from DDL is visible.
@@ -1068,7 +1069,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if kp := observability.GetKnowledgePolicyMetrics(); kp != nil {
 					kp.IncReconcile("schema_change", defaultDBName)
 				}
-				changes, err := be.ReconcileDecaySuppressionWithChanges(defaultDBName)
+				changes, err := be.ReconcileDecaySuppressionWithChanges(defaultDBName, schemaLifetime)
 				if err != nil || db.cypherExecutor == nil {
 					return
 				}
