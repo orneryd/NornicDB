@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -18,6 +19,6 @@ func TestDBManagerCleanupClosesOwningDB(t *testing.T) {
 			assert.ErrorIs(t, err, nornicdb.ErrClosed,
 				"manager cleanup must stop the owning DB before closing its shared storage")
 		})
-		_ = testDBManager(t, db)
+		_ = testutil.DatabaseManager(t, db)
 	})
 }
