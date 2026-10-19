@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"io"
 	"log/slog"
 	"net/http"
