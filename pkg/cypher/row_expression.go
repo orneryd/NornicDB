@@ -1426,10 +1426,9 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 }
 
 // rowValuesWithStatementContext returns a row predicate's values with the
-// statement context bound (rowStatementContextKey) when the predicate reads the
-// statement's clock, as evaluateRowExpressionWithContext binds it for a
-// projection: every clock call of one statement then reads one instant
-// (#872). values itself is not modified.
+// statement context bound (rowStatementContextKey) when its functions or graph
+// expressions need execution state, as evaluateRowExpressionWithContext binds
+// it for a projection. values itself is not modified.
 func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
 	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContext(expression) {
 		return values
