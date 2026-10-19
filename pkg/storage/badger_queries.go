@@ -199,7 +199,9 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 				continue
 			}
 
-			if touched[nodeID] { continue }
+			if touched[nodeID] {
+				continue
+			}
 
 			// Cache-first: avoid Badger reads/decodes for hot label scans.
 			b.nodeCacheMu.RLock()
@@ -773,26 +775,42 @@ func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]
 
 func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]*Node, error) {
 	result := make(map[NodeID]*Node, len(ids))
-	if len(ids) == 0 { return result, nil }
-	if err := b.ensureOpen(); err != nil { return nil, err }
+	if len(ids) == 0 {
+		return result, nil
+	}
+	if err := b.ensureOpen(); err != nil {
+		return nil, err
+	}
 	copyForRead := copyNodeWithoutEmbeddings
-	if embeddings { copyForRead = copyNode }
+	if embeddings {
+		copyForRead = copyNode
+	}
 	now := DecayScoringTime()
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		clear(result)
 		b.nodeCacheMu.RLock()
 		defer b.nodeCacheMu.RUnlock()
 		for _, id := range ids {
-			if id == "" { continue }
+			if id == "" {
+				continue
+			}
 			var node *Node
 			if w != nil {
 				state := w.entityStateLocked(bufferedNodeEntity, string(id))
-				if state.deleted { continue }
+				if state.deleted {
+					continue
+				}
 				node = state.node
 			}
-			if node == nil { node = b.nodeCache[id] }
-			if node == nil { return false, nil }
-			if !b.filterNodeByDecay(node, now) { result[id] = copyForRead(node) }
+			if node == nil {
+				node = b.nodeCache[id]
+			}
+			if node == nil {
+				return false, nil
+			}
+			if !b.filterNodeByDecay(node, now) {
+				result[id] = copyForRead(node)
+			}
 		}
 		return true, nil
 	}
@@ -802,33 +820,55 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 	err := b.withReadView(func(w *WriteBehindBuffer) {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
-				if states == nil { states = make(map[NodeID]bufferedEntityState) }
+				if states == nil {
+					states = make(map[NodeID]bufferedEntityState)
+				}
 				states[id] = state
 			}
 		}
 	}, func(txn *badger.Txn) error {
 		clear(result)
 		for _, id := range ids {
-			if id == "" { continue }
+			if id == "" {
+				continue
+			}
 			state := states[id]
-			if state.deleted { continue }
+			if state.deleted {
+				continue
+			}
 			node := state.node
 			if !state.found {
 				item, err := txn.Get(nodeKey(id))
-				if errors.Is(err, badger.ErrKeyNotFound) { continue }
-				if err != nil { return err }
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
 				var hydrate func(*badger.Txn, *Node, NodeID) (*Node, error)
-				if embeddings { hydrate = b.loadNodeEmbeddings }
+				if embeddings {
+					hydrate = b.loadNodeEmbeddings
+				}
 				node, err = b.readNodeItemInTxn(txn, item, id, hydrate)
-				if err != nil { return err }
-				if embeddings { loaded = append(loaded, node) }
+				if err != nil {
+					return err
+				}
+				if embeddings {
+					loaded = append(loaded, node)
+				}
 			}
-			if !b.filterNodeByDecay(node, now) { result[id] = copyForRead(node) }
+			if !b.filterNodeByDecay(node, now) {
+				result[id] = copyForRead(node)
+			}
 		}
 		return nil
 	}, readViewOptions{cached: cached})
-	if err != nil { return nil, err }
-	for _, node := range loaded { b.cacheFillNode(gen, node) }
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range loaded {
+		b.cacheFillNode(gen, node)
+	}
 	return result, nil
 }
 
@@ -844,7 +884,9 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 	err := b.withReadView(func(w *WriteBehindBuffer) {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
-				if states == nil { states = make(map[NodeID]bufferedEntityState) }
+				if states == nil {
+					states = make(map[NodeID]bufferedEntityState)
+				}
 				states[id] = state
 			}
 		}

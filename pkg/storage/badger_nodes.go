@@ -177,15 +177,21 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		if w != nil {
 			state := w.entityStateLocked(bufferedNodeEntity, string(id))
 			if state.found {
-				if state.deleted { return true, ErrNotFound }
+				if state.deleted {
+					return true, ErrNotFound
+				}
 				node = hitCopy(state.node)
 				return true, nil
 			}
 		}
-		if !readCache { return false, nil }
+		if !readCache {
+			return false, nil
+		}
 		b.nodeCacheMu.RLock()
 		value, found := b.nodeCache[id]
-		if found { node = hitCopy(value) }
+		if found {
+			node = hitCopy(value)
+		}
 		b.nodeCacheMu.RUnlock()
 		return found, nil
 	}
@@ -217,7 +223,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
-	if loaded { atomic.AddInt64(&b.cacheMisses, 1) } else { atomic.AddInt64(&b.cacheHits, 1) }
+	if loaded {
+		atomic.AddInt64(&b.cacheMisses, 1)
+	} else {
+		atomic.AddInt64(&b.cacheHits, 1)
+	}
 	if loaded && cacheFill != nil {
 		cacheFill(gen, node)
 	}
