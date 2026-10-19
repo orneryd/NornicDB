@@ -53,7 +53,7 @@ func fnGDSGraphExists(ctx cypherfn.Context, args []string) (interface{}, error) 
 	if !ok {
 		return nil, fmt.Errorf("gds.graph.exists expects a graph name, got %s", cypherTypeSystemName(values[0]))
 	}
-	_, missing := lookupGraphProjection(storageDatabaseName(ctx.Storage), name)
+	_, missing := lookupGraphProjection(graphFunctionDatabase(ctx), name)
 	return missing == nil, nil
 }
 
@@ -84,7 +84,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
 		}
 	}
-	projection, err := lookupGraphProjection(storageDatabaseName(ctx.Storage), graph)
+	projection, err := lookupGraphProjection(graphFunctionDatabase(ctx), graph)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,10 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
-		var store storage.Engine = ctx.Storage
+		store, err := ctx.GraphStorage()
+		if err != nil {
+			return nil, err
+		}
 		if store != nil {
 			store = graphIdentityView(store)
 		}
@@ -373,7 +376,11 @@ func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gdsNodeByID(ctx.Storage, values[0]), nil
+	store, err := ctx.GraphStorage()
+	if err != nil {
+		return nil, err
+	}
+	return gdsNodeByID(store, values[0], graphFunctionIdentityDomain(ctx, store)), nil
 }
 
 // fnGDSAsNodes is gds.util.asNodes(nodeIds): the nodes with those ids, in
@@ -390,22 +397,30 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("gds.util.asNodes expects a list of node ids, got %s", cypherTypeSystemName(values[0]))
 	}
+	store, err := ctx.GraphStorage()
+	if err != nil {
+		return nil, err
+	}
 	nodes := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
-		if node := gdsNodeByID(ctx.Storage, id); node != nil {
+		if node := gdsNodeByID(store, id, graphFunctionIdentityDomain(ctx, store)); node != nil {
 			nodes = append(nodes, node)
 		}
 	}
 	return nodes, nil
 }
 
-func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
+func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
-	id := fmt.Sprint(value)
+	id, ok := graphEntityLookupID(store, value, domains...)
+	if !ok {
+		return nil
+	}
+	// Storage's transaction owner decides visibility; preserve getQueryNode.
 	var noExecutor *StorageExecutor
-	if node, err := noExecutor.getQueryNode(store, storage.NodeID(id)); err == nil && node != nil {
+	if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
 		return node
 	}
 	return nil

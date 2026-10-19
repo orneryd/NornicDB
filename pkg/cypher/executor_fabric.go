@@ -613,17 +613,6 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 		return nil, nil, false, nil
 	}
 	engine := c.base.storage
-	if c.base.dbManager != nil && storageDatabaseName(engine) != dbName {
-		selected, err := c.base.dbManager.GetStorageForUse(dbName, c.authToken)
-		if err != nil {
-			return nil, nil, true, err
-		}
-		var ok bool
-		engine, ok = selected.(storage.Engine)
-		if !ok {
-			return nil, nil, true, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(dbName), nil)
-		}
-	}
 	executor := c.base.cloneForStorage(engine)
 	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, true, err
@@ -670,6 +659,13 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+	previousIdentityScope := exec.graphIdentityScope
+	var catalog *fabric.Catalog
+	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil {
+		catalog = prepared.catalog
+	}
+	exec.graphIdentityScope = newGraphIdentityScope(catalog, exec.executionDatabaseName(ctx), exec.dbManager, c.authToken)
+	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	query = fabric.LocalQuery(query)
 	query, names := canonicalizeQuotedVariablesWithBindings(query, recordBindings)
 	if names != nil {

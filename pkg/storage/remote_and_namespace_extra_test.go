@@ -113,8 +113,10 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	ns := NewNamespacedEngine(fallback, "tenant")
 	out, in, err := ns.GetAdjacentEdges("n1")
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
-	require.Equal(t, []*Edge{{ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e1", StartNode: "n1", EndNode: "n2"}}, out)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
+	require.Empty(t, fallback.outgoing[0].Database, "source annotations must not mutate the stored input")
+	require.Empty(t, fallback.incoming[0].Database)
 
 	wantErr := errors.New("adjacent failed")
 	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: NewMemoryEngine()}, adjErr: wantErr}
@@ -127,7 +129,7 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	direct.adjIn = []*Edge{{ID: "other:e5", StartNode: "other:n5", EndNode: "other:n1"}}
 	out, in, err = ns.GetAdjacentEdges("n1")
 	require.NoError(t, err)
-	require.Equal(t, []*Edge{{ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
+	require.Equal(t, []*Edge{{Database: "tenant", ID: "e4", StartNode: "n1", EndNode: "n4"}}, out)
 	require.Empty(t, in)
 
 	fallback.outErr = wantErr

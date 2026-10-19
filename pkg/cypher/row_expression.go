@@ -488,7 +488,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 	result, comparison, resolved, err := evaluateComparisonChain(expr, func(operand string) (interface{}, bool, error) {
 		return e.evaluateRowValue(operand, values)
-	}, compareCypherPredicateValue, rowIsCypher25(values))
+	}, compareCypherPredicateValue, rowIsCypher25(values), e.graphIdentityDomain())
 	if comparison {
 		return result, resolved, err
 	}
@@ -1764,7 +1764,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand) || isRelationshipPatternOperand(operand), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return e.evaluateRowValue(operand, scope)
 		}, false)
-	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain())
 	if comparison {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -1876,10 +1876,10 @@ func isRowIdentityExpression(expression string) bool {
 // normalizeRowIdentityValues preserves complete element identities. The legacy
 // raw-ID comparison extension applies only when one operand is unqualified;
 // stripping two database-qualified IDs would collapse different constituents.
-func normalizeRowIdentityValues(left, right interface{}) (interface{}, interface{}) {
+func normalizeRowIdentityValues(left, right interface{}, domains ...graphIdentityDomain) (interface{}, interface{}) {
 	leftPayload, leftElement := rowIdentityPayload(left)
 	rightPayload, rightElement := rowIdentityPayload(right)
-	if leftElement && rightElement {
+	if leftElement && rightElement && (len(domains) == 0 || domains[0].preserveQualifiers(left, right)) {
 		return left, right
 	}
 	return leftPayload, rightPayload
@@ -1917,14 +1917,22 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 	if err != nil {
 		return nil, err
 	}
-	return e.relationshipEndpoint(edge, end), nil
+	store, err := e.FunctionStorage(e.databaseName())
+	if err != nil {
+		return nil, err
+	}
+	return e.relationshipEndpoint(edge, end, store), nil
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the
 // endpoint read by its id, null when it is gone. The one implementation, for
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
-func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
+	store := e.storage
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	if edge == nil {
 		return nil
 	}
@@ -1932,15 +1940,15 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if end {
 		id = edge.EndNode
 	}
-	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
-	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(e.storage)
+	edgeID, edgeSelected := edge.Identity().LookupID(store, "5")
+	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(store)
 	if !edgeSelected || !nodeSelected {
 		return nil
 	}
-	if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
+	if current, err := store.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
 		return nil
 	}
-	node, err := e.getQueryNode(e.storage, nodeID)
+	node, err := e.getQueryNode(store, nodeID)
 	if err != nil {
 		return nil
 	}
@@ -1991,14 +1999,14 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left))
+	value, ok := rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left), e.graphIdentityDomain())
 	return value, ok, nil
 }
 
 // rowMembershipOfValues is `needle IN haystack` for evaluated operands, with
 // Cypher's three-valued rules. identity is set when the needle is an id() /
 // elementId() expression, compared by its identity payload.
-func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interface{}, bool) {
+func rowMembershipOfValues(needle, haystack interface{}, identity bool, domains ...graphIdentityDomain) (interface{}, bool) {
 	if haystack == nil {
 		return nil, true
 	}
@@ -2013,7 +2021,7 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	for _, item := range items {
 		comparisonNeedle := needle
 		if identity {
-			comparisonNeedle, item = normalizeRowIdentityValues(needle, item)
+			comparisonNeedle, item = normalizeRowIdentityValues(needle, item, domains...)
 		}
 		equal := cypherEquality(comparisonNeedle, item)
 		if equal == nil {

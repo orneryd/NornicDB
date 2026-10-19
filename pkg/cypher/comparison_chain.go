@@ -52,6 +52,7 @@ func evaluateComparisonChain(
 	resolve func(string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
@@ -59,7 +60,7 @@ func evaluateComparisonChain(
 	}
 	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
 		return resolve(operand)
-	}, compare, cypher25)
+	}, compare, cypher25, domains...)
 	return value, true, resolved, err
 }
 
@@ -86,6 +87,7 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
 	hasNull, resolved := false, leftOK
@@ -103,7 +105,7 @@ func evaluateScannedComparisonChain(
 		if leftOK && rightOK && leftErr == nil && rightErr == nil {
 			comparisonLeft, comparisonRight := left, right
 			if normalizeIdentity {
-				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right)
+				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right, domains...)
 			}
 			if left == nil || right == nil {
 				hasNull = true
