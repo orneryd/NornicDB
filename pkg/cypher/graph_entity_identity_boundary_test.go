@@ -19,9 +19,8 @@ func TestGraphEntityIdentityReaderBoundary(t *testing.T) {
   file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0); if err != nil { t.Fatal(err) }
   for _, decl := range file.Decls {
    fn, ok := decl.(*ast.FuncDecl); if !ok { continue }
-   ast.Inspect(fn, func(node ast.Node) bool {
-    call, ok := node.(*ast.CallExpr); if !ok { return true }
-    id, ok := call.Fun.(*ast.Ident); if !ok { return true }
+   ast.Inspect(fn.Body, func(node ast.Node) bool {
+    id, ok := node.(*ast.Ident); if !ok { return true }
     if id.Name == "linkPredictionNodeID" || id.Name == "gdsNodeID" && fn.Name.Name != "similarityNodeID" {
      t.Errorf("%s: %s calls bare-local %s; resolve through the graph identity owner", name, fn.Name.Name, id.Name)
     }

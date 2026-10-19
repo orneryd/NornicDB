@@ -378,3 +378,10 @@ func (c *linkPredictionConfig) sourceDisplay() string {
  id, _ := graphEntityDisplayID(value)
  return string(id)
 }
+// graphEntityLookupID is the storage-domain adapter for utility functions.
+// Preserve their legacy string coercion without losing native provenance.
+func graphEntityLookupID(engine storage.Engine, value interface{}) (storage.NodeID, bool) {
+ reference, ok := graphEntityReference(value)
+ if !ok { reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)} }
+ return reference.NodeLookupID(engine)
+}
