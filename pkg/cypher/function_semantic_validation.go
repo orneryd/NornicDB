@@ -137,18 +137,6 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// skipCalledName returns where the name after CALL or USE ends: a procedure
-// or graph name, dotted, which is not a function call. Anything else after
-// the keyword (a subquery, its imports) is scanned on.
-func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, queryGapEnd(expression, start))
-	if !ok {
-		return start
-	}
-	_, end = dottedNameParts(expression, end, true)
-	return end
-}
-
 // forEachSemanticCall retains the procedure dependency inventory, using the
 // same lexical spans as runtime and static function consumers.
 func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {

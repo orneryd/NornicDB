@@ -27,6 +27,8 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 type functionCallSpan struct {
 	name        string
 	start, open int
+	next        int
+	procedure   bool
 }
 
 func (call functionCallSpan) close(text string) int {
@@ -50,7 +52,7 @@ func functionCallAt(text string, at int) (functionCallSpan, bool) {
 	if open >= len(text) || text[open] != '(' {
 		return functionCallSpan{}, false
 	}
-	return functionCallSpan{name: name + parts, start: at, open: open}, true
+	return functionCallSpan{name: name + parts, start: at, open: open, next: open + 1}, true
 }
 
 // nextFunctionCall is the lexical owner for static and runtime call readers.
@@ -61,6 +63,10 @@ func nextFunctionCall(text string, index int) (functionCallSpan, bool) {
 }
 
 func nextFunctionCallIn(text string, index int, descendSubqueries bool) (functionCallSpan, bool) {
+	return nextCallSpan(text, index, descendSubqueries, false)
+}
+
+func nextCallSpan(text string, index int, descendSubqueries, includeProcedures bool) (functionCallSpan, bool) {
 	for index < len(text) {
 		if end := queryGapEnd(text, index); end > index {
 			index = end
@@ -82,7 +88,23 @@ func nextFunctionCallIn(text string, index int, descendSubqueries bool) (functio
 			continue
 		}
 		if text[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
-			index = skipCalledName(text, next)
+			start := queryGapEnd(text, next)
+			called, end, named := scanIdentifierToken(text, start)
+			if !named {
+				index = next
+				continue
+			}
+			parts, end := dottedNameParts(text, end, true)
+			if includeProcedures && strings.EqualFold(name, "CALL") {
+				cursor := queryGapEnd(text, end)
+				open := -1
+				if cursor < len(text) && text[cursor] == '(' {
+					open = cursor
+					cursor++
+				}
+				return functionCallSpan{name: called + parts, start: start, open: open, next: cursor, procedure: true}, true
+			}
+			index = end
 			continue
 		}
 		call, called := functionCallAt(text, index)

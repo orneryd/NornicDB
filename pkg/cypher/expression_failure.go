@@ -499,6 +499,16 @@ func subqueryInsideCase(expression string, offset int) bool {
 // localBindingAt owns each lambda's input/body split; an input is not local
 // merely because it is textually inside the function's parentheses.
 func inLocalExpressionScope(expression string, offset int) bool {
+	for index := 0; index < offset; {
+		call, ok := nextFunctionCall(expression, index)
+		if !ok || call.open >= offset {
+			break
+		}
+		if equalFoldASCII(call.name, "coalesce") && call.close(expression) >= offset {
+			return true
+		}
+		index = call.open + 1
+	}
 	for i := 0; i < offset; i++ {
 		switch expression[i] {
 		case '\'', '"', '`':
@@ -536,17 +546,6 @@ func inLocalExpressionScope(expression string, offset int) bool {
 					return true
 				}
 				continue
-			}
-			end := i
-			for end > 0 && isASCIISpace(expression[end-1]) {
-				end--
-			}
-			word := end
-			for word > 0 && isRowReceiverIdentifierByte(expression[word-1]) {
-				word--
-			}
-			if function, ok := canonicalCallableName(expression[word:end]); ok && equalFoldASCII(function, "coalesce") && functionNameStartsAt(expression, word) {
-				return true
 			}
 		}
 	}
