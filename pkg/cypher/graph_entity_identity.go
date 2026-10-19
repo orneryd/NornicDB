@@ -35,22 +35,24 @@ func graphEntityDisplayID(value interface{}) (storage.NodeID, bool) {
 
 // identityGraphEngine preserves nil storage so existing graph builders return
 // their established error. Wrapping nil would hide that contract from them.
-func identityGraphEngine(engine storage.Engine) storage.Engine {
+func identityGraphEngine(engine storage.Engine, scopes ...*graphIdentityScope) storage.Engine {
  if engine == nil { return nil }
- return graphIdentityView(engine)
+ return graphIdentityView(engine,scopes...)
 }
 
 // graphIdentityStorage is a read view for algorithms whose maps accept NodeID.
 // Inside that view every node, edge and endpoint uses the canonical identity
 // key. Native values are restored at the result boundary; no identity cache or
 // graph-sized cross-stream seen set is retained by this adapter.
-type graphIdentityStorage struct{ storage.Engine }
+type graphIdentityStorage struct{ storage.Engine; scope *graphIdentityScope }
 
-func graphIdentityView(engine storage.Engine) *graphIdentityStorage {
+func graphIdentityView(engine storage.Engine, scopes ...*graphIdentityScope) *graphIdentityStorage {
 	if view, ok := engine.(*graphIdentityStorage); ok {
 		return view
 	}
-	return &graphIdentityStorage{Engine: engine}
+	var scope *graphIdentityScope
+ if len(scopes)>0 { scope=scopes[0] }
+ return &graphIdentityStorage{Engine: engine,scope:scope}
 }
 
 func (v *graphIdentityStorage) node(node *storage.Node) *storage.Node {
@@ -100,7 +102,7 @@ func graphIdentityPathValue(path PathResult) PathResult {
 }
 
 func (e *StorageExecutor) graphIdentityExecutor(ctx context.Context) *StorageExecutor {
-	engine := identityGraphEngine(e.getStorage(ctx))
+	engine := identityGraphEngine(e.getStorage(ctx), e.graphIdentityScope)
  if engine == nil { return e }
  return e.cloneForStorage(engine)
 }
@@ -275,7 +277,9 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 			if kind != "4" {
 				return "", false
 			}
-			reference.Database, reference.LocalID = database, local
+			domain := graphIdentityDomain{engine:v.Engine,scope:v.scope}
+ if storage.CompositeDatabaseOf(v.Engine) == "" && !domain.foreignQualifier(database) { database = storage.DatabaseOf(v.Engine) }
+ reference.Database, reference.LocalID = database, local
 		} else if storage.CompositeDatabaseOf(v.Engine) == "" {
 			reference.Database = storage.DatabaseOf(v.Engine)
 		} else if node, err := v.Engine.GetNode(storage.NodeID(reference.LocalID)); err == nil && node != nil {
@@ -288,7 +292,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 // algorithmIdentityInput gives all whole-graph algorithms one key domain for
 // native arguments, graph scans, adjacency and their computed maps.
 func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
-	view := graphIdentityView(e.storage)
+	view := graphIdentityView(e.storage,e.graphIdentityScope)
 	graph := e.cloneForStorage(view)
 	input := append([]interface{}(nil), args...)
 	if len(input) > 0 {
@@ -380,8 +384,17 @@ func (c *linkPredictionConfig) sourceDisplay() string {
 }
 // graphEntityLookupID is the storage-domain adapter for utility functions.
 // Preserve their legacy string coercion without losing native provenance.
-func graphEntityLookupID(engine storage.Engine, value interface{}) (storage.NodeID, bool) {
+func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...graphIdentityDomain) (storage.NodeID, bool) {
  reference, ok := graphEntityReference(value)
  if !ok { reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)} }
+  if _,native := value.(*storage.Node); !native {
+  if kind,database,local,qualified := storage.ParseElementID(reference.LocalID); qualified {
+   if kind != "4" { return "",false }
+   domain := graphIdentityDomain{engine:engine}
+   if len(domains)>0 { domain=domains[0] }
+   if storage.CompositeDatabaseOf(engine)=="" && !domain.foreignQualifier(database) { return storage.NodeID(local),true }
+   reference=storage.EntityIdentity{Database:database,LocalID:local}
+  }
+ }
  return reference.NodeLookupID(engine)
 }

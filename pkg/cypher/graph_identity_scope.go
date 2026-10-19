@@ -80,3 +80,8 @@ func (domain graphIdentityDomain) preserveQualifiers(left,right interface{}) boo
  if !leftQualified || !rightQualified || leftKind != rightKind { return true }
  return domain.foreignQualifier(leftDatabase) || domain.foreignQualifier(rightDatabase)
 }
+func graphFunctionIdentityDomain(ctx cypherfn.Context,engine storage.Engine) graphIdentityDomain {
+ domain := graphIdentityDomain{engine:engine}
+ if executor,ok := ctx.Graphs.(*StorageExecutor); ok { domain.scope=executor.graphIdentityScope }
+ return domain
+}
