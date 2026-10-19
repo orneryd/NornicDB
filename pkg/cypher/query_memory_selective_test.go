@@ -48,15 +48,15 @@ func TestQueryMemorySelectiveAccessSkipsDecoyEdges(t *testing.T) {
 	require.Len(t, seed.Rows, 1)
 	params := map[string]interface{}{"a": seed.Rows[0][0], "b": seed.Rows[0][1], "r": seed.Rows[0][2]}
 	for _, tc := range []struct{ name, query string }{
-		{"type_alternatives", "MATCH ()-[r:QUERIES_TABLE|ALTERNATIVE]->() RETURN count(r)"},
-		{"label_seed", "MATCH (a:Function)-[r]->(b) RETURN count(r)"},
-		{"bound_start", "MATCH (a) WHERE id(a)=$a MATCH (a)-[r]->(b) RETURN count(r)"},
-		{"bound_end", "MATCH (b) WHERE id(b)=$b MATCH (a)-[r]->(b) RETURN count(r)"},
-		{"bound_both", "MATCH (a) WHERE id(a)=$a MATCH (b) WHERE id(b)=$b MATCH (a)-[r]->(b) RETURN count(r)"},
-		{"bound_predicate", "MATCH (a:Function {uid:'fn'}) MATCH (a)-[r]->(b) WHERE type(r) IN ['QUERIES_TABLE'] RETURN count(r)"},
-		{"relationship_element_id", "MATCH ()-[r]->() WHERE elementId(r)=$r RETURN count(r)"},
-		{"relationship_id", "MATCH ()-[r]->() WHERE id(r)=$r RETURN count(r)"},
-		{"endpoint_property_seed", "MATCH (:Function {uid:'fn'})-[r]->() RETURN count(r)"},
+		{"type_alternatives", "MATCH ()-[r:QUERIES_TABLE|ALTERNATIVE]->() RETURN type(r)"},
+		{"label_seed", "MATCH (a:Function)-[r]->(b) RETURN type(r)"},
+		{"bound_start", "MATCH (a) WHERE id(a)=$a MATCH (a)-[r]->(b) RETURN type(r)"},
+		{"bound_end", "MATCH (b) WHERE id(b)=$b MATCH (a)-[r]->(b) RETURN type(r)"},
+		{"bound_both", "MATCH (a) WHERE id(a)=$a MATCH (b) WHERE id(b)=$b MATCH (a)-[r]->(b) RETURN type(r)"},
+		{"bound_predicate", "MATCH (a:Function {uid:'fn'}) MATCH (a)-[r]->(b) WHERE type(r) IN ['QUERIES_TABLE'] RETURN type(r)"},
+		{"relationship_element_id", "MATCH ()-[r]->() WHERE elementId(r)=$r RETURN type(r)"},
+		{"relationship_id", "MATCH ()-[r]->() WHERE id(r)=$r RETURN type(r)"},
+		{"endpoint_property_seed", "MATCH (:Function {uid:'fn'})-[r]->() RETURN type(r)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Compile/cache parser plans before measuring execution allocation.
@@ -68,7 +68,7 @@ func TestQueryMemorySelectiveAccessSkipsDecoyEdges(t *testing.T) {
 			result, err := exec.Execute(ctx, tc.query, params)
 			runtime.ReadMemStats(&after)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+			require.Equal(t, [][]interface{}{{"QUERIES_TABLE"}}, result.Rows)
 			t.Logf("selective query: visited %d streamed edges, allocated %d bytes with 4000 decoys", store.visited, after.TotalAlloc-before.TotalAlloc)
 			require.Zero(t, store.wholeVisited, "selective plans must never read the graph-wide cursor")
 			require.LessOrEqual(t, store.visited, 1, "typed scans must only visit selected relationship types")
