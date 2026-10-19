@@ -17,10 +17,12 @@ func TestListInputPublicRepresentations(t *testing.T) {
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	ctx := context.Background()
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
-	read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
+	read := func(t *testing.T, query string, params map[string]interface{}) (interface{}, error) {
 		t.Helper()
 		result, err := exec.Execute(ctx, query, params)
-		require.NoError(t, err, query)
+		if err != nil {
+			return nil, err
+		}
 		require.Len(t, result.Rows, 1, query)
 		require.Len(t, result.Rows[0], 1, query)
 		// JSON removes transport-specific numeric Go kinds without using the
@@ -29,7 +31,7 @@ func TestListInputPublicRepresentations(t *testing.T) {
 		require.NoError(t, err)
 		var value interface{}
 		require.NoError(t, json.Unmarshal(encoded, &value))
-		return value
+		return value, nil
 	}
 	for _, disabled := range []bool{false, true} {
 		rowValueProgramsDisabled.Store(disabled)
@@ -42,7 +44,11 @@ func TestListInputPublicRepresentations(t *testing.T) {
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
 				for _, template := range listinputs.Queries() {
 					t.Run(template, func(t *testing.T) {
-						want := read(t, listinputs.Query(template, input.Literal), nil)
+						want, wantErr := read(t, listinputs.Query(template, input.Literal), nil)
+						wantCode := errorStatusCode(wantErr)
+						if wantErr != nil {
+							require.NotEmpty(t, wantCode, "literal failures must carry a status code")
+						}
 						for _, form := range []struct{ name, prefix, value string }{
 							{"parameter", "", "$xs"},
 							{"with", "WITH $xs AS xs ", "xs"},
@@ -58,7 +64,14 @@ func TestListInputPublicRepresentations(t *testing.T) {
 									requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 									return
 								}
-								require.Equal(t, want, read(t, form.prefix+listinputs.Query(template, form.value), params))
+								query := form.prefix + listinputs.Query(template, form.value)
+								got, err := read(t, query, params)
+								if wantErr != nil {
+									requireStatusCode(t, err, wantCode)
+									return
+								}
+								require.NoError(t, err, query)
+								require.Equal(t, want, got)
 							})
 						}
 					})

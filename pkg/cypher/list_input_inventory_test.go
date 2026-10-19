@@ -4,8 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -16,13 +14,16 @@ import (
 // Keep the public representation matrix tied to the actual engine catalog.
 // A newly registered collection consumer must join the matrix at registration.
 func TestListInputConsumerInventory(t *testing.T) {
-	source, err := os.ReadFile("function_catalog.go")
-	require.NoError(t, err)
-	names := regexp.MustCompile(`name: "(apoc\.coll\.[^"]+)"`).FindAllSubmatch(source, -1)
+	var names []string
+	for _, function := range nativeAPOCFunctionCatalog() {
+		if strings.HasPrefix(function.name, "apoc.coll.") {
+			names = append(names, function.name)
+		}
+	}
 	require.NotEmpty(t, names)
 	queries := strings.Join(listinputs.Queries(), "\n")
 	for _, name := range names {
-		require.Contains(t, queries, string(name[1])+"(", "missing public representation coverage")
+		require.Contains(t, queries, name+"(", "missing public representation coverage")
 	}
 	// These runtime-list adapters previously asserted a boxed list and silently
 	// discarded other representations. Conversion belongs only to ListValue.
