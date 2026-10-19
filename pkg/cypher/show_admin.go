@@ -213,10 +213,6 @@ type runningTransaction struct {
 	connection ClientConnection
 	started    time.Time
 	terminated atomic.Bool
-	// committed is set when an auto-commit statement's transaction has
-	// committed: a TERMINATE that arrives after that doesn't fail the
-	// statement, whose writes are stored (Execute).
-	committed atomic.Bool
 	// memory is the running statement's memory estimate, nil while no
 	// limit is configured (#1343).
 	memory atomic.Pointer[transactionMemoryTracker]

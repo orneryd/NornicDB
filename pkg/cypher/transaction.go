@@ -163,14 +163,14 @@ func bareTransactionCommand(cypher string) string {
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
-func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	upper := upperASCII(strings.TrimSpace(cypher))
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
 		return e.handleBegin()
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
-		return e.handleCommit()
+		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
 		return e.handleRollback()
 	default:
@@ -293,7 +293,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 }
 
 // handleCommit commits the active transaction.
-func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -320,7 +320,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
 		opCount = tx.OperationCount()
-		err = tx.Commit()
+		err = tx.CommitContext(ctx)
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
 	default:
@@ -365,6 +365,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 		}
 		return nil, failure
 	}
+	publishStatementCommit(ctx)
 	if e.txContext.storageWrapper != nil {
 		txExec := e.cloneWithStorage(e.txContext.storageWrapper)
 		txExec.promoteNodeLookupCacheTo(e)

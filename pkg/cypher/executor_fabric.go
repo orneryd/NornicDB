@@ -173,6 +173,9 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
 		}
+		if tx.WriteShard() != "" {
+			publishStatementCommit(ctx)
+		}
 	}
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil

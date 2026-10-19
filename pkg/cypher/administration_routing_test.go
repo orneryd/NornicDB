@@ -41,7 +41,7 @@ func TestAdministrationTransactionOpenedOnUserDatabase(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err)
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(t.Context())
 	require.NoError(t, err)
 	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
 	require.NoError(t, err)
