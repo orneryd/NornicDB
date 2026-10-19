@@ -1153,6 +1153,7 @@ func TestDBConfigHandlers(t *testing.T) {
 	_ = server.dbConfigStore.Load(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/databases//config", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	rec = httptest.NewRecorder()
 	server.handleDbConfigPrefix(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
