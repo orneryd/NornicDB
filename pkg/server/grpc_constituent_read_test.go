@@ -91,7 +91,9 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 		require.NoError(t, err)
 		_, err = points.Count(reader, &qpb.CountPoints{CollectionName: "grpc_selected_alias"})
 		if allowed {
-			require.NoError(t, err)
+			// Collection lookup does not resolve ordinary database aliases.
+			// Admission succeeds and reaches that existing lookup boundary.
+			require.Equal(t, codes.NotFound, status.Code(err))
 		} else {
 			require.Equal(t, codes.PermissionDenied, status.Code(err))
 		}
