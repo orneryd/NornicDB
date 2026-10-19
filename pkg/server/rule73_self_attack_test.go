@@ -18,7 +18,7 @@ const (
 	rule73HTTPRead      rule73HTTPClass = "read"
 	rule73HTTPWrite     rule73HTTPClass = "write"
 	rule73HTTPReadWrite rule73HTTPClass = "read_write"
-rule73HTTPReadAdmin rule73HTTPClass = "read_admin"
+	rule73HTTPReadAdmin rule73HTTPClass = "read_admin"
 	rule73HTTPAdmin     rule73HTTPClass = "admin"
 	rule73HTTPAllAdmin  rule73HTTPClass = "all_admin"
 )
@@ -98,7 +98,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		{"default-only", []string{"nornic"}, true, true},
 		{"named-only", []string{"rule73_named"}, true, true},
 		{"write-only", []string{"nornic", "rule73_named"}, false, true},
-{"read-only", []string{"nornic", "rule73_named"}, true, false},
+		{"read-only", []string{"nornic", "rule73_named"}, true, false},
 		{"no-access", []string{"nornic", "rule73_named"}, false, false},
 	} {
 		require.NoError(t, server.roleStore.CreateRole(ctx, spec.name))
@@ -138,8 +138,8 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		case rule73HTTPReadWrite:
 			return p.read && p.write
 		case rule73HTTPReadAdmin:
- return p.read && p.admin
- case rule73HTTPAdmin:
+			return p.read && p.admin
+		case rule73HTTPAdmin:
 			return p.read && p.write && p.admin
 		default:
 			return false
@@ -245,7 +245,7 @@ func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 		{"default-only", []string{"nornic"}, true, true},
 		{"named-only", []string{"rule73_named"}, true, true},
 		{"write-only", []string{"nornic", "rule73_named"}, false, true},
-{"read-only", []string{"nornic", "rule73_named"}, true, false},
+		{"read-only", []string{"nornic", "rule73_named"}, true, false},
 		{"no-access", []string{"nornic", "rule73_named"}, false, false},
 	} {
 		require.NoError(t, server.roleStore.CreateRole(ctx, spec.name))
