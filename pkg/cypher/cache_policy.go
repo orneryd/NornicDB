@@ -112,21 +112,17 @@ func cacheableReadQuery(cypher string, depth int) bool {
 // same cache policy as the outer statement. Parameters and row expressions
 // are resolved during execution, so their outer results cannot be reused.
 func cacheableDynamicStatements(query string, depth int) bool {
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, queryGapEnd(query, from))
-		if !ok {
+	for _, call := range readFunctionSyntax(query).calls {
+		if !call.procedure {
 			continue
 		}
-		switch name = lowerASCII(name); name {
+		name := lowerASCII(call.name)
+		switch name {
 		case "apoc.cypher.run", "apoc.cypher.doitall":
-			args := explicitProcedureArgumentTexts(query[at:])
+			var args []string
+			if call.group >= 0 && call.close(query) >= 0 {
+				args = call.arguments(nil)
+			}
 			if len(args) == 0 || !isWholeCypherQuotedString(args[0]) {
 				return false
 			}

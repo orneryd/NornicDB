@@ -90,21 +90,12 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
 	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
+	for _, call := range readFunctionSyntax(query).calls {
+		if !call.procedure {
 			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
 		}
+		name := call.name
 		if procedure, found := globalProcedureRegistry.Get(name); found {
 			procedures = append(procedures, procedure.Spec)
 			continue

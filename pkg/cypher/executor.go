@@ -2206,15 +2206,8 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		if _, procedure := procedureNameAt(cypher, queryGapEnd(cypher, from)); procedure {
-			return true
-		}
+	if _, procedure := firstProcedureCall(cypher); procedure {
+		return true
 	}
 	return expressionReadsGraphText(cypher)
 }
