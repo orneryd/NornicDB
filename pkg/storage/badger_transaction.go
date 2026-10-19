@@ -2815,7 +2815,7 @@ func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
 func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
-	var notification *commitNotification
+	notification := &commitNotification{}
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
@@ -2980,6 +2980,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.releaseSnapshotReaderLocked()
 
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	cw.notification = notification
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
@@ -3038,9 +3039,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
-	if len(tx.operations) > 0 {
-		notification = tx.engine.reserveCommitOperations(tx.operations)
-	}
 	runCommitTailHook()
 
 	tx.endChangeCaptureLocked(true)
@@ -3088,7 +3086,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
-	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
+	notification.ops = append([]Operation(nil), tx.operations...)
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked

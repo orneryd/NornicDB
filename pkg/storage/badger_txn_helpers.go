@@ -25,19 +25,31 @@ func (b *BadgerEngine) ensureOpen() error {
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginWrite() (func(), error) {
+	return b.beginPublication(false)
+}
+
+// Replay is the only write admitted during shutdown's final drain. Existing
+// committers already hold their publication lease and finish before that drain.
+func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
 	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
+	b.mu.RLock()
+	closed := b.closed || (b.closing && !replay)
+	b.mu.RUnlock()
+	if closed {
 		b.writeBarrier.RUnlock()
-		return nil, err
+		return nil, ErrStorageClosed
 	}
 	return b.writeBarrier.RUnlock, nil
 }
 
 func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
 	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
+	b.mu.RLock()
+	closed := b.closed || b.closing
+	b.mu.RUnlock()
+	if closed {
 		b.writeBarrier.Unlock()
-		return nil, err
+		return nil, ErrStorageClosed
 	}
 	return b.writeBarrier.Unlock, nil
 }
@@ -77,7 +89,7 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 // is visible and before this returns (badger_publication_stage.go). publish
 // and keys may read what fn recorded: they run after fn. keys returns the
 // entities and unique values the publication touches.
-func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any) error {
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any, notification ...*commitNotification) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(fn); err != nil {
 			return err
@@ -87,7 +99,7 @@ func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publ
 			cw.publishKeys = keys()
 		}
 		return nil
-	})
+	}, notification...)
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each
@@ -114,7 +126,7 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, notification ...*commitNotification) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -128,6 +140,9 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 		}
 		defer db.endRead(readTs)
 		cw := b.newCommitWriter(db, txn)
+		if len(notification) > 0 {
+			cw.notification = notification[0]
+		}
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)

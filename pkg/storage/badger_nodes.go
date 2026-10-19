@@ -43,7 +43,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return "", barrierErr
 	}
@@ -146,7 +146,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, publish, keys)
+	}, publish, keys, notification)
 	releaseUniqueLocks()
 	if err != nil {
 		return "", err
@@ -158,7 +158,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	}
 
 	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(node)
+	notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 
 	return node.ID, nil
 }
@@ -383,7 +383,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -622,7 +622,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, publish, keys)
+	}, publish, keys, notification)
 	if err == nil && persistSeparateEmbeddings {
 		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
 	}
@@ -630,9 +630,9 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 	// Notify listeners on successful operation
 	if err == nil {
 		if wasInsert {
-			b.notifyNodeCreated(node)
+			notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 		} else {
-			b.notifyNodeUpdated(node)
+			notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
 		}
 	}
 
@@ -696,7 +696,7 @@ func (b *BadgerEngine) deleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -814,16 +814,11 @@ func (b *BadgerEngine) deleteNode(id NodeID) error {
 			}
 		}
 		return nil
-	}, publish, keys)
+	}, publish, keys, notification)
 
 	if err == nil {
-		// Notify listeners about deleted edges
-		for _, edgeID := range deletedEdgeIDs {
-			b.notifyEdgeDeleted(edgeID)
-		}
-
-		// Notify listeners (e.g., search service) to remove from indexes
-		b.notifyNodeDeleted(id)
+		// Keep the incident-edge and node callbacks in one committed batch.
+		notification.ops = []Operation{{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs}}
 	}
 
 	return err

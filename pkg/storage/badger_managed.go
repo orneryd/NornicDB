@@ -201,8 +201,8 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 // commit commits txn as one ordinary commit: it takes the next timestamp
 // under the shared commit gate, writes, and waits until the published
 // timestamp covers the write so the caller reads its own write afterwards.
-func (m *managedBadgerDB) commit(txn *badger.Txn) error {
-	return m.commitPublishing(txn, nil, nil)
+func (m *managedBadgerDB) commit(txn *badger.Txn, onAssign ...func()) error {
+	return m.commitPublishing(txn, nil, nil, onAssign...)
 }
 
 // commitPublishing is commit for a commit with a derived-state publication
@@ -213,8 +213,8 @@ func (m *managedBadgerDB) commit(txn *badger.Txn) error {
 //
 // admit, when set, runs under the shared commit gate before the commit takes
 // its timestamp; its error refuses the commit, which then writes nothing.
-func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPublication, admit func() error) error {
-	ts, err := m.commitShared(txn, publish, admit)
+func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPublication, admit func() error, onAssign ...func()) error {
+	ts, err := m.commitShared(txn, publish, admit, onAssign...)
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPubli
 	return nil
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublication, admit func() error) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublication, admit func() error, onAssign ...func()) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
 	if admit != nil {
@@ -236,7 +236,7 @@ func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublicati
 		}
 	}
 	m.advanceDiscardTs()
-	ts, err := m.oracle.assign()
+	ts, err := m.oracle.assignNotifying(onAssign...)
 	if err != nil {
 		return 0, err
 	}
@@ -457,9 +457,9 @@ type largeCommit struct {
 
 // beginLargeCommit takes the commit gate exclusively and durably records the
 // intent of a large commit.
-func (m *managedBadgerDB) beginLargeCommit() (*largeCommit, error) {
+func (m *managedBadgerDB) beginLargeCommit(onAssign ...func()) (*largeCommit, error) {
 	m.commitGate.Lock()
-	intentTs, err := m.oracle.assign()
+	intentTs, err := m.oracle.assignNotifying(onAssign...)
 	if err != nil {
 		m.commitGate.Unlock()
 		return nil, err
@@ -758,6 +758,12 @@ func (o *commitOracle) releaseReads() {
 
 // assign returns the next commit timestamp, unfinished until finish.
 func (o *commitOracle) assign() (uint64, error) {
+	return o.assignNotifying()
+}
+
+// Reservations share the timestamp lock, so event order follows commit order
+// even when physical commits or their publication tails overlap.
+func (o *commitOracle) assignNotifying(onAssign ...func()) (uint64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.failed != nil {
@@ -766,6 +772,9 @@ func (o *commitOracle) assign() (uint64, error) {
 	ts := o.nextTs
 	o.nextTs++
 	o.inflight[ts] = struct{}{}
+	for _, reserve := range onAssign {
+		reserve()
+	}
 	return ts, nil
 }
 
