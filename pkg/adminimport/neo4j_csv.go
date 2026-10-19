@@ -1,6 +1,7 @@
 package adminimport
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -75,7 +76,7 @@ func DiscoverNeo4jCSVSources(dir string, opts Options) (nodeSources []string, re
 	return nodeSources, relSources, nil
 }
 
-func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions) error {
+func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 	if opts.OutputDir == "" {
 		return unsupported(localization.AdminExportOutputDirectoryRequired())
 	}
@@ -98,11 +99,13 @@ func ExportNeo4jCSV(engine storage.ExportableEngine, opts Neo4jCSVExportOptions)
 		return err
 	}
 
-	nodes, err := engine.AllNodes()
+	// An export holds every stored entity, those the visibility layer hides
+	// from reads included.
+	nodes, err := storage.CollectStoredNodes(context.Background(), engine)
 	if err != nil {
 		return err
 	}
-	edges, err := engine.AllEdges()
+	edges, err := storage.CollectStoredEdges(context.Background(), engine)
 	if err != nil {
 		return err
 	}

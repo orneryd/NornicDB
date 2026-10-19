@@ -173,10 +173,12 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 }
 
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
-// miss decode via decode, decay filter and optional cache store. GetNode and
-// GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
-// copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
+// miss decode via decode, the visibility layer when v applies it, and optional
+// cache store. GetNode and GetNodeWithoutEmbeddings differ only in the decode
+// function, the cache-hit copy shape and whether the decoded node is cached.
+// The cache holds stored bodies; every read of a hit applies its own
+// visibility.
+func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -191,7 +193,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		nodeCopy := hitCopy(cached)
-		if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
+		if b.hidesNode(v, nodeCopy, DecayScoringTime()) {
 			return nil, ErrNotFound
 		}
 		return nodeCopy, nil
@@ -221,7 +223,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	if node == nil {
 		return nil, ErrNotFound
 	}
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	if b.hidesNode(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	if cacheFill != nil {
@@ -232,6 +234,16 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
+	return b.getNode(id, visibleRead)
+}
+
+// GetStoredNode is GetNode for integrity work: it also returns a node the
+// visibility layer hides (StoredEntityReader).
+func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
+	return b.getNode(id, storedRead)
+}
+
+func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
 	// Write-behind overlay: acknowledged buffered writes are visible before
 	// the background flush lands them in Badger.
 	if b.writeBehind != nil {
@@ -242,7 +254,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 			return CopyNode(n), nil
 		}
 	}
-	return b.getNodeByID(id,
+	return b.getNodeByID(id, v,
 		func(txn *badger.Txn, val []byte) (*Node, error) {
 			return b.decodeNodeWithEmbeddings(txn, val, id)
 		},
@@ -342,7 +354,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 // The decoded node is not cached, so an embedding-free read can never poison
 // the cache for later full reads.
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	return b.getNodeByID(id,
+	return b.getNodeByID(id, visibleRead,
 		func(_ *badger.Txn, val []byte) (*Node, error) {
 			return b.decodeNode(namespaceForNodeID(id), val)
 		},

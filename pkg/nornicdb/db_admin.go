@@ -1423,13 +1423,14 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 		}
 	}
 
-	// Fallback: Export as JSON for non-backupable engines (memory)
-	nodes, err := db.storage.AllNodes()
+	// Fallback: Export as JSON for non-backupable engines (memory). A backup
+	// holds every stored entity, those the visibility layer hides included.
+	nodes, err := storage.CollectStoredNodes(ctx, db.storage)
 	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupNodesReadFailed(err), err)
 	}
 
-	edges, err := db.storage.AllEdges()
+	edges, err := storage.CollectStoredEdges(ctx, db.storage)
 	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupEdgesReadFailed(err), err)
 	}
@@ -1639,7 +1640,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 
 	// Collect user data using streaming
 	var userData []map[string]interface{}
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(n *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(n *storage.Node) error {
 		if db.nodeMatchesSubject(n, userID) {
 			userData = append(userData, map[string]interface{}{
 				"id":         string(n.ID),
@@ -1758,7 +1759,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 
 	// Collect IDs to delete first (can't delete while iterating)
 	var toDelete []storage.NodeID
-	err := storage.StreamNodesWithFallback(ctx, storageEngine, 1000, func(n *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, storageEngine, storage.StreamNodesOptions{WithEmbeddings: true}, func(n *storage.Node) error {
 		if db.nodeMatchesSubject(n, userID) {
 			toDelete = append(toDelete, n.ID)
 		}
@@ -1799,7 +1800,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	// Collect nodes to update (can't update while streaming in some engines)
 	// We must make copies since other goroutines might be iterating over these nodes
 	var toUpdate []*storage.Node
-	err := storage.StreamNodesWithFallback(ctx, storageEngine, 1000, func(n *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, storageEngine, storage.StreamNodesOptions{WithEmbeddings: true}, func(n *storage.Node) error {
 		if db.nodeMatchesSubject(n, userID) {
 			toUpdate = append(toUpdate, db.anonymizedNodeCopy(n, anonymousID))
 		}

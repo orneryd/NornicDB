@@ -575,3 +575,18 @@ func storageSizeInitialized(t *testing.T, manager *DatabaseManager, dbName strin
 	defer info.sizeMu.RUnlock()
 	return info.sizeInitialized
 }
+
+// Storage sizing streams nodes through StreamNodesWithOptions: the fake
+// answers it from its fields, as AllNodes does.
+func (e *storageSizingErrorEngine) StreamNodesWithOptions(_ context.Context, _ storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	nodes, err := e.AllNodes()
+	if err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}

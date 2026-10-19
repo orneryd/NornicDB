@@ -223,7 +223,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 					b.edgesByType[op.Edge.Type] = append(b.edgesByType[op.Edge.Type], op.Edge.ID)
 				}
 				b.indexEdgeAdjacency(op.Edge)
-				if op.Type == OpCreateEdge {
+				if op.Type == OpCreateEdge && !op.ReplacesExisting {
 					b.edgeCreateCount++
 				}
 			}

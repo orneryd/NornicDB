@@ -197,14 +197,14 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 
 // readEdgeBodyInTxn reads and decodes the current edge body for id from txn.
 // This is the shared direct-read core of GetEdge and getEdgeVisibleAtInTxn:
-// key lookup, decode and the decay filter are one implementation so the two
-// read paths cannot drift apart.
+// key lookup, decode and the visibility layer (when v applies it) are one
+// implementation so the read paths cannot drift apart.
 //
 // A missing key is reported as (nil, false, nil) so MVCC callers can fall
 // through to their record path; decoding failures, an absent decoded edge and
-// decay-filtered edges are reported as errors (ErrNotFound where the caller
-// should observe a not-found edge).
-func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID) (*Edge, bool, error) {
+// hidden edges are reported as errors (ErrNotFound where the caller should
+// observe a not-found edge).
+func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID, v readVisibility) (*Edge, bool, error) {
 	item, err := txn.Get(edgeKey(id))
 	if err == badger.ErrKeyNotFound {
 		return nil, false, nil
@@ -223,7 +223,7 @@ func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID) (*Edge, boo
 	if edge == nil {
 		return nil, false, ErrNotFound
 	}
-	if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+	if b.hidesEdge(v, edge, DecayScoringTime()) {
 		return nil, false, ErrNotFound
 	}
 	return edge, true, nil
@@ -231,6 +231,16 @@ func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID) (*Edge, boo
 
 // GetEdge retrieves an edge by ID.
 func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
+	return b.getEdge(id, visibleRead)
+}
+
+// GetStoredEdge is GetEdge for integrity work: it also returns a relationship
+// the visibility layer hides (StoredEntityReader).
+func (b *BadgerEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
+	return b.getEdge(id, storedRead)
+}
+
+func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurGet)
 	if id == "" {
@@ -245,7 +255,7 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 	err := b.withView(func(txn *badger.Txn) error {
 		var ok bool
 		var readErr error
-		edge, ok, readErr = b.readEdgeBodyInTxn(txn, id)
+		edge, ok, readErr = b.readEdgeBodyInTxn(txn, id, v)
 		if !ok && readErr == nil {
 			return ErrNotFound
 		}

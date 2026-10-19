@@ -405,7 +405,9 @@ func (a *StorageAdapter) applySetProperty(data []byte) error {
 	}
 
 	// Get node, update property, save
-	node, err := a.engine.GetNode(storage.NodeID(req.NodeID))
+	// A replicated write reaches the node whether or not the visibility
+	// layer hides it from reads.
+	node, err := storage.GetStoredNode(a.engine, storage.NodeID(req.NodeID))
 	if err != nil {
 		return err
 	}
@@ -756,13 +758,14 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
-	// Get all nodes and edges
-	nodes, err := a.engine.AllNodes()
+	// Every stored node and edge: the ones the visibility layer hides from
+	// reads are replicated data too.
+	nodes, err := storage.CollectStoredNodes(context.Background(), a.engine)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllNodesFailed(err), err)
 	}
 
-	edges, err := a.engine.AllEdges()
+	edges, err := storage.CollectStoredEdges(context.Background(), a.engine)
 	if err != nil {
 		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
