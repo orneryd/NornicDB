@@ -11,7 +11,7 @@ import (
 )
 
 func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
-	ids := []string{"other", nodeNamedVectorKey("second", "default"), nodePropertyVectorKey("first", "features"), nodeChunkVectorKey("first", 0), "literal-named-doc"}
+	ids := []string{"other", nodeNamedVectorKey("second", "default"), nodePropertyVectorKey("first", "features"), nodeChunkVectorKey("first", 1), "literal-named-doc"}
 	hints := map[string]LexicalSeedHint{
 		"first":             {ID: "first", Rank: 0, Signature: 1},
 		"second":            {ID: "second", Rank: 1, Signature: 2},
@@ -23,7 +23,7 @@ func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 		for i, pair := range pairs {
 			got[i] = pair.id
 		}
-		require.Equal(t, []string{nodeChunkVectorKey("first", 0), nodePropertyVectorKey("first", "features"), nodeNamedVectorKey("second", "default"), "literal-named-doc", "other"}, got, "ranked document hints must prioritize every embedding exactly once")
+		require.Equal(t, []string{nodeChunkVectorKey("first", 1), nodePropertyVectorKey("first", "features"), nodeNamedVectorKey("second", "default"), "literal-named-doc", "other"}, got, "ranked document hints must prioritize every embedding exactly once")
 		config := DefaultHNSWConfig()
 		config.UseGPUBuild = true
 		config.GPUBuildBatchSize = 2
