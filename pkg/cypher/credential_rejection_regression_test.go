@@ -30,7 +30,7 @@ func TestCredentialRejectionPublic(t *testing.T) {
 		"CREATE COMPOSITE DATABASE probe ALIAS r FOR DATABASE remote AT 'http://example.test' USER probe PASSWORD ",
 		"ALTER COMPOSITE DATABASE probe ADD ALIAS r FOR DATABASE remote AT 'http://example.test' USER probe PASSWORD ",
 	} {
-		for _, value := range []string{secret, "'" + secret + "' garbage", "'" + secret} {
+		for _, value := range []string{secret, secret + " " + secret, "'" + secret + "' garbage", "'" + secret} {
 			_, err := executor.Execute(context.Background(), prefix+value, nil)
 			if err == nil {
 				t.Errorf("malformed credential command accepted: %s", prefix)
