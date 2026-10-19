@@ -3118,6 +3118,7 @@ func (tx *BadgerTransaction) Commit() error {
 		case OpUpdateNode:
 			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 		case OpDeleteNode:
+			tx.engine.deleteRelationshipUniqueIndexes(op.DeletedEdgeIDs...)
 			if op.OldNode != nil {
 				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
 			} else {
