@@ -16,6 +16,11 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if hint.readTail == nil || hint.orderExpr != "" || hint.earlyLimit >= 0 {
 		return nil, false, nil
 	}
+	for _, tail := range hint.readTail {
+		if topLevelKeywordIndex(tail, "ORDER BY") >= 0 {
+			return nil, false, nil
+		}
+	}
 	pattern := pipelineClauseBody(clause, "MATCH")
 	where := ""
 	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
@@ -32,6 +37,9 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
+	if !traversalSourceUnboundedScan(shape, where, nil) {
+		return nil, false, nil
+	}
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
 	store := e.getStorage(ctx)
@@ -40,6 +48,20 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		endpointValues := &endpointPropertyCache{}
 		current := make(pipelineRow)
 		completed := input(func(row pipelineRow) bool {
+			if !traversalSourceUnboundedScan(shape, where, row) {
+				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
+				if err != nil {
+					recordExpressionFailure(ctx, err)
+					valid = false
+					return false
+				}
+				for _, selected := range rows {
+					if !yield(selected) {
+						return false
+					}
+				}
+				return true
+			}
 			rowCtx := withValueBindings(ctx, row)
 			match := e.parseTraversalPattern(rowCtx, pattern)
 			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
@@ -153,6 +175,25 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		})
 		return completed && valid
 	}, true, nil
+}
+
+// A whole-edge stream is an access path only for an unseeded scan. Predicates
+// and inline properties may select an ID/index/endpoint seed, including seek
+// capabilities supplied by the storage engine. Leave their selection to the
+// existing traversal planner instead of inspecting individual predicate forms.
+// Outer bindings are only known when the upstream source yields a row.
+func traversalSourceUnboundedScan(match *TraversalMatch, where string, row pipelineRow) bool {
+	if where != "" || len(match.StartNode.properties) != 0 || len(match.EndNode.properties) != 0 || len(match.Relationship.Properties) != 0 {
+		return false
+	}
+	for _, variable := range []string{match.StartNode.variable, match.EndNode.variable, match.Relationship.Variable, match.PathVariable} {
+		if variable != "" {
+			if _, bound := row[variable]; bound {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func traversalSourceProperties(node nodePatternInfo, where string, tail []string, pathVariable string) []string {
