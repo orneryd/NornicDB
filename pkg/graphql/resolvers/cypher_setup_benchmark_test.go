@@ -17,7 +17,7 @@ func BenchmarkGraphQLNativeCypherSetup(b *testing.B) {
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
 	manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
 	require.NoError(b, err)
-	b.Cleanup(func() { require.NoError(b, manager.Close()) })
+	// The manager borrows DB storage; DB owns its shutdown.
 	resolver := NewResolver(db, manager)
 	ctx := context.Background()
 	database := manager.DefaultDatabaseName()
