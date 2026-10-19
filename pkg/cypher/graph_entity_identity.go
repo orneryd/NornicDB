@@ -422,3 +422,49 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 	}
 	return reference.NodeLookupID(engine)
 }
+
+// nativeEntityIdentity also serves relationship consumers whose public graph
+// input is not a node. It never interprets a stored local ID as an element ID.
+func nativeEntityIdentity(value interface{}) (storage.EntityIdentity, bool) {
+    switch entity := value.(type) {
+    case *storage.Node:
+        if entity != nil { return entity.Identity(),true }
+    case *storage.Edge:
+        if entity != nil { return entity.Identity(),true }
+    }
+    return storage.EntityIdentity{},false
+}
+
+func nativeEntityMetadataID(engine storage.Engine, identity storage.EntityIdentity) string {
+    if identity.Database != "" && storage.DatabaseOf(engine) != identity.Database {
+        return identity.Database+":"+identity.LocalID
+    }
+    return storage.QualifiedEntityID(engine,identity.LocalID)
+}
+
+// nativeEntityMetadataTarget shares source selection with storage's identity
+// owner. Metadata reads may inspect a source engine; data operations continue
+// through their transaction/admission wrapper and never use this escape.
+func (e *StorageExecutor) nativeEntityMetadataTarget(ctx context.Context, identity storage.EntityIdentity) (storage.Engine,string) {
+    selected := e.getStorage(ctx)
+    source := func(engine storage.Engine) storage.Engine {
+        if identity.Database == "" || storage.DatabaseOf(engine) == identity.Database { return engine }
+        for depth:=0; engine != nil && depth<16; depth++ {
+            if sources,ok := engine.(interface{EntitySource(storage.EntityIdentity)(storage.Engine,error)}); ok {
+                if selected,err := sources.EntitySource(identity); err == nil { return selected }
+                return nil
+            }
+            wrapper,ok := engine.(storage.EngineUnwrapper)
+            if !ok { break }
+            next:=wrapper.GetInnerEngine()
+            if next==engine { break }
+            engine=next
+        }
+        return nil
+    }
+    if engine:=source(selected); engine != nil { return engine,storage.QualifiedEntityID(engine,identity.LocalID) }
+    if scoped,err:=e.graphFunctionStorage("",selected); err==nil {
+        if engine:=source(scoped); engine != nil { return engine,storage.QualifiedEntityID(engine,identity.LocalID) }
+    }
+    return nil,nativeEntityMetadataID(selected,identity)
+}
