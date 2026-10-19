@@ -44,8 +44,13 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
 
-	// Missing node in a relationship predicate should return false.
+	// A bound-null node in a relationship predicate should return false.
+	nodes["c"] = nil
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+
+	// An absent symbol is invalid at the public semantic-validation boundary.
+	_, err = exec.Execute(ctx, "MATCH (a:Person) WHERE (a)-[:KNOWS]->(c) RETURN a", nil)
+	require.ErrorContains(t, err, "Variable `c` not defined")
 
 	// Fallback expression evaluation branch.
 	require.True(t, exec.evaluateWhereForContext(ctx, "1 = 1", nodes))
