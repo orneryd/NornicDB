@@ -18,6 +18,10 @@ import (
 // Compile-time interface assertion.
 var _ Engine = (*RemoteEngine)(nil)
 
+// RemoteRequestTimeout bounds a detached remote participant cleanup by the
+// same request deadline as the remote transport.
+const RemoteRequestTimeout = 30 * time.Second
+
 // RemoteEngineConfig configures a remote storage engine.
 //
 // The URI field determines the transport protocol:
@@ -462,7 +466,7 @@ type remoteTxResponse struct {
 func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransport, error) {
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: RemoteRequestTimeout}
 	}
 	return &httpTransport{
 		baseURL:   strings.TrimRight(uri, "/"),
@@ -823,7 +827,7 @@ func remoteToInt64(v interface{}) int64 {
 // defaultCtx creates a context with a 30-second timeout as a fallback
 // for Engine methods that don't accept a caller-provided context.
 func defaultCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+	return context.WithTimeout(context.Background(), RemoteRequestTimeout)
 }
 
 // ---------------------------------------------------------------------------

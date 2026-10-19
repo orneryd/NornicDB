@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // RaftState represents the current state of a Raft node.
@@ -202,12 +204,40 @@ func (r *RaftReplicator) peerCount() int {
 
 // applyFuture represents a pending apply operation.
 type applyFuture struct {
-	caller context.Context // admission only; committed entries outlive the caller
-	cmd    *Command
-	index  uint64
-	term   uint64
-	errCh  chan error
-	doneCh chan struct{}
+	caller      context.Context // admission only; committed entries outlive the caller
+	cmd         *Command
+	index       uint64
+	term        uint64
+	errCh       chan error
+	doneCh      chan struct{}
+	resolveOnce sync.Once
+}
+
+func (future *applyFuture) resolve(err error) {
+	future.resolveOnce.Do(func() {
+		future.errCh <- err
+		if future.doneCh != nil {
+			close(future.doneCh)
+		}
+	})
+}
+
+func (r *RaftReplicator) takeApplyFuture(index uint64) *applyFuture {
+	r.futuresMu.Lock()
+	defer r.futuresMu.Unlock()
+	future := r.futures[index]
+	delete(r.futures, index)
+	return future
+}
+
+func (r *RaftReplicator) completeNamespaceCommand(cmd *Command, err error, notify func(error)) {
+	if op := cmd.namespaceDrop; op != nil && op.Committed() {
+		// Catalog persistence may submit another consensus command. Never run
+		// that continuation on the state-machine/consensus apply goroutine.
+		go func() { notify(op.Complete(err)) }()
+		return
+	}
+	notify(err)
 }
 
 // rpcRequest represents an incoming RPC request.
@@ -819,18 +849,77 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		future.errCh <- ErrNotLeader
 		return
 	}
+	if future.cmd.Type == CmdDeleteByPrefix {
+		// A prepared DROP fences native publications. Earlier committed log
+		// entries must cross the state machine before installing that fence;
+		// otherwise an earlier same-namespace write would wait on the DROP
+		// which is itself waiting behind that write in the apply order.
+		caller := future.caller
+		if caller == nil {
+			caller = context.Background()
+		}
+		if err := r.awaitNamespacePreparationFrontier(caller); err != nil {
+			future.resolve(err)
+			return
+		}
+		if preparer, ok := r.storage.(interface {
+			PrepareCommandContext(context.Context, *Command) error
+		}); ok {
+			caller := future.caller
+			if caller == nil {
+				caller = context.Background()
+			}
+			if err := preparer.PrepareCommandContext(caller, future.cmd); err != nil {
+				future.errCh <- err
+				return
+			}
+			future.cmd.namespaceDrop.DeferConsensusCompletion()
+		} else if future.cmd.namespaceDrop != nil {
+			future.errCh <- storage.ErrNotImplemented
+			return
+		}
+	}
 
 	// Append to local log
-	r.logMu.Lock()
-	entry := &RaftLogEntry{
-		Index:   r.log[len(r.log)-1].Index + 1,
-		Term:    term,
-		Command: future.cmd,
+	var entry *RaftLogEntry
+	appendLog := func() error {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		if r.state != StateLeader || r.currentTerm != term {
+			return ErrNotLeader
+		}
+		if op := future.cmd.namespaceDrop; op != nil {
+			if err := stampNamespaceDrop(future.cmd, op); err != nil {
+				return err
+			}
+		}
+		r.logMu.Lock()
+		entry = &RaftLogEntry{
+			Index:   r.log[len(r.log)-1].Index + 1,
+			Term:    term,
+			Command: future.cmd,
+		}
+		r.log = append(r.log, entry)
+		future.index = entry.Index
+		future.term = term
+		r.logMu.Unlock()
+		return nil
 	}
-	r.log = append(r.log, entry)
-	future.index = entry.Index
-	future.term = term
-	r.logMu.Unlock()
+	if op := future.cmd.namespaceDrop; op != nil {
+		caller := future.caller
+		if caller == nil {
+			caller = context.Background()
+		}
+		if err := op.Propose(caller, appendLog); err != nil {
+			future.errCh <- err
+			return
+		}
+	} else {
+		if err := appendLog(); err != nil {
+			future.resolve(err)
+			return
+		}
+	}
 
 	// Track this future for commit notification
 	r.futuresMu.Lock()
@@ -844,7 +933,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		r.logMu.Unlock()
 
 		// Apply to state machine
-		err := r.storage.ApplyCommand(future.cmd)
+		err := r.applyCommittedCommand(future.cmd)
 
 		r.logMu.Lock()
 		r.lastApplied = entry.Index
@@ -854,7 +943,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		delete(r.futures, entry.Index)
 		r.futuresMu.Unlock()
 
-		future.errCh <- err
+		r.completeNamespaceCommand(future.cmd, err, future.resolve)
 		return
 	}
 
@@ -877,26 +966,31 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 
 	for {
 		select {
+		case <-future.doneCh:
+			return
 		case <-ctx.Done():
-			future.errCh <- ctx.Err()
+			future.resolve(ctx.Err())
 			return
 		case <-r.stopCh:
-			future.errCh <- ErrClosed
+			future.resolve(ErrClosed)
 			return
 		case <-timeout:
 			r.futuresMu.Lock()
 			delete(r.futures, future.index)
 			r.futuresMu.Unlock()
-			future.errCh <- localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
+			future.resolve(localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil))
 			return
 		case <-ticker.C:
+			if future.cmd.namespaceDrop != nil {
+				continue
+			} // the completion owner resolves DROP
 			r.logMu.RLock()
 			committed := r.commitIndex >= future.index
 			applied := r.lastApplied >= future.index
 			r.logMu.RUnlock()
 
 			if applied {
-				future.errCh <- nil
+				future.resolve(nil)
 				return
 			}
 
@@ -969,22 +1063,22 @@ func (r *RaftReplicator) advanceCommitIndex() {
 
 		if int(applyIdx) < len(r.log) {
 			entry := r.log[applyIdx]
+			var applyErr error
 			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
+				if err := r.applyCommittedCommand(entry.Command); err != nil {
+					applyErr = err
 					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
 			}
+			notify := func(error) {}
+			if future := r.takeApplyFuture(applyIdx); future != nil {
+				notify = future.resolve
+			}
+			if entry.Command != nil {
+				r.completeNamespaceCommand(entry.Command, applyErr, notify)
+			}
 		}
 
-		// Notify any waiting futures
-		r.futuresMu.Lock()
-		if future, ok := r.futures[applyIdx]; ok {
-			delete(r.futures, applyIdx)
-			r.futuresMu.Unlock()
-			future.errCh <- nil
-		} else {
-			r.futuresMu.Unlock()
-		}
 	}
 }
 
@@ -1231,6 +1325,14 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		if int(idx) < len(r.log) {
 			if r.log[idx].Term != entry.Term {
 				// Conflict: delete this and all following entries
+				for _, discarded := range r.log[idx:] {
+					if discarded.Command != nil && discarded.Command.namespaceDrop != nil {
+						discarded.Command.namespaceDrop.Abort()
+					}
+					if future := r.takeApplyFuture(discarded.Index); future != nil {
+						future.resolve(ErrNotLeader)
+					}
+				}
 				r.log = r.log[:idx]
 				r.log = append(r.log, entry)
 			}
@@ -1264,9 +1366,15 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		if int(r.lastApplied) < len(r.log) {
 			entry := r.log[r.lastApplied]
 			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
+				applyErr := r.applyCommittedCommand(entry.Command)
+				if applyErr != nil {
 					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 				}
+				notify := func(error) {}
+				if future := r.takeApplyFuture(entry.Index); future != nil {
+					notify = future.resolve
+				}
+				r.completeNamespaceCommand(entry.Command, applyErr, notify)
 			}
 		}
 	}
@@ -1366,15 +1474,24 @@ func (r *RaftReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout
 			return localizedError(localization.ReplicationRaftForwardToLeaderFailed(err), err)
 		}
 		if fa, ok := conn.(forwardApplySender); ok {
-			return fa.SendForwardApply(fwdCtx, cmd, timeout)
+			err := fa.SendForwardApply(fwdCtx, cmd, timeout)
+			var outcome *storage.NamespaceDropError
+			if errors.As(err, &outcome) {
+				return err
+			}
+			return commandWaitOutcome(cmd, err)
 		}
 		return ErrNotLeader
 	}
 
+	if cmd.Type == CmdDeleteByPrefix && cmd.namespaceDrop == nil {
+		cmd.namespaceDrop = storage.NewNamespaceDrop(nil)
+	}
 	future := &applyFuture{
 		caller: ctx,
 		cmd:    cmd,
 		errCh:  make(chan error, 1),
+		doneCh: make(chan struct{}),
 	}
 
 	select {
@@ -1387,11 +1504,15 @@ func (r *RaftReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout
 
 	select {
 	case err := <-future.errCh:
+		if cmd.namespaceDrop != nil {
+			return cmd.namespaceDrop.Result(err)
+		}
 		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		return commandWaitOutcome(cmd, ctx.Err())
 	case <-time.After(timeout):
-		return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
+		err := localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
+		return commandWaitOutcome(cmd, err)
 	}
 }
 
@@ -1547,10 +1668,7 @@ func (r *RaftReplicator) Shutdown() error {
 	// Fail any pending futures
 	r.futuresMu.Lock()
 	for _, future := range r.futures {
-		select {
-		case future.errCh <- ErrClosed:
-		default:
-		}
+		future.resolve(ErrClosed)
 	}
 	r.futures = make(map[uint64]*applyFuture)
 	r.futuresMu.Unlock()

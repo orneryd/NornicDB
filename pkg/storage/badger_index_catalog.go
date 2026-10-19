@@ -20,8 +20,10 @@ func indexEntryCatalogKey(entityID string) []byte {
 }
 
 func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCatalog) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return putIndexEntryCatalogInTxn(txn, entityID, cat)
+	return b.withNamespaceSideStateWrite(entityID, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return putIndexEntryCatalogInTxn(txn, entityID, cat)
+		})
 	})
 }
 
@@ -56,8 +58,10 @@ func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog
 }
 
 func (b *BadgerEngine) DeleteIndexEntryCatalog(entityID string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return deleteIndexEntryCatalogInTxn(txn, entityID)
+	return b.withNamespaceSideStateWrite(entityID, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return deleteIndexEntryCatalogInTxn(txn, entityID)
+		})
 	})
 }
 

@@ -88,6 +88,7 @@ type EmbeddingFailureStreamer interface {
 // that read and this commit fails the commit with a conflict, reported as
 // ErrEmbeddingSourceChanged too.
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	beginRevision := b.namespaceLifetimeRevision()
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -150,6 +151,14 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
+	release, err := b.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(node.ID), beginRevision); err != nil {
+		return err
+	}
 	err = b.commitEngineWrite(func(cw *commitWriter) error {
 		var writes []func(txn *badger.Txn) error
 		if err := cw.writeOnce(func(txn *badger.Txn) error {

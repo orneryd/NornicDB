@@ -331,6 +331,9 @@ func TestCompositeExplicitTx_RemoteParticipantCommitLifecycle(t *testing.T) {
 	)
 	var remote *httptest.Server
 	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if respondRemoteNamespaceFixture(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant_remote/tx"):
 			openCount++
@@ -411,6 +414,9 @@ func TestCompositeExplicitTx_RemoteParticipantRollbackLifecycle(t *testing.T) {
 	)
 	var remote *httptest.Server
 	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if respondRemoteNamespaceFixture(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/db/tenant_remote_rb/tx"):
 			openCount++

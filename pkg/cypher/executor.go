@@ -322,8 +322,9 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser  *Parser
-	storage storage.Engine
+	inheritedNamespaceLifetime storage.NamespaceLifetimeSnapshot
+	parser                     *Parser
+	storage                    storage.Engine
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -1660,6 +1661,10 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	logicalLifetime := storage.LogicalNamespaceBegin(ctx)
+	if logicalLifetime == nil {
+		logicalLifetime = storage.CaptureNamespaceLifetimes(e.storage)
+	}
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -1697,6 +1702,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	tx, err := beginTransactionSnapshot(txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
+	}
+	if err := tx.BindLogicalBegin(logicalLifetime); err != nil {
+		_ = tx.Rollback()
+		return nil, err
 	}
 	if engines.namespace != "" {
 		if err := tx.SetNamespace(engines.namespace); err != nil {
