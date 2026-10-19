@@ -831,7 +831,8 @@ func (s *Session) handlePull(data []byte) error {
 
 	// Check if more records available
 	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
-	s.updateResultStream(statementID, stream, hasMore)
+	// Retain the batch until delivery completes. Deferred flush and FAILURE
+	// cleanup must still be able to find the final PULL's pending cursors.
 
 	// Clear result if done
 	if !hasMore {
@@ -898,7 +899,7 @@ func (s *Session) handlePull(data []byte) error {
 		if err := s.sendSuccessNoFlush(metadata); err != nil {
 			return err
 		}
-		return s.flushResultDelivery(stream, true)
+		return s.flushResultDelivery(statementID, stream, true)
 	}
 
 	// When there are more records, send has_more: true
@@ -907,7 +908,7 @@ func (s *Session) handlePull(data []byte) error {
 	}); err != nil {
 		return err
 	}
-	return s.flushResultDelivery(stream, false)
+	return s.flushResultDelivery(statementID, stream, false)
 }
 
 // boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
