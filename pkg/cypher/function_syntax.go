@@ -333,3 +333,12 @@ func firstSyntaxGroup(text string, opening byte, from int) int {
  for _,group:=range readFunctionSyntax(text).groups {if group.open>=from && group.open>=0 && text[group.open]==opening {return group.open}}
  return -1
 }
+
+func functionReadsVariable(text, name, variable string) bool {
+ for _,call:=range readFunctionSyntax(text).calls {
+  if call.procedure || !strings.EqualFold(call.name,name) {continue}
+  arguments:=call.arguments(nil)
+  if len(arguments)==1 && simpleSemanticIdentifier(arguments[0])==variable {return true}
+ }
+ return false
+}

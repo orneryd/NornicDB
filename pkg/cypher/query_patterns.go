@@ -246,12 +246,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable (the one doing the incoming), and
 	// only optimize the narrow "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
-	countStarPattern := "COUNT(*)"
-
-	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+	if isReturnNameCountShape(query,startVar,endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -273,10 +268,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable, and only optimize the narrow
 	// "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
-
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if isReturnNameCountShape(query,startVar,endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -331,9 +323,8 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	}
 
 	// Require COUNT(endVar) or COUNT(*).
-	rightUpper := upperASCII(strings.ReplaceAll(right, " ", ""))
-	wantCountVar := "COUNT(" + upperASCII(endVar) + ")"
-	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
+	name,arguments,called:=parseFunctionCallArguments(right)
+ return called && strings.EqualFold(name,"count") && len(arguments)==1 && (arguments[0]=="*" || simpleSemanticIdentifier(arguments[0])==endVar)
 }
 
 func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
