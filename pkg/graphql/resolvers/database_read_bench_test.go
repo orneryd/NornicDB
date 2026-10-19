@@ -29,6 +29,7 @@ func BenchmarkGraphQLDatabaseReads(b *testing.B) {
 		resolver, ctx := fixture(b)
 
 		b.ReportAllocs()
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if _, err := resolver.Query().NodeCount(ctx, nil); err != nil {
 				b.Fatal(err)
@@ -39,6 +40,7 @@ func BenchmarkGraphQLDatabaseReads(b *testing.B) {
 		resolver, ctx := fixture(b)
 
 		b.ReportAllocs()
+		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			if _, err := resolver.Query().Nodes(ctx, nil); err != nil {
 				b.Fatal(err)
