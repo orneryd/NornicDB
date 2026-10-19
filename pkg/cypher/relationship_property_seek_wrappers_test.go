@@ -17,8 +17,16 @@ import (
 func TestRelationshipPropertySeekWrappedEngineStack(t *testing.T) {
 	for _, name := range []string{"memory", "wal", "traced_physical", "traced_database", "wal_database", "replicated_database", "production_stack"} {
 		t.Run(name, func(t *testing.T) {
-			var base storage.Engine = storage.NewMemoryEngine()
-			t.Cleanup(func() { require.NoError(t, base.Close()) })
+			var base storage.Engine
+			if name == "memory" {
+				base = storage.NewMemoryEngine()
+			} else {
+				engine, err := storage.NewBadgerEngine(t.TempDir())
+				require.NoError(t, err)
+				base = engine
+			}
+			physical := base
+			t.Cleanup(func() { require.NoError(t, physical.Close()) })
 			if name != "memory" {
 				wal, err := storage.NewWAL(t.TempDir(), nil)
 				require.NoError(t, err)
