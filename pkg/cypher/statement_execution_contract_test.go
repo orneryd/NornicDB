@@ -98,91 +98,192 @@ func TestStatementExecutionClauseContracts(t *testing.T) {
 // cache/telemetry owners. The mode owner's dependency closure may not call any
 // of those owners, including through another package-local helper.
 func TestStatementExecutionAdmissionBoundary(t *testing.T) {
- files,err:=os.ReadDir("."); require.NoError(t,err)
- functions:=map[string]*ast.FuncDecl{}
- origins:=map[string]string{}
- fields:=map[string]map[string]string{}
- globals:=map[string]string{}
- var declarations []*ast.GenDecl
- typeName:=func(expr ast.Expr) string {return admissionTypeName(expr)}
- for _,file:=range files {
-  name:=file.Name(); if !strings.HasSuffix(name,".go") || strings.HasSuffix(name,"_test.go") {continue}
-  tree,err:=parser.ParseFile(token.NewFileSet(),filepath.Clean(name),nil,0); require.NoError(t,err)
-  for _,declaration:=range tree.Decls {
-   if fn,ok:=declaration.(*ast.FuncDecl); ok && fn.Body!=nil {
-    key:=fn.Name.Name
-    if fn.Recv!=nil {key=typeName(fn.Recv.List[0].Type)+"."+key}
-    functions[key],origins[key]=fn,name
-   }
-   if decl,ok:=declaration.(*ast.GenDecl); ok {
-    declarations=append(declarations,decl)
-    for _,spec:=range decl.Specs {if typ,ok:=spec.(*ast.TypeSpec); ok {if structure,ok:=typ.Type.(*ast.StructType); ok {
-     fields[typ.Name.Name]=map[string]string{}
-     for _,field:=range structure.Fields.List {for _,name:=range field.Names {fields[typ.Name.Name][name.Name]=typeName(field.Type)}}
-    }}}
-   }
-  }
- }
- // Resolve concrete receivers rather than conflating unrelated Get/Analyze
- // methods. Imports cannot reach the package-private cache hint owners.
- var resolveType func(ast.Expr,map[string]string) string
- var resolveFunction func(ast.Expr,map[string]string) string
- resolveFunction=func(expr ast.Expr,variables map[string]string) string {
-  switch value:=expr.(type) {
-  case *ast.Ident: if functions[value.Name]!=nil {return value.Name}
-  case *ast.SelectorExpr: key:=resolveType(value.X,variables)+"."+value.Sel.Name; if functions[key]!=nil {return key}
-  }
-  return ""
- }
- resolveType=func(expr ast.Expr,variables map[string]string) string {
-  switch value:=expr.(type) {
-  case *ast.Ident: if value:=variables[value.Name];value!="" {return value}; return globals[value.Name]
-  case *ast.SelectorExpr: return fields[resolveType(value.X,variables)][value.Sel.Name]
-  case *ast.UnaryExpr: return resolveType(value.X,variables)
-  case *ast.CompositeLit: return typeName(value.Type)
-  case *ast.CallExpr: if fn:=functions[resolveFunction(value.Fun,variables)];fn!=nil && fn.Type.Results!=nil && len(fn.Type.Results.List)>0 {return typeName(fn.Type.Results.List[0].Type)}
-  }
-  return ""
- }
- for pass:=0;pass<3;pass++ {for _,declaration:=range declarations {for _,spec:=range declaration.Specs {if variable,ok:=spec.(*ast.ValueSpec);ok {for index,name:=range variable.Names {
-  typ:=typeName(variable.Type); if typ=="" && index<len(variable.Values) {typ=resolveType(variable.Values[index],nil)}; if typ!="" {globals[name.Name]=typ}
- }}}}}
- hints:=map[string]bool{}; calls:=map[string][]string{}
- for key,fn:=range functions {
-  variables:=map[string]string{}
-  declare:=func(list *ast.FieldList){if list!=nil {for _,field:=range list.List {for _,name:=range field.Names {variables[name.Name]=typeName(field.Type)}}}}
-  declare(fn.Recv);declare(fn.Type.Params);declare(fn.Type.Results)
-  for pass:=0;pass<3;pass++ {ast.Inspect(fn.Body,func(node ast.Node)bool{
-   if assignment,ok:=node.(*ast.AssignStmt);ok {for index,target:=range assignment.Lhs {if name,ok:=target.(*ast.Ident);ok && index<len(assignment.Rhs) {if typ:=resolveType(assignment.Rhs[index],variables);typ!="" {variables[name.Name]=typ}}}}
-   if variable,ok:=node.(*ast.ValueSpec);ok {for index,name:=range variable.Names {typ:=typeName(variable.Type);if typ=="" && index<len(variable.Values) {typ=resolveType(variable.Values[index],variables)};if typ!="" {variables[name.Name]=typ}}}
-   return true
-  })}
-  ast.Inspect(fn.Body,func(node ast.Node)bool{
-   if field,ok:=node.(*ast.SelectorExpr);ok {
-    switch field.Sel.Name {case "IsWriteQuery","IsReadOnly","HasCreate","HasMerge","HasDelete","HasSet","HasRemove","HasForeach":hints[key]=true}
-    if field.Sel.Name=="IsWriteQuery" {require.Contains(t,map[string]bool{"query_info.go":true,"cache_policy.go":true,"op_type.go":true},origins[key],"cache-only write hint escaped into %s",key)}
-   }
-   // References, rather than just calls, retain function-valued aliases too.
-   if expr,ok:=node.(ast.Expr);ok {if target:=resolveFunction(expr,variables);target!="" {calls[key]=append(calls[key],target)}}
-   return true
-  })
- }
- for _,root:=range []string{"readStatementExecutionContract","statementNeedsTransaction","StorageExecutor.admitResolvedStatementWrite","StorageExecutor.observeResolvedStatementMode","fabricProcedureWritePlan","QueryPermissionRequirements"} {
-  require.Contains(t,functions,root)
-  seen:=map[string]bool{}
-  var visit func(string,[]string)
-  visit=func(key string,path []string){
-   // This producer constructs fixed registry contracts; invoking handlers is
-   // an execution boundary, not part of deciding their declared mode.
-   if seen[key] || key=="ensureBuiltInProceduresRegistered" {return};seen[key]=true
-   path=append(path,key);require.False(t,hints[key],"admission reaches cache-only hints: %s",strings.Join(path," -> "))
-   for _,next:=range calls[key] {visit(next,path)}
-  }
-  visit(root,nil)
- }
+	files, err := os.ReadDir(".")
+	require.NoError(t, err)
+	functions := map[string]*ast.FuncDecl{}
+	origins := map[string]string{}
+	fields := map[string]map[string]string{}
+	globals := map[string]string{}
+	var declarations []*ast.GenDecl
+	typeName := func(expr ast.Expr) string { return admissionTypeName(expr) }
+	for _, file := range files {
+		name := file.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		tree, err := parser.ParseFile(token.NewFileSet(), filepath.Clean(name), nil, 0)
+		require.NoError(t, err)
+		for _, declaration := range tree.Decls {
+			if fn, ok := declaration.(*ast.FuncDecl); ok && fn.Body != nil {
+				key := fn.Name.Name
+				if fn.Recv != nil {
+					key = typeName(fn.Recv.List[0].Type) + "." + key
+				}
+				functions[key], origins[key] = fn, name
+			}
+			if decl, ok := declaration.(*ast.GenDecl); ok {
+				declarations = append(declarations, decl)
+				for _, spec := range decl.Specs {
+					if typ, ok := spec.(*ast.TypeSpec); ok {
+						if structure, ok := typ.Type.(*ast.StructType); ok {
+							fields[typ.Name.Name] = map[string]string{}
+							for _, field := range structure.Fields.List {
+								for _, name := range field.Names {
+									fields[typ.Name.Name][name.Name] = typeName(field.Type)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// Resolve concrete receivers rather than conflating unrelated Get/Analyze
+	// methods. Imports cannot reach the package-private cache hint owners.
+	var resolveType func(ast.Expr, map[string]string) string
+	var resolveFunction func(ast.Expr, map[string]string) string
+	resolveFunction = func(expr ast.Expr, variables map[string]string) string {
+		switch value := expr.(type) {
+		case *ast.Ident:
+			if functions[value.Name] != nil {
+				return value.Name
+			}
+		case *ast.SelectorExpr:
+			key := resolveType(value.X, variables) + "." + value.Sel.Name
+			if functions[key] != nil {
+				return key
+			}
+		}
+		return ""
+	}
+	resolveType = func(expr ast.Expr, variables map[string]string) string {
+		switch value := expr.(type) {
+		case *ast.Ident:
+			if value := variables[value.Name]; value != "" {
+				return value
+			}
+			return globals[value.Name]
+		case *ast.SelectorExpr:
+			return fields[resolveType(value.X, variables)][value.Sel.Name]
+		case *ast.UnaryExpr:
+			return resolveType(value.X, variables)
+		case *ast.CompositeLit:
+			return typeName(value.Type)
+		case *ast.CallExpr:
+			if fn := functions[resolveFunction(value.Fun, variables)]; fn != nil && fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
+				return typeName(fn.Type.Results.List[0].Type)
+			}
+		}
+		return ""
+	}
+	for pass := 0; pass < 3; pass++ {
+		for _, declaration := range declarations {
+			for _, spec := range declaration.Specs {
+				if variable, ok := spec.(*ast.ValueSpec); ok {
+					for index, name := range variable.Names {
+						typ := typeName(variable.Type)
+						if typ == "" && index < len(variable.Values) {
+							typ = resolveType(variable.Values[index], nil)
+						}
+						if typ != "" {
+							globals[name.Name] = typ
+						}
+					}
+				}
+			}
+		}
+	}
+	hints := map[string]bool{}
+	calls := map[string][]string{}
+	for key, fn := range functions {
+		variables := map[string]string{}
+		declare := func(list *ast.FieldList) {
+			if list != nil {
+				for _, field := range list.List {
+					for _, name := range field.Names {
+						variables[name.Name] = typeName(field.Type)
+					}
+				}
+			}
+		}
+		declare(fn.Recv)
+		declare(fn.Type.Params)
+		declare(fn.Type.Results)
+		for pass := 0; pass < 3; pass++ {
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				if assignment, ok := node.(*ast.AssignStmt); ok {
+					for index, target := range assignment.Lhs {
+						if name, ok := target.(*ast.Ident); ok && index < len(assignment.Rhs) {
+							if typ := resolveType(assignment.Rhs[index], variables); typ != "" {
+								variables[name.Name] = typ
+							}
+						}
+					}
+				}
+				if variable, ok := node.(*ast.ValueSpec); ok {
+					for index, name := range variable.Names {
+						typ := typeName(variable.Type)
+						if typ == "" && index < len(variable.Values) {
+							typ = resolveType(variable.Values[index], variables)
+						}
+						if typ != "" {
+							variables[name.Name] = typ
+						}
+					}
+				}
+				return true
+			})
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if field, ok := node.(*ast.SelectorExpr); ok {
+				switch field.Sel.Name {
+				case "IsWriteQuery", "IsReadOnly", "HasCreate", "HasMerge", "HasDelete", "HasSet", "HasRemove", "HasForeach":
+					hints[key] = true
+				}
+				if field.Sel.Name == "IsWriteQuery" {
+					require.Contains(t, map[string]bool{"query_info.go": true, "cache_policy.go": true, "op_type.go": true}, origins[key], "cache-only write hint escaped into %s", key)
+				}
+			}
+			// References, rather than just calls, retain function-valued aliases too.
+			if expr, ok := node.(ast.Expr); ok {
+				if target := resolveFunction(expr, variables); target != "" {
+					calls[key] = append(calls[key], target)
+				}
+			}
+			return true
+		})
+	}
+	for _, root := range []string{"readStatementExecutionContract", "statementNeedsTransaction", "StorageExecutor.admitResolvedStatementWrite", "StorageExecutor.observeResolvedStatementMode", "fabricProcedureWritePlan", "QueryPermissionRequirements"} {
+		require.Contains(t, functions, root)
+		seen := map[string]bool{}
+		var visit func(string, []string)
+		visit = func(key string, path []string) {
+			// This producer constructs fixed registry contracts; invoking handlers is
+			// an execution boundary, not part of deciding their declared mode.
+			if seen[key] || key == "ensureBuiltInProceduresRegistered" {
+				return
+			}
+			seen[key] = true
+			path = append(path, key)
+			require.False(t, hints[key], "admission reaches cache-only hints: %s", strings.Join(path, " -> "))
+			for _, next := range calls[key] {
+				visit(next, path)
+			}
+		}
+		visit(root, nil)
+	}
 }
 
 func admissionTypeName(expr ast.Expr) string {
- switch value:=expr.(type) {case *ast.Ident:return value.Name;case *ast.StarExpr:return admissionTypeName(value.X);case *ast.IndexExpr:return admissionTypeName(value.X);case *ast.IndexListExpr:return admissionTypeName(value.X)}
- return ""
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.StarExpr:
+		return admissionTypeName(value.X)
+	case *ast.IndexExpr:
+		return admissionTypeName(value.X)
+	case *ast.IndexListExpr:
+		return admissionTypeName(value.X)
+	}
+	return ""
 }

@@ -439,9 +439,13 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 	switch current := fragment.(type) {
 	case *fabric.FragmentExec:
 		input, err := fabricProcedureWritePlan(current.Input)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		contract, err := readStatementExecutionContract(current.Query)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		write := contract.writes
 		if input == current.Input && write == current.IsWrite {
 			return current, nil
@@ -451,9 +455,13 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		return &copy, nil
 	case *fabric.FragmentApply:
 		input, err := fabricProcedureWritePlan(current.Input)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		inner, err := fabricProcedureWritePlan(current.Inner)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		if input == current.Input && inner == current.Inner {
 			return current, nil
 		}
@@ -462,9 +470,13 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		return &copy, nil
 	case *fabric.FragmentUnion:
 		left, err := fabricProcedureWritePlan(current.LHS)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		right, err := fabricProcedureWritePlan(current.RHS)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		if left == current.LHS && right == current.RHS {
 			return current, nil
 		}
@@ -473,7 +485,9 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		return &copy, nil
 	case *fabric.FragmentLeaf:
 		input, err := fabricProcedureWritePlan(current.Input)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		if input == current.Input {
 			return current, nil
 		}
