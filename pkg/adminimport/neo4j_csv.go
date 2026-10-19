@@ -101,18 +101,12 @@ func ExportNeo4jCSV(engine storage.Engine, opts Neo4jCSVExportOptions) error {
 
 	// An export holds every stored entity, those the visibility layer hides
 	// from reads included.
-	var nodes []*storage.Node
-	if err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
-		nodes = append(nodes, node)
-		return nil
-	}); err != nil {
+	nodes, err := storage.CollectStoredNodes(context.Background(), engine)
+	if err != nil {
 		return err
 	}
-	var edges []*storage.Edge
-	if err := storage.StreamStoredEdgesByType(context.Background(), engine, "", func(edge *storage.Edge) error {
-		edges = append(edges, edge)
-		return nil
-	}); err != nil {
+	edges, err := storage.CollectStoredEdges(context.Background(), engine)
+	if err != nil {
 		return err
 	}
 

@@ -30,6 +30,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -1302,14 +1303,14 @@ func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 		return nil, fmt.Errorf("wal: checkpoint failed: %w", err)
 	}
 
-	// Get all nodes
-	nodes, err := engine.AllNodes()
+	// Every stored node and edge: the ones the visibility layer hides from
+	// reads are stored data too.
+	nodes, err := CollectStoredNodes(context.Background(), engine)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to get nodes: %w", err)
 	}
 
-	// Get all edges
-	edges, err := engine.AllEdges()
+	edges, err := CollectStoredEdges(context.Background(), engine)
 	if err != nil {
 		return nil, fmt.Errorf("wal: failed to get edges: %w", err)
 	}
