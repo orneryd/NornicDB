@@ -33,6 +33,32 @@ func TestEmbedWorkerRetryOwnerAllowsFreshWork(t *testing.T) {
 	require.NotEmpty(t, saved.ChunkEmbeddings)
 }
 
+type unindexedRetryOwnerQueue struct {
+	storage.Engine
+	queue *rejectingSidecarQueue
+}
+
+func (q *unindexedRetryOwnerQueue) FindNodeNeedingEmbedding() *storage.Node {
+	node, _ := q.Engine.GetNode("node-000")
+	return node // A generic scan cannot remove a retained candidate's marker.
+}
+
+func (q *unindexedRetryOwnerQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+	return q.queue.UpdateNodeEmbeddingSidecar(node)
+}
+
+func TestEmbedWorkerRetryOwnerAllowsFreshUnindexedWork(t *testing.T) {
+	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 2, 1000)
+	queue.attempts["node-001"] = 1000
+	worker.storage = &unindexedRetryOwnerQueue{Engine: queue.Engine, queue: queue}
+	require.True(t, worker.processNextBatch())
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, int64(1), worker.processed.Load())
+	saved, err := queue.GetNode("node-001")
+	require.NoError(t, err)
+	require.NotEmpty(t, saved.ChunkEmbeddings)
+}
+
 func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
 	worker, queue, provider := nodeSaveRetryFixture(t, "whole", 1, 1000)
 	require.True(t, worker.processNextBatch())
@@ -147,6 +173,27 @@ func TestEmbedWorkerRetryOwnerInvalidatesPolicy(t *testing.T) {
 	makeNodeSaveRetriesReady(worker)
 	require.True(t, worker.processNextBatch())
 	require.Equal(t, 2, provider.GetEmbedCount(), "a changed text policy must regenerate even for identical source")
+}
+
+type retryOwnerSpaceEmbedder struct {
+	*mockEmbedder
+	space string
+}
+
+func (e *retryOwnerSpaceEmbedder) EmbeddingSpace() string { return e.space }
+
+func TestEmbedWorkerRetryOwnerInvalidatesLiveSpace(t *testing.T) {
+	worker, queue, plain := nodeSaveRetryFixture(t, "whole", 1, 1)
+	provider := &retryOwnerSpaceEmbedder{mockEmbedder: plain, space: "before"}
+	worker.SetEmbedder(provider)
+	require.True(t, worker.processNextBatch())
+	provider.space = "after"
+	makeNodeSaveRetriesReady(worker)
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, 2, plain.GetEmbedCount())
+	saved, err := queue.GetNode("node-000")
+	require.NoError(t, err)
+	require.Equal(t, "after", saved.EmbedMeta["embedding_space"])
 }
 
 func TestEmbedWorkerRetryOwnerInterleavesDueRetries(t *testing.T) {

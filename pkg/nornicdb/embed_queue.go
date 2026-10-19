@@ -110,7 +110,7 @@ type EmbedWorker struct {
 	embeddingRetries map[storage.NodeID]*retainedNodeEmbedding
 
 	embeddingEpoch atomic.Uint64
-	retryTurn bool // claimMu alternates due retries with fresh work.
+	retryTurn      bool // claimMu alternates due retries with fresh work.
 
 	// workersStarted is true once StartWorkers() has been called (used when DeferWorkerStart is true).
 	workersStarted bool
