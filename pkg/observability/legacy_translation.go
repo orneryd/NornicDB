@@ -171,8 +171,11 @@ func legacyReadFamily(family *dto.MetricFamily, scope *LegacyReadScope, allowUnl
 	if family == nil {
 		return nil
 	}
-	var admitted []*dto.Metric
-	for i, metric := range family.Metric {
+	// Registry.Gather creates these families for this call. Compact its own
+	// sample slice; neither collectors nor their metrics are changed. A scoped
+	// scrape therefore needs no copied DTO or additional slice per family.
+	admitted := family.Metric[:0]
+	for _, metric := range family.Metric {
 		allowed := allowUnlabelled
 		for _, label := range metric.GetLabel() {
 			if label.GetName() == "database" {
@@ -180,18 +183,12 @@ func legacyReadFamily(family *dto.MetricFamily, scope *LegacyReadScope, allowUnl
 				break
 			}
 		}
-		if !allowed && admitted == nil {
-			admitted = make([]*dto.Metric, 0, len(family.Metric))
-			admitted = append(admitted, family.Metric[:i]...)
-		}
-		if allowed && admitted != nil {
+		if allowed {
 			admitted = append(admitted, metric)
 		}
 	}
-	if admitted == nil {
-		return family
-	}
-	return &dto.MetricFamily{Name: family.Name, Help: family.Help, Type: family.Type, Metric: admitted}
+	family.Metric = admitted
+	return family
 }
 
 // emitSample formats a single sample line per the per-row format rules
