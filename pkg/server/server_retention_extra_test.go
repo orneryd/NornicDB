@@ -1,9 +1,9 @@
 package server
 
 import (
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"context"
 	"encoding/json"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"net/http"
 	"net/http/httptest"
 	"testing"
