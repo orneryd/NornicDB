@@ -73,6 +73,9 @@ type ProcedureSpec struct {
 	// handler resolves arguments normally; actual inner writes promote a
 	// Fabric participant at the shared execution boundary.
 	ExecutesStatements bool
+	// OwnsTransactions commits independent batches. Its WRITE contract still
+	// admits a Fabric writer, but a caller's statement cannot absorb its batches.
+	OwnsTransactions bool
 }
 
 // writes reports whether a call of the procedure changes the database: its
