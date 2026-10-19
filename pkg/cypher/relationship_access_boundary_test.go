@@ -17,85 +17,147 @@ import (
 // of a scan/count/aggregation kernel cannot evade it by omitting diagnostics.
 func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 	type function struct {
-		name, position string
+		name, position           string
 		owner, typed, result, io bool
-		calls map[string]bool
+		calls                    map[string]bool
 	}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	functions := map[string]*function{}
 	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") { continue }
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
 		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		require.NoError(t, err)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil { continue }
-			item := &function{name:fn.Name.Name, position:fset.Position(fn.Pos()).String(), calls:map[string]bool{}}
+			if !ok || fn.Body == nil {
+				continue
+			}
+			item := &function{name: fn.Name.Name, position: fset.Position(fn.Pos()).String(), calls: map[string]bool{}}
 			if fn.Recv != nil {
-				ast.Inspect(fn.Recv, func(n ast.Node) bool { if id, ok := n.(*ast.Ident); ok { if id.Name == "relationshipAccessExecution" { item.owner = true }; if id.Name == "TraversalContext" { item.typed = true } }; return true })
+				ast.Inspect(fn.Recv, func(n ast.Node) bool {
+					if id, ok := n.(*ast.Ident); ok {
+						if id.Name == "relationshipAccessExecution" {
+							item.owner = true
+						}
+						if id.Name == "TraversalContext" {
+							item.typed = true
+						}
+					}
+					return true
+				})
 			}
 			ast.Inspect(fn.Type.Params, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok && (id.Name == "TraversalMatch" || id.Name == "TraversalContext" || id.Name == "RelationshipPattern" || id.Name == "boundDegreeShape") { item.typed = true }
+				if id, ok := n.(*ast.Ident); ok && (id.Name == "TraversalMatch" || id.Name == "TraversalContext" || id.Name == "RelationshipPattern" || id.Name == "boundDegreeShape") {
+					item.typed = true
+				}
 				return true
 			})
 			if fn.Type.Results != nil {
-				ast.Inspect(fn.Type.Results, func(n ast.Node) bool { if id, ok := n.(*ast.Ident); ok && id.Name == "ExecuteResult" { item.result = true }; return true })
+				ast.Inspect(fn.Type.Results, func(n ast.Node) bool {
+					if id, ok := n.(*ast.Ident); ok && id.Name == "ExecuteResult" {
+						item.result = true
+					}
+					return true
+				})
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if id, ok := n.(*ast.Ident); ok && id.Name == "relationshipAccessExecution" && fn.Name.Name != "relationshipExecutionFor" {
-					t.Errorf("%s: execution capability constructed outside the program",fset.Position(id.Pos()))
+					t.Errorf("%s: execution capability constructed outside the program", fset.Position(id.Pos()))
 				}
 				call, ok := n.(*ast.CallExpr)
-				if !ok { return true }
+				if !ok {
+					return true
+				}
 				name := ""
-				switch target := call.Fun.(type) { case *ast.Ident: name=target.Name; case *ast.SelectorExpr: name=target.Sel.Name }
+				switch target := call.Fun.(type) {
+				case *ast.Ident:
+					name = target.Name
+				case *ast.SelectorExpr:
+					name = target.Sel.Name
+				}
 				item.calls[name] = true
-				if ((strings.HasPrefix(name,"Get") || strings.HasPrefix(name,"Count")) && strings.Contains(name,"Edge")) || name == "SeekRelationships" || name == "RelationshipCount" { item.io = true }
+				if ((strings.HasPrefix(name, "Get") || strings.HasPrefix(name, "Count")) && strings.Contains(name, "Edge")) || name == "SeekRelationships" || name == "RelationshipCount" {
+					item.io = true
+				}
 				return true
 			})
 			// StorageExecutor's parsed-pattern readers have unique names. Keep
 			// owner methods separately so their names form explicit graph cuts.
 			key := item.name
-			if item.owner { key = "program."+key }
+			if item.owner {
+				key = "program." + key
+			}
 			functions[key] = item
 		}
 	}
 	ownerNames := map[string]bool{}
-	for _, fn := range functions { if fn.owner { ownerNames[fn.name]=true } }
+	for _, fn := range functions {
+		if fn.owner {
+			ownerNames[fn.name] = true
+		}
+	}
 	require.NotEmpty(t, ownerNames, "no program execution boundary")
 	// Compute relationship I/O reachability with program methods as graph
 	// cuts. Merely reaching the owner is not an independent read kernel.
 	for changed := true; changed; {
-		changed=false
+		changed = false
 		for _, fn := range functions {
-			if fn.owner || fn.io { continue }
+			if fn.owner || fn.io {
+				continue
+			}
 			for callee := range fn.calls {
-				if next:=functions[callee]; next!=nil && !ownerNames[callee] && !next.result && next.io { fn.io=true; changed=true; break }
+				if next := functions[callee]; next != nil && !ownerNames[callee] && !next.result && next.io {
+					fn.io = true
+					changed = true
+					break
+				}
 			}
 		}
 	}
 	readers := map[string]bool{}
-	for key, fn := range functions { if fn.typed && fn.io && !fn.owner { readers[key]=true } }
+	for key, fn := range functions {
+		if fn.typed && fn.io && !fn.owner {
+			readers[key] = true
+		}
+	}
 	// The internal kernel closure is derived from the program's actual calls,
 	// not a maintained list of clauses, functions or file-name exemptions.
 	kernel := map[string]bool{}
 	var include func(string)
-	include=func(name string) { if !readers[name] || kernel[name] { return }; kernel[name]=true; for next:=range functions[name].calls { include(next) } }
-	for _, fn:=range functions { if fn.owner { for callee:=range fn.calls { include(callee) } } }
+	include = func(name string) {
+		if !readers[name] || kernel[name] {
+			return
+		}
+		kernel[name] = true
+		for next := range functions[name].calls {
+			include(next)
+		}
+	}
+	for _, fn := range functions {
+		if fn.owner {
+			for callee := range fn.calls {
+				include(callee)
+			}
+		}
+	}
 	require.NotEmpty(t, kernel)
 	var population []string
-	for name:=range kernel { population=append(population,functions[name].position+" "+name) }
+	for name := range kernel {
+		population = append(population, functions[name].position+" "+name)
+	}
 	sort.Strings(population)
-	t.Logf("program-owned relationship read kernels (%d):\n%s",len(population),strings.Join(population,"\n"))
+	t.Logf("program-owned relationship read kernels (%d):\n%s", len(population), strings.Join(population, "\n"))
 	for name, fn := range functions {
-		for callee:=range fn.calls {
+		for callee := range fn.calls {
 			if readers[callee] && !fn.owner && !kernel[name] {
-				t.Errorf("%s: %s bypasses relationshipAccessProgram execution boundary via %s",fn.position,name,callee)
+				t.Errorf("%s: %s bypasses relationshipAccessProgram execution boundary via %s", fn.position, name, callee)
 			}
 			if callee == "relationshipAccessFor" && name != "relationshipExecutionFor" && name != "relationshipLocalAccessSites" {
-				t.Errorf("%s: independent relationship plan consumer %s",fn.position,name)
+				t.Errorf("%s: independent relationship plan consumer %s", fn.position, name)
 			}
 		}
 	}

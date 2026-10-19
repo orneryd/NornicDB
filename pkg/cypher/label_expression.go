@@ -486,10 +486,12 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 // dynamicLabelOpenAt owns the token boundary used by label parsing, cache
 // dependencies and relationship-site compilation. A parameter is not a token.
 func dynamicLabelOpenAt(text string, at int) (open int, any, ok bool) {
-	if at < 0 || at+1 >= len(text) || text[at] != '$' { return 0, false, false }
-	open = at+1
+	if at < 0 || at+1 >= len(text) || text[at] != '$' {
+		return 0, false, false
+	}
+	open = at + 1
 	for _, name := range [...]string{"all", "any"} {
-		end := at+1+len(name)
+		end := at + 1 + len(name)
 		if end < len(text) && strings.EqualFold(text[at+1:end], name) && text[end] == '(' {
 			return end, name == "any", true
 		}

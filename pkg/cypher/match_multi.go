@@ -162,11 +162,18 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundEndNode := existing[matches.EndNode.variable]
 
 			var start, end []*storage.Node
-			if boundStartNode != nil { start = []*storage.Node{boundStartNode} }
-			if boundEndNode != nil { end = []*storage.Node{boundEndNode} }
+			if boundStartNode != nil {
+				start = []*storage.Node{boundStartNode}
+			}
+			if boundEndNode != nil {
+				end = []*storage.Node{boundEndNode}
+			}
 			execution := e.relationshipExecutionFor(ctx, pattern, "")
 			paths, err := execution.paths(ctx, matches, start, end, nil)
-			if err != nil { recordExpressionFailure(ctx, err); return nil, nil }
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, nil
+			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
 					continue
@@ -1412,11 +1419,18 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 		}
 	}
 	var start, end []*storage.Node
-	if node := nodes[match.StartNode.variable]; node != nil { start = []*storage.Node{node} }
-	if node := nodes[match.EndNode.variable]; node != nil { end = []*storage.Node{node} }
+	if node := nodes[match.StartNode.variable]; node != nil {
+		start = []*storage.Node{node}
+	}
+	if node := nodes[match.EndNode.variable]; node != nil {
+		end = []*storage.Node{node}
+	}
 	execution := e.relationshipExecutionFor(ctx, match.accessPattern, "")
 	paths, err := execution.paths(ctx, match, start, end, nil)
-	if err != nil { recordExpressionFailure(ctx, err); return false }
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
 
 	existing := binding(nodes)
 	for _, path := range paths {
@@ -1443,7 +1457,10 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 	}
 	execution := e.relationshipExecutionFor(ctx, match.accessPattern, "")
 	paths, err := execution.paths(ctx, match, []*storage.Node{start}, nil, nil)
-	if err != nil { recordExpressionFailure(ctx, err); return false }
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
 	end, bound := nodes[match.EndNode.variable]
 	for _, path := range paths {
 		if len(path.Nodes) == 0 {
