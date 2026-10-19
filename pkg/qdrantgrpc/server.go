@@ -284,15 +284,70 @@ func (s *Server) VisibleDatabases(ctx context.Context, candidates []string) ([]s
 	}
 	mode := s.databaseAccessModeResolver(roles)
 	if mode == nil {
-		return candidates, nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(candidates))
 	for _, name := range candidates {
-		if mode.CanSeeDatabase(name) {
+		if mode.CanSeeDatabase(name) && s.AllowDatabaseAccess(ctx, name, false) == nil {
 			out = append(out, name)
 		}
 	}
 	return out, nil
+}
+
+// AllowAllDatabaseAccess checks the population a full storage snapshot can
+// expose, including ordinary graph databases which are not Qdrant collections.
+func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
+	if s.databaseAccessModeResolver == nil {
+		return nil
+	}
+	var names []string
+	if store, ok := s.collections.(*databaseCollectionStore); ok {
+		for _, database := range store.dbManager.ListDatabases() {
+			if database != nil && database.Type != "system" {
+				names = append(names, database.Name)
+			}
+		}
+	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
+		names = lister.ListNamespaces()
+	} else {
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	}
+	for _, database := range names {
+		if database == "" || database == "system" {
+			continue
+		}
+		if err := s.AllowDatabaseAccess(ctx, database, false); err != nil {
+			return err
+		}
+		if err := s.AllowDatabaseAccess(ctx, database, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// authorizeRequestDatabase covers named and empty/batch requests before the
+// service dispatch. Per-statement and child-request checks remain at their
+// existing owners when a method can select more than one database.
+func (s *Server) authorizeRequestDatabase(ctx context.Context, req interface{}, fullMethod string) error {
+	key, _ := methodKey(fullMethod)
+	if key == "Snapshots/CreateFull" || key == "Snapshots/ListFull" || key == "Snapshots/DeleteFull" {
+		return s.AllowAllDatabaseAccess(ctx)
+	}
+	if selected, ok := req.(interface{ GetCollectionName() string }); ok {
+		permission, known := requiredPermissionForMethod(fullMethod)
+		if known {
+			write := permission != auth.PermRead && permission != auth.PermAdmin
+			// Snapshot deletion has global admin entitlement but a database
+			// write effect; snapshot creation/listing read the collection.
+			if key == "Snapshots/Delete" {
+				write = true
+			}
+			return s.AllowDatabaseAccess(ctx, selected.GetCollectionName(), write)
+		}
+	}
+	return nil
 }
 
 type contextKeyClaims struct{}
@@ -523,6 +578,9 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 						return nil, err
 					}
 					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+						return nil, err
+					}
 					return handler(ctx, req)
 				}
 				// If Basic Auth fails, fall through to try Bearer token
@@ -547,6 +605,9 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+		return nil, err
+	}
 	return handler(ctx, req)
 }
 
@@ -720,19 +781,36 @@ func methodKey(fullMethod string) (string, bool) {
 }
 
 var defaultMethodPermissions = map[string]auth.Permission{
+	"Points/DeleteVectorName":                  auth.PermWrite,
+	"Points/UpdateBatch":                       auth.PermWrite,
+	"Points/RecommendGroups":                   auth.PermRead,
+	"Points/CreateFieldIndex":                  auth.PermWrite,
+	"Points/CreateVectorName":                  auth.PermWrite,
+	"Collections/CreateShardKey":               auth.PermAdmin,
+	"Points/QueryBatch":                        auth.PermRead,
+	"Points/DeletePayload":                     auth.PermWrite,
+	"Collections/CollectionClusterInfo":        auth.PermRead,
+	"Collections/ListShardKeys":                auth.PermRead,
+	"NornicSearch/SearchText":                  auth.PermRead,
+	"Points/SearchGroups":                      auth.PermRead,
+	"Collections/DeleteShardKey":               auth.PermAdmin,
+	"Collections/UpdateCollectionClusterSetup": auth.PermAdmin,
+	"Points/DeleteFieldIndex":                  auth.PermWrite,
+	"Points/SearchMatrixOffsets":               auth.PermRead,
+	"Points/Query":                             auth.PermRead,
+	"Collections/ListCollectionAliases":        auth.PermRead,
+	"Collections/ListAliases":                  auth.PermRead,
+	"Points/Facet":                             auth.PermRead,
+	"Points/SearchMatrixPairs":                 auth.PermRead,
+	"Points/QueryGroups":                       auth.PermRead,
 	// Collections (admin/DDL-ish)
-	"Collections/Create":                   auth.PermCreate,
-	"Collections/Update":                   auth.PermCreate,
-	"Collections/UpdateAliases":            auth.PermCreate,
-	"Collections/CreateAlias":              auth.PermCreate,
-	"Collections/DeleteAlias":              auth.PermCreate,
-	"Collections/RenameAlias":              auth.PermCreate,
-	"Collections/Delete":                   auth.PermDelete,
-	"Collections/Get":                      auth.PermRead,
-	"Collections/List":                     auth.PermRead,
-	"Collections/GetAliases":               auth.PermRead,
-	"Collections/CollectionExists":         auth.PermRead,
-	"Collections/GetCollectionClusterInfo": auth.PermRead,
+	"Collections/Create":           auth.PermCreate,
+	"Collections/Update":           auth.PermCreate,
+	"Collections/UpdateAliases":    auth.PermCreate,
+	"Collections/Delete":           auth.PermDelete,
+	"Collections/Get":              auth.PermRead,
+	"Collections/List":             auth.PermRead,
+	"Collections/CollectionExists": auth.PermRead,
 
 	// Points (data plane)
 	"Points/Search":         auth.PermRead,
@@ -761,7 +839,6 @@ var defaultMethodPermissions = map[string]auth.Permission{
 	"Snapshots/ListFull":   auth.PermAdmin,
 	"Snapshots/Delete":     auth.PermAdmin,
 	"Snapshots/DeleteFull": auth.PermAdmin,
-	"Snapshots/Recover":    auth.PermAdmin,
 
 	// gRPC reflection is useful for debugging but should be gated.
 	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,

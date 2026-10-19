@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -38,6 +39,9 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.SplitN(path, "/", 2)
 	dbName := parts[0]
+	if !s.authorizeDatabaseOperation(w, r, dbName, auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+		return
+	}
 	if dbName == "system" {
 		s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.SystemDatabaseOverridesUnsupported())
 		return

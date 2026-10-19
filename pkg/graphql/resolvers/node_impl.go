@@ -3,11 +3,17 @@ package resolvers
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
+
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 )
 
 // NodeRelationships returns relationships for a node
 func (r *nodeResolver) nodeRelationships(ctx context.Context, obj *models.Node, types []string, direction *models.RelationshipDirection, limit *int) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	edges, err := r.getEdgesForNode(ctx, obj.ID)
 	if err != nil {
 		return nil, err
@@ -56,18 +62,30 @@ func (r *nodeResolver) nodeRelationships(ctx context.Context, obj *models.Node, 
 
 // NodeOutgoing returns outgoing relationships
 func (r *nodeResolver) nodeOutgoing(ctx context.Context, obj *models.Node, types []string, limit *int) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	dir := models.RelationshipDirectionOutgoing
 	return r.nodeRelationships(ctx, obj, types, &dir, limit)
 }
 
 // NodeIncoming returns incoming relationships
 func (r *nodeResolver) nodeIncoming(ctx context.Context, obj *models.Node, types []string, limit *int) ([]models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	dir := models.RelationshipDirectionIncoming
 	return r.nodeRelationships(ctx, obj, types, &dir, limit)
 }
 
 // NodeNeighbors returns neighboring nodes
 func (r *nodeResolver) nodeNeighbors(ctx context.Context, obj *models.Node, direction *models.RelationshipDirection, relationshipTypes []string, labels []string, limit *int) ([]models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	edges, err := r.getEdgesForNode(ctx, obj.ID)
 	if err != nil {
 		return nil, err
@@ -146,6 +164,10 @@ func (r *nodeResolver) nodeNeighbors(ctx context.Context, obj *models.Node, dire
 
 // NodeSimilar finds similar nodes
 func (r *nodeResolver) nodeSimilar(ctx context.Context, obj *models.Node, limit *int, threshold *float64) ([]models.SimilarNode, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	lim := 10
 	if limit != nil {
 		lim = *limit

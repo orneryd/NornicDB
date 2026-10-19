@@ -197,6 +197,39 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 	return resolved, nil
 }
 
+// authorizeDirectOperation is the boundary for GraphQL operations that may
+// return without executing a Cypher statement (including empty inputs).
+// Statement-driven fields retain the executor's statement permission owner.
+func (r *Resolver) authorizeDirectOperation(ctx context.Context, permissions ...auth.Permission) error {
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, permission := range permissions {
+		if !auth.RequestDatabasePermissionAllowed(ctx, database, permission) {
+			return &cypher.PermissionDeniedError{Permission: string(permission)}
+		}
+	}
+	return nil
+}
+
+// The embedding worker scans base storage across namespaces. Its trigger,
+// reset and queue statistics therefore require permission on every database,
+// even when the GraphQL request selects just one database.
+func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context) error {
+	for _, database := range r.dbManager.ListDatabases() {
+		if database == nil || database.Type == "system" {
+			continue
+		}
+		for _, permission := range []auth.Permission{auth.PermRead, auth.PermWrite} {
+			if !auth.RequestDatabasePermissionAllowed(ctx, database.Name, permission) {
+				return &cypher.PermissionDeniedError{Permission: string(permission)}
+			}
+		}
+	}
+	return nil
+}
+
 // readableDatabase is the database a direct GraphQL reader selects, resolved
 // as executeCypher resolves it, after the shared direct-read decision.
 func (r *Resolver) readableDatabase(ctx context.Context) (string, error) {

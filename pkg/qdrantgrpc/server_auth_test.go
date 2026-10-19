@@ -184,7 +184,7 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	require.NoError(t, err)
 	visible, err = srvNilMode.VisibleDatabases(context.Background(), []string{"db1", "db2"})
 	require.NoError(t, err)
-	require.Equal(t, []string{"db1", "db2"}, visible)
+	require.Empty(t, visible)
 
 	cfgAllow := DefaultConfig()
 	cfgAllow.DatabaseAccessModeResolver = func(roles []string) auth.DatabaseAccessMode {
