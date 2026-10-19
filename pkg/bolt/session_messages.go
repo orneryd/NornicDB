@@ -788,7 +788,6 @@ func (s *Session) handlePull(data []byte) error {
 	if err := s.fillLazyResult(&stream, options.limit); err != nil {
 		lazyFailure = err.(*lazyStatementError)
 	}
-	firstRecord := stream.index
 
 	// Stream records - use batched writing for large result sets
 	remaining := len(stream.result.Rows) - stream.index
@@ -798,7 +797,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database); err != nil {
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.delivery); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -811,7 +810,7 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row, stream.database); err != nil {
+			if err := s.writeRecordNoFlush(row, stream.database, stream.delivery); err != nil {
 				return err
 			}
 
@@ -832,7 +831,6 @@ func (s *Session) handlePull(data []byte) error {
 
 	// Check if more records available
 	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
-	deliveredRows := stream.result.Rows[firstRecord:stream.index]
 	s.updateResultStream(statementID, stream, hasMore)
 
 	// Clear result if done
@@ -900,7 +898,7 @@ func (s *Session) handlePull(data []byte) error {
 		if err := s.sendSuccessNoFlush(metadata); err != nil {
 			return err
 		}
-		return s.flushResultDelivery(stream, deliveredRows, true)
+		return s.flushResultDelivery(stream, true)
 	}
 
 	// When there are more records, send has_more: true
@@ -909,7 +907,7 @@ func (s *Session) handlePull(data []byte) error {
 	}); err != nil {
 		return err
 	}
-	return s.flushResultDelivery(stream, deliveredRows, false)
+	return s.flushResultDelivery(stream, false)
 }
 
 // boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
@@ -972,8 +970,8 @@ func (s *Session) handleDiscard(data []byte) error {
 		if options.limit > 0 && discardCount > options.limit-discarded {
 			discardCount = options.limit - discarded
 		}
-		if stream.delivery != nil {
-			stream.delivery.DiscardValues(stream.result.Rows[stream.index : stream.index+discardCount])
+		if options.limit > 0 && (stream.lazy != nil || discardCount < remaining) {
+			s.discardResultDelivery(stream, stream.result.Rows[stream.index:stream.index+discardCount])
 		}
 		stream.index += discardCount
 		discarded += discardCount
@@ -1537,7 +1535,7 @@ func (s *Session) sendRecord(fields []any) error {
 // It is used by PULL streaming to batch many records into a single flush
 // (the final SUCCESS message flushes everything). dbName is the database the
 // active result stream ran on (its entities carry its element ids, #745).
-func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
+func (s *Session) writeRecordNoFlush(fields []any, dbName string, delivery ...*resultstream.Delivery) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1548,6 +1546,9 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
 
 	err := s.writeMessageNoFlush(buf)
+	if err == nil && len(delivery) > 0 && delivery[0] != nil {
+		delivery[0].ObserveWritten(buf)
+	}
 	s.recordBuf = buf[:0]
 	return err
 }
@@ -1557,7 +1558,7 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
 // Uses buffer pooling to reduce allocations per record. dbName is the
 // database the active result stream ran on (#745 element ids).
-func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
+func (s *Session) sendRecordsBatched(rows [][]any, dbName string, delivery ...*resultstream.Delivery) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1582,6 +1583,9 @@ func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
 		if err := s.writeMessageNoFlush(buf); err != nil {
 			s.recordBuf = buf[:0]
 			return err
+		}
+		if len(delivery) > 0 && delivery[0] != nil {
+			delivery[0].ObserveWritten(buf)
 		}
 	}
 
@@ -1638,6 +1642,11 @@ func (s *Session) sendFailure(code, message string) error {
 }
 
 func (s *Session) sendFailureWithDetail(code, message, detail string) error {
+	if s.failedUntilReset {
+		// No PULL can deliver pending records in the failed state. Retire
+		// their batches without poisoning the connection tracker after RESET.
+		s.abandonContinuationResults()
+	}
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
