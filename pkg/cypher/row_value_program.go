@@ -744,13 +744,6 @@ func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interf
 		}
 		return nil, false, nil
 	}
-	if mayContainSubqueryExpression(expr) {
-		if function, argument, call := parseFunctionCallWS(expr); call {
-			if value, handled, resolved, err := e.evaluateRowGraphFunction(function, argument, values); handled {
-				return value, resolved, err
-			}
-		}
-	}
 	return e.evaluateRowFallback(expr, values)
 }
 

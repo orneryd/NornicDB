@@ -2,6 +2,8 @@
 // by embedded execution and Bolt, including the Neo4j 5.26 reference controls.
 package dynamiclabels
 
+import "strings"
+
 // Fixture is reset before each case so writes cannot affect later controls.
 const Fixture = "CREATE (a:Anchor {id: 0}), (n:A {id: 1}), (m:A:B {id: 2}), (b:B {id: 3}), (:C {id: 4}), (a)-[:R {p: 'x'}]->(n), (a)-[:R {p: 'x'}]->(m), (a)-[:R {p: 'x'}]->(b)"
 
@@ -13,6 +15,8 @@ type Case struct {
 	Rows [][]any
 	Code string
 	Cypher25 bool
+	ReferenceCode string
+	ReferenceMessage string
 }
 
 // Cases covers each dynamic-label spelling, value source, enclosing query form
@@ -94,10 +98,29 @@ func Cases() []Case {
 		if form == "$any($labels)" { rows = anyAB }
 		cases = append(cases, Case{Name:"where-25/"+form, Query:"CYPHER 25 "+query, Params:map[string]any{"labels":[]any{"A","B"}}, Rows:rows, Cypher25:true})
 	}
-	return append(cases,
+	cases = append(cases,
 		Case{Name:"CREATE/all", Query:"CREATE (n:$all($labels)) RETURN size(labels(n)) AS c", Params:map[string]any{"labels":[]any{"D","E"}}, Rows:[][]any{{int64(2)}}},
 		Case{Name:"MERGE/row", Query:"WITH $labels AS ls MERGE (n:$(ls) {id: 2}) RETURN n.id AS id", Params:map[string]any{"labels":[]any{"A","B"}}, Rows:one},
 		Case{Name:"optional/missing", Query:"OPTIONAL MATCH (n:$any(['Missing'])) RETURN n.id AS id", Rows:[][]any{{nil}}},
 		Case{Name:"profile/runtime", Query:"PROFILE WITH ['A','B'] AS ls MATCH (n:$any(ls)) RETURN n.id AS id ORDER BY id", Rows:anyAB},
 	)
+	// Neo4j 5.26's planner throws a class-cast error when a dynamic label's
+	// operand contains typed patterns. Preserve that reference observation and
+	// also compare the equivalent supported, untyped pattern against its rows.
+	for _, c := range cases {
+		untyped := strings.ReplaceAll(c.Query, "MATCH (:Anchor)", "MATCH (anchor) WHERE anchor.id = 0")
+		untyped = strings.ReplaceAll(untyped, "-[r:R]->", "-[r]->")
+		if untyped != c.Query {
+			c.Name += "/untyped"
+			c.Query = untyped
+			cases = append(cases, c)
+		}
+	}
+	for i := range cases {
+		if strings.Contains(cases[i].Query, "EXISTS { MATCH (:Anchor)") || strings.Contains(cases[i].Query, "-[r:R]->") {
+			cases[i].ReferenceCode = "Neo.DatabaseError.General.UnknownError"
+			cases[i].ReferenceMessage = "cannot be cast to class org.neo4j.cypher.internal.label_expressions.LabelExpression"
+		}
+	}
+	return cases
 }
