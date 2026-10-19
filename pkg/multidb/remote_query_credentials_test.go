@@ -6,11 +6,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRemoteQueryCredentialPersistence(t *testing.T) {
+	previous := observability.DefaultRedactKeys
+	observability.DefaultRedactKeys = append(append([]string(nil), previous...), "url_query_fixture_seal")
+	t.Cleanup(func() { observability.DefaultRedactKeys = previous })
 	const secret = "synthetic-query-credential-739261"
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "new", true: "legacy"}[legacy], func(t *testing.T) {
@@ -22,7 +26,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 			cfg.RemoteEngineFactory = func(ref ConstituentRef, token string) (storage.Engine, error) {
 				endpoint, err := url.Parse(ref.URI)
 				require.NoError(t, err)
-				for _, key := range []string{"password", "api_key", "X-Amz-Signature"} {
+				for _, key := range []string{"password", "api_key", "X-Amz-Signature", "fixture_seal"} {
 					require.Equal(t, []string{secret, secret}, endpoint.Query()[key])
 				}
 				fragment, err := url.ParseQuery(endpoint.Fragment)
@@ -34,7 +38,7 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 			manager, err := NewDatabaseManager(inner, cfg)
 			require.NoError(t, err)
 			ref := ConstituentRef{Alias: "r", Type: "remote", DatabaseName: "remote", AccessMode: "read", URI: "http://example.test?region=keep&password=" + secret + "&password=" + secret + "&api_key=" + secret + "&api_key=" + secret + "&X-Amz-Signature=" + secret + "&X-Amz-Signature=" + secret}
-			ref.URI += "#token=" + secret + "&token=" + secret
+			ref.URI += "&fixture_seal=" + secret + "&fixture_seal=" + secret + "#token=" + secret + "&token=" + secret + "&fixture_seal=" + secret
 			if legacy {
 				manager.databases["probe"] = &DatabaseInfo{Name: "probe", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
