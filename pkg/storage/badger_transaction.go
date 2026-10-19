@@ -4738,10 +4738,18 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 	}
 	nextWriter := tx.badgerDB.newTxnAt(badgerReadTs, true)
 	if tx.badgerTx != nil && tx.engine.idDict != nil {
-		if preserveWrites { tx.engine.idDict.moveTxnCounters(tx.badgerTx, nextWriter) } else { tx.engine.idDict.discardTxnCounters(tx.badgerTx) }
+		if preserveWrites {
+			tx.engine.idDict.moveTxnCounters(tx.badgerTx, nextWriter)
+		} else {
+			tx.engine.idDict.discardTxnCounters(tx.badgerTx)
+		}
 	}
 	if tx.badgerTx != nil && tx.engine.propKeyDict != nil {
-		if preserveWrites { tx.engine.propKeyDict.moveTxnCounters(tx.badgerTx, nextWriter) } else { tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx) }
+		if preserveWrites {
+			tx.engine.propKeyDict.moveTxnCounters(tx.badgerTx, nextWriter)
+		} else {
+			tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx)
+		}
 	}
 	if tx.badgerTx != nil {
 		tx.badgerTx.Discard()

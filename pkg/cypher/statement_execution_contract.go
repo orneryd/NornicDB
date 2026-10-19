@@ -32,10 +32,13 @@ func readStatementExecutionContract(query string) (statementExecutionContract, e
 	}
 	visit(structure)
 	visitStructuredProcedureCalls(structure, func(spec ProcedureSpec, _ string) bool {
-		contract.writes = contract.writes || spec.writes()
+		// SCHEMA procedures keep their existing schema-transaction owner;
+		// this contract admits registered data WRITE procedures.
+		fixedWrite := spec.Mode == ProcedureModeWrite
+		contract.writes = contract.writes || fixedWrite
 		contract.dynamic = contract.dynamic || spec.ExecutesStatements
 		contract.transaction = contract.transaction || !spec.OwnsTransactions &&
-			(spec.writes() || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
+			(fixedWrite || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
 		return false
 	})
 	return contract, nil

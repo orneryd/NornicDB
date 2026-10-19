@@ -6,7 +6,11 @@ import "context"
 // resolved statement modes use readStatementExecutionContract instead.
 func (e *StorageExecutor) invalidateResultCacheForQuery(info *QueryInfo) {
 	if info.IsWriteQuery && e.cache != nil {
-		if len(info.Labels) > 0 { e.cache.InvalidateLabels(info.Labels) } else { e.cache.Invalidate() }
+		if len(info.Labels) > 0 {
+			e.cache.InvalidateLabels(info.Labels)
+		} else {
+			e.cache.Invalidate()
+		}
 	}
 }
 
