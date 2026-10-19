@@ -56,6 +56,7 @@ func (domain graphIdentityDomain) foreignQualifier(database string) bool {
 }
 
 func (e *StorageExecutor) FunctionStorage(database string) (storage.Engine,error) {
+ if database == "" && e.graphIdentityScope != nil { database=e.graphIdentityScope.database }
  if database == "" || database == storageDatabaseName(e.storage) || e.graphIdentityScope == nil || e.graphIdentityScope.manager == nil { return e.storage,nil }
  scope := e.graphIdentityScope
  scope.once.Do(func(){
@@ -70,6 +71,7 @@ func (e *StorageExecutor) FunctionStorage(database string) (storage.Engine,error
 
 func graphFunctionDatabase(ctx cypherfn.Context) string {
  if ctx.Database != "" { return ctx.Database }
+ if executor,ok := ctx.Graphs.(*StorageExecutor); ok && executor.graphIdentityScope != nil { return executor.graphIdentityScope.database }
  return storageDatabaseName(ctx.Storage)
 }
 func (domain graphIdentityDomain) preserveQualifiers(left,right interface{}) bool {
