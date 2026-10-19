@@ -55,6 +55,18 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         if err != nil { t.Fatal(err) }
         files = append(files, file)
     }
+    // A fresh reader with an unrelated name, an alias and inferred locals must
+    // be caught by the same compiler graph. It exists only in this AST fixture,
+    // never in production source or the executable test package.
+    const negativeName = "identity-boundary-negative-control.generated"
+    negative,err:=parser.ParseFile(positions,negativeName,
+        "package cypher\nimport storage \"github.com/orneryd/nornicdb/pkg/storage\"\n"+
+        "type identityBoundaryAlias = storage.Node\n"+
+        "func unrelatedIdentityReader(input *identityBoundaryAlias, relationship *storage.Edge) []string {\n"+
+        "candidate := input; inferred := relationship\n"+
+        "return []string{string(candidate.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n",0)
+    if err!=nil {t.Fatal(err)}
+    files=append(files,negative)
     info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
     configuration := types.Config{
         Importer: importer.ForCompiler(positions, "gc", func(path string) (io.ReadCloser, error) {
@@ -75,6 +87,7 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         return named.Obj().Pkg().Path() == "github.com/orneryd/nornicdb/pkg/storage" && (named.Obj().Name() == "Node" || named.Obj().Name() == "Edge")
     }
     var findings []string
+    negativeFindings:=0
     for _, file := range files {
         source := positions.Position(file.Pos()).Filename
         if filepath.Base(source) == "graph_entity_identity.go" { continue }
@@ -102,11 +115,14 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
             // The sole deferred row-similarity adapter is the accepted key-domain
             // exception. Its projection/filter siblings receive no exemption.
             if filepath.Base(source) == "gds_node_similarity_rows.go" && owner == "similarityNodeID" { continue }
+            if source==negativeName {negativeFindings++;continue}
             findings = append(findings, fmt.Sprintf("%s: %s reads native %s.%s outside identity owner", positions.Position(selector.Pos()), owner, selection.Recv(), field))
         }
     }
     sort.Strings(findings)
+    if negativeFindings!=4 {t.Fatalf("typed identity guard missed its fresh aliased/inferred reader: caught %d/4 native field reads",negativeFindings)}
+    t.Log("negative control: all 4 native field reads caught through aliased and inferred receivers")
     for _, finding := range findings { t.Log(finding) }
     if len(findings) != 0 { t.Fatalf("%d native identity consumers still bypass the owner", len(findings)) }
-    t.Logf("complete compiler inventory: %d production files, no native identity owner bypasses", len(files))
+    t.Logf("complete compiler inventory: %d production files, no native identity owner bypasses", len(files)-1)
 }
