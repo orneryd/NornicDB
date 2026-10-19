@@ -581,7 +581,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// Look up the schema entry BEFORE dropping it so we can also tear down
 	// any in-memory index data the schema entry was the only handle for.
 	// Vector indexes carry their declared (label, property) — when the user
-	// drops one we must also delete every node's property vector for <property>
+	// drops one we must also delete every "<nodeID>-prop-<property>" vector
 	// from the search service, otherwise a recreate-from-scratch of the same
 	// index inherits orphaned vectors that still match queries.
 	var droppedVectorIndex *storage.VectorIndex
