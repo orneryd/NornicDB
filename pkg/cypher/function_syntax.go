@@ -224,14 +224,14 @@ type functionSyntax struct {
 	// Delimiter consumers read only the outer expression; nested arguments
 	// have their own spans and do not need duplicate punctuation inventories.
 	rootPunctuation []int
-	text       string
-	calls      []functionCallSpan
-	groups     []syntaxGroup
-	arguments  []syntaxSpan
-	comments   []syntaxSpan
-	quoted     []syntaxSpan
-	subqueries []syntaxSpan
-	leading    int
+	text            string
+	calls           []functionCallSpan
+	groups          []syntaxGroup
+	arguments       []syntaxSpan
+	comments        []syntaxSpan
+	quoted          []syntaxSpan
+	subqueries      []syntaxSpan
+	leading         int
 }
 
 type functionSyntaxKey struct {
