@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 )
 
@@ -25,4 +26,21 @@ func TestFabricGrammarRuleOwnership(t *testing.T) {
 	q = ReadQueryStructure("CALL { USE comp.one RETURN 1 AS k } IN /* USE */ TRANSACTIONS OF 10 ROWS RETURN k")
 	require.NoError(t, q.Err)
 	require.True(t, q.Clauses[0].InTransactions)
+}
+
+func TestFabricStructureRenderingSourceSpans(t *testing.T) {
+	for _, text := range []string{"  WITH 7 AS union RETURN coalesce(union,0) /* CALL */", "RETURN 'USE UNION' AS k ORDER\n/* WITH */ BY k", "NODETACH DELETE n"} {
+		q := ReadQueryStructure(text)
+		require.NoError(t, q.Err)
+		var out strings.Builder
+		offset := 0
+		for _, edit := range q.LocalEdits {
+			require.GreaterOrEqual(t, edit.Start, offset)
+			out.WriteString(text[offset:edit.Start])
+			out.WriteString(edit.Text)
+			offset = edit.End
+		}
+		out.WriteString(text[offset:])
+		require.Equal(t, q.LocalText, out.String(), "structural rendering and its source map agree")
+	}
 }

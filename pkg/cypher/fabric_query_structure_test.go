@@ -73,6 +73,12 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 		{"unwind_binding", "UNWIND [7] AS %[1]s RETURN %[1]s AS k"},
 		{"foreach_binding", "FOREACH (%[1]s IN [7] | CREATE (:FabricStructureForeach {v:%[1]s})) RETURN 7 AS k"},
 		{"comprehension_binding", "RETURN [%[1]s IN [7] | %[1]s][0] AS k"},
+		{"reduce_accumulator", "RETURN reduce(%[1]s=0,x IN [7] | %[1]s+x) AS k"},
+		{"reduce_element", "RETURN reduce(acc=0,%[1]s IN [7] | acc+%[1]s) AS k"},
+		{"predicate_binding", "RETURN CASE WHEN any(%[1]s IN [7] WHERE %[1]s=7) THEN 7 ELSE 0 END AS k"},
+		{"map_value", "WITH 7 AS %[1]s RETURN {v:%[1]s}.v AS k"},
+		{"map_shorthand", "WITH {v:0} AS m,7 AS %[1]s RETURN m{%[1]s}.%[1]s AS k"},
+		{"pattern_comprehension", "CREATE (s)-[:FabricCompRel]->(:FabricCompTarget {v:7}) RETURN [(s)-[:FabricCompRel]->(%[1]s) | %[1]s.v][0] AS k"},
 		{"property_and_map_key", "WITH {%[1]s:7} AS m RETURN m.%[1]s AS k"},
 		{"map_projection", "WITH {%[1]s:7} AS m RETURN m{.%[1]s}.%[1]s AS k"},
 		{"pattern_binding", "MATCH (%[1]s:FabricStructureName) RETURN %[1]s.v AS k"},
@@ -105,13 +111,16 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 					}
 					for _, position := range []struct{ name, query string }{
 						{"import_after_distinct", "USE comp WITH 7 AS %[1]s WITH DISTINCT %[1]s CALL { WITH %[1]s USE comp.one RETURN %[1]s AS k } RETURN k"},
+						{"call_scope", "USE comp WITH 7 AS %[1]s CALL (%[1]s) { USE comp.one RETURN %[1]s AS k } RETURN k"},
+						{"call_scope_star", "USE comp WITH 7 AS %[1]s CALL (*) { USE comp.one RETURN %[1]s AS k } RETURN k"},
+						{"dynamic_graph_argument", "USE comp WITH 'comp.one' AS %[1]s CALL { WITH %[1]s USE graph.byName(%[1]s) RETURN 7 AS k } RETURN k"},
 						{"final_projection", "USE comp CALL { USE comp.one RETURN 7 AS %[1]s } RETURN %[1]s AS k"},
 						{"final_distinct", "USE comp CALL { USE comp.one RETURN 7 AS %[1]s } RETURN DISTINCT %[1]s AS k"},
 						{"final_order", "USE comp CALL { USE comp.one RETURN 7 AS %[1]s } RETURN %[1]s ORDER BY %[1]s DESC SKIP 0 LIMIT 1"},
 					} {
 						t.Run(fmt.Sprintf("%s/quoted_%v/%s", word, quoted, position.name), func(t *testing.T) {
 							query := fmt.Sprintf(position.query, name)
-							fabricCompareGrammarCase(t, base, driver, query, strings.NewReplacer("USE comp.one ", "", "USE comp ", "").Replace(query))
+							fabricCompareGrammarCase(t, base, driver, query, strings.NewReplacer("USE graph.byName("+name+") ", "", "USE comp.one ", "", "USE comp ", "").Replace(query))
 						})
 					}
 				}
@@ -153,6 +162,7 @@ func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.
 			require.NoError(t, endErr)
 		}
 		require.NoError(t, err, "explicit=%v query=%s", explicit, query)
+		require.Equal(t,ref.Keys,result.Columns,"explicit=%v query=%s",explicit,query)
 		fabricStructureRows(t, result.Rows, string(want))
 	}
 }
