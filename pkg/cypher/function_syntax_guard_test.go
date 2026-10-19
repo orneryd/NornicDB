@@ -31,7 +31,7 @@ func TestFunctionSyntaxOwnerGuard(t *testing.T) {
  }
 }
 
-var rawFunctionPrefix=regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9.]*[ \t]*\($`)
+var rawFunctionPrefix=regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9.]*[ \t]*\(`)
 var callTextInput=regexp.MustCompile(`(?i)(expr|arg|param|signature|call|content|^text$|^s$)`)
 
 func alternateFunctionSyntax(body ast.Node) []string {
@@ -58,6 +58,10 @@ func alternateFunctionSyntax(body ast.Node) []string {
    if expression,ok:=n.Args[1].(*ast.BinaryExpr);ok && expression.Op==token.ADD {
     if literal,ok:=expression.Y.(*ast.BasicLit);ok {value,_:=strconv.Unquote(literal.Value);if value=="(" {reasons["independent function-prefix reader"]=true}}
    }
+   ast.Inspect(n.Args[1],func(child ast.Node)bool {
+    if literal,ok:=child.(*ast.BasicLit);ok && literal.Kind==token.STRING {value,_:=strconv.Unquote(literal.Value);if rawFunctionPrefix.MatchString(value) {reasons["independent function-prefix reader"]=true}}
+    return true
+   })
    literal,ok:=n.Args[1].(*ast.BasicLit);if !ok {return true}
    value,_:=strconv.Unquote(literal.Value)
    if rawFunctionPrefix.MatchString(value) {reasons["independent function-prefix reader"]=true}
