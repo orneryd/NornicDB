@@ -29,7 +29,7 @@ func codeIntelReadFixture(t testing.TB, nodes, edges int) *StorageExecutor {
 }
 
 func TestCodeIntelLabelledCountAllocations(t *testing.T) {
-	const edges = 8192
+	const edges = 65536
 	exec := codeIntelReadFixture(t, 256, edges)
 	runtime.GC()
 	var before, after runtime.MemStats
@@ -42,7 +42,7 @@ func TestCodeIntelLabelledCountAllocations(t *testing.T) {
 	t.Logf("labelled count: %d allocated bytes for %d edges", allocated, edges)
 	// The input is deliberately much larger than the scalar output. This
 	// ceiling catches retained paths/binding maps and decoding node bodies.
-	require.Less(t, allocated, uint64(32<<20))
+	require.Less(t, allocated, uint64(96<<20))
 }
 
 func TestCodeIntelRelationshipReadSemantics(t *testing.T) {
@@ -99,7 +99,7 @@ func BenchmarkCodeIntelRelationshipReads(b *testing.B) {
 	}
 }
 func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
-	const edges = 8192
+	const edges = 65536
 	exec := codeIntelReadFixture(t, 256, edges)
 	runtime.GC()
 	var before, blocked runtime.MemStats
