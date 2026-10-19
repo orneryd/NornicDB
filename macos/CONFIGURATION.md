@@ -18,9 +18,12 @@ Setup has three steps:
    and Heimdall. Each service has its own provider, model, endpoint and credential.
    Embeddings also expose dimensions, workers and chunking. Remote model IDs are
    kept exactly as entered; GGUF downloads apply to local models only.
-   **Download default local models** is available directly on this page and in
-   Settings → AI services. It uses the same downloader as the tray menu for
-   BGE-M3, BGE reranker and Qwen, without changing provider/model selections.
+   Each enabled service with **Local** selected shows its own **Download default
+   model** button: BGE-M3 for Embeddings, BGE reranker for Reranking, and Qwen
+   for Heimdall inference. Each button downloads only that service’s model,
+   without changing provider/model selections. The tray retains its download-all
+   action; all paths share the same downloader. Failed downloads preserve any
+   existing valid model.
 3. **Review:** inspect the selected services and startup overrides, then explicitly
    save and start the service. The wizard closes after launch submission rather than
    waiting for readiness. The tray stays yellow while the server process initializes,
