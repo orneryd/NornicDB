@@ -41,63 +41,7 @@ func findMatchingCallParen(s string, open int) int {
 }
 
 func splitProcedureTopLevelComma(s string) []string {
-	var out []string
-	var cur strings.Builder
-	paren := 0
-	bracket := 0
-	brace := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, ch := range s {
-		if inQuote {
-			cur.WriteRune(ch)
-			if ch == quoteChar && !isBackslashEscaped(s, i) {
-				inQuote = false
-				quoteChar = 0
-			}
-			continue
-		}
-
-		switch ch {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = ch
-			cur.WriteRune(ch)
-		case '(':
-			paren++
-			cur.WriteRune(ch)
-		case ')':
-			paren--
-			cur.WriteRune(ch)
-		case '[':
-			bracket++
-			cur.WriteRune(ch)
-		case ']':
-			bracket--
-			cur.WriteRune(ch)
-		case '{':
-			brace++
-			cur.WriteRune(ch)
-		case '}':
-			brace--
-			cur.WriteRune(ch)
-		case ',':
-			if paren == 0 && bracket == 0 && brace == 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			} else {
-				cur.WriteRune(ch)
-			}
-		default:
-			cur.WriteRune(ch)
-		}
-	}
-
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+ return readFunctionSyntax(s).appendArguments(nil,0,false)
 }
 
 func parseProcedureArgLiteral(s string) (interface{}, error) {

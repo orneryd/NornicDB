@@ -163,11 +163,5 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
-	quote := expression[start]
-	for index := start + 1; index < len(expression); index++ {
-		if expression[index] == quote && !isBackslashEscaped(expression, index) {
-			return index + 1
-		}
-	}
-	return len(expression)
+ return skipCypherQuotedText(expression,start,expression[start])
 }

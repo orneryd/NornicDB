@@ -26,35 +26,7 @@ func splitTopLevelComma(input string) []string {
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
-	if strings.TrimSpace(input) == "" {
-		return parts
-	}
-
-	start := 0
-	depth := 0
-
-	for i := 0; i < len(input); i++ {
-		switch input[i] {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(input, i, input[i]) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, strings.TrimSpace(input[start:i]))
-				start = i + 1
-			}
-		}
-	}
-
-	if s := strings.TrimSpace(input[start:]); s != "" {
-		parts = append(parts, s)
-	}
-	return parts
+ return readFunctionSyntax(input).appendArguments(parts,0,false)
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {
