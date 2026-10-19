@@ -23,6 +23,16 @@ func queryMemoryPolicyFixture(t testing.TB) (*StorageExecutor, *storage.BadgerEn
 	}))
 	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
 		Name: "facts", TargetLabels: []string{"Fact"}, ProfileRef: "age",
+		PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{{PropertyPath: "secret", HalfLifeSeconds: 1}},
+	}))
+	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
+		Name: "relationships", Scope: knowledgepolicy.ScopeEdge, Function: knowledgepolicy.DecayFunctionExponential,
+		HalfLifeSeconds: 3600 * 24 * 365, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
+		Enabled: true, DecayEnabled: true,
+	}))
+	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
+		Name: "relationships", IsEdge: true, TargetEdgeType: "REL", ProfileRef: "relationships",
+		PropertyRules: []knowledgepolicy.DecayProfilePropertyRule{{PropertyPath: "secret", HalfLifeSeconds: 1}},
 	}))
 	require.NoError(t, schema.CreatePromotionProfile(knowledgepolicy.PromotionProfileDef{
 		Name: "keep", Scope: knowledgepolicy.ScopeNode, Multiplier: 10, ScoreFloor: 0.5, ScoreCap: 1, Enabled: true,
@@ -39,11 +49,12 @@ func queryMemoryPolicyFixture(t testing.TB) (*StorageExecutor, *storage.BadgerEn
 		{ID: "policy:internal", Labels: []string{"Fact", "_meta"}, Properties: map[string]interface{}{"promote": true, "display": "internal"}},
 	} {
 		node.CreatedAt, node.UpdatedAt = old, old
+		node.Properties["secret"] = "hidden"
 		_, err := base.CreateNode(node)
 		require.NoError(t, err)
 	}
 	for _, start := range []storage.NodeID{"policy:a", "policy:expired", "policy:internal"} {
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(string(start) + "-edge"), StartNode: start, EndNode: "policy:b", Type: "REL"}))
+		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(string(start) + "-edge"), StartNode: start, EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"secret": "hidden"}, CreatedAt: old, UpdatedAt: old}))
 	}
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "policy"))
 	exec.cache = nil

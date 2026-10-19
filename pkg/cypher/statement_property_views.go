@@ -1,15 +1,21 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"reflect"
 	"slices"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
-// Read-only statements can reuse immutable property projections. Write statements
-// deliberately omit this memo: a mutation must immediately observe its new body.
-// The executor clone, maps and scoring instant belong to one statement only.
+// Read-only expressions reuse immutable projections until their public row is
+// published. The scoring instant belongs to the statement, but bodies do not.
+// The additional budget bounds work between published rows (e.g. filtered
+// candidates). Write statements omit this memo and observe their new body.
+const statementPropertyViewBytes = 1 << 20
+const statementPropertyViewEntries = 1024
+
 type statementPropertyViews struct {
 	mu         sync.Mutex
 	projection storage.QueryResultProjection
@@ -17,6 +23,7 @@ type statementPropertyViews struct {
 	edges      map[*storage.Edge]*storage.Edge
 	nodeBodies map[storage.NodeID]nodePropertyViewBody
 	edgeBodies map[storage.EdgeID]edgePropertyViewBody
+	bytes      int64
 }
 type nodePropertyViewBody struct {
 	source     *storage.Node
@@ -40,6 +47,34 @@ func (e *StorageExecutor) withStatementPropertyViews(query string) *StorageExecu
 	return scoped
 }
 
+func (v *statementPropertyViews) clear() {
+	clear(v.nodes)
+	clear(v.edges)
+	clear(v.nodeBodies)
+	clear(v.edgeBodies)
+	v.bytes = 0
+}
+
+func (v *statementPropertyViews) releaseRow() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.clear()
+}
+
+// reserve runs under mu, before retaining either source pointers or detached
+// snapshots. Oversized bodies may be projected for the current expression but
+// never enter the memo. This is a cache estimate, not a statement memory limit.
+func (v *statementPropertyViews) reserve(bytes int64) bool {
+	if bytes > statementPropertyViewBytes {
+		return false
+	}
+	if v.bytes+bytes > statementPropertyViewBytes || len(v.nodes)+len(v.edges) >= statementPropertyViewEntries {
+		v.clear()
+	}
+	v.bytes += bytes
+	return true
+}
+
 func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	if source == nil {
 		return nil
@@ -48,6 +83,20 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	defer v.mu.Unlock()
 	if cached := v.nodes[source]; cached != nil {
 		return cached
+	}
+	// Include source, detached scoring body, projected map and map/key overhead.
+	bytes := int64(512+len(source.ID)) + 3*util.EstimateValueBytes(source.Properties) + util.EstimateValueBytes(source.Labels) + util.EstimateValueBytes(source.EmbedMeta)
+	for name, vector := range source.NamedEmbeddings {
+		bytes += int64(64 + len(name) + 4*cap(vector))
+	}
+	for _, vector := range source.ChunkEmbeddings {
+		bytes += int64(24 + 4*cap(vector))
+	}
+	cache := v.reserve(bytes)
+	if !cache {
+		out := *source
+		out.Properties = v.projection.NodeProperties(source)
+		return &out
 	}
 	if v.nodes == nil {
 		v.nodes = make(map[*storage.Node]*storage.Node)
@@ -77,6 +126,12 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 	defer v.mu.Unlock()
 	if cached := v.edges[source]; cached != nil {
 		return cached
+	}
+	bytes := int64(512+len(source.ID)+len(source.StartNode)+len(source.EndNode)+len(source.Type)) + 3*util.EstimateValueBytes(source.Properties)
+	if !v.reserve(bytes) {
+		out := *source
+		out.Properties = v.projection.EdgeProperties(source)
+		return &out
 	}
 	if v.edges == nil {
 		v.edges = make(map[*storage.Edge]*storage.Edge)
