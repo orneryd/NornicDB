@@ -12,12 +12,13 @@ import (
 type relationshipAccessProgram struct {
 	query string
 	sites []*relationshipAccessTemplate
-	byID map[string]*relationshipAccessTemplate
+	byID  map[string]*relationshipAccessTemplate
+	graphQueries []string
 }
 
 type relationshipAccessTemplate struct {
 	id, pattern, where string
-	occurrences int64
+	occurrences        int64
 }
 
 type relationshipAccessProgramKey struct{}
@@ -53,18 +54,26 @@ func withRelationshipAccessProgram(ctx context.Context, query string) context.Co
 // independent of storage and never evaluates expressions, including write tokens.
 func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 	program := &relationshipAccessProgram{query: query, byID: make(map[string]*relationshipAccessTemplate)}
-	seen := program.byID
+	seen := make(map[string]*relationshipAccessTemplate)
+	graphDepth := 0
 	add := func(pattern, where string) {
 		if !patternHasRelationship(pattern) {
 			return
 		}
 		id := relationshipAccessID(pattern, where)
+		if graphDepth > 0 {
+			if program.byID[id] == nil {
+				program.byID[id] = &relationshipAccessTemplate{id: id, pattern: pattern, where: where}
+			}
+			return
+		}
 		if site := seen[id]; site != nil {
 			site.occurrences++
 			return
 		}
 		site := &relationshipAccessTemplate{id: id, pattern: pattern, where: where, occurrences: 1}
 		seen[id] = site
+		program.byID[id] = site
 		program.sites = append(program.sites, site)
 	}
 	var statement func(string)
@@ -133,7 +142,12 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 	statement = func(text string) {
 		// USE selects a view, not a different access-site grammar.
 		if _, body, hasUse, err := parseUseClause(text, true); hasUse && err == nil {
+			if graphDepth == 0 {
+				program.graphQueries = append(program.graphQueries, text)
+			}
+			graphDepth++
 			statement(body)
+			graphDepth--
 			return
 		}
 		if branches, _, _, ok := parseTopLevelUnionBranches(text); ok && len(branches) > 1 {
@@ -183,4 +197,3 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 	statement(query)
 	return program
 }
-
