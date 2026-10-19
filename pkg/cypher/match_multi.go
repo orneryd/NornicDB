@@ -405,7 +405,7 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 		if edge == nil {
 			continue
 		}
-		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Database: edge.Database, Properties: edge.Properties}
 	}
 	return view
 }
