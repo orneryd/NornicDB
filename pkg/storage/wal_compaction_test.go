@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,23 @@ func (e *snapshotErrorEngine) AllEdges() ([]*Edge, error) {
 		return nil, e.allEdgesErr
 	}
 	return e.MemoryEngine.AllEdges()
+}
+
+// A snapshot collects stored nodes and relationships (CollectStoredNodes,
+// CollectStoredEdges): the fake fails those reads as it fails AllNodes and
+// AllEdges.
+func (e *snapshotErrorEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
+	if e.allNodesErr != nil {
+		return e.allNodesErr
+	}
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
+}
+
+func (e *snapshotErrorEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, fn func(*Edge) error) error {
+	if e.allEdgesErr != nil {
+		return e.allEdgesErr
+	}
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, fn)
 }
 
 // TestWALCompactionConfig tests WAL configuration options for compaction.
