@@ -1603,8 +1603,10 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 
 	// Endpoint seeks use the same source selection as ordinary MATCH seeks.
 	// Ambiguous composite raw IDs stay on the normal predicate path.
-	lookupID,found,applicable := e.entitySeekLookup(idValue,"4",kind)
-	if !applicable || !found { return "",nil }
+	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
+	if !applicable || !found {
+		return "", nil
+	}
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {

@@ -15,9 +15,11 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			prefix := ""
-			if !namespaced { prefix = "raw:" }
-			same,localTarget := NodeID(prefix+"same"),NodeID(prefix+"target")
-			relation := EdgeID(prefix+"same-rel")
+			if !namespaced {
+				prefix = "raw:"
+			}
+			same, localTarget := NodeID(prefix+"same"), NodeID(prefix+"target")
+			relation := EdgeID(prefix + "same-rel")
 			engines := make(map[string]Engine)
 			names := map[string]string{"one": "one", "one_alias": "one", "two": "two"}
 			modes := map[string]string{"one": "read_write", "one_alias": "read", "two": "read_write"}
@@ -25,8 +27,8 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			for _, database := range []string{"one", "two"} {
 				var engine Engine = NewMemoryEngine()
 				if namespaced {
-					base,err := NewBadgerEngineInMemory()
-					require.NoError(t,err)
+					base, err := NewBadgerEngineInMemory()
+					require.NoError(t, err)
 					engine = NewNamespacedEngine(base, database)
 				}
 				t.Cleanup(func() { _ = engine.Close() })
@@ -36,10 +38,12 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 					require.NoError(t, err)
 				}
 				require.NoError(t, engine.CreateEdge(&Edge{ID: relation, StartNode: same, EndNode: localTarget, Type: "R"}))
-				if provider,ok := engine.(MVCCHeadEngine); ok {
-					head,err := provider.GetEdgeCurrentHead(relation)
-					require.NoError(t,err)
-					if head.Version.Compare(version)>0 { version = head.Version }
+				if provider, ok := engine.(MVCCHeadEngine); ok {
+					head, err := provider.GetEdgeCurrentHead(relation)
+					require.NoError(t, err)
+					if head.Version.Compare(version) > 0 {
+						version = head.Version
+					}
 				}
 			}
 			engines["one_alias"] = engines["one"]
@@ -55,15 +59,15 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			for label, read := range readers {
 				t.Run(label, func(t *testing.T) {
 					for _, database := range []string{"one", "two"} {
-						node, err := read(NodeID("4:" + database + ":"+string(same)))
+						node, err := read(NodeID("4:" + database + ":" + string(same)))
 						require.NoError(t, err)
 						require.Equal(t, same, node.ID)
 						require.Equal(t, database, node.Database)
 						require.Equal(t, database, node.Properties["db"])
 					}
-					_, err := read(NodeID("4:missing:"+string(same)))
+					_, err := read(NodeID("4:missing:" + string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
-					_, err = read(NodeID("5:one:"+string(same)))
+					_, err = read(NodeID("5:one:" + string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
 				})
 			}
@@ -87,11 +91,11 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 				require.Equal(t, 1, composite.GetOutDegree(source))
 				require.Equal(t, 1, composite.GetInDegree(target))
 				if namespaced {
-					_,err := composite.GetNodeCurrentHead(source)
-					require.NoError(t,err)
+					_, err := composite.GetNodeCurrentHead(source)
+					require.NoError(t, err)
 				}
 				for _, read := range []func(EdgeID) (*Edge, error){composite.GetEdge, composite.GetEdgeLatestEffective, composite.GetEdgeLatestVisible} {
-					edge, err := read(EdgeID("5:" + database + ":"+string(relation)))
+					edge, err := read(EdgeID("5:" + database + ":" + string(relation)))
 					require.NoError(t, err)
 					require.Equal(t, database, edge.Database)
 				}
@@ -99,8 +103,8 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			edges, err := composite.GetEdgesBetween(NodeID("4:one:"+string(same)), NodeID("4:two:"+string(localTarget)))
 			require.NoError(t, err)
 			require.Empty(t, edges)
-			one,two := NodeID("4:one:"+string(same)),NodeID("4:two:"+string(same))
-			batch, err := composite.BatchGetNodes([]NodeID{one,two,NodeID("4:missing:"+string(same))})
+			one, two := NodeID("4:one:"+string(same)), NodeID("4:two:"+string(same))
+			batch, err := composite.BatchGetNodes([]NodeID{one, two, NodeID("4:missing:" + string(same))})
 			require.NoError(t, err)
 			require.Len(t, batch, 2)
 			require.Equal(t, "one", batch[one].Database)
