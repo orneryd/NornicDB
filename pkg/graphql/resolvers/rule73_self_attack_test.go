@@ -134,7 +134,7 @@ func TestRule73SelfAttackEveryGraphQLDataResolver(t *testing.T) {
 		{"write-only-default", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic"}, false, true, false), func(class rule73GraphQLClass) bool { return class == rule73Write }},
 		{"write-only-named", rule73GraphQLContext("", map[string]string{"rule73_named": "rule73_named"}, false, true, false), func(class rule73GraphQLClass) bool { return class == rule73Write }},
 		{"no-access", rule73GraphQLContext("", nil, false, false, false), func(rule73GraphQLClass) bool { return false }},
-		{"admin", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic", "rule73_named": "rule73_named"}, true, true, true), func(rule73GraphQLClass) bool { return true }},
+		{"admin", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic", "rule73_named": "rule73_named", "system": "system"}, true, true, true), func(rule73GraphQLClass) bool { return true }},
 		{"auth-off", auth.WithRequestAuthenticationDisabled(context.Background()), func(rule73GraphQLClass) bool { return true }},
 	}
 
