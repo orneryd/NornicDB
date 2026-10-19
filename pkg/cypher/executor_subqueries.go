@@ -911,14 +911,7 @@ func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody 
 		withVars = append(withVars, "*")
 	}
 	for _, item := range p.Items {
-		name := item.Alias
-		if name == "" {
-			name = item.Name
-		}
-		if name == "" {
-			name = item.Expression
-		}
-		withVars = append(withVars, name)
+		withVars = append(withVars, item.Column)
 	}
 	if len(withVars) == 0 {
 		return nil, "", true, localizedError(localization.CypherSubqueriesWithImportsRequired(), nil)

@@ -818,7 +818,7 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 
 			if p.Star {
 				text := item.Expression
-				if item.Alias != "" {
+				if item.HasAlias {
 					text += " AS `" + strings.ReplaceAll(item.Alias, "`", "``") + "`"
 				}
 				plan.starItems = append(plan.starItems, text)

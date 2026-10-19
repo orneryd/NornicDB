@@ -239,11 +239,8 @@ func trailingWithAliases(query string) []string {
 	}
 	var aliases []string
 	for _, item := range with.Projection.Items {
-		name := item.Alias
-		if name == "" {
-			name = item.Name
-		}
-		if name != "" {
+		name := item.Column
+		if item.HasAlias || item.Name != "" {
 			aliases = append(aliases, quoteCypherIdentifier(name))
 		}
 	}
