@@ -49,26 +49,26 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		"CALL u5tx.writefail() YIELD value RETURN value",
 		"CALL apoc.cypher.doIt('CREATE (:U5AtomicWrite) RETURN 1 AS value',{}) YIELD value CALL u5tx.fail() YIELD rejected RETURN rejected",
 	} {
-	t.Run("composite fragment/"+fragment, func(t *testing.T) {
-		manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = manager.Close() })
-		require.NoError(t, manager.CreateDatabase("atomic_shard"))
-		require.NoError(t, manager.CreateCompositeDatabase("atomic_comp", []multidb.ConstituentRef{{
-			Alias: "shard", DatabaseName: "atomic_shard", Type: "local", AccessMode: "read_write",
-		}}))
-		store, err := manager.GetStorage("atomic_comp")
-		require.NoError(t, err)
-		exec := NewStorageExecutor(store)
-		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
-		_, err = exec.Execute(context.Background(), "CALL { USE atomic_comp.shard "+fragment+" } RETURN 1", nil)
-		require.ErrorContains(t, err, failure.Error())
-		shard, err := manager.GetStorage("atomic_shard")
-		require.NoError(t, err)
-		nodes, err := shard.GetNodesByLabel("U5AtomicWrite")
-		require.NoError(t, err)
-		require.Empty(t, nodes, "failed local fragment must roll back its writes")
-	})
+		t.Run("composite fragment/"+fragment, func(t *testing.T) {
+			manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = manager.Close() })
+			require.NoError(t, manager.CreateDatabase("atomic_shard"))
+			require.NoError(t, manager.CreateCompositeDatabase("atomic_comp", []multidb.ConstituentRef{{
+				Alias: "shard", DatabaseName: "atomic_shard", Type: "local", AccessMode: "read_write",
+			}}))
+			store, err := manager.GetStorage("atomic_comp")
+			require.NoError(t, err)
+			exec := NewStorageExecutor(store)
+			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+			_, err = exec.Execute(context.Background(), "CALL { USE atomic_comp.shard "+fragment+" } RETURN 1", nil)
+			require.ErrorContains(t, err, failure.Error())
+			shard, err := manager.GetStorage("atomic_shard")
+			require.NoError(t, err)
+			nodes, err := shard.GetNodesByLabel("U5AtomicWrite")
+			require.NoError(t, err)
+			require.Empty(t, nodes, "failed local fragment must roll back its writes")
+		})
 	}
 }
 
