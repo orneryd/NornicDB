@@ -176,9 +176,10 @@ func vectorPayloadBytes(value []float32) int64 {
 // nodeVectorIDsLocked visits the IDs written by the canonical ingestion path.
 // Main/chunk zero share one entry. Caller holds indexMu.
 func (s *Service) nodeVectorIDsLocked(nodeID string, visit func(string)) {
-	visit(nodeID)
+	mainKey := nodeMainVectorKey(nodeID)
+	visit(mainKey)
 	for _, id := range s.nodeChunkVectors[nodeID] {
-		if id != nodeID {
+		if id != mainKey {
 			visit(id)
 		}
 	}
