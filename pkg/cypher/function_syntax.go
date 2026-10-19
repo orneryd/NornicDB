@@ -415,6 +415,11 @@ func (syntax *functionSyntax) appendArguments(parts []string, group int, keepEmp
 	if len(spans) == 1 && syntax.render(spans[0]) == "" {
 		return parts
 	}
+	if cap(parts)-len(parts) < len(spans) {
+		grown := make([]string,len(parts),len(parts)+len(spans))
+		copy(grown,parts)
+		parts = grown
+	}
 	for index, span := range spans {
 		value := syntax.render(span)
 		if index == len(spans)-1 && value == "" && !keepEmpty {
@@ -461,15 +466,11 @@ func (syntax *functionSyntax) splitDelimiter(delimiter rune) []string {
 }
 
 func parseFunctionCallArguments(text string) (string, []string, bool) {
-	return parseFunctionCallArgumentsInto(text, nil)
-}
-
-func parseFunctionCallArgumentsInto(text string, buffer []string) (string, []string, bool) {
 	call, ok := standaloneFunctionCall(text)
 	if !ok {
 		return "", nil, false
 	}
-	return call.name, call.arguments(buffer), true
+	return call.name, call.arguments(nil), true
 }
 
 func singleFunctionArgument(text string) string {
