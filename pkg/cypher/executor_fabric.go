@@ -110,9 +110,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 
 	authToken := GetAuthTokenFromContext(ctx)
 	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
-		base:       e,
-		authToken:  authToken,
-		autoCommit: autoCommit,
+		base:        e,
+		authToken:   authToken,
+		autoCommit:  autoCommit,
+		transaction: tx,
 	}, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
@@ -551,9 +552,11 @@ func mapString(m map[string]interface{}, key string) string {
 }
 
 type cypherFabricExecutor struct {
-	base       *StorageExecutor
-	authToken  string
-	autoCommit bool
+	base            *StorageExecutor
+	authToken       string
+	autoCommit      bool
+	transaction     *fabric.FabricTransaction
+	localDispatchMu sync.Mutex
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -609,8 +612,15 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	if len(recordBindings) > 0 {
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
-	if !c.autoCommit {
-		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
+			// Fabric has one write participant. Its local fragments share one
+			// transactional executor until the coordinator admits COMMIT.
+			// Concurrent read-only participants keep their independent path.
+			if c.autoCommit {
+				c.localDispatchMu.Lock()
+				defer c.localDispatchMu.Unlock()
+			}
 			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
 			if err != nil {
 				return nil, nil, err
@@ -637,9 +647,16 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
+	// Fragment imports are installed before the engine's shared compile-time
+	// scope/type owner runs. Both parser paths enter through this gate, so
+	// body-scope improvements apply here without another Fabric scope reader.
+	if err := exec.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
+		_, err = names.restore(nil, err, exec.parseReturnItems)
+		return nil, nil, err
+	}
 	var result *ExecuteResult
 	var err error
-	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (embedding || fabric.ReadQueryStructure(query).HasEmbeddingCandidate()) {
+	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && (embedding || fabric.ReadQueryStructure(query).HasEmbeddingCandidate()) {
 		// Inline embeddings use the normal mutation/transaction owner. Internal
 		// fragment execution alone deliberately does not start an implicit tx.
 		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
@@ -707,10 +724,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}
 
 	terminalCtx := context.WithoutCancel(beginCtx)
-	if c.base.txContext != nil {
-		if tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction); ok {
-			terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
-		}
+	if tx := c.fabricTransaction(); tx != nil {
+		terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
 	}
 	commitFn := func(_ *fabric.SubTransaction) error {
 		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
@@ -731,11 +746,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 }
 
 func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, commitFn fabric.CommitCallback, rollbackFn fabric.RollbackCallback) error {
-	if c.base == nil || c.base.txContext == nil {
-		return nil
-	}
-	tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction)
-	if !ok || tx == nil {
+	tx := c.fabricTransaction()
+	if tx == nil {
 		return nil
 	}
 	return tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn)
@@ -793,4 +805,17 @@ func fabricGraphReferenceError(err error) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
 	}
 	return err
+}
+
+// fabricTransaction is the coordinator's participant/lifetime owner on both
+// implicit and explicit dispatch; direct helper callers keep the session owner.
+func (c *cypherFabricExecutor) fabricTransaction() *fabric.FabricTransaction {
+	if c.transaction != nil {
+		return c.transaction
+	}
+	if c.base != nil && c.base.txContext != nil {
+		tx, _ := c.base.txContext.tx.(*fabric.FabricTransaction)
+		return tx
+	}
+	return nil
 }
