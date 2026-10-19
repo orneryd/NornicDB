@@ -48,7 +48,7 @@ func readFunctionIdentity(text string, at, previous int) (functionCallSpan, bool
 		at > 0 && (text[at-1] == '$' || text[at-1] == ':' && !colonIsMapKeySeparator(text, at-1)) {
 		return functionCallSpan{}, false
 	}
-	name, next, ok := scanIdentifierToken(text, at)
+	name, next, ok := callableIdentifierToken(text, at)
 	if !ok {
 		return functionCallSpan{}, false
 	}
@@ -170,7 +170,7 @@ func canonicalCallableName(text string) (string, bool) {
 			return text, true
 		}
 	}
-	name, end, ok := scanIdentifierToken(text, 0)
+	name, end, ok := callableIdentifierToken(text, 0)
 	if !ok {
 		return "", false
 	}
@@ -201,6 +201,7 @@ type functionSyntax struct {
 	calls      []functionCallSpan
 	groups     []syntaxGroup
 	comments   []syntaxSpan
+	quoted     []syntaxSpan
 	subqueries []syntaxSpan
 	leading    int
 }
@@ -231,18 +232,20 @@ func readFunctionSyntax(text string) *functionSyntax {
 			continue
 		}
 		if text[index] == '\'' || text[index] == '"' {
-			index = skipCypherQuotedText(text, index, text[index])
+			end := skipCypherQuotedText(text, index, text[index])
+			syntax.quoted = append(syntax.quoted, syntaxSpan{index, end})
+			index = end
 			previous = index - 1
 			continue
 		}
-		if name, next, ok := scanIdentifierToken(text, index); ok {
+		if name, next, ok := callableIdentifierToken(text, index); ok {
 			if text[index] != '`' {
 				if _, open, ok := subqueryExpressionKeywordAt(text, index); ok {
 					subqueryOpen[open] = index
 				}
 				if strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE") {
 					start := queryGapEnd(text, next)
-					called, end, named := scanIdentifierToken(text, start)
+					called, end, named := callableIdentifierToken(text, start)
 					if !named {
 						index = next
 						previous = next - 1
@@ -507,7 +510,7 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 			return expression[origin:end], end
 		}
 		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
+		part, partEnd, ok := callableIdentifierToken(expression, partStart)
 		if !ok {
 			if normalizing {
 				return normalized.String(), end
@@ -532,4 +535,19 @@ func (syntax *functionSyntax) callIndex(offset int) int {
  low,high:=0,len(syntax.calls)
  for low<high {middle:=low+(high-low)/2;if syntax.calls[middle].start<offset {low=middle+1} else {high=middle}}
  return low
+}
+
+// callableIdentifierToken preserves quoted identifiers and treats Unicode
+// whitespace as trivia rather than part of an unquoted callable component.
+func callableIdentifierToken(text string, start int) (string, int, bool) {
+	name, end, ok := scanIdentifierToken(text, start)
+	if !ok || text[start] == '`' {
+		return name, end, ok
+	}
+	for index := start; index < end; index++ {
+		if text[index] >= 0x80 && queryWhitespaceAt(text, index) > 0 {
+			return text[start:index], index, index > start
+		}
+	}
+	return name, end, true
 }
