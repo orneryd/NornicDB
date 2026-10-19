@@ -89,6 +89,13 @@ type EmbeddingFailureStreamer interface {
 // that read and this commit fails the commit with a conflict, reported as
 // ErrEmbeddingSourceChanged too.
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	return commitEmbeddingOutcome(node, func() error { return b.persistNodeEmbeddingSidecar(node) }, b.notifyNodeUpdated)
+}
+
+func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -199,7 +206,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	b.cacheDeleteNode(node.ID)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	b.notifyNodeUpdated(node)
+	// Publication belongs to commitEmbeddingOutcome.
 	return nil
 }
 
@@ -232,7 +239,23 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
-	embedded.UpdatedAt = stored.UpdatedAt
+	attempt := embedded.EmbeddingAttempt
+	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
+	if attempt != nil && (failed || len(embedded.EmbedMeta) == 0) {
+		matches, err := attempt.BodyRevision.matches(b, txn, embedded.ID, item.Version())
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return ErrEmbeddingSourceChanged
+		}
+	}
+	vectors, meta := embedded.ChunkEmbeddings, embedded.EmbedMeta
+	*embedded = *stored
+	embedded.ChunkEmbeddings, embedded.EmbedMeta = vectors, meta
+	embedded.EmbeddingsStoredSeparately = false // Published vectors are already hydrated.
+	embedded.EmbeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+	embedded.EmbeddingAttempt = attempt
 	return nil
 }
 

@@ -303,10 +303,11 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 		running = stats.Running
 	}
 
+	pending := r.DB.PendingEmbeddingsCount()
 	return &models.EmbeddingStatus{
-		Pending:       0, // Worker doesn't track pending
+		Pending:       pending,
 		Embedded:      embeddingCount,
-		Total:         embeddingCount,
+		Total:         embeddingCount + pending,
 		WorkerRunning: running,
 	}, nil
 }

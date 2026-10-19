@@ -208,9 +208,14 @@ type EdgeID string
 //
 //	Node structs are NOT thread-safe. The storage engine handles concurrency.
 type Node struct {
-	ID         NodeID         `json:"id"`
-	Labels     []string       `json:"labels"`
-	Properties map[string]any `json:"properties"`
+	embeddingOwner   *BadgerEngine
+	embeddingOwnerID NodeID
+	// Transient storage snapshot and attempt identity; never part of user data.
+	EmbeddingRevision EmbeddingBodyRevision `json:"-" msgpack:"-"`
+	EmbeddingAttempt  *EmbeddingAttempt     `json:"-" msgpack:"-"`
+	ID                NodeID                `json:"id"`
+	Labels            []string              `json:"labels"`
+	Properties        map[string]any        `json:"properties"`
 
 	// NornicDB extensions
 	CreatedAt       time.Time            `json:"-"`

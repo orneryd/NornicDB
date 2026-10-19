@@ -156,7 +156,11 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	}
 
 	nodeCopy := &Node{
+		embeddingOwner:             node.embeddingOwner,
+		embeddingOwnerID:           node.embeddingOwnerID,
 		ID:                         node.ID,
+		EmbeddingRevision:          node.EmbeddingRevision,
+		EmbeddingAttempt:           node.EmbeddingAttempt,
 		Labels:                     make([]string, 0, len(node.Labels)),
 		CreatedAt:                  node.CreatedAt,
 		UpdatedAt:                  node.UpdatedAt,

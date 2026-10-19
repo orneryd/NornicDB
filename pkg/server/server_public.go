@@ -149,6 +149,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"enabled":   true,
 			"status":    status,
 			"processed": embedStats.Processed,
+			"pending":   embedStats.Pending,
 			"failed":    embedStats.Failed,
 		}
 	}

@@ -1845,6 +1845,9 @@ func (e *queueBranchEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error
 	if e.updateEmbeddingErr != nil {
 		return e.updateEmbeddingErr
 	}
+	if err := e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node); err != nil {
+		return err
+	}
 	e.updatedEmbedding = storage.CopyNode(node)
 	return nil
 }
@@ -2052,7 +2055,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Zero(t, worker.QueueLen())
 		worker.Trigger()
 		worker.Trigger()
-		require.Eventually(t, func() bool { return worker.QueueLen() == 1 }, 200*time.Millisecond, 5*time.Millisecond)
+		require.Eventually(t, func() bool { return len(worker.trigger) == 1 }, 200*time.Millisecond, 5*time.Millisecond)
 		select {
 		case <-worker.trigger:
 		default:

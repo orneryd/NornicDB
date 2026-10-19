@@ -34,6 +34,9 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 
 func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
 	if !b.hasCommitListeners() {
+		if op.Type == OpUpdateNode && op.Node != nil {
+			deliverEmbeddingOutcome(op.Node.EmbeddingAttempt, op.Node)
+		}
 		return
 	}
 	if op.Node != nil {

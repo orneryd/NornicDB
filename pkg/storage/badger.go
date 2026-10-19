@@ -565,6 +565,7 @@ func (b *BadgerEngine) publishNodeUpdated(node *Node) {
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchNodeUpdated(node *Node) {
+	defer deliverEmbeddingOutcome(node.EmbeddingAttempt, node)
 	b.callbackMu.RLock()
 	callbacks := b.onNodeUpdated
 	b.callbackMu.RUnlock()
