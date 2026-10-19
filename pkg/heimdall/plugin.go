@@ -857,9 +857,7 @@ func (m *SubsystemManager) GetAction(name string) (ActionFunc, bool) {
 
 // StartAll starts all registered subsystems.
 func (m *SubsystemManager) StartAll() error {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	for _, lp := range plugins {
 		if err := lp.Plugin.Start(); err != nil {
@@ -871,9 +869,7 @@ func (m *SubsystemManager) StartAll() error {
 
 // StopAll stops all registered subsystems.
 func (m *SubsystemManager) StopAll() error {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	var lastErr error
 	for _, lp := range plugins {
@@ -905,9 +901,7 @@ func (m *SubsystemManager) ShutdownAll() error {
 
 // AllHealth returns health status of all subsystems.
 func (m *SubsystemManager) AllHealth() map[string]SubsystemHealth {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	result := make(map[string]SubsystemHealth)
 	for _, lp := range plugins {
@@ -918,9 +912,7 @@ func (m *SubsystemManager) AllHealth() map[string]SubsystemHealth {
 
 // AllSummaries returns summaries of all subsystems (for SLM context).
 func (m *SubsystemManager) AllSummaries() map[string]string {
-	m.mu.RLock()
-	plugins := m.listOrderedPluginsLocked()
-	m.mu.RUnlock()
+	plugins := m.listOrderedPlugins()
 
 	result := make(map[string]string)
 	for _, lp := range plugins {
@@ -1210,11 +1202,27 @@ func ListHeimdallActions() []string {
 // ListHeimdallPlugins returns information about all loaded SLM plugins.
 func ListHeimdallPlugins() []*LoadedHeimdallPlugin {
 	m := GetSubsystemManager()
+	return m.listOrderedPlugins()
+}
+
+// listOrderedPlugins returns a stable snapshot and fills a dirty ordering cache
+// under the manager's exclusive lock. The second check in the locked helper
+// lets concurrent readers reuse the first completed fill.
+func (m *SubsystemManager) listOrderedPlugins() []*LoadedHeimdallPlugin {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if !m.orderDirty && m.orderedPlugins != nil {
+		plugins := append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
+		m.mu.RUnlock()
+		return plugins
+	}
+	m.mu.RUnlock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.listOrderedPluginsLocked()
 }
 
+// listOrderedPluginsLocked requires m.mu to be held exclusively.
 func (m *SubsystemManager) listOrderedPluginsLocked() []*LoadedHeimdallPlugin {
 	if !m.orderDirty && m.orderedPlugins != nil {
 		return append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
