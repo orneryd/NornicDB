@@ -124,7 +124,7 @@ func TestContinuationAfterTombstoneRunsReturnsEveryLiveDocument(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}
-	_, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil)
+	_, err := service.getOrCreateHNSWIndex(context.Background(), 2)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
 	removed := map[string]bool{}

@@ -42,7 +42,7 @@ func TestGPUBruteForceIndexBuiltOnlyWhenChosen(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", "100")
 	_, err = svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 	require.Nil(t, gpuIndexOf(svc))
 
 	// In range: the strategy builds the GPU copy and searches it.

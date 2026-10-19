@@ -145,6 +145,14 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 // the configured policy and drops the pipeline, under the admission
 // boundary, taking pipelineMu before indexMu like clear and strategy swaps.
 func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuantizationConfig) (bool, error) {
+	s.mu.RLock()
+	sameBeforeJoin := s.hnswQuantizationOverride != nil && *s.hnswQuantizationOverride == cfg
+	s.mu.RUnlock()
+	if sameBeforeJoin {
+		return false, nil
+	}
+	resume := s.pauseHNSWBuild()
+	defer resume()
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()

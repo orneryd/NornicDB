@@ -106,7 +106,7 @@ func TestHNSWScalarDefaultUpgradesSavedFloatGraph(t *testing.T) {
 
 	// Fresh services over saved state: storage iteration would mean a rebuild.
 	saved := &iteratorEngine{Engine: engine, iterateErr: errors.New("saved indexes must not rebuild from storage")}
-	hnswBeforeInstallHook = func() { t.Error("the saved graph must be loaded, not rebuilt") }
+	hnswBeforeInstallHook = func(context.Context) { t.Error("the saved graph must be loaded, not rebuilt") }
 	t.Cleanup(func() { hnswBeforeInstallHook = nil })
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "")
 	for _, restart := range []string{"upgrade from float graph", "restart with scalar model"} {
