@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // isSystemCommandNoGraph returns true for statements that operate on database metadata
@@ -446,7 +447,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 	if err := validateKnownFunctions(cypher); err != nil {
 		return err
 	}
-	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", observability.RedactText(parserError.Error()))
 }
 
 // isNornicExtensionStatement reports whether cypher is a statement outside
