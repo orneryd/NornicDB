@@ -220,7 +220,7 @@ func bound(expr string, node rowValueNode, info rowValueInfo) (rowValueNode, row
 
 // compile compiles expr, running evaluateRowValueText's tests in its order.
 func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
 	}

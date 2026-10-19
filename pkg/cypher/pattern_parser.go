@@ -85,9 +85,9 @@ func containsReservedKeyword(s string) bool {
 //
 //	parseNodePattern(ctx, "(n:Person {name: 'Alice'})")
 //	// Returns: {variable: "n", labels: ["Person"], properties: {"name": "Alice"}}
-//
-//	parseNodePattern(ctx, "(:Employee)")
-//	// Returns: {variable: "", labels: ["Employee"], properties: {}}
+
+// parseNodePattern(ctx, "(:Employee)")
+// // Returns: {variable: "", labels: ["Employee"], properties: {}}
 func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
 	info := nodePatternInfo{
 		labels:     []string{},
@@ -139,9 +139,9 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //
 //	parseProperties("{name: 'Alice', age: 30}")
 //	// Returns: {"name": "Alice", "age": int64(30)}
-//
-//	parseProperties("{tags: ['a', 'b'], active: true}")
-//	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
+
+// parseProperties("{tags: ['a', 'b'], active: true}")
+// // Returns: {"tags": []interface{}{"a", "b"}, "active": true}
 func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
 	return e.parsePropertyMap(ctx, propsStr, false)
 }
@@ -289,56 +289,7 @@ func isBackslashEscaped(s string, idx int) bool {
 //	splitPropertyPairs("tags: ['a', 'b'], data: {nested: true}")
 //	// Returns: ["tags: ['a', 'b']", "data: {nested: true}"]
 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
-	var pairs []string
-	var current strings.Builder
-	depth := 0 // Track [], {} nesting
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range propsStr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote (look back for \)
-				escaped := false
-				if i > 0 {
-					// Count consecutive backslashes before this quote
-					backslashes := 0
-					for j := i - 1; j >= 0 && propsStr[j] == '\\'; j-- {
-						backslashes++
-					}
-					escaped = backslashes%2 == 1
-				}
-				if !escaped {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '[' || c == '{' || c == '(') && !inQuote:
-			depth++
-			current.WriteRune(c)
-		case (c == ']' || c == '}' || c == ')') && !inQuote:
-			depth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && depth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				pairs = append(pairs, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	// Add final pair
-	if s := strings.TrimSpace(current.String()); s != "" {
-		pairs = append(pairs, s)
-	}
-
-	return pairs
+	return readFunctionSyntax(propsStr).appendArguments(nil, 0, false)
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.
@@ -350,7 +301,9 @@ func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 //   - 123 → int64
 //   - 1.23 → float64
 //   - [1, 2, 3] → []interface{}
+
 //   - {key: value} → map[string]interface{}
+
 //   - function() → evaluated result
 //
 // # Parameters
@@ -505,8 +458,10 @@ type invalidPropertyValue struct {
 // # Example
 //
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
+
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
-//	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
+
+// parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
 func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
 	elements := e.splitArrayElements(strings.TrimSpace(arrayStr[1 : len(arrayStr)-1]))
 	value, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
@@ -565,25 +520,6 @@ func (e *StorageExecutor) splitArrayElements(inner string) []string {
 //	looksLikeFunctionCall("'not a function'")    // false
 //	looksLikeFunctionCall("x + y")               // false
 func looksLikeFunctionCall(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-
-	// Must end with )
-	if !strings.HasSuffix(s, ")") {
-		return false
-	}
-
-	// Find the opening parenthesis
-	parenIdx := strings.Index(s, "(")
-	if parenIdx <= 0 {
-		return false
-	}
-
-	// The part before ( must be a function name, possibly qualified
-	// (apoc.coll.sum, custom . range, `custom`.`and`): the one callable name
-	// reader parseFunctionCallWS and dispatch use.
-	_, ok := canonicalCallableName(s[:parenIdx])
+	_, _, ok := parseFunctionCallWS(s)
 	return ok
 }

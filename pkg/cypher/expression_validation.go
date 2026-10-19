@@ -216,11 +216,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		}
 	}
 	closing := func() int {
-		closeBy := ')'
-		if list {
-			closeBy = ']'
-		}
-		if close := findMatchingDelimiter(text, open, rune(text[open]), closeBy); close >= 0 {
+		if close := syntaxGroupClose(text, open); close >= 0 {
 			return close
 		}
 		return len(text)
@@ -481,20 +477,13 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 // open at text[open] when it binds variables of its own (all / any / none /
 // single / filter, reduce / allReduce), as written; "" for any other.
 func bindingFunctionBeforeParen(text string, open int) string {
-	end := open
-	for end > 0 && isWhitespace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end || start > 0 && isIdentByte(text[start-1]) {
+	call, ok := functionCallBeforeParen(text, open)
+	if !ok {
 		return ""
 	}
-	switch strings.ToLower(text[start:end]) {
+	switch call.normalized {
 	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
+		return call.name
 	default:
 		return ""
 	}

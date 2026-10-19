@@ -159,16 +159,11 @@ func staticFunctionResultType(function, arguments string) string {
 // does; other function results stay unchecked in argument and list
 // positions.
 func staticValueCallType(expression string) string {
-	expression = strings.TrimSpace(expression)
-	name, end, ok := scanIdentifierToken(expression, 0)
+	name, arguments, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return ""
 	}
-	open := queryGapEnd(expression, end)
-	if open >= len(expression) || expression[open] != '(' || findMatchingParen(expression, open) != len(expression)-1 {
-		return ""
-	}
-	switch result := staticFunctionResultType(name, expression[open+1:len(expression)-1]); result {
+	switch result := staticFunctionResultType(name, arguments); result {
 	case "Vector", "UUID":
 		return result
 	}
@@ -676,41 +671,33 @@ func maskCaseBlocks(expression string) string {
 // property key. ok is false when the operand doesn't end in one at its top
 // level. A '.' between digits belongs to a number.
 func staticPostfixSplit(expression string) (receiver, inner string, subscript, ok bool) {
+	syntax := readFunctionSyntax(expression)
 	last := -1
-	depth := 0
-	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; character {
-		case '\'', '"', '`':
-			index = skipQuotedSemanticText(expression, index) - 1
-		case '(', '{':
-			depth++
-		case ')', '}':
-			depth--
-		case '[':
-			if depth == 0 && index > 0 {
-				last, subscript = index, true
-			}
-			depth++
-		case ']':
-			depth--
-		case '.':
-			if depth == 0 && index > 0 && index+1 < len(expression) && isIdentStartByte(expression[index+1]) {
-				last, subscript = index, false
-			}
+	var selected syntaxGroup
+	for _, group := range syntax.groups {
+		if group.parent == 0 && group.open > 0 && expression[group.open] == '[' && group.close >= 0 {
+			last = group.open
+			selected = group
+			subscript = true
+		}
+	}
+	for _, at := range syntax.rootPunctuation {
+		if at > last && at > 0 && expression[at] == '.' && at+1 < len(expression) && isIdentStartByte(expression[at+1]) {
+			last = at
+			subscript = false
 		}
 	}
 	if last <= 0 {
 		return "", "", false, false
 	}
-	// expression is trimmed and last > 0, so the receiver isn't empty.
-	receiver = strings.TrimSpace(expression[:last])
+	receiver = syntax.render(syntaxSpan{0, last})
 	if subscript {
-		if findMatchingDelimiter(expression, last, '[', ']') != len(expression)-1 {
+		if queryGapEnd(expression, selected.close+1) != len(expression) {
 			return "", "", false, false
 		}
-		return receiver, expression[last+1 : len(expression)-1], true, true
+		return receiver, syntax.render(syntaxSpan{last + 1, selected.close}), true, true
 	}
-	key := expression[last+1:]
+	key := syntax.render(syntaxSpan{last + 1, len(expression)})
 	if simpleSemanticIdentifier(key) == "" {
 		return "", "", false, false
 	}

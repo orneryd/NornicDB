@@ -88,8 +88,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
-		args := e.splitFunctionArgs(inner)
+	if name, args, ok := parseFunctionCallArguments(expr); ok {
 		if equalFoldASCII(name, "size") && len(args) == 1 {
 			args[0] = sizeArgumentExpression(args[0])
 		}

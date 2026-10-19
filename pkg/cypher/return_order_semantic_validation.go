@@ -244,8 +244,8 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 func aggregateContains(expression string, predicate func(string) bool) bool {
 	for _, span := range findAggregateSpans(expression) {
 		call := expression[span.start:span.end]
-		open := strings.IndexByte(call, '(')
-		if predicate(call[open+1 : len(call)-1]) {
+		_, inner, _ := parseFunctionCallWS(call)
+		if predicate(inner) {
 			return true
 		}
 	}
@@ -253,24 +253,19 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 }
 
 func containsFunctionCallNamed(expression, expected string) bool {
+	syntax := readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
+		call, ok := syntax.nextCall(index, true, false, false)
 		if !ok {
-			index++
-			continue
+			break
 		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if strings.EqualFold(normalizeProjectionColumnName(name), expected) && cursor < len(expression) && expression[cursor] == '(' {
+		if strings.EqualFold(call.name, expected) {
 			return true
 		}
-		index = next
+		index = call.open + 1
 	}
 	return false
 }
-
 func pipelineReturnSourceColumns(clause string) []string {
 	body := strings.TrimSpace(clause[len("RETURN"):])
 	end := len(body)
@@ -357,10 +352,10 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if cursor < len(expression) && expression[cursor] == ':' {
 			continue
 		}
-		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
+		if call, called := functionCallAt(expression, start); called {
 			// apoc.coll.sort(…): a namespaced function's name, not a
 			// variable and its property.
-			index = end
+			index = call.open
 			continue
 		}
 		normalized := normalizeProjectionColumnName(name)
@@ -379,18 +374,6 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		}
 		visit(normalized, start)
 	}
-}
-
-// qualifiedFunctionNameEnd reports whether the name before at continues as
-// a namespace path (.name …) that a call's '(' follows, and where the path
-// ends.
-func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
-	parts, end := dottedNameParts(expression, at, true)
-	cursor := queryGapEnd(expression, end)
-	if parts == "" || cursor >= len(expression) || expression[cursor] != '(' {
-		return at, false
-	}
-	return cursor, true
 }
 
 // semanticFreeReferences returns the variables and variable.property

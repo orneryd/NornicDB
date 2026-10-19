@@ -1947,7 +1947,7 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
 	}
 	seen := make(map[string]bool, len(props))
-	for _, reference := range strings.Split(propertyExpr, ",") {
+	for _, reference := range splitTopLevelComma(propertyExpr) {
 		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
 		if !valid || normalizeIdentifierToken(qualifier) != variable || seen[property] {
 			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)

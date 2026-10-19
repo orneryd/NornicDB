@@ -29,11 +29,12 @@ type customSignature struct {
 // outputs may be omitted or VOID.
 func parseCustomSignature(signature string) (customSignature, bool) {
 	signature = strings.TrimSpace(signature)
-	open := strings.IndexByte(signature, '(')
-	if open <= 0 {
+	call, called := functionCallAt(signature, readFunctionSyntax(signature).leading)
+	open := call.open
+	if !called || open <= 0 {
 		return customSignature{}, false
 	}
-	closing := findMatchingParen(signature, open)
+	closing := call.close(signature)
 	if closing < 0 {
 		return customSignature{}, false
 	}

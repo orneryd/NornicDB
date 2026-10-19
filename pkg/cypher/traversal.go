@@ -791,7 +791,7 @@ func referencesTraversalVariable(expr string, variable string) bool {
 		return false
 	}
 	trimmed := strings.TrimSpace(expr)
-	if strings.Contains(trimmed, variable+".") || strings.Contains(lowerASCII(trimmed), "id("+lowerASCII(variable)+")") || strings.Contains(lowerASCII(trimmed), "elementid("+lowerASCII(variable)+")") {
+	if strings.Contains(trimmed, variable+".") || functionReadsVariable(trimmed, "id", variable) || functionReadsVariable(trimmed, "elementId", variable) {
 		return true
 	}
 	return false
