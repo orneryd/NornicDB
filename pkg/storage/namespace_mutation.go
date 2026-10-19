@@ -28,14 +28,20 @@ func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []
 	if revision != nil {
 		begin = *revision
 	}
-	lock, unlock := b.writeBarrier.RLock, b.writeBarrier.RUnlock
-	if exclusive {
-		lock, unlock = b.writeBarrier.Lock, b.writeBarrier.Unlock
-	}
-	release, err := util.LockContext(ctx, lock, unlock)
-	if err != nil {
-		return nil, err
-	}
+ var release func()
+ if ctx.Done()==nil {
+  // Keep ordinary writes at one escaping release value. Passing a lock method
+  // through the cancellable goroutine handoff would add an allocation even for
+  // Background, whose admission never needs that handoff.
+  if err:=ctx.Err();err!=nil{return nil,err}
+  if exclusive {b.writeBarrier.Lock();release=b.writeBarrier.Unlock} else {b.writeBarrier.RLock();release=b.writeBarrier.RUnlock}
+ } else {
+  lock,unlock:=b.writeBarrier.RLock,b.writeBarrier.RUnlock
+  if exclusive {lock,unlock=b.writeBarrier.Lock,b.writeBarrier.Unlock}
+  var err error
+  release,err=util.LockContext(ctx,lock,unlock)
+  if err!=nil{return nil,err}
+ }
 	b.mu.RLock()
 	closed := b.closed && mode != namespacePublicationShutdown
 	b.mu.RUnlock()
