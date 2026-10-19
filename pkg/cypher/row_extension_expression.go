@@ -119,7 +119,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !separatorOK {
 			return nil, true, false, nil
 		}
-		items := toAnySlice(values[0])
+		items, _ := cypherListValue(values[0])
 		parts := make([]string, len(items))
 		for index, item := range items {
 			parts[index] = fmt.Sprint(item)

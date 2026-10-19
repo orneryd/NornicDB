@@ -350,7 +350,14 @@ func cypherUnsignedInteger(value interface{}) (uint64, bool) {
 	}
 }
 
+// cypherListValue is the runtime-list input owner. Consumers must use it rather
+// than asserting []interface{}: drivers and storage also carry typed slices and
+// arrays. Element conversion stays in toAnySlice, including recursive consumers
+// such as flatten and fromPairs. The ordinary boxed-list path does not allocate.
 func cypherListValue(value interface{}) ([]interface{}, bool) {
+	if list, ok := value.([]interface{}); ok {
+		return list, true
+	}
 	if cypherValueKindOf(value) != valueKindList {
 		return nil, false
 	}

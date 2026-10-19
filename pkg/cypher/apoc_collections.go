@@ -85,20 +85,13 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 	if recursive {
 		depth = math.MaxInt64
 	}
-	var result []interface{}
-	switch v := val.(type) {
-	case nil:
+	if val == nil {
 		return []interface{}{}
-	case []interface{}:
-		return collFlatten(make([]interface{}, 0, len(v)), v, depth)
-	case []string:
-		for _, s := range v {
-			result = append(result, s)
-		}
-	default:
-		result = append(result, val)
 	}
-	return result
+	if items, ok := cypherListValue(val); ok {
+		return collFlatten(make([]interface{}, 0, len(items)), items, depth)
+	}
+	return []interface{}{val}
 }
 
 // toSet removes duplicates from a list while preserving order.
@@ -166,8 +159,7 @@ func apocCollToSet(val interface{}) interface{} {
 //	apocCollSum([1.5, 2.5])   // 4.0
 func apocCollSum(val interface{}) float64 {
 	var sum float64
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		for _, item := range v {
 			if f, ok := toFloat64(item); ok {
 				sum += f
@@ -192,8 +184,7 @@ func apocCollSum(val interface{}) float64 {
 //	apocCollAvg([1, 2, 3, 4])  // 2.5
 //	apocCollAvg([])           // nil
 func apocCollAvg(val interface{}) interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
@@ -223,8 +214,7 @@ func apocCollAvg(val interface{}) interface{} {
 //	apocCollMin([3, 1, 4, 1, 5])  // 1
 //	apocCollMin([])              // nil
 func apocCollMin(val interface{}) interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
@@ -256,8 +246,7 @@ func apocCollMin(val interface{}) interface{} {
 //	apocCollMax([3, 1, 4, 1, 5])  // 5
 //	apocCollMax([])              // nil
 func apocCollMax(val interface{}) interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
@@ -294,8 +283,7 @@ func apocCollMax(val interface{}) interface{} {
 //
 //	apocCollSort([3, 1, 4, 1, 5])  // [1, 1, 3, 4, 5]
 func apocCollSort(val interface{}) []interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		// In Cypher's order, as coll.sort and ORDER BY sort (strings too;
 		// null last).
 		return sortedCypherValues(v)
@@ -324,8 +312,7 @@ func apocCollSortNodes(val interface{}, propName string) []interface{} {
 // The query route supplies its visible property reader while sorting the raw
 // entity bindings, so later mutations cannot persist a filtered property map.
 func apocCollSortNodesByProperty(val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		result := make([]interface{}, len(v))
 		copy(result, v)
 		// Sort by property value
@@ -374,8 +361,7 @@ func getNodeProperty(node interface{}, propName string) interface{} {
 //
 //	apocCollReverse([1, 2, 3])  // [3, 2, 1]
 func apocCollReverse(val interface{}) []interface{} {
-	switch v := val.(type) {
-	case []interface{}:
+	if v, ok := cypherListValue(val); ok {
 		result := make([]interface{}, len(v))
 		for i, item := range v {
 			result[len(v)-1-i] = item
@@ -424,10 +410,10 @@ func apocCollUnion(list1, list2 interface{}) []interface{} {
 //	apocCollUnionAll([1, 2], [2, 3])  // [1, 2, 2, 3]
 func apocCollUnionAll(list1, list2 interface{}) []interface{} {
 	var result []interface{}
-	if l1, ok := list1.([]interface{}); ok {
+	if l1, ok := cypherListValue(list1); ok {
 		result = append(result, l1...)
 	}
-	if l2, ok := list2.([]interface{}); ok {
+	if l2, ok := cypherListValue(list2); ok {
 		result = append(result, l2...)
 	}
 	return result
@@ -709,7 +695,7 @@ func apocCollSplit(listVal, value interface{}) []interface{} {
 //
 //	apocCollPartition([1, 2, 3, 4, 5], 2)  // [[1, 2], [3, 4], [5]]
 func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
-	list, ok := listVal.([]interface{})
+	list, ok := cypherListValue(listVal)
 	if !ok {
 		return nil
 	}
@@ -743,7 +729,7 @@ func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
 //
 //	apocCollPairs([1, 2, 3])  // [[1, 2], [2, 3], [3, nil]]
 func apocCollPairs(val interface{}) []interface{} {
-	list, ok := val.([]interface{})
+	list, ok := cypherListValue(val)
 	if !ok {
 		return nil
 	}
@@ -774,8 +760,8 @@ func apocCollPairs(val interface{}) []interface{} {
 //
 //	apocCollZip([1, 2], ["a", "b"])  // [[1, "a"], [2, "b"]]
 func apocCollZip(list1, list2 interface{}) []interface{} {
-	l1, ok1 := list1.([]interface{})
-	l2, ok2 := list2.([]interface{})
+	l1, ok1 := cypherListValue(list1)
+	l2, ok2 := cypherListValue(list2)
 	if !ok1 || !ok2 {
 		return nil
 	}
@@ -835,7 +821,7 @@ func apocSameValue(value, listed interface{}) bool {
 //
 //	apocCollFrequencies([3, 1, 3])  // [{item: 3, count: 2}, {item: 1, count: 1}]
 func apocCollFrequencies(val interface{}) []interface{} {
-	list, _ := val.([]interface{})
+	list, _ := cypherListValue(val)
 	result := make([]interface{}, 0, len(list))
 	var positions cypherValueIndex
 	for _, item := range list {
@@ -932,13 +918,13 @@ func mergeMaps(map1, map2 interface{}) map[string]interface{} {
 func fromPairs(val interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	list, ok := val.([]interface{})
+	list, ok := cypherListValue(val)
 	if !ok {
 		return result
 	}
 
 	for _, item := range list {
-		pair, ok := item.([]interface{})
+		pair, ok := cypherListValue(item)
 		if !ok || len(pair) < 2 {
 			continue
 		}
@@ -969,8 +955,8 @@ func fromPairs(val interface{}) map[string]interface{} {
 func fromLists(keys, values interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 
-	keyList, ok1 := keys.([]interface{})
-	valList, ok2 := values.([]interface{})
+	keyList, ok1 := cypherListValue(keys)
+	valList, ok2 := cypherListValue(values)
 	if !ok1 || !ok2 {
 		return result
 	}

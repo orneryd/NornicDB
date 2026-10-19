@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve typed-list parameters and stored list properties across collection
+  functions and plugin adapters through one shared runtime-list reader.
+
 - Use canonical temporal equality for APOC collection membership and set operations, including typed Go parameters and temporal values nested in lists and maps.
 
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured

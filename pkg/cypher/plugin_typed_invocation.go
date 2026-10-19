@@ -171,15 +171,16 @@ func convertPluginArgument(value reflect.Value, target reflect.Type) (reflect.Va
 			return out, true
 		}
 	case reflect.Slice:
-		if value.Kind() != reflect.Slice && value.Kind() != reflect.Array {
+		items, isList := cypherListValue(value.Interface())
+		if !isList {
 			return reflect.Value{}, false
 		}
 		if value.Kind() == reflect.Slice && value.IsNil() {
 			return reflect.Zero(target), true
 		}
-		list := reflect.MakeSlice(target, value.Len(), value.Len())
-		for i := 0; i < value.Len(); i++ {
-			item, ok := convertPluginArgument(value.Index(i), target.Elem())
+		list := reflect.MakeSlice(target, len(items), len(items))
+		for i := range items {
+			item, ok := convertPluginArgument(reflect.ValueOf(items[i]), target.Elem())
 			if !ok {
 				return reflect.Value{}, false
 			}

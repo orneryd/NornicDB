@@ -332,7 +332,7 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, err
 		}
 		if name == "split" {
-			if delimiters, isList := values[1].([]interface{}); isList {
+			if delimiters, isList := cypherListValue(values[1]); isList {
 				return splitAtAnyDelimiter(name, text, delimiters)
 			}
 		}

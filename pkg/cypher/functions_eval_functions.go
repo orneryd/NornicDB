@@ -253,7 +253,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	if matchFuncStartAndSuffix(expr, "tail") {
 		inner := extractFuncArgs(expr, "tail")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 1 {
+		if list, ok := cypherListValue(innerVal); ok && len(list) > 1 {
 			return list[1:]
 		}
 		return []interface{}{}
@@ -294,7 +294,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			startIdx, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				endIdx := int64(len(list))
 				if len(args) >= 3 {
 					endIdx, _ = strconv.ParseInt(strings.TrimSpace(args[2]), 10, 64)
@@ -327,7 +327,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		if len(args) == 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			searchVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				for i, item := range list {
 					if e.compareEqual(item, searchVal) {
 						return int64(i)
@@ -374,7 +374,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		if len(args) >= 2 {
 			if node, ok := nodes[strings.TrimSpace(args[0])]; ok {
 				labelsVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if labels, ok := labelsVal.([]interface{}); ok {
+				if labels, ok := cypherListValue(labelsVal); ok {
 					for _, reqLabel := range labels {
 						labelStr, _ := reqLabel.(string)
 						found := false
@@ -399,22 +399,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// APOC Map Functions
 	// ========================================
 
-	// apoc.map.fromPairs(list) - create map from [[key, value], ...] pairs
+	// apoc.map.fromPairs uses the same nested-list reader on both evaluators.
 	if matchFuncStartAndSuffix(expr, "apoc.map.frompairs") {
 		inner := extractFuncArgs(expr, "apoc.map.frompairs")
-		pairsVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if pairs, ok := pairsVal.([]interface{}); ok {
-			result := make(map[string]interface{})
-			for _, pair := range pairs {
-				if pairList, ok := pair.([]interface{}); ok && len(pairList) >= 2 {
-					if key, ok := pairList[0].(string); ok {
-						result[key] = pairList[1]
-					}
-				}
-			}
-			return result
-		}
-		return map[string]interface{}{}
+		return fromPairs(e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 	}
 
 	// apoc.map.merge(map1, map2) - merge two maps
@@ -475,7 +463,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			var valuesToRemove []interface{}
 
 			if len(args) >= 2 {
-				if keys, ok := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
+				if keys, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
 					for _, k := range keys {
 						if ks, ok := k.(string); ok {
 							keysToRemove = append(keysToRemove, ks)
@@ -484,7 +472,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				}
 			}
 			if len(args) >= 3 {
-				if vals, ok := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
+				if vals, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
 					valuesToRemove = vals
 				}
 			}
@@ -919,15 +907,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			if s, ok := sepVal.(string); ok {
 				sep = strings.Trim(s, "'\"")
 			}
-			// Convert list to string slice
-			var parts []string
-			switch v := listVal.(type) {
-			case []interface{}:
-				for _, item := range v {
-					parts = append(parts, fmt.Sprintf("%v", item))
-				}
-			case []string:
-				parts = v
+			items, _ := cypherListValue(listVal)
+			parts := make([]string, len(items))
+			for index, item := range items {
+				parts[index] = fmt.Sprint(item)
 			}
 			return strings.Join(parts, sep)
 		}
