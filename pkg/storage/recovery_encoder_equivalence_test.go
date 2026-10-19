@@ -21,13 +21,13 @@ func TestRecoveryEncoderFormatEquivalence(t *testing.T) {
 	props := map[string]any{
 		"nil": nil, "bool": true, "string": "<>&\"\\\n", "bytes": []byte{0, 255},
 		"i8": int8(-7), "i16": int16(-300), "i32": int32(-70000), "i64": int64(9007199254740993), "int": int(-5),
-		"u8": uint8(250), "u16": uint16(65530), "u32": uint32(1<<31), "u64": uint64(1<<63), "uint": uint(7),
-		"f32": float32(1.25), "f64": float64(7), "ints": []int64{1, 1<<55}, "strings": []string{"a", "b"},
+		"u8": uint8(250), "u16": uint16(65530), "u32": uint32(1 << 31), "u64": uint64(1 << 63), "uint": uint(7),
+		"f32": float32(1.25), "f64": float64(7), "ints": []int64{1, 1 << 55}, "strings": []string{"a", "b"},
 		"floats": []float32{1, 2}, "bools": []bool{true, false}, "nil-list": []any(nil), "nil-map": map[string]any(nil),
 		"int-list": []int{-1, 2}, "i32-list": []int32{-3, 4}, "f64-list": []float64{1.5, 2.5}, "nil-strings": []string(nil),
 		"empty-list": []any{}, "empty-map": map[string]any{},
 		"nested": []any{map[string]any{"before": "preserved", "stamp": time.Date(2026, 2, 3, 4, 5, 6, 7, zone)}, []any{time.Unix(123, 456).In(time.FixedZone("", 19800)), time.Unix(123, 0).UTC()}},
-		"large": strings.Repeat("x", 128<<10),
+		"large":  strings.Repeat("x", 128<<10),
 	}
 	n, e := recoveryFieldFixture()
 	n.Properties, e.Properties = props, props

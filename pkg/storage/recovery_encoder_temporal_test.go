@@ -22,16 +22,16 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	require.NoError(t, err)
 	stamp := time.Date(2026, 2, 3, 4, 5, 6, 789, time.UTC)
 	properties := map[string]any{
-		"date": cypher.CypherDate{Time: stamp},
-		"local-time": cypher.CypherLocalTime{Time: stamp},
-		"time": cypher.CypherTime{Time: stamp.In(time.FixedZone("", 19800))},
+		"date":           cypher.CypherDate{Time: stamp},
+		"local-time":     cypher.CypherLocalTime{Time: stamp},
+		"time":           cypher.CypherTime{Time: stamp.In(time.FixedZone("", 19800))},
 		"local-datetime": cypher.CypherLocalDateTime{Time: stamp},
-		"datetime": cypher.CypherDateTime{Time: stamp.In(zone), ZoneID: zone.String()},
-		"duration": &cypher.CypherDuration{Months: 2, Days: 3, Seconds: 4, Nanos: 567},
-		"point": cypher.CypherPoint{SRID: 4979, X: 12.5, Y: 34.5, Z: 56.5},
-		"uuid": cypher.CypherUUID{},
-		"vector-int": cypher.CypherVector{Type: cypher.VectorInteger64, Ints: []int64{1, 1<<55}},
-		"vector-float": cypher.CypherVector{Type: cypher.VectorFloat32, Floats: []float64{1.25, 2.5}},
+		"datetime":       cypher.CypherDateTime{Time: stamp.In(zone), ZoneID: zone.String()},
+		"duration":       &cypher.CypherDuration{Months: 2, Days: 3, Seconds: 4, Nanos: 567},
+		"point":          cypher.CypherPoint{SRID: 4979, X: 12.5, Y: 34.5, Z: 56.5},
+		"uuid":           cypher.CypherUUID{},
+		"vector-int":     cypher.CypherVector{Type: cypher.VectorInteger64, Ints: []int64{1, 1 << 55}},
+		"vector-float":   cypher.CypherVector{Type: cypher.VectorFloat32, Floats: []float64{1.25, 2.5}},
 	}
 	properties["nested"] = []any{map[string]any{"value": properties["datetime"]}, properties["duration"]}
 	node := &storage.Node{ID: "nornic:temporal", Properties: properties}
