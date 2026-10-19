@@ -616,28 +616,28 @@ func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	}
 	body, err := json.Marshal(openaiRequest{Model: e.Model(), Input: texts})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", observability.RedactError(err, observability.ClientCredentials(e.config.APIURL, e.config.APIKey)...))
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.config.APIURL+path, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", observability.RedactError(err, observability.ClientCredentials(e.config.APIURL, e.config.APIKey)...))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", observability.RedactError(err, observability.ClientCredentials(e.config.APIURL, e.config.APIKey)...))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: string(raw)}
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: observability.RedactText(string(raw), observability.ClientCredentials(e.config.APIURL, e.config.APIKey)...)}
 	}
 	var wire struct {
 		Embeddings      [][]float32 `json:"embeddings"`
 		PromptEvalCount int         `json:"prompt_eval_count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, fmt.Errorf("failed to decode response: %w", observability.RedactError(err, observability.ClientCredentials(e.config.APIURL, e.config.APIKey)...))
 	}
 	recordEmbeddingUsage(ctx, "ollama", e.Model(), len(texts), wire.PromptEvalCount)
 	if err := CheckEmbeddings(wire.Embeddings, len(texts), e.Dimensions()); err != nil {
