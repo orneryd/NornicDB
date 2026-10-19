@@ -1,7 +1,8 @@
 package cypher
 
 import (
-	"strings"
+	"context"
+ "strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,13 +39,13 @@ func TestPipelineDiagnosticLexicalSecrecy(t *testing.T) {
 		"RETURN (] // private-comment",
 		"RETURN 1 /* private-comment",
 	} {
-		for _, redacted := range []string{RedactLiterals(StripComments(query)), executor.redactForLog(query)} {
+		for _, redacted := range []string{RedactLiterals(StripComments(query)), executor.redactForLog(context.Background(), query)} {
 			for _, secret := range []string{"private-literal", "private-comment", "123456789", "abcdef"} {
 				require.NotContains(t, redacted, secret, "query: %s", query)
 			}
 		}
 	}
-	public := executor.redactForLog("MATCH (n:Person) WHERE n.email = 'private-literal' /* private-comment */ RETURN n // private-comment")
+	public := executor.redactForLog(context.Background(), "MATCH (n:Person) WHERE n.email = 'private-literal' /* private-comment */ RETURN n // private-comment")
 	require.NotContains(t, public, "private-literal")
 	require.NotContains(t, public, "private-comment")
 	a := RedactLiterals(StripComments("MATCH (n:Person) RETURN n.email = 'one' AS result // comment"))
