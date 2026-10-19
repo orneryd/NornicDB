@@ -44,7 +44,12 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, "failed procedure statement must roll back its writes")
 		})
 	}
-	t.Run("composite fragment", func(t *testing.T) {
+	for _, fragment := range []string{
+		"CREATE (:U5AtomicWrite) WITH 1 AS keep CALL u5tx.fail() YIELD rejected RETURN rejected",
+		"CALL u5tx.writefail() YIELD value RETURN value",
+		"CALL apoc.cypher.doIt('CREATE (:U5AtomicWrite) RETURN 1 AS value',{}) YIELD value CALL u5tx.fail() YIELD rejected RETURN rejected",
+	} {
+	t.Run("composite fragment/"+fragment, func(t *testing.T) {
 		manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = manager.Close() })
@@ -56,7 +61,7 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		require.NoError(t, err)
 		exec := NewStorageExecutor(store)
 		exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
-		_, err = exec.Execute(context.Background(), "CALL { USE atomic_comp.shard CREATE (:U5AtomicWrite) WITH 1 AS keep CALL u5tx.fail() YIELD rejected RETURN rejected } RETURN rejected", nil)
+		_, err = exec.Execute(context.Background(), "CALL { USE atomic_comp.shard "+fragment+" } RETURN 1", nil)
 		require.ErrorContains(t, err, failure.Error())
 		shard, err := manager.GetStorage("atomic_shard")
 		require.NoError(t, err)
@@ -64,6 +69,7 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, nodes, "failed local fragment must roll back its writes")
 	})
+	}
 }
 
 func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
