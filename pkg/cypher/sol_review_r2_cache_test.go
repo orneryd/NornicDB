@@ -44,11 +44,14 @@ func TestSolReviewR2CacheParameterInputs(t *testing.T) {
 		require.Len(t, result.Rows, tc.count)
 	}
 	for _, query := range []string{"RETURN rand() AS value", "CREATE (n:SolCacheWrite) RETURN n"} {
+		hits, _, _, _, _ := exec.cache.Stats()
 		first, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err)
 		second, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err)
 		require.NotSame(t, first, second, "non-deterministic and write statements must execute")
+		afterHits, _, _, _, _ := exec.cache.Stats()
+		require.Equal(t, hits, afterHits, "non-deterministic and write statements must not hit the outer cache")
 	}
 }
 
@@ -57,12 +60,14 @@ func TestSolReviewR2CacheParameterizedTimePredicate(t *testing.T) {
 	query := "CALL db.rretrieve($request)"
 	deadline := time.Now().Add(time.Second)
 	params := map[string]any{"request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}, "deadline": deadline.UnixMilli()}
+	hits, _, _, _, _ := exec.cache.Stats()
 	first, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
 	require.Len(t, first.Rows, 2)
 	time.Sleep(time.Until(deadline.Add(100 * time.Millisecond)))
 	second, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
-	t.Logf("same cached result=%t; before=%d after=%d", first == second, len(first.Rows), len(second.Rows))
+	afterHits, _, _, _, _ := exec.cache.Stats()
+	require.Equal(t, hits, afterHits, "the time predicate must bypass result-cache hits")
 	require.Empty(t, second.Rows, "the parameter-supplied time predicate must be evaluated again after its deadline")
 }

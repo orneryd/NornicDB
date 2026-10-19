@@ -33,9 +33,9 @@ func TestSearchStreamParameterAwareCache(t *testing.T) {
 	first, err := run(ctx, plain)
 	require.NoError(t, err)
 	require.Len(t, first.Rows, 2)
-	again, err := run(ctx, plain)
-	require.NoError(t, err)
-	require.Same(t, first, again, "one-shot request should hit result cache")
+	requireOwnedResultCacheHit(t, exec, first, func() (*ExecuteResult, error) {
+		return run(ctx, plain)
+	})
 	empty, err := run(ctx, map[string]any{"query": "nonexistent", "limit": int64(2)})
 	require.NoError(t, err)
 	require.Empty(t, empty.Rows)
