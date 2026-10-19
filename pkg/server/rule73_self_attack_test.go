@@ -51,7 +51,7 @@ func rule73HTTPInventory() []rule73HTTPCase {
 		{"embed.stats", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/stats" }, nil},
 		{"embed.failures", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/failures" }, nil},
 		{"embed.retry-failures", http.MethodPost, "all", rule73HTTPReadWrite, func(string) string { return "/nornicdb/embed/retry-failures" }, constantBody(map[string]any{})},
-		{"embed.clear", http.MethodPost, "default", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
+		{"embed.clear", http.MethodPost, "selected", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
 		{"search.rebuild", http.MethodPost, "selected", rule73HTTPReadWrite, func(string) string { return "/nornicdb/search/rebuild" }, func(db string) any { return map[string]any{"database": db} }},
 		{"gdpr.export", http.MethodPost, "default", rule73HTTPRead, func(string) string { return "/gdpr/export" }, constantBody(map[string]any{"user_id": "nobody", "format": "json"})},
 		{"gdpr.delete", http.MethodPost, "default", rule73HTTPReadWrite, func(string) string { return "/gdpr/delete" }, constantBody(map[string]any{"user_id": "nobody", "confirm": true})},
