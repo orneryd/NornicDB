@@ -216,7 +216,14 @@ func (r *Resolver) authorizeDirectOperation(ctx context.Context, permissions ...
 // The embedding worker scans base storage across namespaces. Its trigger,
 // reset and queue statistics therefore require permission on every database,
 // even when the GraphQL request selects just one database.
-func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context) error {
+func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context, regenerate bool) error {
+	// Regeneration clears stored embeddings before starting the worker. Like
+	// the HTTP regenerate operation, this destructive branch requires admin.
+	if regenerate {
+		if err := r.authorizeDirectOperation(ctx, auth.PermAdmin); err != nil {
+			return err
+		}
+	}
 	for _, database := range r.dbManager.ListDatabases() {
 		if database == nil || database.Type == "system" {
 			continue
@@ -264,15 +271,21 @@ func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, er
 	return database, engine, nil
 }
 
-// subscriptionDatabase retains the existing explicit-target requirement for
+// subscriptionSelection retains the requested default selection for live checks,
+// and the existing explicit-target requirement for
 // composite subscriptions after the shared direct-read decision.
-func (r *Resolver) subscriptionDatabase(ctx context.Context) (string, error) {
+func (r *Resolver) subscriptionSelection(ctx context.Context) (string, error) {
 	database, err := r.readableDatabase(ctx)
 	if err != nil {
 		return "", err
 	}
 	if r.dbManager.IsCompositeDatabase(database) {
 		return "", fmt.Errorf("subscriptions on composite database '%s' are not supported; target a constituent database explicitly", database)
+	}
+	// The broker binds the canonical database itself. Passing the canonical
+	// name here would discard a selected default alias before live checks.
+	if auth.RequestDatabaseScopeFromContext(ctx) != nil {
+		return "", nil
 	}
 	return database, nil
 }
