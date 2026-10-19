@@ -8,6 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type relationshipAccessScanOnly struct{ storage.Engine }
+
+func TestRelationshipAccessProgramScanView(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "scan_site_owner")
+	setup := NewStorageExecutor(store)
+	for _, q := range []string{"CREATE ()-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
+		_, err := setup.Execute(context.Background(), q, nil)
+		require.NoError(t, err)
+	}
+	e := NewStorageExecutor(&relationshipAccessScanOnly{Engine: store})
+	for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+		result, err := e.Execute(context.Background(), mode+" MATCH ()-[r:T]->() WHERE r.p='x' RETURN r.p", nil)
+		require.NoError(t, err)
+		root := result.Metadata["plan"].(*ExecutionPlan).Root
+		require.Nil(t, relationshipPlanOperator(root, "RelationshipIndexSeek"))
+		expand := relationshipPlanOperator(root, "Expand")
+		require.NotNil(t, expand)
+		require.Equal(t, []string{"r"}, expand.Identifiers)
+		require.Equal(t, int64(100), expand.EstimatedRows)
+	}
+}
+
 // Remove the program's site, while leaving the executable query unchanged.
 // Both readers must lose the seek. A runtime planner that re-derives sites from
 // its pattern, or a display scanner that rebuilds them, fails this guard.
