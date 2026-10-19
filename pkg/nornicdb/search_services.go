@@ -539,6 +539,10 @@ func (db *DB) ResetSearchService(dbName string) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
+	// Creation binds the registry epoch before publication. Retire in-flight
+	// creation as well as the cached entry before allowing a replacement.
+	db.searchServiceCreationMu.Lock()
+	defer db.searchServiceCreationMu.Unlock()
 	db.searchServicesMu.Lock()
 	if entry, ok := db.searchServices[dbName]; ok && entry != nil && entry.svc != nil {
 		// Stop pending persist timers and close file-backed vector store
