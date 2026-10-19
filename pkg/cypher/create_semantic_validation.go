@@ -445,6 +445,11 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	// A qualified call can be followed by a property/subscript access. Its
+	// namespace is not a variable, as in the shared free-reference reader.
+	if _, call := qualifiedFunctionNameEnd(expression, next); call {
+		return "", false
+	}
 	remainder := strings.TrimSpace(expression[next:])
 	if remainder == "" || strings.HasPrefix(remainder, ".") || strings.HasPrefix(remainder, "[") {
 		return root, true
