@@ -18,6 +18,7 @@ const (
 	rule73HTTPRead      rule73HTTPClass = "read"
 	rule73HTTPWrite     rule73HTTPClass = "write"
 	rule73HTTPReadWrite rule73HTTPClass = "read_write"
+rule73HTTPReadAdmin rule73HTTPClass = "read_admin"
 	rule73HTTPAdmin     rule73HTTPClass = "admin"
 	rule73HTTPAllAdmin  rule73HTTPClass = "all_admin"
 )
@@ -53,17 +54,17 @@ func rule73HTTPInventory() []rule73HTTPCase {
 		{"gdpr.delete", http.MethodPost, "default", rule73HTTPReadWrite, func(string) string { return "/gdpr/delete" }, constantBody(map[string]any{"user_id": "nobody", "confirm": true})},
 		{"admin.backup", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/admin/backup" }, constantBody(map[string]any{"path": "/tmp/rule73-probe-backup"})},
 		{"admin.restore", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/admin/restore" }, constantBody(map[string]any{"path": "/tmp/rule73-probe-missing"})},
-		{"admin.database.config", http.MethodGet, "selected", rule73HTTPAdmin, func(db string) string { return "/admin/databases/" + db + "/config" }, nil},
-		{"admin.database.mvcc", http.MethodGet, "selected", rule73HTTPAdmin, func(db string) string { return "/admin/databases/" + db + "/mvcc" }, nil},
-		{"retention.policies", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/policies" }, nil},
-		{"retention.policy", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/policies/missing" }, nil},
-		{"retention.defaults", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/policies/defaults" }, nil},
-		{"retention.holds", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/holds" }, nil},
-		{"retention.hold", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/holds/missing" }, nil},
-		{"retention.erasures", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/erasures" }, nil},
+		{"admin.database.config", http.MethodGet, "selected", rule73HTTPReadAdmin, func(db string) string { return "/admin/databases/" + db + "/config" }, nil},
+		{"admin.database.mvcc", http.MethodGet, "selected", rule73HTTPReadAdmin, func(db string) string { return "/admin/databases/" + db + "/mvcc" }, nil},
+		{"retention.policies", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/policies" }, nil},
+		{"retention.policy", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/policies/missing" }, nil},
+		{"retention.defaults", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/policies/defaults" }, nil},
+		{"retention.holds", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/holds" }, nil},
+		{"retention.hold", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/holds/missing" }, nil},
+		{"retention.erasures", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/erasures" }, nil},
 		{"retention.process-erasure", http.MethodPost, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/erasures/missing/process" }, nil},
 		{"retention.sweep", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/admin/retention/sweep" }, nil},
-		{"retention.status", http.MethodGet, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/status" }, nil},
+		{"retention.status", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/status" }, nil},
 	}
 }
 
@@ -97,6 +98,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		{"default-only", []string{"nornic"}, true, true},
 		{"named-only", []string{"rule73_named"}, true, true},
 		{"write-only", []string{"nornic", "rule73_named"}, false, true},
+{"read-only", []string{"nornic", "rule73_named"}, true, false},
 		{"no-access", []string{"nornic", "rule73_named"}, false, false},
 	} {
 		require.NoError(t, server.roleStore.CreateRole(ctx, spec.name))
@@ -135,7 +137,9 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 			return p.write
 		case rule73HTTPReadWrite:
 			return p.read && p.write
-		case rule73HTTPAdmin:
+		case rule73HTTPReadAdmin:
+ return p.read && p.admin
+ case rule73HTTPAdmin:
 			return p.read && p.write && p.admin
 		default:
 			return false
@@ -180,7 +184,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 					switch p.name {
 					case "default-only", "named-only":
 						wantNodes = 1
-					case "admin":
+					case "admin", "read-only":
 						wantNodes = 2
 					}
 					require.Equal(t, wantNodes, database["nodes"], response.Body.String())
@@ -241,6 +245,7 @@ func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 		{"default-only", []string{"nornic"}, true, true},
 		{"named-only", []string{"rule73_named"}, true, true},
 		{"write-only", []string{"nornic", "rule73_named"}, false, true},
+{"read-only", []string{"nornic", "rule73_named"}, true, false},
 		{"no-access", []string{"nornic", "rule73_named"}, false, false},
 	} {
 		require.NoError(t, server.roleStore.CreateRole(ctx, spec.name))
