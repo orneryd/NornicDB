@@ -28,17 +28,23 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 		})
 		for _, procedure := range globalProcedureRegistry.ListBuiltIns() {
 			for index, input := range procedure.ResultCache.CypherInputs {
-				if input.StoredText != "" { continue }
+				if input.StoredText != "" {
+					continue
+				}
 				inputs++
 				t.Run(fmt.Sprintf("%s/%s/%d", function.name, procedure.Name, index), func(t *testing.T) {
 					args := make([]string, procedure.MinArgs)
-					if len(args) <= input.Argument { args = make([]string, input.Argument+1) }
+					if len(args) <= input.Argument {
+						args = make([]string, input.Argument+1)
+					}
 					params := map[string]any{}
-					for i := range args { args[i] = "{}" }
+					for i := range args {
+						args[i] = "{}"
+					}
 					text := "RETURN " + invocation + " AS value"
 					if input.Field != "" {
 						text = invocation + " IS NOT NULL"
-						params["request"] = map[string]any{"query":"transcript", input.Field:text}
+						params["request"] = map[string]any{"query": "transcript", input.Field: text}
 						args[input.Argument] = "$request"
 					} else {
 						params["statement"] = text
@@ -46,7 +52,7 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 					}
 					query := "CALL " + procedure.Name + "(" + strings.Join(args, ",") + ")"
 					ctx := withQueryParams(context.Background(), params)
-					require.False(t, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly:true}, query), query)
+					require.False(t, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, query), query)
 				})
 			}
 		}
@@ -59,17 +65,64 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 	exec := solR2CacheExecutor(t)
 	seen := map[string]bool{}
 	for _, function := range cypherFunctionCatalog {
-		if function.cacheVolatility == functionStable || strings.HasPrefix(function.name,"gds.") || strings.HasPrefix(function.name,"graph.") || seen[function.name] { continue }
+		if function.cacheVolatility == functionStable || strings.HasPrefix(function.name, "gds.") || strings.HasPrefix(function.name, "graph.") || seen[function.name] {
+			continue
+		}
 		seen[function.name] = true
 		t.Run(function.name, func(t *testing.T) {
-			for _, query := range []string{"RETURN "+function.name+"() AS value", "CALL db.rretrieve($request)"} {
-				params := map[string]any{"request":map[string]any{"query":"transcript","where":function.name+"() IS NOT NULL"}}
+			for _, query := range []string{"RETURN " + function.name + "() AS value", "CALL db.rretrieve($request)"} {
+				params := map[string]any{"request": map[string]any{"query": "transcript", "where": function.name + "() IS NOT NULL"}}
 				first, err := exec.Execute(context.Background(), query, params)
 				require.NoError(t, err, query)
 				second, err := exec.Execute(context.Background(), query, params)
 				require.NoError(t, err, query)
-				require.NotSame(t, first, second, "outer and parameterized predicates must execute: %s",query)
+				require.NotSame(t, first, second, "outer and parameterized predicates must execute: %s", query)
 			}
 		})
 	}
+}
+
+func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
+	exec := solR2CacheExecutor(t)
+	for _, test := range []struct {
+		query     string
+		params    map[string]any
+		cacheable bool
+	}{
+		{"RETURN 'timestamp() rand()' AS data", nil, true},
+		{"RETURN timestamp /* gap */ () AS now", nil, false},
+		{"RETURN `randomUUID` ( ) AS id", nil, false},
+		{"RETURN date('2020-01-01') AS day", nil, true},
+		{"RETURN datetime({timezone:'UTC'}) AS now", nil, false},
+		{"RETURN unknownFunction() AS value", nil, false},
+		{"CALL unknown.procedure()", nil, false},
+		{"CALL db.infer({prompt:'x',cache:true})", nil, false},
+		{"CALL db.rretrieve({query:'timestamp()'})", nil, true},
+		{"CALL db.rretrieve({query:'transcript',where:$predicate})", map[string]any{"predicate": "timestamp() < $deadline", "deadline": int64(1)}, false},
+		{"CALL db.rretrieve($request)", map[string]any{"request": map[string]any{"query": "transcript", "where": "node.kind = $kind"}, "kind": "a"}, true},
+		{"CALL db.rretrieve($request)", map[string]any{"request": map[string]any{"query": "transcript", "qid": "", "discard": false}}, true},
+		{"CALL db.rretrieve($request)", map[string]any{"request": map[string]any{"query": "transcript", "mode": "id", "n": int64(1)}}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN rand() AS value"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN 1 AS value"}, true},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CREATE (:Synthetic)"}, false},
+		{"CALL apoc.cypher.run($statement,{request:$request})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
+		{"CALL apoc.cypher.run($statement,{request:{query:'transcript',where:'timestamp() < $deadline'}})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript"}}, false},
+		{"CALL apoc.cypher.run($statement,{request:{query:'transcript'}})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, true},
+	} {
+		t.Run(test.query+fmt.Sprint(test.params), func(t *testing.T) {
+			ctx := withQueryParams(context.Background(), test.params)
+			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, test.query))
+		})
+	}
+}
+
+func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
+	exec := solR2CacheExecutor(t)
+	params := map[string]any{"request": map[string]any{"query": "transcript", "where": "node.kind = $kind"}, "kind": "a"}
+	first, err := exec.Execute(context.Background(), "CALL db.rretrieve($request)", params)
+	require.NoError(t, err)
+	second, err := exec.Execute(context.Background(), "CALL db.rretrieve($request)", params)
+	require.NoError(t, err)
+	require.Same(t, first, second, "proven deterministic parameterized predicates retain result caching")
+	require.Len(t, second.Rows, 1)
 }
