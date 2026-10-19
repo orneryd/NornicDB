@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,7 +17,18 @@ type namespaceDropCommand struct {
 }
 
 func isNamespaceLifecycle(cmd *Command) bool {
-	return cmd.Type == CmdDeleteByPrefix || cmd.Type == CmdNamespaceCatalog
+	if cmd.Type == CmdNamespaceCatalog {
+		return true
+	}
+	if cmd.Type != CmdDeleteByPrefix {
+		return false
+	}
+	var request namespaceDropCommand
+	if err := decodeGob(cmd.Data, &request); err != nil {
+		return false
+	}
+	namespace, suffix, found := strings.Cut(request.Prefix, ":")
+	return found && namespace != "" && suffix == ""
 }
 
 func configureNamespaceOperation(cmd *Command, op *storage.NamespaceDrop) (namespaceDropCommand, error) {
@@ -69,7 +81,14 @@ func (r *RaftReplicator) applyCommittedCommand(cmd *Command) error {
 		}
 		cmd.namespaceDrop.DeferConsensusCompletion()
 	}
-	return applyCommittedStorageCommand(r.storage, cmd)
+	err := applyCommittedStorageCommand(r.storage, cmd)
+	if op := cmd.namespaceDrop; op != nil && op.Committed() {
+		// Catalog publication is intrinsic to the storage operation; it does
+		// not submit another consensus command. Complete retirement and release
+		// admission before any apply path advances to the next committed entry.
+		return op.Complete(err)
+	}
+	return err
 }
 
 func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, cmd *Command) error {
