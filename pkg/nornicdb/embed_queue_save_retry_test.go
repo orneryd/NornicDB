@@ -157,17 +157,28 @@ func TestEmbedWorkerSaveRetryRetainsProviderResult(t *testing.T) {
 
 func TestEmbedWorkerSaveRetryPreservesDocumentBatch(t *testing.T) {
 	for _, mode := range []string{"document-batch", "resolved-document-batch", "property-batch"} {
-		t.Run(mode, func(t *testing.T) {
-			worker, _, provider := nodeSaveRetryFixture(t, mode, 16, 1)
+		for _, rejections := range []int{1, 100} {
+		t.Run(fmt.Sprintf("%s/rejections_%d", mode, rejections), func(t *testing.T) {
+			worker, queue, provider := nodeSaveRetryFixture(t, mode, 16, rejections)
 			var published int
 			worker.SetOnEmbedded(func(*storage.Node) { published++ })
 			require.True(t, worker.processNextBatch())
 			require.Zero(t, published)
 			require.Equal(t, 16, provider.GetEmbedCount())
 			require.True(t, worker.processNextBatch())
-			require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
+			if rejections == 1 {
+				require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
+			} else {
+				require.Zero(t, published)
+			}
+			attempts := 0
+			for _, count := range queue.attempts {
+				attempts += count
+			}
+			require.Equal(t, 32, attempts, "one retry pass must remain bounded by the batch size, including rejected retries")
 			require.Equal(t, 16, provider.GetEmbedCount())
 		})
+		}
 	}
 }
 
@@ -193,15 +204,20 @@ func BenchmarkNodeEmbeddingSaveRetry(b *testing.B) {
 	for _, mode := range []string{"whole", "chunked", "document-batch"} {
 		for _, rejected := range []int{0, 1} {
 			b.Run(fmt.Sprintf("%s/rejected_%d", mode, rejected), func(b *testing.B) {
-				worker, queue, provider := nodeSaveRetryFixture(b, mode, 1, rejected)
+				nodes := 1
+				if mode == "document-batch" {
+					nodes = 16
+				}
+				worker, queue, provider := nodeSaveRetryFixture(b, mode, nodes, rejected)
+				ids := append([]storage.NodeID(nil), queue.pending...)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {
 					queue.attempts = make(map[storage.NodeID]int)
 					worker.recentlyProcessed = make(map[string]time.Time)
-					queue.AddToPendingEmbeddings("node-000")
+					queue.pending = append(queue.pending[:0], ids...)
 					before := worker.processed.Load()
-					for worker.processed.Load() == before {
+					for worker.processed.Load()-before < int64(nodes) {
 						worker.processNextBatch()
 					}
 				}
