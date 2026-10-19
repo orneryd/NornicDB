@@ -17,9 +17,16 @@ import (
 )
 
 func TestFunctionSyntaxGeneratedRoutes(t *testing.T) {
+	runFunctionSyntaxRoutes(t, functionsyntaxmatrix.Cases())
+}
+
+func TestFunctionSyntaxNativeRoutes(t *testing.T) {
+	runFunctionSyntaxRoutes(t, functionsyntaxmatrix.NativeCases())
+}
+
+func runFunctionSyntaxRoutes(t *testing.T, cases []functionsyntaxmatrix.Case) {
 	prior := config.IsCypherQueryNormalizationEnabled()
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
-	cases := functionsyntaxmatrix.Cases()
 	for _, normalize := range []bool{false, true} {
 		for _, explicit := range []bool{false, true} {
 			for _, route := range []string{"direct", "use", "nested-use"} {

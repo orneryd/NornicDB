@@ -16,6 +16,14 @@ import (
 )
 
 func TestFunctionSyntaxGeneratedBolt(t *testing.T) {
+	runFunctionSyntaxBolt(t, functionsyntaxmatrix.Cases())
+}
+
+func TestFunctionSyntaxNativeBolt(t *testing.T) {
+	runFunctionSyntaxBolt(t, functionsyntaxmatrix.NativeCases())
+}
+
+func runFunctionSyntaxBolt(t *testing.T, cases []functionsyntaxmatrix.Case) {
 	prior := config.IsCypherQueryNormalizationEnabled()
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
 	base := storage.NewMemoryEngine()
@@ -28,7 +36,7 @@ func TestFunctionSyntaxGeneratedBolt(t *testing.T) {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("normalize=%t/explicit=%t", normalize, explicit), func(t *testing.T) {
 				config.SetCypherQueryNormalizationEnabled(normalize)
-				for _, sample := range functionsyntaxmatrix.Cases() {
+				for _, sample := range cases {
 					func() {
 						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
