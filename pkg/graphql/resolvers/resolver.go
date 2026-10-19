@@ -165,11 +165,10 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 		// System Cypher uses metadata storage, not a data search service.
 		// Query and mutation share this canonical namespace-aware setup.
 		if effectiveDb != r.dbManager.SystemDatabaseName() {
-			service, err := r.DB.GetOrCreateSearchService(effectiveDb, storage)
-			if err != nil {
+			if _, err := r.DB.GetOrCreateSearchService(effectiveDb, storage); err != nil {
 				return nil, err
 			}
-			executor.SetSearchService(service)
+			executor.SetSearchServiceResolver(effectiveDb, r.DB.SearchServiceResolver())
 		}
 		baseExecutor := r.DB.GetCypherExecutor()
 		if baseExecutor != nil {
