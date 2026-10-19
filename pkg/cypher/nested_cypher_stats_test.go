@@ -62,7 +62,9 @@ func TestNestedCypherRollbackStats(t *testing.T) {
 }
 
 func TestNestedCypherVoidNilTail(t *testing.T) {
-	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.nil", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) { return nil, nil }))
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.nil", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+		return nil, nil
+	}))
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nil_tail"))
 	require.NotPanics(t, func() {
 		result, err := exec.Execute(context.Background(), "CALL nestedstats.nil() RETURN 1 AS value", nil)
