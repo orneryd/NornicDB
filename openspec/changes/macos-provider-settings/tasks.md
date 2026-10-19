@@ -27,3 +27,5 @@
 - [x] Restore default local model download action directly in setup and Settings AI controls using the existing shared downloader.
 
 - [x] Remove activation-triggered wizard routing; explicit Settings closes setup without clearing pending review, and app reopen respects an already visible window.
+
+- [x] Add search continuation capacity to shared AI features, load YAML/ENV, persist YAML/LaunchAgent and track Settings edits; zero disables continuation.

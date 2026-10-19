@@ -14,7 +14,7 @@ Setup has three steps:
    automatic startup. Storage upgrade authorization is visible at the front of
    this page and again on Review, with the same selected state. Existing values
    are loaded; opening setup applies no preset.
-2. **Optional AI:** configure K-Means Clustering, Memory Decay and Auto-TLP, then independently enable and configure Embeddings, Reranking,
+2. **Optional AI:** configure K-Means Clustering, Memory Decay, Auto-TLP and the maximum active search cursor count, then independently enable and configure Embeddings, Reranking,
    and Heimdall. Each service has its own provider, model, endpoint and credential.
    Embeddings also expose dimensions, workers and chunking. Remote model IDs are
    kept exactly as entered; GGUF downloads apply to local models only.
@@ -112,3 +112,8 @@ The app retains a per-user operating-system lock so two updated copies cannot
 create independent tray instances. The installed owner also retires older copies
 that predate the lock. Source/build staging folders are not installation targets
 and are not deleted by the installer; use the installed application.
+
+Search cursor continuation uses `memory.search_cursor_max` and
+`NORNICDB_SEARCH_CURSOR_MAX`. Zero disables continuation; a positive count enables
+it with that process-wide maximum. Existing values are loaded, Settings tracks
+edits, and Review displays the limit. Restart the server to apply changes.
