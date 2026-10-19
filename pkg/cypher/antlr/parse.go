@@ -5,6 +5,7 @@
 package antlr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ type ParseResult struct {
 type pooledValidator struct {
 	lexer         *CypherLexer
 	tokens        *antlr.CommonTokenStream
+	stream        *validationTokenStream
 	parser        *CypherParser
 	errorListener *parseErrorListener
 }
@@ -31,7 +33,8 @@ var validatorPool = sync.Pool{
 		input := antlr.NewInputStream("")
 		lexer := NewCypherLexer(input)
 		tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-		parser := NewCypherParser(tokens)
+		stream := &validationTokenStream{CommonTokenStream: tokens}
+		parser := NewCypherParser(stream)
 
 		errorListener := &parseErrorListener{}
 
@@ -46,6 +49,7 @@ var validatorPool = sync.Pool{
 		return &pooledValidator{
 			lexer:         lexer,
 			tokens:        tokens,
+			stream:        stream,
 			parser:        parser,
 			errorListener: errorListener,
 		}
@@ -106,6 +110,16 @@ func Parse(query string) (*ParseResult, error) {
 // This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
+	return ValidateContext(context.Background(), query)
+}
+
+// ValidateContext keeps native syntax validation within the statement's lifetime.
+// Token consumption and prediction lookahead observe cancellation even when all
+// tokens have already been buffered for an SLL-to-LL retry.
+func ValidateContext(ctx context.Context, query string) (retErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	query = strings.TrimSpace(query)
 	if query == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
@@ -116,12 +130,21 @@ func Validate(query string) error {
 	v.errorListener.reset()
 	prediction := acquirePrediction()
 	usePrediction(v.parser, prediction)
+	v.stream.ctx, v.stream.done = ctx, ctx.Done()
 	defer func() {
+		v.stream.ctx, v.stream.done = nil, nil
 		// A pooled validator holds no generation: an idle one would keep a
 		// retired generation's DFAs reachable until it is reused.
 		v.parser.Interpreter = nil
 		prediction.release()
 		validatorPool.Put(v)
+		if caught := recover(); caught != nil {
+			if canceled, ok := caught.(validationCancellation); ok {
+				retErr = canceled.err
+			} else {
+				panic(caught)
+			}
+		}
 	}()
 
 	var input antlr.CharStream
@@ -134,7 +157,7 @@ func Validate(query string) error {
 	v.lexer.Reset()
 
 	v.tokens.SetTokenSource(v.lexer)
-	v.parser.SetTokenStream(v.tokens)
+	v.parser.SetTokenStream(v.stream)
 
 	// Fast path: SLL prediction mode is usually faster; fall back to LL on errors.
 	v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeSLL)
@@ -145,7 +168,7 @@ func Validate(query string) error {
 		// require full context prediction.
 		v.errorListener.reset()
 		v.tokens.Seek(0)
-		v.parser.SetTokenStream(v.tokens)
+		v.parser.SetTokenStream(v.stream)
 		v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeLL)
 		_ = v.parser.Script()
 
@@ -156,6 +179,29 @@ func Validate(query string) error {
 	}
 	return nil
 }
+
+// The runtime owns buffering and prediction; this adapter adds the statement's
+// cancellation boundary without modifying generated grammar or runtime code.
+type validationTokenStream struct {
+	*antlr.CommonTokenStream
+	ctx  context.Context
+	done <-chan struct{}
+}
+type validationCancellation struct{ err error }
+
+func (s *validationTokenStream) check() {
+	if s.done != nil {
+		select {
+		case <-s.done:
+			panic(validationCancellation{s.ctx.Err()})
+		default:
+		}
+	}
+}
+func (s *validationTokenStream) LA(i int) int         { s.check(); return s.CommonTokenStream.LA(i) }
+func (s *validationTokenStream) LT(i int) antlr.Token { s.check(); return s.CommonTokenStream.LT(i) }
+func (s *validationTokenStream) Consume()             { s.check(); s.CommonTokenStream.Consume() }
+func (s *validationTokenStream) Seek(i int)           { s.check(); s.CommonTokenStream.Seek(i) }
 
 // parseErrorListener collects syntax errors during parsing
 type parseErrorListener struct {
