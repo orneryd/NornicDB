@@ -273,3 +273,110 @@ func (s *Service) forEachNodeVectorKeyLocked(nodeID string, visit func(string)) 
 		visit(key)
 	}
 }
+
+// Node and vector-entry identities are deliberately different types. Only this
+// owner constructs or converts them; hint maps cannot be indexed with the other
+// identity even when their byte strings are identical.
+type vectorNodeID string
+type vectorEntryID string
+
+type nodeLexicalHint struct {
+	ID vectorNodeID
+	Rank uint32
+	Signature uint64
+}
+
+type nodeLexicalHints map[vectorNodeID]nodeLexicalHint
+type entryLexicalHints map[vectorEntryID]nodeLexicalHint
+
+func nodeHintsFromValues(hints []LexicalSeedHint) nodeLexicalHints {
+	if len(hints) == 0 { return nil }
+	out := make(nodeLexicalHints, len(hints))
+	for _, hint := range hints {
+		id := strings.TrimSpace(hint.ID)
+		if id != "" {
+			out[vectorNodeID(id)] = nodeLexicalHint{ID: vectorNodeID(id), Rank: hint.Rank, Signature: hint.Signature}
+		}
+	}
+	if len(out) == 0 { return nil }
+	return out
+}
+
+func nodeHintForID(hints nodeLexicalHints, id string) (nodeLexicalHint, bool) {
+	hint, ok := hints[vectorNodeID(id)]
+	return hint, ok
+}
+
+func lexicalHintForVectorID(key string, hints nodeLexicalHints) (nodeLexicalHint, bool) {
+	owner, ok := vectorEntryOwner(key)
+	if !ok { return nodeLexicalHint{}, false }
+	return nodeHintForID(hints, owner)
+}
+
+func entryHintForVectorID(hints entryLexicalHints, key string) (nodeLexicalHint, bool) {
+	hint, ok := hints[vectorEntryID(key)]
+	return hint, ok
+}
+
+// entryHintsFromValues is the public HNSW per-entry hint API boundary. Its IDs
+// already identify entries; the retained hint still names the owning document.
+func entryHintsFromValues(hints []LexicalSeedHint) entryLexicalHints {
+	if len(hints) == 0 { return nil }
+	out := make(entryLexicalHints, len(hints))
+	for _, hint := range hints {
+		if owner, ok := vectorEntryOwner(hint.ID); ok {
+			out[vectorEntryID(hint.ID)] = nodeLexicalHint{ID: vectorNodeID(owner), Rank: hint.Rank, Signature: hint.Signature}
+		}
+	}
+	return out
+}
+
+func putEntryLexicalHint(hints entryLexicalHints, key string, hint nodeLexicalHint) {
+	hints[vectorEntryID(key)] = hint
+}
+
+func mainKeyForLexicalHint(hint nodeLexicalHint) string {
+	return nodeMainVectorKey(string(hint.ID))
+}
+
+// lexicalHintValues projects an explicitly node- or entry-keyed map through the
+// legacy public hint API. The key domain is preserved; the maps never mix.
+func lexicalHintValues[K ~string, H ~map[K]nodeLexicalHint](hints H) []LexicalSeedHint {
+	if len(hints) == 0 { return nil }
+	out := make([]LexicalSeedHint, 0, len(hints))
+	for key, hint := range hints {
+		out = append(out, LexicalSeedHint{ID: string(key), Rank: hint.Rank, Signature: hint.Signature})
+	}
+	return out
+}
+
+// entryLexicalHintsForNodes binds document hints to canonical inventory entries.
+// The input remains document-keyed for construction and owner lookup; only graph
+// hint caches use this entry-keyed projection. Caller snapshots before pipelineMu.
+func (s *Service) entryLexicalHintsForNodes(docs nodeLexicalHints) entryLexicalHints {
+	if len(docs) == 0 { return nil }
+	out := make(entryLexicalHints)
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for nodeID, hint := range docs {
+		s.forEachNodeVectorKeyLocked(string(nodeID), func(key string) { putEntryLexicalHint(out, key, hint) })
+	}
+	return out
+}
+
+func (s *Service) hnswLexicalSeedNodeSet(ft bm25Index) map[string]struct{} {
+	hints := s.hnswLexicalSeedHints(ft, DefaultHNSWConfig().M)
+	if len(hints) == 0 { return nil }
+	out := make(map[string]struct{}, len(hints))
+	for id := range hints { out[string(id)] = struct{}{} }
+	return out
+}
+
+func vectorIDInSeedNodeSet(vectorID string, seedNodeIDs map[string]struct{}) bool {
+	owner, ok := vectorEntryOwner(vectorID)
+	if !ok { return false }
+	_, ok = seedNodeIDs[owner]
+	return ok
+}

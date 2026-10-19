@@ -53,7 +53,7 @@ func BenchmarkHNSWBuild2048(b *testing.B) {
 						}
 						if lexical && i < 256 {
 							pairs[i].hasHint = true
-							pairs[i].hint = LexicalSeedHint{ID: pairs[i].id, Rank: uint32(i), Signature: uint64(i) * 0x9e3779b185ebca87}
+							pairs[i].hint = nodeLexicalHint{ID: vectorNodeID(pairs[i].id), Rank: uint32(i), Signature: uint64(i) * 0x9e3779b185ebca87}
 						}
 					}
 					config := HNSWConfigFromEnv()

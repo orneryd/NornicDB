@@ -19,7 +19,7 @@ func referenceHNSWSelection(h *HNSWIndex, query []float32, ids []uint32, m int) 
 	type item struct {
 		id       uint32
 		distance float32
-		hint     LexicalSeedHint
+		hint     nodeLexicalHint
 		hinted   bool
 	}
 	var candidates []item

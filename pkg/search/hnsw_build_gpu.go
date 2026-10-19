@@ -133,7 +133,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 type hnswBuildPair struct {
 	id      string
 	vec     []float32
-	hint    LexicalSeedHint
+	hint nodeLexicalHint
 	hasHint bool
 }
 
@@ -566,7 +566,7 @@ func buildHNSWCPU(ctx context.Context, dimensions int, config HNSWConfig, lookup
 				return err
 			}
 			if p.hasHint {
-				built.setBuildLexicalHint(p.hint)
+				built.setBuildLexicalHint(p.id, p.hint)
 			}
 			if err := built.Add(p.id, p.vec); err != nil {
 				return fmt.Errorf("failed to add vector to HNSW: %w", err)
@@ -691,7 +691,7 @@ func buildHNSWAccelerated(ctx context.Context, dimensions int, config HNSWConfig
 				return err
 			}
 			if p.hasHint {
-				built.setBuildLexicalHint(p.hint)
+				built.setBuildLexicalHint(p.id, p.hint)
 			}
 			var candidates []uint32
 			if i < len(candidateInternalIDs) {

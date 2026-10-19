@@ -192,7 +192,7 @@ func (s *Service) reserveHNSWRebuild(ctx context.Context, old *HNSWIndex) (conte
 // buildHNSWSnapshot is the sole snapshot/lease owner for initial builds,
 // maintenance rebuilds and strategy transitions. File views never outlive their
 // read lease; the published graph always returns to the owning runtime lookup.
-func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config HNSWConfig, vi *VectorIndex, vfs *VectorFileStore, hints map[string]LexicalSeedHint) (*HNSWIndex, hnswBuildStats, error) {
+func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config HNSWConfig, vi *VectorIndex, vfs *VectorFileStore, hints nodeLexicalHints) (*HNSWIndex, hnswBuildStats, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, hnswBuildStats{}, err
 	}

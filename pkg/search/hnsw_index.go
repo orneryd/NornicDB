@@ -145,7 +145,7 @@ type HNSWIndex struct {
 	addBestScratch    []uint32
 	insertAllScratch  []uint32
 	insertBestScratch []uint32
-	buildLexicalHints map[string]LexicalSeedHint
+	buildLexicalHints nodeLexicalHints
 }
 
 type visitedGenState struct {
@@ -157,7 +157,7 @@ type hnswDistNode struct {
 	id           uint32
 	dist         float32
 	vec          []float32
-	hint         LexicalSeedHint
+	hint nodeLexicalHint
 	hasHint      bool
 	minDiversity int
 	hasDiversity bool
@@ -237,30 +237,16 @@ func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(hints) == 0 {
-		h.buildLexicalHints = nil
-		return
-	}
-	h.buildLexicalHints = make(map[string]LexicalSeedHint, len(hints))
-	for _, hint := range hints {
-		if hint.ID != "" {
-			h.buildLexicalHints[hint.ID] = hint
-		}
-	}
+	h.buildLexicalHints = nodeHintsFromValues(hints)
 }
 
-func (h *HNSWIndex) setBuildLexicalHint(hint LexicalSeedHint) {
-	if hint.ID == "" {
-		return
-	}
+func (h *HNSWIndex) setBuildLexicalHint(key string, hint nodeLexicalHint) {
+	if hint.ID == "" { return }
 	h.mu.Lock()
-	if h.buildLexicalHints == nil {
-		h.buildLexicalHints = make(map[string]LexicalSeedHint)
-	}
+	defer h.mu.Unlock()
+	if h.buildLexicalHints == nil { h.buildLexicalHints = make(nodeLexicalHints) }
 	h.buildLexicalHints[hint.ID] = hint
-	h.mu.Unlock()
 }
-
 // Config returns a copy of the index configuration.
 func (h *HNSWIndex) Config() HNSWConfig {
 	h.mu.RLock()
@@ -1486,16 +1472,9 @@ func (h *HNSWIndex) buildNeighborDistance(left, right uint32, a, b []float32) fl
 	return distance
 }
 
-func (h *HNSWIndex) buildLexicalHintLocked(internalID uint32) (LexicalSeedHint, bool) {
-	if len(h.buildLexicalHints) == 0 || !validHNSWIndex(internalID, len(h.internalToID)) {
-		return LexicalSeedHint{}, false
-	}
-	id, ok := vectorEntryOwner(h.internalToID[internalID])
-	if !ok {
-		return LexicalSeedHint{}, false
-	}
-	hint, ok := h.buildLexicalHints[id]
-	return hint, ok
+func (h *HNSWIndex) buildLexicalHintLocked(internalID uint32) (nodeLexicalHint, bool) {
+	if !validHNSWIndex(internalID, len(h.internalToID)) { return nodeLexicalHint{}, false }
+	return lexicalHintForVectorID(h.internalToID[internalID], h.buildLexicalHints)
 }
 
 func preferLexicallyDiverseTie(candidates []hnswDistNode, start int) {
