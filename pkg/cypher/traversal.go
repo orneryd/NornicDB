@@ -1485,8 +1485,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // The traversal still checks the whole pattern from each start node.
 func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
-	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
-		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
+	if planTraversalScan(match).access != traversalTypeScan {
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
@@ -1496,7 +1495,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return
 		}
 		seen[id] = true
-		if node, getErr := e.getQueryNode(store, id); getErr == nil && node != nil {
+		if node, getErr := e.newRelationshipEndpointReader(store).read(id, nil); getErr == nil && node != nil {
 			nodes = append(nodes, node)
 		}
 	}
@@ -1960,28 +1959,13 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 // edge semantics.
 func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextNodeID storage.NodeID) (*storage.Node, bool) {
 	nextNode := ctx.nodeCache[nextNodeID]
-	if nextNode == nil && ctx.endpointsNeedOnlyLabels && !ctx.temporalViewport.Enabled() {
-		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
-			if labelsOnly, err := reader.GetNodeProjected(nextNodeID, []string{}); err == nil && labelsOnly != nil {
-				nextNode = labelsOnly
-				ctx.nodeCache[nextNodeID] = nextNode
-			}
-		}
-	}
-	if nextNode == nil && ctx.endpointsNeedOnlyExist && !ctx.temporalViewport.Enabled() {
-		if checker, ok := e.storage.(storage.RelationshipEndpointChecker); ok {
-			if visible, answered := checker.RelationshipEndpointVisible(nextNodeID); answered {
-				if !visible {
-					return nil, false
-				}
-				nextNode = &storage.Node{ID: nextNodeID}
-				ctx.nodeCache[nextNodeID] = nextNode
-			}
-		}
-	}
 	if nextNode == nil {
+		var properties []string
+		if (ctx.endpointsNeedOnlyLabels || ctx.endpointsNeedOnlyExist) && !ctx.temporalViewport.Enabled() {
+			properties = []string{}
+		}
 		var err error
-		nextNode, err = e.getQueryNode(e.storage, nextNodeID)
+		nextNode, err = e.newRelationshipEndpointReader(e.storage).read(nextNodeID, properties)
 		if err != nil || nextNode == nil {
 			return nil, false
 		}
