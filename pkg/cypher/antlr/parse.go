@@ -117,16 +117,12 @@ func ValidateContext(ctx context.Context, query string) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	defer func() {
-		if p := recover(); p != nil {
-			if canceled, ok := p.(predictionCanceled); ok {
-				err = canceled.err
-			} else {
-				panic(p)
-			}
-		}
-	}()
-	query = strings.TrimSpace(query)
+	defer recoverPredictionCancellation(&err)
+
+	query, err = TrimSpaceContext(ctx, query)
+	if err != nil {
+		return err
+	}
 	if query == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
 		return localization.NewLocalizedError(string(message.ID), message, nil)
@@ -137,6 +133,11 @@ func ValidateContext(ctx context.Context, query string) (err error) {
 	prediction := acquirePrediction()
 	usePrediction(v.parser, prediction)
 	defer func() {
+		// Tokens can retain their lexer's character stream. Drop the statement
+		// context as well as the parser wrapper before pooling the validator.
+		if input, ok := v.lexer.GetInputStream().(*contextCharStream); ok {
+			input.ctx = context.Background()
+		}
 		// Restore the plain stream before detaching and releasing the generation.
 		v.parser.SetTokenStream(v.tokens)
 		v.parser.Interpreter = nil
@@ -144,12 +145,8 @@ func ValidateContext(ctx context.Context, query string) (err error) {
 		validatorPool.Put(v)
 	}()
 
-	var input antlr.CharStream
-	if isASCII(query) {
-		input = newASCIICharStream(query)
-	} else {
-		input = antlr.NewInputStream(query)
-	}
+	input := contextInputStream(ctx, query)
+
 	v.lexer.SetInputStream(input)
 	v.lexer.Reset()
 

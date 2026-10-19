@@ -45,7 +45,7 @@ func (e *StorageExecutor) emitRejectionReport(ctx context.Context, query string,
 	if code != "Neo.ClientError.Statement.SyntaxError" {
 		return
 	}
-	redacted := e.redactForLog(ctx, StripComments(query))
+	redacted := e.redactForLog(ctx, query)
 	hash := StatementShapeHash(redacted)
 	statementClass := "OTHER"
 	for _, start := range validSyntaxStarts {
