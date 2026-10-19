@@ -46,8 +46,8 @@ func cypherEqualityValue(left, right interface{}) interface{} {
 	leftEdge, leftIsEdge := left.(*storage.Edge)
 	rightEdge, rightIsEdge := right.(*storage.Edge)
 	if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
-		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.ID == rightNode.ID) ||
-			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID)
+		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.Database == rightNode.Database && leftNode.ID == rightNode.ID) ||
+			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.Database == rightEdge.Database && leftEdge.ID == rightEdge.ID)
 	}
 	// Source element identity survives property snapshots and optional legacy
 	// metadata. ORDER BY also distinguishes identity-availability domains to

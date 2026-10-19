@@ -32,7 +32,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	communities := graph.computeLouvain(nodes, weightProp)
 
 	// Build result
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -106,7 +106,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 
 	communities := graph.computeLabelPropagation(nodes)
 
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -189,7 +189,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 
 	components := graph.computeWCC(nodes)
 
-	rows := algorithmRows(nodes, components)
+	rows := graphAlgorithmRows(nodes, components)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "componentId"},

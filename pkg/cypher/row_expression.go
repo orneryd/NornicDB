@@ -1855,7 +1855,7 @@ func normalizeRowIdentityComparison(leftExpr, rightExpr string, leftValue, right
 	if !isRowIdentityExpression(leftExpr) && !isRowIdentityExpression(rightExpr) {
 		return leftValue, rightValue
 	}
-	return rowIdentityPayload(leftValue), rowIdentityPayload(rightValue)
+	return normalizeRowIdentityValues(leftValue, rightValue)
 }
 
 func isRowIdentityExpression(expression string) bool {
@@ -1863,16 +1863,27 @@ func isRowIdentityExpression(expression string) bool {
 	return ok && (strings.EqualFold(name, "id") || strings.EqualFold(name, "elementId"))
 }
 
-func rowIdentityPayload(value interface{}) interface{} {
+// normalizeRowIdentityValues preserves complete element identities. The legacy
+// raw-ID comparison extension applies only when one operand is unqualified;
+// stripping two database-qualified IDs would collapse different constituents.
+func normalizeRowIdentityValues(left, right interface{}) (interface{}, interface{}) {
+	leftPayload, leftElement := rowIdentityPayload(left)
+	rightPayload, rightElement := rowIdentityPayload(right)
+	if leftElement && rightElement {
+		return left, right
+	}
+	return leftPayload, rightPayload
+}
+
+func rowIdentityPayload(value interface{}) (interface{}, bool) {
 	text, ok := value.(string)
 	if !ok {
-		return value
+		return value, false
 	}
-	parts := strings.SplitN(text, ":", 3)
-	if len(parts) == 3 && (parts[0] == "4" || parts[0] == "5") {
-		return parts[2]
+	if _, _, payload, found := storage.ParseElementID(text); found {
+		return payload, true
 	}
-	return text
+	return text, false
 }
 
 // rowRelationshipEndpoint evaluates startNode(r) / endNode(r), reading bound
@@ -1900,7 +1911,7 @@ func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, val
 	if edge == nil {
 		return nil, true, nil
 	}
-	entry := rowEndpointMemoEntry{id: edge.ID, end: end}
+	entry := rowEndpointMemoEntry{id: storage.EdgeID(edge.IdentityKey()), end: end}
 	if result, read := memo[entry]; read {
 		return result, true, nil
 	}
@@ -1939,19 +1950,22 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if edge == nil {
 		return nil
 	}
-	// A deleted relationship has no endpoints. Only a value shaped like its
-	// view (deletedEntityViews.edge) can be one, and storage confirms it: a
-	// relationship carrying its properties costs no second read.
-	if mayBeDeletedRelationshipView(edge) {
-		if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-			return nil
-		}
-	}
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
 	}
-	node, err := e.getQueryNode(e.storage, id)
+	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
+	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(e.storage)
+	if !edgeSelected || !nodeSelected {
+		return nil
+	}
+	// A deleted relationship has no endpoints; full values avoid a second read.
+	if mayBeDeletedRelationshipView(edge) {
+		if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
+			return nil
+		}
+	}
+	node, err := e.getQueryNode(e.storage, nodeID)
 	if err != nil {
 		return nil
 	}
@@ -2017,9 +2031,9 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	if !identity {
 		return cypherMembership(needle, items)
 	}
-	needle = rowIdentityPayload(needle)
 	return cypherMembershipValues(needle, len(items), func(i int) interface{} {
-		return cypherEquality(needle, rowIdentityPayload(items[i]))
+		left, right := normalizeRowIdentityValues(needle, items[i])
+		return cypherEquality(left, right)
 	}), true
 }
 
