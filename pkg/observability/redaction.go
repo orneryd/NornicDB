@@ -8,9 +8,10 @@ import (
 )
 
 // DefaultRedactKeys is the canonical sensitive-key allow-list for slog
-// records. Keys are matched case-insensitively, regardless of slog.Group
-// nesting depth. Extend at runtime via NORNICDB_LOG_REDACT_EXTRA
-// (comma-separated).
+// records and display helpers. Keys are matched case-insensitively, regardless
+// of slog.Group nesting depth. Add canonical extensions before constructing
+// handlers or using display helpers; do not mutate the list concurrently with
+// redaction. NORNICDB_LOG_REDACT_EXTRA (comma-separated) adds log-only keys.
 //
 // Note: pkg/audit/audit.go owns its own signed audit stream and is
 // intentionally NOT a consumer of this list (LOG-10 / SEC-05). A future
@@ -44,7 +45,11 @@ func RedactedPlaceholder() string {
 // Matching is case-insensitive and recognizes common separators such as '.', '_',
 // and '-' so names like client_secret and user.password are caught by the base key set.
 func IsSensitiveFieldName(name string) bool {
-	return isSensitiveKeyName(name, builtInSensitiveNames)
+	if isSensitiveKeyName(name, builtInSensitiveNames) {
+		return true
+	}
+	names := currentCanonicalSensitiveNames()
+	return names != builtInSensitiveNames && isSensitiveKeyName(name, names)
 }
 
 // redactingHandler walks slog.Attr groups recursively and replaces values
