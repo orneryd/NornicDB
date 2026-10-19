@@ -3,8 +3,8 @@ package resolvers
 import (
 	"context"
 
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
