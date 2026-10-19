@@ -15,3 +15,5 @@
 - [x] Require explicit deletion of redundant forwarding/compatibility wrappers and migration of callers in blocked-commit instructions; real rejected-commit tests assert this guidance.
 - [x] Record all rewritten owners before candidate size filters so replaced old bodies are not treated as current duplicates; integration regression fails before fix and passes after.
 - [x] 71 hook/detector tests pass with isolated fixture Git configuration; standalone runtime updated with the tested source.
+
+- [x] Distinguish semantic matches to already-called owners using current extracted AST edges, report the proof, preserve code-copy blocking and comparison against other semantic targets; fail-first regression and 75 tests pass.
