@@ -44,6 +44,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			ctx := context.Background()
 			const role = "metrics-reader"
 			require.NoError(t, s.dbManager.CreateDatabase("metrics_private"))
+			require.NoError(t, s.dbManager.CreateAlias("metrics_alias", "nornic"))
 			for database, size := range map[string]int{"nornic": 2, "metrics_private": 3} {
 				engine, err := s.dbManager.GetStorage(database)
 				require.NoError(t, err)
@@ -69,6 +70,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			cypherMetrics := observability.NewCypherMetrics(registry, tenantLabels, nil)
 			cypherMetrics.BindSlowQueries("nornic").Add(2)
 			cypherMetrics.BindSlowQueries("metrics_private").Add(7)
+			if tenantLabels { cypherMetrics.BindSlowQueries("metrics_alias").Add(4) }
 			embedMetrics := observability.NewEmbedMetrics(registry, nil)
 			embedMetrics.Processed.WithLabelValues("local", "test", "success", "cpu").Add(9)
 			s.SetObsRegistry(registry)
@@ -92,6 +94,12 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			visibleSlow := float64(0)
 			if tenantLabels { visibleSlow = 2 }
 			t.Run("omitted-allowlist", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias"}))
+			aliasSlow := float64(0)
+			if tenantLabels { aliasSlow = 6 }
+			t.Run("alias-granted", func(t *testing.T) { check(t, 2, 1, aliasSlow) })
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
+			t.Run("alias-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_private"}))
 			t.Run("granted", func(t *testing.T) { check(t, 5, 2, 9) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_private", false, false))
@@ -120,7 +128,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 					require.Equal(t, http.StatusOK, response.Code)
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
-					require.Equal(t, float64(9), legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
+					fullSlow := float64(9)
+					if tenantLabels { fullSlow = 13 }
+					require.Equal(t, fullSlow, legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
 					require.Equal(t, float64(9), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
 				})
 			}

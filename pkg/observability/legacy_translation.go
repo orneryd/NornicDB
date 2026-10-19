@@ -60,6 +60,9 @@ type legacyMapping struct {
 	MatchLabel  string
 	MatchValue  string
 	KeepLabels  []string
+	// DatabaseData marks values derived from database work. Without a
+	// database label they require read access to their entire population.
+	DatabaseData bool
 }
 
 // legacyMappings is the static 12-entry table. Plan 05-02 wires Reduce +
@@ -73,12 +76,12 @@ var legacyMappings = []legacyMapping{
 	{LegacyName: "nornicdb_requests_total", LegacyHelp: "Total HTTP requests", LegacyType: "counter", Sources: []string{"nornicdb_http_requests_total"}, Reduce: sumAcrossLabels, UnitFn: identity},
 	{LegacyName: "nornicdb_errors_total", LegacyHelp: "Total HTTP 5xx responses", LegacyType: "counter", Sources: []string{"nornicdb_http_requests_total"}, Reduce: sumByMatchingLabel, UnitFn: identity, MatchLabel: "status_class", MatchValue: "5xx"},
 	{LegacyName: "nornicdb_active_requests", LegacyHelp: "Currently active HTTP requests", LegacyType: "gauge", Sources: []string{"nornicdb_http_in_flight_requests"}, Reduce: takeLatest, UnitFn: identity},
-	{LegacyName: "nornicdb_nodes_total", LegacyHelp: "Total nodes in database", LegacyType: "gauge", Sources: []string{"nornicdb_storage_nodes_total"}, Reduce: takeLatest, UnitFn: identity},
-	{LegacyName: "nornicdb_edges_total", LegacyHelp: "Total edges in database", LegacyType: "gauge", Sources: []string{"nornicdb_storage_edges_total"}, Reduce: takeLatest, UnitFn: identity},
-	{LegacyName: "nornicdb_embeddings_processed", LegacyHelp: "Total embeddings processed successfully", LegacyType: "counter", Sources: []string{"nornicdb_embed_processed_total"}, Reduce: sumByMatchingLabel, UnitFn: identity, MatchLabel: "result", MatchValue: "success"},
-	{LegacyName: "nornicdb_embeddings_failed", LegacyHelp: "Total embeddings that failed processing", LegacyType: "counter", Sources: []string{"nornicdb_embed_processed_total"}, Reduce: sumByMatchingLabel, UnitFn: identity, MatchLabel: "result", MatchValue: "failure"},
-	{LegacyName: "nornicdb_embedding_worker_running", LegacyHelp: "Embedding worker running flag (1=running, 0=stopped)", LegacyType: "gauge", Sources: []string{"nornicdb_embed_worker_running"}, Reduce: takeLatest, UnitFn: identity},
-	{LegacyName: "nornicdb_slow_queries_total", LegacyHelp: "Total slow Cypher queries observed", LegacyType: "counter", Sources: []string{"nornicdb_cypher_slow_queries_total"}, Reduce: sumAcrossLabels, UnitFn: identity},
+	{LegacyName: "nornicdb_nodes_total", LegacyHelp: "Total nodes in database", LegacyType: "gauge", Sources: []string{"nornicdb_storage_nodes_total"}, Reduce: takeLatest, UnitFn: identity, DatabaseData: true},
+	{LegacyName: "nornicdb_edges_total", LegacyHelp: "Total edges in database", LegacyType: "gauge", Sources: []string{"nornicdb_storage_edges_total"}, Reduce: takeLatest, UnitFn: identity, DatabaseData: true},
+	{LegacyName: "nornicdb_embeddings_processed", LegacyHelp: "Total embeddings processed successfully", LegacyType: "counter", Sources: []string{"nornicdb_embed_processed_total"}, Reduce: sumByMatchingLabel, UnitFn: identity, MatchLabel: "result", MatchValue: "success", DatabaseData: true},
+	{LegacyName: "nornicdb_embeddings_failed", LegacyHelp: "Total embeddings that failed processing", LegacyType: "counter", Sources: []string{"nornicdb_embed_processed_total"}, Reduce: sumByMatchingLabel, UnitFn: identity, MatchLabel: "result", MatchValue: "failure", DatabaseData: true},
+	{LegacyName: "nornicdb_embedding_worker_running", LegacyHelp: "Embedding worker running flag (1=running, 0=stopped)", LegacyType: "gauge", Sources: []string{"nornicdb_embed_worker_running"}, Reduce: takeLatest, UnitFn: identity, DatabaseData: true},
+	{LegacyName: "nornicdb_slow_queries_total", LegacyHelp: "Total slow Cypher queries observed", LegacyType: "counter", Sources: []string{"nornicdb_cypher_slow_queries_total"}, Reduce: sumAcrossLabels, UnitFn: identity, DatabaseData: true},
 	{LegacyName: "nornicdb_slow_query_threshold_ms", LegacyHelp: "Slow-query threshold in milliseconds (legacy unit; new metric is *_seconds)", LegacyType: "gauge", Sources: []string{"nornicdb_cypher_slow_query_threshold_seconds"}, Reduce: takeLatest, UnitFn: secondsToMs},
 	{LegacyName: "nornicdb_info", LegacyHelp: "Build information (version, backend)", LegacyType: "gauge", Sources: []string{"nornicdb_build_info"}, Reduce: dropExtraLabels, UnitFn: identity, KeepLabels: []string{"version", "backend"}},
 }
@@ -98,6 +101,27 @@ func secondsToMs(v float64) float64 { return v * 1000.0 }
 // The now parameter is reserved for future relative-timestamp emission
 // (CONTEXT D-01 future-proofs the API); currently unused.
 func RenderLegacy(reg *prometheus.Registry, now time.Time) []byte {
+	return renderLegacy(reg, now, nil)
+}
+
+// LegacyReadScope supplies an admitted count population and the caller's
+// existing live database read decision. The registry remains process-wide;
+// filtering applies only to this rendering, never to shared collectors.
+type LegacyReadScope struct {
+	CanReadDatabase      func(string) bool
+	AllDatabasesReadable bool
+	Nodes, Edges         int64
+}
+
+// RenderLegacyForRead renders the same legacy metric families for a caller.
+// Database-labelled samples are admitted before reduction. Database-derived
+// aggregates without labels are zero unless their full population is readable;
+// node/edge totals instead use the supplied admitted storage counts.
+func RenderLegacyForRead(reg *prometheus.Registry, now time.Time, scope LegacyReadScope) []byte {
+	return renderLegacy(reg, now, &scope)
+}
+
+func renderLegacy(reg *prometheus.Registry, now time.Time, scope *LegacyReadScope) []byte {
 	_ = now // reserved for future relative-timestamp emission
 
 	var buf bytes.Buffer
@@ -114,6 +138,13 @@ func RenderLegacy(reg *prometheus.Registry, now time.Time) []byte {
 		}
 		byName[mf.GetName()] = mf
 	}
+	if scope != nil {
+		for _, m := range legacyMappings {
+			for _, source := range m.Sources {
+				byName[source] = legacyReadFamily(byName[source], scope, !m.DatabaseData || scope.AllDatabasesReadable)
+			}
+		}
+	}
 
 	sorted := append([]legacyMapping(nil), legacyMappings...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].LegacyName < sorted[j].LegacyName })
@@ -122,10 +153,45 @@ func RenderLegacy(reg *prometheus.Registry, now time.Time) []byte {
 		fmt.Fprintf(&buf, "# HELP %s %s\n", m.LegacyName, escapeHelp(m.LegacyHelp))
 		fmt.Fprintf(&buf, "# TYPE %s %s\n", m.LegacyName, m.LegacyType)
 		value := m.UnitFn(m.Reduce(byName, m))
+		if scope != nil {
+			switch m.LegacyName {
+			case "nornicdb_nodes_total":
+				value = float64(scope.Nodes)
+			case "nornicdb_edges_total":
+				value = float64(scope.Edges)
+			}
+		}
 		emitSample(&buf, m, value, byName)
 	}
 
 	return buf.Bytes()
+}
+
+func legacyReadFamily(family *dto.MetricFamily, scope *LegacyReadScope, allowUnlabelled bool) *dto.MetricFamily {
+	if family == nil {
+		return nil
+	}
+	var admitted []*dto.Metric
+	for i, metric := range family.Metric {
+		allowed := allowUnlabelled
+		for _, label := range metric.GetLabel() {
+			if label.GetName() == "database" {
+				allowed = scope.CanReadDatabase != nil && scope.CanReadDatabase(label.GetValue())
+				break
+			}
+		}
+		if !allowed && admitted == nil {
+			admitted = make([]*dto.Metric, 0, len(family.Metric))
+			admitted = append(admitted, family.Metric[:i]...)
+		}
+		if allowed && admitted != nil {
+			admitted = append(admitted, metric)
+		}
+	}
+	if admitted == nil {
+		return family
+	}
+	return &dto.MetricFamily{Name: family.Name, Help: family.Help, Type: family.Type, Metric: admitted}
 }
 
 // emitSample formats a single sample line per the per-row format rules
