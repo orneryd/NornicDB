@@ -314,3 +314,6 @@ name resemblance and unrelated edges do not establish it. Code-copy matches stil
 block even when the changed function also calls the owner, and other semantic
 matches remain eligible. No score floor or copy threshold is reduced. The report
 and JSON retain the caller, owner and call location for review.
+
+Method dispatch is not accepted as proof of the matched owner’s identity; only
+AST-resolved named free-function calls qualify for this existing-use distinction.
