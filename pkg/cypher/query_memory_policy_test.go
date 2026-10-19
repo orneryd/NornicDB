@@ -54,7 +54,7 @@ func queryMemoryPolicyFixture(t testing.TB) (*StorageExecutor, *storage.BadgerEn
 		require.NoError(t, err)
 	}
 	for _, start := range []storage.NodeID{"policy:a", "policy:expired", "policy:internal"} {
-		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(string(start) + "-edge"), StartNode: start, EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"secret": "hidden"}, CreatedAt: old, UpdatedAt: old}))
+		require.NoError(t, base.CreateEdge(&storage.Edge{ID: storage.EdgeID(string(start) + "-edge"), StartNode: start, EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"secret": "hidden", "marker": "visible"}, CreatedAt: old, UpdatedAt: old}))
 	}
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "policy"))
 	exec.cache = nil
