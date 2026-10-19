@@ -107,30 +107,41 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 // authorization and transaction admission. A true visit stops the scan without
 // materializing a list of complete procedure specifications.
 func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, string) bool) bool {
- structure := fabric.ReadQueryStructure(query)
- if structure.Err != nil { return false }
- return visitStructuredProcedureCalls(structure, visit)
+	structure := fabric.ReadQueryStructure(query)
+	if structure.Err != nil {
+		return false
+	}
+	return visitStructuredProcedureCalls(structure, visit)
 }
 
 // visitStructuredProcedureCalls visits only grammar-owned procedure invocation
 // nodes. Authorization and execution admission share this live registry reader.
 func visitStructuredProcedureCalls(structure *fabric.QueryStructure, visit func(ProcedureSpec, string) bool) bool {
- ensureBuiltInProceduresRegistered()
- for _, clause := range structure.Clauses {
-  if clause.Nested != nil && visitStructuredProcedureCalls(clause.Nested,visit) { return true }
-  if clause.Kind != "CALL" || clause.Nested != nil { continue }
-  if procedure,found:=globalProcedureRegistry.Get(clause.Name); found {
-   if visit(procedure.Spec,clause.Text) { return true }
-   continue
-  }
-  // Invalid case variants still retain conservative permission requirements;
-  // only the exact registered name is executable.
-  for _,procedure:=range globalProcedureRegistry.List() {
-   if strings.EqualFold(clause.Name,procedure.Name) && visit(procedure,clause.Text) { return true }
-  }
- }
- return false
+	ensureBuiltInProceduresRegistered()
+	for _, clause := range structure.Clauses {
+		if clause.Nested != nil && visitStructuredProcedureCalls(clause.Nested, visit) {
+			return true
+		}
+		if clause.Kind != "CALL" || clause.Nested != nil {
+			continue
+		}
+		if procedure, found := globalProcedureRegistry.Get(clause.Name); found {
+			if visit(procedure.Spec, clause.Text) {
+				return true
+			}
+			continue
+		}
+		// Invalid case variants still retain conservative permission requirements;
+		// only the exact registered name is executable.
+		for _, procedure := range globalProcedureRegistry.List() {
+			if strings.EqualFold(clause.Name, procedure.Name) && visit(procedure, clause.Text) {
+				return true
+			}
+		}
+	}
+	return false
 }
+
 // procedureNameAt parses the dotted procedure name after a CALL keyword
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
