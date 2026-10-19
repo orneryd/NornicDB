@@ -499,7 +499,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
 
-		for _, ref := range info.Constituents {
+		for _, ref := range canonicalConstituents(info.Constituents) {
 			var constituentStorage storage.Engine
 			actualName := ref.DatabaseName
 			var err error
@@ -565,7 +565,7 @@ func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (Cons
 	if !exists || info.Type != "composite" {
 		return ConstituentRef{}, "", false
 	}
-	for _, ref := range info.Constituents {
+	for _, ref := range canonicalConstituents(info.Constituents) {
 		if !strings.EqualFold(ref.Alias, constituentAlias) {
 			continue
 		}
@@ -669,7 +669,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	}
 
 	aliases := append([]string(nil), info.Aliases...)
-	constituents := append([]ConstituentRef(nil), info.Constituents...)
+	constituents := canonicalConstituents(info.Constituents)
 
 	info.sizeMu.RLock()
 	totalSize := info.totalSize
