@@ -883,7 +883,7 @@ func (n *rowMembershipNode) eval(e *StorageExecutor, values map[string]interface
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, n.identity)
+	value, ok := rowMembershipOfValues(needle, haystack, n.identity, e.graphIdentityDomain())
 	if !n.negated || !ok || value == nil {
 		return value, ok, nil
 	}

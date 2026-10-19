@@ -55,6 +55,7 @@ func evaluateComparisonChain(
 	resolve func(string, foldPosition) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+ domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
 	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25)
 }
@@ -66,7 +67,7 @@ func evaluateComparisonChainInContext(ctx context.Context, expression string, re
 	position := comparisonFoldPosition(&scan)
 	value, resolved, err := evaluateScannedComparisonChain(ctx, expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
 		return resolve(operand, position)
-	}, compare, cypher25)
+	}, compare, cypher25, domains...)
 	return value, true, resolved, err
 }
 
@@ -94,6 +95,7 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+ domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	if scan.count > 1 && mayContainSubqueryExpression(expression) && constantFalseLink(expression, scan, cypher25) {
 		// Neo4j folds a link of two literals before it plans the chain's
@@ -167,7 +169,7 @@ func evaluateComparisonLinks(expression string, scan *comparisonChainScan, norma
 		if leftOK && rightOK && leftErr == nil && rightErr == nil {
 			comparisonLeft, comparisonRight := left, right
 			if normalizeIdentity {
-				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right)
+				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right, domains...)
 			}
 			if left == nil || right == nil {
 				hasNull = true

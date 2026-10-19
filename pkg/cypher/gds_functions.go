@@ -53,7 +53,7 @@ func fnGDSGraphExists(ctx cypherfn.Context, args []string) (interface{}, error) 
 	if !ok {
 		return nil, fmt.Errorf("gds.graph.exists expects a graph name, got %s", cypherTypeSystemName(values[0]))
 	}
-	_, missing := lookupGraphProjection(storageDatabaseName(ctx.Storage), name)
+	_, missing := lookupGraphProjection(graphFunctionDatabase(ctx), name)
 	return missing == nil, nil
 }
 
@@ -84,7 +84,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
 		}
 	}
-	projection, err := lookupGraphProjection(storageDatabaseName(ctx.Storage), graph)
+	projection, err := lookupGraphProjection(graphFunctionDatabase(ctx), graph)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,8 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
-		var store storage.Engine = ctx.Storage
+		store,err := ctx.GraphStorage()
+ if err != nil { return nil,err }
 		if store != nil {
 			store = graphIdentityView(store)
 		}
@@ -373,7 +374,9 @@ func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gdsNodeByID(ctx.Storage, values[0]), nil
+	store,err := ctx.GraphStorage()
+ if err != nil { return nil,err }
+ return gdsNodeByID(store, values[0]), nil
 }
 
 // fnGDSAsNodes is gds.util.asNodes(nodeIds): the nodes with those ids, in
@@ -390,9 +393,11 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("gds.util.asNodes expects a list of node ids, got %s", cypherTypeSystemName(values[0]))
 	}
-	nodes := make([]interface{}, 0, len(ids))
+	store,err := ctx.GraphStorage()
+ if err != nil { return nil,err }
+ nodes := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
-		if node := gdsNodeByID(ctx.Storage, id); node != nil {
+		if node := gdsNodeByID(store, id); node != nil {
 			nodes = append(nodes, node)
 		}
 	}
