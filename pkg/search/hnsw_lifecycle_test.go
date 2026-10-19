@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -215,6 +216,29 @@ func TestHNSWCancelledContextDoesNotStartGPUOrCPUFallback(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Zero(t, accel.prepares)
 	require.Zero(t, iterations)
+}
+
+type cancellingHNSWAccelerator struct {
+	*CPUHNSWBuildAccelerator
+	cancel context.CancelFunc
+}
+
+func (a *cancellingHNSWAccelerator) Prepare(int, int) error {
+	a.cancel()
+	return errors.New("accelerator preparation interrupted")
+}
+
+func TestHNSWCancelledPreparationDoesNotStartCPUFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	accel := &cancellingHNSWAccelerator{CPUHNSWBuildAccelerator: NewCPUHNSWBuildAccelerator(), cancel: cancel}
+	iterations := 0
+	iter := func(_ int, fn func([]hnswBuildPair) error) error { iterations++; return fn(nil) }
+	cfg := DefaultHNSWConfig()
+	cfg.UseGPUBuild = true
+	_, _, err := buildHNSWWithOptionalGPU(ctx, 3, cfg, nil, 1, iter, accel)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, iterations, "cancelled preparation started CPU construction")
 }
 
 func TestHNSWBuildDefersSnapshotWhileVectorsAreReplaced(t *testing.T) {
