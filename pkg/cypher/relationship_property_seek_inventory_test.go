@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// Reviewer-derived 71-case inventory for the approved 1.4.4 boundary. Dynamic
-// CREATE token discovery belongs to #1516 / #1459 / #1468 in 1.5.0.
+// Reviewer-derived inventory, including graph expressions in dynamic write tokens.
 // Inventory from the clause enum, expression dispatch, subquery,
 // pattern-expression and pipeline binding owners, rather than the fix's tests.
 func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
@@ -19,6 +18,9 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 	const x = "EXISTS { " + g + "}"
 	const l = "COLLECT { " + g + "RETURN r.p }"
 	cases := []struct{ name, q string }{
+		{"dynamic_create_exists_label", "WITH $x AS k CREATE (n:$(CASE WHEN " + x + " THEN 'Made' ELSE 'Missing' END)) RETURN labels(n)"},
+		{"dynamic_create_collect_label", "WITH $x AS k CREATE (n:$(head(" + l + "))) RETURN labels(n)"},
+		{"dynamic_create_collect_type", "WITH $x AS k CREATE ()-[s:$(head(" + l + "))]->() RETURN type(s)"},
 		{"parameter", "MATCH ()-[r:T]->() WHERE r.p=$x RETURN r.p"},
 		{"with_distinct", "WITH DISTINCT $x AS k " + g + "RETURN r.p"},
 		{"with_aggregate", "UNWIND [$x,$x] AS v WITH head(collect(v)) AS k " + g + "RETURN r.p"},
