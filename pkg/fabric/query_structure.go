@@ -8,6 +8,7 @@ import (
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
 	grammar "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // QueryStructure is Fabric's syntax boundary. Clause and expression ownership
@@ -60,6 +61,7 @@ type QueryProjection struct {
 type QueryProjectionItem struct {
 	Expression, Alias, Name string
 	Column                  string
+	HasAlias                bool
 	tree                    grammar.IExpressionContext
 }
 
@@ -80,9 +82,31 @@ type syntaxErrors struct {
 	err error
 }
 
+// QuerySyntaxError retains the parser's status through every Fabric consumer.
+type QuerySyntaxError struct { Message localization.Message }
+
+func (e *QuerySyntaxError) Error() string { return e.Message.Fallback }
+func (e *QuerySyntaxError) BoltErrorCode() string { return "Neo.ClientError.Statement.SyntaxError" }
+
+// Structural consumers require a complete parse; recovery cannot provide a
+// usable structure. Stop at the first error instead of repairing a tree that
+// callers will reject, particularly for ordinary extensions outside this grammar.
+type structureErrorStrategy struct { *antlr4.DefaultErrorStrategy }
+type structureSyntaxAbort struct{}
+
+func (s *structureErrorStrategy) Sync(antlr4.Parser) {}
+func (s *structureErrorStrategy) Recover(parser antlr4.Parser, err antlr4.RecognitionException) {
+	s.ReportError(parser, err)
+	panic(structureSyntaxAbort{})
+}
+func (s *structureErrorStrategy) RecoverInline(parser antlr4.Parser) antlr4.Token {
+	s.Recover(parser, antlr4.NewInputMisMatchException(parser))
+	return nil
+}
+
 func (e *syntaxErrors) SyntaxError(_ antlr4.Recognizer, _ interface{}, line, column int, message string, _ antlr4.RecognitionException) {
 	if e.err == nil {
-		e.err = fmt.Errorf("invalid Cypher at %d:%d: %s", line, column, message)
+		e.err = &QuerySyntaxError{Message: localization.CypherANTLRParseSyntaxError(fmt.Sprintf("at %d:%d: %s", line, column, message))}
 	}
 }
 
@@ -102,6 +126,7 @@ func newStructureReader(text string) *structureReader {
 	lexer.AddErrorListener(errors)
 	stream := antlr4.NewCommonTokenStream(lexer, antlr4.TokenDefaultChannel)
 	parser := grammar.NewCypherParser(stream)
+	parser.SetErrorHandler(&structureErrorStrategy{antlr4.NewDefaultErrorStrategy()})
 	parser.RemoveErrorListeners()
 	parser.AddErrorListener(errors)
 	r := &structureReader{text: text, stream: stream, parser: parser, errors: errors}
@@ -152,7 +177,7 @@ func ReadQueryStructure(text string) *QueryStructure {
 		return cached
 	}
 	r := newStructureReader(text)
-	tree := r.parser.FabricScript()
+	tree := r.parseScript()
 	var result *QueryStructure
 	if r.errors.err == nil {
 		result = r.body(tree.FabricBody(), false)
@@ -175,6 +200,22 @@ func ReadQueryStructure(text string) *QueryStructure {
 		structureCache.Unlock()
 	}
 	return result
+}
+
+func (r *structureReader) parseScript() (tree grammar.IFabricScriptContext) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			if _, syntax := caught.(structureSyntaxAbort); !syntax {
+				panic(caught)
+			}
+			root := r.parser.GetParserRuleContext()
+			for root.GetParent() != nil {
+				root = root.GetParent().(antlr4.ParserRuleContext)
+			}
+			tree = root.(grammar.IFabricScriptContext)
+		}
+	}()
+	return r.parser.FabricScript()
 }
 
 func (r *structureReader) partialUses(body grammar.IFabricBodyContext) *QueryStructure {
@@ -456,20 +497,24 @@ func (r *structureReader) projection(body grammar.IProjectionBodyContext) *Query
 		v := QueryProjectionItem{Expression: r.source(item.Expression()), tree: item.Expression()}
 		if item.Symbol() != nil {
 			v.Alias = unquoteSyntaxName(r.source(item.Symbol()))
+			v.HasAlias = true
 		}
 		v.Name = syntaxIdentifier(item.Expression())
-		v.Column = v.Alias
-		if v.Column == "" {
-			v.Column = v.Name
+		v.Column = v.Expression
+		if symbol, ok := syntaxOnly[grammar.ISymbolContext](item.Expression()); ok {
+			v.Column = unquoteSyntaxName(symbol.GetText())
 		}
-		if v.Column == "" {
-			v.Column = v.Expression
+		if v.HasAlias {
+			v.Column = v.Alias
 		}
 		walkSyntax(item.Expression(), func(node antlr4.Tree) {
 			switch value := node.(type) {
 			case grammar.ICountAllContext:
 				p.Aggregates = true
 			case grammar.IFunctionInvocationContext:
+				if value.InvocationName() == nil {
+					break // The grammar's TRIM ... FROM alternative has no invocationName.
+				}
 				switch strings.ToLower(value.InvocationName().GetText()) {
 				case "count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc":
 					p.Aggregates = true
@@ -599,7 +644,7 @@ func StripLeadingImportsForRecord(text string, bindings map[string]interface{}) 
 		return text
 	}
 	for i, name := range names {
-		if _, ok := bindings[name]; !ok || p.Items[i].Alias != "" {
+		if _, ok := bindings[name]; !ok || p.Items[i].HasAlias {
 			return text
 		}
 	}
@@ -653,7 +698,7 @@ func readExpression(text string) (*structureReader, grammar.IExpressionContext) 
 	}
 	r.bytes = append(r.bytes, len(text))
 	p := readProjection(text)
-	if p == nil || p.Star || p.Distinct || p.Modifiers != "" || len(p.Items) != 1 || p.Items[0].Alias != "" {
+	if p == nil || p.Star || p.Distinct || p.Modifiers != "" || len(p.Items) != 1 || p.Items[0].HasAlias {
 		return r, nil
 	}
 	return r, p.Items[0].tree
@@ -810,11 +855,7 @@ func syntaxVariable(tree, parent antlr4.Tree) (grammar.ISymbolContext, bool) {
 	if !ok {
 		return nil, false
 	}
-	switch parent.(type) {
-	case grammar.IAtomContext, grammar.IMapProjectionContext:
-		return symbol, true
-	}
-	return nil, false
+	return symbol, symbolRole(symbol, parent).expression
 }
 
 // BranchDeclaresVariable distinguishes a binding from a read by its grammar
@@ -834,11 +875,9 @@ func BranchDeclaresVariable(text, name string) bool {
 			if !ok || unquoteSyntaxName(symbol.GetText()) != name {
 				return
 			}
-			switch parent.(type) {
-			case grammar.INodePatternContext, grammar.IRelationDetailContext, grammar.IPatternPartContext, grammar.IUnwindStContext, grammar.IForStContext, grammar.IProjectionItemContext, grammar.ILetItemContext:
-				found, declares = true, true
-			case grammar.IAtomContext, grammar.IMapProjectionContext, grammar.IMapProjectionItemContext:
-				found = true
+			role := symbolRole(symbol, parent)
+			if role.queryBinding || role.expression {
+				found, declares = true, role.queryBinding
 			}
 		})
 		if found {
@@ -973,7 +1012,7 @@ func readCollectMapProjection(text string) []string {
 	ret := ""
 	if len(q.Clauses) == 2 {
 		p := simpleClauseProjection(q.Clauses[1], 1)
-		if q.Clauses[1].Kind != "RETURN" || p == nil || p.Items[0].Alias != "" || p.Items[0].Name == "" {
+		if q.Clauses[1].Kind != "RETURN" || p == nil || p.Items[0].HasAlias || p.Items[0].Name == "" {
 			return nil
 		}
 		ret = p.Items[0].Name
@@ -989,7 +1028,7 @@ func readCollectDistinctProjection(text string) []string {
 	p := simpleClauseProjection(q.Clauses[0], 1)
 	last := simpleClauseProjection(q.Clauses[3], 1)
 	keys := simpleClauseProjection(q.Clauses[2], 1)
-	if p == nil || last == nil || keys == nil || p.Items[0].Alias == "" || keys.Items[0].Alias == "" || last.Items[0].Name == "" || last.Items[0].Alias != "" {
+	if p == nil || last == nil || keys == nil || p.Items[0].Alias == "" || keys.Items[0].Alias == "" || last.Items[0].Name == "" || last.Items[0].HasAlias {
 		return nil
 	}
 	m := syntaxMapCollect(p.Items[0])
@@ -1248,6 +1287,13 @@ func QueryWithBatchWindow(text string, limit, skip int) string {
 	for i, c := range q.Clauses {
 		if c.Kind == "MATCH" && matchIndex < 0 {
 			matchIndex = i
+		}
+		if matchIndex < 0 && c.Kind == "RETURN" && c.Projection != nil && c.Projection.Skip == "" && c.Projection.Limit == "" {
+			parts = append(parts, strings.TrimSpace(window))
+			for _, tail := range q.Clauses[i:] {
+				parts = append(parts, tail.Text)
+			}
+			return strings.Join(parts, " ")
 		}
 		if matchIndex >= 0 && i > matchIndex {
 			switch c.Kind {
