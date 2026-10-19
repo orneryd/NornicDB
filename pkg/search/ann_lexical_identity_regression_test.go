@@ -11,7 +11,7 @@ import (
 )
 
 func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
-	ids := []string{"other", "second-named-default", "first-prop-features", "first-chunk-0", "literal-named-doc"}
+	ids := []string{"other", nodeNamedVectorKey("second", "default"), nodePropertyVectorKey("first", "features"), nodeChunkVectorKey("first", 0), "literal-named-doc"}
 	hints := map[string]LexicalSeedHint{
 		"first":             {ID: "first", Rank: 0, Signature: 1},
 		"second":            {ID: "second", Rank: 1, Signature: 2},
@@ -23,7 +23,7 @@ func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 		for i, pair := range pairs {
 			got[i] = pair.id
 		}
-		require.Equal(t, []string{"first-chunk-0", "first-prop-features", "second-named-default", "literal-named-doc", "other"}, got, "ranked document hints must prioritize every embedding exactly once")
+		require.Equal(t, []string{nodeChunkVectorKey("first", 0), nodePropertyVectorKey("first", "features"), nodeNamedVectorKey("second", "default"), "literal-named-doc", "other"}, got, "ranked document hints must prioritize every embedding exactly once")
 		config := DefaultHNSWConfig()
 		config.UseGPUBuild = true
 		config.GPUBuildBatchSize = 2
@@ -105,7 +105,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				})
 				expected := make([]string, 0, 2)
 				for _, hint := range ranked {
-					if hint.ID == "first-named-default" || hint.ID == "second-named-default" {
+					if hint.ID == nodeNamedVectorKey("first", "default") || hint.ID == nodeNamedVectorKey("second", "default") {
 						expected = append(expected, hint.ID)
 					}
 				}
@@ -113,7 +113,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				svc.hnswIndex.mu.RLock()
 				defer svc.hnswIndex.mu.RUnlock()
 				require.Equal(t, expected, svc.hnswIndex.internalToID, "public construction must preserve ranked embedding insertion order")
-				for _, id := range []string{"first-named-default", "second-named-default"} {
+				for _, id := range []string{nodeNamedVectorKey("first", "default"), nodeNamedVectorKey("second", "default")} {
 					hint, ok := svc.hnswIndex.buildLexicalHints[id]
 					require.True(t, ok, "public index build must bind the lexical hint to %s", id)
 					require.NotZero(t, hint.Signature)
@@ -133,5 +133,5 @@ func TestBM25SeedEmbeddingIDsUsesIndexedMetadata(t *testing.T) {
 	}))
 	require.Equal(t, []string{"missing", "seed"}, svc.bm25SeedEmbeddingIDs([]string{"missing", "seed"}))
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "encoded", Properties: map[string]any{"features": []float32{0, 1}}, NamedEmbeddings: map[string][]float32{"default": {1, 0}, "alternate": {0, 1}}}))
-	require.Equal(t, []string{"encoded-named-alternate", "encoded-named-default", "encoded-prop-features"}, svc.bm25SeedEmbeddingIDs([]string{"encoded"}))
+	require.Equal(t, []string{nodeNamedVectorKey("encoded", "alternate"), nodeNamedVectorKey("encoded", "default"), nodePropertyVectorKey("encoded", "features")}, svc.bm25SeedEmbeddingIDs([]string{"encoded"}))
 }
