@@ -97,9 +97,10 @@ func mixCypherHash(hash, value uint64) uint64 {
 	return (hash ^ value) * 1099511628211
 }
 
-// cypherEquivalenceHash never serializes lists or maps. Map entry hashes are
+// cypherValueHash never serializes lists or maps. Map entry hashes are
 // combined commutatively, independently of insertion/iteration order. A hash
-// only selects a bucket; cypherValuesEquivalent checks collisions.
+// only selects a bucket; cypherValuesMatch checks collisions under the same
+// explicitly selected contract, including nested temporal values.
 func cypherValueHash(value interface{}, contract cypherComparisonContract) uint64 {
 	if key, scalar := cypherComparableKey(value, contract); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
@@ -122,8 +123,8 @@ func cypherValueHash(value interface{}, contract cypherComparisonContract) uint6
 	return hash
 }
 
-// cypherValuesEquivalent is DISTINCT's structural equality: null equals
-// null, numbers compare exactly across types, and each NaN remains separate.
+// cypherValuesMatch compares structural values under the caller's contract:
+// null equals null, numbers compare exactly, and each NaN remains separate.
 func cypherValuesMatch(left, right interface{}, contract cypherComparisonContract) bool {
 	leftKey, leftScalar := cypherComparableKey(left, contract)
 	rightKey, rightScalar := cypherComparableKey(right, contract)
