@@ -450,7 +450,8 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
-	statementCacheScope *multidb.StatementCacheScope
+	graphIdentityScope *graphIdentityScope
+ statementCacheScope *multidb.StatementCacheScope
 	statementCaches     *StatementCaches
 	statementCachesOnce sync.Once
 
