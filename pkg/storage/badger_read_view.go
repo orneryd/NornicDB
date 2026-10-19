@@ -46,6 +46,11 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			}
 		}
 	}
+	return b.captureReadViewFallback(w, capture, opts)
+}
+
+// Keep transaction creation and its defers off the committed-cache fast path.
+func (b *BadgerEngine) captureReadViewFallback(w *WriteBehindBuffer, capture func(*WriteBehindBuffer), opts readViewOptions) (*badgerReadView, error) {
 	if w != nil {
 		w.mu.RLock()
 		defer w.mu.RUnlock()
@@ -130,17 +135,33 @@ func (b *BadgerEngine) withReadView(capture func(*WriteBehindBuffer), read func(
 	if len(options) != 0 {
 		opts = options[0]
 	}
-	nodeGen, edgeGen := b.nodeCacheGen.current(), b.edgeCacheGen.current()
 	if opts.current != nil {
-		*opts.current = true
+		return b.withCurrentReadView(capture, read, opts)
 	}
 	view, err := b.captureReadView(capture, opts)
 	if err != nil || view == nil {
 		return err
 	}
+	return view.readAndClose(read)
+}
+
+func (v *badgerReadView) readAndClose(read func(*badger.Txn) error) error {
+	defer v.Close()
+	return recoverBadgerClosedPanic(func() error { return v.withView(read) })
+}
+
+// Only materializers opting into current body caches need group validation.
+func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, opts readViewOptions) error {
+	nodeGen, edgeGen := b.nodeCacheGen.current(), b.edgeCacheGen.current()
+	*opts.current = true
+	view, err := b.captureReadView(capture, opts)
+	if err != nil || view == nil {
+		return err
+	}
 	defer view.Close()
+
 	err = recoverBadgerClosedPanic(func() error { return view.withView(read) })
-	if opts.current != nil && (nodeGen != b.nodeCacheGen.current() || edgeGen != b.edgeCacheGen.current()) {
+	if nodeGen != b.nodeCacheGen.current() || edgeGen != b.edgeCacheGen.current() {
 		// Re-evaluate only internal materialization, never a user callback.
 		*opts.current = false
 		return recoverBadgerClosedPanic(func() error { return view.withView(read) })
