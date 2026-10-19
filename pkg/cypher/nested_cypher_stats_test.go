@@ -62,24 +62,24 @@ func TestNestedCypherRollbackStats(t *testing.T) {
 }
 
 func TestNestedCypherVoidNilTail(t *testing.T) {
- require.NoError(t,RegisterUserProcedure(ProcedureSpec{Name:"nestedstats.nil",Mode:ProcedureModeWrite,MinArgs:0,MaxArgs:0},func(context.Context,*StorageExecutor,string,[]interface{})(*ExecuteResult,error){return nil,nil}))
- exec:=NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t),"nil_tail"))
- require.NotPanics(t,func(){
-  result,err:=exec.Execute(context.Background(),"CALL nestedstats.nil() RETURN 1 AS value",nil)
-  require.NoError(t,err)
-  require.EqualValues(t,1,result.Rows[0][0])
-  require.True(t,result.Stats==nil || *result.Stats==(QueryStats{}))
- })
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.nil", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) { return nil, nil }))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nil_tail"))
+	require.NotPanics(t, func() {
+		result, err := exec.Execute(context.Background(), "CALL nestedstats.nil() RETURN 1 AS value", nil)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, result.Rows[0][0])
+		require.True(t, result.Stats == nil || *result.Stats == (QueryStats{}))
+	})
 }
 
 func TestNestedCypherVoidStatementStats(t *testing.T) {
- require.NoError(t,RegisterUserProcedure(ProcedureSpec{Name:"nestedstats.nilwrite",Mode:ProcedureModeWrite,MinArgs:0,MaxArgs:0},func(ctx context.Context,exec *StorageExecutor,_ string,_ []interface{})(*ExecuteResult,error){
-  _,err:=exec.executeUserStatement(ctx,"CREATE (:VoidNestedStats)",nil)
-  return nil,err
- }))
- exec:=NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t),"nil_write"))
- result,err:=exec.Execute(context.Background(),"CALL nestedstats.nilwrite() RETURN 1 AS value",nil)
- require.NoError(t,err)
- require.EqualValues(t,1,result.Rows[0][0])
- require.Equal(t,1,result.Stats.NodesCreated)
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.nilwrite", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(ctx context.Context, exec *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+		_, err := exec.executeUserStatement(ctx, "CREATE (:VoidNestedStats)", nil)
+		return nil, err
+	}))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nil_write"))
+	result, err := exec.Execute(context.Background(), "CALL nestedstats.nilwrite() RETURN 1 AS value", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.Rows[0][0])
+	require.Equal(t, 1, result.Stats.NodesCreated)
 }
