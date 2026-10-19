@@ -63,6 +63,11 @@ func storageDatabaseName(engine storage.Engine) string {
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
+		if composite, ok := engine.(interface{ CompositeName() string }); ok {
+			if name := composite.CompositeName(); name != "" {
+				return name
+			}
+		}
 		if namespaceProvider, ok := engine.(interface{ Namespace() string }); ok {
 			if namespace := strings.TrimSpace(namespaceProvider.Namespace()); namespace != "" {
 				return namespace

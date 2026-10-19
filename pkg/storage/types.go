@@ -208,6 +208,9 @@ type EdgeID string
 //
 //	Node structs are NOT thread-safe. The storage engine handles concurrency.
 type Node struct {
+	// Database is query-value provenance. It is never persisted or a property.
+	Database string `json:"-" msgpack:"-"`
+
 	ID         NodeID         `json:"id"`
 	Labels     []string       `json:"labels"`
 	Properties map[string]any `json:"properties"`
@@ -326,6 +329,9 @@ type Node struct {
 //
 //	Edge structs are NOT thread-safe. The storage engine handles concurrency.
 type Edge struct {
+	// Database owns this relationship and both endpoint identities.
+	Database string `json:"-" msgpack:"-"`
+
 	ID         EdgeID         `json:"id"`
 	StartNode  NodeID         `json:"startNode"`
 	EndNode    NodeID         `json:"endNode"`

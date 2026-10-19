@@ -383,6 +383,7 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 		// transaction scan allocate once more per visited node.
 		out := *node
 		out.ID = w.unprefixNodeID(out.ID)
+		out.Database = w.namespace
 		return visit(&out)
 	})
 }
@@ -410,6 +411,7 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 			// StreamNodesByLabelProjected: strip the ID prefix on a shallow copy.
 			out := *node
 			out.ID = w.unprefixNodeID(out.ID)
+			out.Database = w.namespace
 			return fn(&out)
 		})
 	}
@@ -826,6 +828,7 @@ func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node
 	// to change the ID (#1110).
 	out := *node
 	out.ID = w.unprefixNodeID(node.ID)
+	out.Database = w.namespace
 	return &out
 }
 
@@ -835,6 +838,7 @@ func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge
 	}
 	out := storage.CopyEdge(edge)
 	out.ID = w.unprefixEdgeID(out.ID)
+	out.Database = w.namespace
 	out.StartNode = w.unprefixNodeID(out.StartNode)
 	out.EndNode = w.unprefixNodeID(out.EndNode)
 	return out

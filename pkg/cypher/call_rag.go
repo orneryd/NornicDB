@@ -323,7 +323,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 	}
 	if mode == search.SearchContinuationID {
 		page, continuationErr := ensureSearchService(nil).SearchTextContinuation(
@@ -332,7 +332,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 	}
 	if useConfiguredRerank && svc != nil {
 		opts.RerankEnabled = svc.RerankerAvailable(ctx)
@@ -355,7 +355,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
@@ -412,7 +412,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(page, storage.DatabaseOf(e.storage)), nil
 		}
 		response, err = search.SearchTextChunksWithErrorPolicy(
 			ctx,
@@ -447,6 +447,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 
 	for _, r := range response.Results {
 		node := &storage.Node{
+			Database:   storage.DatabaseOf(e.storage),
 			ID:         storage.NodeID(r.ID),
 			Labels:     r.Labels,
 			Properties: r.Properties,
@@ -469,12 +470,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	return result, nil
 }
 
-func executeSearchContinuationPage(page *search.SearchContinuationPage) *ExecuteResult {
+func executeSearchContinuationPage(page *search.SearchContinuationPage, database string) *ExecuteResult {
 	results := make([]interface{}, 0, len(page.Results))
 	for index := range page.Results {
 		result := page.Results[index]
 		mapped := map[string]interface{}{
-			"node":  &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties},
+			"node":  &storage.Node{ID: storage.NodeID(result.ID), Database: database, Labels: result.Labels, Properties: result.Properties},
 			"score": result.Score, "rrf_score": result.RRFScore,
 			"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
 			"group_key": result.GroupKey, "phase": result.Phase,
@@ -488,7 +489,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 			for passageIndex := range result.Passages {
 				passage := result.Passages[passageIndex]
 				passages[passageIndex] = map[string]interface{}{
-					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
+					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Database: database, Labels: passage.Labels, Properties: passage.Properties},
 					"score": passage.Score, "rrf_score": passage.RRFScore,
 					"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
 					"phase":   passage.Phase,

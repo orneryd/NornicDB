@@ -166,11 +166,11 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	return &storage.Node{ID: node.ID}
+	return &storage.Node{ID: node.ID, Database: node.Database}
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+	return &storage.Edge{ID: edge.ID, Database: edge.Database, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 // validateDeletedEntityReads rejects a clause that, after a DELETE in the
