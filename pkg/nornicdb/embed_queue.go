@@ -1547,7 +1547,6 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, bool) {
 		if nodeGone(node, err) {
 			delete(ew.embeddingRetries, pending.ID)
 			ew.markNodeEmbedded(pending.ID)
-			return nil, true
 		}
 		return nil, false
 	}
