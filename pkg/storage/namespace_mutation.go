@@ -13,6 +13,7 @@ const (
 	namespacePublicationFresh namespacePublicationMode = iota
 	namespacePublicationReplay
 	namespacePublicationLifecycle
+	namespacePublicationShutdown
 )
 
 // beginNamespaceMutation is the physical admission owner. Capture the logical
@@ -36,7 +37,7 @@ func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []
 		return nil, err
 	}
 	b.mu.RLock()
-	closed := b.closed || (b.closing && mode != namespacePublicationReplay)
+	closed := mode != namespacePublicationShutdown && (b.closed || (b.closing && mode != namespacePublicationReplay))
 	b.mu.RUnlock()
 	if closed {
 		release()
