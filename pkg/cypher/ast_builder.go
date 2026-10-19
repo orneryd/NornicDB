@@ -805,36 +805,24 @@ func (b *ASTBuilder) parseSkip(text string) *int64 {
 
 // parseCall parses a CALL clause.
 func (b *ASTBuilder) parseCall(text string) *ASTCall {
-	call := &ASTCall{}
-	content := strings.TrimSpace(text[len("CALL"):])
-
-	// Find procedure name and arguments
-	if parenIdx := strings.Index(content, "("); parenIdx > 0 {
-		call.Procedure = strings.TrimSpace(content[:parenIdx])
-
-		// Find closing paren
-		closeIdx := strings.LastIndex(content, ")")
-		if closeIdx > parenIdx {
-			call.RawArgs = content[parenIdx+1 : closeIdx]
-
-			// Parse YIELD if present
-			rest := strings.TrimSpace(content[closeIdx+1:])
-			if strings.HasPrefix(upperASCII(rest), "YIELD") {
-				yieldContent := strings.TrimSpace(rest[5:])
-				yields := strings.Split(yieldContent, ",")
-				for _, y := range yields {
-					y = strings.TrimSpace(y)
-					if y != "" {
-						call.Yield = append(call.Yield, y)
-					}
-				}
-			}
-		}
-	} else {
-		call.Procedure = content
-	}
-
-	return call
+ call:=&ASTCall{}
+ for _,span:=range readFunctionSyntax(text).calls {
+  if !span.procedure {continue}
+  call.Procedure=span.name
+  rest:=span.next
+  if span.open>=0 {
+   close:=span.close(text)
+   if close<0 {return call}
+   call.RawArgs=text[span.open+1:close]
+   rest=close+1
+  }
+  tail:=text[queryGapEnd(text,rest):]
+  if startsWithKeywordFold(tail,"YIELD") {
+   call.Yield=splitTopLevelComma(tail[len("YIELD"):])
+  }
+  return call
+ }
+ return call
 }
 
 // parsePatterns parses pattern text into ASTPattern structs.

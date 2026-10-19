@@ -47,7 +47,7 @@ func extractFuncInner(expr string) string {
 	if close < 0 {
 		return ""
 	}
-	return strings.TrimSpace(expr[call.open+1 : close])
+	return call.syntax.render(syntaxSpan{call.open+1,close})
 }
 
 // compareForSort compares two values for sorting, returns true if a < b
