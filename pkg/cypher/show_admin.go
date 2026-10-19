@@ -320,7 +320,7 @@ func (r *runningTransactionRegistry) terminate(id string) (*runningTransaction, 
 	}
 	r.mu.RLock()
 	tx, ok := r.byNumber[number]
-	r.mu.RUnlock()
+	defer r.mu.RUnlock()
 	if !ok || !strings.EqualFold(tx.database, id[:separator]) {
 		return nil, false
 	}
@@ -353,10 +353,10 @@ type runningStatement struct {
 	memoryMark int64
 }
 
-func (s runningStatement) done() {
+func (s runningStatement) done() bool {
 	if s.tx == nil {
 		s.memory.releaseSince(s.memoryMark)
-		return
+		return false
 	}
 	if tracker := s.tx.memory.Load(); tracker != nil {
 		tracker.end()
@@ -365,12 +365,18 @@ func (s runningStatement) done() {
 			transactionMemoryTrackers.Put(tracker)
 		}
 	}
+	// Serialize final statement retirement with successful TERMINATE lookup.
+	// Once retired, a later termination belongs to the next statement.
+	runningTransactions.mu.Lock()
 	if s.autoCommit {
-		runningTransactions.end(s.tx)
+		delete(runningTransactions.byNumber, s.tx.number)
 	} else {
 		s.tx.endQuery()
 	}
+	terminated := s.tx.terminated.Load()
+	runningTransactions.mu.Unlock()
 	s.statement.cancel(context.Canceled)
+	return terminated
 }
 
 // statementContext is a running statement's context: TERMINATE and the
