@@ -27,7 +27,9 @@ Setup has three steps:
    turns green when health succeeds, and red when no server process is running.
    Disabled services retain their saved settings.
 
-Settings uses the same AI and Advanced controls. Stop Server and Restart Server
+Settings uses the same AI and Advanced controls. Choosing Settings closes any
+open setup window; activating the app does not reopen setup. Pending setup review
+remains available on the next app launch or reopen when no window is visible. Stop Server and Restart Server
 ask for confirmation; Cancel leaves the service running unchanged.
 
 ## Advanced (optional)
