@@ -13,6 +13,8 @@ import "context"
 // BadgerEngine implements it (MemoryEngine by embedding); WALEngine and
 // NamespacedEngine forward it. Callers reach it through StoredReader, which
 // unwraps decorators that add no visibility of their own.
+// Transaction views implement this capability themselves: stored reads bypass
+// suppression/decay, but retain the transaction's snapshot, writes and deletes.
 type StoredEntityReader interface {
 	GetStoredNode(id NodeID) (*Node, error)
 	GetStoredEdge(id EdgeID) (*Edge, error)
