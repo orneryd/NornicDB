@@ -1643,14 +1643,14 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 
 // claimNextNodeSource reserves a fresh source snapshot or a retained sidecar's
 // node. Persistence retries use the same claims as every provider route.
-func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, bool) {
+func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *storage.Node, bool) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 
 	// Rechecked for every claim, so a pause or restore that starts while a
 	// batch is being filled leaves the nodes not yet claimed pending.
 	if ew.operatorPaused.Load() || ew.restoreHolds.Load() > 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	var pending *storage.Node
 	for id, retained := range ew.embeddingRetries {
@@ -1663,14 +1663,14 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, bool) {
 		pending = ew.findNodeWithoutEmbedding()
 	}
 	if pending == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if ew.claimedNodes == nil {
 		ew.claimedNodes = make(map[string]struct{})
 	}
 	id := string(pending.ID)
 	if _, claimed := ew.claimedNodes[id]; claimed {
-		return nil, false
+		return nil, nil, false
 	}
 
 	node, err := ew.storage.GetNode(pending.ID)
@@ -1681,18 +1681,20 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, bool) {
 		if nodeGone(node, err) {
 			delete(ew.embeddingRetries, pending.ID)
 			ew.markNodeEmbedded(pending.ID)
-			return nil, true
+			return nil, nil, true
 		}
-		return nil, false
+		return nil, nil, false
 	}
 	if ew.wasRecentlyProcessed(node.ID) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	ew.claimedNodes[id] = struct{}{}
 	ew.inFlight.Add(1)
 	ew.markNodeEmbedded(node.ID)
-	return copyNodeForEmbedding(node), false
+	retained := ew.embeddingRetries[node.ID]
+	delete(ew.embeddingRetries, node.ID)
+	return copyNodeForEmbedding(node), retained, false
 }
 
 func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
