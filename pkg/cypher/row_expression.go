@@ -1920,11 +1920,8 @@ func rowIdentityPayload(value interface{}) (interface{}, bool) {
 	if !ok {
 		return value, false
 	}
-	kind, rest, found := strings.Cut(text, ":")
-	if found && (kind == "4" || kind == "5") {
-		if _, payload, found := strings.Cut(rest, ":"); found {
-			return payload, true
-		}
+	if _, _, payload, found := storage.ParseElementID(text); found {
+		return payload, true
 	}
 	return text, false
 }

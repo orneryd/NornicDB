@@ -396,6 +396,12 @@ func (c *CompositeEngine) ConstituentDatabaseForEdge(id EdgeID) string {
 
 // GetNode retrieves a node. Searches all readable constituents.
 func (c *CompositeEngine) GetNode(id NodeID) (*Node, error) {
+	if engine, local, qualified := c.constituentForElementID("4", string(id)); qualified {
+		if engine == nil {
+			return nil, ErrNotFound
+		}
+		return engine.GetNode(NodeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {
@@ -622,6 +628,12 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 
 // GetEdge retrieves an edge. Searches all constituents.
 func (c *CompositeEngine) GetEdge(id EdgeID) (*Edge, error) {
+	if engine, local, qualified := c.constituentForElementID("5", string(id)); qualified {
+		if engine == nil {
+			return nil, ErrNotFound
+		}
+		return engine.GetEdge(EdgeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 
 	for _, alias := range readConstituents {

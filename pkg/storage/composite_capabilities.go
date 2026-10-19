@@ -395,7 +395,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 		stop := false
 		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
 			err = lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
-				if !visit(NodeID(QualifiedEntityID(engine, string(id)))) {
+				if !visit(c.constituentNodeElementID(alias, engine, id)) {
 					stop = true
 					return false
 				}
@@ -410,7 +410,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 				if node == nil {
 					continue
 				}
-				if !visit(NodeID(QualifiedEntityID(engine, string(node.ID)))) {
+				if !visit(c.constituentNodeElementID(alias, engine, node.ID)) {
 					stop = true
 					break
 				}
@@ -430,6 +430,12 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 // constituents like their non-projected counterparts.
 
 func (c *CompositeEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
+	if engine, local, qualified := c.constituentForElementID("4", string(id)); qualified {
+		if engine == nil {
+			return nil, ErrNotFound
+		}
+		return getNodeProjectedThrough(engine, NodeID(local), properties)
+	}
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {

@@ -18,9 +18,20 @@ func RelationshipElementID(database string, id EdgeID) string {
 	return formatElementID("5", database, string(id))
 }
 
+// ParseElementID reads the database and local identity from a native element ID.
+// Local IDs may contain colons; only the two structural separators are split.
+func ParseElementID(value string) (kind, database, id string, ok bool) {
+	kind, rest, found := strings.Cut(value, ":")
+	if !found || kind != "4" && kind != "5" {
+		return "", "", "", false
+	}
+	database, id, found = strings.Cut(rest, ":")
+	return kind, database, id, found
+}
+
 func formatElementID(kind, database, id string) string {
 	id = strings.TrimSpace(id)
-	if parts := strings.SplitN(id, ":", 3); len(parts) == 3 && parts[0] == kind {
+	if parsedKind, _, _, ok := ParseElementID(id); ok && parsedKind == kind {
 		return id
 	}
 	database = strings.TrimSpace(database)
