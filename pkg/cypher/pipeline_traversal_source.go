@@ -86,7 +86,10 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					current[name] = value
 				}
 				// Check bound identities before any property read.
-				for _, endpoint := range []struct{ variable string; id storage.NodeID }{{match.StartNode.variable, startID}, {match.EndNode.variable, endID}} {
+				for _, endpoint := range []struct {
+					variable string
+					id       storage.NodeID
+				}{{match.StartNode.variable, startID}, {match.EndNode.variable, endID}} {
 					if bound, ok := pipelineBoundNode(row, endpoint.variable); ok && bound.ID != endpoint.id {
 						return nil
 					}
