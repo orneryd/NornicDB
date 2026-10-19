@@ -280,6 +280,7 @@ func (r *Resolver) subscriptionDatabase(ctx context.Context) (string, error) {
 	}
 	return database, nil
 }
+
 // executeCypher executes a Cypher query using the specified database's namespaced storage.
 // If database is empty, uses the default database.
 // Authorization is derived from the Cypher statement and enforced by the executor.
