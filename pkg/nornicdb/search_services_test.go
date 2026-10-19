@@ -135,20 +135,19 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 
 	t.Run("pending queue helpers guard nil/empty inputs", func(t *testing.T) {
 		var nilEntry *dbSearchService
-		nilEntry.queueIndex(&storage.Node{ID: "x"})
-		nilEntry.queueRemove("x")
-		require.Nil(t, nilEntry.drainPending())
+		nodes, edges := nilEntry.drainPending()
+		require.Nil(t, nodes)
+		require.Nil(t, edges)
 
-		entry := &dbSearchService{}
-		entry.queueIndex(nil)
-		entry.queueRemove("")
-		require.Nil(t, entry.drainPending())
+		entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test"), 3)}
+		nodes, edges = entry.drainPending()
+		require.Nil(t, nodes)
+		require.Nil(t, edges)
 
-		entry.queueIndex(&storage.Node{ID: "a"})
-		entry.queueRemove("a")
-		drained := entry.drainPending()
-		require.Len(t, drained, 1)
-		require.True(t, drained["a"].remove)
+		entry.queueRefresh("a")
+		newest := entry.queueRefresh("a")
+		nodes, _ = entry.drainPending()
+		require.Equal(t, map[string]search.NodeMutation{"a": newest}, nodes)
 	})
 
 	t.Run("GetDatabaseManagedEmbeddingStats reports bytes per database", func(t *testing.T) {
@@ -188,8 +187,9 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 	t.Run("pending flush debounces ready-service mutations", func(t *testing.T) {
 		engine := storage.NewMemoryEngine()
 		t.Cleanup(func() { _ = engine.Close() })
+		store := storage.NewNamespacedEngine(engine, "nornic")
 		db := &DB{buildCtx: context.Background()}
-		svc := search.NewServiceWithDimensionsAndBM25Engine(engine, 3, search.DefaultBM25Engine())
+		svc := search.NewServiceWithDimensionsAndBM25Engine(store, 3, search.DefaultBM25Engine())
 		entry := &dbSearchService{
 			dbName:            "nornic",
 			svc:               svc,
@@ -198,7 +198,9 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		}
 		close(entry.buildDone)
 
-		entry.queueIndex(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
+		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
+		require.NoError(t, err)
+		entry.queueRefresh("debounced")
 		db.ensurePendingFlush(entry)
 
 		time.Sleep(5 * time.Millisecond)
@@ -914,8 +916,8 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.NotNil(t, startedLazy)
 	require.False(t, startedLazy.GetBuildProgress().Ready)
 
-	require.NoError(t, db.removeNodeFromSearchIndexes(context.Background(), "lazy_cov", nil, ""))
-	err = db.removeNodeFromSearchIndexes(context.Background(), "system", nil, "node")
+	require.NoError(t, db.refreshNodeInSearchIndexes(context.Background(), "lazy_cov", nil, ""))
+	err = db.refreshNodeInSearchIndexes(context.Background(), "system", nil, "node")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "system database")
 
@@ -954,23 +956,12 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 		buildDone: make(chan struct{}),
 	}
 
-	// Queue operations before build completes:
-	// - remove op (should be tolerated even when missing)
-	// - nil node op (should be skipped)
-	// - valid index op (should be applied)
-	entry.pendingMu.Lock()
-	entry.pendingOps = map[string]pendingSearchMutation{
-		"missing": {remove: true},
-		"nil-op":  {node: nil, remove: false},
-		"n1": {
-			node: &storage.Node{
-				ID:              "n1",
-				Properties:      map[string]any{"content": "flush"},
-				ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-			},
-		},
-	}
-	entry.pendingMu.Unlock()
+	// Queue refreshes before the build completes: one for a node that is
+	// missing (tolerated) and one for a stored node (applied).
+	_, err := engine.CreateNode(&storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
+	require.NoError(t, err)
+	entry.queueRefresh("missing")
+	entry.queueRefresh("n1")
 
 	db.ensurePendingFlush(entry)
 	close(entry.buildDone)
@@ -994,12 +985,15 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const dbName = "tenant_lazy_ingest"
-	db.indexNodeFromEvent(&storage.Node{
-		ID:              storage.NodeID(dbName + ":n1"),
+	// The write and the event storage publishes for it.
+	_, err = storage.NewNamespacedEngine(db.baseStorage, dbName).CreateNode(&storage.Node{
+		ID:              "n1",
 		Labels:          []string{"Entity"},
 		Properties:      map[string]any{"name": "alice"},
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	})
+	require.NoError(t, err)
+	db.indexNodeFromEvent(&storage.Node{ID: storage.NodeID(dbName + ":n1")})
 
 	svc, err := db.GetOrCreateSearchService(dbName, nil)
 	require.NoError(t, err)
@@ -1101,7 +1095,11 @@ func TestSearchServices_GetOrCreate_ResolverAndPersistPaths(t *testing.T) {
 	_, err = db.EnsureSearchIndexesBuilt(context.Background(), "tenant_cfg", tenantStorage)
 	require.NoError(t, err)
 
-	bm25v1Path := filepath.Join(cfg.Database.DataDir, "search", "tenant_cfg", "bm25")
+	// The current generation persists under the directory CURRENT names.
+	base := filepath.Join(cfg.Database.DataDir, "search", "tenant_cfg")
+	token, err := readSearchStateToken(filepath.Join(base, searchStateCurrentFile))
+	require.NoError(t, err)
+	bm25v1Path := filepath.Join(base, token, "bm25")
 	_, err = os.Stat(bm25v1Path)
 	require.NoError(t, err)
 }
@@ -1198,7 +1196,8 @@ func TestSearchServices_RemoveEventDuringBuild_IsDeterministicallyReplayed(t *te
 	svc, err := db.GetOrCreateSearchService("tenant_remove_race", blocking)
 	require.NoError(t, err)
 
-	// Queue remove while build is blocked.
+	// Delete and queue its remove event while build is blocked.
+	require.NoError(t, tenantStorage.DeleteNode("gone"))
 	db.removeNodeFromEvent("tenant_remove_race:gone")
 	require.Equal(t, 0, svc.EmbeddingCount())
 

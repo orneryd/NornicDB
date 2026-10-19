@@ -226,3 +226,13 @@ func (r *ReplicatedEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSn
 }
 
 var _ storage.ReadSnapshotter = (*ReplicatedEngine)(nil)
+var _ storage.EventSubscriber = (*ReplicatedEngine)(nil)
+
+// SubscribeEvents forwards to the local storage chain: leader and follower
+// writes are both applied to it, and it publishes them.
+func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error {
+	if e == nil || e.Engine == nil {
+		return storage.ErrStorageClosed
+	}
+	return storage.SubscribeEvents(e.Engine, handlers)
+}

@@ -90,8 +90,8 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 			dbName:            "tenant",
 			svc:               svc,
 			pendingFlushDelay: 5 * time.Millisecond,
-			pendingOps: map[string]pendingSearchMutation{
-				"n1": {remove: true},
+			pendingOps: map[string]search.NodeMutation{
+				"n1": svc.ReserveNodeMutation("n1"),
 			},
 		}
 

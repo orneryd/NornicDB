@@ -109,9 +109,9 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	nodeGen, edgeGen := engine.nodeCacheGen.current(), engine.edgeCacheGen.current()
 	rollback := errors.New("injected rollback after suppression writes")
 	err = engine.withUpdate(func(txn *badger.Txn) error {
-		_, changed, err := engine.evaluateNodeSuppressionInTxn(txn, "test:n")
+		_, changedNode, err := engine.evaluateNodeSuppressionInTxn(txn, "test:n")
 		require.NoError(t, err)
-		require.True(t, changed)
+		require.NotNil(t, changedNode)
 		_, changedEdge, err := engine.evaluateEdgeSuppressionInTxn(txn, "test:e")
 		require.NoError(t, err)
 		require.NotNil(t, changedEdge)
