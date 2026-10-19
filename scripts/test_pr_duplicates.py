@@ -333,6 +333,14 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual([match.hit.id for match in finding.matches], ["second"])
         self.assertEqual(records[0][1].id, "top")
 
+    def test_method_dispatch_is_not_proof_of_the_matched_owner_identity(self):
+        hits = self.field(0.70)
+        hits[0].label = ".greet()"
+        records = []
+        finding, _ = self.evaluate(hits, owner_calls={"top": "L2"}, existing_owner_calls=records)
+        self.assertEqual(finding.matches[0].hit.id, "top")
+        self.assertEqual(records, [])
+
     def test_copy_still_blocks_even_when_the_candidate_also_calls_the_owner(self):
         copied = FUNC_A.replace("    return subtotal + tax", """    shipping = sum(item.quantity for item in items)
     discount = min(subtotal, shipping)
