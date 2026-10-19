@@ -183,10 +183,13 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 			}
 		}
 	}
-	// Resolve local constituent aliases through the same selection decision.
-	physical, allowed = s.graphAccess(mode, physical)
-	if !allowed {
-		return nil, false
+	// Ordinary names and aliases are already canonical. Only a dotted local
+	// constituent can name a further local alias.
+	if strings.Contains(database, ".") {
+		physical, allowed = s.graphAccess(mode, physical)
+		if !allowed {
+			return nil, false
+		}
 	}
 	if !s.dbManager.IsCompositeDatabase(physical) {
 		return []string{physical}, true
@@ -196,12 +199,28 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 		return nil, false
 	}
 	targets := []string{physical}
+	// Resolve the already-read references without copying the parent metadata
+	// again for each constituent. GraphAccess owns both selection decisions;
+	// only local names participate in local catalog alias resolution.
 	for _, ref := range info.Constituents {
-		children, allowed := s.databaseReadTargets(physical+"."+ref.Alias, mode)
+		var target string
+		var allowed bool
+		switch ref.Type {
+		case "local":
+			target, allowed = s.graphAccess(mode, ref.DatabaseName)
+		case "remote":
+			var canAccess func(string) bool
+			if mode != nil {
+				canAccess = mode.CanAccessDatabase
+			}
+			target, allowed = cypher.GraphAccess(nil, ref.DatabaseName, canAccess)
+		default:
+			return nil, false
+		}
 		if !allowed {
 			return nil, false
 		}
-		targets = append(targets, children...)
+		targets = append(targets, target)
 	}
 	return targets, true
 }
