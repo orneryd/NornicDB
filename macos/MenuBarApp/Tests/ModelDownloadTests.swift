@@ -21,12 +21,28 @@ final class ModelDownloadTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).count, 3)
     }
 
+    func testReadyModelSkipsDownloadEntirely() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for model in DefaultLocalModel.allCases {
+            let destination = directory.appendingPathComponent(model.filename)
+            let original = ggufMagicHeader + Data([1, 2, 3])
+            try original.write(to: destination)
+            try downloadDefaultLocalModel(model, into: directory) { _ in
+                XCTFail("An installed valid model must not download again")
+                return 1
+            }
+            XCTAssertEqual(try Data(contentsOf: destination), original)
+        }
+    }
+
     func testFailedDownloadPreservesExistingModelAndRemovesPartialFile() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let destination = directory.appendingPathComponent(DefaultLocalModel.embeddings.filename)
-        let original = ggufMagicHeader + Data([1, 2, 3])
+        let original = Data("previous invalid file".utf8)
         try original.write(to: destination)
         for exitCode: Int32 in [0, 22] {
             XCTAssertThrowsError(try downloadDefaultLocalModel(.embeddings, into: directory) { arguments in
