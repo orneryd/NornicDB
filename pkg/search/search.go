@@ -3277,6 +3277,7 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 // indexNodeAsLocked is indexNodeLocked with the temporal decision already
 // made: by indexNodeLocked, or at the call for a write queued on a population.
 func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex bool) error {
+	var indexErr error
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
 	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
@@ -3360,6 +3361,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 				expectedDim = s.vectorFileStore.GetDimensions()
 			}
 			if err := s.addVectorLocked(namedID, embedding); err != nil {
+				indexErr = errors.Join(indexErr, vectorInstallError(namedID, err))
 				if err == ErrDimensionMismatch {
 					s.logPrintf("⚠️ IndexNode %s named[%s]: embedding dimension mismatch (got %d, expected %d)",
 						node.ID, vectorName, len(embedding), expectedDim)
@@ -3404,6 +3406,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			expectedDim = s.vectorFileStore.GetDimensions()
 		}
 		if err := s.addVectorLocked(string(node.ID), mainEmbedding); err != nil {
+			indexErr = errors.Join(indexErr, vectorInstallError(string(node.ID), err))
 			if err == ErrDimensionMismatch {
 				s.logPrintf("⚠️ IndexNode %s main: embedding dimension mismatch (got %d, expected %d)",
 					node.ID, len(mainEmbedding), expectedDim)
@@ -3433,6 +3436,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 				if len(embedding) > 0 {
 					chunkID := fmt.Sprintf("%s-chunk-%d", node.ID, i)
 					if err := s.addVectorLocked(chunkID, embedding); err != nil {
+						indexErr = errors.Join(indexErr, vectorInstallError(chunkID, err))
 						if err == ErrDimensionMismatch {
 							s.logPrintf("⚠️ IndexNode %s chunk %d: embedding dimension mismatch (got %d, expected %d)",
 								node.ID, i, len(embedding), expectedDim)
@@ -3476,6 +3480,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			}
 			propID := fmt.Sprintf("%s-prop-%s", nodeIDStr, key)
 			if err := s.addVectorLocked(propID, vec); err != nil {
+				indexErr = errors.Join(indexErr, vectorInstallError(propID, err))
 				continue
 			}
 			if s.nodePropVector[nodeIDStr] == nil {
@@ -3499,7 +3504,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	capacityUsage.vectorResident = s.nodeVectorResidentLocked(nodeIDStr)
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
-	return nil
+	return indexErr
 }
 
 // nodeVectorStateUnchangedLocked reports whether re-indexing node would produce
@@ -4062,7 +4067,12 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 }
 
 func (s *Service) runBasePopulationAttempt(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
-	defer func() { s.finishNodeAdmission(job, resultErr) }()
+	defer func() {
+		resultErr = s.finishNodeAdmission(job, resultErr)
+		if resultErr != nil {
+			s.ready.Store(false)
+		}
+	}()
 	// Base loading and its persisted graph install share service lifetime.
 	ctx, releaseBuild, buildErr := s.ownBaseBuildContext(ctx)
 	if buildErr != nil {

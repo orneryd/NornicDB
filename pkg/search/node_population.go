@@ -110,10 +110,13 @@ func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
 // (node_population_writes.go);
 // queued is set while any write is queued.
 type nodePopulationAdmission struct {
-	done     chan struct{}
-	err      error
-	deferred []deferredIndexWrite
-	queued   atomic.Bool
+	done chan struct{}
+	err  error
+	// replayErr is owned by indexMu until NODE publishes. It retains failures
+	// from every replay batch, including the final publication drain.
+	replayErr error
+	deferred  []deferredIndexWrite
+	queued    atomic.Bool
 	// pendingOps counts queued operations that change a setting an entry
 	// decision reads (the dimension mode, the embedding space, the index
 	// flags) and are not applied yet; populated is set once its batches and
@@ -155,8 +158,8 @@ func (s *Service) claimNodeAdmission() *nodePopulationAdmission {
 	return job
 }
 
-func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
-	s.publishNodeAdmission(job, err, "")
+func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) error {
+	return s.publishNodeAdmission(job, err, "")
 }
 
 // publishNodeAdmission publishes NODE. The queued live writes are applied
@@ -167,7 +170,7 @@ func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
 // parkPath, set by an explicit build that has just saved BM25 there (caller
 // holds persistRunMu), parks BM25 through the warmup only when no queued
 // write changed it since the save.
-func (s *Service) publishNodeAdmission(job *nodePopulationAdmission, err error, parkPath string) {
+func (s *Service) publishNodeAdmission(job *nodePopulationAdmission, err error, parkPath string) error {
 	if err != nil {
 		s.indexMu.Lock()
 		if !nodeAdmissionClosed(job) {
@@ -183,22 +186,28 @@ func (s *Service) publishNodeAdmission(job *nodePopulationAdmission, err error, 
 	parked := false
 	s.indexMu.Lock()
 	s.baseBuildControlMu.Lock()
+	var resultErr error
 	if !nodeAdmissionClosed(job) {
 		job.pendingOps -= s.applyDeferredIndexWritesLocked(job, job.takeDeferredLocked(true))
+		err = errors.Join(err, job.replayErr)
 		if err == nil && parkPath != "" {
 			parked = s.parkFulltextLocked(parkPath)
 		}
 		job.err = err
+		resultErr = err
 		close(job.done)
 		if s.nodeAdmission == job {
 			s.populationRunning.Store(false)
 		}
+	} else {
+		resultErr = errors.Join(err, job.err)
 	}
 	s.baseBuildControlMu.Unlock()
 	s.indexMu.Unlock()
 	if parked {
 		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
 	}
+	return resultErr
 }
 
 func nodeAdmissionClosed(job *nodePopulationAdmission) bool {
@@ -493,9 +502,10 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	s.indexMu.Unlock()
 	if !explicit {
 		plan.closeBaseline()
-		s.completePopulationSequence(job)
-		s.finishNodeAdmission(job, nil)
-		return nil
+		if err := s.completePopulationSequence(job); err != nil {
+			return err
+		}
+		return s.finishNodeAdmission(job, nil)
 	}
 	// Admit a reusable saved graph before NODE publishes. After it every live
 	// delta must reach a graph already installed or the canonical construction
@@ -515,17 +525,20 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err != nil {
 		// The node population is complete; a relationship failure does
 		// not undo it, so a retry keeps skipping the node iteration.
-		s.finishNodeAdmission(job, nil)
-		return err
+		return errors.Join(err, s.finishNodeAdmission(job, nil))
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// The population is complete: every queued operation, administrative ones
 	// included, is applied before the base save.
-	s.completePopulationSequence(job)
+	if err := s.completePopulationSequence(job); err != nil {
+		return err
+	}
 	if !plan.nodesRebuilt {
-		s.finishNodeAdmission(job, nil)
+		if err := s.finishNodeAdmission(job, nil); err != nil {
+			return err
+		}
 		return s.completeBaseIndexBuild(ctx)
 	}
 	s.setBuildPhase("persisting_base_indexes")
@@ -543,8 +556,7 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 // (runBasePopulationAttempt).
 func (s *Service) persistBaseIndexesAndPublish(ctx context.Context, job *nodePopulationAdmission, park bool) error {
 	if !s.nodePopulationForPersist(ctx) || !s.persistEnabled.Load() {
-		s.finishNodeAdmission(job, nil)
-		return nil
+		return s.finishNodeAdmission(job, nil)
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
@@ -555,8 +567,7 @@ func (s *Service) persistBaseIndexesAndPublish(ctx context.Context, job *nodePop
 	if !park {
 		saved = ""
 	}
-	s.publishNodeAdmission(job, nil, saved)
-	return nil
+	return s.publishNodeAdmission(job, nil, saved)
 }
 
 // nodePopulationForPersist reports whether a persist outside a population may

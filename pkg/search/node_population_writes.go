@@ -1,6 +1,7 @@
 package search
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"runtime/debug"
@@ -28,6 +29,9 @@ import (
 // give.
 
 // deferredIndexWrite is one operation prepared for the population sequence.
+// Operational replay failures are retained on the NODE job and returned by
+// BuildIndexes and NODE waiters. Later accepted writes are still applied;
+// a failed population never publishes readiness or complete sources.
 type deferredIndexWrite struct {
 	node   *storage.Node // IndexNode
 	nodeID string        // RemoveNode
@@ -256,11 +260,11 @@ func (s *Service) adoptPopulationDimensions(dims int) {
 // the relationship stream) is complete and applies every queued operation,
 // administrative ones included. Caller is the population, before the base
 // save.
-func (s *Service) completePopulationSequence(job *nodePopulationAdmission) {
+func (s *Service) completePopulationSequence(job *nodePopulationAdmission) error {
 	s.baseBuildControlMu.Lock()
 	job.populated = true
 	s.baseBuildControlMu.Unlock()
-	s.applyDeferredIndexWrites(job)
+	return s.applyDeferredIndexWrites(job)
 }
 
 // orderWithPopulation runs an administrative operation that changes what a
@@ -535,19 +539,21 @@ func queuedScalarKind(kind reflect.Kind) bool {
 // calls it, between its steps, holding no index lock. No queued write chooses
 // the index dimensions: a write carrying a vector is queued only when they
 // are fixed (vectorNeedsOrderedDecision).
-func (s *Service) applyDeferredIndexWrites(job *nodePopulationAdmission) {
-	if job == nil || !job.queued.Load() {
-		return
+func (s *Service) applyDeferredIndexWrites(job *nodePopulationAdmission) error {
+	if job == nil {
+		return nil
 	}
 	s.baseBuildControlMu.Lock()
 	writes := job.takeDeferredLocked(false)
 	s.baseBuildControlMu.Unlock()
 	s.indexMu.Lock()
 	ops := s.applyDeferredIndexWritesLocked(job, writes)
+	err := job.replayErr
 	s.indexMu.Unlock()
 	s.baseBuildControlMu.Lock()
 	job.pendingOps -= ops
 	s.baseBuildControlMu.Unlock()
+	return err
 }
 
 // applyDeferredIndexWritesLocked applies queued writes in arrival order, after
@@ -589,7 +595,8 @@ func (s *Service) applyDeferredIndexWritesLocked(job *nodePopulationAdmission, w
 			}
 		}
 		if err != nil {
-			s.logPrintf("⚠️ Search: queued index write failed: %v", err)
+			job.replayErr = errors.Join(job.replayErr, write.replayError(err))
+			s.changeNodeSourcesLocked(nodePopulationFailed)
 		}
 	}
 	return ops
