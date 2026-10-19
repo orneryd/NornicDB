@@ -1,5 +1,7 @@
 package storage
 
+import "maps"
+
 // StoredNodeImage returns the logical full-node image produced by the storage
 // codec. Commit admission uses this for both prior and staged entities: pending
 // values (including an acknowledged write-behind value) have not necessarily
@@ -16,9 +18,13 @@ func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 
 func (tx *BadgerTransaction) storedNodeImageLocked(node *Node) (*Node, error) {
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
-	canonical := copyNode(node)
+	canonical := *node
 	canonical.ID = namespace.prefixNodeID(canonical.ID)
-	data, separate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, tx.namespace, canonical)
+	// The codec only mutates embedding metadata when splitting a large body.
+	// Properties, labels and inline vectors are read-only and decode into a
+	// separate owned image; copying them before encoding serves no purpose.
+	canonical.EmbedMeta = maps.Clone(node.EmbedMeta)
+	data, separate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, tx.namespace, &canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +35,13 @@ func (tx *BadgerTransaction) storedNodeImageLocked(node *Node) (*Node, error) {
 	if separate {
 		// Full stored reads hydrate separately stored vectors and clear the
 		// physical placement flag. Keep the codec's persisted metadata.
-		image.ChunkEmbeddings = canonical.ChunkEmbeddings
+		if len(canonical.ChunkEmbeddings) > 0 {
+			image.ChunkEmbeddings = make([][]float32, len(canonical.ChunkEmbeddings))
+			for i, chunk := range canonical.ChunkEmbeddings {
+				image.ChunkEmbeddings[i] = make([]float32, len(chunk))
+				copy(image.ChunkEmbeddings[i], chunk)
+			}
+		}
 		image.EmbeddingsStoredSeparately = false
 	}
 	return image, nil
@@ -49,11 +61,11 @@ func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 
 func (tx *BadgerTransaction) storedEdgeImageLocked(edge *Edge) (*Edge, error) {
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
-	canonical := copyEdge(edge)
+	canonical := *edge
 	canonical.ID = namespace.prefixEdgeID(canonical.ID)
 	canonical.StartNode = namespace.prefixNodeID(canonical.StartNode)
 	canonical.EndNode = namespace.prefixNodeID(canonical.EndNode)
-	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), tx.namespace, canonical)
+	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), tx.namespace, &canonical)
 	if err != nil {
 		return nil, err
 	}

@@ -25,6 +25,39 @@ func (tx *BadgerTransaction) PendingChanges(includeEntities bool) TransactionCha
 	return tx.pendingChangesLocked(includeEntities)
 }
 
+// AccountingChanges borrows the final staged images for synchronous admission.
+// The caller must exclusively own the transaction through commit/rollback and
+// must not mutate this view. Unlike PendingChanges, it does not create entity
+// copies that the accounting owner only reads and then immediately discards.
+func (tx *BadgerTransaction) AccountingChanges() TransactionChanges {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	changes := tx.pendingChangesLocked(false)
+	changes.Nodes, changes.Edges = tx.pendingNodes, tx.pendingEdges
+	if len(tx.deletedNodes)+len(tx.connectedDeletes) > 0 {
+		changes.Nodes = make(map[NodeID]*Node, len(tx.pendingNodes)+len(tx.deletedNodes)+len(tx.connectedDeletes))
+		for id, node := range tx.pendingNodes {
+			changes.Nodes[id] = node
+		}
+		for id := range tx.deletedNodes {
+			changes.Nodes[id] = nil
+		}
+		for id := range tx.connectedDeletes {
+			changes.Nodes[id] = nil
+		}
+	}
+	if len(tx.deletedEdges) > 0 {
+		changes.Edges = make(map[EdgeID]*Edge, len(tx.pendingEdges)+len(tx.deletedEdges))
+		for id, edge := range tx.pendingEdges {
+			changes.Edges[id] = edge
+		}
+		for id := range tx.deletedEdges {
+			changes.Edges[id] = nil
+		}
+	}
+	return changes
+}
+
 func (tx *BadgerTransaction) pendingChangesLocked(includeEntities bool) TransactionChanges {
 	changes := TransactionChanges{
 		Namespace:     tx.namespace,

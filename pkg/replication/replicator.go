@@ -90,6 +90,8 @@ type Command struct {
 	RequestID string
 	// Process-local lifecycle state is deliberately absent from the wire/WAL.
 	namespaceDrop *storage.NamespaceDrop
+	// Process-local admitted transaction; never serialized to peers or WAL.
+	managedWrite *managedCommandWrite
 }
 
 // CommandType identifies the type of write operation.

@@ -16,6 +16,7 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 
 type accountingTransaction interface {
 	PendingChanges(bool) storage.TransactionChanges
+	AccountingChanges() storage.TransactionChanges
 	StoredNodeImage(*storage.Node) (*storage.Node, error)
 	StoredEdgeImage(*storage.Edge) (*storage.Edge, error)
 	CommitContextWithPublication(context.Context, func()) error
@@ -63,8 +64,11 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 		tx.UseManagedAccounting(accounting)
 		commitAttempted = true
 		err := tx.CommitContextWithPublication(ctx, afterPublication)
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nornicerrors.MarkCommitRolledBack(err)
+		if !committed && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			pending, routed := tx.(interface{ CommitMayBePending() bool })
+			if !routed || !pending.CommitMayBePending() {
+				return nornicerrors.MarkCommitRolledBack(err)
+			}
 		}
 		return err
 	}
@@ -114,23 +118,17 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 		}
 		changes = tx.PendingChanges(false)
 	}
-	var batch accountingBatch
-	account := func() {
-		if initialized || (limits != nil && limits.Storage.MaxBytes > 0) {
-			t.manager.publishAccountingBatch(t.dbName, batch, nil)
-		}
-	}
 	publish := func() {
 		committed = true
 		release()
 		release = nil
 	}
 	if !exclusive {
-		return commit(publish, account)
+		return commit(publish, func() {})
 	}
 	trackBytes := initialized || (limits != nil && limits.Storage.MaxBytes > 0)
 	if trackBytes || (limits != nil && (limits.Storage.MaxNodes > 0 || limits.Storage.MaxEdges > 0)) {
-		changes = tx.PendingChanges(true)
+		changes = tx.AccountingChanges()
 	}
 	var currentBytes int64
 	if trackBytes {
@@ -139,9 +137,12 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 			return err
 		}
 	}
-	batch, err = t.prepareAccountingBatch(tx, changes, trackBytes)
-	if err != nil {
-		return err
+	var batch accountingBatch
+	if trackBytes || (limits != nil && (limits.Storage.MaxNodes > 0 || limits.Storage.MaxEdges > 0)) {
+		batch, err = t.prepareAccountingBatch(tx, changes, trackBytes)
+		if err != nil {
+			return err
+		}
 	}
 	if err := batch.admit(t, limits, currentBytes); err != nil {
 		return err
@@ -154,6 +155,11 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 				return nornicerrors.MarkCommitRolledBack(err)
 			}
 		}
+	}
+	account := func() {}
+	if trackBytes {
+		manager, database, admitted := t.manager, t.dbName, batch
+		account = func() { manager.publishAccountingBatch(database, admitted, nil) }
 	}
 	return commit(publish, account)
 }

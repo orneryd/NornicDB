@@ -58,5 +58,5 @@ func accountingForStoredPairs[K comparable, V any](prior, final map[K]*V, size f
 	for id, body := range final {
 		pending[id] = body
 	}
-	return storedEntityAccounting(pending, func(id K) (*V, error) { return prior[id], nil }, func(body *V) (*V, error) { return body, nil }, size, true)
+	return storedEntityAccounting(pending, func(id K) (*V, error) { return prior[id], nil }, func(body *V) (*V, error) { return body, nil }, size, true, nil)
 }

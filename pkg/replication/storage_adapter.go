@@ -233,37 +233,43 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	// Execute the command immediately (don't wait for WAL write)
 	// This allows storage operations to proceed in parallel with WAL I/O
 	var execErr error
-	switch cmd.Type {
-	case CmdCreateNode:
-		_, execErr = a.engine.CreateNode(payload.node)
-	case CmdUpdateNode:
-		execErr = a.engine.UpdateNode(payload.node)
-	case CmdDeleteNode:
-		execErr = a.applyDeleteNode(cmd.Data)
-	case CmdCreateEdge:
-		execErr = a.engine.CreateEdge(payload.edge)
-	case CmdUpdateEdge:
-		execErr = a.engine.UpdateEdge(payload.edge)
-	case CmdDeleteEdge:
-		execErr = a.applyDeleteEdge(cmd.Data)
-	case CmdDeleteByPrefix:
-		execErr = a.applyDeleteByPrefixContext(ctx, cmd.Data)
-	case CmdSetProperty:
-		execErr = a.applySetProperty(cmd.Data)
-	case CmdBatchWrite:
-		execErr = a.applyBatchWrite(cmd.Data)
-	case CmdCypher:
-		execErr = a.applyCypher(cmd.Data)
-	case CmdBulkCreateNodes:
-		execErr = a.applyBulkCreateNodes(cmd.Data)
-	case CmdBulkCreateEdges:
-		execErr = a.applyBulkCreateEdges(cmd.Data)
-	case CmdBulkDeleteNodes:
-		execErr = a.applyBulkDeleteNodes(cmd.Data)
-	case CmdBulkDeleteEdges:
-		execErr = a.applyBulkDeleteEdges(cmd.Data)
-	default:
-		execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+	localApply := false
+	if cmd.managedWrite != nil {
+		localApply, execErr = cmd.managedWrite.apply()
+	}
+	if !localApply {
+		switch cmd.Type {
+		case CmdCreateNode:
+			_, execErr = a.engine.CreateNode(payload.node)
+		case CmdUpdateNode:
+			execErr = a.engine.UpdateNode(payload.node)
+		case CmdDeleteNode:
+			execErr = a.applyDeleteNode(cmd.Data)
+		case CmdCreateEdge:
+			execErr = a.engine.CreateEdge(payload.edge)
+		case CmdUpdateEdge:
+			execErr = a.engine.UpdateEdge(payload.edge)
+		case CmdDeleteEdge:
+			execErr = a.applyDeleteEdge(cmd.Data)
+		case CmdDeleteByPrefix:
+			execErr = a.applyDeleteByPrefixContext(ctx, cmd.Data)
+		case CmdSetProperty:
+			execErr = a.applySetProperty(cmd.Data)
+		case CmdBatchWrite:
+			execErr = a.applyBatchWrite(cmd.Data)
+		case CmdCypher:
+			execErr = a.applyCypher(cmd.Data)
+		case CmdBulkCreateNodes:
+			execErr = a.applyBulkCreateNodes(cmd.Data)
+		case CmdBulkCreateEdges:
+			execErr = a.applyBulkCreateEdges(cmd.Data)
+		case CmdBulkDeleteNodes:
+			execErr = a.applyBulkDeleteNodes(cmd.Data)
+		case CmdBulkDeleteEdges:
+			execErr = a.applyBulkDeleteEdges(cmd.Data)
+		default:
+			execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
+		}
 	}
 
 	// Try to get position from async write (non-blocking, best-effort)
@@ -323,9 +329,10 @@ func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replic
 
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
 func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord, cmd *Command) {
-	if cmd.namespaceDrop != nil {
+	if cmd.namespaceDrop != nil || cmd.managedWrite != nil {
 		copy := *cmd
 		copy.namespaceDrop = nil
+		copy.managedWrite = nil
 		cmd = &copy
 	}
 	a.memWALMu.Lock()
