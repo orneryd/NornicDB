@@ -42,6 +42,7 @@ func writeSnapshotCollection(writer io.Writer, snapshot *Snapshot) error {
 		return fmt.Errorf("nil snapshot")
 	}
 	buffered := bufio.NewWriter(writer)
+	frames := snapshotFrameWriter{writer: buffered}
 	timestamp := snapshot.Timestamp
 	if timestamp.IsZero() {
 		timestamp = time.Now()
@@ -53,7 +54,7 @@ func writeSnapshotCollection(writer io.Writer, snapshot *Snapshot) error {
 		if node == nil {
 			return fmt.Errorf("snapshot contains nil node")
 		}
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, node, materializedSnapshotRecordSize); err != nil {
+		if err := frames.write(streamSnapshotNode, node, materializedSnapshotRecordSize); err != nil {
 			return err
 		}
 	}
@@ -61,12 +62,12 @@ func writeSnapshotCollection(writer io.Writer, snapshot *Snapshot) error {
 		if edge == nil {
 			return fmt.Errorf("snapshot contains nil edge")
 		}
-		if err := writeSnapshotFrame(buffered, streamSnapshotEdge, edge, materializedSnapshotRecordSize); err != nil {
+		if err := frames.write(streamSnapshotEdge, edge, materializedSnapshotRecordSize); err != nil {
 			return err
 		}
 	}
 	footer := snapshotCompletion{Nodes: uint64(len(snapshot.Nodes)), Edges: uint64(len(snapshot.Edges)), Collection: &snapshotCollectionFields{Timestamp: snapshot.Timestamp, Version: snapshot.Version}}
-	if err := writeSnapshotFrame(buffered, streamSnapshotFooter, footer, materializedSnapshotRecordSize); err != nil {
+	if err := frames.write(streamSnapshotFooter, footer, materializedSnapshotRecordSize); err != nil {
 		return err
 	}
 	return buffered.Flush()
