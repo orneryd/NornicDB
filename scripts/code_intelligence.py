@@ -26,8 +26,10 @@ This commit is blocked. Both reuse candidates and refactor targets require resol
 2. For a reuse candidate, extend or call the existing owner instead of adding a
    parallel implementation. For refactor targets, converge all affected paths into
    one canonical owner and migrate every caller, then remove redundant logic.
-   Preserve supported API contracts; a thin delegating API is valid only when it
-   contains no independent copy of the behavior.
+   Delete redundant forwarding and compatibility wrappers, aliases and shims.
+   Migrate every caller to the canonical API, then remove the obsolete entry
+   points. Do not leave a tiny delegating wrapper as a substitute for completing
+   the refactor; preserve required behavior by updating the actual consumers.
 3. Do not leaf-patch divergent paths, mask failures, delete required behavior,
    suppress findings, lower thresholds, or bypass/disable this hook to commit.
 4. Verify the complete affected behavior with focused regression tests and the
