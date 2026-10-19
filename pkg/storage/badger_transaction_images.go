@@ -11,12 +11,14 @@ func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return nil, err
 	}
+	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
 	canonical := copyNode(node)
-	data, separate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), canonical)
+	canonical.ID = namespace.prefixNodeID(canonical.ID)
+	data, separate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, tx.namespace, canonical)
 	if err != nil {
 		return nil, err
 	}
-	image, err := tx.engine.decodeNode(namespaceForNodeID(node.ID), data)
+	image, err := tx.engine.decodeNode(tx.namespace, data)
 	if err != nil {
 		return nil, err
 	}
@@ -38,9 +40,14 @@ func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return nil, err
 	}
-	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
+	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
+	canonical := copyEdge(edge)
+	canonical.ID = namespace.prefixEdgeID(canonical.ID)
+	canonical.StartNode = namespace.prefixNodeID(canonical.StartNode)
+	canonical.EndNode = namespace.prefixNodeID(canonical.EndNode)
+	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), tx.namespace, canonical)
 	if err != nil {
 		return nil, err
 	}
-	return tx.engine.decodeEdgeBodyByID(data, edge.ID)
+	return tx.engine.decodeEdgeBodyByID(data, canonical.ID)
 }
