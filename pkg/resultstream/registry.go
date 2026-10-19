@@ -318,7 +318,12 @@ func (r *Registry) Pull(ctx context.Context, scope Scope, qid string, n int) (*P
 		err = ctx.Err()
 	}
 	if err != nil {
-		r.remove(token.streamID, entry)
+		// A request cancellation or step deadline does not end an issued
+		// stream. Its replayable position can be retried with a fresh context;
+		// stream expiry and terminal producer failures still release admission.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			r.remove(token.streamID, entry)
+		}
 		r.observeError(err)
 		return nil, err
 	}
