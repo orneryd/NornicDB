@@ -298,7 +298,7 @@ func TestWriteBehindBuffer_AppliedGenerationFallsThrough(t *testing.T) {
 	buf.AppendNode(bufferedTestNode("n1", nil))
 	require.NoError(t, buf.Flush())
 	_, found, _ := buf.GetNode("n1")
-	require.False(t, found, "applied generations must fall through to the engine")
+	require.False(t, found, "retired generations must fall through to the engine")
 	require.Equal(t, 0, buf.PendingOps())
 }
 
