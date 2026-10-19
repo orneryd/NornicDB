@@ -150,13 +150,13 @@ func TestWriteBehindReplayListenerRetiresEveryReadSource(t *testing.T) {
 							check(string(edge.ID), properties, err, e != nil, source)
 						}
 						for source, get := range map[string]func() ([]*Edge, error){
-							"type": func() ([]*Edge, error) { return b.GetEdgesByType("LINK") },
-							"stored-type": func() ([]*Edge, error) { return b.GetStoredEdgesByType("LINK") },
-							"outgoing": func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
+							"type":            func() ([]*Edge, error) { return b.GetEdgesByType("LINK") },
+							"stored-type":     func() ([]*Edge, error) { return b.GetStoredEdgesByType("LINK") },
+							"outgoing":        func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
 							"stored-outgoing": func() ([]*Edge, error) { return b.GetStoredOutgoingEdges("test:a") },
-							"incoming": func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
+							"incoming":        func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
 							"stored-incoming": func() ([]*Edge, error) { return b.GetStoredIncomingEdges("test:b") },
-							"between": func() ([]*Edge, error) { return b.GetEdgesBetween("test:a", "test:b") },
+							"between":         func() ([]*Edge, error) { return b.GetEdgesBetween("test:a", "test:b") },
 						} {
 							edges, err := get()
 							assert.NoError(t, err, source)
