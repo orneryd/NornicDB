@@ -25,6 +25,9 @@ type BifrostClient struct {
 	Writer      http.ResponseWriter
 	ConnectedAt time.Time
 	LastPing    time.Time
+
+	mu sync.Mutex
+	canRead func() bool
 }
 
 // BifrostMessage is a message sent through Bifrost.
@@ -51,15 +54,37 @@ func NewBifrost(cfg Config) *Bifrost {
 
 // RegisterClient adds a new connected client.
 func (b *Bifrost) RegisterClient(id string, w http.ResponseWriter, f http.Flusher) {
+	_ = b.registerClient(id, w, f, nil, nil)
+}
+
+// registerClient publishes the connection only after its initial message has
+// been flushed. All later writers share the client's serialization lock.
+func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flusher, canRead func() bool, initial *BifrostMessage) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.clients[id] = &BifrostClient{
+	client := &BifrostClient{
 		ID:          id,
 		Writer:      w,
 		Flusher:     f,
 		ConnectedAt: time.Now(),
 		LastPing:    time.Now(),
+		canRead: canRead,
 	}
+	if initial != nil {
+		data, err := encodeBifrostMessage(*initial)
+		if err != nil { return err }
+		if err := client.write(data); err != nil { return err }
+	}
+	b.clients[id] = client
+	return nil
+}
+
+func (c *BifrostClient) write(data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.Writer.Write(data); err != nil { return err }
+	c.Flusher.Flush()
+	return nil
 }
 
 // UnregisterClient removes a disconnected client.
@@ -153,24 +178,29 @@ func (b *Bifrost) broadcast(msg BifrostMessage) error {
 		return nil
 	}
 
-	data, err := json.Marshal(msg)
+	sseData, err := encodeBifrostMessage(msg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return err
 	}
-
-	// SSE format: "data: <json>\n\n"
-	sseData := fmt.Sprintf("data: %s\n\n", string(data))
 
 	var lastErr error
 	for _, client := range b.clients {
-		if _, err := client.Writer.Write([]byte(sseData)); err != nil {
+		if client.canRead != nil && !client.canRead() {
+			continue
+		}
+		if err := client.write(sseData); err != nil {
 			lastErr = err
 			continue
 		}
-		client.Flusher.Flush()
 	}
 
 	return lastErr
+}
+
+func encodeBifrostMessage(msg BifrostMessage) ([]byte, error) {
+	data, err := json.Marshal(msg)
+	if err != nil { return nil, fmt.Errorf("failed to marshal message: %w", err) }
+	return []byte(fmt.Sprintf("data: %s\n\n", string(data))), nil
 }
 
 // Stats returns current Bifrost statistics.
