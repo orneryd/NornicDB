@@ -120,5 +120,10 @@ func MapAggregateCases() []Case {
 			}
 		}
 	}
+	cases = append(cases,
+		Case{"slice/function-after-boundary", "RETURN [1,2,3][..size([0,0])] AS v", `[[[1,2]]]`},
+		Case{"slice/both-function-bounds", "RETURN [1,2,3][size([])..size([0,0])] AS v", `[[[1,2]]]`},
+		Case{"slice/map-value-aggregate", "UNWIND [1,2] AS x RETURN {c:[1,2,3][..count(x)]} AS v", `[[{"c":[1,2]}]]`},
+	)
 	return cases
 }
