@@ -3,13 +3,14 @@ package resolvers
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"reflect"
 	"testing"
 )
 
 func TestStatementCacheFamilyGraphQLDropCycles(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, manager)
 	for i := range 64 {
 		name := fmt.Sprintf("cache_graphql_%d", i)

@@ -1,6 +1,6 @@
 Resumed at maintainer request after macOS installation work. Mandatory live duplicate checking is restored; automatic ingestion hooks remain paused. Prior canceled runs remain incomplete.
 
-- [x] Clean inactive task artifacts/worktrees; preserve branches and dirty worktrees.
+- [x] Delete temporary task artifacts/worktrees, including dirty temporary worktrees as explicitly requested; preserve branches.
 - [x] Read #1487 and the #1465/#1469 family, unresolved review and shutdown consumers.
 - [x] Reproduce late publication on original #1487 and premature provider Close on the prior lifecycle owner for ordinary/typed background calls.
 - [x] Integrate the existing shared DB provider owner; keep actual batch calls synchronous within joined workers. Validate current-release integration before publication.
@@ -14,3 +14,7 @@ Resumed at maintainer request after macOS installation work. Mandatory live dupl
 - [x] Converge single-flight construction/wait assertions into one test owner, retaining both cases; 10-repeat race check passes.
 - [x] Consolidate model warmup launch/loop/completion into one owner; native warmup/Close race checks pass.
 - [x] Share bounded HTTP shutdown between database HTTP and standalone MCP; MCP cancellation regression fails before correction and both public Stop paths pass 10-repeat race checks.
+
+- [x] Consolidate handler/resolver database-manager fixtures into one cleanup owner; remove both duplicate helpers and migrate their callers.
+
+- [x] Preserve both current-release GraphQL cleanup regressions; consolidate subscription available/missing-broker assertions as explicit cases.

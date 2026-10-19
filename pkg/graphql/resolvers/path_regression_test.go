@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -11,7 +12,7 @@ import (
 
 func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
 	db := testDB(t)
-	resolver := NewResolver(db, testDBManager(t, db))
+	resolver := NewResolver(db, testutil.DatabaseManager(t, db))
 	qr := &queryResolver{resolver}
 	ctx := context.Background()
 	a := createNodeViaCypher(t, resolver, []string{"PathNode"}, map[string]interface{}{"name": "a"})
@@ -75,7 +76,7 @@ func TestGraphQLPathBoundsAndEnumeration(t *testing.T) {
 
 func TestGraphQLPathOwnerControls(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, manager)
 	qr := &queryResolver{resolver}
 	ctx := context.Background()
