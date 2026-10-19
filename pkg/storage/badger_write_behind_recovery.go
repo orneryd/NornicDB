@@ -24,10 +24,11 @@ func (data *WALBufferedCommitData) bufferedCommit() bufferedCommit {
 	return c
 }
 
-// RecoverBufferedCommits replays write-behind commits that were acknowledged
-// into the WAL but never reached Badger before a crash lost the in-memory
-// buffer. It runs at engine open, after both the engine and the WAL are
-// constructed and before the engine serves traffic.
+// RecoverBufferedCommits replays pending native lifecycle operations and
+// acknowledged write-behind commits in journal order. It runs at every durable
+// engine open, regardless of the current write-behind configuration, before
+// serving traffic. A previous process may have enabled buffering, and native
+// lifecycle records are autonomous even when buffering has never been enabled.
 //
 // Idempotency: every flushed generation writes a per-commit flush marker key
 // (prefixBufferedFlush) inside the same Badger transaction as its data, so a
