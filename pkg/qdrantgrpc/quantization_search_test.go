@@ -4,15 +4,37 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+// Quantized scores belong to the published graph. First-use requests may
+// legitimately return exact scores while the service-owned graph is building.
+// Base readiness can precede that graph, so wait for the active strategy too.
+func requireCollectionHNSWReady(t *testing.T, ctx context.Context, dbm *multidb.DatabaseManager, provider SearchServiceProvider, points qpb.PointsClient, name string, vector []float32) {
+	t.Helper()
+	store, err := dbm.GetStorage(name)
+	require.NoError(t, err)
+	svc, err := provider(name, store)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := points.Search(ctx, &qpb.SearchPoints{CollectionName: name, Vector: vector, Limit: 1})
+		require.NoError(c, err)
+		require.True(c, svc.IsReady())
+		require.Equal(c, "HNSW", svc.CurrentStrategy())
+	}, 10*time.Second, time.Millisecond, "collection must publish HNSW before quantized scores are asserted")
+}
 
 func TestQuantizationControlsReachPublicSearchAndQuery(t *testing.T) {
 	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
@@ -23,10 +45,12 @@ func TestQuantizationControlsReachPublicSearchAndQuery(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	srv := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+	provider := sharedSearchProvider()
+	srv := startSharedIndexServer(t, dbm, base, provider)
 	createCosineCollection(t, ctx, srv.collections, "quantized", 2)
 	upsertPoint(t, ctx, srv.points, "quantized", 1, []float32{1, 0.1}, nil)
 	upsertPoint(t, ctx, srv.points, "quantized", 2, []float32{-1, -0.1}, nil)
+	requireCollectionHNSWReady(t, ctx, dbm, provider, srv.points, "quantized", []float32{1, 1})
 	yes, no := true, false
 	over := 2.0
 	exactScore := float64(1.1) / math.Sqrt(2*1.01)
@@ -207,6 +231,9 @@ func TestQuantizedDropRecreateUsesDefaultAndPreservesOtherCollection(t *testing.
 			}
 			upsertPoint(t, ctx, srv.points, "replace", 1, []float32{1, 0, 0, 0}, nil)
 			upsertPoint(t, ctx, srv.points, "keep", 2, []float32{1, 0, 0, 0}, nil)
+			for _, name := range []string{"replace", "keep"} {
+				requireCollectionHNSWReady(t, ctx, dbm, provider, srv.points, name, []float32{1, 1, 0, 0})
+			}
 			no := false
 			score := func(name string, id uint64, want float64) {
 				response, err := srv.points.Search(ctx, &qpb.SearchPoints{CollectionName: name, Vector: []float32{1, 1, 0, 0}, Limit: 1,
@@ -226,6 +253,7 @@ func TestQuantizedDropRecreateUsesDefaultAndPreservesOtherCollection(t *testing.
 			require.NoError(t, err)
 			createCosineCollection(t, ctx, srv.collections, "replace", 4)
 			upsertPoint(t, ctx, srv.points, "replace", 3, []float32{1, 0, 0, 0}, nil)
+			requireCollectionHNSWReady(t, ctx, dbm, provider, srv.points, "replace", []float32{1, 1, 0, 0})
 			store, err = dbm.GetStorage("replace")
 			require.NoError(t, err)
 			after, err := provider("replace", store)
@@ -257,7 +285,8 @@ func TestMixedCompressionPoliciesSurviveRestart(t *testing.T) {
 			base := storage.NewMemoryEngine()
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
-			first := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
+			firstProvider := sharedSearchProvider()
+			first := startSharedIndexServer(t, dbm, base, firstProvider)
 			_, err = first.collections.Create(ctx, &qpb.CreateCollection{CollectionName: "override",
 				QuantizationConfig: &qpb.QuantizationConfig{Quantization: &qpb.QuantizationConfig_Binary{Binary: &qpb.BinaryQuantization{}}},
 				VectorsConfig:      &qpb.VectorsConfig{Config: &qpb.VectorsConfig_Params{Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine}}}})
@@ -277,7 +306,10 @@ func TestMixedCompressionPoliciesSurviveRestart(t *testing.T) {
 				require.Equal(t, uint64(1), response.Result[0].Id.GetNum())
 				return float64(response.Result[0].Score)
 			}
-			check := func(srv sharedIndexServer) (float64, float64) {
+			check := func(srv sharedIndexServer, provider SearchServiceProvider) (float64, float64) {
+				for _, name := range []string{"override", "default"} {
+					requireCollectionHNSWReady(t, ctx, dbm, provider, srv.points, name, []float32{1, 1, 0, 0})
+				}
 				override, defaulted := approximate(srv, "override"), approximate(srv, "default")
 				require.Greater(t, math.Abs(override-exact), 1e-3, "the binary override scores sign bits")
 				if global == "none" {
@@ -294,10 +326,11 @@ func TestMixedCompressionPoliciesSurviveRestart(t *testing.T) {
 				require.Nil(t, info.Result.Config.QuantizationConfig)
 				return override, defaulted
 			}
-			override, defaulted := check(first)
+			override, defaulted := check(first, firstProvider)
 			first.stop()
-			second := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
-			restartedOverride, restartedDefault := check(second)
+			secondProvider := sharedSearchProvider()
+			second := startSharedIndexServer(t, dbm, base, secondProvider)
+			restartedOverride, restartedDefault := check(second, secondProvider)
 			require.InDelta(t, override, restartedOverride, 1e-6)
 			require.InDelta(t, defaulted, restartedDefault, 1e-6)
 		})
