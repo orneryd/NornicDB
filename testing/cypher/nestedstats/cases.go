@@ -10,6 +10,9 @@ func Cases() []Case {
 	body := "CREATE (:NestedStats {p: 1}) RETURN 1 AS value"
 	params := map[string]any{"body": body}
 	return []Case{
+		{Name: "literalCollectWrite", Query: "RETURN COLLECT { CREATE (:NestedStats {p:1}) RETURN 1 AS value } AS nested", Direct: body},
+		{Name: "literalCountWrite", Query: "RETURN COUNT { CREATE (:NestedStats {p:1}) RETURN 1 AS value } AS nested", Direct: body},
+		{Name: "readExpression", Query: "RETURN COLLECT { CALL apoc.cypher.run('RETURN 1 AS value',{}) YIELD value RETURN value } AS nested", Direct: "RETURN 1 AS value"},
 		{Name: "collectExpression", Query: "RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
 		{Name: "countExpression", Query: "RETURN COUNT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
 		{Name: "existsExpression", Query: "RETURN EXISTS { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
