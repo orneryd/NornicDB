@@ -3,11 +3,12 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestFunctionLexicalPublicRoutes(t *testing.T) {
@@ -47,7 +48,10 @@ func TestFunctionLexicalPublicRoutes(t *testing.T) {
 						rows  [][]interface{}
 					}{{"UNWIND [1,2] AS x RETURN COUNT /*gap*/ { RETURN count(*) AS n } AS v", [][]interface{}{{int64(1)}, {int64(1)}}},
 						{"WITH {and:true} AS n RETURN n . and AND true AS v", [][]interface{}{{true}}},
-						{"RETURN toUpper(/* range('bad') */ 'ok') AS v", [][]interface{}{{"OK"}}}} {
+						{"RETURN toUpper(/* range('bad') */ 'ok') AS v", [][]interface{}{{"OK"}}},
+						{"RETURN toUpper(/* percentileCont('bad') shortestPath((a)-->(a)) missing('bad') ) */ 'ok') AS v", [][]interface{}{{"OK"}}},
+						{"RETURN toUpper(// range('bad')\n'ok') AS v", [][]interface{}{{"OK"}}},
+						{"UNWIND [1,2] AS x RETURN x /* count('bad') range('bad') */ AS v", [][]interface{}{{int64(1)}, {int64(2)}}}} {
 						query := sample.query
 						if route == "use" {
 							query = "USE review_cmp.sh " + query

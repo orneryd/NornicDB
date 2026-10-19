@@ -25,7 +25,7 @@ func TestFunctionLexicalCommentBolt(t *testing.T) {
 		Rows  json.RawMessage
 	}
 	require.NoError(t, json.Unmarshal(raw, &cases))
-	require.Len(t, cases, 1)
+	require.NotEmpty(t, cases)
 	prior := config.IsCypherQueryNormalizationEnabled()
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
 	base := storage.NewMemoryEngine()
