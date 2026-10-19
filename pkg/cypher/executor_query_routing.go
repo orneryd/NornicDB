@@ -447,7 +447,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 	if err := validateKnownFunctions(cypher); err != nil {
 		return err
 	}
-	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", observability.RedactText(parserError.Error()))
+	return &classifiedCypherError{code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax", cause: observability.RedactError(parserError)}
 }
 
 // isNornicExtensionStatement reports whether cypher is a statement outside
