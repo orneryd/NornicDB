@@ -40,20 +40,22 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 	for _, readable := range []bool{false, true} {
 		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_physical", readable, false))
 		phase := "denied"
-		if readable { phase = "allowed" }
+		if readable {
+			phase = "allowed"
+		}
 		for _, selection := range []string{"grpc_physical", "grpc_portfolio.part", "grpc_portfolio"} {
 			t.Run(phase+"/"+selection, func(t *testing.T) {
-			_, getErr := collections.Get(reader, &qpb.GetCollectionInfoRequest{CollectionName: selection})
-			_, countErr := points.Count(reader, &qpb.CountPoints{CollectionName: selection})
-			if readable {
-				require.NoError(t, getErr, selection)
-				require.NoError(t, countErr, selection)
-			} else {
-				require.Equal(t, codes.PermissionDenied, status.Code(getErr), "read bypass via %s: %v", selection, getErr)
-				require.Equal(t, codes.PermissionDenied, status.Code(countErr), "read bypass via %s: %v", selection, countErr)
-			}
-			_, err := collections.Get(admin, &qpb.GetCollectionInfoRequest{CollectionName: selection})
-			require.NoError(t, err, "admin lost supported selection %s", selection)
+				_, getErr := collections.Get(reader, &qpb.GetCollectionInfoRequest{CollectionName: selection})
+				_, countErr := points.Count(reader, &qpb.CountPoints{CollectionName: selection})
+				if readable {
+					require.NoError(t, getErr, selection)
+					require.NoError(t, countErr, selection)
+				} else {
+					require.Equal(t, codes.PermissionDenied, status.Code(getErr), "read bypass via %s: %v", selection, getErr)
+					require.Equal(t, codes.PermissionDenied, status.Code(countErr), "read bypass via %s: %v", selection, countErr)
+				}
+				_, err := collections.Get(admin, &qpb.GetCollectionInfoRequest{CollectionName: selection})
+				require.NoError(t, err, "admin lost supported selection %s", selection)
 			})
 		}
 	}
