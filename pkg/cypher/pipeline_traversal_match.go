@@ -16,7 +16,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		if err != nil {
 			return nil, true, err
 		}
-		out, _ := materializePipelineSource(source)
+		out, _ := materializePipelineSource(ctx, source)
 		return out, true, getExpressionFailure(ctx)
 	}
 	if len(rows) == 0 {
