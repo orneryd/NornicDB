@@ -20,6 +20,7 @@ func TestRaftNamespacedPartialPrefixDelete(t *testing.T) {
 			defer adapter.Close()
 			cfg := DefaultConfig()
 			cfg.Mode, cfg.NodeID = ModeRaft, "partial"
+			cfg.Raft.Bootstrap = true
 			raft, err := NewRaftReplicator(cfg, adapter)
 			require.NoError(t, err)
 			raft.state, raft.currentTerm = StateLeader, 1
@@ -107,6 +108,7 @@ func TestRaftNamespaceCompletionOrdersFollowingWrite(t *testing.T) {
 			defer unregister()
 			cfg := DefaultConfig()
 			cfg.Mode, cfg.NodeID = ModeRaft, "ordered"
+			cfg.Raft.Bootstrap = true
 			if mode != "single-node" {
 				cfg.Raft.Peers = []PeerConfig{{ID: "peer", Addr: "127.0.0.1:17001"}}
 			}
