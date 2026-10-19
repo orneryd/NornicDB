@@ -33,9 +33,13 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		})
 		for _, declaration := range file.Decls {
 			method, ok := declaration.(*ast.FuncDecl)
-			if !ok || method.Recv == nil { continue }
+			if !ok || method.Recv == nil {
+				continue
+			}
 			receiver, ok := method.Recv.List[0].Type.(*ast.StarExpr)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 			if name, ok := receiver.X.(*ast.Ident); ok && name.Name == "StorageExecutor" {
 				methods[method.Name.Name] = method
 			}
@@ -45,11 +49,17 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		var names []string
 		ast.Inspect(body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok { return true }
+			if !ok {
+				return true
+			}
 			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok { return true }
+			if !ok {
+				return true
+			}
 			object, ok := selector.X.(*ast.Ident)
-			if ok && object.Name == receiver { names = append(names, selector.Sel.Name) }
+			if ok && object.Name == receiver {
+				names = append(names, selector.Sel.Name)
+			}
 			return true
 		})
 		return names
@@ -61,16 +71,24 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		variables := map[string]int{}
 		ast.Inspect(method.Body, func(node ast.Node) bool {
 			assignment, ok := node.(*ast.AssignStmt)
-			if !ok || len(assignment.Rhs) != 1 || len(assignment.Lhs) == 0 { return true }
+			if !ok || len(assignment.Rhs) != 1 || len(assignment.Lhs) == 0 {
+				return true
+			}
 			cast, ok := assignment.Rhs[0].(*ast.TypeAssertExpr)
-			if !ok { return true }
+			if !ok {
+				return true
+			}
 			kind, ok := cast.Type.(*ast.Ident)
 			variable, named := assignment.Lhs[0].(*ast.Ident)
-			if !ok || kind.Name != "string" || !named { return true }
+			if !ok || kind.Name != "string" || !named {
+				return true
+			}
 			minimum := 0
 			if indexed, ok := cast.X.(*ast.IndexExpr); ok {
 				if literal, ok := indexed.Index.(*ast.BasicLit); ok && literal.Kind == token.INT {
-					if index, err := strconv.Atoi(literal.Value); err == nil { minimum = index+1 }
+					if index, err := strconv.Atoi(literal.Value); err == nil {
+						minimum = index + 1
+					}
 				}
 			}
 			variables[variable.Name] = minimum
@@ -78,12 +96,18 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		})
 		ast.Inspect(method.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
-			if !ok { return true }
+			if !ok {
+				return true
+			}
 			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !(strings.HasPrefix(selector.Sel.Name,"evaluate") || selector.Sel.Name == "executeInternal" || selector.Sel.Name == "Eval") { return true }
+			if !ok || !(strings.HasPrefix(selector.Sel.Name, "evaluate") || selector.Sel.Name == "executeInternal" || selector.Sel.Name == "Eval") {
+				return true
+			}
 			for _, argument := range call.Args {
 				if variable, ok := argument.(*ast.Ident); ok {
-					if minimum, valueText := variables[variable.Name]; valueText { rawText[name] = minimum }
+					if minimum, valueText := variables[variable.Name]; valueText {
+						rawText[name] = minimum
+					}
 				}
 			}
 			return true
@@ -91,17 +115,29 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 	}
 	var reachesText func(string, int, map[string]bool) bool
 	reachesText = func(name string, maxArgs int, visited map[string]bool) bool {
-		if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRelationshipWhereFilter" { return true }
+		if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRelationshipWhereFilter" {
+			return true
+		}
 		// Generic engines consume syntax already present in the outer text.
 		// Do not walk their downstream fanout as a handler dependency.
-		if strings.HasPrefix(name,"evaluate") || strings.HasPrefix(name,"parse") || name == "executeInternal" || name == "executeWithoutTransaction" { return false }
-		if minimum, adapter := rawText[name]; adapter && (maxArgs < 0 || maxArgs >= minimum) { return true }
-		if visited[name] { return false }
+		if strings.HasPrefix(name, "evaluate") || strings.HasPrefix(name, "parse") || name == "executeInternal" || name == "executeWithoutTransaction" {
+			return false
+		}
+		if minimum, adapter := rawText[name]; adapter && (maxArgs < 0 || maxArgs >= minimum) {
+			return true
+		}
+		if visited[name] {
+			return false
+		}
 		visited[name] = true
 		method := methods[name]
-		if method == nil || len(method.Recv.List[0].Names) == 0 { return false }
+		if method == nil || len(method.Recv.List[0].Names) == 0 {
+			return false
+		}
 		for _, callee := range callees(method.Body, method.Recv.List[0].Names[0].Name) {
-			if reachesText(callee,maxArgs,visited) { return true }
+			if reachesText(callee, maxArgs, visited) {
+				return true
+			}
 		}
 		return false
 	}
@@ -116,30 +152,38 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		var handler *ast.FuncLit
 		for _, literal := range literals[filepath.Base(source)] {
 			if positions.Position(literal.Pos()).Line <= line && positions.Position(literal.End()).Line >= line {
-				if handler == nil || literal.End()-literal.Pos() < handler.End()-handler.Pos() { handler = literal }
+				if handler == nil || literal.End()-literal.Pos() < handler.End()-handler.Pos() {
+					handler = literal
+				}
 			}
 		}
 		require.NotNil(t, handler, "%s: resolve actual registered handler at %s:%d", spec.Name, source, line)
 		for _, parameter := range handler.Type.Params.List {
 			pointer, ok := parameter.Type.(*ast.StarExpr)
-			if !ok { continue }
+			if !ok {
+				continue
+			}
 			kind, ok := pointer.X.(*ast.Ident)
-			if !ok || kind.Name != "StorageExecutor" || len(parameter.Names) == 0 { continue }
-			for _, callee := range callees(handler.Body,parameter.Names[0].Name) {
-				if !reachesText(callee,spec.MaxArgs,map[string]bool{}) { continue }
+			if !ok || kind.Name != "StorageExecutor" || len(parameter.Names) == 0 {
+				continue
+			}
+			for _, callee := range callees(handler.Body, parameter.Names[0].Name) {
+				if !reachesText(callee, spec.MaxArgs, map[string]bool{}) {
+					continue
+				}
 				require.NotEmpty(t, spec.ResultCache.CypherInputs, "%s interprets text through %s", spec.Name, callee)
-				discovered = append(discovered,spec.Name)
+				discovered = append(discovered, spec.Name)
 				break
 			}
 		}
 	}
-	require.GreaterOrEqual(t,len(discovered),19)
-	t.Logf("source-derived executable-text procedures (%d): %v; string-value adapters: %v",len(discovered),discovered,rawText)
+	require.GreaterOrEqual(t, len(discovered), 19)
+	t.Logf("source-derived executable-text procedures (%d): %v; string-value adapters: %v", len(discovered), discovered, rawText)
 	// Installation defers interpretation until a later custom procedure CALL.
-	for _, name := range []string{"apoc.custom.installProcedure","apoc.custom.declareProcedure"} {
+	for _, name := range []string{"apoc.custom.installProcedure", "apoc.custom.declareProcedure"} {
 		procedure, ok := globalProcedureRegistry.Get(name)
-		require.True(t,ok,name)
-		require.NotEmpty(t,procedure.Spec.ResultCache.CypherInputs,name)
-		require.False(t,procedure.Spec.ResultCache.Deterministic,name)
+		require.True(t, ok, name)
+		require.NotEmpty(t, procedure.Spec.ResultCache.CypherInputs, name)
+		require.False(t, procedure.Spec.ResultCache.Deterministic, name)
 	}
 }
