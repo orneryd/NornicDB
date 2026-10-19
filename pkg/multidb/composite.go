@@ -295,10 +295,27 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 		return nil, localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	// Return a copy
-	result := make([]ConstituentRef, len(info.Constituents))
-	copy(result, info.Constituents)
-	return result, nil
+	return canonicalConstituents(info.Constituents), nil
+}
+
+// canonicalConstituents is the shared catalog/manager view of graph aliases.
+// Preserve the catalog's last-registration-wins rule for case-folded duplicates.
+// Stored metadata retains its original spelling and order.
+func canonicalConstituents(refs []ConstituentRef) []ConstituentRef {
+	if refs == nil {
+		return nil
+	}
+	winners := make(map[string]int, len(refs))
+	for i, ref := range refs {
+		winners[strings.ToLower(ref.Alias)] = i
+	}
+	result := make([]ConstituentRef, 0, len(winners))
+	for i, ref := range refs {
+		if winners[strings.ToLower(ref.Alias)] == i {
+			result = append(result, ref)
+		}
+	}
+	return result
 }
 
 // ListCompositeDatabases returns all composite databases.
