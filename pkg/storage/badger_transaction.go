@@ -416,6 +416,8 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 // clearSnapshotCachesLocked drops what the transaction cached from its
 // snapshot.
 func (tx *BadgerTransaction) clearSnapshotCachesLocked() {
+	tx.snapshotLabelNodes = nil
+	tx.snapshotProjectedLabelNodes = nil
 	tx.snapshotOutgoingAdjacency.clear()
 	tx.snapshotIncomingAdjacency.clear()
 	tx.snapshotLabelPrefixNodes = nil
@@ -4677,15 +4679,52 @@ func (tx *BadgerTransaction) observedLocked() bool {
 // caches. The new snapshot is opened first, so a refresh turned away (a
 // restore holding reads) leaves the transaction on its current one.
 func (tx *BadgerTransaction) refreshSnapshotLocked() error {
+	return tx.advanceSnapshotLocked(false)
+}
+
+// ResumeAfterIndependentCommit advances an implicit caller's read view while
+// retaining its entire pending write set and rollback ownership. Explicit
+// transactions never enter this path. Before advancing, old pending mutations
+// are checked against their old snapshot so a batch cannot mask a conflict.
+func (tx *BadgerTransaction) ResumeAfterIndependentCommit() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+	if !tx.implicit {
+		return fmt.Errorf("independent-commit continuation requires an implicit transaction")
+	}
+	return tx.advanceSnapshotLocked(true)
+}
+
+func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
 	if err != nil {
 		return err
 	}
+	// Pin the next view before validating the old footprint. A publication
+	// after validation then remains newer than the next view and is checked
+	// again at commit; no interval can silently erase a write conflict.
+	beginSnapshot := tx.engine.snapshotNamespaceVersions()
+	if preserveWrites {
+		if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
+			err = fmt.Errorf("schema snapshot changed before continuation: %w", ErrConflict)
+		} else {
+			err = tx.validateSnapshotIsolationConflicts()
+		}
+		if err != nil {
+			snapshotTx.Discard()
+			tx.badgerDB.endRead(badgerReadTs)
+			return err
+		}
+	}
+	nextWriter := tx.badgerDB.newTxnAt(badgerReadTs, true)
 	if tx.badgerTx != nil && tx.engine.idDict != nil {
-		tx.engine.idDict.discardTxnCounters(tx.badgerTx)
+		if preserveWrites { tx.engine.idDict.moveTxnCounters(tx.badgerTx, nextWriter) } else { tx.engine.idDict.discardTxnCounters(tx.badgerTx) }
 	}
 	if tx.badgerTx != nil && tx.engine.propKeyDict != nil {
-		tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx)
+		if preserveWrites { tx.engine.propKeyDict.moveTxnCounters(tx.badgerTx, nextWriter) } else { tx.engine.propKeyDict.discardTxnCounters(tx.badgerTx) }
 	}
 	if tx.badgerTx != nil {
 		tx.badgerTx.Discard()
@@ -4700,8 +4739,8 @@ func (tx *BadgerTransaction) refreshSnapshotLocked() error {
 	tx.snapshotTx = snapshotTx
 	tx.badgerReadTs = badgerReadTs
 	tx.badgerReadHeld = true
-	tx.badgerTx = tx.badgerDB.newTxnAt(badgerReadTs, true)
-	tx.beginSnapshot = tx.engine.snapshotNamespaceVersions()
+	tx.badgerTx = nextWriter
+	tx.beginSnapshot = beginSnapshot
 	tx.clearSnapshotCachesLocked()
 	return tx.refreshReadVersionForNamespaceLocked()
 }

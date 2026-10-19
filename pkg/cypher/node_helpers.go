@@ -73,7 +73,7 @@ func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) 
 // procedure (CALL), which may write without one; both keep full reads, as
 // does a store without the query-node read.
 func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
-	if info == nil || !info.IsReadOnly || info.IsWriteQuery || !info.HasMatch || info.HasCall {
+	if info == nil || !info.IsReadOnly || !info.HasMatch || info.HasCall {
 		return false
 	}
 	_, ok := e.storage.(storage.QueryNodeReader)

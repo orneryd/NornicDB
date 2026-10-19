@@ -420,6 +420,11 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			c.Kind = "CALL"
 			t := clause.QueryCallSt()
 			c.tree = t
+			var name []string
+			for _, part := range t.InvocationName().AllSymbol() {
+				name = append(name, unquoteSyntaxName(r.source(part)))
+			}
+			c.Name = strings.Join(name, ".")
 			c.Optional = t.OPTIONAL() != nil
 			if t.YIELD() != nil {
 				y := &QueryYield{Star: t.MULT() != nil}

@@ -103,6 +103,14 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 }
 
 func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, prepared *fabricPreparedExec) (*ExecuteResult, error) {
+	contract, err := readStatementExecutionContract(cypher)
+	if err != nil {
+		return nil, err
+	}
+	fragment, err := fabricProcedureWritePlan(prepared.fragment)
+	if err != nil {
+		return nil, err
+	}
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
@@ -150,11 +158,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	// Conditional statements may promote while running. Serialize their
 	// dispatch without voting WRITE before their actual body executes.
-	fabricExecutor.SetConcurrentExecution(autoCommit && !callsDynamicStatementProcedure(cypher))
+	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
-	fragment := fabricProcedureWritePlan(prepared.fragment, params)
 	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -379,43 +386,53 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 // admission, just as the native transaction route does. Cached structural plans
 // stay immutable and do not retain an obsolete procedure mode after registration.
 // The existing Fabric participant owner then handles writes and their rollback.
-func fabricProcedureWritePlan(fragment fabric.Fragment, parameters ...map[string]interface{}) fabric.Fragment {
+func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error) {
 	switch current := fragment.(type) {
 	case *fabric.FragmentExec:
-		input := fabricProcedureWritePlan(current.Input, parameters...)
-		write := current.IsWrite || callsDataWriteProcedure(current.Query, parameters...)
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil { return nil, err }
+		contract, err := readStatementExecutionContract(current.Query)
+		if err != nil { return nil, err }
+		write := contract.writes
 		if input == current.Input && write == current.IsWrite {
-			return current
+			return current, nil
 		}
 		copy := *current
 		copy.Input, copy.IsWrite = input, write
-		return &copy
+		return &copy, nil
 	case *fabric.FragmentApply:
-		input, inner := fabricProcedureWritePlan(current.Input, parameters...), fabricProcedureWritePlan(current.Inner, parameters...)
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil { return nil, err }
+		inner, err := fabricProcedureWritePlan(current.Inner)
+		if err != nil { return nil, err }
 		if input == current.Input && inner == current.Inner {
-			return current
+			return current, nil
 		}
 		copy := *current
 		copy.Input, copy.Inner = input, inner
-		return &copy
+		return &copy, nil
 	case *fabric.FragmentUnion:
-		left, right := fabricProcedureWritePlan(current.LHS, parameters...), fabricProcedureWritePlan(current.RHS, parameters...)
+		left, err := fabricProcedureWritePlan(current.LHS)
+		if err != nil { return nil, err }
+		right, err := fabricProcedureWritePlan(current.RHS)
+		if err != nil { return nil, err }
 		if left == current.LHS && right == current.RHS {
-			return current
+			return current, nil
 		}
 		copy := *current
 		copy.LHS, copy.RHS = left, right
-		return &copy
+		return &copy, nil
 	case *fabric.FragmentLeaf:
-		input := fabricProcedureWritePlan(current.Input, parameters...)
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil { return nil, err }
 		if input == current.Input {
-			return current
+			return current, nil
 		}
 		copy := *current
 		copy.Input = input
-		return &copy
+		return &copy, nil
 	default:
-		return fragment
+		return fragment, nil
 	}
 }
 

@@ -521,13 +521,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
 		}
 
-		if info.IsWriteQuery && e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
+		e.invalidateResultCacheForQuery(info)
 
 		return result, nil
 	}
@@ -793,7 +787,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
 	info := e.analyzer.Analyze(cypher)
-	ctx, finishMode := e.observeResolvedStatementMode(ctx, info, cypher)
+	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
+	if modeErr != nil {
+		return nil, modeErr
+	}
 	if finishMode != nil {
 		defer func() {
 			if retErr == nil {
@@ -801,7 +798,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			}
 		}()
 	}
-	if err := e.admitResolvedStatementWrite(ctx, info, cypher); err != nil {
+	if err := e.admitResolvedStatementWrite(ctx, cypher); err != nil {
 		return nil, err
 	}
 
@@ -935,23 +932,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 
-	// Invalidate caches on write operations (using cached analysis)
-	if info.IsWriteQuery {
-		// Only invalidate node lookup cache when NODES are deleted
-		// Relationship-only deletes (like benchmark CREATE rel DELETE rel) don't affect node cache
-		if info.HasDelete && queryDeletesNodes(cypher) {
-			e.invalidateNodeLookupCache()
-		}
-
-		// Invalidate query result cache using cached labels
-		if e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
-	}
+	e.invalidateCachesForQuery(info, cypher)
 
 	return result, err
 }
