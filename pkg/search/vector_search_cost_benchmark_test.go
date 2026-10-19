@@ -12,6 +12,16 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// closeAfterBuilds closes svc once no background HNSW build of it is in
+// flight: a build outliving its test would run the package's build hooks
+// inside another test.
+func closeAfterBuilds(tb testing.TB, svc *Service) {
+	for deadline := time.Now().Add(30 * time.Second); svc.hnswRebuildInFlight.Load() && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	_ = svc.Close()
+}
+
 // selectiveClusteredService is review r4's Service fixture: 2,000 documents
 // in 16 dimensions, 8 clusters or lists probed one at a time, and 11 documents
 // above the 0.95 threshold, all in the nearest cluster. Old and new code
@@ -26,7 +36,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	const count, dims = 2000, 16
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
-	tb.Cleanup(func() { _ = svc.Close() })
+	tb.Cleanup(func() { closeAfterBuilds(tb, svc) })
 	if strategy != "ivfpq" {
 		svc.EnableClustering(nil, 8)
 		svc.SetMinEmbeddingsForClustering(1)
@@ -142,7 +152,7 @@ func BenchmarkChunkedCorpusVectorSearch(b *testing.B) {
 			b.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
 			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 			svc := NewServiceWithDimensions(engine, dims)
-			b.Cleanup(func() { _ = svc.Close() })
+			b.Cleanup(func() { closeAfterBuilds(b, svc) })
 			rng := rand.New(rand.NewSource(1))
 			next := func() []float32 {
 				v := make([]float32, dims)
