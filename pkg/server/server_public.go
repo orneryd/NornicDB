@@ -199,7 +199,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		body = observability.RenderLegacyForRead(registry, time.Now(), observability.LegacyReadScope{
 			CanReadDatabase:      canRead,
-			AllDatabasesReadable: s.canReadAllDatabasesWith(canRead),
+			AllDatabasesReadable: s.canReadAllDatabasesWith(canRead, true),
 			Nodes:                nodes, Edges: edges,
 		})
 	}
