@@ -105,6 +105,12 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		return 0, fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
 	}
 
+	release, err := b.beginPublication(true)
+	if err != nil {
+		return replayed, err
+	}
+	defer release()
+
 	// The replayed commits carried no count deltas; rebuild the derived
 	// counts from committed entities so readers never observe committed
 	// entities without their counts.

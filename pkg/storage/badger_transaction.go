@@ -245,7 +245,7 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 	if namespace == "" {
 		return MVCCVersion{CommitTimestamp: now}
 	}
-	state, err := b.namespaceMVCC(namespace)
+	state, err := b.readNamespaceMVCC(namespace)
 	if err != nil {
 		return MVCCVersion{CommitTimestamp: now}
 	}

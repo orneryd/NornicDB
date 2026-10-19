@@ -94,7 +94,15 @@ func (source *lifecycleGuardSource) raw(call *ast.CallExpr) bool {
  }
  selector,ok:=call.Fun.(*ast.SelectorExpr);if !ok{return false}
  name:=selector.Sel.Name
- receiver:=types.TypeString(source.info.TypeOf(selector.X),func(p *types.Package)string{return p.Path()})
+  receiver:=types.TypeString(source.info.TypeOf(selector.X),func(p *types.Package)string{return p.Path()})
+ // A nested raw handle cannot hide physical writes when optional external
+ // export data is unavailable to the test's importer.
+ physical:=strings.Contains(receiver,"managedBadgerDB")
+ for base:=selector.X; ; {
+  if strings.Contains(types.TypeString(source.info.TypeOf(base),func(p *types.Package)string{return p.Path()}),"managedBadgerDB"){physical=true}
+  part,ok:=base.(*ast.SelectorExpr);if !ok{break};base=part.X
+ }
+ if physical {switch name {case "Update","DropPrefix","DropAll","Load","Set","Delete","SetEntry","Commit","Flush","NewWriteBatch":return true}}
  if strings.Contains(receiver,"managedBadgerDB") { switch name {case "Update","DropPrefix","DropAll","Load":return true} }
  if strings.Contains(receiver,"dgraph-io/badger") {switch name {case "Set","Delete","SetEntry","Commit","DropPrefix","DropAll","Load":return true} }
  return false
@@ -124,9 +132,33 @@ func (source *lifecycleGuardSource) bypasses() []string {
    return true
   })
  }
+ for _,fn:=range source.functions {
+  // A factory can initialize only a newly allocated engine before publication.
+  // No existing-engine argument or method receiver may use this construction rule.
+  constructed:=!fn.async && fn.decl.Recv==nil
+  if constructed {for _,param:=range fn.decl.Type.Params.List {
+   ast.Inspect(param.Type,func(n ast.Node)bool {if id,ok:=n.(*ast.Ident);ok && (strings.Contains(id.Name,"Engine") || id.Name=="DB"){constructed=false};return true})
+  }}
+  allocated:=false
+  if constructed {ast.Inspect(fn.decl.Body,func(n ast.Node)bool {if lit,ok:=n.(*ast.CompositeLit);ok {if id,ok:=lit.Type.(*ast.Ident);ok && id.Name=="BadgerEngine" {allocated=true}};return true})}
+  // A newly opened managed physical handle owns Badger's exclusive directory
+  // lease before any namespace engine is published. Follow that constructor
+  // capability, not a list of offline tool or startup consumer names.
+  if constructed {ast.Inspect(fn.decl.Body,func(node ast.Node)bool{
+   call,ok:=node.(*ast.CallExpr);if !ok{return true}
+   target:=source.target(call);if target==nil || target.decl.Recv!=nil || target.decl.Type.Results==nil{return true}
+   for _,result:=range target.decl.Type.Results.List {
+    pointer,ok:=result.Type.(*ast.StarExpr);if !ok{continue}
+    name,ok:=pointer.X.(*ast.Ident);if ok && name.Name=="managedBadgerDB"{allocated=true}
+   }
+   return true
+  })}
+  fn.constructed = constructed && allocated
+
+ }
  var visit func(*lifecycleGuardFunction,map[*lifecycleGuardFunction]bool) bool
  visit=func(fn *lifecycleGuardFunction,seen map[*lifecycleGuardFunction]bool) bool {
-  if seen[fn] {return false};seen[fn]=true
+  if seen[fn] || fn.constructed {return false};seen[fn]=true
   for _,call:=range fn.calls {if owner[call] && call.lease {return false}}
   if fn.raw{return true}
   for _,call:=range fn.calls {if visit(call,seen){return true}}
@@ -140,15 +172,6 @@ func (source *lifecycleGuardSource) bypasses() []string {
    if star,ok:=receiver.(*ast.StarExpr);ok{receiver=star.X}
    if name,ok:=receiver.(*ast.Ident);ok && !ast.IsExported(name.Name){continue}
   }
-  // A factory can initialize only a newly allocated engine before publication.
-  // No existing-engine argument or method receiver may use this construction rule.
-  constructed:=!fn.async && fn.decl.Recv==nil
-  if constructed {for _,param:=range fn.decl.Type.Params.List {
-   ast.Inspect(param.Type,func(n ast.Node)bool {if id,ok:=n.(*ast.Ident);ok && strings.Contains(id.Name,"Engine"){constructed=false};return true})
-  }}
-  allocated:=false
-  if constructed {ast.Inspect(fn.decl.Body,func(n ast.Node)bool {if lit,ok:=n.(*ast.CompositeLit);ok {if id,ok:=lit.Type.(*ast.Ident);ok && id.Name=="BadgerEngine" {allocated=true}};return true})}
-  if constructed && allocated {continue}
   if visit(fn,map[*lifecycleGuardFunction]bool{}) {violations=append(violations,fn.path+":"+fn.name)}
  }
  sort.Strings(violations)
@@ -188,18 +211,21 @@ func TestLifecycleMutationGuardRejectsNewEntry(t *testing.T) {
  root:=t.TempDir()
  // Names are deliberately novel; no consumer allowlist participates.
  const fixture=`package storage
- type BadgerEngine struct{}
+ type managedBadgerDB struct{}
+ func (m *managedBadgerDB) DropPrefix() error {return nil}
+ type BadgerEngine struct{db *managedBadgerDB}
  func (b *BadgerEngine) withUpdate() error {return nil}
  func (b *BadgerEngine) beginNamespaceMutation() (func(),error) {return func(){},nil}
  func (b *BadgerEngine) OrdinaryAdmittedMutation() error {release,_:=b.beginNamespaceMutation();defer release();return b.withUpdate()}
  func (b *BadgerEngine) NewlyAddedMutation() error {return b.withUpdate()}
+ func (b *BadgerEngine) NewlyAddedPhysicalBypass() error {return b.db.DropPrefix()}
  func (b *BadgerEngine) NewlyAddedSiblingBypass() error {b.OrdinaryAdmittedMutation();return b.withUpdate()}
  func (b *BadgerEngine) launchBackground() {go func(){b.withUpdate()}()}
  `
  if err:=os.WriteFile(filepath.Join(root,"new.go"),[]byte(fixture),0600);err!=nil{t.Fatal(err)}
  source:=lifecycleGuardParse(t,root)
  got:=source.bypasses()
- if len(got)!=3{t.Fatal("new mutation populations escaped structural guard",got)}
+ if len(got)!=4{t.Fatal("new mutation populations escaped structural guard",got)}
  if err:=os.Mkdir(filepath.Join(root,"ingress"),0700);err!=nil{t.Fatal(err)}
  if err:=os.WriteFile(filepath.Join(root,"ingress","consumer.go"),[]byte("package storage;func NewlyAddedHandler(m any){go func(){ drop:=m.DropDatabase; drop(\"x\") }()}"),0600);err!=nil{t.Fatal(err)}
  violations,err:=lifecycleGuardContextViolations(root);if err!=nil{t.Fatal(err)};if len(violations)!=1{t.Fatal("new context-free consumer escaped guard",violations)}

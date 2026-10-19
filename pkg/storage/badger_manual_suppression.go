@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -173,6 +174,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 // an entity created again with the same ID (a MERGEd relationship's ID is
 // derived from its endpoints and properties) isn't hidden.
 func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
+	revision := b.namespaceLifetimeRevision()
 	if !b.manuallySuppressed(kind, id) {
 		return
 	}
@@ -180,10 +182,19 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	// A delete is reported from inside its commit; the key goes in a
 	// transaction of its own.
 	go func() {
-		_ = b.withUpdate(func(txn *badger.Txn) error {
-			return txn.Delete(manualSuppressionKey(kind, id))
-		})
+		_ = b.retireManualSuppressionKey(kind, id, revision)
 	}()
+}
+
+// The scheduled cleanup retains its originating lifetime, including a wait
+// behind publication. It cannot remove a recreated namespace's side state.
+func (b *BadgerEngine) retireManualSuppressionKey(kind byte, id string, revision uint64) error {
+	release, err := b.beginNamespaceMutation(context.Background(), []string{namespaceForSideStateID(id)}, &revision, false, namespacePublicationFresh)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(manualSuppressionKey(kind, id)) })
 }
 
 // ManualSuppressionEngine hides and shows nodes and relationships on demand

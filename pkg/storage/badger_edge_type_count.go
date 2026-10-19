@@ -576,6 +576,11 @@ func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
 // writes through the raw database handle because the engine is already
 // marked closed.
 func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationShutdown)
+	if err != nil {
+		return
+	}
+	defer release()
 	if db == nil {
 		return
 	}

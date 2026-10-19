@@ -141,6 +141,23 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 // database-scoped wrapper of b), in chunks: the same per-node work as
 // RebuildTemporalIndexes, for one label instead of the whole store.
 func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+	var scope []string
+	for current := engine; current != nil; {
+		if scoped, ok := current.(interface{ Namespace() string }); ok {
+			scope = []string{scoped.Namespace()}
+			break
+		}
+		wrapper, ok := current.(EngineUnwrapper)
+		if !ok {
+			break
+		}
+		current = wrapper.GetInnerEngine()
+	}
+	release, err := b.beginNamespaceMutation(context.Background(), scope, nil, false, namespacePublicationFresh)
+	if err != nil {
+		return err
+	}
+	defer release()
 	var ids []NodeID
 	if err := StreamStoredNodesByLabelProjected(engine, label, []string{}, func(node *Node) error {
 		if node != nil {
