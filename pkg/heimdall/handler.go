@@ -419,9 +419,13 @@ func (h *Handler) canReadAllDatabases(ctx context.Context) bool {
 		return false
 	}
 	for _, database := range h.database.ListDatabases() {
-		if database == "" || database == "system" { continue }
+		if database == "" || database == "system" {
+			continue
+		}
 		if allows != nil {
-			if !allows(database, auth.PermRead) { return false }
+			if !allows(database, auth.PermRead) {
+				return false
+			}
 		} else if !auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead) {
 			return false
 		}
