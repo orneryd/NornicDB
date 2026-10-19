@@ -88,6 +88,13 @@ type EmbeddingFailureStreamer interface {
 // that read and this commit fails the commit with a conflict, reported as
 // ErrEmbeddingSourceChanged too.
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if b.writeBehind == nil {
+		return b.updateNodeEmbeddingSidecar(node)
+	}
+	return b.orderBehindBufferedWrites(nodeEntities(node), func() error { return b.updateNodeEmbeddingSidecar(node) })
+}
+
+func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {

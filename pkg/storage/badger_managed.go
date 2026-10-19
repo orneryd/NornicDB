@@ -181,7 +181,7 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 // under the shared commit gate, writes, and waits until the published
 // timestamp covers the write so the caller reads its own write afterwards.
 func (m *managedBadgerDB) commit(txn *badger.Txn) error {
-	return m.commitPublishing(txn, nil)
+	return m.commitPublishing(txn, nil, nil)
 }
 
 // commitPublishing is commit for a commit with a derived-state publication
@@ -189,8 +189,11 @@ func (m *managedBadgerDB) commit(txn *badger.Txn) error {
 // returns once it has run (publicationStage.apply). A commit without one
 // changes no derived state and does not wait for the stage: its caller may
 // hold a lock that another commit's publication takes.
-func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPublication) error {
-	ts, err := m.commitShared(txn, publish)
+//
+// admit, when set, runs under the shared commit gate before the commit takes
+// its timestamp; its error refuses the commit, which then writes nothing.
+func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPublication, admit func() error) error {
+	ts, err := m.commitShared(txn, publish, admit)
 	if err != nil {
 		return err
 	}
@@ -203,9 +206,14 @@ func (m *managedBadgerDB) commitPublishing(txn *badger.Txn, publish *commitPubli
 	return nil
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublication) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn, publish *commitPublication, admit func() error) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
+	if admit != nil {
+		if err := admit(); err != nil {
+			return 0, err
+		}
+	}
 	m.advanceDiscardTs()
 	ts, err := m.oracle.assign()
 	if err != nil {
@@ -484,9 +492,15 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 // finish writes the last batch together with the intent's deletion,
 // publishes the whole commit and releases the gate. The commit's
 // derived-state publication (nil for none) runs in the ordered stage under
-// the intent's timestamp, and finish returns once it has run. On error the
-// caller must abort.
-func (lc *largeCommit) finish(w *batchWriter, publish *commitPublication) error {
+// the intent's timestamp, and finish returns once it has run. admit, when set,
+// runs first, under the exclusive gate; its error refuses the commit. On
+// error the caller must abort.
+func (lc *largeCommit) finish(w *batchWriter, publish *commitPublication, admit func() error) error {
+	if admit != nil {
+		if err := admit(); err != nil {
+			return err
+		}
+	}
 	// Every earlier batch must be durable before the intent's deletion is.
 	err := lc.db.syncIfPersistent()
 	if err == nil {

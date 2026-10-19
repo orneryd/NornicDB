@@ -885,7 +885,12 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			return w.LastErr()
+			if err := w.LastErr(); err != nil {
+				return err
+			}
+			// A claimed large generation may still be making progress in
+			// Badger. Absence of an apply error is not proof of completion.
+			stalls = 0
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -980,6 +985,30 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 		}
 	})
 	return out, touched
+}
+
+// HoldsEntities reports whether a generation not yet applied holds a write
+// or delete of any node (NodeID) or relationship (EdgeID) among keys; other
+// keys are ignored. A synchronous commit of such an entity has to wait for
+// the replay (BadgerEngine.orderBehindBufferedWrites).
+func (w *WriteBehindBuffer) HoldsEntities(keys []any) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	for _, key := range keys {
+		var state bufferedEntityState
+		switch id := key.(type) {
+		case NodeID:
+			state = w.entityStateLocked(bufferedNodeEntity, string(id))
+		case EdgeID:
+			state = w.entityStateLocked(bufferedEdgeEntity, string(id))
+		default:
+			continue
+		}
+		if state.found {
+			return true
+		}
+	}
+	return false
 }
 
 // LookupNode resolves the newest buffered version of id, if the buffer has

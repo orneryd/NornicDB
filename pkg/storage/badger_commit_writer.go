@@ -37,6 +37,10 @@ type commitWriter struct {
 	// key (badger_publication_stage.go).
 	publish     func()
 	publishKeys []any
+	// replay marks the write-behind replay's own commit: the entities it
+	// writes are the buffer's by definition, so it is never held behind them
+	// (admit).
+	replay bool
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -109,16 +113,21 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
 func (cw *commitWriter) finish() error {
+	// admit costs a closure; it can only refuse under write-behind.
+	var admit func() error
+	if cw.engine.writeBehind != nil && !cw.replay {
+		admit = cw.admit
+	}
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commitPublishing(cw.txn, cw.publication())
+		return cw.db.commitPublishing(cw.txn, cw.publication(), admit)
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter, cw.publication())
+		err = cw.large.finish(&cw.batchWriter, cw.publication(), admit)
 	}
 	return err
 }
@@ -130,6 +139,17 @@ func (cw *commitWriter) publication() *commitPublication {
 		return nil
 	}
 	return &commitPublication{keys: cw.publishKeys, run: cw.publish}
+}
+
+// admit runs under the commit gate, where no write-behind acknowledgement can
+// interleave: it refuses a synchronous commit of a node or relationship the
+// buffer still holds (errBufferedWritePending), since the replay would land
+// the older acknowledged write over it.
+func (cw *commitWriter) admit() error {
+	if cw.replay || cw.engine.writeBehind == nil || !cw.engine.writeBehind.HoldsEntities(cw.publishKeys) {
+		return nil
+	}
+	return errBufferedWritePending
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch

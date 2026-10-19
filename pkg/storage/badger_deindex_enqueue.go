@@ -18,6 +18,22 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if !b.decayEnabled {
 		return false, nil
 	}
+	if b.writeBehind == nil {
+		return b.enqueueDeindexIfSuppressed(entityID, isEdge)
+	}
+	entity := []any{NodeID(entityID)}
+	if isEdge {
+		entity = []any{EdgeID(entityID)}
+	}
+	var becameSuppressed bool
+	err := b.orderBehindBufferedWrites(entity, func() (err error) {
+		becameSuppressed, err = b.enqueueDeindexIfSuppressed(entityID, isEdge)
+		return err
+	})
+	return becameSuppressed, err
+}
+
+func (b *BadgerEngine) enqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
 
 	becameSuppressed := false
 	nodeChanged := false

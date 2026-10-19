@@ -2797,6 +2797,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
+	if err := tx.drainBufferedEntitiesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	// The engine's write barrier is held through publication, before listener
 	// delivery (releaseWriteBarrierLocked): exclusively for a schema transaction, so
 	// no data write publishes between its snapshot check and its schema
@@ -2897,9 +2901,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
-	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
-		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
-		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
+	if tx.bufferableLocked() && len(temporalTargets) == 0 {
 		return tx.commitBufferedLocked()
 	}
 

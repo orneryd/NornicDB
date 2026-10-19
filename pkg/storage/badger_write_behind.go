@@ -10,6 +10,7 @@ package storage
 // transactions and snapshot opens drain the buffer first.
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -128,7 +129,12 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
+	// The exclusive commit gate orders this acknowledgement against every
+	// synchronous commit's check of the buffer (commitWriter.admit): a
+	// synchronous commit of an entity sees it, or commits before it.
+	tx.badgerDB.commitGate.Lock()
 	tx.engine.writeBehind.AppendCommit(c)
+	tx.badgerDB.commitGate.Unlock()
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
 	// not at flush. The sync path advances it per-op through the notify*
@@ -140,6 +146,90 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.bufferedAck.Store(true)
 	tx.closeLocked(TxStatusCommitted, true, nil)
 	return nil
+}
+
+// errBufferedWritePending refuses a synchronous commit of a node or
+// relationship that an acknowledged write-behind commit still holds. The
+// acknowledgement comes first in the logical order, but its replay commits
+// later, at a newer timestamp, and would land the older write (a body, a
+// tombstone, a suppression key's delete) over the newer one.
+var errBufferedWritePending = errors.New("an acknowledged write-behind commit of the same entity is not replayed yet")
+
+// orderBehindBufferedWrites runs a synchronous engine write of entities
+// after the acknowledged write-behind commits that hold any of them: it
+// drains the buffer first when they do, and again whenever the commit is
+// refused because an acknowledgement of an entity it writes arrived in the
+// meantime (commitWriter.admit). It drains outside the engine's write
+// barrier, which the replay takes, so the write runs from the start again:
+// what it reads then includes the replayed state.
+func (b *BadgerEngine) orderBehindBufferedWrites(entities []any, write func() error) error {
+	if b.writeBehind == nil {
+		return write()
+	}
+	if b.writeBehind.HoldsEntities(entities) {
+		if err := b.FlushWriteBehind(); err != nil {
+			return err
+		}
+	}
+	for {
+		err := write()
+		if !errors.Is(err, errBufferedWritePending) {
+			return err
+		}
+		if err := b.FlushWriteBehind(); err != nil {
+			return err
+		}
+	}
+}
+
+// bufferableLocked reports whether the commit may be acknowledged through the
+// write-behind buffer: an implicit autocommit with no schema,
+// knowledge-policy or change-capture writes. Commit also requires that it
+// writes no temporal index entries, which it knows only once it has buffered
+// them.
+func (tx *BadgerTransaction) bufferableLocked() bool {
+	return tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
+		!tx.knowledgeSchemaDirty &&
+		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
+}
+
+// drainBufferedEntitiesLocked puts the acknowledged write-behind commits
+// that hold an entity this transaction writes into Badger before the
+// transaction commits to Badger itself (orderBehindBufferedWrites). The
+// transaction read those entities through the overlay, so the drain changes
+// nothing it read. It runs before the commit takes the write barrier, which
+// the replay takes too. An acknowledgement of one of them that arrives during
+// the commit is a concurrent writer that committed first: the commit fails
+// with ErrConflict (commitWriter.admit). A commit the buffer acknowledges
+// itself is ordered by the buffer and drains nothing.
+func (tx *BadgerTransaction) drainBufferedEntitiesLocked() error {
+	wb := tx.engine.writeBehind
+	if wb == nil || (tx.bufferableLocked() && !tx.writesTemporalConstrainedNodeLocked()) {
+		return nil
+	}
+	if !wb.HoldsEntities(appendOperationPublicationKeys(nil, nil, tx.operations)) {
+		return nil
+	}
+	return tx.engine.FlushWriteBehind()
+}
+
+// writesTemporalConstrainedNodeLocked reports whether the transaction writes
+// a node carrying a label with a temporal constraint: the writes that may
+// give it temporal index entries (bufferTemporalIndexWrites).
+func (tx *BadgerTransaction) writesTemporalConstrainedNodeLocked() bool {
+	constrained := func(node *Node) bool {
+		if node == nil {
+			return false
+		}
+		dbName, _, ok := ParseDatabasePrefix(string(node.ID))
+		return ok && len(temporalConstraintsForLabels(tx.engine.GetSchemaForNamespace(dbName), node.Labels)) > 0
+	}
+	for _, op := range tx.operations {
+		if constrained(op.Node) || constrained(op.OldNode) {
+			return true
+		}
+	}
+	return false
 }
 
 // persistReplayTxnCounters makes one generation's property-key tokens
@@ -169,17 +259,16 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 }
 
 // replayWriteBehind replays one drained generation into Badger. It marks
-// the generation applied on success so the buffer retires it.
+// the generation applied once the replay is published and before its
+// listeners run, so the buffer retires its read overlay first: a listener
+// reads its own synchronous write, and a flush it starts can reach the
+// generations after this one.
 func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	commits := buf.Commits()
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
-		return err
-	}
-	buf.markApplied()
-	return nil
+	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, buf.markApplied)
 }
 
 // applyBufferedCommits replays buffered commits into Badger: a single Badger
@@ -189,19 +278,21 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // commits it also writes each commit's flush marker key, so the marker is
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
-func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
-	return b.applyBufferedCommitsWithCountPublication(commits, nil)
+func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit, beforeNotifications ...func()) error {
+	return b.applyBufferedCommitsWithCountPublication(commits, nil, beforeNotifications...)
 }
 
 // publishCounts retires the generation count overlay under the same locks that
 // publish persisted counters. Entity/cache callbacks run afterward without locks.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
+// beforeNotifications run once the replay is published, before its listeners.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
 
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	cw := b.newCommitWriter(b.db, txn)
+	cw.replay = true
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
 	// a separate batchWriter whose txn never follows the batch rotation
@@ -429,6 +520,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// The listeners, after the stage published every replayed commit and
 	// after the count locks are released, in commit order: a callback never
 	// runs inside the stage, so one that commits can't wait on it.
+	for _, ready := range beforeNotifications {
+		ready()
+	}
 	for _, c := range commits {
 		b.notifyReplayedOperations(c.ops, c.recovered)
 	}

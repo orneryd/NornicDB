@@ -18,6 +18,27 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
+	if b.writeBehind == nil {
+		return b.createNode(node)
+	}
+	var id NodeID
+	err := b.orderBehindBufferedWrites(nodeEntities(node), func() (err error) {
+		id, err = b.createNode(node)
+		return err
+	})
+	return id, err
+}
+
+// nodeEntities is the node a write of node names, for
+// orderBehindBufferedWrites.
+func nodeEntities(node *Node) []any {
+	if node == nil {
+		return nil
+	}
+	return []any{node.ID}
+}
+
+func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
 			_, err := tx.CreateNode(node)
@@ -332,6 +353,13 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(node *Node) error {
+	if b.writeBehind == nil {
+		return b.updateNode(node)
+	}
+	return b.orderBehindBufferedWrites(nodeEntities(node), func() error { return b.updateNode(node) })
+}
+
+func (b *BadgerEngine) updateNode(node *Node) error {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
 			return upsertNodeInTransaction(tx, node)
@@ -640,6 +668,13 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
+	if b.writeBehind == nil {
+		return b.deleteNode(id)
+	}
+	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.deleteNode(id) })
+}
+
+func (b *BadgerEngine) deleteNode(id NodeID) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
 		return tx.DeleteNode(id)
 	}); handled {

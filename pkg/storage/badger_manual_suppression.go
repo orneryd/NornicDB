@@ -92,6 +92,13 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // whether or not decay is enabled (#1064). Showing it again re-indexes it for
 // search. ErrNotFound when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
+	if b.writeBehind == nil {
+		return b.setNodeManuallySuppressed(id, suppressed)
+	}
+	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.setNodeManuallySuppressed(id, suppressed) })
+}
+
+func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool) error {
 	var node *Node
 	err := b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
 		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
@@ -111,6 +118,13 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
+	if b.writeBehind == nil {
+		return b.setEdgeManuallySuppressed(id, suppressed)
+	}
+	return b.orderBehindBufferedWrites([]any{id}, func() error { return b.setEdgeManuallySuppressed(id, suppressed) })
+}
+
+func (b *BadgerEngine) setEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
 	err := b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, nil)
 	if err != nil {
 		return err

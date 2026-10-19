@@ -33,16 +33,16 @@ import (
 // publishingPaths maps each function that hands the stage a publication to
 // the test that runs it under a held older publication.
 var publishingPaths = map[string]string{
-	"CreateNode":  "TestPostCommitPublicationOrder (create)",
-	"UpdateNode":  "TestPostCommitPublicationOrder (update, restore, label add and remove)",
-	"DeleteNode":  "TestPostCommitPublicationOrder (delete)",
-	"CreateEdge":  "TestPostCommitEdgePublicationOrder (create)",
-	"UpdateEdge":  "TestPostCommitEdgePublicationOrder (update, restore, type change)",
-	"DeleteEdge":  "TestPostCommitEdgePublicationOrder (delete)",
+	"createNode":  "TestPostCommitPublicationOrder (create)",
+	"updateNode":  "TestPostCommitPublicationOrder (update, restore, label add and remove)",
+	"deleteNode":  "TestPostCommitPublicationOrder (delete)",
+	"createEdge":  "TestPostCommitEdgePublicationOrder (create)",
+	"updateEdge":  "TestPostCommitEdgePublicationOrder (update, restore, type change)",
+	"deleteEdge":  "TestPostCommitEdgePublicationOrder (delete)",
 	"publication": "transaction commits: TestPostCommitPublicationOrder and TestPostCommitEdgePublicationOrder (older-tx, newer-tx); the commit writer's pending-embedding candidates",
 	"applyBufferedCommitsWithCountPublication": "TestPostCommitPublicationOrderWriteBehindReplay",
-	"EnqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
-	"UpdateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
+	"enqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
+	"updateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
 	"setManualSuppression":                     "TestManualSuppressionPublicationOrder (suppress overtaken by unsuppress, and the reverse, on a node and a relationship)",
 }
 
@@ -100,6 +100,9 @@ var commitFunctions = []string{
 	"commitEngineWrite", "commitEngineWriteWithRead", "commitEngineWriteHeld", "withUpdate", "withNotifyingUpdate",
 	"withPublishingUpdate", "withUpdateUnits", "commit", "commitPublishing", "commitShared", "commitBatch",
 	"beginLargeCommit", "waitPublished", "CommitAt", "Commit", "CommitContext",
+	// A publication that drained the write-behind buffer would wait for a
+	// replay that waits for the stage.
+	"FlushWriteBehind", "orderBehindBufferedWrites", "drainBufferedEntitiesLocked",
 }
 
 // stageLockObservers maps every lock in stageLocks to the matrix consumer

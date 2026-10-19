@@ -236,7 +236,10 @@ func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
 // validation and the write, whether on an ordinary commit or a large
 // commit's first batch) becomes the commit-conflict error.
 func (tx *BadgerTransaction) abortCommitLocked(err error) error {
-	if errors.Is(err, badger.ErrConflict) && !errors.Is(err, ErrConflict) {
+	// A write-behind acknowledgement of an entity this commit writes arrived
+	// during the commit (commitWriter.admit): a concurrent writer committed
+	// it first.
+	if (errors.Is(err, badger.ErrConflict) || errors.Is(err, errBufferedWritePending)) && !errors.Is(err, ErrConflict) {
 		err = commitConflictError(err)
 	}
 	if tx.commitW != nil {
