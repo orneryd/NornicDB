@@ -129,6 +129,8 @@ const (
 type vectorDomainGuard struct {
 	p          *domainTypedPkg
 	env        map[types.Object]vectorDomain
+	keys       map[types.Object]vectorDomain
+	aliases    map[types.Object]*types.Func
 	returns    map[*types.Func]vectorDomain
 	decls      map[*types.Func]*ast.FuncDecl
 	violations map[string]bool
@@ -177,6 +179,24 @@ func (g *vectorDomainGuard) object(expr ast.Expr) types.Object {
 	return nil
 }
 
+func (g *vectorDomainGuard) called(expr ast.Expr) *types.Func {
+	obj := g.object(expr)
+	if fn, ok := obj.(*types.Func); ok {
+		return fn.Origin()
+	}
+	return g.aliases[obj]
+}
+
+func (g *vectorDomainGuard) argumentOffset(call *ast.CallExpr, fn *types.Func) int {
+	sig := fn.Type().(*types.Signature)
+	if sig.Recv() != nil {
+		if actual, ok := g.p.info.TypeOf(call.Fun).Underlying().(*types.Signature); ok && actual.Params().Len() == sig.Params().Len()+1 {
+			return 1 // method expression, including an aliased method expression
+		}
+	}
+	return 0
+}
+
 func domainBackend(recv string) bool {
 	switch recv {
 	case "VectorIndex", "VectorFileStore", "HNSWIndex", "EmbeddingIndex", "ClusterIndex", "IVFPQIndex", "vectorLookupGetter", "ivfpqExactOverflow", "annMutationOverlay":
@@ -187,7 +207,7 @@ func domainBackend(recv string) bool {
 
 func domainKeyMethod(method string) bool {
 	switch method {
-	case "Add", "Update", "Remove", "Get", "GetVector", "GetRawVector", "getVectorRef", "HasVector", "AddBatch", "addLocked", "removeLocked", "addWithLevel0Candidates", "AddNormalized", "addNormalized", "ScoreSubset":
+	case "Add", "Update", "Remove", "Get", "GetVector", "GetRawVector", "getVectorRef", "Has", "HasVector", "AddBatch", "addLocked", "removeLocked", "addWithLevel0Candidates", "AddNormalized", "addNormalized", "ScoreSubset":
 		return true
 	}
 	return false
@@ -220,8 +240,12 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 		}
 	}
 	sig := fn.Type().(*types.Signature)
-	if sig.Recv() != nil && domainBackend(domainTypeName(sig.Recv().Type())) && domainKeyMethod(fn.Name()) && n == 0 {
-		return domainEntry
+	if sig.Recv() != nil && domainBackend(domainTypeName(sig.Recv().Type())) && domainKeyMethod(fn.Name()) && n >= 0 && n < sig.Params().Len() {
+		t := sig.Params().At(n).Type().Underlying()
+		if basic, ok := t.(*types.Basic); ok && basic.Kind() == types.String && n == 0 { return domainEntry }
+		if slice, ok := t.(*types.Slice); ok {
+			if basic, ok := slice.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.String { return domainEntry }
+		}
 	}
 	return 0
 }
@@ -232,7 +256,10 @@ func domainResult(fn *types.Func) vectorDomain {
 		return domainEntry
 	case "vectorEntryOwner":
 		return domainNode
+	case "clusterGeneration.members", "Clustering.MemberIDs", "ClusterIndex.GetClusterMemberIDs", "ClusterIndex.GetClusterMemberIDsForCluster", "VectorIndex.GetAllVectors", "VectorIndex.GetAllIDs", "VectorFileStore.GetAllVectors", "VectorFileStore.GetAllIDs":
+		return domainEntry
 	}
+	if fn.Name() == "ScoreCandidates" { return domainEntry }
 	return 0
 }
 
@@ -260,7 +287,7 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 		switch recv + "." + field {
 		case "Node.ID", "vectorEntry.NodeID", "nodeLexicalHint.ID", "LexicalSeedHint.ID":
 			return domainNode
-		case "nodeVectorEntry.key", "hnswBuildPair.id", "HNSWIndex.internalToID", "strategyDelta.id", "hnswBuildMutation.id", "annMutation.id":
+		case "nodeVectorEntry.key", "hnswBuildPair.id", "HNSWIndex.internalToID", "strategyDelta.id", "strategyDeltaMutation.id", "hnswBuildMutation.id", "annMutation.id", "ScoredCandidate.ID", "Clustering.Clusters":
 			return domainEntry
 		case "Service.nodeChunkVectors", "Service.nodeNamedVector", "Service.nodePropVector":
 			return domainEntry
@@ -301,7 +328,7 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 				}
 			}
 		}
-		if f, ok := g.object(x.Fun).(*types.Func); ok {
+		if f := g.called(x.Fun); f != nil {
 			if d := domainResult(f); d != 0 {
 				return d
 			}
@@ -327,7 +354,7 @@ func (g *vectorDomainGuard) rangeDomains(e ast.Expr) (vectorDomain, vectorDomain
 	if typ := g.p.info.TypeOf(e); typ != nil {
 		switch typ.Underlying().(type) {
 		case *types.Map:
-			return 0, g.infer(e)
+			return g.keys[g.object(e)], g.infer(e)
 		case *types.Slice, *types.Array:
 			return 0, g.infer(e)
 		}
@@ -336,8 +363,11 @@ func (g *vectorDomainGuard) rangeDomains(e ast.Expr) (vectorDomain, vectorDomain
 }
 
 func (g *vectorDomainGuard) bind(e ast.Expr, d vectorDomain) {
-	if d == 0 || e == nil {
+	if e == nil {
 		return
+	}
+	if index, ok := e.(*ast.IndexExpr); ok {
+		g.keys[g.object(index.X)] |= g.infer(index.Index)
 	}
 	if obj, ok := g.object(e).(*types.Var); ok {
 		// Fields have their own declared semantic contract; per-object local
@@ -359,6 +389,7 @@ func (g *vectorDomainGuard) closeDomains() {
 					for i, rhs := range x.Rhs {
 						if i < len(x.Lhs) {
 							g.bind(x.Lhs[i], g.infer(rhs))
+							if f := g.called(rhs); f != nil { g.aliases[g.object(x.Lhs[i])] = f }
 						}
 					}
 				case *ast.ValueSpec:
@@ -376,11 +407,12 @@ func (g *vectorDomainGuard) closeDomains() {
 						g.returns[fn] |= g.infer(x.Results[0])
 					}
 				case *ast.CallExpr:
-					if f, ok := g.object(x.Fun).(*types.Func); ok {
+					if f := g.called(x.Fun); f != nil {
 						sig := f.Type().(*types.Signature)
+						offset := g.argumentOffset(x, f)
 						for i, a := range x.Args {
-							if i < sig.Params().Len() && domainParam(f, i) == 0 {
-								g.env[sig.Params().At(i)] |= g.infer(a)
+							if i >= offset && i-offset < sig.Params().Len() && domainParam(f, i-offset) == 0 {
+								g.env[sig.Params().At(i-offset)] |= g.infer(a)
 							}
 						}
 						name := domainFuncName(f)
@@ -390,7 +422,7 @@ func (g *vectorDomainGuard) closeDomains() {
 								continue
 							}
 							params := g.p.info.TypeOf(lit).(*types.Signature).Params()
-							if name == "Service.forEachNodeVectorKeyLocked" && params.Len() > 0 {
+							if (name == "Service.forEachNodeVectorKeyLocked" || name == "Service.nodeVectorIDsLocked") && params.Len() > 0 {
 								g.env[params.At(0)] = domainEntry
 							}
 							if (strings.HasSuffix(name, ".IterateChunked") || strings.HasSuffix(name, ".Iterate") || strings.HasSuffix(name, ".IterateVectors")) && domainBackend(strings.Split(name, ".")[0]) && params.Len() > 0 {
@@ -414,6 +446,45 @@ func (g *vectorDomainGuard) closeDomains() {
 
 func (g *vectorDomainGuard) flag(where, msg string) { g.violations[where+": "+msg] = true }
 
+func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, owner bool) {
+	ast.Inspect(root, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if tn, ok := g.object(x.Fun).(*types.TypeName); ok && !owner {
+				switch domainTypeName(tn.Type()) {
+				case "vectorNodeID", "vectorEntryID": g.flag(where, "identity conversion outside vector_entry_key.go")
+				}
+				if basic, ok := tn.Type().Underlying().(*types.Basic); ok && basic.Kind() == types.String && len(x.Args) == 1 {
+					switch domainTypeName(g.p.info.TypeOf(x.Args[0])) {
+					case "vectorNodeID", "vectorEntryID": g.flag(where, "identity erasure outside vector_entry_key.go")
+					}
+				}
+			}
+		case *ast.MapType:
+			if typ := g.p.info.TypeOf(x); typ != nil {
+				m := typ.Underlying().(*types.Map)
+				if domainTypeName(m.Elem()) == "LexicalSeedHint" { g.flag(where, "raw string hint map reintroduces an ambiguous identity domain") }
+				if domainTypeName(m.Elem()) == "nodeLexicalHint" {
+					key := domainTypeName(m.Key())
+					if key != "vectorNodeID" && key != "vectorEntryID" { g.flag(where, "internal hint map has no typed key domain") }
+				}
+			}
+		case *ast.CompositeLit:
+			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && len(x.Elts) > 0 { g.flag(where, "constructs a document hint outside the key owner") }
+			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "LexicalSeedHint" {
+				for _, el := range x.Elts { if kv, ok := el.(*ast.KeyValueExpr); ok { if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "ID" && g.infer(kv.Value)&domainEntry != 0 { g.flag(where, "entry key assigned to a BM25 document hint") } } }
+			}
+		case *ast.AssignStmt:
+			if owner { break }
+			for i, lhs := range x.Lhs {
+				if i >= len(x.Rhs) { break }
+				if sel, ok := lhs.(*ast.SelectorExpr); ok { recv, field := g.field(sel); if (recv == "LexicalSeedHint" || recv == "nodeLexicalHint") && field == "ID" && g.infer(x.Rhs[i])&domainEntry != 0 { g.flag(where, "entry key assigned to a document hint") } }
+			}
+		}
+		return true
+	})
+}
+
 func (g *vectorDomainGuard) run() {
 	for _, file := range g.p.files {
 		for _, decl := range file.Decls {
@@ -431,10 +502,18 @@ func (g *vectorDomainGuard) run() {
 		}
 	}
 	g.closeDomains()
+	// Package initializers and type declarations are part of the population too;
+	// a new alias or function-valued global must not bypass a function-only scan.
+	for _, file := range g.p.files {
+		owner := filepath.Base(vectorDomainFileNames[file]) == "vector_entry_key.go"
+		for _, decl := range file.Decls {
+			if _, ok := decl.(*ast.GenDecl); ok { g.checkIdentitySyntax("declaration in "+filepath.Base(vectorDomainFileNames[file]), decl, owner) }
+		}
+	}
 	for fn, decl := range g.decls {
 		where := domainFuncName(fn)
 		owner := filepath.Base(gFileName(g, decl)) == "vector_entry_key.go"
-		_, service := strings.CutPrefix(where, "Service.")
+		g.checkIdentitySyntax(where, decl, owner)
 		ast.Inspect(decl, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.CallExpr:
@@ -451,8 +530,8 @@ func (g *vectorDomainGuard) run() {
 						g.flag(where, "identity erasure outside vector_entry_key.go")
 					}
 				}
-				f, ok := obj.(*types.Func)
-				if !ok {
+				f := g.called(x.Fun)
+				if f == nil {
 					// The canonical inventory's callback is itself an entry sink.
 					if where == "Service.forEachNodeVectorKeyLocked" && len(x.Args) == 1 {
 						if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "visit" && g.infer(x.Args[0]) != domainEntry {
@@ -462,8 +541,10 @@ func (g *vectorDomainGuard) run() {
 					return true
 				}
 				name := domainFuncName(f)
+				offset := g.argumentOffset(x, f)
 				for i, arg := range x.Args {
-					want := domainParam(f, i)
+					if i < offset { continue }
+					want := domainParam(f, i-offset)
 					if want == 0 {
 						continue
 					}
@@ -477,7 +558,7 @@ func (g *vectorDomainGuard) run() {
 					if got != 0 && got != want {
 						g.flag(where, fmt.Sprintf("%s argument %d has domain %d, want %d", name, i, got, want))
 					}
-					if got == 0 && service && want == domainEntry {
+					if got == 0 && want == domainEntry {
 						g.flag(where, fmt.Sprintf("unproved vector key at %s argument %d", name, i))
 					}
 				}
@@ -487,7 +568,7 @@ func (g *vectorDomainGuard) run() {
 					g.population[where+" -> "+recv+"."+field] = true
 				}
 			case *ast.CompositeLit:
-				if domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && !owner {
+				if domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && len(x.Elts) != 0 && !owner {
 					g.flag(where, "constructs a document hint outside the key owner")
 				}
 			case *ast.ReturnStmt:
@@ -530,7 +611,7 @@ func TestVectorEntryDomainGuard(t *testing.T) {
 	for _, f := range p.files {
 		vectorDomainFileNames[f] = imp.fset.Position(f.Pos()).Filename
 	}
-	g := &vectorDomainGuard{p: p, env: map[types.Object]vectorDomain{}, returns: map[*types.Func]vectorDomain{}, decls: map[*types.Func]*ast.FuncDecl{}, violations: map[string]bool{}, population: map[string]bool{}}
+	g := &vectorDomainGuard{p: p, env: map[types.Object]vectorDomain{}, keys: map[types.Object]vectorDomain{}, aliases: map[types.Object]*types.Func{}, returns: map[*types.Func]vectorDomain{}, decls: map[*types.Func]*ast.FuncDecl{}, violations: map[string]bool{}, population: map[string]bool{}}
 	g.run()
 	var population, violations []string
 	for edge := range g.population {
