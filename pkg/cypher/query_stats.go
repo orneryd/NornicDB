@@ -55,6 +55,24 @@ func addQueryStats(total, delta *QueryStats) {
 	total.ConstraintsRemoved += delta.ConstraintsRemoved
 }
 
+// subtractQueryStats removes counters already covered by a committed summary.
+func subtractQueryStats(total, delta *QueryStats) {
+	if total == nil || delta == nil {
+		return
+	}
+	total.NodesCreated -= delta.NodesCreated
+	total.NodesDeleted -= delta.NodesDeleted
+	total.RelationshipsCreated -= delta.RelationshipsCreated
+	total.RelationshipsDeleted -= delta.RelationshipsDeleted
+	total.PropertiesSet -= delta.PropertiesSet
+	total.LabelsAdded -= delta.LabelsAdded
+	total.LabelsRemoved -= delta.LabelsRemoved
+	total.IndexesAdded -= delta.IndexesAdded
+	total.IndexesRemoved -= delta.IndexesRemoved
+	total.ConstraintsAdded -= delta.ConstraintsAdded
+	total.ConstraintsRemoved -= delta.ConstraintsRemoved
+}
+
 // queryStatsAccumulator combines completed nested summaries across concurrent evaluators.
 type queryStatsAccumulator struct {
 	mu    sync.Mutex
