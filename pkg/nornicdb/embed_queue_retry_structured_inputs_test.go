@@ -115,8 +115,13 @@ func TestEmbedWorkerRetryStructuredMetadataInputs(t *testing.T) {
 							require.True(t, (storage.EmbeddingTextPolicy{IncludeLabels: true}).SameSource(before, node), "text policy omits this provider-visible input")
 							require.NoError(t, queue.UpdateNode(node))
 						}
-						makeNodeSaveRetriesReady(worker)
-						require.True(t, worker.processNextBatch())
+						// A changed input discards the retained result and needs a
+						// provider attempt. MAIN-first collection processes those
+						// DLQ attempts one cycle at a time; drain every affected ID.
+						for pass := 0; pass < count && worker.processed.Load() < int64(count); pass++ {
+							makeNodeSaveRetriesReady(worker)
+							require.True(t, worker.processNextBatch())
+						}
 						require.Equal(t, int64(count), worker.processed.Load())
 						marker, calls := float32(2), 2*count
 						if change == "remove" {
