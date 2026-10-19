@@ -301,7 +301,7 @@ func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replic
 		// Preserve FIFO when the bounded queue fills. A direct append must
 		// not overtake older acknowledged commands still in the writer queue.
 		if err := a.FlushWAL(); err != nil {
-			return nil, record, err
+			return nil, record, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
 		}
 		a.walMu.Lock()
 		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
