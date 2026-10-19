@@ -50,6 +50,8 @@ func TestU4LexicalColdProfile(t *testing.T) {
 		{"tool", "pprof", "-top", "-nodecount=35", binary, cpuPath},
 		{"tool", "pprof", "-top", "-alloc_space", "-nodecount=35", "-base="+before, binary, after},
 		{"tool", "pprof", "-top", "-cum", "-alloc_space", "-nodecount=35", "-base="+before, binary, after},
+		{"tool", "pprof", "-list=readFunctionSyntax", "-alloc_space", "-base="+before, binary, after},
+		{"tool", "pprof", "-peek=readFunctionSyntax", "-alloc_space", "-base="+before, binary, after},
 	} {
 		output, err := exec.Command("go", args...).CombinedOutput()
 		fmt.Printf("U4_PROFILE %v\n%s\n", args[1:], output)
