@@ -77,6 +77,9 @@ func terminateStatement(query string) {
 func TestStatementStopsEachStageWithinBoundedWork(t *testing.T) {
 	const (
 		people  = 20000
+		// The traversal still has more work than the cancellation bound,
+		// without making edge-scan speed under -race its deadline trigger.
+		traversalPeople = 3000
 		trigger = 200
 		// Rows a stage may evaluate after its context ended: a few probe
 		// intervals (pipelineCancellationInterval), against the
@@ -85,14 +88,18 @@ func TestStatementStopsEachStageWithinBoundedWork(t *testing.T) {
 	)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "bounded")
 	for i := 0; i < people; i++ {
+		labels := []string{"P"}
+		if i < traversalPeople {
+			labels = append(labels, "T")
+		}
 		_, err := store.CreateNode(&storage.Node{
 			ID:         storage.NodeID(fmt.Sprintf("p-%d", i)),
-			Labels:     []string{"P"},
+			Labels:     labels,
 			Properties: map[string]interface{}{"v": int64(i), "k": int64(i % 50)},
 		})
 		require.NoError(t, err)
 	}
-	for i := 0; i+1 < people; i++ {
+	for i := 0; i+1 < traversalPeople; i++ {
 		require.NoError(t, store.CreateEdge(&storage.Edge{
 			ID:        storage.EdgeID(fmt.Sprintf("next-%d", i)),
 			StartNode: storage.NodeID(fmt.Sprintf("p-%d", i)),
@@ -121,9 +128,12 @@ func TestStatementStopsEachStageWithinBoundedWork(t *testing.T) {
 		{"aggregation", "MATCH (n:P) RETURN n.k AS k, collect(bound.tick(n.v)) AS vs"},
 		{"projection", "MATCH (n:P) RETURN bound.tick(n.v) AS v, n.k AS k"},
 		{"unwind", fmt.Sprintf("UNWIND range(1, %d) AS x WITH bound.tick(x) AS y RETURN count(y) AS c", people)},
-		{"traversal", "MATCH (a:P)-[:NEXT]->(b:P) WHERE bound.tick(b.v) IS NOT NULL RETURN count(b) AS c"},
+		{"traversal", "MATCH (a:T)-[:NEXT]->(b:T) WHERE bound.tick(b.v) IS NOT NULL RETURN count(b) AS c"},
 		{"filter", "MATCH (n:P) WHERE bound.tick(n.v) IS NOT NULL RETURN n.v AS v"},
 		{"reduce", "RETURN reduce(s = 0, x IN range(1, 20000) | s + bound.tick(x)) AS v"},
+		{"allreduce", "CYPHER 25 RETURN allReduce(s = 0, x IN range(1, 20000) | s + bound.tick(x), s >= 0) AS v"},
+		{"comprehension", "RETURN [x IN range(1, 20000) | bound.tick(x)] AS v"},
+		{"quantifier", "RETURN all(x IN range(1, 20000) WHERE bound.tick(x) > 0) AS v"},
 	}
 	// Each mode ends the statement at the trigger row and names the error
 	// it must then return.

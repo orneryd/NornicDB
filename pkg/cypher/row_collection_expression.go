@@ -4,7 +4,7 @@ package cypher
 // row, every part evaluated by evaluate (the row evaluator, or the context
 // evaluator for a reduce whose expressions hold subqueries); resolved is false
 // when a part can't be evaluated.
-func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}, evaluate rowValueEvaluator, probe *pipelineCancellation) (interface{}, bool, error) {
 	form, ok := parseReduceForm(function, argument)
 	if !ok {
 		return nil, false, nil
@@ -20,12 +20,12 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	if listValue == nil {
 		return nil, true, nil
 	}
-	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
+	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate), probe)
 	// The shared loop owns coercion and per-element cancellation for the
 	// interpreted and compiled readers alike.
 	return rowReduceLoop(form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
-		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
+		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) }, probe)
 }
 
 func rowTopLevelPipeIndex(expression string) int {

@@ -100,7 +100,7 @@ func TestQuantifierRuntimePredicatePreservesEvaluationFailures(t *testing.T) {
 			value, resolved, err := rowQuantifierLoop("any", []interface{}{1, 2}, func(interface{}) {}, func() (interface{}, bool, error) {
 				calls++
 				return nil, tc.resolved, tc.err
-			})
+			}, nil)
 			require.Nil(t, value)
 			require.False(t, resolved)
 			if tc.err != nil {

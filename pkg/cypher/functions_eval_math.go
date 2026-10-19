@@ -1197,12 +1197,9 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		return nil
 	}
 	value, _, err := rowQuantifierLoop(function, items, func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
-		if !probe.check() {
-			return nil, false, probe.err
-		}
 		value, ok := e.evaluateQuantifierPredicate(ctx, predicate, values)
 		return value, ok, getExpressionFailure(ctx)
-	})
+	}, probe)
 	if probe.err != nil {
 		// The probe recorded the cancellation when it observed it.
 		return nil
@@ -1259,17 +1256,12 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	}
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
-	// holds is always set so the shared loop polls cancellation once per
-	// element, with or without a WHERE predicate.
-	holds := func() (bool, bool, error) {
-		if !probe.check() {
-			return false, false, probe.err
+	var holds func() (bool, bool, error)
+	if condition != "" {
+		holds = func() (bool, bool, error) {
+			value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+			return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
 		}
-		if condition == "" {
-			return true, true, nil
-		}
-		value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-		return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
 	}
 	var project func() (interface{}, bool, error)
 	if projection != "" {
@@ -1281,7 +1273,7 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	budget := expressionBudgetOf(ctx)
 	result, _, err := rowComprehensionLoop(&budget, items, func(item interface{}) {
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
-	}, holds, project)
+	}, holds, project, probe)
 	if probe.err != nil {
 		// The probe recorded the cancellation when it observed it.
 		return nil

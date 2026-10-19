@@ -12,13 +12,28 @@ import "context"
 // row copied once, its variables (extra of them) rebound per element. A body
 // with a subquery (localSubqueries) evaluates it per element, only where
 // reached, so the scope is a local subquery scope (localSubqueryScope).
-func rowElementScope(values map[string]interface{}, extra int, localSubqueries bool) map[string]interface{} {
+func rowElementScope(values map[string]interface{}, extra int, localSubqueries bool, probe *pipelineCancellation) map[string]interface{} {
 	scope := make(map[string]interface{}, len(values)+extra)
 	for name, value := range values {
+		if probe.stopped() {
+			break
+		}
 		scope[name] = value
 	}
+	// A context-aware row reader can borrow a probe without adding hidden
+	// metadata to every scalar row. Its list scope must retain that owner
+	// for nested text readers, function dispatch and subqueries as well.
+	ctx := rowStatementContext(values)
+	if probe != nil && (ctx == nil || contextPipelineProbe(ctx) != probe) {
+		if ctx == nil {
+			ctx = probeStatementContext(probe)
+		} else {
+			ctx = context.WithValue(ctx, pipelineCancellationKey{}, probe)
+		}
+		scope[rowStatementContextKey] = ctx
+	}
 	if localSubqueries {
-		if ctx := rowStatementContext(values); ctx != nil && !inLocalSubqueryScope(ctx) {
+		if ctx != nil && !inLocalSubqueryScope(ctx) {
 			scope[rowStatementContextKey] = context.WithValue(ctx, localSubqueryScopeKey{}, true)
 		}
 	}
@@ -28,9 +43,12 @@ func rowElementScope(values map[string]interface{}, extra int, localSubqueries b
 // rowQuantifierLoop is all / any / none / single(variable IN items WHERE
 // predicate), folded by quantifierFold. An unevaluated predicate leaves the
 // quantifier unresolved; an evaluated value uses the shared predicate contract.
-func rowQuantifierLoop(function string, items []interface{}, bind func(interface{}), predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
+func rowQuantifierLoop(function string, items []interface{}, bind func(interface{}), predicate func() (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
 	fold := quantifierFold{function: function}
 	for _, item := range items {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		bind(item)
 		result, evaluated, err := predicate()
 		if err != nil {
@@ -59,15 +77,18 @@ func rowQuantifierLoop(function string, items []interface{}, bind func(interface
 // (budget, #1343): its capacity before it is made, its values as they are
 // added, checked every comprehensionCheckEvery elements. It is given back
 // once built; the row or list that keeps it counts it there.
-func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error)) (interface{}, bool, error) {
+func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
 	if budget.active() {
 		if err := budget.beginList(len(items)); err != nil {
 			return nil, false, err
 		}
 		defer budget.release()
 	}
-	result := make([]interface{}, 0, len(items))
+	result := make([]interface{}, 0, pipelineInitialCapacity(len(items), probe))
 	for index, item := range items {
+		if probe.stopped() {
+			return nil, false, probe.failed()
+		}
 		if index > 0 && index%comprehensionCheckEvery == 0 {
 			if err := budget.checkList(); err != nil {
 				return nil, false, err
@@ -126,8 +147,7 @@ func rowConditionHolds(condition interface{}, evaluated bool, err error) (bool, 
 // accumulator: step and predicate evaluate the form's step and predicate
 // with the accumulator and the variable bound in scope. A step or predicate
 // that can't be evaluated leaves the form unresolved.
-func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
-	probe := rowPipelineCancellation(scope)
+func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
 	items := coerceToUnwindItemsWithCancellation(listValue, probe)
 	if probe != nil && probe.failed() != nil {
 		return nil, false, probe.failed()

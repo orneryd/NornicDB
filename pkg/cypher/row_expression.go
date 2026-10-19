@@ -315,7 +315,9 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 				return value, handled, err
 			}
 		case "reduce", "allreduce":
-			return e.evaluateRowReduce(function, argument, values, e.evaluateRowValue)
+			return e.evaluateRowReduce(function, argument, values, func(text string, scope map[string]interface{}) (interface{}, bool, error) {
+				return e.evaluateRowValueWithCancellation(text, scope, probe)
+			}, probe)
 		case "coalesce":
 			// EXISTS subqueries are non-null booleans and end coalesce
 			// immediately. An argument is evaluated only when reached, its
@@ -1176,7 +1178,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		return nil, true, false, probe.err
 	}
 	// One scope for every element, as in evaluateRowQuantifier.
-	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate) || mayContainSubqueryExpression(projection))
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate) || mayContainSubqueryExpression(projection), probe)
 	var holds func() (bool, bool, error)
 	switch {
 	case predicate != "" && containsRelationshipPattern(predicate):
@@ -1208,7 +1210,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		}
 	}
 	budget := rowExpressionBudget(scope)
-	value, resolved, err := rowComprehensionLoop(&budget, items, func(item interface{}) { scope[variable] = item }, holds, project)
+	value, resolved, err := rowComprehensionLoop(&budget, items, func(item interface{}) { scope[variable] = item }, holds, project, probe)
 	if probe != nil && probe.err != nil {
 		return nil, true, false, probe.err
 	}
@@ -1349,13 +1351,10 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	// One scope for every element, the variable rebound per element, as
 	// reduce does: copying the row per element cost an allocation of the
 	// whole row for each one (#1214).
-	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate))
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate), probe)
 	value, resolved, err := rowQuantifierLoop(function, items, func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {
-		if probe != nil && !probe.check() {
-			return nil, false, probe.err
-		}
 		return evaluate(predicate, scope)
-	})
+	}, probe)
 	if probe != nil && probe.err != nil {
 		return nil, true, false, probe.err
 	}
