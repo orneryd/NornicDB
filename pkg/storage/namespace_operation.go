@@ -13,23 +13,28 @@ import (
 // A prepared operation fences new publications without holding the physical
 // engine's global barrier while consensus or catalog I/O is pending.
 type NamespaceDrop struct {
-	engine             *BadgerEngine
-	prefix             string
-	namespace          string
-	phase              atomic.Uint32
-	journalPosition    atomic.Uint64
-	catalogRevision    uint64
-	catalogRevisionChosen bool
-	catalogMutation *NamespaceCatalogMutation
-	once               sync.Once
-	done               chan struct{}
-	journal            func() (bool, error)
-	complete           func() error
-	err                error
-	releasePublication func()
-	physicalDone       bool
-	consensus          bool
-	releaseTasks       func()
+	engine                  *BadgerEngine
+	prefix                  string
+	namespace               string
+	phase                   atomic.Uint32
+	journalPosition         atomic.Uint64
+	catalogRevision         uint64
+	catalogRevisionChosen   bool
+	catalogMutation         *NamespaceCatalogMutation
+	committedEntry          bool
+	nativeSequence          uint64
+	nativeWAL               *WAL
+	once                    sync.Once
+	done                    chan struct{}
+	journal                 func() (bool, error)
+	complete                func() error
+	resolved                func()
+	err                     error
+	releasePublication      func()
+	physicalDone            bool
+	consensus               bool
+	releaseTasks            func()
+	releaseJournalAdmission func()
 }
 
 const (
@@ -60,10 +65,21 @@ func NamespaceDropFromContext(ctx context.Context) *NamespaceDrop {
 // The callback runs under the namespace's physical publication barrier.
 func (op *NamespaceDrop) SetJournal(journal func() (bool, error)) { op.journal = journal }
 
+// OnResolved releases preparation receipts after either abort or completion.
+// It runs outside publication locks and never performs committed completion.
+func (op *NamespaceDrop) OnResolved(resolved func()) { op.resolved = resolved }
+
 func (op *NamespaceDrop) SetJournalPosition(position uint64) { op.journalPosition.Store(position) }
 func (op *NamespaceDrop) JournalPosition() uint64            { return op.journalPosition.Load() }
-func (op *NamespaceDrop) SetCatalogRevision(revision uint64) { op.catalogRevision = revision; op.catalogRevisionChosen=true }
-func (op *NamespaceDrop) CatalogRevision() uint64            { return op.catalogRevision }
+func (op *NamespaceDrop) SetCatalogRevision(revision uint64) {
+	op.catalogRevision = revision
+	op.catalogRevisionChosen = true
+}
+func (op *NamespaceDrop) CatalogRevision() uint64 { return op.catalogRevision }
+
+// MarkCommittedEntry is for deterministic application of an admitted journal
+// entry. The caller's wait can no longer cancel or revalidate its preparation.
+func (op *NamespaceDrop) MarkCommittedEntry() { op.committedEntry = true }
 
 func (op *NamespaceDrop) SetPublicationRelease(release func()) { op.releasePublication = release }
 func (op *NamespaceDrop) HasPublicationLease() bool            { return op.releasePublication != nil }
@@ -78,7 +94,10 @@ func (op *NamespaceDrop) physicalComplete(ctx context.Context, err error) error 
 		op.releasePublication()
 		op.releasePublication = nil
 	}
-	err=errors.Join(err,op.applyCatalogMutation())
+	err = errors.Join(err, op.applyCatalogMutation())
+	if op.nativeSequence != 0 {
+		err = errors.Join(err, op.engine.persistNamespaceCompletion(op.namespace, op.nativeSequence))
+	}
 	op.physicalDone, op.err = true, errors.Join(op.err, err)
 	if (op.consensus || ctx.Value(deferredDropCompletionKey{}) == true) && op.complete != nil {
 		return op.Result(op.err)
@@ -101,12 +120,12 @@ type NamespaceDropError struct {
 
 func (e *NamespaceDropError) Error() string {
 	if e.Aborted {
-		return fmt.Sprintf("DROP preparation aborted: %v", e.Cause)
+		return fmt.Sprintf("namespace preparation aborted: %v", e.Cause)
 	}
 	if e.Committed {
-		return fmt.Sprintf("DROP committed; completion/acknowledgement: %v", e.Cause)
+		return fmt.Sprintf("namespace operation committed; completion/acknowledgement: %v", e.Cause)
 	}
-	return fmt.Sprintf("DROP proposed; outcome pending: %v", e.Cause)
+	return fmt.Sprintf("namespace proposed; outcome pending: %v", e.Cause)
 }
 func (e *NamespaceDropError) Unwrap() error         { return e.Cause }
 func (e *NamespaceDropError) MutationApplied() bool { return e.Committed }
@@ -138,8 +157,16 @@ func PrepareNamespaceDrop(ctx context.Context, engine Engine, prefix string, op 
 	case *NamespacedEngine:
 		return PrepareNamespaceDrop(ctx, e.inner, e.namespace+e.separator+prefix, op)
 	case *WALEngine:
+		journalPrefix := prefix
+		if e.journalNamespace != "" {
+			journalPrefix = e.journalNamespace + ":" + prefix
+		}
+		if err := PrepareNamespaceJournal(ctx, e.engine, journalPrefix, op); err != nil {
+			return err
+		}
 		release, err := e.admitNamespaceLifecycle(ctx)
 		if err != nil {
+			op.Abort()
 			return err
 		}
 		defer release()
@@ -160,17 +187,56 @@ func (b *BadgerEngine) PrepareNamespaceDrop(ctx context.Context, prefix string, 
 	if !whole || namespace == "" || strings.Contains(namespace, ":") {
 		return ErrNotImplemented
 	}
-	releaseTasks, err := b.admitNamespaceTasks(ctx, namespace)
-	if err != nil {
+	if err := PrepareNamespaceJournal(ctx, b, prefix, op); err != nil {
 		return err
 	}
 	prepared := false
 	defer func() {
 		if !prepared {
+			op.Abort()
+		}
+	}()
+	releaseTasks, err := b.admitNamespaceTasks(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !prepared {
 			releaseTasks()
 		}
 	}()
-	release, err := b.beginPrefixDeletion(ctx, prefix)
+	// Close physical ACK admission before capturing the accepted buffer frontier.
+	// Replay uses its shared publication barrier and can still drain old ACKs.
+	release, err := b.beginSchemaWriteContext(ctx)
+	if err != nil {
+		return err
+	}
+	err = func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := b.checkNamespaceOperation(namespace); err != nil {
+			return err
+		}
+		op.engine, op.prefix, op.namespace = b, prefix, namespace
+		if op.catalogMutation == nil {
+			if err := op.captureCatalogRetirement(); err != nil {
+				return err
+			}
+		}
+		if err := op.validateCatalogMutation(); err != nil {
+			return err
+		}
+		if op.fencesNamespace() {
+			b.setNamespaceOperation(namespace, op)
+		}
+		return nil
+	}()
+	release()
+	if err != nil {
+		return err
+	}
+	release, err = b.beginPrefixDeletion(ctx, prefix)
 	if err != nil {
 		return err
 	}
@@ -178,22 +244,18 @@ func (b *BadgerEngine) PrepareNamespaceDrop(ctx context.Context, prefix string, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := b.checkNamespaceOperation(namespace); err != nil {
-		return err
-	}
-	op.engine, op.prefix, op.namespace = b, prefix, namespace
 	op.releaseTasks = releaseTasks
 	priorCompletion := op.complete
 	op.complete = func() error {
 		var err error
-		if op.dropsNamespace(){err = b.completeNamespaceRetirement(namespace)}
+		if op.dropsNamespace() {
+			err = b.completeNamespaceRetirement(namespace)
+		}
 		if priorCompletion != nil {
 			err = errors.Join(err, priorCompletion())
 		}
 		return err
 	}
-	if err:=op.validateCatalogMutation();err!=nil{return err}
-	if op.fencesNamespace(){b.setNamespaceOperation(namespace, op)}
 	op.phase.Store(dropPrepared)
 	prepared = true
 	return nil
@@ -241,6 +303,13 @@ func (op *NamespaceDrop) Abort() {
 			op.releaseTasks()
 			op.releaseTasks = nil
 		}
+		if op.resolved != nil {
+			op.resolved()
+		}
+		if op.releaseJournalAdmission != nil {
+			op.releaseJournalAdmission()
+			op.releaseJournalAdmission = nil
+		}
 		close(op.done)
 	})
 }
@@ -254,6 +323,13 @@ func (op *NamespaceDrop) commitLocked(ctx context.Context) error {
 		}
 	}
 	op.chooseCatalogRevision()
+	if op.nativeSequence == 0 {
+		wal := op.nativeWAL
+		if wal == nil {
+			wal = op.engine.bufferedCommitWAL
+		}
+		op.bindNativeJournal(wal)
+	}
 	if op.journal != nil {
 		admitted, err := op.journal()
 		if !admitted && err != nil {
@@ -265,6 +341,9 @@ func (op *NamespaceDrop) commitLocked(ctx context.Context) error {
 		op.err = errors.Join(op.err, op.engine.retireNamespace(op.namespace, op.catalogRevision))
 		op.engine.publishLogicalNamespaceRetirement(op.namespace)
 	}
+	if op.namespace != "" {
+		op.engine.observeCatalogRevision(op.catalogRevision)
+	}
 	op.phase.Store(dropCommitted)
 	return nil
 }
@@ -272,8 +351,10 @@ func (op *NamespaceDrop) commitLocked(ctx context.Context) error {
 func (op *NamespaceDrop) chooseCatalogRevision() {
 	if !op.catalogRevisionChosen && op.namespace != "" {
 		op.catalogRevision = op.engine.catalogRevision.Load()
-		if op.dropsNamespace(){op.catalogRevision++}
-		op.catalogRevisionChosen=true
+		if op.dropsNamespace() {
+			op.catalogRevision++
+		}
+		op.catalogRevisionChosen = true
 	}
 }
 
@@ -295,6 +376,13 @@ func (op *NamespaceDrop) finish(err error) error {
 		if op.releaseTasks != nil {
 			op.releaseTasks()
 			op.releaseTasks = nil
+		}
+		if op.resolved != nil {
+			op.resolved()
+		}
+		if op.releaseJournalAdmission != nil {
+			op.releaseJournalAdmission()
+			op.releaseJournalAdmission = nil
 		}
 		close(op.done)
 	})

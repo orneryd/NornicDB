@@ -2,7 +2,11 @@
 package multidb
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +53,10 @@ func (m *DatabaseManager) loadMetadata() error {
 		if err := json.Unmarshal([]byte(data), &databases); err != nil {
 			return localizedError(localization.MultidbMetadataParseFailed(err), err)
 		}
+		var committed map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(data), &committed); err != nil {
+			return err
+		}
 		births := make(map[string]uint64)
 		if encoded, ok := node.Properties["namespace_lifetimes"].(string); ok {
 			if err := json.Unmarshal([]byte(encoded), &births); err != nil {
@@ -60,6 +68,7 @@ func (m *DatabaseManager) loadMetadata() error {
 			info.namespaceLifetime = births[name]
 			if storage.NamespaceCatalogRetired(m.inner, name, info.namespaceLifetime) {
 				delete(databases, name)
+				delete(committed, name)
 				continue
 			}
 			if previous := m.databases[name]; previous != nil && previous.ID == info.ID {
@@ -81,6 +90,12 @@ func (m *DatabaseManager) loadMetadata() error {
 			}
 		}
 		m.databases = databases
+		m.committedCatalog = committed
+		for name, p := range m.catalogPreparations {
+			if bytes.Equal(committed[name], p.mutation.Value) {
+				m.finishCatalogPreparationLocked(name, p)
+			}
+		}
 	}
 
 	return nil
@@ -97,90 +112,108 @@ func copyDatabaseMetadata(dst, src *DatabaseInfo) {
 	dst.Options, dst.namespaceLifetime = src.Options, src.namespaceLifetime
 }
 
-// persistMetadata saves database metadata to storage.
-func (m *DatabaseManager) persistMetadata(completion ...bool) error {
-	if len(completion) != 0 && completion[0] {
-		if leader, ok := m.inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
-			// Committed DROP and its durable markers already retire the
-			// replica catalog. Only the primary publishes full metadata;
-			// a late local snapshot must not overwrite a replayed CREATE.
-			return nil
-		}
-	}
+// persistMetadata publishes namespace deltas, never a snapshot of pending intent.
+// Callers hold m.mu; it is released for all storage and consensus waits.
+func (m *DatabaseManager) persistMetadata() error {
+	return m.persistMetadataContext(context.Background(), false)
+}
+
+func (m *DatabaseManager) catalogRecord() *storage.Node {
+	return &storage.Node{ID: storage.NodeID(m.config.SystemDatabase + ":" + metadataNodeID), Labels: []string{"_System", "_Metadata"}, Properties: map[string]any{
+		"type": "databases", "updated_at": time.Now().Unix(), "server_id": m.serverID, "server_created_at": m.serverCreatedAt.Format(time.RFC3339Nano),
+	}}
+}
+
+func (m *DatabaseManager) persistMetadataContext(ctx context.Context, bootstrap bool) error {
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
 	if m.serverCreatedAt.IsZero() {
 		m.serverCreatedAt = time.Now().UTC()
 	}
-	for _, database := range m.databases {
-		if database.ID == "" {
-			database.ID = uuid.NewString()
+	var mutations []storage.NamespaceCatalogMutation
+	for name, info := range m.databases {
+		if info.ID == "" {
+			info.ID = uuid.NewString()
+		}
+		value, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+		expected := m.committedCatalog[name]
+		// Compare semantic catalog values: old records may omit newly added fields.
+		var previous DatabaseInfo
+		if len(expected) != 0 {
+			if err := json.Unmarshal(expected, &previous); err != nil {
+				return err
+			}
+		}
+		normalized, _ := json.Marshal(&previous)
+		if len(expected) == 0 || !bytes.Equal(value, normalized) {
+			mutations = append(mutations, storage.NamespaceCatalogMutation{Namespace: name, Record: m.catalogRecord(), Expected: expected, Value: value, Create: len(expected) == 0, Bootstrap: bootstrap})
 		}
 	}
-	// Serialize metadata
-	data, err := json.Marshal(m.databases)
-	if err != nil {
-		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
-	}
-	births := make(map[string]uint64, len(m.databases))
+	// Restore committed metadata before releasing the manager lock. No pending
+	// CREATE/ALTER can leak into reads or another namespace's publication.
 	for name, info := range m.databases {
-		births[name] = info.namespaceLifetime
+		raw := m.committedCatalog[name]
+		if len(raw) == 0 {
+			delete(m.databases, name)
+			continue
+		}
+		var previous DatabaseInfo
+		if err := json.Unmarshal(raw, &previous); err != nil {
+			return err
+		}
+		previous.namespaceLifetime = info.namespaceLifetime
+		copyDatabaseMetadata(info, &previous)
 	}
-	lifetimes, err := json.Marshal(births)
-	if err != nil {
-		return err
+	sort.Slice(mutations, func(i, j int) bool { return mutations[i].Namespace < mutations[j].Namespace })
+	for _, mutation := range mutations {
+		if m.catalogPreparations[mutation.Namespace] != nil {
+			return storage.ErrConflict
+		}
 	}
-
-	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
-
-	node := &storage.Node{
-		ID:     storage.NodeID(metadataNodeID),
-		Labels: []string{"_System", "_Metadata"},
-		Properties: map[string]any{
-			"data":                string(data),
-			"namespace_lifetimes": string(lifetimes),
-			"type":                "databases",
-			"updated_at":          time.Now().Unix(),
-			"server_id":           m.serverID,
-			"server_created_at":   m.serverCreatedAt.Format(time.RFC3339Nano),
-		},
+	if m.catalogPreparations == nil {
+		m.catalogPreparations = make(map[string]*catalogPreparation)
 	}
-
-	// Capture the catalog publication order while holding m.mu, then release
-	// it for every storage/snapshot/replication wait. A later snapshot cannot
-	// overtake this one and overwrite a newer catalog with older metadata.
-	previous := m.metadataTail
-	done := make(chan struct{})
-	m.metadataTail = done
+	preparations := make([]*catalogPreparation, 0, len(mutations))
+	for _, mutation := range mutations {
+		p := &catalogPreparation{mutation: mutation, done: make(chan struct{}), operation: storage.NewNamespaceDrop(nil)}
+		p.operation.OnResolved(func() { m.finishCatalogPreparation(p.mutation.Namespace, p) })
+		m.catalogPreparations[mutation.Namespace] = p
+		preparations = append(preparations, p)
+	}
 	m.mu.Unlock()
 	defer m.mu.Lock()
-	defer close(done)
-	if previous != nil {
-		<-previous
-	}
-
-	// Check if node exists
-	existing, err := systemEngine.GetNode(storage.NodeID(metadataNodeID))
-	if err == storage.ErrNotFound {
-		// Create new
-		_, err := systemEngine.CreateNode(node)
-		if len(completion) != 0 && completion[0] && storage.MutationApplied(err) {
-			return nil
+	started := 0
+	defer func() {
+		for _, p := range preparations[started:] {
+			m.finishCatalogPreparation(p.mutation.Namespace, p)
 		}
-		return err
+	}()
+	for _, p := range preparations {
+		started++
+		if err := storage.PublishNamespaceCatalogContext(storage.WithNamespaceDrop(ctx, p.operation), m.inner, p.mutation); err != nil {
+			var outcome *storage.NamespaceDropError
+			if !errors.As(err, &outcome) || outcome.Committed || outcome.Aborted {
+				m.finishCatalogPreparation(p.mutation.Namespace, p)
+			}
+			return err
+		}
+		if !p.operation.Committed() {
+			// Forwarded CREATE/ALTER can reach the leader before local replay.
+			// Wait for the committed catalog, without owning the manager lock.
+			select {
+			case <-p.done:
+			case <-ctx.Done():
+				return &storage.NamespaceDropError{Committed: true, Cause: ctx.Err()}
+			}
+		}
 	}
-	if err != nil {
-		return err
-	}
-
-	// Update existing
-	node.CreatedAt = existing.CreatedAt
-	err = systemEngine.UpdateNode(node)
-	if len(completion) != 0 && completion[0] && storage.MutationApplied(err) {
-		return nil
-	}
-	return err
+	// Legacy/mock wrappers without intrinsic observers still publish by reading
+	// committed storage; no proposed value is installed directly.
+	return m.loadMetadata()
 }
 
 // ServerIdentity returns the persisted installation UUID and creation time.

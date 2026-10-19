@@ -9,8 +9,28 @@ import (
 )
 
 type namespaceDropCommand struct {
-	Prefix     string
-	Retirement uint64
+	Prefix           string
+	Retirement       uint64
+	RevisionAssigned bool
+	Catalog          *storage.NamespaceCatalogMutation
+}
+
+func isNamespaceLifecycle(cmd *Command) bool {
+	return cmd.Type == CmdDeleteByPrefix || cmd.Type == CmdNamespaceCatalog
+}
+
+func configureNamespaceOperation(cmd *Command, op *storage.NamespaceDrop) (namespaceDropCommand, error) {
+	var request namespaceDropCommand
+	if err := decodeGob(cmd.Data, &request); err != nil {
+		return request, err
+	}
+	if request.Catalog != nil {
+		op.SetCatalogMutation(*request.Catalog)
+	}
+	if request.RevisionAssigned || request.Retirement != 0 {
+		op.SetCatalogRevision(request.Retirement)
+	}
+	return request, nil
 }
 
 func stampNamespaceDrop(cmd *Command, op *storage.NamespaceDrop) error {
@@ -19,6 +39,8 @@ func stampNamespaceDrop(cmd *Command, op *storage.NamespaceDrop) error {
 		return err
 	}
 	request.Retirement = op.CatalogRevision()
+	request.RevisionAssigned = true
+	request.Catalog = op.CatalogMutation()
 	data, err := encodeGob(request)
 	if err == nil {
 		cmd.Data = data
@@ -36,7 +58,7 @@ func applyCommittedStorageCommand(target Storage, cmd *Command) error {
 }
 
 func (r *RaftReplicator) applyCommittedCommand(cmd *Command) error {
-	if cmd.Type == CmdDeleteByPrefix {
+	if isNamespaceLifecycle(cmd) {
 		if cmd.namespaceDrop == nil {
 			cmd.namespaceDrop = storage.NewNamespaceDrop(nil)
 		}
@@ -45,9 +67,32 @@ func (r *RaftReplicator) applyCommittedCommand(cmd *Command) error {
 	return applyCommittedStorageCommand(r.storage, cmd)
 }
 
-func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context) error {
+func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, cmd *Command) error {
+	namespaces, err := commandNamespaces(cmd)
+	if err != nil {
+		return err
+	}
 	r.logMu.RLock()
-	frontier := r.log[len(r.log)-1].Index
+	var frontier uint64
+	for _, entry := range r.log {
+		if entry.Command == nil || entry.Index <= r.lastApplied {
+			continue
+		}
+		prior, err := commandNamespaces(entry.Command)
+		if err != nil {
+			r.logMu.RUnlock()
+			return err
+		}
+		matches := len(prior) == 0 || len(namespaces) == 0
+		for _, name := range namespaces {
+			for _, other := range prior {
+				matches = matches || name == other
+			}
+		}
+		if matches {
+			frontier = entry.Index
+		}
+	}
 	applied := r.lastApplied
 	r.logMu.RUnlock()
 	if applied >= frontier {
@@ -64,7 +109,7 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context) 
 		case <-r.stopCh:
 			return ErrClosed
 		case <-timeout.C:
-			return fmt.Errorf("DROP preparation waiting for prior consensus entries: deadline exceeded")
+			return fmt.Errorf("namespace preparation waiting for prior consensus entries: deadline exceeded")
 		case <-ticker.C:
 			r.logMu.RLock()
 			applied = r.lastApplied
@@ -77,7 +122,7 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context) 
 }
 
 func commandWaitOutcome(cmd *Command, err error) error {
-	if err == nil || cmd.Type != CmdDeleteByPrefix {
+	if err == nil || !isNamespaceLifecycle(cmd) {
 		return err
 	}
 	return &storage.NamespaceDropError{Committed: cmd.namespaceDrop != nil && cmd.namespaceDrop.Committed(), Cause: err}
@@ -86,10 +131,6 @@ func commandWaitOutcome(cmd *Command, err error) error {
 // Consensus admission prepares the SAME operation later applied by the storage
 // adapter. No snapshot, frontier or lock wait is first discovered after append.
 func (a *StorageAdapter) PrepareCommandContext(ctx context.Context, cmd *Command) error {
-	var req struct{ Prefix string }
-	if err := decodeGob(cmd.Data, &req); err != nil {
-		return err
-	}
 	op := cmd.namespaceDrop
 	if op == nil {
 		op = storage.NamespaceDropFromContext(ctx)
@@ -98,8 +139,17 @@ func (a *StorageAdapter) PrepareCommandContext(ctx context.Context, cmd *Command
 		op = storage.NewNamespaceDrop(nil)
 	}
 	cmd.namespaceDrop = op
+	req, err := configureNamespaceOperation(cmd, op)
+	if err != nil {
+		return err
+	}
+	if err := storage.PrepareNamespaceJournal(ctx, a.engine, req.Prefix, op); err != nil {
+		op.Abort()
+		return err
+	}
 	release, err := a.admitCommand(ctx, cmd, true)
 	if err != nil {
+		op.Abort()
 		return err
 	}
 	op.SetPublicationRelease(release)

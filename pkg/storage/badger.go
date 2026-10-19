@@ -204,17 +204,22 @@ type BadgerEngine struct {
 	writeBarrier sync.RWMutex
 	// Immutable publication fences exist only while prefix deletion is active.
 	// Updates use prefixDeleteMu; ordinary commits perform one atomic load.
-	prefixDeleteMu            sync.Mutex
-	deletingPrefixes          atomic.Pointer[[]string]
-	namespaceLifetimes        atomic.Pointer[namespaceLifetimes]
-	namespaceRetirementHooks  sync.Map
-	namespaceRetirementHookID atomic.Uint64
-	namespaceTaskGates        sync.Map
-	catalogObserversMu        sync.Mutex
-	catalogObservers          atomic.Pointer[namespaceCatalogObservers]
-	catalogObserverID         uint64
-	catalogRevision           atomic.Uint64
-	catalogRecordGates        sync.Map
+	prefixDeleteMu               sync.Mutex
+	deletingPrefixes             atomic.Pointer[[]string]
+	namespaceLifetimes           atomic.Pointer[namespaceLifetimes]
+	namespaceRetirementHooks     sync.Map
+	namespaceRetirementHookID    atomic.Uint64
+	namespaceTaskGates           sync.Map
+	catalogObserversMu           sync.Mutex
+	catalogObservers             atomic.Pointer[namespaceCatalogObservers]
+	catalogObserverID            uint64
+	catalogRevision              atomic.Uint64
+	catalogRecordGates           sync.Map
+	namespaceJournalMu           sync.Mutex
+	namespaceJournalStates       map[string]*namespaceJournalState
+	namespaceJournalGlobal       namespaceJournalState
+	namespaceJournalPreparations map[string]*NamespaceDrop
+	namespaceWALOwner            *WALEngine
 	// Sidecar publication is the only writer that does not change a body.
 	// Versions are recorded only for live sidecar ranges; the scalar is read
 	// under writeBarrier and avoids any registry walk on ordinary commits.

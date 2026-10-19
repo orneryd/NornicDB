@@ -2835,11 +2835,18 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 const commitCancelPollEvery = 256
 
 func (tx *BadgerTransaction) Commit() error {
+	return tx.commit(nil)
+}
+
+func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
 	defer func() {
 		tx.mu.Unlock()
+		if commitErr == nil && afterPublication != nil {
+			afterPublication()
+		}
 		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()

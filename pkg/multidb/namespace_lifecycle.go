@@ -50,6 +50,7 @@ func (m *DatabaseManager) retireDatabaseCatalog(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.databases, name)
+	delete(m.committedCatalog, name)
 	m.applyChangeCapture(name, nil)
 	delete(m.engines, name)
 	delete(m.limitCheckers, name)
@@ -66,10 +67,9 @@ func (m *DatabaseManager) completeDatabaseRetirement(name string) error {
 		return nil
 	}
 	delete(m.pendingCatalogRetirements, name)
-	err := m.persistMetadata(true)
 	for _, waiter := range m.namespaceRetirements[name] {
 		close(waiter)
 	}
 	delete(m.namespaceRetirements, name)
-	return err
+	return nil
 }

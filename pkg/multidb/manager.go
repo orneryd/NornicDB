@@ -7,6 +7,7 @@ package multidb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -46,7 +47,8 @@ import (
 //	tenantStorage.CreateNode(&storage.Node{ID: "123"})
 type DatabaseManager struct {
 	mu                            sync.RWMutex
-	metadataTail                  chan struct{}
+	committedCatalog              map[string]json.RawMessage
+	catalogPreparations           map[string]*catalogPreparation
 	catalogRefreshMu              sync.Mutex
 	unregisterCatalogObserver     func()
 	pendingCatalogRetirements     map[string]bool
@@ -370,7 +372,7 @@ func (m *DatabaseManager) ensureSystemDatabases() error {
 		}
 	}
 
-	return m.persistMetadata()
+	return m.persistMetadataContext(context.Background(), true)
 }
 
 // CreateDatabase creates a new database.
@@ -390,11 +392,6 @@ func (m *DatabaseManager) CreateDatabaseContext(ctx context.Context, name string
 		return err
 	}
 	defer finish()
-	release, err := storage.AdmitNamespaceLifecycle(ctx, m.inner, name)
-	if err != nil {
-		return err
-	}
-	defer release()
 	unlock, err := util.LockContext(ctx, m.mu.Lock, m.mu.Unlock)
 	if err != nil {
 		return err
@@ -412,7 +409,7 @@ func (m *DatabaseManager) CreateDatabaseContext(ctx context.Context, name string
 	}
 
 	// Check limit
-	if m.config.MaxDatabases > 0 && len(m.databases) >= m.config.MaxDatabases {
+	if m.config.MaxDatabases > 0 && len(m.databases)+m.pendingDatabaseCreatesLocked() >= m.config.MaxDatabases {
 		return ErrMaxDatabasesReached
 	}
 	if err := ctx.Err(); err != nil {
@@ -430,15 +427,7 @@ func (m *DatabaseManager) CreateDatabaseContext(ctx context.Context, name string
 		UpdatedAt:         time.Now(),
 	}
 
-	release()
-	err = m.persistMetadata()
-	if err == nil {
-		err = ctx.Err()
-	}
-	if err != nil {
-		return fmt.Errorf("CREATE DATABASE committed: %w", err)
-	}
-	return nil
+	return m.persistMetadataContext(ctx, false)
 }
 
 // DropDatabase removes a database and all its data.
@@ -501,9 +490,11 @@ func (m *DatabaseManager) dropDatabaseContext(ctx context.Context, name, require
 		m.namespaceRetirements = make(map[string][]chan struct{})
 	}
 	m.namespaceRetirements[name] = append(m.namespaceRetirements[name], retired)
+	mutation := storage.NamespaceCatalogMutation{Namespace: name, Record: m.catalogRecord(), Expected: m.committedCatalog[name]}
 	release()
 	defer m.removeNamespaceRetirementWaiter(name, retired)
 	op := storage.NewNamespaceDrop(nil)
+	op.SetCatalogMutation(mutation)
 	_, _, err = storage.DeletePrefixContext(storage.WithNamespaceDrop(ctx, op), m.inner, name+":")
 	if err != nil && !op.Committed() {
 		var pending *storage.NamespaceDropError
@@ -809,6 +800,11 @@ func (m *DatabaseManager) DefaultDatabaseName() string {
 
 // SetDatabaseStatus sets a database online/offline.
 func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -904,6 +900,11 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 
 // CreateAlias creates an alias for a database (Neo4j-compatible).
 func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), databaseName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -919,6 +920,9 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 	if m.databases[alias] != nil {
 		return ErrAliasConflict
 	}
+	if pending := m.catalogPreparations[alias]; pending != nil && pending.mutation.Create {
+		return ErrAliasConflict
+	}
 
 	// Validate alias name
 	if err := m.validateAliasName(alias); err != nil {
@@ -926,6 +930,9 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 	}
 
 	// Check if alias is already used by another database
+	if m.catalogAliasReservedLocked(alias) {
+		return ErrAliasExists
+	}
 	for _, dbInfo := range m.databases {
 		for _, existingAlias := range dbInfo.Aliases {
 			if existingAlias == alias {
@@ -946,11 +953,20 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 
 // DropAlias removes an alias (Neo4j-compatible).
 func (m *DatabaseManager) DropAlias(alias string) error {
+	name, err := m.ResolveDatabase(alias)
+	if err != nil {
+		return ErrAliasNotFound
+	}
+	finish, err := m.admitDatabaseLifecycle(context.Background(), name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Find database with this alias
-	for _, info := range m.databases {
+	if info := m.databases[name]; info != nil {
 		for i, existingAlias := range info.Aliases {
 			if existingAlias == alias {
 				// Remove alias
@@ -992,6 +1008,11 @@ func (m *DatabaseManager) ListAliases(databaseName string) map[string]string {
 
 // SetDatabaseLimits sets resource limits for a database.
 func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), databaseName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1001,12 +1022,10 @@ func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits)
 	}
 
 	limits = cloneLimits(limits)
-	previousLimits := info.Limits
 	info.Limits = limits
 	info.UpdatedAt = time.Now()
 
 	if err := m.persistMetadata(); err != nil {
-		info.Limits = previousLimits
 		return err
 	}
 	if checker := m.limitCheckers[databaseName]; checker != nil {
