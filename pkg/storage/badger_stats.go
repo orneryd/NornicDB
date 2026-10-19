@@ -725,10 +725,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
 			continue
 		}
-		projected := projectCachedNodeForRead(node, opts.Projection)
-		if opts.StripEmbeddings {
-			projected = copyNodeWithoutEmbeddings(projected)
-		}
+		projected := projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
 		if err := fn(projected); err != nil {
 			if err == ErrIterationStopped {
 				return nil
