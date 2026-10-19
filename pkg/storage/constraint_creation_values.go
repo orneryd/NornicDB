@@ -44,7 +44,7 @@ func (seen constraintCreationValues) add(id string, values []interface{}) (strin
 		}
 		equal := true
 		for i, value := range values {
-			if !constraintCreationValueEqual(prior.values[i], value) {
+			if !compareValues(prior.values[i], value) {
 				equal = false
 				break
 			}
@@ -55,18 +55,6 @@ func (seen constraintCreationValues) add(id string, values []interface{}) (strin
 	}
 	seen[key] = append(seen[key], constraintCreationValue{id: id, values: values})
 	return "", false
-}
-
-func constraintCreationValueEqual(a, b interface{}) bool {
-	av, bv := reflect.ValueOf(a), reflect.ValueOf(b)
-	if av.IsValid() && bv.IsValid() {
-		// Reuse the exact numeric owner already used for constraint list elements:
-		// widening adjacent int64 values through float64 would create duplicates.
-		if equal, numeric := equalConstraintListNumbers(av, bv); numeric {
-			return equal
-		}
-	}
-	return compareValues(a, b)
 }
 
 // Property indexes deliberately do not index byte arrays. DDL uniqueness,
