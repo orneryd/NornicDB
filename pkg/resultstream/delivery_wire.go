@@ -29,6 +29,15 @@ func (d *Delivery) ObserveWritten(data []byte) bool {
 func (d *Delivery) DeliveredWritten() {
 	d.finishWhere(func(cursor deliveryCursor) bool { return cursor.written }, false)
 }
+
+// DiscardEncoded retires references in a complete record selected by DISCARD.
+// The transport uses its canonical encoder, covering every supported value type
+// and references carried inside serialized text without inspecting Go shapes.
+func (d *Delivery) DiscardEncoded(data []byte) {
+	d.finishWhere(func(cursor deliveryCursor) bool {
+		return bytes.Contains(data, []byte(cursor.qid))
+	}, true)
+}
 func (c *deliveryCursor) observeWritten(data []byte) {
 	if c.written || len(data) == 0 {
 		return
