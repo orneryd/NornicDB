@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -92,7 +93,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdCreateNode, CmdUpdateNode:
 		node, err := decodeNodePayload(cmd.Data)
 		if err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeNodeFailed(err), err)
 		}
 		add(string(node.ID))
 		if len(payload) != 0 {
@@ -101,7 +102,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdCreateEdge, CmdUpdateEdge:
 		edge, err := decodeEdgePayload(cmd.Data)
 		if err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeEdgeFailed(err), err)
 		}
 		add(string(edge.ID))
 		if len(payload) != 0 {
@@ -110,7 +111,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdDeleteNode, CmdSetProperty:
 		var req struct{ NodeID string }
 		if err := decodeGob(cmd.Data, &req); err != nil && cmd.Type != CmdDeleteNode {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeSetPropertyFailed(err), err)
 		}
 		if req.NodeID == "" {
 			add(string(cmd.Data))
@@ -120,19 +121,22 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdDeleteEdge:
 		var req struct{ EdgeID string }
 		if err := decodeGob(cmd.Data, &req); err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeDeleteEdgeFailed(err), err)
 		}
 		add(req.EdgeID)
 	case CmdDeleteByPrefix, CmdNamespaceCatalog:
 		var req struct{ Prefix string }
 		if err := decodeGob(cmd.Data, &req); err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeDeletePrefixFailed(err), err)
 		}
 		add(req.Prefix)
 	case CmdBulkCreateNodes, CmdBulkCreateEdges:
 		var encoded [][]byte
 		if err := decodeGob(cmd.Data, &encoded); err != nil {
-			return nil, err
+			if cmd.Type == CmdBulkCreateNodes {
+				return nil, localizedError(localization.ReplicationStorageDecodeBulkCreateNodesFailed(err), err)
+			}
+			return nil, localizedError(localization.ReplicationStorageDecodeBulkCreateEdgesFailed(err), err)
 		}
 		for _, data := range encoded {
 			if cmd.Type == CmdBulkCreateNodes {
@@ -152,7 +156,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdBulkDeleteNodes:
 		var ids []storage.NodeID
 		if err := decodeGob(cmd.Data, &ids); err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeBulkDeleteNodesFailed(err), err)
 		}
 		for _, id := range ids {
 			add(string(id))
@@ -160,7 +164,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdBulkDeleteEdges:
 		var ids []storage.EdgeID
 		if err := decodeGob(cmd.Data, &ids); err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeBulkDeleteEdgesFailed(err), err)
 		}
 		for _, id := range ids {
 			add(string(id))
@@ -168,7 +172,7 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 	case CmdBatchWrite:
 		var batch struct{ Nodes, Edges [][]byte }
 		if err := decodeGob(cmd.Data, &batch); err != nil {
-			return nil, err
+			return nil, localizedError(localization.ReplicationStorageDecodeBatchFailed(err), err)
 		}
 		for _, data := range batch.Nodes {
 			node, err := decodeNodePayload(data)
