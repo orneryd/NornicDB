@@ -273,6 +273,16 @@ cursor count to enable it. Set `memory.search_cursor_ttl` or
 `NORNICDB_SEARCH_CURSOR_TTL` to an integer number of milliseconds; the default
 is `300000`.
 
+`memory.search_cursor_max_page_size` / `NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE`
+sets the maximum `n` for each continuation START or PULL. It defaults to
+`500`; positive integers override it, while zero or an omitted value keeps the
+default. Environment variables override YAML. This is independent of the
+initial retrieval depth (`limit`) and total emitted result ceiling
+(`max_results`). Page responses advertise `max_page_size` (native gRPC uses
+response header metadata). Oversized pages return HTTP `400 page_size_exceeded`
+with `max_page_size`; see [search continuation](../user-guides/search-continuation.md)
+for equivalent gRPC and Bolt errors.
+
 #### Activation summary
 
 The key metadata endpoint reports the activation contract for every setting:

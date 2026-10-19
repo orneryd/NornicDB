@@ -183,6 +183,25 @@ lifetime in milliseconds and defaults to `300000` (five minutes). Ordinary
 searches without continuation fields are unaffected when the feature is
 disabled.
 
+`n` on START and PULL must be a positive integer at most
+`memory.search_cursor_max_page_size` (or
+`NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE`). The default maximum is **500**;
+set a positive integer to raise or lower it. This page limit is separate from
+the initial retrieval `limit` and the overall `max_results` ceiling.
+HTTP and Cypher page maps advertise `max_page_size`, including on START.
+Native gRPC advertises it in the `max_page_size` response header metadata,
+without changing the protobuf response.
+
+An oversized page returns HTTP 400 with `request_status: "page_size_exceeded"`
+and `max_page_size`. Native gRPC returns `InvalidArgument` with an `ErrorInfo`
+detail (`reason: "PAGE_SIZE_EXCEEDED"`, metadata `request_status`,
+`max_page_size`, and `http_code: "400"`). Bolt returns
+`Neo.ClientError.Statement.ArgumentError` with `request_status` and
+`max_page_size` in FAILURE metadata; Cypher errors also identify
+`page_size_exceeded` and the maximum in their message. A malformed qid retains
+its existing invalid-continuation error. Retry a valid qid with a smaller `n`
+after an oversized-page error.
+
 Qids are signed, fixed-expiry, process-local tokens. Registry state stores a
 keyed owner/database digest, not credentials. Pull and discard require the same
 validated principal and canonical database. A different server instance cannot
