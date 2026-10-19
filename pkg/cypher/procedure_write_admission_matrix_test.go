@@ -128,12 +128,12 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 									return result, err
 								}
 								if origin.OwnsTransactions {
- return nested.executePeriodicBatch(ctx,origin.Name,func(batchCtx context.Context,batch *StorageExecutor)(*ExecuteResult,error){
-  transactional=batch.inTransaction(batchCtx)
-  return batch.Execute(batchCtx,"CREATE (:U5AdmissionMatrix) RETURN 1 AS value",nil)
- })
-}
-         if writes {
+									return nested.executePeriodicBatch(ctx, origin.Name, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
+										transactional = batch.inTransaction(batchCtx)
+										return batch.Execute(batchCtx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
+									})
+								}
+								if writes {
 									return nested.Execute(ctx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
 								}
 								return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
