@@ -10,15 +10,32 @@ import (
 	"testing"
 	"time"
 
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	const query = "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
+	// Isolate row materialization from process-global recognizer initialization.
+	// In a fresh process the first Validate reports the cold parser cost; in a
+	// full suite earlier tests may already have initialized the recognizer.
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	result, err := executor.Execute(context.Background(), "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c", nil)
+	err := cypherantlr.Validate(query)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	t.Logf("parser initialization evidence: first Validate allocated %d bytes (cold in a fresh focused process)", after.TotalAlloc-before.TotalAlloc)
+	runtime.ReadMemStats(&before)
+	err = cypherantlr.Validate(query)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	t.Logf("parser initialization evidence: warm Validate allocated %d bytes", after.TotalAlloc-before.TotalAlloc)
+
+	// Use a fresh executor and measure its first real Execute, never a cached result.
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	runtime.ReadMemStats(&before)
+	result, err := executor.Execute(context.Background(), query, nil)
 	runtime.ReadMemStats(&after)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
