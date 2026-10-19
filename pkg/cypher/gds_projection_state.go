@@ -140,15 +140,26 @@ func gdsNodeIndex(nodes []string) map[string]int {
 // their import-map order, then targets within each type. Stable sorting retains
 // the order of parallel arcs. Algorithms consume this order before arithmetic.
 func (g *gdsSubgraph) orderOutgoing() {
+	_ = g.orderOutgoingWithCancellation(nil)
+}
+
+func (g *gdsSubgraph) orderOutgoingWithCancellation(probe *pipelineCancellation) error {
 	for source, edges := range g.outgoing {
+		if probe.stopped() { return probe.failed() }
 		if len(edges) > 1 {
 			var ranks []int
 			if len(g.outgoingTypes) > source {
 				ranks = g.outgoingTypes[source]
 			}
-			sort.Stable(gdsOrderedEdges{edges: edges, ranks: ranks})
+			ordered := gdsOrderedEdges{edges: edges, ranks: ranks}
+			if probe == nil {
+				sort.Stable(ordered)
+			} else if !probe.sortInterface(ordered, true) {
+				return probe.failed()
+			}
 		}
 	}
+	return nil
 }
 
 type gdsOrderedEdges struct {

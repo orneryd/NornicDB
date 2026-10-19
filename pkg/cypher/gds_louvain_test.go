@@ -187,11 +187,11 @@ func TestLouvainLevelsAsGDS(t *testing.T) {
 func TestGDSLouvainStreamArgumentBranches(t *testing.T) {
 	newLouvainKarateGraph(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv"))
-	_, err := exec.callGdsLouvainStream(nil)
+	_, err := exec.callGdsLouvainStream(context.Background(), nil)
 	require.ErrorContains(t, err, "graphName")
-	_, err = exec.callGdsLouvainStream([]interface{}{"k", int64(5)})
+	_, err = exec.callGdsLouvainStream(context.Background(), []interface{}{"k", int64(5)})
 	require.ErrorContains(t, err, "configuration")
-	_, err = exec.callGdsLouvainStream([]interface{}{"missing"})
+	_, err = exec.callGdsLouvainStream(context.Background(), []interface{}{"missing"})
 	require.ErrorContains(t, err, "Graph with name `missing` does not exist")
 	for config, message := range map[string]string{
 		"maxIterations: 'x'":                  "The value of `maxIterations` must be of type `Integer` but was `String`.",
@@ -297,7 +297,7 @@ func TestGDSLouvainCommunityIDsAsGDS(t *testing.T) {
 		require.ErrorContains(t, err, message, config)
 	}
 	for _, tolerance := range []float64{math.Inf(1), math.NaN()} {
-		_, err := exec.callGdsLouvainStream([]interface{}{"k", map[string]interface{}{"tolerance": tolerance}})
+		_, err := exec.callGdsLouvainStream(context.Background(), []interface{}{"k", map[string]interface{}{"tolerance": tolerance}})
 		require.ErrorContains(t, err, "Value for `tolerance` was `"+javaDoubleText(tolerance)+"`, but must be within the range [0.00, 1797", tolerance)
 	}
 	require.Equal(t, "Infinity", javaDoubleText(math.Inf(1)))

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestGDSLouvainSingleTypeStreamAllocationBound(t *testing.T) {
 				plain, typed := selectAllocs(false), selectAllocs(true)
 				stream := testing.AllocsPerRun(3, func() {
 					var err error
-					gdsLouvainAllocationStream, err = e.callGdsLouvainStream([]interface{}{"alloc", map[string]interface{}{"concurrency": int64(1), "relationshipWeightProperty": "w", "maxLevels": int64(1), "maxIterations": int64(1), "consecutiveIds": true}})
+					gdsLouvainAllocationStream, err = e.callGdsLouvainStream(context.Background(), []interface{}{"alloc", map[string]interface{}{"concurrency": int64(1), "relationshipWeightProperty": "w", "maxLevels": int64(1), "maxIterations": int64(1), "consecutiveIds": true}})
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -282,6 +282,43 @@ func (probe *pipelineCancellation) poll() bool {
 // and letting sort finish a large input. Only the private cancellation sentinel
 // is recovered, within the sort call; unrelated panics retain their meaning.
 func (probe *pipelineCancellation) sort(values interface{}, less func(int, int) bool, stable bool) (ok bool) {
+	return probe.sortOperation(func() {
+		guarded := func(left, right int) bool {
+			probe.checkSort()
+			return less(left, right)
+		}
+		if stable {
+			sort.SliceStable(values, guarded)
+		} else {
+			sort.Slice(values, guarded)
+		}
+	})
+}
+
+// A custom Swap may move parallel metadata arrays along with its values.
+// Keep that genuine sort boundary while sharing cancellation and unwinding.
+func (probe *pipelineCancellation) sortInterface(values sort.Interface, stable bool) bool {
+	return probe.sortOperation(func() {
+		guarded := pipelineSortable{Interface: values, probe: probe}
+		if stable { sort.Stable(guarded) } else { sort.Sort(guarded) }
+	})
+}
+
+type pipelineSortable struct {
+	sort.Interface
+	probe *pipelineCancellation
+}
+
+func (values pipelineSortable) Less(left, right int) bool {
+	values.probe.checkSort()
+	return values.Interface.Less(left, right)
+}
+
+func (probe *pipelineCancellation) checkSort() {
+	if probe != nil && !probe.check() { panic(pipelineSortCancellation{}) }
+}
+
+func (probe *pipelineCancellation) sortOperation(run func()) (ok bool) {
 	defer func() {
 		if stopped := recover(); stopped != nil {
 			if _, cancelled := stopped.(pipelineSortCancellation); !cancelled {
@@ -290,18 +327,8 @@ func (probe *pipelineCancellation) sort(values interface{}, less func(int, int) 
 			ok = false
 		}
 	}()
-	guarded := func(left, right int) bool {
-		if !probe.check() {
-			panic(pipelineSortCancellation{})
-		}
-		return less(left, right)
-	}
-	if stable {
-		sort.SliceStable(values, guarded)
-	} else {
-		sort.Slice(values, guarded)
-	}
-	return probe.check()
+	run()
+	return probe == nil || probe.check()
 }
 
 // contextPipelineProbe is the statement probe ctx already carries, or nil:

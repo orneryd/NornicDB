@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
@@ -29,7 +30,9 @@ var louvainConfigKeys = []string{
 // the largest seed + its numeric original ID (string IDs use 1 + their
 // projection position). This can collide with a seed, as in GDS.
 // consecutiveIds numbers them 0, 1, … by first node.
-func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLouvainStream(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -121,21 +124,25 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 	}
 
-	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested, includeTypes: true})
+	graph, err := selectGDSSubgraphWithCancellation(probe, projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested, includeTypes: true})
 	if err != nil {
 		return nil, err
 	}
 	size := len(graph.nodes)
-	graph.orderOutgoing()
+	if err := graph.orderOutgoingWithCancellation(probe); err != nil { return nil, err }
 	// The relationships as projected, as GDS reads them: outgoing (an
 	// UNDIRECTED projection holds each both ways), a missing weight NaN.
 	arcCounts := make([]int, size)
 	for source, edges := range graph.outgoing {
+		if probe.stopped() { return nil, probe.failed() }
 		arcCounts[source] = len(edges)
 	}
-	solver := louvain.NewGraph(size, arcCounts)
+	solver, err := louvain.NewGraphWithCancellation(size, arcCounts, functionCancellation(probe))
+	if err != nil { return nil, err }
 	for source, edges := range graph.outgoing {
+		if probe.stopped() { return nil, probe.failed() }
 		for _, edge := range edges {
+			if probe.stopped() { return nil, probe.failed() }
 			solver.Arc(source, edge.target, edge.weight)
 		}
 	}
@@ -147,6 +154,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		seeds := make(map[int]int64)
 		largest := int64(0)
 		for i, id := range graph.nodes {
+			if probe.stopped() { return nil, probe.failed() }
 			run.Seed[i] = i
 			// Integer reads preserve exact Long values and supply GDS's
 			// missing sentinel through the single projected-property owner.
@@ -177,6 +185,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 		groups := make(map[int64]int)
 		for i := range graph.nodes {
+			if probe.stopped() { return nil, probe.failed() }
 			seed := name(i)
 			if first, seen := groups[seed]; seen {
 				run.Seed[i] = first
@@ -185,7 +194,8 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			}
 		}
 	}
-	result := louvain.Run(solver, run)
+	result, err := louvain.RunWithCancellation(solver, run, functionCancellation(probe))
+	if err != nil { return nil, err }
 	last := len(result.Levels) - 1
 	final := result.Levels[last]
 	communityID := func(level, community int) int64 {
@@ -197,10 +207,12 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 
 	sizes := make(map[int]int)
 	for _, community := range final {
+		if probe.stopped() { return nil, probe.failed() }
 		sizes[community]++
 	}
 	rows := make([][]interface{}, 0, size)
 	for i, id := range graph.nodes {
+		if probe.stopped() { return nil, probe.failed() }
 		if int64(sizes[final[i]]) < minSize {
 			continue
 		}
@@ -208,6 +220,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		if intermediate {
 			list := make([]interface{}, len(result.Levels))
 			for level, membership := range result.Levels {
+				if probe.stopped() { return nil, probe.failed() }
 				list[level] = communityID(level, membership[i])
 			}
 			levels = list
@@ -219,10 +232,12 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		// the solver's communities. The unfiltered stream needs no remap.
 		visible := make([]int, len(rows))
 		for i, row := range rows {
+			if probe.stopped() { return nil, probe.failed() }
 			visible[i] = int(row[1].(int64))
 		}
-		louvain.Renumber(visible)
+		if _, err := louvain.RenumberWithCancellation(visible, functionCancellation(probe)); err != nil { return nil, err }
 		for i, community := range visible {
+			if probe.stopped() { return nil, probe.failed() }
 			rows[i][1] = int64(community)
 		}
 	}

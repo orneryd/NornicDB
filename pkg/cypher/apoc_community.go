@@ -21,7 +21,9 @@ import (
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.louvain", args)
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
+	nodes, err := e.algorithmNodesWithCancellation("apoc.algo.louvain", args, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -29,10 +31,12 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	weightProp, _ := algorithmConfig(args)["weightProperty"].(string)
 
 	// Run Louvain algorithm
-	communities := e.computeLouvain(nodes, weightProp)
+	communities, err := e.computeLouvain(nodes, weightProp, probe)
+	if err != nil { return nil, err }
 
 	// Build result
-	rows := algorithmRows(nodes, communities)
+	rows, err := algorithmRowsWithCancellation(nodes, communities, probe)
+	if err != nil { return nil, err }
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -48,21 +52,25 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // helps, then merges each community into one node; levels repeat until a
 // level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
 // numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string, probe *pipelineCancellation) (map[storage.NodeID]int, error) {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[storage.NodeID]int{}, probe.failed()
 	}
 	index := make(map[storage.NodeID]int, len(nodes))
 	unique := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if probe.stopped() { return nil, probe.failed() }
 		if _, listed := index[node.ID]; !listed {
 			index[node.ID] = len(unique)
 			unique = append(unique, node)
 		}
 	}
-	graph := louvain.NewGraph(len(unique))
+	graph, err := louvain.NewGraphWithCancellation(len(unique), nil, functionCancellation(probe))
+	if err != nil { return nil, err }
 	for i, node := range unique {
-		for _, edge := range e.getNodeEdges(node.ID) {
+		if probe.stopped() { return nil, probe.failed() }
+		for _, edge := range e.getNodeEdgesWithCancellation(node.ID, probe) {
+			if probe.stopped() { return nil, probe.failed() }
 			// Each relationship once: from its start node.
 			if edge.StartNode != node.ID {
 				continue
@@ -81,12 +89,16 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		}
 	}
 
-	membership := louvain.Final(louvain.Run(graph, louvain.DefaultOptions()))
+	if probe.failed() != nil { return nil, probe.failed() }
+	run, err := louvain.RunWithCancellation(graph, louvain.DefaultOptions(), functionCancellation(probe))
+	if err != nil { return nil, err }
+	membership := louvain.Final(run)
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
+		if probe.stopped() { return nil, probe.failed() }
 		result[node.ID] = membership[i]
 	}
-	return result
+	return result, nil
 }
 
 // =============================================================================
@@ -99,14 +111,17 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args)
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
+	nodes, err := e.algorithmNodesWithCancellation("apoc.algo.labelPropagation", args, probe)
 	if err != nil {
 		return nil, err
 	}
 
 	communities := e.computeLabelPropagation(nodes)
 
-	rows := algorithmRows(nodes, communities)
+	rows, err := algorithmRowsWithCancellation(nodes, communities, probe)
+	if err != nil { return nil, err }
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -182,14 +197,17 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.wcc", args)
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
+	nodes, err := e.algorithmNodesWithCancellation("apoc.algo.wcc", args, probe)
 	if err != nil {
 		return nil, err
 	}
 
 	components := e.computeWCC(nodes)
 
-	rows := algorithmRows(nodes, components)
+	rows, err := algorithmRowsWithCancellation(nodes, components, probe)
+	if err != nil { return nil, err }
 
 	return &ExecuteResult{
 		Columns: []string{"node", "componentId"},

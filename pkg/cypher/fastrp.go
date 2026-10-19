@@ -333,6 +333,11 @@ type gdsEdge struct {
 // GDS's errors for labels, types and weight keys the graph doesn't hold.
 // Missing values stay NaN; algorithms decide whether and when to validate them.
 func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []string, weightProperty string, options ...gdsSubgraphOptions) (*gdsSubgraph, error) {
+	return selectGDSSubgraphWithCancellation(nil, proj, nodeLabels, relationshipTypes, weightProperty, options...)
+}
+
+func selectGDSSubgraphWithCancellation(probe *pipelineCancellation, proj *GraphProjection, nodeLabels, relationshipTypes []string, weightProperty string, options ...gdsSubgraphOptions) (*gdsSubgraph, error) {
+	if probe.stopped() { return nil, probe.failed() }
 	var selection gdsSubgraphOptions
 	if len(options) > 0 {
 		selection = options[0]
@@ -355,6 +360,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 	includeTypes := false
 	if selection.includeTypes && !selection.omitAdjacency && len(types) > 1 {
 		for _, relationshipType := range types[1:] {
+			if probe.stopped() { return nil, probe.failed() }
 			if relationshipType != types[0] {
 				includeTypes = true
 				break
@@ -369,6 +375,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 	} else {
 		graph.index = make(map[string]int)
 		for _, id := range proj.NodeIDs {
+			if probe.stopped() { return nil, probe.failed() }
 			if !proj.matchesNodeLabels(id, nodeLabels) {
 				continue
 			}
@@ -387,6 +394,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 		return graph, nil
 	}
 	for i := range proj.Relationships {
+		if probe.stopped() { return nil, probe.failed() }
 		relationship := &proj.Relationships[i]
 		if !containsString(types, relationship.Type) {
 			continue

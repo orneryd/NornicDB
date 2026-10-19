@@ -43,11 +43,17 @@ func (pq *priorityQueue) Pop() interface{} {
 
 // getNodeEdges returns all edges for a node.
 func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
+	return e.getNodeEdgesWithCancellation(nodeID, nil)
+}
+
+func (e *StorageExecutor) getNodeEdgesWithCancellation(nodeID storage.NodeID, probe *pipelineCancellation) []*storage.Edge {
+	if probe.stopped() { return nil }
 	var result []*storage.Edge
 	outgoing, _ := e.storage.GetOutgoingEdges(nodeID)
+	if probe.stopped() { return nil }
 	incoming, _ := e.storage.GetIncomingEdges(nodeID)
-	result = append(result, outgoing...)
-	result = append(result, incoming...)
+	result = appendPipelineItems(result, outgoing, probe)
+	result = appendPipelineItems(result, incoming, probe)
 	return result
 }
 
@@ -304,8 +310,10 @@ func (e *StorageExecutor) findAllSimplePathsWithCancellation(startID, endID stor
 
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
 	const procedure = "apoc.algo.pageRank"
-	nodes, err := e.algorithmNodes(procedure, args)
+	nodes, err := e.algorithmNodesWithCancellation(procedure, args, probe)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +327,8 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 		damping = d
 	}
 	scores := e.computePageRank(nodes, damping, iterations)
-	rows := algorithmRows(nodes, scores)
+	rows, err := algorithmRowsWithCancellation(nodes, scores, probe)
+	if err != nil { return nil, err }
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -369,12 +378,15 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.betweenness", args)
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
+	nodes, err := e.algorithmNodesWithCancellation("apoc.algo.betweenness", args, probe)
 	if err != nil {
 		return nil, err
 	}
 	scores := e.computeBetweenness(nodes)
-	rows := algorithmRows(nodes, scores)
+	rows, err := algorithmRowsWithCancellation(nodes, scores, probe)
+	if err != nil { return nil, err }
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -440,12 +452,15 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.closeness", args)
+	ctx = withPipelineCancellation(ctx)
+	probe := contextPipelineProbe(ctx)
+	nodes, err := e.algorithmNodesWithCancellation("apoc.algo.closeness", args, probe)
 	if err != nil {
 		return nil, err
 	}
 	scores := e.computeCloseness(nodes)
-	rows := algorithmRows(nodes, scores)
+	rows, err := algorithmRowsWithCancellation(nodes, scores, probe)
+	if err != nil { return nil, err }
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -662,9 +677,16 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 // given node that has a value, in the given nodes' order (a node listed twice
 // once), so the same call on the same graph gives the same rows (#1183).
 func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) [][]interface{} {
+	rows, _ := algorithmRowsWithCancellation(nodes, values, nil)
+	return rows
+}
+
+func algorithmRowsWithCancellation[T any](nodes []*storage.Node, values map[storage.NodeID]T, probe *pipelineCancellation) ([][]interface{}, error) {
+	if probe.stopped() { return nil, probe.failed() }
 	rows := make([][]interface{}, 0, len(values))
 	seen := make(map[storage.NodeID]struct{}, len(values))
 	for _, node := range nodes {
+		if probe.stopped() { return nil, probe.failed() }
 		value, ok := values[node.ID]
 		if _, listed := seen[node.ID]; !ok || listed {
 			continue
@@ -672,7 +694,7 @@ func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) []
 		seen[node.ID] = struct{}{}
 		rows = append(rows, []interface{}{node, value})
 	}
-	return rows
+	return rows, nil
 }
 
 // renumberInNodeOrder numbers communities 0, 1, … by their first node in the
@@ -708,17 +730,28 @@ func algorithmConfig(args []interface{}) map[string]interface{} {
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
 func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
+	return e.algorithmNodesWithCancellation(procedure, args, nil)
+}
+
+func (e *StorageExecutor) algorithmNodesWithCancellation(procedure string, args []interface{}, probe *pipelineCancellation) ([]*storage.Node, error) {
+	if probe.stopped() { return nil, probe.failed() }
 	value := procedureArgument(args, 0)
 	typeError := func() error {
 		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))
 	}
-	if items, isList := cypherListValue(value); isList {
+	ordered := func(nodes []*storage.Node) ([]*storage.Node, error) {
+		return nodesInIDOrderWithCancellation(nodes, probe), probe.failed()
+	}
+	items, isList := cypherListValueWithCancellation(value, probe)
+	if probe.failed() != nil { return nil, probe.failed() }
+	if isList {
 		if len(items) == 0 {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return ordered(e.storage.GetAllNodes())
 		}
 		if _, isNode := items[0].(*storage.Node); isNode {
 			nodes := make([]*storage.Node, 0, len(items))
 			for _, item := range items {
+				if probe.stopped() { return nil, probe.failed() }
 				node, isNode := item.(*storage.Node)
 				if !isNode || node == nil {
 					return nil, typeError()
@@ -734,13 +767,13 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	switch label := value.(type) {
 	case nil:
-		return nodesInIDOrder(e.storage.GetAllNodes()), nil
+		return ordered(e.storage.GetAllNodes())
 	case string:
 		if label == "" {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return ordered(e.storage.GetAllNodes())
 		}
 		nodes, _ := e.storage.GetNodesByLabel(label)
-		return nodesInIDOrder(nodes), nil
+		return ordered(nodes)
 	default:
 		return nil, typeError()
 	}
@@ -751,7 +784,16 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 // the caller passes keeps its order. It sorts a copy: storage may share the
 // slice it returns.
 func nodesInIDOrder(nodes []*storage.Node) []*storage.Node {
-	sorted := append([]*storage.Node(nil), nodes...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	return nodesInIDOrderWithCancellation(nodes, nil)
+}
+
+func nodesInIDOrderWithCancellation(nodes []*storage.Node, probe *pipelineCancellation) []*storage.Node {
+	sorted := appendPipelineItems([]*storage.Node(nil), nodes, probe)
+	if probe.failed() != nil { return nil }
+	if probe == nil {
+		sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	} else if !probe.sort(sorted, func(i, j int) bool { return comparePipelineStrings(string(sorted[i].ID), string(sorted[j].ID), probe) < 0 }, true) {
+		return nil
+	}
 	return sorted
 }
