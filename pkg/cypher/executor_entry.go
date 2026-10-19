@@ -792,6 +792,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
 	info := e.analyzer.Analyze(cypher)
+	if err := e.admitResolvedStatementWrite(ctx,info,cypher); err != nil { return nil,err }
 
 	// Plan 04-03 Sites 1 + 3 (RISK-1 corrected): classify ONCE post-Analyze.
 	// isFabric=false here because the fabric branch returns at line ~963

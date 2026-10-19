@@ -146,64 +146,23 @@ func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, strin
 
 // callsDataWriteProcedure uses the registered contract shared with authorization
 // to decide whether procedure calls need statement-level write atomicity.
-func callsDataWriteProcedure(query string, parameters ...map[string]interface{}) bool {
-	var params map[string]interface{}
-	if len(parameters) > 0 {
-		params = parameters[0]
-	}
-	return procedureCallsWriteData(query, params, 0)
-}
-
-func procedureCallsWriteData(query string, params map[string]interface{}, depth int) bool {
-	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, call string) bool {
-		if procedure.Mode == ProcedureModeWrite {
-			return true
-		}
-		contract := procedure.Statement
-		if contract == nil {
-			return false
-		}
-		if depth >= 16 {
-			return true
-		}
-		arguments := explicitProcedureArgumentTexts(call)
-		if contract.QueryIndex >= len(arguments) {
-			return true
-		}
-		statement, known := procedureStatementText(arguments[contract.QueryIndex], params)
-		// Row-dependent or otherwise unresolved executable text may write. It
-		// must enter the statement owner before evaluating that expression.
-		if !known {
-			return true
-		}
-		if analyzeQuery(classificationText(statement)).IsWriteQuery {
-			return true
-		}
-		var innerParams map[string]interface{}
-		if index := contract.ParamsIndex; index >= 0 && index < len(arguments) {
-			expression := strings.TrimSpace(arguments[index])
-			if strings.HasPrefix(expression, "$") {
-				if value, ok := resolveSetMergeSourceFromParams(params, expression[1:]); ok {
-					innerParams, _ = value.(map[string]interface{})
-				}
-			}
-		}
-		return procedureCallsWriteData(statement, innerParams, depth+1)
+func callsDataWriteProcedure(query string, _ ...map[string]interface{}) bool {
+	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
+		return procedure.Mode == ProcedureModeWrite
 	})
 }
 
-func procedureStatementText(expression string, params map[string]interface{}) (string, bool) {
-	expression = strings.TrimSpace(expression)
-	if isWholeCypherQuotedString(expression) {
-		return decodeCypherQuotedString(expression)
-	}
-	if strings.HasPrefix(expression, "$") {
-		if value, ok := resolveSetMergeSourceFromParams(params, expression[1:]); ok {
-			statement, ok := value.(string)
-			return statement, ok
-		}
-	}
-	return "", false
+// Statement execution is a capability, not a predicted WRITE vote. Native
+// statements need a rollback owner; Fabric promotes only at actual execution.
+func callsDynamicStatementProcedure(query string) bool {
+	return visitRegisteredProcedureCalls(query,func(procedure ProcedureSpec,_ string) bool {
+		return procedure.ExecutesStatements
+	})
+}
+
+func statementWritesGraph(info *QueryInfo,query string) bool {
+	if matchKeywordAt(query,0,"EXPLAIN") { return false }
+	return info.IsWriteQuery || info.HasCall && callsDataWriteProcedure(query)
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword
