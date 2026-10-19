@@ -139,6 +139,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 				}
 			}
 			// Count executions, not yielded rows or shared result reuse.
+
 			if result != nil && len(totals) > 0 {
 				addQueryStats(totals[0], result.Stats)
 			}
