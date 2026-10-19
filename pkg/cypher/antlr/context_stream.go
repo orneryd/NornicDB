@@ -53,9 +53,11 @@ type contextCharStream struct {
 type contextCharCancellation struct {
 	ctx    context.Context
 	checks uint
+	unwind any
 }
 
 func (s *contextCharCancellation) check() {
+	s.rethrow()
 	if s.checks&1023 == 0 {
 		s.poll()
 	}
@@ -63,22 +65,47 @@ func (s *contextCharCancellation) check() {
 }
 
 func (s *contextCharCancellation) poll() {
+	// ANTLR's lexer safeMatch recovers non-recognition panics without
+	// rethrowing them. Preserve the outcome so NextToken's following LA,
+	// outside safeMatch, unwinds synchronously instead of emitting a token
+	// without consuming input. Preserve unrelated panics as well.
+	defer func() {
+		if p := recover(); p != nil {
+			s.unwind = p
+			panic(p)
+		}
+	}()
 	if err := s.ctx.Err(); err != nil {
 		panic(predictionCanceled{err})
 	}
 }
 
-func (s *contextCharCancellation) releaseContext() { s.ctx = context.Background() }
+func (s *contextCharCancellation) rethrow() {
+	if s.unwind != nil {
+		panic(s.unwind)
+	}
+}
+
+func (s *contextCharCancellation) releaseContext() {
+	s.ctx = context.Background()
+	s.unwind = nil
+}
 
 func (s *contextCharStream) LA(k int) int { s.check(); return s.CharStream.LA(k) }
 func (s *contextCharStream) Consume()     { s.check(); s.CharStream.Consume() }
 
 // Embed the concrete ASCII stream so lookahead and text access retain their
 // direct implementation. Lexer consumption polls every 1024 characters, even
-// within one long token; repeated lookahead needs no additional bookkeeping.
+// within one long token. Lookahead rethrows an interrupted match without
+// polling the context or counting every character operation.
 type contextASCIICharStream struct {
 	asciiCharStream
 	contextCharCancellation
+}
+
+func (s *contextASCIICharStream) LA(k int) int {
+	s.rethrow()
+	return s.asciiCharStream.LA(k)
 }
 
 func (s *contextASCIICharStream) Consume() {
