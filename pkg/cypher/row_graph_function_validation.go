@@ -198,21 +198,22 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
-		Storage:  e.storage,
-		Cypher25: rowIsCypher25(values),
-		Eval: func(expression string) (interface{}, error) {
-			value, resolved, err := e.evaluateRowValue(expression, values)
-			if err != nil {
-				panic(rowFunctionArgumentFailure{err})
-			}
-			if !resolved {
-				panic(rowFunctionArgumentFailure{errRowArgumentUnresolved})
-			}
-			return value, nil
-		},
-		Graphs: e,
+	fnCtx := e.registryFunctionContext(rowStatementContextOrBackground(values), func(expression string) (interface{}, error) {
+		value, resolved, err := e.evaluateRowValue(expression, values)
+		if err != nil {
+			panic(rowFunctionArgumentFailure{err})
+		}
+		if !resolved {
+			panic(rowFunctionArgumentFailure{errRowArgumentUnresolved})
+		}
+		return value, nil
 	})
+	// Some internal row callers carry the language version as a binding rather
+	// than a statement context. Keep that binding authoritative when present.
+	if version, bound := values[cypher25RowKey].(bool); bound {
+		fnCtx.Cypher25 = version
+	}
+	value, found, err := cypherfn.EvaluateFunction(function, args, fnCtx)
 	if !found {
 		return nil, false, false, nil
 	}
