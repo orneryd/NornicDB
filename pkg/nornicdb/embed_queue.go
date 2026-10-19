@@ -93,9 +93,9 @@ type EmbedWorker struct {
 
 	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
-	embeddingRetries map[storage.NodeID]*retainedNodeEmbedding
-	retryMaxCount int // zero uses the shared owner default
-	retryMaxBytes int64
+	embeddingRetries        map[storage.NodeID]*retainedNodeEmbedding
+	retryMaxCount           int // zero uses the shared owner default
+	retryMaxBytes           int64
 	retryBudgetBlockedUntil time.Time
 
 	embeddingEpoch atomic.Uint64
@@ -1267,7 +1267,7 @@ func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node, provider embed.Embe
 	}
 	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
 	if errors.Is(updateErr, storage.ErrEmbeddingSourceChanged) {
-	ew.dropNodeEmbeddingRetry(node.ID)
+		ew.dropNodeEmbeddingRetry(node.ID)
 		// The node changed while it was being embedded: the embedding is of
 		// its old content and was not written. The change left the node
 		// pending; it is embedded again once the recently-processed wait
