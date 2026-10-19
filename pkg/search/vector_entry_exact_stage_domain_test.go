@@ -14,11 +14,14 @@ func TestVectorEntryExactStageDomainGuardRejectsBypasses(t *testing.T) {
 func domainFixtureStageScore(node *stageNode) {
 	recordStageScore(node, node.id, 1)
 }
+func domainFixtureStageOwner(pair hnswBuildPair) *stageNode {
+	return &stageNode{id: pair.id}
+}
 func domainFixtureStageMember(resolver vectorMemberResolver, pair hnswBuildPair) {
 	resolver([]string{pair.id})
 }
 `)
-	for _, name := range []string{"domainFixtureStageScore", "domainFixtureStageMember"} {
+	for _, name := range []string{"domainFixtureStageScore", "domainFixtureStageOwner", "domainFixtureStageMember"} {
 		found := false
 		for issue := range g.violations {
 			if strings.Contains(issue, name) {
