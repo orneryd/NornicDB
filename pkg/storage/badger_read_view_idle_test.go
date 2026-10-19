@@ -132,7 +132,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 				func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
 				func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
 				func() ([]*Edge, error) {
-					out, in, err := b.readAdjacency("test:a", true, true)
+					out, in, err := b.readAdjacency("test:a", true, true, visibleRead)
 					require.Empty(t, in)
 					return out, err
 				},

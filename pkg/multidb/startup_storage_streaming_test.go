@@ -112,7 +112,13 @@ func (e *startupStreamingEngine) StreamNodesByPrefix(ctx context.Context, prefix
 // StreamNodesWithOptions models the unified kernel explicitly so the embedded
 // MemoryEngine's promoted implementation does not shadow the prefix recording.
 func (e *startupStreamingEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
-	e.prefixes = append(e.prefixes, opts.Prefix)
+	// An unprefixed stream is a whole-store node stream, as StreamNodes is
+	// (storage sizing streams stored nodes this way).
+	if opts.Prefix == "" {
+		e.nodeStreamCalls++
+	} else {
+		e.prefixes = append(e.prefixes, opts.Prefix)
+	}
 	nodes, err := e.MemoryEngine.AllNodes()
 	if err != nil {
 		return err
@@ -257,4 +263,16 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	require.Positive(t, total)
 	require.NotEmpty(t, engine.prefixes)
 	require.Equal(t, 1, engine.edgeStreamCalls)
+}
+
+// Storage sizing streams stored relationships (storage.StreamStoredEdgesByType
+// and its scoped form): the spy counts them as it counts StreamEdges.
+func (e *startupStreamingEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*storage.Edge) error) error {
+	e.edgeStreamCalls++
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, visit)
+}
+
+func (e *startupStreamingEngine) StreamStoredEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*storage.Edge) error) error {
+	e.edgeStreamCalls++
+	return e.MemoryEngine.StreamStoredEdgesByTypeInScope(ctx, scope, edgeType, visit)
 }

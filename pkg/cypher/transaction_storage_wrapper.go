@@ -253,6 +253,19 @@ func (w *transactionStorageWrapper) DeleteConnectedNode(id storage.NodeID) error
 	return w.tx.DeleteConnectedNode(w.prefixNodeID(id))
 }
 
+// IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
+// namespace (storage.IncidentEdgeLister).
+func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	if w.namespace == "" {
+		return w.tx.IncidentEdges(nodeID)
+	}
+	edges, err := w.tx.IncidentEdges(w.prefixNodeID(nodeID))
+	if err != nil {
+		return nil, err
+	}
+	return w.toUserEdges(edges), nil
+}
+
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
 	if edge == nil {
 		return storage.ErrInvalidData

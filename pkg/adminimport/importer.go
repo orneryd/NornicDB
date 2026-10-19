@@ -1005,11 +1005,9 @@ func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaMana
 	if err := storage.RefreshUniqueConstraintValuesForEngine(engine, schema); err != nil {
 		return err
 	}
-	nodes, err := engine.AllNodes()
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
+	// Every stored node, those the visibility layer hides from reads
+	// included: the indexes are trusted to hold every matching node.
+	if err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{}, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
 				if idx == nil {
@@ -1020,6 +1018,9 @@ func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaMana
 				}
 			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	schema.MarkPropertyIndexesFilled()
 	return nil

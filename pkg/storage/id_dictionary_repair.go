@@ -65,7 +65,7 @@ func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	}
 	// A node in no label index key is mismatched only if it has labels.
 	for _, id := range unlabelled {
-		if node, err := b.GetNode(id); err == nil && len(node.Labels) > 0 {
+		if node, err := b.GetStoredNode(id); err == nil && len(node.Labels) > 0 {
 			report.MismatchedNodes = append(report.MismatchedNodes, id)
 		}
 	}
@@ -167,7 +167,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 // lostNodeNumID finds a lost node's numeric ID: the one unresolved, unclaimed
 // ID in the label index of every one of its labels.
 func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64, bool, error) {
-	node, err := b.GetNode(id)
+	node, err := b.GetStoredNode(id)
 	if err != nil || len(node.Labels) == 0 {
 		return 0, false, nil
 	}
@@ -192,7 +192,7 @@ func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64
 // unclaimed ID in its start node's outgoing keys, its end node's incoming
 // keys and its type's index.
 func (b *BadgerEngine) lostEdgeNumID(id EdgeID, claimed map[uint64]bool) (uint64, bool, error) {
-	edge, err := b.GetEdge(id)
+	edge, err := b.GetStoredEdge(id)
 	if err != nil {
 		return 0, false, nil
 	}
