@@ -846,7 +846,7 @@ func (s *Session) handlePull(data []byte) error {
 		// Return metadata for completed query (Neo4j compatibility)
 		// Neo4j sends: type, bookmark, t_last, stats, db (but NOT has_more when false)
 		queryType := "r"
-		if stream.isWrite {
+		if stream.isWrite || boltStatsMetadata(resultStats) != nil {
 			queryType = "w"
 		}
 
@@ -1005,7 +1005,7 @@ func (s *Session) handleDiscard(data []byte) error {
 
 	// Build completion metadata with stats (same contract as PULL completion).
 	queryType := "r"
-	if stream.isWrite {
+	if stream.isWrite || boltStatsMetadata(resultStats) != nil {
 		queryType = "w"
 	}
 	bookmark := s.currentBookmark()
