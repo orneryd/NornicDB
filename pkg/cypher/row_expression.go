@@ -1954,9 +1954,11 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if end {
 		id = edge.EndNode
 	}
-	edgeID,edgeSelected := edge.Identity().LookupID(e.storage,"5")
-	nodeID,nodeSelected := (storage.EntityIdentity{Database:edge.Database,LocalID:string(id)}).NodeLookupID(e.storage)
-	if !edgeSelected || !nodeSelected { return nil }
+	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
+	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(e.storage)
+	if !edgeSelected || !nodeSelected {
+		return nil
+	}
 	// A deleted relationship has no endpoints; full values avoid a second read.
 	if mayBeDeletedRelationshipView(edge) {
 		if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
