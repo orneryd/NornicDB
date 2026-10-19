@@ -4,9 +4,9 @@ import "context"
 
 type snapshotStoredEdgeWriter struct {
 	frames *snapshotFrameWriter
-	limit int64
-	count uint64
-	ids *NamespacedEngine
+	limit  int64
+	count  uint64
+	ids    *NamespacedEngine
 }
 
 func writeSnapshotEdges(ctx context.Context, engine Engine, frames *snapshotFrameWriter, limit int64) (uint64, error) {
@@ -36,14 +36,20 @@ func (w *snapshotStoredEdgeWriter) stream(ctx context.Context, engine Engine, sc
 		}
 	}
 	return streamStoredEdgesByTypeInScope(ctx, engine, scope, "", func(edge *Edge) error {
-		if edge == nil || !edgeIDInScope(edge.ID, scope) { return nil }
+		if edge == nil || !edgeIDInScope(edge.ID, scope) {
+			return nil
+		}
 		return w.visit(edge)
 	})
 }
 
 func (w *snapshotStoredEdgeWriter) visit(edge *Edge) error {
-	if w.ids != nil { edge = w.ids.toUserEdge(edge) }
-	if err := w.frames.write(streamSnapshotEdge, edge, w.limit); err != nil { return err }
+	if w.ids != nil {
+		edge = w.ids.toUserEdge(edge)
+	}
+	if err := w.frames.write(streamSnapshotEdge, edge, w.limit); err != nil {
+		return err
+	}
 	w.count++
 	return nil
 }
@@ -52,7 +58,9 @@ func (b *BadgerEngine) streamSnapshotEdgeBodies(ctx context.Context, scope strin
 	var transcoder snapshotEdgeTranscoder
 	body := func(id EdgeID, data []byte) (bool, error) {
 		fast, err := transcoder.writeBody(b, id, data, writer.ids, writer.frames, writer.limit)
-		if fast && err == nil { writer.count++ }
+		if fast && err == nil {
+			writer.count++
+		}
 		return fast, err
 	}
 	return b.streamEdgesByTypeInScopeWithBodies(ctx, scope, "", storedRead, writer.visit, body)
