@@ -12,12 +12,12 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	canRead func() bool
-	ch subscriptionChannel
+	canRead  func() bool
+	ch       subscriptionChannel
 	database string
-	labels []string
-	types  []string
-	id     *string
+	labels   []string
+	types    []string
+	id       *string
 }
 
 func matchesDatabase(subscriptionDatabase, eventDatabase string) bool {
@@ -129,10 +129,10 @@ func (b *EventBroker) SubscribeNodeCreatedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[*models.Node]() // Buffered to prevent blocking
 
 	b.addSubscription(ctx, &b.nodeCreatedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:     ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		labels: labels,
+		labels:   labels,
 	}, func() {
 		b.unsubscribeNodeCreated(ch)
 	})
@@ -151,11 +151,11 @@ func (b *EventBroker) SubscribeNodeUpdatedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[*models.Node]()
 
 	b.addSubscription(ctx, &b.nodeUpdatedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:     ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		labels: labels,
-		id:     id,
+		labels:   labels,
+		id:       id,
 	}, func() {
 		b.unsubscribeNodeUpdated(ch)
 	})
@@ -174,10 +174,10 @@ func (b *EventBroker) SubscribeNodeDeletedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[string]()
 
 	b.addSubscription(ctx, &b.nodeDeletedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:     ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		labels: labels,
+		labels:   labels,
 	}, func() {
 		b.unsubscribeNodeDeleted(ch)
 	})
@@ -196,10 +196,10 @@ func (b *EventBroker) SubscribeRelationshipCreatedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[*models.Relationship]()
 
 	b.addSubscription(ctx, &b.relationshipCreatedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:    ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		types: types,
+		types:    types,
 	}, func() {
 		b.unsubscribeRelationshipCreated(ch)
 	})
@@ -218,11 +218,11 @@ func (b *EventBroker) SubscribeRelationshipUpdatedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[*models.Relationship]()
 
 	b.addSubscription(ctx, &b.relationshipUpdatedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:    ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		types: types,
-		id:    id,
+		types:    types,
+		id:       id,
 	}, func() {
 		b.unsubscribeRelationshipUpdated(ch)
 	})
@@ -241,10 +241,10 @@ func (b *EventBroker) SubscribeRelationshipDeletedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[string]()
 
 	b.addSubscription(ctx, &b.relationshipDeletedSubs, subscriptionInfo{
-		canRead: canRead,
-		ch:    ch,
+		canRead:  canRead,
+		ch:       ch,
 		database: database,
-		types: types,
+		types:    types,
 	}, func() {
 		b.unsubscribeRelationshipDeleted(ch)
 	})
