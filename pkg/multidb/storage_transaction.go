@@ -108,6 +108,8 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 			return err
 		}
 	}
+	// Quotas describe stored data, including hidden entities. Use the same
+	// stored-reader owner as direct accounting for each prior committed body.
 	nodes, nodeBytes, err := transactionEntityDelta(changes.Nodes,
 		func(id storage.NodeID) (*storage.Node, error) {
 			return storage.GetStoredNode(t.Engine, storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))

@@ -22,17 +22,17 @@ type quotaReadFailureEngine struct {
 }
 
 func (e *quotaReadFailureEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
-func (e *quotaReadFailureEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *quotaReadFailureEngine) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
 	if e.mode.Load() == 1 {
 		return nil, quotaReadFailure
 	}
-	return e.MemoryEngine.GetNode(id)
+	return e.MemoryEngine.GetStoredNode(id)
 }
-func (e *quotaReadFailureEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *quotaReadFailureEngine) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
 	if e.mode.Load() == 2 {
 		return nil, quotaReadFailure
 	}
-	return e.MemoryEngine.GetEdge(id)
+	return e.MemoryEngine.GetStoredEdge(id)
 }
 func (e *quotaReadFailureEngine) NodeCountByPrefix(prefix string) (int64, error) {
 	if e.mode.Load() == 3 {
