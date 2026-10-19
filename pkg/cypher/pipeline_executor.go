@@ -527,7 +527,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(cypher) >= 0
-	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
+	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") && !e.pipelineReadsImportedBinding(ctx, nil) {
 		if !pipelineUnwindUsesRange(cypher) {
 			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
@@ -1104,16 +1104,13 @@ func (e *StorageExecutor) forEachPipelineImport(ctx context.Context, clauses []p
 // pipelineReadsImportedBinding declines statement shortcuts unless the shared
 // scope owner proves the body independent of the complete imported row.
 func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	var imports typeScope
+	dependent := false
 	e.forEachPipelineImport(ctx, clauses, func(name string, _ interface{}) {
-		if !strings.HasPrefix(name, "$") {
-			if imports == nil {
-				imports = make(typeScope)
-			}
-			imports[name] = staticOperand{}
+		if !dependent {
+			dependent = pipelineReadsBinding(clauses, name)
 		}
 	})
-	return !imports.pipelineIndependent(clauses)
+	return dependent
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of

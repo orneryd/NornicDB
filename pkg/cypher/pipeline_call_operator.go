@@ -98,8 +98,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// the import is unambiguous (#907, kept at the owner's direction).
 	imports := scopedImports
 	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
+		dependencies := pipelineDependencyClauses(body)
 		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
+			if !strings.HasPrefix(name, "$") && (scoped || pipelineReadsBinding(dependencies, name)) {
 				imports = append(imports, name)
 			}
 		}

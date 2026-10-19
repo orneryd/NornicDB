@@ -32,6 +32,7 @@ func TestCorrelatedBodyDependencyDifferential(t *testing.T) {
 		{"indexed-read", "MATCH (b:Target) WHERE b.n IN $keys OR b.m IN $keys", "b.n AS n"},
 		{"bounded-read", "MATCH (b:Target)", "b.n AS n LIMIT 5"},
 		{"relationship-count", "MATCH ()-[r:R]->()", "count(r) AS c"},
+		{"unwind-count", "UNWIND [1] AS k MATCH (b:Target) WHERE b.n = k", "count(b) AS c"},
 	}
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
@@ -40,16 +41,25 @@ func TestCorrelatedBodyDependencyDifferential(t *testing.T) {
 			require.True(t, ok)
 			// Prove the generated family starts at a real physical shortcut.
 			runCtx := withParams(ctx, params)
-			_, node, nodeErr := exec.tryExecutePipelineSimpleNodeReadPlan(runCtx, clauses, params)
-			_, relationship, relErr := exec.tryExecutePipelineSimpleRelationshipCountPlan(runCtx, clauses, params)
-			require.NoError(t, nodeErr)
-			require.NoError(t, relErr)
-			require.True(t, node || relationship, base)
+			if shape.name == "unwind-count" {
+				plan, err := exec.prepareTopLevelUnwind(runCtx, base)
+				require.NoError(t, err)
+				_, batch, err := exec.executeUnwindBatchOperator(runCtx, plan)
+				require.NoError(t, err)
+				require.True(t, batch, base)
+			} else {
+				_, node, nodeErr := exec.tryExecutePipelineSimpleNodeReadPlan(runCtx, clauses, params)
+				_, relationship, relErr := exec.tryExecutePipelineSimpleRelationshipCountPlan(runCtx, clauses, params)
+				require.NoError(t, nodeErr)
+				require.NoError(t, relErr)
+				require.True(t, node || relationship, base)
+			}
 			variants := []string{
 				base,
 				shape.match + " RETURN *",
 				shape.match + " RETURN DISTINCT *",
 				shape.match + " RETURN *, 1 AS marker",
+				shape.match + " RETURN *, count(*) AS total",
 				shape.match + " WITH * RETURN *",
 				"WITH * " + shape.match + " RETURN *",
 				"WITH a " + base,

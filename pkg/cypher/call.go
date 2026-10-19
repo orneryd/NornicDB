@@ -340,8 +340,9 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 
 	expectedCols := expectedReturnColumnsFromTail(tail)
 	usedCols := make([]int, 0, len(seed.Columns))
+	dependencies := pipelineDependencyClauses(tail)
 	for i, col := range seed.Columns {
-		if isIdentifierReferenced(tail, col) {
+		if pipelineReadsBinding(dependencies, col) {
 			usedCols = append(usedCols, i)
 		}
 	}
