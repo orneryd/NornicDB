@@ -202,7 +202,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				return readable
 			},
 			AllDatabasesReadable: s.canReadAllDatabases(r),
-			Nodes: nodes, Edges: edges,
+			Nodes:                nodes, Edges: edges,
 		})
 	}
 	w.Header().Set("Content-Type", observability.LegacyContentType)

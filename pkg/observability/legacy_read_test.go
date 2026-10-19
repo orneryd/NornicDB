@@ -24,7 +24,7 @@ func TestRenderLegacyReadScope(t *testing.T) {
 	allowed := false
 	scope := LegacyReadScope{
 		CanReadDatabase: func(database string) bool { return database == "visible" || allowed },
-		Nodes: 2, Edges: 1,
+		Nodes:           2, Edges: 1,
 	}
 	for _, phase := range []bool{false, true, false} {
 		allowed = phase
