@@ -339,7 +339,7 @@ func (g *hnswBuildGraphSnapshot) signatureOf(id uint32) uint64 {
 type hnswBuildPair struct {
 	id      string
 	vec     []float32
-	hint    LexicalSeedHint
+	hint nodeLexicalHint
 	hasHint bool
 }
 
@@ -963,10 +963,7 @@ func buildHNSWBatchParallel(ctx context.Context, dimensions int, config HNSWConf
 		for i := range batch {
 			queries[i] = batch[i].vec
 			if batch[i].hasHint {
-				// BM25 metadata keeps the document ID; the graph cache owns embedding IDs.
-				hint := batch[i].hint
-				hint.ID = batch[i].id
-				built.setBuildLexicalHint(hint)
+				built.setBuildLexicalHint(batch[i].id, batch[i].hint)
 			}
 		}
 

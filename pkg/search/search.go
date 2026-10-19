@@ -4069,7 +4069,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				// Beam factor is query-only tuning and does not affect the persisted
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
+				loaded.SetBuildLexicalHints(lexicalHintValues(s.entryLexicalHintsForNodes(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M))))
 				s.publishVectorServing(func() {
 					s.hnswMu.Lock()
 					s.hnswIndex = loaded
@@ -6273,7 +6273,7 @@ var hnswAfterReplayHook func()
 // getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
 // seedHints (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
 // since they read the node metadata under indexMu.
-func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int, seedHints map[string]LexicalSeedHint) (*HNSWIndex, error) {
+func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int, seedHints nodeLexicalHints) (*HNSWIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -6542,7 +6542,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	rebuilt := NewHNSWIndex(old.dimensions, old.config)
 	rebuilt.SetVectorLookup(s.getVectorLookup())
 	seedHints := s.hnswBuildLexicalSeedHints(fulltext, old.config.M)
-	rebuilt.SetBuildLexicalHints(lexicalHintValues(seedHints))
+	rebuilt.SetBuildLexicalHints(lexicalHintValues(s.entryLexicalHintsForNodes(seedHints)))
 	const rebuildProgressInterval = 50000
 	if vfs != nil && vfs.Count() > 0 {
 		total := vfs.Count()

@@ -108,7 +108,7 @@ func (h *HNSWIndex) QuantizationBytes() int {
 func (h *HNSWIndex) quantizationTrainingIDsLocked(limit int) []uint32 {
 	type seed struct {
 		id   uint32
-		hint LexicalSeedHint
+		hint nodeLexicalHint
 	}
 	seeds := make([]seed, 0, len(h.buildLexicalHints))
 	for id := range h.internalToID {

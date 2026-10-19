@@ -12,7 +12,7 @@ import (
 
 func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 	ids := []string{"other", nodeNamedVectorKey("second", "default"), nodePropertyVectorKey("first", "features"), nodeChunkVectorKey("first", 1), "literal-named-doc"}
-	hints := map[string]LexicalSeedHint{
+	hints := nodeLexicalHints{
 		"first":             {ID: "first", Rank: 0, Signature: 1},
 		"second":            {ID: "second", Rank: 1, Signature: 2},
 		"literal-named-doc": {ID: "literal-named-doc", Rank: 2, Signature: 3},
@@ -36,9 +36,9 @@ func TestHNSWLexicalSeedsFollowVectorIdentity(t *testing.T) {
 				continue
 			}
 			require.Contains(t, hints, pair.hint.ID, "iterator metadata keeps its BM25 document identity")
-			bound, ok := built.buildLexicalHints[pair.id]
+			bound, ok := built.buildLexicalHints[vectorEntryID(pair.id)]
 			require.True(t, ok, "construction must bind the hint to embedding %s", pair.id)
-			require.Equal(t, pair.id, bound.ID)
+			require.Equal(t, pair.hint.ID, bound.ID)
 			require.Equal(t, pair.hint.Signature, bound.Signature)
 		}
 	}
@@ -96,7 +96,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				require.Len(t, svc.clusterGen.profiles, 2)
 			} else {
 				require.NotNil(t, svc.hnswIndex)
-				ranked := lexicalHintValues(svc.hnswBuildLexicalSeedHints(svc.fulltext(), svc.hnswIndex.Config().M))
+				ranked := lexicalHintValues(svc.entryLexicalHintsForNodes(svc.hnswBuildLexicalSeedHints(svc.fulltext(), svc.hnswIndex.Config().M)))
 				slices.SortFunc(ranked, func(a, b LexicalSeedHint) int {
 					if n := cmp.Compare(a.Rank, b.Rank); n != 0 {
 						return n
@@ -114,7 +114,7 @@ func TestANNPublicBuildUsesNamedVectorLexicalSeeds(t *testing.T) {
 				defer svc.hnswIndex.mu.RUnlock()
 				require.Equal(t, expected, svc.hnswIndex.internalToID, "public construction must preserve ranked embedding insertion order")
 				for _, id := range []string{nodeNamedVectorKey("first", "default"), nodeNamedVectorKey("second", "default")} {
-					hint, ok := svc.hnswIndex.buildLexicalHints[id]
+					hint, ok := svc.hnswIndex.buildLexicalHints[vectorEntryID(id)]
 					require.True(t, ok, "public index build must bind the lexical hint to %s", id)
 					require.NotZero(t, hint.Signature)
 				}
