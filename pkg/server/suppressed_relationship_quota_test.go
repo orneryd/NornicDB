@@ -129,7 +129,7 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 // explicit update, at both the physical edge-count and logical byte capacity.
 func TestSuppressedRelationshipReMergeAtQuota(t *testing.T) {
 	for _, quota := range []string{"edges", "bytes"} {
-		for _, route := range []string{"bolt", "http"} {
+		for _, route := range []string{"bolt", "http", "bolt-explicit", "http-explicit"} {
 			for _, buffered := range []bool{false, true} {
 				mode := "synchronous"
 				if buffered {
