@@ -105,6 +105,11 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 		require.NoError(t, err)
 		require.Eventually(t, func() bool { return !svc.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
 		if generator == "hnsw" {
+			// The initial pipeline can serve exact fallback while the service's
+			// graph builds. Select again after publication so this cell searches
+			// the HNSW coordinates it is meant to verify.
+			p, err = svc.getOrCreateVectorPipeline(ctx)
+			require.NoError(t, err)
 			h, ok := p.candidateGen.(*HNSWCandidateGen)
 			require.True(t, ok, "%T", p.candidateGen)
 			require.Equal(t, quantization != "none", h.quantizationActive(ctx), "the cell must search %s codes", quantization)
