@@ -26,7 +26,18 @@ import (
 // statement, so an administration command there is refused as after any
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
-func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+ if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
+  // The returned statement summary already includes its descendants. Hide
+  // this collector during execution so descendants cannot be counted twice.
+  ctx = context.WithValue(ctx, procedureStatementStatsKey{}, (*procedureStatementStats)(nil))
+  defer func() {
+   if err == nil && result != nil {
+    totals.executed = true
+    totals.stats = mergeQueryStats(totals.stats, result.Stats)
+   }
+  }()
+ }
 	if err := internalFunctionCallError(statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
