@@ -818,33 +818,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Canonical mapping keeps DB and server adapters consistent.
-	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
-		setSearchFallbackReasonHeader(w, continuationPage.FallbackReason)
-		body := map[string]any{
-			"results":               results,
-			"qid":                   continuationPage.QID,
-			"has_more":              continuationPage.HasMore,
-			"position":              continuationPage.Position,
-			"returned":              continuationPage.Returned,
-			"discovered":            continuationPage.Discovered,
-			"total":                 continuationPage.Total,
-			"expires_at":            continuationPage.ExpiresAt,
-			"search_method":         continuationPage.SearchMethod,
-			"fallback_triggered":    continuationPage.FallbackTriggered,
-			"fallback_reason":       continuationPage.FallbackReason,
-			"mode":                  continuationPage.Mode,
-			"ranked_count":          continuationPage.RankedCount,
-			"eligible_count":        continuationPage.EligibleCount,
-			"ranked_pool_exhausted": continuationPage.RankedPoolExhausted,
-			"collection_exhausted":  continuationPage.CollectionExhausted,
-			"completion":            continuationPage.Completion,
-		}
-		addQueryChunkCounts(body, continuationPage.QueryChunksSearched, continuationPage.QueryChunksTotal)
-		s.writeJSON(w, http.StatusOK, body)
+		s.writeSearchContinuationPage(w, continuationPage)
 		return
 	}
+	// Canonical mapping keeps DB and server adapters consistent.
+	results := nornicdb.MapSearchResponse(searchResponse)
 	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
 	if searchDiagEnabled {
 		s.logEvent(ctx, slog.LevelInfo, localization.ServerSearchTimingEvent(localization.ServerSearchTimingFields{
@@ -933,6 +912,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 			body[key] = value
 		}
 	}
+	addQueryChunkCounts(body, page.QueryChunksSearched, page.QueryChunksTotal)
 	s.writeJSON(w, http.StatusOK, body)
 }
 

@@ -16,7 +16,7 @@ func TestSearchContinuationPageSizeCypher(t *testing.T) {
 	for _, limit := range []int{500, 2, 600} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-			for i := 0; i < limit + 2; i++ {
+			for i := 0; i < limit+2; i++ {
 				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("page-%04d", i)), Properties: map[string]any{"content": "page document"}})
 				require.NoError(t, err)
 			}
