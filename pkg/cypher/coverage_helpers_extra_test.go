@@ -124,11 +124,13 @@ func TestQueryPatternIdentifierHelpers(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestRedactSilentErrorListenerSyntaxError(t *testing.T) {
-	listener := &redactSilentErrorListener{}
-	require.False(t, listener.hadError)
-	listener.SyntaxError(nil, nil, 0, 0, "boom", nil)
-	require.True(t, listener.hadError)
+func TestRedactLexicalErrorsFailClosed(t *testing.T) {
+	for _, query := range []string{"RETURN '\"secret", "RETURN \x00", "MATCH ("} {
+		_, ok := redactLexCheckedContext(t.Context(), query)
+		require.False(t, ok)
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		require.Equal(t, RedactedPlaceholder, exec.redactForLog(t.Context(), query))
+	}
 }
 
 func TestNormalizeInterfaceMap(t *testing.T) {
