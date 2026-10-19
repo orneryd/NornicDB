@@ -14,6 +14,7 @@ func TestExecutionDeterminismCachedAdmissionAllocations(t *testing.T) {
 	exec := solR2CacheExecutor(t)
 	ctx := withQueryParams(context.Background(), map[string]any{
 		"request": map[string]any{"query": "transcript", "limit": int64(2)},
+		"query": "transcript",
 	})
 	for _, query := range []string{
 		"CALL db.rretrieve($request)",
@@ -30,6 +31,16 @@ func TestExecutionDeterminismCachedAdmissionAllocations(t *testing.T) {
 			require.Zero(t, allocations, "a cached analysis needs only binding-dependent admission")
 		})
 	}
+	t.Run("fixed executable field with bound data", func(t *testing.T) {
+		const query = "CALL db.rretrieve({query:$query,where:'timestamp() < $deadline'})"
+		info := exec.analyzer.Analyze(query)
+		require.False(t, exec.canUseResultCache(ctx, info, query))
+		require.Zero(t, testing.AllocsPerRun(1000, func() {
+			if exec.canUseResultCache(ctx, info, query) {
+				t.Fatal("a fixed time predicate must stay outside result caching")
+			}
+		}), "a fixed predicate must be classified before resolving bound data fields")
+	})
 }
 
 // The same cached QueryInfo must inspect each execution's current request,
