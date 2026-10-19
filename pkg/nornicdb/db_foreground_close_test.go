@@ -60,8 +60,7 @@ func TestSolReviewCloseQuiescesForegroundEmbeddings(t *testing.T) {
 				e := &solReviewForegroundEmbedder{mockEmbedder: mockEmbedder{dims: 4, model: "foreground"}, entered: make(chan struct{}), proceed: make(chan struct{}), closeCalled: make(chan struct{})}
 				var release sync.Once
 				allowQuery := func() { release.Do(func() { close(e.proceed) }) }
-				defer allowQuery()
-				defer db.Close()
+				t.Cleanup(func() { allowQuery(); _ = db.Close() })
 				var provider embed.Embedder = e
 				if cacheSize > 0 {
 					provider = embed.NewCachedEmbedder(provider, cacheSize)
