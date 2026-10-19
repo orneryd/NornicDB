@@ -29,6 +29,7 @@ const (
 	functionVolatile
 	functionVolatileWithoutArguments
 	functionTemporalConstructor
+	functionTemporalTruncation
 )
 
 // These are registry declarations for the supported text interpreters. Read
@@ -66,4 +67,8 @@ var builtinProcedureResultCache = map[string]ProcedureResultCache{
 	"apoc.export.csv.query":                {CypherInputs: []ProcedureCypherInput{{Argument: 0}}},
 	"apoc.custom.installProcedure":         {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
 	"apoc.custom.declareProcedure":         {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
+	// These legacy handlers also accept a raw configuration expression. Their
+	// live collector state remains non-deterministic regardless of its content.
+	"db.stats.collect":  {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
+	"db.stats.retrieve": {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
 }

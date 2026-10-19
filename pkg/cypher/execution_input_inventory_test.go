@@ -58,6 +58,14 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRelationshipWhereFilter" {
 			return true
 		}
+		// The generic expression engine evaluates syntax already present in
+		// the outer statement; walking through it reaches every query handler,
+		// not a dependency of this procedure's evaluated argument values.
+		// Re-interpretation of a string value (the legacy statistics config)
+		// is audited separately below.
+		if strings.HasPrefix(name, "evaluate") || strings.HasPrefix(name, "parse") {
+			return false
+		}
 		if visited[name] {
 			return false
 		}
@@ -120,4 +128,10 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, len(discovered), 14)
 	t.Logf("source-derived executable-text procedures (%d): %v", len(discovered), discovered)
+	for _, name := range []string{"db.stats.collect", "db.stats.retrieve", "apoc.custom.installProcedure", "apoc.custom.declareProcedure"} {
+		procedure, ok := globalProcedureRegistry.Get(name)
+		require.True(t, ok, name)
+		require.NotEmpty(t, procedure.Spec.ResultCache.CypherInputs, name)
+		require.False(t, procedure.Spec.ResultCache.Deterministic, name)
+	}
 }
