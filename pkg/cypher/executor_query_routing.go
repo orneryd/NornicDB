@@ -456,12 +456,27 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 // procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP PROCEDURE) and database
 // limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
 // the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
-// SET / REMOVE OPTION, #937).
+// SET / REMOVE OPTION, #937). Composite/alias administration uses its existing
+// command readers on both parsers: those own option semantics and localized
+// failures, including native extensions the standard alias syntax does not have.
 func isNornicExtensionStatement(cypher string) bool {
 	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
 	// GRANT … as the default parser does.
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
+	if startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "SHOW", "CONSTITUENTS") ||
+		startsWithKeywords(cypher, "SHOW", "ALIASES") ||
+		startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES") ||
+		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
+		startsWithKeywords(cypher, "ALTER", "ALIAS") ||
+		startsWithKeywords(cypher, "DROP", "ALIAS") ||
+		startsWithKeywords(cypher, "CREATE OR REPLACE", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "CREATE OR REPLACE", "ALIAS") {
+		return true
+	}
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
 		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
