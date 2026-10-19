@@ -116,10 +116,11 @@ func cgExpectedProfile(svc *Service, members []string) map[string]float64 {
 	tf := map[string]float64{}
 	total := 0.0
 	for _, id := range members {
-		text, ok := ft.GetDocument(id)
-		if !ok {
-			text, ok = ft.GetDocument(normalizeVectorResultIDToNodeID(id))
+		owner, valid := vectorEntryOwner(id)
+		if !valid {
+			continue
 		}
+		text, ok := ft.GetDocument(owner)
 		if !ok || text == "" {
 			continue
 		}

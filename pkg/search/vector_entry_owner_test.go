@@ -19,6 +19,13 @@ import (
 
 const vectorOwnerDims = 4
 
+func vectorOwnerForTest(t *testing.T, key string) string {
+	t.Helper()
+	owner, ok := vectorEntryOwner(key)
+	require.True(t, ok)
+	return owner
+}
+
 func vectorOwnerAxis(axis int) []float32 {
 	vector := make([]float32, vectorOwnerDims)
 	vector[axis] = 1
