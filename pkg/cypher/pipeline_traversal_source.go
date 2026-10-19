@@ -46,7 +46,6 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
 	store := e.getStorage(ctx)
-	hideSystemNodes := shouldHideSystemNodes(store)
 	endpoints := e.newRelationshipEndpointReader(store)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
