@@ -57,7 +57,7 @@ func r11Move(t *testing.T, f *cgFixture, from, to int) string {
 	dest := f.svc.clusterIndex.GetClusterMemberIDsForCluster(to)
 	require.NotEmpty(t, ids)
 	require.NotEmpty(t, dest)
-	node, err := f.engine.GetNode(storage.NodeID(decodeVectorKey(ids[0]).node))
+	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, ids[0])))
 	require.NoError(t, err)
 	vec, ok := f.svc.getVectorLookup()(dest[0])
 	require.True(t, ok)
@@ -211,7 +211,7 @@ func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	r11Restore(t, f, path)
 	cid, _ := f.svc.clusterIndex.ClusterOf(moved)
 	require.Equal(t, 0, cid)
-	require.True(t, r11PublicSelfHit(t, f, vec, decodeVectorKey(moved).node))
+	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 
 // A vector moved after the save (the store is newer than the saved
@@ -228,7 +228,7 @@ func TestClusterGenerationRestorePlacesVectorsUpdatedAfterSave(t *testing.T) {
 	r11Restore(t, f, path)
 	cid, _ := f.svc.clusterIndex.ClusterOf(moved)
 	require.Equal(t, 1, cid, "placed by its current coordinates, not its saved cluster")
-	require.True(t, r11PublicSelfHit(t, f, vec, decodeVectorKey(moved).node))
+	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 
 // parkReconcile holds the admission boundary, starts a population reconcile
