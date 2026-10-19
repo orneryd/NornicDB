@@ -234,7 +234,8 @@ func parseConstituentFromTokens(tokens []string, idx *int) (map[string]interface
 //
 //	CREATE COMPOSITE DATABASE analytics IF NOT EXISTS
 //	  ALIAS tenant_a FOR DATABASE tenant_a
-func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = observability.RedactError(retErr) }()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("CREATE COMPOSITE DATABASE"), nil)
 	}
@@ -345,7 +346,8 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 }
 
 // executeDropCompositeDatabase handles DROP COMPOSITE DATABASE command.
-func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = observability.RedactError(retErr) }()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("DROP COMPOSITE DATABASE"), nil)
 	}
@@ -411,7 +413,8 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 }
 
 // executeShowCompositeDatabases handles SHOW COMPOSITE DATABASES command.
-func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = observability.RedactError(retErr) }()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
@@ -429,8 +432,18 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 	}, nil
 }
 
+// compositeDisplayURI projects command output only. Keep nil local values and
+// stored/runtime URIs unchanged; the shared URL owner redacts remote userinfo.
+func compositeDisplayURI(value interface{}) interface{} {
+	if uri, ok := value.(string); ok {
+		return observability.RedactURL(uri)
+	}
+	return value
+}
+
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
-func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = observability.RedactError(retErr) }()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}
@@ -499,23 +512,19 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				ref.DatabaseName,
 				ref.Type,
 				ref.AccessMode,
-				observability.RedactURL(ref.URI),
+				compositeDisplayURI(ref.URI),
 				ref.SecretRef,
 				ref.AuthMode,
 				ref.User,
 			}
 		} else if m, ok := c.(map[string]interface{}); ok {
 			// Fallback for map format (if returned as map)
-			uri := m["uri"]
-			if value, ok := uri.(string); ok {
-				uri = observability.RedactURL(value)
-			}
 			rows[i] = []interface{}{
 				m["alias"],
 				m["database_name"],
 				m["type"],
 				m["access_mode"],
-				uri,
+				compositeDisplayURI(m["uri"]),
 				m["secret_ref"],
 				m["auth_mode"],
 				m["user"],
@@ -548,7 +557,8 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 //
 //	ALTER COMPOSITE DATABASE analytics
 //	  DROP ALIAS tenant_c
-func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
+	defer func() { retErr = observability.RedactError(retErr) }()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("ALTER COMPOSITE DATABASE"), nil)
 	}
@@ -656,7 +666,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 				aliasName,
 				constituentDbName,
 				constituent["type"],
-				constituent["uri"],
+				compositeDisplayURI(constituent["uri"]),
 				constituent["secret_ref"],
 				constituent["auth_mode"],
 				constituent["user"],
