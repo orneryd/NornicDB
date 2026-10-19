@@ -312,6 +312,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
+	syntax := functionSyntaxView{text: expression}
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
 	var names []string
@@ -430,7 +431,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if call, called := functionCallAt(expression, index); called {
+		if call, called := syntax.callAt(index); called {
 			delimiters = append(delimiters, '(')
 			index = call.open + 1
 			continue

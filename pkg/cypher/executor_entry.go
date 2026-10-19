@@ -291,7 +291,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
 		}
 	}
-	cypher = strings.TrimSpace(cypher[readFunctionSyntax(cypher).leading:])
+	cypher = strings.TrimSpace(cypher[lexicalLeadingTriviaEnd(cypher):])
 	cypher = trimTrailingStatementDelimiters(cypher)
 	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
@@ -307,7 +307,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
-	cypher = strings.TrimSpace(cypher[readFunctionSyntax(cypher).leading:])
+	cypher = strings.TrimSpace(cypher[lexicalLeadingTriviaEnd(cypher):])
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
 	cypher25 := cypherVersionFromContext(ctx) == "25"

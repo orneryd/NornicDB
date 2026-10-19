@@ -1,0 +1,105 @@
+package cypher
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/internal/testutil/functionsyntaxmatrix"
+	"github.com/stretchr/testify/require"
+)
+
+// Sparse requests are retention policies on the existing lexer. Compare them
+// with its complete inventory, both on cache hits and above the cache bound.
+// Public route tests keep the independently checked Neo4j outcomes unchanged.
+func TestFunctionSyntaxDemandMatchesInventory(t *testing.T) {
+	texts := []string{
+		"sum(0) + COUNT { RETURN max(1) AS n } + sum(2)",
+		"COUNT { RETURN COUNT { RETURN max(1) AS n } AS n }",
+		"COUNT { RETURN max(1)",
+		"COUNT { RETURN COUNT { RETURN max(1) AS n }",
+		"sum(COUNT { RETURN max(1) AS n })",
+		"sum(count(1)",
+		"count(1] + sum(2)",
+		"range(range(1,2),3) + range(4,5)",
+		"range(1,2 + range(3,4)",
+		"CALL range(count(1)) YIELD v RETURN v",
+		"USE range(count(1)) RETURN v",
+		"RETURN (n):count(1), {`c`:count(1)}, xs[..count(1)]",
+		"RETURN substring(/* don't range('bad'), ) */ 'okay',0,2)",
+		"RETURN count('not /* trivia */'), /* unfinished",
+	}
+	for _, sample := range functionsyntaxmatrix.Cases() {
+		texts = append(texts, sample.Query)
+	}
+	prefix := "/* " + strings.Repeat("trivia ", 2400) + " */ "
+	for index, text := range texts {
+		for _, padding := range []string{"", prefix} {
+			text := padding + text
+			syntax := readFunctionSyntax(text)
+			require.Equal(t, len(findAggregateSpans(text)) > 0, containsAggregateFunc(text), "aggregate %d: %s", index, text)
+			require.Equal(t, syntax.render(syntaxSpan{0, len(text)}), lexicalExpressionText(text), "render %d", index)
+			for _, name := range []string{"range", "coalesce", "substring", "count"} {
+				want := make([]string, 0)
+				for at := 0; at < len(text); {
+					call, ok := syntax.nextCall(at, true, false, false)
+					if !ok {
+						break
+					}
+					at = call.open + 1
+					if !strings.EqualFold(call.name, name) {
+						continue
+					}
+					if call.close(text) < 0 {
+						break
+					}
+					want = append(want, syntax.source(syntaxSpan{call.open + 1, call.close(text)}))
+					at = call.close(text) + 1
+				}
+				require.Equal(t, want, namedFunctionArguments(text, name), "%s %d", name, index)
+			}
+		}
+	}
+}
+
+func TestFunctionSyntaxLongAdapterView(t *testing.T) {
+	expression := strings.Repeat("/* don't range('bad'), ( */ 0 + ", 600) + "labels(n) + properties(r) + n.name"
+	require.Greater(t, len(expression), 16384)
+	view := functionSyntaxView{text: expression}
+	first := view.facts()
+	require.Same(t, first, view.facts())
+	_, retained := functionSyntaxCache.get(functionSyntaxKey{expression, false})
+	require.False(t, retained, "large facts must stay local to the walk")
+	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "r", relationshipOnly: true}, {variable: "n"}}, deletedEntityReadsIn(expression))
+	plain := functionSyntaxView{text: "n.name + 1"}
+	_, called := plain.callAt(0)
+	require.False(t, called)
+	require.Nil(t, plain.syntax, "a call-free reference walk needs no full facts")
+}
+
+func TestFunctionSyntaxSparseRetention(t *testing.T) {
+	for _, kind := range []string{"block", "subqueries"} {
+		syntax := functionSyntax{text: functionFactConsumerInput(4000, kind)}
+		request := functionSyntaxRequest{aggregate: true, activeOpen: -1}
+		if kind == "block" {
+			request.aggregate, request.functionName = false, "coalesce"
+		}
+		scanFunctionSyntax(&syntax, false, &request)
+		require.Empty(t, syntax.calls, "a sparse query must not retain a call inventory")
+		require.Empty(t, syntax.arguments)
+		require.Empty(t, syntax.quoted)
+		require.Empty(t, syntax.rootPunctuation)
+		require.Empty(t, syntax.comments)
+		require.Len(t, syntax.groups, 1, "closed transient groups must be released")
+		if kind == "block" {
+			require.Len(t, request.arguments, 4000)
+		} else {
+			require.False(t, request.found)
+		}
+	}
+	text := "count(1) + " + strings.Repeat("coalesce(null,1) + ", 4000)
+	syntax := functionSyntax{text: text}
+	request := functionSyntaxRequest{aggregate: true, activeOpen: -1}
+	scanFunctionSyntax(&syntax, false, &request)
+	require.True(t, request.found)
+	require.Less(t, syntax.groups[len(syntax.groups)-1].close, len("count(1) + "), "the boolean request stops at its first closed aggregate")
+}

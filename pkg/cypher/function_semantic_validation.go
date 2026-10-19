@@ -91,6 +91,9 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 
 // Invocation offsets and identities come from the same retained lexical owner.
 func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
+	if !mayHaveFunctionCall(text) {
+		return nil
+	}
 	syntax := readFunctionSyntax(text)
 	for index := 0; index < len(text); {
 		call, ok := syntax.nextCall(index, true, false, false)

@@ -202,6 +202,9 @@ func rowStatementContext(values map[string]interface{}) context.Context {
 // scores at the statement's time (#866). A row expression with one carries
 // the statement context (rowStatementContextKey).
 func containsStatementClockCall(expression string) bool {
+	if !mayHaveFunctionCall(expression) {
+		return false
+	}
 	syntax := readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
 		call, ok := syntax.nextCall(index, true, false, false)

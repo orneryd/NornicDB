@@ -12,6 +12,9 @@ import (
 // (receiver[key], receiver[from..to]), wherever it appears, with scope's
 // static types. The rules are staticOperatorChecker.checkPostfix's.
 func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
+	if !strings.ContainsRune(text, '[') {
+		return nil
+	}
 	// The scan reads raw text, local variables included ([x IN l | x[0]]),
 	// so it can't tell an undefined variable.
 	scope.complete = false

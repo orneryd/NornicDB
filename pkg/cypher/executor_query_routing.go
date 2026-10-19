@@ -868,7 +868,7 @@ var validSyntaxStarts = [...]string{
 }
 
 func hasValidStartKeyword(cypher string) bool {
-	cypher = cypher[readFunctionSyntax(cypher).leading:]
+	cypher = cypher[lexicalLeadingTriviaEnd(cypher):]
 	for _, start := range validSyntaxStarts {
 		if startsWithKeywordFold(cypher, start) {
 			return true

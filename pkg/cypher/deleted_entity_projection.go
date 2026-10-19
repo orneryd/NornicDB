@@ -218,8 +218,9 @@ type deletedEntityRead struct {
 // labels(v), keys(v), properties(v).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
+	syntax := functionSyntaxView{text: expression}
 	for index := 0; index < len(expression); {
-		if call, ok := functionCallAt(expression, index); ok {
+		if call, ok := syntax.callAt(index); ok {
 			name := call.normalized
 			if name == "labels" || name == "keys" || name == "properties" {
 				arguments := call.arguments(nil)

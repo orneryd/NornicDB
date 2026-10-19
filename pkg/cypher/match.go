@@ -28,7 +28,7 @@ func isAggregateFunc(expr string) bool {
 // containsAggregateFunc checks if expression contains any aggregate function
 // (handles expressions like SUM(a) + SUM(b))
 func containsAggregateFunc(expr string) bool {
-	return len(findAggregateSpans(expr)) > 0
+	return hasLexicalAggregate(expr)
 }
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)

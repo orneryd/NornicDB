@@ -2,6 +2,18 @@ package cypher
 
 import "strings"
 
+// Leading trivia is a lexical request of its own. Statement routing must not
+// construct or look up a complete call inventory just to find its first token.
+func lexicalLeadingTriviaEnd(text string) int {
+	return queryGapEnd(text, 0)
+}
+
+// A missing opening delimiter conclusively excludes every function call,
+// including quoted names. Presence still requires the lexical owner to read it.
+func mayHaveFunctionCall(text string) bool {
+	return strings.ContainsRune(text, '(')
+}
+
 // lexicalExpressionText returns expression code independently of optional query
 // normalization. Comment-looking quoted values and names remain data, and a
 // comment between tokens must not join them into a different identifier.
@@ -11,7 +23,13 @@ func lexicalExpressionText(text string) string {
 	if strings.IndexByte(text, '/') < 0 {
 		return strings.TrimSpace(text)
 	}
-	return readFunctionSyntax(text).render(syntaxSpan{0, len(text)})
+	if syntax, ok := cachedFunctionSyntax(text); ok {
+		return syntax.render(syntaxSpan{0, len(text)})
+	}
+	syntax := functionSyntax{text: text}
+	request := functionSyntaxRequest{renderOnly: true, activeOpen: -1}
+	scanFunctionSyntax(&syntax, false, &request)
+	return syntax.render(syntaxSpan{0, len(text)})
 }
 
 // parseFunctionCallWS parses a standalone function call expression, tolerating
@@ -147,6 +165,32 @@ func functionCallAt(text string, at int) (functionCallSpan, bool) {
 	return readFunctionSyntax(text).callAt(at)
 }
 
+// A text walk keeps one lazy view, including for texts above the cache bound.
+// Call-free expressions need no inventory, and large inventories stay local
+// to the walk rather than being rebuilt at each candidate offset.
+type functionSyntaxView struct {
+	text   string
+	syntax *functionSyntax
+	loaded bool
+}
+
+func (view *functionSyntaxView) facts() *functionSyntax {
+	if !view.loaded {
+		view.loaded = true
+		if strings.ContainsRune(view.text, '(') {
+			view.syntax = readFunctionSyntax(view.text)
+		}
+	}
+	return view.syntax
+}
+
+func (view *functionSyntaxView) callAt(at int) (functionCallSpan, bool) {
+	if syntax := view.facts(); syntax != nil {
+		return syntax.callAt(at)
+	}
+	return functionCallSpan{}, false
+}
+
 func (syntax *functionSyntax) callAt(at int) (functionCallSpan, bool) {
 	index := syntax.callIndex(at)
 	if index < len(syntax.calls) {
@@ -255,8 +299,89 @@ func readFunctionSyntax(text string) *functionSyntax {
 	return readFunctionSyntaxFacts(text, false)
 }
 
-// Both entries use this one lexical pass. An argument-only consumer needs the
-// outer separators and comments, not retained call identities or inner groups.
+// A request changes retained detail, never lexical rules. Sparse consumers use
+// the same scan and keep only transient nesting plus the result they requested.
+type functionSyntaxRequest struct {
+	functionName   string
+	aggregate      bool
+	renderOnly     bool
+	activeOpen     int
+	arguments      []string
+	found          bool
+	unclosedScalar bool
+}
+
+func cachedFunctionSyntax(text string) (*functionSyntax, bool) {
+	if len(text) > 16384 {
+		return nil, false
+	}
+	return functionSyntaxCache.get(functionSyntaxKey{text, false})
+}
+
+// hasLexicalAggregate answers the boolean question without materializing an
+// inventory. Existing complete facts are reused; otherwise the shared scan
+// excludes scalar bodies and stops when any qualifying call closes.
+func hasLexicalAggregate(text string) bool {
+	if !strings.ContainsRune(text, '(') {
+		return false
+	}
+	if syntax, ok := cachedFunctionSyntax(text); ok {
+		for index := 0; index < len(text); {
+			call, ok := syntax.nextCall(index, false, false, false)
+			if !ok {
+				break
+			}
+			if lexicalAggregateName(call.name) && call.close(text) >= 0 {
+				return true
+			}
+			index = call.open + 1
+		}
+		return false
+	}
+	syntax := functionSyntax{text: text}
+	request := functionSyntaxRequest{aggregate: true, activeOpen: -1}
+	scanFunctionSyntax(&syntax, false, &request)
+	if request.unclosedScalar {
+		// Preserve the full reader's behavior on malformed, unclosed bodies:
+		// only closed scalar scopes exclude calls. Public syntax validation
+		// remains responsible for rejecting the malformed statement.
+		return len(findAggregateSpans(text)) > 0
+	}
+	return request.found
+}
+
+func lexicalNamedArguments(text, name string) []string {
+	arguments := make([]string, 0)
+	if !strings.ContainsRune(text, '(') {
+		return arguments
+	}
+	if syntax, ok := cachedFunctionSyntax(text); ok {
+		for index := 0; index < len(text); {
+			call, ok := syntax.nextCall(index, true, false, false)
+			if !ok {
+				break
+			}
+			index = call.open + 1
+			if !strings.EqualFold(call.name, name) {
+				continue
+			}
+			close := call.close(text)
+			if close < 0 {
+				break
+			}
+			arguments = append(arguments, syntax.source(syntaxSpan{call.open + 1, close}))
+			index = close + 1
+		}
+		return arguments
+	}
+	syntax := functionSyntax{text: text}
+	request := functionSyntaxRequest{functionName: name, activeOpen: -1, arguments: arguments}
+	scanFunctionSyntax(&syntax, false, &request)
+	return request.arguments
+}
+
+// Full and argument-only inventories use the same lexical pass as sparse
+// requests. Argument-only consumers retain outer separators and comments.
 func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 	key := functionSyntaxKey{text, argumentsOnly}
 	if len(text) <= 16384 {
@@ -264,11 +389,25 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			return syntax
 		}
 	}
-	syntax := &functionSyntax{text: text, leading: queryGapEnd(text, 0)}
+	syntax := &functionSyntax{text: text, leading: lexicalLeadingTriviaEnd(text)}
+	scanFunctionSyntax(syntax, argumentsOnly, nil)
+	if len(text) <= 16384 {
+		functionSyntaxCache.put(key, syntax)
+	}
+	return syntax
+}
+
+// scanFunctionSyntax is the only lexical pass for full, argument-only,
+// comment-rendering, named-argument and boolean requests.
+func scanFunctionSyntax(syntax *functionSyntax, argumentsOnly bool, request *functionSyntaxRequest) {
+	text := syntax.text
 	// Counts are allocation hints only, never token classification. Bound the
 	// reservation so parentheses inside a large literal cannot inflate it.
-	parentheses := strings.Count(text, "(")
-	groups := parentheses + strings.Count(text, "[") + strings.Count(text, "{")
+	parentheses, groups := 0, 0
+	if request == nil {
+		parentheses = strings.Count(text, "(")
+		groups = parentheses + strings.Count(text, "[") + strings.Count(text, "{")
+	}
 	if parentheses > 64 {
 		parentheses = 64
 	}
@@ -282,7 +421,11 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 		groups = 3
 	}
 	// Group zero represents the whole input, including argument-only inputs.
-	syntax.groups = make([]syntaxGroup, 1, groups+1)
+	if request != nil {
+		syntax.groups = make([]syntaxGroup, 1, 16)
+	} else {
+		syntax.groups = make([]syntaxGroup, 1, groups+1)
+	}
 	syntax.groups[0] = syntaxGroup{open: -1, close: len(text), parent: -1}
 	// Temporary nesting and comma chains never escape the lexical pass. Most
 	// expressions fit these buffers; larger inputs grow through append.
@@ -295,11 +438,16 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 	subqueryOpen := make(map[int]int)
 	var subqueryBuffer [16]syntaxSpan
 	subqueries := subqueryBuffer[:0]
+	var candidateBuffer [16]int
+	candidates := candidateBuffer[:0]
+	hiddenOpen, hiddenDepth := -1, 0
 	previous := -1
 	suppressedNameEnd := 0
 	for index := 0; index < len(text); {
 		if end := queryCommentEnd(text, index); end >= 0 {
-			syntax.comments = append(syntax.comments, syntaxSpan{index, end})
+			if request == nil || request.renderOnly || request.activeOpen >= 0 && index > request.activeOpen {
+				syntax.comments = append(syntax.comments, syntaxSpan{index, end})
+			}
 			index = end
 			continue
 		}
@@ -309,7 +457,7 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 		}
 		if text[index] == '\'' || text[index] == '"' {
 			end := skipCypherQuotedText(text, index, text[index])
-			if !argumentsOnly {
+			if !argumentsOnly && request == nil {
 				syntax.quoted = append(syntax.quoted, syntaxSpan{index, end})
 			}
 			index = end
@@ -317,13 +465,17 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			continue
 		}
 		if name, next, ok := callableIdentifierToken(text, index); ok {
-			if argumentsOnly || index < suppressedNameEnd {
+			if argumentsOnly || request != nil && (request.renderOnly || hiddenDepth > 0 || request.activeOpen >= 0) || index < suppressedNameEnd {
 				index, previous = next, next-1
 				continue
 			}
 			if text[index] != '`' && (previous < 0 || text[previous] != '.') {
 				if _, open, ok := subqueryExpressionKeywordAt(text, index); ok {
-					subqueryOpen[open] = index
+					if request == nil {
+						subqueryOpen[open] = index
+					} else if request.aggregate {
+						hiddenOpen = open
+					}
 				}
 				if strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE") {
 					start := queryGapEnd(text, next)
@@ -340,7 +492,7 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 						index, previous = next, next-1
 						continue
 					}
-					if strings.EqualFold(name, "CALL") {
+					if strings.EqualFold(name, "CALL") && request == nil {
 						name := called + parts
 						call := functionCallSpan{name: name, normalized: lowerASCII(name), start: start, nameEnd: end, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
 						if cursor < len(text) && text[cursor] == '(' {
@@ -365,7 +517,15 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 				groupOpening = text[group.open]
 			}
 			if call, ok := readFunctionIdentity(text, index, previous, groupOpening); ok {
-				pending, hasPending = call, true
+				if request == nil {
+					pending, hasPending = call, true
+				} else if !precededByTypeAnnotation(text, call.start) && !isNonFunctionSemanticKeyword(call.normalized) {
+					if request.aggregate && lexicalAggregateName(call.name) {
+						candidates = append(candidates, call.open)
+					} else if request.functionName != "" && strings.EqualFold(call.name, request.functionName) {
+						request.activeOpen = call.open
+					}
+				}
 				// A qualified name is one token; its components are never separate calls.
 				index = next
 				previous = next - 1
@@ -380,6 +540,9 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			group := len(syntax.groups)
 			syntax.groups = append(syntax.groups, syntaxGroup{open: index, close: -1, parent: stack[len(stack)-1]})
 			stack = append(stack, group)
+			if request != nil && request.aggregate && index == hiddenOpen {
+				hiddenDepth, hiddenOpen = len(stack), -1
+			}
 			if hasPending && pending.open == index {
 				call := pending
 				call.syntax = syntax
@@ -394,6 +557,23 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 				if opening == '(' && text[index] == ')' || opening == '[' && text[index] == ']' || opening == '{' && text[index] == '}' {
 					syntax.groups[group].close = index
 					stack = stack[:len(stack)-1]
+					if request != nil {
+						open := syntax.groups[group].open
+						if len(candidates) > 0 && candidates[len(candidates)-1] == open {
+							request.found = true
+							return
+						}
+						if request.activeOpen == open {
+							request.arguments = append(request.arguments, syntax.source(syntaxSpan{open + 1, index}))
+							request.activeOpen = -1
+							syntax.comments = syntax.comments[:0]
+						}
+						if hiddenDepth == len(stack)+1 {
+							hiddenDepth = 0
+						}
+						syntax.groups = syntax.groups[:group]
+						break
+					}
 					if argumentsOnly {
 						syntax.groups = syntax.groups[:group]
 						break
@@ -405,7 +585,7 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			}
 		case ',':
 			group := stack[len(stack)-1]
-			if !argumentsOnly || group == 0 {
+			if request == nil && (!argumentsOnly || group == 0) {
 				shape := &syntax.groups[group]
 				separator := len(separators)
 				separators = append(separators, syntaxSeparator{index, -1})
@@ -416,17 +596,21 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 				}
 				shape.argumentEnd = separator
 			}
-			if !argumentsOnly && group == 0 {
+			if !argumentsOnly && request == nil && group == 0 {
 				syntax.rootPunctuation = append(syntax.rootPunctuation, index)
 			}
 		default:
 			group := stack[len(stack)-1]
-			if !argumentsOnly && group == 0 {
+			if !argumentsOnly && request == nil && group == 0 {
 				syntax.rootPunctuation = append(syntax.rootPunctuation, index)
 			}
 		}
 		previous = index
 		index++
+	}
+	if request != nil {
+		request.unclosedScalar = hiddenDepth > 0
+		return
 	}
 	// Closed scopes arrive in closing order. Collapse nested scopes to
 	// disjoint outer ranges, then label the ordered calls in one sweep.
@@ -476,10 +660,6 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 		syntax.arguments = append(syntax.arguments, syntaxSpan{start, shape.close})
 		shape.argumentEnd = len(syntax.arguments)
 	}
-	if len(text) <= 16384 {
-		functionSyntaxCache.put(key, syntax)
-	}
-	return syntax
 }
 
 // render removes comments recorded by the lexer, never quoted data. A space
@@ -681,8 +861,12 @@ func (syntax *functionSyntax) groupAt(open int) (syntaxGroup, bool) {
 }
 
 func firstSyntaxGroup(text string, opening byte, from int) int {
-	for _, group := range readFunctionSyntax(text).groups {
-		if group.open >= from && group.open >= 0 && text[group.open] == opening {
+	return readFunctionSyntax(text).firstGroup(opening, from)
+}
+
+func (syntax *functionSyntax) firstGroup(opening byte, from int) int {
+	for _, group := range syntax.groups {
+		if group.open >= from && group.open >= 0 && syntax.text[group.open] == opening {
 			return group.open
 		}
 	}

@@ -253,6 +253,9 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 }
 
 func containsFunctionCallNamed(expression, expected string) bool {
+	if !mayHaveFunctionCall(expression) {
+		return false
+	}
 	syntax := readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
 		call, ok := syntax.nextCall(index, true, false, false)
@@ -309,6 +312,7 @@ func semanticExpressionReferences(expression string) []string {
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
 func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+	syntax := functionSyntaxView{text: expression}
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -352,7 +356,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if cursor < len(expression) && expression[cursor] == ':' {
 			continue
 		}
-		if call, called := functionCallAt(expression, start); called {
+		if call, called := syntax.callAt(start); called {
 			// apoc.coll.sort(…): a namespaced function's name, not a
 			// variable and its property.
 			index = call.open
