@@ -21,7 +21,8 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 		for _, composite := range []bool{false, true} {
 			for _, explicit := range []bool{false, true} {
 				for _, failure := range []bool{false, true} {
-					t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v", name, composite, explicit, failure), func(t *testing.T) {
+					for _, dynamic := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v/dynamic=%v", name, composite, explicit, failure, dynamic), func(t *testing.T) {
 						exec, committed := newProcedureAdmissionExecutor(t, composite)
 						cleanupAdmissionProcedure(t, "u5batch.step")
 						calls, visible := 0, -1
@@ -45,6 +46,11 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 						if name == "apoc.periodic.commit" {
 							call = "CALL " + name + "($body,{}) YIELD executions RETURN executions"
 						}
+						params := map[string]interface{}{"body": body}
+						if dynamic {
+							params["periodic"] = call
+							call = "CALL apoc.cypher.run($periodic,{body:$body}) YIELD value RETURN value"
+						}
 						if composite {
 							call = "CALL { USE admission_comp.one " + call + " } RETURN *"
 						}
@@ -52,7 +58,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 							_, err := exec.Execute(context.Background(), "BEGIN", nil)
 							require.NoError(t, err)
 						}
-						result, err := exec.Execute(context.Background(), call, map[string]interface{}{"body": body})
+						result, err := exec.Execute(context.Background(), call, params)
 						if composite {
  require.ErrorContains(t,err,"unsupported query type in transaction")
  require.Zero(t,calls,"unsupported managed scope must fail before any batch action")
@@ -70,6 +76,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 						require.NoError(t, err)
 						wantNodes:=1; if explicit {wantNodes=0}; require.Len(t, nodes, wantNodes, "explicit rollback retains shipped folding; autocommit retains completed batches")
 					})
+					}
 				}
 			}
 		}
