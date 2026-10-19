@@ -75,14 +75,8 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}); err != nil {
 		return fmt.Errorf("stream snapshot nodes: %w", err)
 	}
-	var edgeCount uint64
-	if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
-		if err := frames.write(streamSnapshotEdge, edge, maxRecordBytes); err != nil {
-			return err
-		}
-		edgeCount++
-		return nil
-	}); err != nil {
+	edgeCount, err := writeSnapshotEdges(ctx, engine, &frames, maxRecordBytes)
+	if err != nil {
 		return fmt.Errorf("stream snapshot edges: %w", err)
 	}
 	footer := struct {
@@ -237,10 +231,34 @@ type snapshotFrameWriter struct {
 }
 
 func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes int64) error {
-	payload, err := w.encoder.recovery(value)
+	var payload []byte
+	var err error
+	var edge *Edge
+	if frameType == streamSnapshotEdge {
+		switch typed := value.(type) {
+		case *Edge:
+			edge = typed
+		case Edge:
+			edge = &typed
+		}
+	}
+	if edge != nil {
+		// Both the reflected encoder and the stored-body transcoder use this
+		// order. Only snapshot edge maps change order; the format is unchanged.
+		w.encoder.reset()
+		w.encoder.msgpack.SetSortMapKeys(true)
+		err = w.encoder.msgpack.Encode(prepareRecoveryEdge(edge))
+		payload = w.encoder.buffer.Bytes()
+	} else {
+		payload, err = w.encoder.recovery(value)
+	}
 	if err != nil {
 		return err
 	}
+	return w.writePayload(frameType, payload, maxRecordBytes)
+}
+
+func (w *snapshotFrameWriter) writePayload(frameType byte, payload []byte, maxRecordBytes int64) error {
 	if int64(len(payload)) > maxRecordBytes {
 		return fmt.Errorf("snapshot record is %d bytes, exceeds limit %d", len(payload), maxRecordBytes)
 	}
@@ -253,7 +271,7 @@ func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes in
 		return err
 	}
 	binary.LittleEndian.PutUint32(w.scratch[:4], crc32Checksum(payload))
-	_, err = w.writer.Write(w.scratch[:4])
+	_, err := w.writer.Write(w.scratch[:4])
 	return err
 }
 

@@ -131,6 +131,10 @@ func (b *BadgerEngine) StreamStoredEdgesByType(ctx context.Context, edgeType str
 }
 
 func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScopeWithBodies(ctx, scope, edgeType, v, visit, nil)
+}
+
+func (b *BadgerEngine) streamEdgesByTypeInScopeWithBodies(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -169,7 +173,16 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		if edgeType == "" {
-			return b.streamAllEdgesInScopeTxn(ctx, txn, scope, emit)
+			var offer storedEdgeBodyVisitor
+			if body != nil && v == storedRead {
+				offer = func(id EdgeID, data []byte) (bool, error) {
+					if touched[id] {
+						return true, nil
+					}
+					return body(id, data)
+				}
+			}
+			return b.streamAllEdgesInScopeTxnWithBodies(ctx, txn, scope, emit, offer)
 		}
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -237,6 +250,15 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 }
 
 func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error) error {
+	return b.streamAllEdgesInScopeTxnWithBodies(ctx, txn, scope, emit, nil)
+}
+
+// storedEdgeBodyVisitor consumes a borrowed body inside Item.Value, or returns
+// false to request the ordinary strict reader. The caller owns visibility and
+// captured-overlay shadowing before it offers a body to this optional consumer.
+type storedEdgeBodyVisitor func(EdgeID, []byte) (bool, error)
+
+func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error, body storedEdgeBodyVisitor) error {
 	prefix := []byte{prefixEdge}
 	if scope != "" {
 		prefix = edgeKey(EdgeID(scope))
@@ -253,12 +275,23 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger
 		}
 		edgeID := EdgeID(key[1:])
 		var edge *Edge
+		var handled bool
 		if err := it.Item().Value(func(val []byte) error {
+			if body != nil {
+				var err error
+				handled, err = body(edgeID, val)
+				if err != nil || handled {
+					return err
+				}
+			}
 			var decodeErr error
 			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 			return decodeErr
 		}); err != nil {
 			return err
+		}
+		if handled {
+			continue
 		}
 		if err := emit(edge); err != nil {
 			return err
