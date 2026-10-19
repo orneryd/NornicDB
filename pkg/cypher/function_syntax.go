@@ -57,8 +57,10 @@ func (call functionCallSpan) close(text string) int {
 // functionCallAt reads a name at a known code position, including quoted and
 // qualified components and trivia before "(". Whole-text consumers must use
 // nextFunctionCall so comments and string literals cannot become code.
-func readFunctionIdentity(text string, at, previous int, expressionColon bool) (functionCallSpan, bool) {
-	if at < 0 || at >= len(text) || at > 0 && previous == at-1 && isIdentByte(text[at-1]) || previous >= 0 && text[previous] == '.' ||
+func readFunctionIdentity(text string, at, previous int, groupOpening byte) (functionCallSpan, bool) {
+	sliceBoundary := groupOpening == '[' && previous > 0 && text[previous] == '.' && text[previous-1] == '.'
+	expressionColon := groupOpening == '{' || groupOpening == '['
+	if at < 0 || at >= len(text) || at > 0 && previous == at-1 && isIdentByte(text[at-1]) || previous >= 0 && text[previous] == '.' && !sliceBoundary ||
 		at > 0 && text[at-1] == '$' || previous >= 0 && text[previous] == ':' && !expressionColon {
 		return functionCallSpan{}, false
 	}
@@ -344,8 +346,9 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			// Pattern label/type colons do not. The forward group's context and
 			// previous live position survive comments and quoted map keys.
 			group := syntax.groups[stack[len(stack)-1]]
-			expressionColon := group.open >= 0 && (text[group.open] == '{' || text[group.open] == '[')
-			if call, ok := readFunctionIdentity(text, index, previous, expressionColon); ok {
+			var groupOpening byte
+			if group.open >= 0 { groupOpening = text[group.open] }
+			if call, ok := readFunctionIdentity(text, index, previous, groupOpening); ok {
 				pending, hasPending = call, true
 				// A qualified name is one token; its components are never separate calls.
 				index = next
