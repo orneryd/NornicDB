@@ -27,6 +27,7 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 type functionCallSpan struct {
 	name        string
 	start, open int
+	nameEnd     int
 	syntax      *functionSyntax
 	group       int
 	next        int
@@ -57,7 +58,7 @@ func readFunctionIdentity(text string, at, previous int) (functionCallSpan, bool
 	if open >= len(text) || text[open] != '(' {
 		return functionCallSpan{}, false
 	}
-	return functionCallSpan{name: name + parts, start: at, open: open, next: open + 1}, true
+	return functionCallSpan{name: name + parts, start: at, nameEnd: end, open: open, next: open + 1}, true
 }
 
 // nextFunctionCall is the lexical owner for static and runtime call readers.
@@ -265,7 +266,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 						continue
 					}
 					if strings.EqualFold(name, "CALL") {
-						call := functionCallSpan{name: called + parts, start: start, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
+						call := functionCallSpan{name: called + parts, start: start, nameEnd: end, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
 						if cursor < len(text) && text[cursor] == '(' {
 							call.open = cursor
 							call.next = cursor + 1
