@@ -605,6 +605,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
+			e.txContext.coordinatorOwned = e.txContext.coordinatorOwned || storage.CoordinatorOwnsTransaction(ctx)
 			if tx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
 				tx.BindContext(ctx)
 			}

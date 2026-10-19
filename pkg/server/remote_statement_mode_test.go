@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -65,6 +66,38 @@ func TestRemoteHTTPModeLeavesCountersIndependent(t *testing.T) {
 			require.Equal(t, mode, stats.QueryType)
 			require.Equal(t, created > 0, stats.ContainsUpdates)
 			require.Equal(t, created, stats.NodesCreated)
+		}
+	}
+}
+
+func TestRemotePeriodicCoordinatorMetadataHTTP(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	endpoint := httptest.NewServer(server.buildRouter())
+	defer endpoint.Close()
+	for _, procedure := range []string{"apoc.periodic.iterate", "apoc.periodic.commit"} {
+		for _, clearMetadata := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/clear=%v", procedure, clearMetadata), func(t *testing.T) {
+				engine, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: endpoint.URL, Database: "nornic", AuthToken: token})
+				require.NoError(t, err)
+				defer engine.Close()
+				tx, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(context.Background()))
+				require.NoError(t, err)
+				defer tx.Rollback(context.Background())
+				if clearMetadata {
+					_, _, err = tx.QueryCypher(context.Background(), "CALL tx.setMetaData({})", nil)
+					require.NoError(t, err)
+				}
+				body := "CALL " + procedure + "('UNWIND [1,2,3] AS x RETURN x','CREATE (:U5PeriodicRemote)',{batchSize:1})"
+				if procedure == "apoc.periodic.commit" {
+					body = "CALL apoc.periodic.commit('CREATE (:U5PeriodicRemote) RETURN 1',{})"
+				}
+				_, _, err = tx.QueryCypher(context.Background(), "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", map[string]interface{}{"body": body})
+				require.ErrorContains(t, err, "unsupported query type in transaction")
+				result, err := server.db.GetCypherExecutor().Execute(context.Background(), "MATCH (n:U5PeriodicRemote) RETURN count(n) AS count", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+			})
 		}
 	}
 }

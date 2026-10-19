@@ -215,7 +215,7 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
 		return handle, nil
 	}
-	handle, err := engine.BeginCypherTx(ctx)
+	handle, err := engine.BeginCypherTx(storage.WithCoordinatorOwnedTransaction(ctx))
 	if err != nil {
 		return nil, err
 	}
