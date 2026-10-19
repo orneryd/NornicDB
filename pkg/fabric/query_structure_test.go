@@ -129,3 +129,41 @@ func TestEmbeddingOptionUsesGrammarContext(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddingProjectionScope(t *testing.T) {
+	for _, text := range []string{
+		"CREATE (embedding) WITH embedding RETURN embedding",
+		"CREATE (EMBEDDING) WITH EMBEDDING RETURN EMBEDDING",
+		"INSERT (embedding) WITH embedding RETURN embedding",
+		"CREATE (embedding) NODETACH DELETE embedding WITH embedding RETURN 7",
+		"WITH 7 AS embedding CREATE (n) WITH embedding RETURN embedding",
+		"MATCH (embedding) SET embedding.k=7 WITH embedding RETURN embedding.k",
+		"UNWIND [7] AS embedding CREATE (n) WITH embedding RETURN embedding",
+		"CALL { RETURN 7 AS embedding } CREATE (n) WITH embedding RETURN embedding",
+		"CREATE (`embedding`) WITH `embedding` CREATE (n) WITH embedding RETURN embedding",
+		"CREATE (embedding) WITH embedding AS retained RETURN retained",
+		"CREATE (embedding) WITH embedding, 7 AS k RETURN k",
+		"CALL () { CREATE (embedding) WITH embedding RETURN embedding } RETURN 7",
+	} {
+		t.Run(text, func(t *testing.T) {
+			q := ReadQueryStructure(text)
+			require.NoError(t, q.Err)
+			stripped, option := StripEmbeddingOption(text)
+			require.False(t, option)
+			require.Equal(t, text, stripped)
+		})
+	}
+	for _, text := range []string{
+		"CREATE (n:embedding {embedding:7}) WITH EMBEDDING RETURN n",
+		"CREATE (embedding) WITH 7 AS k CREATE (n) WITH EMBEDDING RETURN n",
+		"CREATE (EMBEDDING) WITH EMBEDDING",
+		"CREATE (n) WITH EMBEDDING RETURN n UNION CREATE (embedding) WITH embedding RETURN embedding",
+	} {
+		t.Run(text, func(t *testing.T) {
+			q := ReadQueryStructure(text)
+			require.NoError(t, q.Err)
+			_, option := StripEmbeddingOption(text)
+			require.True(t, option)
+		})
+	}
+}
