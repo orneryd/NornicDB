@@ -26,6 +26,9 @@ func (w *WriteBehindBuffer) idleReadEpoch(scope string) (uint64, bool) {
 	if scope == "" {
 		return global, false
 	}
+	// Scoped readers pass ID prefixes (for example test:), while point
+	// readers pass the namespace itself. Both name the same generation.
+	scope, _, _ = strings.Cut(scope, ":")
 	if wildcard, ok := w.readScopes.Load(""); ok && wildcard.(*overlayScopeEpoch).epoch.Load()&1 != 0 {
 		return global, false
 	}
