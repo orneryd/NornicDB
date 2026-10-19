@@ -436,12 +436,15 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 // calls with one key are one expression. call is a call semanticAggregateCalls
 // found: a name, then its parenthesized arguments.
 func aggregateCallKey(call string) string {
-	open := strings.IndexByte(call, '(')
-	arguments := strings.TrimSpace(call[open+1:])
+	name, inner, ok := parseFunctionCallWS(call)
+	if !ok {
+		return call
+	}
+	arguments := strings.TrimSpace(StripComments(inner)) + ")"
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
 		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
 	}
-	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
+	return upperASCII(name) + "(" + stripExpressionWhitespace(arguments)
 }
 
 // stripExpressionWhitespace removes the whitespace outside quoted text, but
@@ -601,16 +604,11 @@ func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []str
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	// An aggregate is a function call: without a parenthesis there is none.
-	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
+	if !isAggregateFunc(expr) {
 		return "", "", false, false
 	}
-	open := strings.Index(expr, "(")
-	if open < 0 {
-		return "", "", false, false
-	}
-	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
+	name, inner, _ = parseFunctionCallWS(expr)
+	name, inner = lowerASCII(name), trimQueryTrivia(inner)
 	inner, distinct = cutDistinctArgument(inner)
 	if inner == "" {
 		return "", "", false, false

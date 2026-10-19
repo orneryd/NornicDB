@@ -17,7 +17,8 @@ import (
 //	if err != nil {
 //	    // handle error
 //	}
-//	// ast.Clauses contains structured representation
+
+// // ast.Clauses contains structured representation
 type ASTBuilder struct {
 	// Precompiled patterns for performance
 	nodePattern     *regexp.Regexp
@@ -993,31 +994,19 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Function call
-	if parenIdx := strings.Index(text, "("); parenIdx > 0 {
-		closeParen := strings.LastIndex(text, ")")
-		if closeParen > parenIdx {
-			expr.Type = ASTExprFunction
-			funcName := strings.TrimSpace(text[:parenIdx])
-			argsText := text[parenIdx+1 : closeParen]
-
-			fc := &ASTFunctionCall{Name: funcName}
-
-			// Check for DISTINCT
-			argsText, fc.Distinct = cutDistinctArgument(argsText)
-
-			args := splitOutsideBrackets(argsText, ',')
-			for _, arg := range args {
-				arg = strings.TrimSpace(arg)
-				if arg != "" && arg != "*" {
-					fc.Arguments = append(fc.Arguments, b.parseExpression(arg))
-				}
+	if name, argsText, ok := parseFunctionCallWS(text); ok {
+		expr.Type = ASTExprFunction
+		fc := &ASTFunctionCall{Name: name}
+		argsText, fc.Distinct = cutDistinctArgument(argsText)
+		for _, arg := range splitTopLevelComma(argsText) {
+			arg = strings.TrimSpace(arg)
+			if arg != "" && arg != "*" {
+				fc.Arguments = append(fc.Arguments, b.parseExpression(arg))
 			}
-
-			expr.Function = fc
-			return expr
 		}
+		expr.Function = fc
+		return expr
 	}
-
 	// Default: treat as variable
 	expr.Type = ASTExprVariable
 	expr.Variable = text

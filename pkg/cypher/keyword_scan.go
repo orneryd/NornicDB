@@ -1355,6 +1355,21 @@ func queryGapStart(query string, index int) int {
 	return start
 }
 
+// trimQueryTrivia removes surrounding whitespace and comments without changing
+// quoted data or expression offsets within the retained text. Evaluation must
+// accept trivia even when optional statement normalization is disabled.
+func trimQueryTrivia(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.IndexByte(text, '/') < 0 {
+		return text
+	}
+	start, end := queryGapEnd(text, 0), queryGapStart(text, len(text))
+	if end < start {
+		end = start
+	}
+	return text[start:end]
+}
+
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
 // written but for its comments: the knowledge-policy DDL (CREATE / ALTER /

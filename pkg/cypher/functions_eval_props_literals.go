@@ -157,17 +157,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// Check if this is an aggregation function - they should not be evaluated in expression context
-	exprLower := lowerASCII(expr)
-	if strings.HasPrefix(exprLower, "count(") ||
-		strings.HasPrefix(exprLower, "sum(") ||
-		strings.HasPrefix(exprLower, "avg(") ||
-		strings.HasPrefix(exprLower, "min(") ||
-		strings.HasPrefix(exprLower, "max(") ||
-		strings.HasPrefix(exprLower, "collect(") {
-		// Aggregation functions must be handled by aggregation logic, not per-row evaluation
-		return nil
+	if name, _, ok := parseFunctionCallWS(expr); ok {
+		switch lowerASCII(name) {
+		case "count", "sum", "avg", "min", "max", "collect":
+			return nil
+		}
 	}
-
 	// Unknown - return as string (for string literals without quotes, etc.)
 	return expr
 }

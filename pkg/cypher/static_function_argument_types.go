@@ -401,41 +401,11 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
-		// Comment contents are never code.
-		if end := queryGapEnd(text, index); end > index {
-			index = end
-			continue
-		}
-		switch text[index] {
-		case '\'', '"':
-			index = skipQuotedSemanticText(text, index)
-			continue
-		}
-		name, next, ok := scanIdentifierToken(text, index)
+		call, ok := nextFunctionCall(text, index)
 		if !ok {
-			index++
-			continue
+			break
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentByte(text[index-1])) {
-			index = next
-			continue
-		}
-		if precededByTypeAnnotation(text, index) {
-			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
-			// block the next entry may start with "(", which must not read
-			// as DATE(...).
-			index = next
-			continue
-		}
-		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, next, true)
-		name, next = name+parts, end
-
-		open := queryGapEnd(text, next)
-		if open >= len(text) || text[open] != '(' {
-			index = next
-			continue
-		}
+		name, open := call.name, call.open
 		if isReduceFormFunction(name) {
 			if err := checkReduceForm(name, text, open, check); err != nil {
 				return err
@@ -449,7 +419,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = open + 1
 			continue
 		}
-		closing := findMatchingDelimiter(text, open, '(', ')')
+		closing := call.close(text)
 		if closing < 0 {
 			return nil
 		}

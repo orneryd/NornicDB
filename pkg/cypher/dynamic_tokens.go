@@ -516,6 +516,10 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 		return nil
 	}
 	for i := 0; i < len(text); i++ {
+		if end := queryCommentEnd(text, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		switch c := text[i]; c {
 		case '\'', '"', '`':
 			i = skipCypherQuotedText(text, i, c) - 1
@@ -533,16 +537,12 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			}
 			i = closing
 		case '_':
-			function := dynamicLabelTestFunction
-			predicate := strings.HasPrefix(text[i:], dynamicLabelPredicateFunction+"(")
-			if predicate {
-				function = dynamicLabelPredicateFunction
-			}
-			if !strings.HasPrefix(text[i:], function+"(") {
+			call, ok := functionCallAt(text, i)
+			if !ok || call.name != dynamicLabelTestFunction && call.name != dynamicLabelPredicateFunction {
 				continue
 			}
-			open := i + len(function)
-			closing := findMatchingDelimiter(text, open, '(', ')')
+			predicate := call.name == dynamicLabelPredicateFunction
+			open, closing := call.open, call.close(text)
 			if closing < 0 {
 				return nil
 			}

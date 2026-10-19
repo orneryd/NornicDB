@@ -23,40 +23,21 @@ import (
 const bfsCancelCheckMask = 0xFF
 
 func extractShortestPathCall(cypher string) (string, string, int, bool) {
-	upperCypher := upperASCII(cypher)
-	// Upper-case literals avoid upperASCII(funcName) allocations on every
-	// statement; the compiler places this constant slice in static data.
-	for _, upperFunc := range []string{"ALLSHORTESTPATHS", "SHORTESTPATH"} {
-		searchStart := 0
-		for searchStart < len(cypher) {
-			idx := strings.Index(upperCypher[searchStart:], upperFunc)
-			if idx < 0 {
+	for _, name := range []string{"allShortestPaths", "shortestPath"} {
+		for index := 0; index < len(cypher); {
+			call, ok := nextFunctionCall(cypher, index)
+			if !ok {
 				break
 			}
-			idx += searchStart
-			if !functionNameStartsAt(cypher, idx) {
-				searchStart = idx + 1
+			index = call.open + 1
+			if !strings.EqualFold(call.name, name) {
 				continue
 			}
-			openParen := idx + len(upperFunc)
-			for openParen < len(cypher) && (cypher[openParen] == ' ' || cypher[openParen] == '\t' || cypher[openParen] == '\n' || cypher[openParen] == '\r') {
-				openParen++
+			close := call.close(cypher)
+			if close < 0 {
+				return name, "", call.start, false
 			}
-			if openParen >= len(cypher) || cypher[openParen] != '(' {
-				searchStart = idx + 1
-				continue
-			}
-			closeParen := findMatchingParen(cypher, openParen)
-			if closeParen < 0 {
-				if upperFunc == "ALLSHORTESTPATHS" {
-					return "allShortestPaths", "", idx, false
-				}
-				return "shortestPath", "", idx, false
-			}
-			if upperFunc == "ALLSHORTESTPATHS" {
-				return "allShortestPaths", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
-			}
-			return "shortestPath", strings.TrimSpace(cypher[openParen+1 : closeParen]), idx, true
+			return name, strings.TrimSpace(cypher[call.open+1 : close]), call.start, true
 		}
 	}
 	return "", "", -1, false

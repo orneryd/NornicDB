@@ -3,13 +3,13 @@ package cypher
 import "strings"
 
 func validateExpressionOperandCompleteness(expression string) error {
-	expression = strings.TrimSpace(expression)
+	expression = trimQueryTrivia(expression)
 	for {
 		inner, enclosed := stripEnclosingExpressionParentheses(expression)
 		if !enclosed {
 			break
 		}
-		expression = strings.TrimSpace(inner)
+		expression = trimQueryTrivia(inner)
 	}
 	last := len(expression) - 1
 	if expression == "" || (expression != "*" && strings.ContainsAny(expression[last:], "+-*/%^") && !labelWildcardAt(expression, last)) {
@@ -135,7 +135,15 @@ func containsTrailingListComma(cypher string) bool {
 // literals and Neo4j rejects it.
 func hasAdjacentStringLiterals(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
+		if end := queryCommentEnd(cypher, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		c := cypher[i]
+		if c == '`' {
+			i = skipCypherQuotedText(cypher, i, c) - 1
+			continue
+		}
 		if c != '\'' && c != '"' {
 			continue
 		}

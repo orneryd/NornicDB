@@ -66,8 +66,8 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		if variable != "" {
 			candidate = strings.TrimSpace(part[strings.Index(part, "=")+1:])
 		}
-		if _, _, funcIdx, ok := extractShortestPathCall(candidate); call == "" && ok && funcIdx == 0 &&
-			findMatchingParen(candidate, strings.IndexByte(candidate, '(')) == len(candidate)-1 {
+		if name, _, ok := parseFunctionCallWS(candidate); call == "" && ok &&
+			(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
 			call, pathVariable = candidate, variable
 			continue
 		}
@@ -194,18 +194,15 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 // expression with it, so the statement fails whether or not a row reaches
 // the call.
 func shortestPathExpressionError(query string, wordStart, wordEnd, end int) error {
-	name := query[wordStart:wordEnd]
-	if !functionNameStartsAt(query, wordStart) {
+	call, ok := functionCallAt(query[:end], wordStart)
+	if !ok {
 		return nil
 	}
+	name := call.name
 	if !equalFoldASCII(name, "shortestPath") && !equalFoldASCII(name, "allShortestPaths") {
 		return nil
 	}
-	open := skipASCIISpaces(query, wordEnd, end)
-	if open >= end || query[open] != '(' {
-		return nil
-	}
-	close := findMatchingParen(query[:end], open)
+	open, close := call.open, call.close(query[:end])
 	if close < 0 {
 		return nil
 	}
@@ -411,33 +408,28 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 		}
 	}
 	text = maskSubqueryBodies(text)
-	for at := 0; at < len(text); at++ {
-		if text[at] == '\'' || text[at] == '"' || text[at] == '`' {
-			at = skipCypherQuotedText(text, at, text[at]) - 1
+	for at := 0; at < len(text); {
+		call, ok := nextFunctionCall(text, at)
+		if !ok {
+			break
+		}
+		at = call.open + 1
+		if !equalFoldASCII(call.name, "shortestPath") && !equalFoldASCII(call.name, "allShortestPaths") {
 			continue
 		}
-		if !isIdentStartByte(text[at]) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
+		close := call.close(text)
+		if close < 0 {
 			continue
 		}
-		end := at + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
-		word := text[at:end]
-		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
-			_, pattern, index, ok := extractShortestPathCall(text[at:])
-			if ok && index == 0 {
-				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
-					if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {
-						return errShortestCommonEndpoints()
-					}
-					if _, bound := scope[items[1].variable]; items[1].variable != "" && bound {
-						return errBoundShortestRelationships(shortestPathFunctionName(equalFoldASCII(word, "allShortestPaths")))
-					}
-				}
+		pattern := strings.TrimSpace(text[call.open+1 : close])
+		if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
+			if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {
+				return errShortestCommonEndpoints()
+			}
+			if _, bound := scope[items[1].variable]; items[1].variable != "" && bound {
+				return errBoundShortestRelationships(shortestPathFunctionName(equalFoldASCII(call.name, "allShortestPaths")))
 			}
 		}
-		at = end - 1
 	}
 	return nil
 }

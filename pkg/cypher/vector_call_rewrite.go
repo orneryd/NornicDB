@@ -28,15 +28,15 @@ var vectorCallMetrics = map[string][]string{
 // when it is vector, vector_distance or vector_norm.
 func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error {
 	q := r.query
-	word := strings.ToLower(q[wordStart:wordEnd])
+	call, ok := functionCallAt(q[:end], wordStart)
+	if !ok {
+		return nil
+	}
+	word := lowerASCII(call.name)
 	if word != "vector" && word != "vector_distance" && word != "vector_norm" {
 		return nil
 	}
-	open := skipASCIISpaces(q, wordEnd, end)
-	if open >= end || q[open] != '(' {
-		return nil
-	}
-	close := findMatchingParen(q[:end], open)
+	open, close := call.open, call.close(q[:end])
 	if close < 0 {
 		return nil
 	}
