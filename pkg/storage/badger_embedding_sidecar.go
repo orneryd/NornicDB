@@ -182,7 +182,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+	notification.ops = append(notification.ops, Operation{Type: OpUpdateNode, Node: node})
 	return nil
 }
 

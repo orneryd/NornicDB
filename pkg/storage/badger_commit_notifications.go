@@ -12,6 +12,13 @@ type commitNotification struct {
 	next              *commitNotification
 }
 
+// Direct writes have one notification operation. Keep its slice backing store
+// with the queue entry; transaction and replay entries keep their batch shape.
+type singleCommitNotification struct {
+	commitNotification
+	operation [1]Operation
+}
+
 func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 	if n == nil {
 		return
@@ -38,8 +45,15 @@ func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error
 	if err != nil {
 		return nil, nil, err
 	}
-	n := &commitNotification{}
-	return n, func() { release(); b.completeCommitNotification(n) }, nil
+	single := &singleCommitNotification{}
+	n := &single.commitNotification
+	n.ops = single.operation[:0]
+	return n, release, nil
+}
+
+func (b *BadgerEngine) finishNotifyingWrite(n *commitNotification, release func()) {
+	release()
+	b.completeCommitNotification(n)
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {

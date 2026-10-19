@@ -104,7 +104,7 @@ func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, rev
 	if err != nil {
 		return err
 	}
-	defer finish()
+	defer b.finishNotifyingWrite(notification, finish)
 	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(id), revision); err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, rev
 	b.graphMutationVersions.changed(namespaceForNodeID(id))
 	if !suppressed && node != nil {
 		// Search drops a node it can't load; index it again.
-		notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+		notification.ops = append(notification.ops, Operation{Type: OpUpdateNode, Node: node})
 	}
 	return nil
 }

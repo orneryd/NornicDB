@@ -47,11 +47,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
+	defer b.finishNotifyingWrite(notification, release)
 	if node == nil {
 		return "", ErrInvalidData
 	}
@@ -170,7 +166,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	}
 
 	// Notify listeners (e.g., search service) to index the new node
-	notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
+	notification.ops = append(notification.ops, Operation{Type: OpCreateNode, Node: node})
 
 	return node.ID, nil
 }
@@ -399,11 +395,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
+	defer b.finishNotifyingWrite(notification, release)
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -651,10 +643,10 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 		}
 		if wasInsert {
 			// Notify listeners about the new node
-			notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
+			notification.ops = append(notification.ops, Operation{Type: OpCreateNode, Node: node})
 		} else {
 			// Notify listeners to re-index the updated node
-			notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+			notification.ops = append(notification.ops, Operation{Type: OpUpdateNode, Node: node})
 		}
 	}
 
@@ -692,11 +684,7 @@ func (b *BadgerEngine) deleteNode(id NodeID) error {
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
+	defer b.finishNotifyingWrite(notification, release)
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -819,7 +807,7 @@ func (b *BadgerEngine) deleteNode(id NodeID) error {
 		}
 
 		// Notify listeners (e.g., search service) to remove from indexes
-		notification.ops = []Operation{{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs}}
+		notification.ops = append(notification.ops, Operation{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs})
 	}
 
 	return err
