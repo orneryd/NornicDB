@@ -502,6 +502,9 @@ func (m *DatabaseManager) dropDatabaseContext(ctx context.Context, name, require
 	op := storage.NewNamespaceDrop(nil)
 	op.SetCatalogMutation(mutation)
 	_, _, err = storage.DeletePrefixContext(storage.WithNamespaceDrop(ctx, op), m.inner, name+":")
+	if !storage.SupportsNamespaceRetirement(m.inner) && (err == nil || op.Committed()) {
+		return m.completeLegacyNamespaceDrop(ctx, name, mutation, op, err)
+	}
 	if err != nil && !op.Committed() {
 		var pending *storage.NamespaceDropError
 		if !errors.As(err, &pending) || pending.Aborted {

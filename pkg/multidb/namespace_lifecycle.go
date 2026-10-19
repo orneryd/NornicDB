@@ -2,8 +2,28 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// A legacy synchronous delete cannot deliver the physical owner's callbacks.
+// Once it succeeds, finish the same catalog delta and cache retirement locally;
+// caller cancellation cannot undo deletion. Forwarded engines with registered
+// notifications retain their existing wait for local committed replay.
+func (m *DatabaseManager) completeLegacyNamespaceDrop(ctx context.Context, name string, mutation storage.NamespaceCatalogMutation, op *storage.NamespaceDrop, err error) error {
+	if !op.Committed() {
+		// Physical deletion already succeeded. Its catalog completion must not
+		// revalidate the old lifetime that the legacy deleter has retired.
+		op.MarkCommittedEntry()
+		err = storage.PublishNamespaceCatalogContext(storage.WithNamespaceDrop(context.WithoutCancel(ctx), op), m.inner, mutation)
+	}
+	m.retireDatabaseCatalog(name)
+	err = errors.Join(err, m.completeDatabaseRetirement(name))
+	completionErr := op.Complete(nil)
+	return errors.Join(op.Result(err), completionErr)
+}
 
 // Lifecycle serialization belongs to the target, never the catalog read lock.
 // Entries remain stable across recreation, so waiters cannot acquire a retired
@@ -50,7 +70,7 @@ func (m *DatabaseManager) retireDatabaseCatalog(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.databases, name)
-	delete(m.committedCatalog,name)
+	delete(m.committedCatalog, name)
 	m.applyChangeCapture(name, nil)
 	delete(m.engines, name)
 	delete(m.limitCheckers, name)
