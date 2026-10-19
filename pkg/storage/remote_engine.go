@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
- "sync/atomic"
+	"sync/atomic"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -61,7 +61,7 @@ type RemoteCypherTx interface {
 
 // RemoteCypherMode reports a completed query's resolved write participation.
 // known=false requires conservative admission for a dynamic remote call.
-type RemoteCypherMode interface { ResolvedWriteMode() (write,known bool) }
+type RemoteCypherMode interface{ ResolvedWriteMode() (write, known bool) }
 
 // RemoteEngine implements Engine by forwarding operations to a remote NornicDB instance
 // via Bolt protocol (preferred) or HTTP tx API (fallback), auto-detected from the URI scheme.
@@ -71,8 +71,8 @@ type RemoteEngine struct {
 }
 
 type remoteStatement struct {
-	 Statement string `json:"statement"`
- IncludeStats bool `json:"includeStats,omitempty"`
+	Statement          string                 `json:"statement"`
+	IncludeStats       bool                   `json:"includeStats,omitempty"`
 	Parameters         map[string]interface{} `json:"parameters,omitempty"`
 	ResultDataContents []string               `json:"resultDataContents,omitempty"`
 }
@@ -126,9 +126,9 @@ type boltTransport struct {
 }
 
 type boltCypherTx struct {
- resolvedMode atomic.Int32
-	session neo4j.SessionWithContext
-	tx      neo4j.ExplicitTransaction
+	resolvedMode atomic.Int32
+	session      neo4j.SessionWithContext
+	tx           neo4j.ExplicitTransaction
 }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
@@ -280,7 +280,7 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 }
 
 func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
- t.resolvedMode.Store(0)
+	t.resolvedMode.Store(0)
 	result, err := t.tx.Run(ctx, statement, params)
 	if err != nil {
 		return nil, nil, err
@@ -301,10 +301,12 @@ func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params
 	if err := result.Err(); err != nil {
 		return nil, nil, err
 	}
-	summary,err:=result.Consume(ctx)
- if err!=nil { return nil,nil,err }
- t.resolvedMode.Store(remoteBoltQueryMode(summary))
- return columns, rows, nil
+	summary, err := result.Consume(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	t.resolvedMode.Store(remoteBoltQueryMode(summary))
+	return columns, rows, nil
 }
 
 func (t *boltCypherTx) Commit(ctx context.Context) error {
@@ -439,12 +441,12 @@ type httpTransport struct {
 }
 
 type httpCypherTx struct {
- resolvedMode atomic.Int32
-	transport   *httpTransport
-	executeURL  string
-	commitURL   string
-	rollbackURL string
-	closed      bool
+	resolvedMode atomic.Int32
+	transport    *httpTransport
+	executeURL   string
+	commitURL    string
+	rollbackURL  string
+	closed       bool
 }
 
 type remoteTxRequest struct {
@@ -453,8 +455,8 @@ type remoteTxRequest struct {
 
 type remoteTxResponse struct {
 	Results []struct {
-		 Columns []string `json:"columns"`
- Stats *remoteQueryStats `json:"stats"`
+		Columns []string          `json:"columns"`
+		Stats   *remoteQueryStats `json:"stats"`
 		Data    []struct {
 			RawRow []json.RawMessage `json:"row"`
 			Row    []interface{}     `json:"-"`
@@ -587,7 +589,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 
 func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats:true, ResultDataContents: []string{"row", "graph", "rest"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, err
@@ -604,7 +606,7 @@ func (h *httpTransport) query(ctx context.Context, statement string, params map[
 
 func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats:true, ResultDataContents: []string{"row", "graph", "rest"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -678,12 +680,12 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 func (h *httpTransport) close() error { return nil }
 
 func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
- t.resolvedMode.Store(0)
+	t.resolvedMode.Store(0)
 	if t.closed {
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats:true, ResultDataContents: []string{"row", "graph", "rest"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -692,7 +694,7 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 		return []string{}, [][]interface{}{}, nil
 	}
 	result := txResp.Results[0]
- t.resolvedMode.Store(remoteHTTPQueryMode(result.Stats))
+	t.resolvedMode.Store(remoteHTTPQueryMode(result.Stats))
 	rows := make([][]interface{}, 0, len(result.Data))
 	for _, data := range result.Data {
 		rows = append(rows, data.Row)

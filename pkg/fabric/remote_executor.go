@@ -284,16 +284,24 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	if err != nil {
 		return nil, nil, err
 	}
-	 columns,rows,err:=handle.tx.QueryCypher(ctx,query,params)
- if err!=nil { return nil,nil,err }
- write,known:=false,false
- if reporter,ok:=handle.tx.(storage.RemoteCypherMode); ok { write,known=reporter.ResolvedWriteMode() }
- if write || !known && unresolvedRemoteMode(ctx) {
-  tx,ok:=FabricTransactionFromContext(ctx)
-  if !ok || tx==nil { return nil,nil,fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'",sub.ShardName) }
-  if _,err:=tx.GetOrOpen(sub.ShardName,true); err!=nil { return nil,nil,err }
- }
- return columns,rows,nil
+	columns, rows, err := handle.tx.QueryCypher(ctx, query, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	write, known := false, false
+	if reporter, ok := handle.tx.(storage.RemoteCypherMode); ok {
+		write, known = reporter.ResolvedWriteMode()
+	}
+	if write || !known && unresolvedRemoteMode(ctx) {
+		tx, ok := FabricTransactionFromContext(ctx)
+		if !ok || tx == nil {
+			return nil, nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
+		}
+		if _, err := tx.GetOrOpen(sub.ShardName, true); err != nil {
+			return nil, nil, err
+		}
+	}
+	return columns, rows, nil
 
 }
 
