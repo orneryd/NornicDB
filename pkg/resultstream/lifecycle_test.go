@@ -36,7 +36,12 @@ func TestStreamLifecycleEndPaths(t *testing.T) {
 			t.Cleanup(r.Close)
 			scope := Scope{Owner: "alice", Database: "one"}
 			s := &lifecycleStream{}
-			first, err := r.Start(context.Background(), scope, s, 1)
+			ctx := context.Background()
+			delivery := &Delivery{}
+			if end == "disconnect" {
+				ctx = WithDelivery(ctx, delivery)
+			}
+			first, err := r.Start(ctx, scope, s, 1)
 			require.NoError(t, err)
 			switch end {
 			case "last_page":
@@ -53,10 +58,7 @@ func TestStreamLifecycleEndPaths(t *testing.T) {
 				_, err := r.Pull(context.Background(), scope, first.QID, 1)
 				require.ErrorIs(t, err, s.err)
 			case "disconnect":
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
-				_, err := r.Pull(ctx, scope, first.QID, 1)
-				require.ErrorIs(t, err, context.Canceled)
+				delivery.Fail() // A produced page was never delivered.
 			case "timeout":
 				r.sweepExpired(first.ExpiresAt.Unix())
 			case "shutdown":
