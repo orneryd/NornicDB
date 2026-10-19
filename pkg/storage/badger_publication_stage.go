@@ -30,8 +30,9 @@ import "sync"
 // whose updates commute need no key: counts, label, edge-type and adjacency
 // cache invalidations, pending-embedding candidates.
 //
-// A publication only updates in-memory structures: it takes their own locks
-// and never commits, so the stage never waits on itself
+// A publication updates in-memory structures and may read immutable commit-
+// version images for accounting. It never commits or takes managed admission,
+// so the stage never waits on itself
 // (TestPublicationStageBoundary). Listeners (commit notifications) and
 // Badger-side follow-ups (positional counts, ID counters, MVCC sequence)
 // stay outside it.
@@ -41,6 +42,7 @@ import "sync"
 type commitPublication struct {
 	keys []any
 	run  func()
+	ts   uint64 // assigned by register, before any publication can run
 }
 
 type stagedPublication struct {
@@ -75,6 +77,7 @@ func (s *publicationStage) register(ts uint64, pub *commitPublication) {
 	if pub == nil {
 		return
 	}
+	pub.ts = ts
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending == nil {

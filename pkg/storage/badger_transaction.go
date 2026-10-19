@@ -110,7 +110,8 @@ type BadgerTransaction struct {
 	badgerReadHeld bool
 
 	// commitW is the commit writer while Commit writes (see commitWriter).
-	commitW *commitWriter
+	commitW           *commitWriter
+	managedAccounting func()
 	// commitReleaseWrite releases the write barrier Commit holds until it
 	// returns. commitCountsHeld and commitEdgeTypeCounts record the count
 	// locks it holds while publishing (acquireCommitPublicationLocked).
@@ -699,6 +700,10 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.createNodeLocked(node, true)
+}
+
+func (tx *BadgerTransaction) createNodeLocked(node *Node, creationTimes bool) (NodeID, error) {
 
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return "", err
@@ -728,12 +733,13 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		return "", ErrAlreadyExists
 	}
 
-	// Check if exists in storage (read from Badger), through the visibility
-	// layer as before.
+	// Node identity is physical, as at synchronous commit validation. A hidden
+	// node still occupies its ID. Decide this before either a buffered ACK or a
+	// physical commit so neither route can publish an insertion over that body.
 	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID))
 	if !skipExistenceCheck {
 		if _, deleted := tx.deletedNodes[node.ID]; !deleted {
-			_, err := tx.getCommittedNodeReadLocked(node.ID, true, visibleRead)
+			_, err := tx.getCommittedNodeReadLocked(node.ID, true, storedRead)
 			if err == nil {
 				return "", ErrAlreadyExists
 			}
@@ -747,7 +753,9 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
 	// Stamp creation times before encoding, as direct engine creation does (#1228).
-	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	if creationTimes {
+		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	}
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
@@ -858,6 +866,11 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		}
 	}
 
+	if !labelsEqual(node.Labels, oldNode.Labels) {
+		if err := tx.engine.rescoreSuppressionAfterLabelChangeInTxn(tx.staged(), tx.namespace, node); err != nil {
+			return err
+		}
+	}
 	body, err := tx.reconcileManagedEmbeddingsLocked(oldNode, node)
 	if err != nil {
 		return err
@@ -2980,6 +2993,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.releaseSnapshotReaderLocked()
 
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	cw.accounting = tx.managedAccounting
 	cw.notification = notification
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }

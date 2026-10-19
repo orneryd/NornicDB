@@ -43,7 +43,8 @@ type commitWriter struct {
 	// replay marks the write-behind replay's own commit: the entities it
 	// writes are the buffer's by definition, so it is never held behind them
 	// (admit).
-	replay bool
+	replay     bool
+	accounting func() // admitted batch; published in this same ordered stage
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -144,7 +145,14 @@ func (cw *commitWriter) publication() *commitPublication {
 	if cw.publish == nil {
 		return nil
 	}
-	return &commitPublication{keys: cw.publishKeys, run: cw.publish}
+	p := &commitPublication{keys: cw.publishKeys, run: cw.publish}
+	if cw.accounting != nil {
+		publish := p.run
+		p.run = func() { publish(); cw.accounting() }
+	} else if !cw.replay {
+		cw.attachAccounting(p)
+	}
+	return p
 }
 
 // admit runs under the commit gate, where no write-behind acknowledgement can

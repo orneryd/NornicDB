@@ -44,6 +44,8 @@ var publishingPaths = map[string]string{
 	"enqueueDeindexIfSuppressed":               "TestPostCommitPublicationOrderSuppression",
 	"updateNodeEmbeddingSidecar":               "TestPostCommitPublicationOrderEmbeddingSidecar",
 	"setManualSuppression":                     "TestManualSuppressionPublicationOrder (suppress overtaken by unsuppress, and the reverse, on a node and a relationship)",
+	"attachAccounting":                         "TestBaseWritersPublishStoredPairAccounting and TestAccountingWithActivePolicyFlusher in multidb: commit-version images and one accounting callback",
+	"withUpdateUnits":                          "TestBaseWritersPublishStoredPairAccounting in multidb: separate-embedding replacement publishes its stored pair",
 }
 
 // stageLocks classifies every lock a publication takes, by the struct field
@@ -65,6 +67,8 @@ var stageLocks = map[string]string{
 	"relationshipUniqueIndexSet.mu":      "relationship-uniqueness index (TestPostCommitEdgePublicationOrder: duplicate rejected, replaced value free)",
 	"pendingEmbeddingCandidates.mu":      "pending-embedding candidates, an add-only set of hints (TestPendingCandidates*)",
 	"BadgerEngine.manualSuppressionMu":   "on-demand suppression mirror (TestManualSuppressionPublicationOrder, TestManualSuppressionConcurrentToggleMatchesStorage, TestManualSuppressionClearedByEveryDeletePath)",
+	"nodeDictShard.mu":                   "read-only numeric-ID decoding for accounting images; dictionary mutations release the shard before committing",
+	"propertyKeyDictionary.mu":           "read-only property-token decoding for accounting images; token commits hold persistMu, not this map lock",
 }
 
 // uniqueKeyLockWait stands for waiting on a unique constraint key lock
@@ -124,6 +128,8 @@ var stageLockObservers = map[string]string{
 	"relationshipUniqueIndexSet.mu":      "relationship-uniqueness index",
 	"pendingEmbeddingCandidates.mu":      "n/a: add-only hints that commute, so their order can't change them (TestPendingCandidates*)",
 	"BadgerEngine.manualSuppressionMu":   "n/a: the suppression mirror has its own matrix, which compares it with the stored keys (TestManualSuppressionPublicationOrder, TestManualSuppressionClearedByEveryDeletePath over the direct, tx, bulk, large and replay paths)",
+	"nodeDictShard.mu":                   "n/a: read-only dictionary lookup; TestBaseWritersPublishStoredPairAccounting compares decoded identities and bytes through stored reads",
+	"propertyKeyDictionary.mu":           "n/a: read-only token lookup; the public replacement and base-writer accounting matrices compare decoded properties with stored reads",
 }
 
 // matrixPathCoverage names, for each committing path, the matrix tests that
@@ -228,7 +234,7 @@ func (src *packageSource) stageRoots() map[string][]ast.Node {
 						}
 						switch target := lhs.(type) {
 						case *ast.SelectorExpr:
-							if target.Sel.Name == "publish" {
+							if target.Sel.Name == "publish" || (target.Sel.Name == "run" && src.info.Selections[target] != nil && types.TypeString(src.info.Selections[target].Recv(), func(*types.Package) string { return "" }) == "*commitPublication") {
 								roots[fn.Name.Name] = append(roots[fn.Name.Name], lit.Body)
 							}
 						case *ast.Ident:
@@ -241,6 +247,18 @@ func (src *packageSource) stageRoots() map[string][]ast.Node {
 					if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "withPublishingUpdate" && len(n.Args) >= 2 {
 						if lit, ok := n.Args[1].(*ast.FuncLit); ok {
 							roots[fn.Name.Name] = append(roots[fn.Name.Name], lit.Body)
+						}
+					}
+				case *ast.CompositeLit:
+					if types.TypeString(src.info.TypeOf(n), func(*types.Package) string { return "" }) == "commitPublication" {
+						for _, element := range n.Elts {
+							if field, ok := element.(*ast.KeyValueExpr); ok {
+								if name, ok := field.Key.(*ast.Ident); ok && name.Name == "run" {
+									if lit, ok := field.Value.(*ast.FuncLit); ok {
+										roots[fn.Name.Name] = append(roots[fn.Name.Name], lit.Body)
+									}
+								}
+							}
 						}
 					}
 				}

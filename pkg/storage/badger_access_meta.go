@@ -16,22 +16,21 @@ func accessMetaKey(entityID string) []byte {
 	return append([]byte{prefixMVCCMeta}, []byte("accessmeta:"+entityID)...)
 }
 
-func getAccessMetaInTxn(txn *badger.Txn, entityID string) (*knowledgepolicy.AccessMetaEntry, error) {
-	item, err := txn.Get(accessMetaKey(entityID))
+func getAccessMetaInTxn(txn kvWriter, entityID string) (*knowledgepolicy.AccessMetaEntry, error) {
+	var entry knowledgepolicy.AccessMetaEntry
+	err := kvReadValue(txn, accessMetaKey(entityID), func(value []byte) error {
+		return util.DecodeMsgpackBytes(value, &entry)
+	})
 	if err == badger.ErrKeyNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var entry knowledgepolicy.AccessMetaEntry
-	err = item.Value(func(value []byte) error {
-		return util.DecodeMsgpackBytes(value, &entry)
-	})
 	return &entry, err
 }
 
-func putAccessMetaInTxn(txn *badger.Txn, entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
+func putAccessMetaInTxn(txn kvWriter, entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
 	data, err := msgpack.Marshal(entry)
 	if err != nil {
 		return err

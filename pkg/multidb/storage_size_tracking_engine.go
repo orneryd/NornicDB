@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -46,6 +45,9 @@ func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbNa
 	}
 	if len(checkers) > 0 {
 		wrapped.checker = checkers[0]
+	}
+	if manager != nil {
+		storage.RegisterAccountingOwner(engine, dbName, wrapped.prepareBaseAccounting)
 	}
 	return wrapped
 }
@@ -331,249 +333,63 @@ func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCC
 	return storage.MVCCHead{}, storage.ErrNotImplemented
 }
 
+// managedWrite stages direct CRUD before entering the same accounting owner as
+// public Cypher commits. No direct route measures or publishes its own delta.
+func (t *sizeTrackingEngine) managedWrite(op storage.Operation) error {
+	tx := storage.NewManagedWrite(t.Engine, t.dbName, op)
+	return t.commitTransaction(context.Background(), tx)
+}
+
 func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_node", node, nil); err != nil {
+	if err := t.managedWrite(storage.Operation{Type: storage.OpCreateNode, Node: node}); err != nil {
 		return "", err
 	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return "", err
-	}
-	if !initialized {
-		return t.Engine.CreateNode(node)
-	}
-	id, err := t.Engine.CreateNode(node)
-	if err != nil {
-		return id, err
-	}
-	created, getErr := storage.GetStoredNode(t.Engine, id)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return id, nil
-	}
-	size, sizeErr := calculateNodeSize(created)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return id, nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, size, 0)
-	return id, nil
+	return storage.NodeID(strings.TrimPrefix(string(node.ID), t.dbName+":")), nil
 }
 
 func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("update_node", node, nil); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.UpdateNode(node)
-	}
-	existing, getErr := storage.GetStoredNode(t.Engine, node.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateNode(node)
-	}
-	oldSize, oldErr := calculateNodeSize(existing)
-	if oldErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateNode(node)
-	}
-	if err := t.Engine.UpdateNode(node); err != nil {
-		return err
-	}
-	updated, updatedErr := storage.GetStoredNode(t.Engine, node.ID)
-	if updatedErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	newSize, newErr := calculateNodeSize(updated)
-	if newErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, newSize-oldSize, 0)
-	return nil
+	return t.managedWrite(storage.Operation{Type: storage.OpUpdateNode, Node: node})
 }
 
 func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("delete_node", nil, nil); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.DeleteNode(id)
-	}
-	existing, getErr := storage.GetStoredNode(t.Engine, id)
-	if getErr != nil {
-		// Nothing to track if the node doesn't exist.
-		return t.Engine.DeleteNode(id)
-	}
-	nodeSize, sizeErr := calculateNodeSize(existing)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.DeleteNode(id)
-	}
-	edgeDelta, edgeErr := t.connectedEdgeBytes(id)
-	if edgeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-	}
-	if err := t.Engine.DeleteNode(id); err != nil {
-		return err
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, -nodeSize, -edgeDelta)
-	return nil
+	return t.managedWrite(storage.Operation{Type: storage.OpDeleteNode, NodeID: id})
 }
 
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_edge", nil, edge); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.CreateEdge(edge)
-	}
-	if err := t.Engine.CreateEdge(edge); err != nil {
-		return err
-	}
-	created, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	size, sizeErr := calculateEdgeSize(created)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, size)
-	return nil
+	return t.managedWrite(storage.Operation{Type: storage.OpCreateEdge, Edge: edge})
 }
 
 func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("update_edge", nil, edge); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.UpdateEdge(edge)
-	}
-	existing, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateEdge(edge)
-	}
-	oldSize, oldErr := calculateEdgeSize(existing)
-	if oldErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.UpdateEdge(edge)
-	}
-	if err := t.Engine.UpdateEdge(edge); err != nil {
-		return err
-	}
-	updated, updatedErr := storage.GetStoredEdge(t.Engine, edge.ID)
-	if updatedErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	newSize, newErr := calculateEdgeSize(updated)
-	if newErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, newSize-oldSize)
-	return nil
+	return t.managedWrite(storage.Operation{Type: storage.OpUpdateEdge, Edge: edge})
 }
 
 func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("delete_edge", nil, nil); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.DeleteEdge(id)
-	}
-	existing, getErr := storage.GetStoredEdge(t.Engine, id)
-	if getErr != nil {
-		return t.Engine.DeleteEdge(id)
-	}
-	size, sizeErr := calculateEdgeSize(existing)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return t.Engine.DeleteEdge(id)
-	}
-	if err := t.Engine.DeleteEdge(id); err != nil {
-		return err
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, -size)
-	return nil
+	return t.managedWrite(storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id})
 }
 
-// BulkCreateNodes creates the nodes one by one through CreateNode, so every
-// node passes the same write-rate and storage-limit checks, in order, as a
-// single create. The batch is all-or-nothing: when a node is rejected (a
-// limit, a constraint), the nodes this batch already created are removed and
-// the cached storage size is marked for recount, so a bulk create never
-// leaves part of its batch behind (a failing CREATE statement writes nothing,
-// #628).
+// BulkCreateNodes stages the whole batch before the shared quota check. A
+// rejection leaves no writes, so cleanup cannot itself consume rate capacity.
 func (t *sizeTrackingEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	created := make([]storage.NodeID, 0, len(nodes))
-	for _, n := range nodes {
-		id, err := t.CreateNode(n)
-		if err != nil {
-			if len(created) > 0 {
-				_ = t.Engine.BulkDeleteNodes(created)
-				t.manager.markStorageSizeDirty(t.dbName)
-			}
-			return err
-		}
-		created = append(created, id)
+	if len(nodes) == 0 {
+		return nil
 	}
-	return nil
+	operations := make([]storage.Operation, len(nodes))
+	for i, node := range nodes {
+		operations[i] = storage.Operation{Type: storage.OpCreateNode, Node: node}
+	}
+	return t.commitTransaction(context.Background(), storage.NewManagedCreateBatch(t.Engine, t.dbName, operations))
 }
 
-// BulkCreateEdges is all-or-nothing like BulkCreateNodes: each relationship
-// goes through CreateEdge, and a rejected one removes the relationships this
-// batch already created.
+// BulkCreateEdges shares the same atomic staging and accounting boundary.
 func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	created := make([]storage.EdgeID, 0, len(edges))
-	for _, e := range edges {
-		if err := t.CreateEdge(e); err != nil {
-			if len(created) > 0 {
-				_ = t.Engine.BulkDeleteEdges(created)
-				t.manager.markStorageSizeDirty(t.dbName)
-			}
-			return err
-		}
-		created = append(created, e.ID)
+	if len(edges) == 0 {
+		return nil
 	}
-	return nil
+	operations := make([]storage.Operation, len(edges))
+	for i, edge := range edges {
+		operations[i] = storage.Operation{Type: storage.OpCreateEdge, Edge: edge}
+	}
+	return t.commitTransaction(context.Background(), storage.NewManagedCreateBatch(t.Engine, t.dbName, operations))
 }
 
 func (t *sizeTrackingEngine) BulkDeleteNodes(ids []storage.NodeID) error {
@@ -592,55 +408,6 @@ func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 		}
 	}
 	return nil
-}
-
-// connectedEdgeBytes sums the sizes of the relationships stored at id, those
-// the visibility layer hides from reads included: deleting the node removes
-// them all.
-func (t *sizeTrackingEngine) connectedEdgeBytes(id storage.NodeID) (int64, error) {
-	outgoing, err := storage.GetStoredOutgoingEdges(t.Engine, id)
-	if err != nil {
-		return 0, localizedError(localization.MultidbStorageGetOutgoingEdgesFailed(err), err)
-	}
-	incoming, err := storage.GetStoredIncomingEdges(t.Engine, id)
-	if err != nil {
-		return 0, localizedError(localization.MultidbStorageGetIncomingEdgesFailed(err), err)
-	}
-	seen := make(map[storage.EdgeID]struct{}, len(outgoing)+len(incoming))
-	var total int64
-	for _, e := range outgoing {
-		if _, ok := seen[e.ID]; ok {
-			continue
-		}
-		seen[e.ID] = struct{}{}
-		size, sizeErr := calculateEdgeSize(e)
-		if sizeErr != nil {
-			return 0, sizeErr
-		}
-		total += size
-	}
-	for _, e := range incoming {
-		if _, ok := seen[e.ID]; ok {
-			continue
-		}
-		seen[e.ID] = struct{}{}
-		size, sizeErr := calculateEdgeSize(e)
-		if sizeErr != nil {
-			return 0, sizeErr
-		}
-		total += size
-	}
-	return total, nil
-}
-
-func (t *sizeTrackingEngine) checkWrite(operation string, node *storage.Node, edge *storage.Edge) error {
-	if t.checker == nil {
-		return nil
-	}
-	if err := t.checker.CheckWriteRate(); err != nil {
-		return err
-	}
-	return t.checker.CheckStorageLimits(operation, node, edge)
 }
 
 // NodeCountByLabel preserves the label counter across this wrapper, so the

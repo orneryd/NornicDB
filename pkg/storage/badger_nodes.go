@@ -677,7 +677,7 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 	if len(units) == 0 {
 		return nil
 	}
-	return b.withUpdateUnits(units)
+	return b.withUpdateUnits(units, nodeID)
 }
 
 // DeleteNode removes a node and all its edges.

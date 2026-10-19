@@ -11,6 +11,10 @@ func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return nil, err
 	}
+	return tx.storedNodeImageLocked(node)
+}
+
+func (tx *BadgerTransaction) storedNodeImageLocked(node *Node) (*Node, error) {
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
 	canonical := copyNode(node)
 	canonical.ID = namespace.prefixNodeID(canonical.ID)
@@ -40,6 +44,10 @@ func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return nil, err
 	}
+	return tx.storedEdgeImageLocked(edge)
+}
+
+func (tx *BadgerTransaction) storedEdgeImageLocked(edge *Edge) (*Edge, error) {
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
 	canonical := copyEdge(edge)
 	canonical.ID = namespace.prefixEdgeID(canonical.ID)

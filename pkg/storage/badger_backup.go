@@ -116,6 +116,10 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	defer file.Close()
 
+	publishAccounting, err := b.captureAccountingReset("", true)
+	if err != nil {
+		return err
+	}
 	if !db.oracle.holdReads(restoreReadDrainTimeout) {
 		return localizedError(localization.StorageClientRestoreBusy(restoreReadDrainTimeout.String()), nil)
 	}
@@ -124,6 +128,7 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	defer publishAccounting()
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -375,6 +380,10 @@ func (b *BadgerEngine) deleteByPrefixLocked(ctx context.Context, prefix string, 
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
+	publishAccounting, err := b.captureAccountingReset(prefix, false)
+	if err != nil {
+		return 0, 0, err
+	}
 	if err := op.commitLocked(ctx); err != nil {
 		return 0, 0, err
 	}
@@ -382,6 +391,7 @@ func (b *BadgerEngine) deleteByPrefixLocked(ctx context.Context, prefix string, 
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
+	publishAccounting()
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}

@@ -27,7 +27,7 @@ func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCata
 	})
 }
 
-func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntryCatalog) error {
+func putIndexEntryCatalogInTxn(txn kvWriter, entityID string, cat *IndexEntryCatalog) error {
 	entry, err := getAccessMetaInTxn(txn, entityID)
 	if err != nil {
 		return err

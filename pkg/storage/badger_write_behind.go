@@ -74,6 +74,10 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return localizedError(localization.StorageTransactionCommitNamespaceMissing(), nil)
 	}
+	accounting, err := tx.prepareBufferedAccountingLocked()
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
 
 	// Ownership transfer, not copies: this is an implicit autocommit, the
 	// transaction closes right after the ACK and closeLocked replaces the
@@ -133,10 +137,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// synchronous commit's check of the buffer (commitWriter.admit): a
 	// synchronous commit of an entity sees it, or commits before it.
 	tx.badgerDB.commitGate.Lock()
+	if accounting != nil {
+		accounting.capturePriorLocked(tx)
+	}
 	// ACK and synchronous timestamp reservations share the commit gate.
 	c.notification = &commitNotification{revisionPublished: true}
 	tx.engine.reserveCommitNotification(c.notification)
 	tx.engine.writeBehind.AppendCommit(c)
+	if tx.managedAccounting != nil {
+		tx.managedAccounting()
+	}
+	if accounting != nil {
+		accounting.publish(accounting.pairs, accounting.err)
+	}
 	tx.badgerDB.commitGate.Unlock()
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,

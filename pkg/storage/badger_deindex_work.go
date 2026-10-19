@@ -15,7 +15,7 @@ func deindexWorkItemKey(workItemID string) []byte {
 	return accessMetaKey(policyWorkMetaIDPrefix + workItemID)
 }
 
-func putDeindexWorkItemInTxn(txn *badger.Txn, item *DeindexWorkItem) error {
+func putDeindexWorkItemInTxn(txn kvWriter, item *DeindexWorkItem) error {
 	entry := &knowledgepolicy.AccessMetaEntry{TargetID: item.TargetID, TargetScope: knowledgepolicy.ScopeType(item.TargetScope), DeindexWork: item}
 	return putAccessMetaInTxn(txn, policyWorkMetaIDPrefix+item.WorkItemID, entry)
 }
