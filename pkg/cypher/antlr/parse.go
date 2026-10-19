@@ -104,7 +104,7 @@ func Parse(query string) (*ParseResult, error) {
 
 // Validate validates a Cypher query using pooled ANTLR objects (lexer/parser/token stream).
 //
-// This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
+// Context-free convenience API; execution and logging use ValidateContext.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
 	return ValidateContext(context.Background(), query)
