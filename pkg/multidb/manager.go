@@ -776,10 +776,7 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 		if info == nil || info.Type != "composite" {
 			return "", ErrDatabaseNotFound
 		}
-		for _, constituent := range info.Constituents {
-			if constituent.Alias != selection[dot+1:] {
-				continue
-			}
+		for _, constituent := range canonicalConstituents(info.Constituents, selection[dot+1:]) {
 			if constituent.Type == "local" {
 				return m.resolveDatabaseInternal(constituent.DatabaseName)
 			}

@@ -1,0 +1,43 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCredentialCompositeAliasPublicSelection(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	for _, name := range []string{"firstdb", "lastdb", "longsdb", "asciisdb"} {
+		require.NoError(t, manager.CreateDatabase(name))
+	}
+	require.NoError(t, manager.CreateCompositeDatabase("probe", []multidb.ConstituentRef{
+		{Alias: "Winner", Type: "local", AccessMode: "read_write", DatabaseName: "firstdb"},
+		{Alias: "winner", Type: "local", AccessMode: "read_write", DatabaseName: "lastdb"},
+		{Alias: "ſ", Type: "local", AccessMode: "read_write", DatabaseName: "longsdb"},
+		{Alias: "S", Type: "local", AccessMode: "read_write", DatabaseName: "asciisdb"},
+	}))
+	adapter := &testDatabaseManagerAdapter{manager: manager}
+	engine, err := manager.GetStorage("nornic")
+	require.NoError(t, err)
+	executor := NewStorageExecutor(engine)
+	executor.SetDatabaseManager(adapter)
+	for _, selection := range []string{"probe.Winner", "probe.winner", "probe.WINNER"} {
+		access, err := AccessDatabases(adapter, selection)
+		require.NoError(t, err)
+		require.Equal(t, []string{"probe", "lastdb"}, access)
+		result, err := executor.Execute(context.Background(), "USE "+selection+" RETURN 1 AS marker", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+	}
+	for alias, want := range map[string]string{"S": "asciisdb", "s": "asciisdb", "ſ": "longsdb"} {
+		access, err := AccessDatabases(adapter, "probe."+alias)
+		require.NoError(t, err)
+		require.Equal(t, []string{"probe", want}, access)
+	}
+}

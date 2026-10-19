@@ -464,7 +464,10 @@ func AccessDatabases(manager DatabaseManagerInterface, database string) ([]strin
 			return []string{composite}, err
 		}
 		for _, item := range constituents {
-			if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
+			// The manager snapshot already contains canonical last winners.
+			// Match the catalog's lowercase keys, including Unicode distinctions
+			// that the broader EqualFold relation would collapse.
+			if ref, ok := toConstituentRef(item); ok && strings.ToLower(ref.Alias) == strings.ToLower(database[dot+1:]) {
 				return []string{composite, ref.DatabaseName}, nil
 			}
 		}

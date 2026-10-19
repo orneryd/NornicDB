@@ -441,6 +441,14 @@ func compositeDisplayURI(value interface{}) interface{} {
 	return value
 }
 
+func compositeDisplayUser(value, mode interface{}) interface{} {
+	if user, ok := value.(string); ok {
+		authMode, _ := mode.(string)
+		return multidb.RemoteUserForDisplay(user, authMode)
+	}
+	return value
+}
+
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
 func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
 	defer redactAdminCommandError(cypher, &retErr)
@@ -515,7 +523,7 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				compositeDisplayURI(ref.URI),
 				ref.SecretRef,
 				ref.AuthMode,
-				ref.User,
+				multidb.RemoteUserForDisplay(ref.User, ref.AuthMode),
 			}
 		} else if m, ok := c.(map[string]interface{}); ok {
 			// Fallback for map format (if returned as map)
@@ -527,7 +535,7 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 				compositeDisplayURI(m["uri"]),
 				m["secret_ref"],
 				m["auth_mode"],
-				m["user"],
+				compositeDisplayUser(m["user"], m["auth_mode"]),
 			}
 		} else {
 			// Unknown type - return empty row
@@ -669,7 +677,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 				compositeDisplayURI(constituent["uri"]),
 				constituent["secret_ref"],
 				constituent["auth_mode"],
-				constituent["user"],
+				compositeDisplayUser(constituent["user"], constituent["auth_mode"]),
 			}},
 		}, nil
 
