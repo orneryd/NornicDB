@@ -155,6 +155,12 @@ func callsDynamicStatementProcedure(query string) bool {
 	})
 }
 
+func callsStatementTransactionProcedure(query string) bool {
+	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
+		return !procedure.OwnsTransactions && (procedure.Mode == ProcedureModeWrite || procedure.ExecutesStatements)
+	})
+}
+
 func statementWritesGraph(info *QueryInfo, query string) bool {
 	if matchKeywordAt(query, 0, "EXPLAIN") {
 		return false

@@ -457,15 +457,15 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRunMany(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.iterate", "apoc.periodic.iterate(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Runs batch iterate/action jobs", ProcedureModeWrite, 2, 3, false,
+		registerBatchProcedureLiteral("apoc.periodic.iterate", "apoc.periodic.iterate(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Runs batch iterate/action jobs", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.commit", "apoc.periodic.commit(statement :: STRING, params :: MAP) :: (updates :: INTEGER, executions :: INTEGER, runtime :: INTEGER)", "Runs periodic commits", ProcedureModeWrite, 1, 2, false,
+		registerBatchProcedureLiteral("apoc.periodic.commit", "apoc.periodic.commit(statement :: STRING, params :: MAP) :: (updates :: INTEGER, executions :: INTEGER, runtime :: INTEGER)", "Runs periodic commits", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicCommit(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.rock_n_roll", "apoc.periodic.rock_n_roll(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Alias of apoc.periodic.iterate", ProcedureModeWrite, 2, 3, false,
+		registerBatchProcedureLiteral("apoc.periodic.rock_n_roll", "apoc.periodic.rock_n_roll(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Alias of apoc.periodic.iterate", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.rock_n_roll", args)
 			})
@@ -978,4 +978,11 @@ func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
 		}
 	}
 	_ = globalProcedureRegistry.RegisterBuiltIn(spec, handler)
+}
+
+func registerBatchProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+ registerProcedure(ProcedureSpec{
+  Name:name,Signature:signature,Description:description,Mode:mode,
+  WorksOnSystem:worksOnSystem,MinArgs:minArgs,MaxArgs:maxArgs,OwnsTransactions:true,
+ },handler)
 }
