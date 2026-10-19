@@ -44,8 +44,16 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
 
-	// Missing node in a relationship predicate should return false.
+	// A bound-null node in a relationship predicate should return false.
+	nodes["c"] = nil
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	delete(nodes, "c")
+
+	// Public pattern expressions cannot introduce an undefined variable.
+	for _, predicate := range []string{"(a)-[:KNOWS]->(c)", "exists((a)-[:KNOWS]->(c))"} {
+		_, err := exec.Execute(ctx, "MATCH (a:Person) WHERE "+predicate+" RETURN a", nil)
+		require.ErrorContains(t, err, "Variable c not defined", predicate)
+	}
 
 	// Fallback expression evaluation branch.
 	require.True(t, exec.evaluateWhereForContext(ctx, "1 = 1", nodes))
