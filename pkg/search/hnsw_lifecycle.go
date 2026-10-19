@@ -295,6 +295,8 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		hnswBeforeInstallHook(ctx)
 	}
 	// Replay before publication: the first ANN reader must see every mutation.
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -329,7 +331,8 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		// the owner retires the pipeline, which is never taken under hnswMu.
 		s.hnswIndex = built
 		s.hnswMu.Unlock()
-	}, true)
+		s.cacheDerivedVectorPipelineLocked(nil)
+	}, false)
 
 	s.ensureHNSWMaintenance()
 	s.schedulePersist()
@@ -463,6 +466,8 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	// Close the rebuild race under the mutation lock. Replaying the complete
 	// overlay is idempotent for vectors already observed by the store snapshot,
 	// and captures mutations that arrived while the graph was being rebuilt.
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()
 	s.hnswMu.RLock()
 	currentIsOld := s.servingHNSW() == old && ctx.Err() == nil
@@ -479,17 +484,16 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 		}
 	}
 
-	// IMPORTANT: do NOT take pipelineMu while holding hnswMu.
-	// Search pipeline creation uses lock order pipelineMu -> hnswMu, so taking
-	// hnswMu -> pipelineMu here can deadlock. The owner retires the pipeline
-	// after the install has released hnswMu.
+	// Publication owns pipelineMu before indexMu and hnswMu, matching
+	// retirement and strategy changes. The shared cache owner needs no relock.
 	s.hnswMu.Lock()
 	if s.servingHNSW() == old && ctx.Err() == nil {
 		s.publishVectorServing(func() {
 			s.hnswIndex = rebuilt
 			s.hnswLastRebuildUnix.Store(time.Now().Unix())
 			s.hnswMu.Unlock()
-		}, true)
+			s.cacheDerivedVectorPipelineLocked(nil)
+		}, false)
 	} else {
 		s.hnswMu.Unlock()
 	}
