@@ -15,10 +15,14 @@ func TestPluginNestedNullConsumers(t *testing.T) {
 	type namedMap map[string]interface{}
 	type namedList []interface{}
 	nulls := map[string]interface{}{
-		"map": map[string]interface{}(nil), "namedMap": namedMap(nil),
-		"otherMap": map[interface{}]interface{}(nil), "node": (*storage.Node)(nil),
-		"edge": (*storage.Edge)(nil), "time": (*time.Time)(nil),
-		"remote": storage.RemoteEntityValue(nil), "path": (*PathResult)(nil),
+		"map":      map[string]interface{}(nil),
+		"namedMap": namedMap(nil),
+		"otherMap": map[interface{}]interface{}(nil),
+		"node":     (*storage.Node)(nil),
+		"edge":     (*storage.Edge)(nil),
+		"time":     (*time.Time)(nil),
+		"remote":   storage.RemoteEntityValue(nil),
+		"path":     (*PathResult)(nil),
 	}
 	handlers := map[string]interface{}{}
 	for name, value := range nulls {
@@ -65,7 +69,10 @@ func TestPluginNestedNullConsumers(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, result.Rows[0][1], result.Rows[0][0])
 			}
-			for _, mutation := range []struct{ query string; want map[string]interface{} }{
+			for _, mutation := range []struct {
+				query string
+				want  map[string]interface{}
+			}{
 				{"MATCH (n:NestedNull) SET n += apoc.map.clean(%s(), [], [])", map[string]interface{}{"a": int64(1), "keep": int64(2)}},
 				{"MATCH (n:NestedNull) SET n = apoc.map.clean(%s(), [], [])", map[string]interface{}{}},
 				{"MATCH (n:NestedNull) SET n += %s()", map[string]interface{}{"keep": int64(2)}},
@@ -126,7 +133,7 @@ func TestPluginNestedNullConsumers(t *testing.T) {
 
 func BenchmarkPluginResultBoundary(b *testing.B) {
 	for _, tc := range []struct {
-		name string
+		name  string
 		value interface{}
 	}{
 		{"scalar", int64(42)},
