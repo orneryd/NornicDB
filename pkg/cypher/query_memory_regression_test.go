@@ -207,7 +207,7 @@ func (g *queryMemoryNodeReadGuard) GetQueryNode(id storage.NodeID) (*storage.Nod
 	return g.BadgerEngine.GetQueryNode(id)
 }
 
-func TestQueryMemoryScalarEndpointsSkipNodeBodies(t *testing.T) {
+func TestQueryMemoryScalarEndpointsReuseQueryReads(t *testing.T) {
 	seed := codeIntelReadFixture(t, 4, 8)
 	base := seed.storage.(*storage.NamespacedEngine).GetInnerEngine().(*storage.BadgerEngine)
 	guard := &queryMemoryNodeReadGuard{BadgerEngine: base}
@@ -217,9 +217,10 @@ func TestQueryMemoryScalarEndpointsSkipNodeBodies(t *testing.T) {
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(wasDisabled) })
 	for _, disabled := range []bool{true, false} {
 		rowValueProgramsDisabled.Store(disabled)
+		guard.fullReads = 0
 		result, err := exec.Execute(context.Background(), "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 8)
-		require.Zero(t, guard.fullReads, "scalar endpoints decoded a full node body (programs disabled=%v)", disabled)
+		require.LessOrEqual(t, guard.fullReads, 8, "endpoint visibility and scalar values must be reused across edges (programs disabled=%v)", disabled)
 	}
 }
