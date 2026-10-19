@@ -27,6 +27,13 @@ func (s *Server) registerRetentionRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *retention.Manager {
+	if r.URL.Path == "/admin/retention/sweep" {
+		if !s.authorizeAllDatabaseOperation(w, r) {
+			return nil
+		}
+	} else if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+		return nil
+	}
 	rm := s.db.GetRetentionManager()
 	if rm == nil {
 		s.writeRetentionManagerDisabled(w, r)

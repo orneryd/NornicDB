@@ -7,6 +7,8 @@
 
 package auth
 
+import "context"
+
 // PrivilegeDatabaseRef identifies the database for privilege checks.
 // Equivalent to Neo4j PrivilegeDatabaseReference (name, owningDatabaseName).
 // For normal (non-composite) databases, Name and OwningDatabaseName are the same.
@@ -66,4 +68,35 @@ func ResolveDatabaseReadAccess(mode DatabaseAccessMode, resolve func(string) Res
 		return true, true
 	}
 	return true, resolve(database).Read
+}
+
+// RequestDatabasePermissionAllowed applies the existing request permission
+// resolver and database selection rules to a direct (non-Cypher) operation.
+// It does not introduce privileges or grant authority to acquire a database.
+func RequestDatabasePermissionAllowed(ctx context.Context, database string, permission Permission) bool {
+	if ctx == nil {
+		return false
+	}
+	mode := RequestDatabaseAccessModeFromContext(ctx)
+	if mode != nil && !mode.CanAccessDatabase(database) {
+		return false
+	}
+	if scope := RequestDatabaseScopeFromContext(ctx); scope != nil {
+		if _, allowed := scope.Resolve(database); !allowed {
+			return false
+		}
+	}
+	if permission == PermRead {
+		_, allowed := ResolveDatabaseReadAccess(mode, RequestResolvedAccessResolverFromContext(ctx), database)
+		return allowed
+	}
+	if allows := RequestEntitlementResolverFromContext(ctx); allows != nil {
+		return allows(database, permission)
+	}
+	if permission == PermWrite {
+		if resolve := RequestResolvedAccessResolverFromContext(ctx); resolve != nil {
+			return resolve(database).Write
+		}
+	}
+	return true
 }

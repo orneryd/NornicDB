@@ -164,6 +164,10 @@ func normalizeGraphNodeIDs(ids []string) []string {
 }
 
 func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -220,6 +224,10 @@ func (s *Server) handleGraphExpand(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -265,6 +273,10 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -315,6 +327,10 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseRead(w, r, r.PathValue("database")) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return

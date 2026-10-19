@@ -788,19 +788,36 @@ func methodKey(fullMethod string) (string, bool) {
 }
 
 var defaultMethodPermissions = map[string]auth.Permission{
+	"Points/DeleteVectorName": auth.PermWrite,
+	"Points/UpdateBatch": auth.PermWrite,
+	"Points/RecommendGroups": auth.PermRead,
+	"Points/CreateFieldIndex": auth.PermWrite,
+	"Points/CreateVectorName": auth.PermWrite,
+	"Collections/CreateShardKey": auth.PermAdmin,
+	"Points/QueryBatch": auth.PermRead,
+	"Points/DeletePayload": auth.PermWrite,
+	"Collections/CollectionClusterInfo": auth.PermRead,
+	"Collections/ListShardKeys": auth.PermRead,
+	"NornicSearch/SearchText": auth.PermRead,
+	"Points/SearchGroups": auth.PermRead,
+	"Collections/DeleteShardKey": auth.PermAdmin,
+	"Collections/UpdateCollectionClusterSetup": auth.PermAdmin,
+	"Points/DeleteFieldIndex": auth.PermWrite,
+	"Points/SearchMatrixOffsets": auth.PermRead,
+	"Points/Query": auth.PermRead,
+	"Collections/ListCollectionAliases": auth.PermRead,
+	"Collections/ListAliases": auth.PermRead,
+	"Points/Facet": auth.PermRead,
+	"Points/SearchMatrixPairs": auth.PermRead,
+	"Points/QueryGroups": auth.PermRead,
 	// Collections (admin/DDL-ish)
 	"Collections/Create":                   auth.PermCreate,
 	"Collections/Update":                   auth.PermCreate,
 	"Collections/UpdateAliases":            auth.PermCreate,
-	"Collections/CreateAlias":              auth.PermCreate,
-	"Collections/DeleteAlias":              auth.PermCreate,
-	"Collections/RenameAlias":              auth.PermCreate,
 	"Collections/Delete":                   auth.PermDelete,
 	"Collections/Get":                      auth.PermRead,
 	"Collections/List":                     auth.PermRead,
-	"Collections/GetAliases":               auth.PermRead,
 	"Collections/CollectionExists":         auth.PermRead,
-	"Collections/GetCollectionClusterInfo": auth.PermRead,
 
 	// Points (data plane)
 	"Points/Search":         auth.PermRead,
@@ -829,7 +846,6 @@ var defaultMethodPermissions = map[string]auth.Permission{
 	"Snapshots/ListFull":   auth.PermAdmin,
 	"Snapshots/Delete":     auth.PermAdmin,
 	"Snapshots/DeleteFull": auth.PermAdmin,
-	"Snapshots/Recover":    auth.PermAdmin,
 
 	// gRPC reflection is useful for debugging but should be gated.
 	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,
