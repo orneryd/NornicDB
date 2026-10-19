@@ -4,7 +4,6 @@ package storage
 import (
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
