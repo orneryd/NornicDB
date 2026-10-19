@@ -32,7 +32,7 @@ func TestCompositeAggregateReadsRequirePhysicalDatabaseAccess(t *testing.T) {
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, role)
 	for _, phase := range []struct {
-		name string
+		name         string
 		read, access bool
 	}{
 		{"read-refused", false, true},
@@ -50,7 +50,7 @@ func TestCompositeAggregateReadsRequirePhysicalDatabaseAccess(t *testing.T) {
 			require.Equal(t, http.StatusOK, response.Code)
 			var payload struct {
 				Database struct {
-					NodeCount int64 `json:"node_count"`
+					NodeCount   int64                       `json:"node_count"`
 					PerDatabase map[string]map[string]int64 `json:"per_database"`
 				} `json:"database"`
 			}
