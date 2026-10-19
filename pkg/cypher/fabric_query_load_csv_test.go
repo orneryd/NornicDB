@@ -73,7 +73,7 @@ func TestFabricQueryStructureLoadCSVSeparators(t *testing.T) {
 						name = "`" + name + "`"
 					}
 					t.Run(fmt.Sprintf("binding_%s/quoted_%v", word, quoted), func(t *testing.T) {
-						clause := "LOAD CSV FROM '" + source + "/plain' AS " + name + " RETURN toInteger(" + name + "[0]) AS k"
+						clause := "LOAD CSV FROM '" + source + "/plain' AS " + name + " RETURN " + name + " AS k"
 						fabricCompareGrammarCase(t, base, driver, "USE comp.csv "+clause, clause)
 					})
 				}
