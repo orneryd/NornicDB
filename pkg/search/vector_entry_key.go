@@ -295,7 +295,8 @@ func nodeHintsFromValues(hints []LexicalSeedHint) nodeLexicalHints {
 	}
 	out := make(nodeLexicalHints, len(hints))
 	for _, hint := range hints {
-		id := strings.TrimSpace(hint.ID)
+		// BM25 supplies graph identities; preserve their exact bytes.
+		id := hint.ID
 		if id != "" {
 			out[vectorNodeID(id)] = nodeLexicalHint{ID: vectorNodeID(id), Rank: hint.Rank, Signature: hint.Signature}
 		}
