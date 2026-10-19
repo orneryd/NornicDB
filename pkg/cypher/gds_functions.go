@@ -376,7 +376,7 @@ func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	store,err := ctx.GraphStorage()
  if err != nil { return nil,err }
- return gdsNodeByID(store, values[0]), nil
+ return gdsNodeByID(store, values[0], graphFunctionIdentityDomain(ctx,store)), nil
 }
 
 // fnGDSAsNodes is gds.util.asNodes(nodeIds): the nodes with those ids, in
@@ -397,16 +397,16 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
  if err != nil { return nil,err }
  nodes := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
-		if node := gdsNodeByID(store, id); node != nil {
+		if node := gdsNodeByID(store, id, graphFunctionIdentityDomain(ctx,store)); node != nil {
 			nodes = append(nodes, node)
 		}
 	}
 	return nodes, nil
 }
 
-func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
+func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
  if store == nil || value == nil { return nil }
- id, ok := graphEntityLookupID(store,value)
+ id, ok := graphEntityLookupID(store,value,domains...)
  if !ok { return nil }
  // Storage's transaction owner decides visibility; preserve getQueryNode.
  var noExecutor *StorageExecutor

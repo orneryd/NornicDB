@@ -405,7 +405,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
-		view := identityGraphEngine(e.storage)
+		view := identityGraphEngine(e.storage,e.graphIdentityScope)
 		config.bindIdentity(view, nil)
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
