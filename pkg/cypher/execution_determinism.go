@@ -30,7 +30,7 @@ func deterministicExecution(ctx context.Context, text string, depth int) bool {
 	}
 	text = classificationText(text)
 	trimmed := strings.TrimSpace(text)
-	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || queryKeywords(text)["LOAD"] {
+	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || containsKeyword(text, "LOAD") {
 		return false
 	}
 	requirements := QueryPermissionRequirements(text)
