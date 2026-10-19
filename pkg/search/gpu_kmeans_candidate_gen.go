@@ -88,7 +88,7 @@ func (g *GPUKMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context
 	unlock()
 	scoredAll := len(ids) >= view.index.Count()
 	if len(ids) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
 	results, err := view.index.ScoreSubset(query, ids)
@@ -96,7 +96,7 @@ func (g *GPUKMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context
 		return nil, candidateEvidence{}, err
 	}
 	if len(results) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
 	routed := len(results) <= limit
@@ -119,5 +119,5 @@ func (g *GPUKMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context
 		out = append(out, Candidate{ID: results[i].ID, Score: score})
 	}
 
-	return out, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}, nil
+	return out, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}.withBound(0), nil
 }
