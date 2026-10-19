@@ -252,7 +252,7 @@ def _code_line_numbers(repo_root, data, symbols, docstrings, line_cache, state_c
 
 
 def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_fraction,
-                      max_query_chars, min_tokens=0, ignore=()):
+                      max_query_chars, min_tokens=0, ignore=(), touched_ids=None):
     """Functions and methods of the head graph whose body is mostly added lines, largest first."""
     link_key = gi.graph_link_key(graph_path)
     symbols = gi.collect_symbol_lines(graph_path)
@@ -267,10 +267,16 @@ def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_
         if ignored(path, ignore):
             continue
         numbers = _code_line_numbers(repo_root, data, symbols, docstrings, line_cache, state_cache)
-        if not numbers or len(numbers) < min_body_lines:
+        if not numbers:
             continue
         fraction = sum(1 for n in numbers if n in file_diff.added) / len(numbers)
-        if fraction <= 0 or fraction < min_added_fraction:
+        if fraction <= 0:
+            continue
+        # Rewritten owners retire their indexed bodies even when their current
+        # implementation is too small to query (for example, a delegating API).
+        if touched_ids is not None:
+            touched_ids.add(data["id"])
+        if len(numbers) < min_body_lines or fraction < min_added_fraction:
             continue
         body = gi.body_for_node(repo_root, data, symbols, line_cache, state_cache, docstrings)
         if not body or len(tokens(body)) < min_tokens:
@@ -591,17 +597,17 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
         report.warnings.append(
             f"The database was last ingested at {commit[:9]}, not at this PR's merge base {base_sha[:9]}, "
             f"so matches may be stale.")
+    touched = set()
     candidates = select_candidates(
         graph_path, repo_root, diff, min_body_lines=opts["min_body_lines"],
         min_added_fraction=opts["min_added_fraction"], max_query_chars=opts["max_query_chars"],
-        min_tokens=opts["min_tokens"], ignore=ignore)
+        min_tokens=opts["min_tokens"], ignore=ignore, touched_ids=touched)
     if len(candidates) > opts["max_candidates"]:
         report.skipped_by_cap = len(candidates) - opts["max_candidates"]
         candidates = candidates[:opts["max_candidates"]]
         report.warnings.append(f"Only the {opts['max_candidates']} largest added functions were analyzed; "
                                f"{report.skipped_by_cap} were skipped.")
     retired = retired_ids(db, repo, diff)
-    touched = {c.id for c in candidates}
     started = clock()
     for index, candidate in enumerate(candidates):
         if clock() - started > opts["deadline_seconds"]:
