@@ -265,6 +265,17 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	properties []string,
 	visit func(*Node) error,
 ) error {
+	return b.streamNodesByLabelAtSnapshotWithView(scope, label, version, view, properties, visibleRead, visit)
+}
+
+func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
+	scope, label string,
+	version MVCCVersion,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -279,7 +290,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, true)
+			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, true, v)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -317,6 +328,17 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	afterNodeID NodeID,
 	visit func(*Node) error,
 ) error {
+	return b.streamNodesByLabelFromPhysicalSnapshotAfterRead(scope, label, view, properties, afterNodeID, visibleRead, visit)
+}
+
+func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
+	scope, label string,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	afterNodeID NodeID,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -337,7 +359,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
+			if node == nil || b.hidesNode(v, node, nowNanos) || !hasLabel(node.Labels, label) {
 				return nil
 			}
 			return visit(node)
@@ -364,7 +386,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		for it.Next() {
 			indexKey := it.Item().Key()
 			nodeID := it.NodeID()
-			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
+			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
