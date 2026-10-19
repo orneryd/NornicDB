@@ -8,21 +8,23 @@ import (
 
 type Case struct{ ID, Query, Rows string }
 type family struct {
-	name, prefix string
+	name, prefix, suffix string
 	args         []string
 	rows         string
 }
 
 func Cases() []Case {
 	families := []family{
-		{"substring", "", []string{"toLower(§'OKAY')", "(§0)", "(§2)"}, `[["ok"]]`},
-		{"range", "", []string{"(§1)", "(§3)", "(§1)"}, `[[[1,2,3]]]`},
-		{"replace", "", []string{"(§'okay')", "(§'a')", "(§'A')"}, `[["okAy"]]`},
-		{"coalesce", "", []string{"(§null)", "(§null)", "(§'okay')"}, `[["okay"]]`},
-		{"size", "", []string{"[§{`a,b`:[1,2],msg:'okay'}]"}, `[[1]]`},
-		{"percentileCont", "UNWIND [1,2,3] AS x ", []string{"(§x)", "(§0.5)"}, `[[2]]`},
-		{"count", "UNWIND [1,2,3] AS x ", []string{"(§x)"}, `[[3]]`},
-		{"reverse", "", []string{"[§1,2,3]"}, `[[[3,2,1]]]`},
+		{"substring", "", "", []string{"toLower(§'OKAY')", "(§0)", "(§2)"}, `[["ok"]]`},
+		{"range", "", "", []string{"(§1)", "(§3)", "(§1)"}, `[[[1,2,3]]]`},
+		{"replace", "", "", []string{"(§'okay')", "(§'a')", "(§'A')"}, `[["okAy"]]`},
+		{"coalesce", "", "", []string{"(§null)", "(§null)", "(§'okay')"}, `[["okay"]]`},
+		{"size", "", "", []string{"[§{`a,b`:[1,2],msg:'okay'}]"}, `[[1]]`},
+		{"percentileCont", "UNWIND [1,2,3] AS x ", "", []string{"(§x)", "(§0.5)"}, `[[2]]`},
+		{"count", "UNWIND [1,2,3] AS x ", "", []string{"(§x)"}, `[[3]]`},
+		{"reverse", "", "", []string{"[§1,2,3]"}, `[[[3,2,1]]]`},
+		{"head", "", ".v", []string{"[§{v:'okay',`a,b`:[1,2]}]"}, `[["okay"]]`},
+		{"reduce", "", "", []string{"a=§0", "x IN [§1,2] | a+x"}, `[[3]]`},
 	}
 	contents := []string{"don't interpret prose", `a "quoted" word`, "comma, comma,", " ) ( [ ] { } ", "range('bad'), percentileCont('bad')", "`odd,name`", `escaped \' and \"`}
 	var cases []Case
@@ -39,7 +41,7 @@ func Cases() []Case {
 					comment = "// " + content + "\n"
 				}
 				emit := func(placement string, args []string, before, gap, after string) {
-					add(fmt.Sprintf("%s/%s/%d/%s", f.name, style, contentIndex, placement), f.prefix+"RETURN "+before+f.name+gap+"("+strings.Join(args, ",")+")"+after+" AS v", f.rows)
+					add(fmt.Sprintf("%s/%s/%d/%s", f.name, style, contentIndex, placement), f.prefix+"RETURN "+before+f.name+gap+"("+strings.Join(args, ",")+")"+after+f.suffix+" AS v", f.rows)
 				}
 				emit("before-call", base, comment, "", "")
 				emit("name-gap", base, "", comment, "")
