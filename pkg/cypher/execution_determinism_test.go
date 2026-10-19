@@ -86,6 +86,7 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 				}
 			}
 			for _, query := range queries {
+				hits, _, _, _, _ := exec.cache.Stats()
 				params := map[string]any{
 					"request":   map[string]any{"query": "transcript", "where": invocation + " IS NOT NULL"},
 					"statement": "RETURN " + invocation + " AS value",
@@ -95,6 +96,8 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 				second, err := exec.Execute(context.Background(), query, params)
 				require.NoError(t, err, query)
 				require.NotSame(t, first, second, "outer and parameterized predicates must execute: %s", query)
+				afterHits, _, _, _, _ := exec.cache.Stats()
+				require.Equal(t, hits, afterHits, "non-deterministic execution must not hit the outer cache: %s", query)
 			}
 		})
 	}
@@ -172,9 +175,9 @@ func TestExecutionDeterminismNestedParameterBindings(t *testing.T) {
 	params["request"] = map[string]any{"query": "transcript"}
 	first, err = exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
-	second, err = exec.Execute(context.Background(), query, params)
-	require.NoError(t, err)
-	require.Same(t, first, second, "deterministic nested parameter requests retain the outer cache hit")
+	requireOwnedResultCacheHit(t, exec, first, func() (*ExecuteResult, error) {
+		return exec.Execute(context.Background(), query, params)
+	})
 }
 
 func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
@@ -182,9 +185,9 @@ func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
 	params := map[string]any{"request": map[string]any{"query": "transcript", "where": "node.kind = $kind"}, "kind": "a"}
 	first, err := exec.Execute(context.Background(), "CALL db.rretrieve($request)", params)
 	require.NoError(t, err)
-	second, err := exec.Execute(context.Background(), "CALL db.rretrieve($request)", params)
-	require.NoError(t, err)
-	require.Same(t, first, second, "proven deterministic parameterized predicates retain result caching")
+	second := requireOwnedResultCacheHit(t, exec, first, func() (*ExecuteResult, error) {
+		return exec.Execute(context.Background(), "CALL db.rretrieve($request)", params)
+	})
 	require.Len(t, second.Rows, 1)
 }
 
