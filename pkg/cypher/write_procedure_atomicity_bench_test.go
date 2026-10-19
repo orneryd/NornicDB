@@ -15,7 +15,9 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "u5_bench"), 0, 0)
 			ctx := context.Background()
 			const statement = "MERGE (n:U5BenchWrite {id:1}) SET n.value=$value RETURN n.value AS value"
-			if _, err := exec.Execute(ctx, statement, map[string]interface{}{"value": 0}); err != nil { b.Fatal(err) }
+			if _, err := exec.Execute(ctx, statement, map[string]interface{}{"value": 0}); err != nil {
+				b.Fatal(err)
+			}
 			query := "CALL apoc.cypher.doIt($statement,{value:$value}) YIELD value RETURN value.value"
 			if route == "registered" {
 				if err := RegisterUserProcedure(ProcedureSpec{
@@ -23,14 +25,18 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 					Mode: ProcedureModeWrite, MinArgs: 1, MaxArgs: 1, Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}},
 				}, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 					return nested.Execute(ctx, statement, map[string]interface{}{"value": args[0]})
-				}); err != nil { b.Fatal(err) }
+				}); err != nil {
+					b.Fatal(err)
+				}
 				query = "CALL u5tx.benchwrite($value) YIELD value RETURN value"
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				result, err := exec.Execute(ctx, query, map[string]interface{}{"value": i, "statement": statement})
-				if err != nil || len(result.Rows) != 1 { b.Fatalf("procedure result: %v %v", result, err) }
+				if err != nil || len(result.Rows) != 1 {
+					b.Fatalf("procedure result: %v %v", result, err)
+				}
 			}
 		})
 	}
