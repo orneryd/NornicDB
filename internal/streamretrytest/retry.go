@@ -35,7 +35,7 @@ func Run(t *testing.T, factory func(*testing.T) Fixture) {
 			for _, id := range []string{"retry-a", "retry-b", "retry-c"} {
 				_, err := f.Engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
 				require.NoError(t, err)
-				results = append(results, search.SearchResult{ID: id, Score: 1})
+				results = append(results, search.SearchResult{ID: id, NodeID: storage.NodeID(id), Score: 1})
 			}
 			var issued []int
 			armed := false

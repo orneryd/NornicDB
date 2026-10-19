@@ -35,7 +35,7 @@ func TestSearchStreamRetryCypher(t *testing.T) {
 							page.IDs = append(page.IDs, string(row.(map[string]any)["node"].(*storage.Node).ID))
 						}
 						return page, nil
-						}}
+					}}
 			})
 		})
 	}
