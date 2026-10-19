@@ -62,6 +62,9 @@ func SearchTextChunksWithErrorPolicy(
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
@@ -132,8 +135,8 @@ func searchSingleQueryChunk(
 	errorPolicy ChunkedSearchErrorPolicy,
 ) (*SearchResponse, error) {
 	embedding, err := embedQuery(ctx, query)
-	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-		return nil, err
+	if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
+		return nil, fatal
 	}
 	fallbackReason := SearchFallbackNone
 	if err != nil {
@@ -144,8 +147,8 @@ func searchSingleQueryChunk(
 	}
 	if err == nil && len(embedding) > 0 {
 		response, searchErr := searchQuery(ctx, query, embedding, opts)
-		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
-			return nil, searchErr
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, searchErr); fatal != nil {
+			return nil, fatal
 		}
 		if searchErr == nil && response != nil {
 			return response, nil
@@ -193,8 +196,8 @@ func searchSeveralQueryChunks(
 	)
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
-		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-			return nil, 0, err
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
+			return nil, 0, fatal
 		}
 		if err != nil || len(embedding) == 0 {
 			// Unavailable preparation does not participate in the selected search;
@@ -212,8 +215,8 @@ func searchSeveralQueryChunks(
 			continue
 		}
 		response, err := searchQuery(ctx, chunk, embedding, &chunkOpts)
-		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, err) {
-			return nil, 0, err
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, err); fatal != nil {
+			return nil, 0, fatal
 		}
 		if err != nil || response == nil {
 			if fallbackReason == SearchFallbackNone {
@@ -385,8 +388,17 @@ func searchResultID(result SearchResult) string {
 	return result.ID
 }
 
-func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || predicate != nil && predicate(err)
+// A DB-owned provider can be canceled while its transport's context is live.
+// That cancellation is fatal too. A provider timeout with a live request keeps
+// the adapter's ordinary outage/fallback policy.
+func fatalChunkedSearchError(ctx context.Context, predicate func(error) bool, err error) error {
+	if canceled := ctx.Err(); canceled != nil {
+		return canceled
+	}
+	if err != nil && (errors.Is(err, context.Canceled) || predicate != nil && predicate(err)) {
+		return err
+	}
+	return nil
 }
 
 // isQueryEmbeddingFallback reports whether reason says the query wasn't
