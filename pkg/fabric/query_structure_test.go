@@ -108,10 +108,15 @@ func TestFabricStructureIncompleteGraphInvocation(t *testing.T) {
 func TestEmbeddingOptionUsesGrammarContext(t *testing.T) {
 	for _, separator := range []string{" ", "  ", "\n", " /* option */ "} {
 		text := "CREATE (n:Doc) WITH" + separator + "EMBEDDING RETURN n"
+		require.NoError(t, ReadQueryStructure(text).Err)
+		require.True(t, ReadQueryStructure(text).HasEmbeddingCandidate())
 		stripped, ok := StripEmbeddingOption(text)
-		if !ok || stripped != "CREATE (n:Doc) RETURN n" {
-			t.Fatalf("option %q: %q %v", text, stripped, ok)
-		}
+		require.False(t, ok, "nonterminal ambiguity belongs to the execution frame")
+		require.Equal(t, text, stripped)
+		terminal := "CREATE (n:Doc) WITH" + separator + "EMBEDDING"
+		stripped, ok = StripEmbeddingOption(terminal)
+		require.True(t, ok)
+		require.Equal(t, "CREATE (n:Doc)", stripped)
 		if strings.Contains(LocalQuery(text), "`EMBEDDING`") {
 			t.Fatalf("option lowered as a name: %q", LocalQuery(text))
 		}
@@ -163,7 +168,7 @@ func TestEmbeddingProjectionScope(t *testing.T) {
 			q := ReadQueryStructure(text)
 			require.NoError(t, q.Err)
 			_, option := StripEmbeddingOption(text)
-			require.True(t, option)
+			require.Equal(t, !q.HasEmbeddingCandidate(), option)
 		})
 	}
 }

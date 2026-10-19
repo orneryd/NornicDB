@@ -11,6 +11,7 @@ type QueryNameOccurrence struct {
 	Start, End                                              int
 	Name, Written                                           string
 	Variable, Binding, Parameter, ProcedureColumn, Selector bool
+	EmbeddingCandidate                                      bool
 }
 
 // The maintained grammar's complete Symbol-parent inventory. Projection and
@@ -38,6 +39,7 @@ func NameOccurrences(text string) ([]QueryNameOccurrence, bool) {
 		r.bytes = append(r.bytes, i)
 	}
 	r.bytes = append(r.bytes, len(text))
+	candidateNames := q.EmbeddingCandidateNames()
 	var names []QueryNameOccurrence
 	var visit func(antlr4.Tree, antlr4.Tree, bool)
 	visit = func(tree, parent antlr4.Tree, inParameter bool) {
@@ -47,7 +49,7 @@ func NameOccurrences(text string) ([]QueryNameOccurrence, bool) {
 		if symbol, ok := tree.(grammar.ISymbolContext); ok {
 			role := symbolRole(symbol, parent)
 			n := QueryNameOccurrence{Start: r.start(symbol.GetStart()), End: r.end(symbol.GetStop()), Name: unquoteSyntaxName(symbol.GetText()), Written: r.source(symbol), Parameter: inParameter,
-				Variable: role.variable, Binding: role.binding, Selector: role.selector, ProcedureColumn: role.procedureColumn}
+				EmbeddingCandidate: candidateNames[symbol.GetStart().GetStart()], Variable: role.variable, Binding: role.binding, Selector: role.selector, ProcedureColumn: role.procedureColumn}
 			names = append(names, n)
 		}
 		for i := 0; i < tree.GetChildCount(); i++ {
@@ -153,7 +155,7 @@ func PreserveNameRoles(text string) string {
 	var out strings.Builder
 	end := 0
 	for _, name := range names {
-		if !name.Variable || name.Parameter || strings.HasPrefix(name.Written, "`") || !KeywordName(name.Name) {
+		if name.EmbeddingCandidate || !name.Variable || name.Parameter || strings.HasPrefix(name.Written, "`") || !KeywordName(name.Name) {
 			continue
 		}
 		out.WriteString(text[end:name.Start])
