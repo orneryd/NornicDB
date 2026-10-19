@@ -74,10 +74,10 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 					require.InDelta(t, tc.want, result.Rows[0][0], 1e-12)
 				})
 			}
-			t.Run("native APOC adjacency and endpoints",func(t *testing.T) {
-				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"RETURN apoc.node.degree(n),apoc.node.degree(m),apoc.nodes.connected(n,z),apoc.nodes.connected(n,y),elementId(apoc.rel.startNode(r)),elementId(apoc.rel.endNode(s))",nil)
-				require.NoError(t,err)
-				require.Equal(t,[][]interface{}{{int64(1),int64(1),true,false,"4:one:same","4:two:target"}},result.Rows)
+			t.Run("native APOC adjacency and endpoints", func(t *testing.T) {
+				result, err := exec.Execute(ctx, compositeIdentityQueryPrefix+"RETURN apoc.node.degree(n),apoc.node.degree(m),apoc.nodes.connected(n,z),apoc.nodes.connected(n,y),elementId(apoc.rel.startNode(r)),elementId(apoc.rel.endNode(s))", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{int64(1), int64(1), true, false, "4:one:same", "4:two:target"}}, result.Rows)
 			})
 			for _, tc := range []struct {
 				expression string
