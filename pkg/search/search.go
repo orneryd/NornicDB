@@ -3393,20 +3393,21 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 	}
 	s.releaseNodeIndexCapacityLocked(nodeIDStr)
 
-	// Remove main embedding
-	s.removeVectorLocked(nodeIDStr)
+	// Remove the same main key the entry writer stored.
+	mainKey := nodeMainVectorKey(nodeIDStr)
+	s.removeVectorLocked(mainKey)
 	if s.servingGPUIndex() != nil {
-		_ = s.servingGPUIndex().Remove(nodeIDStr)
+		_ = s.servingGPUIndex().Remove(mainKey)
 	}
 	if removeFulltext && s.fulltext() != nil {
 		s.fulltext().Remove(nodeIDStr)
 	}
 
 	// Keep the active graph current with the canonical vector store.
-	s.hnswRemoveLive(nodeIDStr)
+	s.hnswRemoveLive(mainKey)
 
 	// Also remove from cluster index if enabled
-	s.retireClusterVectorLocked(nodeIDStr)
+	s.retireClusterVectorLocked(mainKey)
 
 	delete(s.nodeLabels, nodeIDStr)
 	delete(s.nodeTypes, nodeIDStr)
