@@ -648,10 +648,10 @@ func (a *StorageAdapter) GetWALPosition() (uint64, error) {
 
 // GetWALEntries returns WAL entries starting from the given position.
 func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*WALEntry, error) {
-	// Fast path: serve from in-memory WAL.
+	// Keep the shared backing array locked until the result window is copied:
+	// pruning compacts and clears it in place.
 	a.memWALMu.RLock()
 	mem := a.memWAL
-	a.memWALMu.RUnlock()
 
 	if len(mem) > 0 && fromPosition >= mem[0].Position {
 		// Binary search first entry with Position > fromPosition
@@ -665,6 +665,7 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 			}
 		}
 		if lo >= len(mem) {
+			a.memWALMu.RUnlock()
 			return []*WALEntry{}, nil
 		}
 		end := lo + maxEntries
@@ -673,8 +674,10 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 		}
 		entries := make([]*WALEntry, end-lo)
 		copy(entries, mem[lo:end])
+		a.memWALMu.RUnlock()
 		return entries, nil
 	}
+	a.memWALMu.RUnlock()
 
 	// Read from persistent WAL
 	a.walMu.RLock()
