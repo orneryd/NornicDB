@@ -69,6 +69,9 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					// Internal-node visibility has a separate public matrix; this
 					// differential isolates policy and transaction query views.
 					require.NoError(t, base.DeleteEdge("policy:internal-edge"))
+					if mode == "promotion" {
+						require.NoError(t, base.CreateEdge(&storage.Edge{ID: "policy:a-edge-2", StartNode: "policy:a", EndNode: "policy:b", Type: "REL"}))
+					}
 					_, err := base.GetNode("policy:a")
 					require.NoError(t, err, "promotion control")
 					_, err = base.GetNode("policy:expired")
@@ -82,6 +85,8 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					t.Cleanup(func() { _ = base.Close() })
 					exec = NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "test"), 0, 0)
 					_, err = exec.Execute(ctx, "CREATE (:Fact {id:'a'})-[:REL]->(:Fact {id:'b'})", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, "MATCH (a:Fact {id:'a'}), (b:Fact {id:'b'}) CREATE (a)-[:REL]->(b)", nil)
 					require.NoError(t, err)
 				}
 				if transaction != "autocommit" {
@@ -102,6 +107,38 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 						require.NoError(t, err)
 						require.Equal(t, control.Columns, result.Columns)
 						require.ElementsMatch(t, queryMemoryCanonicalRows(t, control.Rows), queryMemoryCanonicalRows(t, result.Rows))
+						queryMemoryOutputCheck(t, control.Rows)
+						// Exercise the PUBLIC stream as well as lazy MATCH rows. The
+						// two visible edges cross threshold1 for eligible nonaggregate
+						// auto-commit reads. Transactions, aggregates and empty results
+						// retain ResultStream's existing materialized contract.
+						for _, streamCtx := range []context.Context{ctx, materialized} {
+							streamCtx, cancel := context.WithCancel(streamCtx)
+							run := executeStreamed(streamCtx, exec, query, 1)
+							var streamedRows [][]interface{}
+							if run.stream.streamed() {
+								for {
+									batch, done := run.stream.Next(1)
+									streamedRows = append(streamedRows, batch...)
+									if done {
+										break
+									}
+								}
+							}
+							<-run.stream.Done()
+							cancel()
+							require.NoError(t, run.err)
+							if !run.stream.streamed() {
+								streamedRows = run.result.Rows
+							} else {
+								require.Equal(t, control.Columns, run.stream.Columns())
+							}
+							if transaction == "autocommit" && len(control.Rows) > 1 {
+								require.True(t, run.stream.streamed(), "eligible query must actually cross threshold1")
+							}
+							queryMemoryOutputCheck(t, streamedRows)
+							require.ElementsMatch(t, queryMemoryCanonicalRows(t, control.Rows), queryMemoryCanonicalRows(t, streamedRows))
+						}
 						// Compare public logical operators as well as the physical
 						// storage probes in TestQueryMemorySelectiveAccessSkipsDecoyEdges.
 						controlPlan, err := exec.Execute(materialized, "EXPLAIN "+query, nil)
@@ -114,7 +151,7 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 				query := "MATCH (a:Fact)-[r:REL]->(b:Fact) RETURN r"
 				result, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err)
-				want := 1
+				want := 2
 				if mode == "suppression" {
 					want = 0
 				}

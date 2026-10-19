@@ -1,6 +1,10 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"reflect"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 func (e *StorageExecutor) propertyViewEngine() *storage.BadgerEngine {
 	if e.storedPropertyIdentity {
@@ -32,6 +36,13 @@ func (e *StorageExecutor) queryVisibleValue(value interface{}) interface{} {
 
 func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{} {
 	switch v := value.(type) {
+	case storage.RemoteEntityValue, storage.RemotePathValue:
+		// These carriers already have their source database's visibility view.
+		return value
+	case storage.Node:
+		return *e.projectVisibleQueryValue(&v).(*storage.Node)
+	case storage.Edge:
+		return *e.projectVisibleQueryValue(&v).(*storage.Edge)
 	case *storage.Node:
 		if v == nil {
 			return v
@@ -105,6 +116,46 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		}
 		return out
 	}
+	// The public APIs and encoders also accept typed lists, arrays and maps.
+	// Preserve their carrier type while recursing through the same entity owner;
+	// adding another container spelling must not introduce another policy switch.
+	if value != nil {
+		v := reflect.ValueOf(value)
+		switch v.Kind() {
+		case reflect.Slice, reflect.Array:
+			if v.Kind() == reflect.Slice && v.IsNil() {
+				return value
+			}
+			var out reflect.Value
+			if v.Kind() == reflect.Slice {
+				out = reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+			} else {
+				out = reflect.New(v.Type()).Elem()
+			}
+			for i := 0; i < v.Len(); i++ {
+				projected := e.projectVisibleQueryValue(v.Index(i).Interface())
+				if projected != nil {
+					out.Index(i).Set(reflect.ValueOf(projected))
+				}
+			}
+			return out.Interface()
+		case reflect.Map:
+			if v.IsNil() || v.Type().Key().Kind() != reflect.String {
+				return value
+			}
+			out := reflect.MakeMapWithSize(v.Type(), v.Len())
+			entries := v.MapRange()
+			for entries.Next() {
+				projected := e.projectVisibleQueryValue(entries.Value().Interface())
+				entry := reflect.Zero(v.Type().Elem())
+				if projected != nil {
+					entry = reflect.ValueOf(projected)
+				}
+				out.SetMapIndex(entries.Key(), entry)
+			}
+			return out.Interface()
+		}
+	}
 	return value
 }
 
@@ -118,8 +169,25 @@ func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]in
 		if v != nil {
 			return v.Properties
 		}
+	case storage.Node:
+		return v.Properties
+	case storage.Edge:
+		return v.Properties
 	}
 	return nil
+}
+
+// publishQueryRow is the public row boundary for both materialized results
+// and ResultStream.emit. Projection detaches graph values before a consumer
+// can observe them; the expression memo has no ownership beyond that row.
+func (e *StorageExecutor) publishQueryRow(row []interface{}) []interface{} {
+	if e.statementPropertyViews != nil {
+		defer e.statementPropertyViews.releaseRow()
+	}
+	if !e.queryPropertyDecayEnabled() {
+		return row
+	}
+	return e.projectVisibleQueryValue(row).([]interface{})
 }
 
 func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
@@ -128,7 +196,7 @@ func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
 		return
 	}
 	for i, row := range result.Rows {
-		result.Rows[i] = e.projectVisibleQueryValue(row).([]interface{})
+		result.Rows[i] = e.publishQueryRow(row)
 	}
 }
 

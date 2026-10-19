@@ -17,12 +17,13 @@ func TestResultStreamStopsOnCancelledContext(t *testing.T) {
 	require.Equal(t, 1, stream.threshold)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.True(t, stream.emit(ctx, []interface{}{1}))
-	require.True(t, stream.emit(ctx, []interface{}{2}))
+	owner := NewStorageExecutor(newTestMemoryEngine(t))
+	require.True(t, stream.emit(ctx, owner, []interface{}{1}))
+	require.True(t, stream.emit(ctx, owner, []interface{}{2}))
 	require.True(t, stream.streamed())
-	require.False(t, stream.emit(ctx, []interface{}{3}), "waiting for demand")
+	require.False(t, stream.emit(ctx, owner, []interface{}{3}), "waiting for demand")
 	stream.want = 1
-	require.False(t, stream.emit(ctx, []interface{}{4}), "waiting to hand over a batch")
+	require.False(t, stream.emit(ctx, owner, []interface{}{4}), "waiting to hand over a batch")
 }
 
 func TestVisitNodeListStopsAndFails(t *testing.T) {
