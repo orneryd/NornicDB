@@ -13,6 +13,7 @@ type relationshipAccessProgram struct {
 	query string
 	sites []*relationshipAccessTemplate
 	byID  map[string]*relationshipAccessTemplate
+
 	graphQueries []string
 }
 
