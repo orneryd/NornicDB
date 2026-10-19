@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -20,28 +21,28 @@ func TestSyntaxValidationCachePerValidator(t *testing.T) {
 
 	config.SetParserType(config.ParserTypeANTLR)
 	valid := "MATCH (n:CacheProbe) RETURN n.id"
-	require.NoError(t, exec.validateSyntax(valid, false))
+	require.NoError(t, exec.validateSyntax(context.Background(), valid, false))
 	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidANTLR))
 	require.False(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic))
-	require.NoError(t, exec.validateSyntax(valid, false), "served from the cache")
+	require.NoError(t, exec.validateSyntax(context.Background(), valid, false), "served from the cache")
 
 	broken := "MATCH (n:CacheProbe RETURN n"
 	for range 2 {
-		require.Error(t, exec.validateSyntax(broken, false))
+		require.Error(t, exec.validateSyntax(context.Background(), broken, false))
 	}
 	require.False(t, exec.hasCachedValidSyntax(broken, syntaxValidANTLR))
 
 	extension := "SHOW LIMITS"
-	require.NoError(t, exec.validateSyntax(extension, false), "a NornicDB extension, checked by the Nornic validator")
+	require.NoError(t, exec.validateSyntax(context.Background(), extension, false), "a NornicDB extension, checked by the Nornic validator")
 	require.True(t, exec.hasCachedValidSyntax(extension, syntaxValidANTLR))
 
 	config.SetParserType(config.ParserTypeNornic)
 	other := "MATCH (n:CacheProbe) RETURN count(n)"
-	require.NoError(t, exec.validateSyntax(other, false))
+	require.NoError(t, exec.validateSyntax(context.Background(), other, false))
 	require.True(t, exec.hasCachedValidSyntax(other, syntaxValidNornic))
 	require.False(t, exec.hasCachedValidSyntax(other, syntaxValidANTLR))
 	// The Nornic acceptance of a text ANTLR accepted adds to its entry.
-	require.NoError(t, exec.validateSyntax(valid, false))
+	require.NoError(t, exec.validateSyntax(context.Background(), valid, false))
 	require.True(t, exec.hasCachedValidSyntax(valid, syntaxValidNornic|syntaxValidANTLR))
 	require.False(t, exec.hasCachedValidSyntax("", syntaxValidNornic))
 	exec.markCachedValidSyntax("", syntaxValidNornic)
@@ -77,6 +78,6 @@ func TestSyntaxValidationCacheRejectedExtension(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	rejected := "SHOW LIMITS YIELD name WHERE name IN ['a',]"
 	require.True(t, isNornicExtensionStatement(rejected))
-	require.Error(t, exec.validateSyntax(rejected, false))
+	require.Error(t, exec.validateSyntax(context.Background(), rejected, false))
 	require.False(t, exec.hasCachedValidSyntax(rejected, syntaxValidANTLR))
 }
