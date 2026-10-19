@@ -12,6 +12,9 @@ import (
 // to the next operator. In particular, aggregation and Bolt projection must
 // not first collect a graph-sized PathResult or binding-map slice.
 func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	if materialize, _ := ctx.Value(traversalMaterializeKey{}).(bool); materialize {
+		return nil, false, nil
+	}
 	// Keep the existing bounded/top-k physical operators for LIMIT and ORDER.
 	if hint.readTail == nil || hint.orderExpr != "" || hint.earlyLimit >= 0 {
 		return nil, false, nil
@@ -37,19 +40,21 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
-	if !traversalSourceUnboundedScan(shape, where, nil) {
+	if planPipelineTraversalScan(shape, where, nil).access == traversalSeededAccess {
 		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
 	store := e.getStorage(ctx)
 	hideSystemNodes := shouldHideSystemNodes(store)
+	endpoints := e.newRelationshipEndpointReader(store)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
 		endpointValues := &endpointPropertyCache{}
 		current := make(pipelineRow)
 		completed := input(func(row pipelineRow) bool {
-			if !traversalSourceUnboundedScan(shape, where, row) {
+			plan := planPipelineTraversalScan(shape, where, row)
+			if plan.access == traversalSeededAccess {
 				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
 				if err != nil {
 					recordExpressionFailure(ctx, err)
@@ -76,22 +81,17 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			// property bodies are never retained between rows.
 			headers := make(map[storage.NodeID]*storage.Node)
 			load := func(id storage.NodeID, properties []string) (*storage.Node, error) {
-				if properties != nil {
-					if len(properties) == 0 && headers[id] != nil {
-						return headers[id], nil
-					}
-					if reader, ok := store.(storage.ProjectedNodeReader); ok {
-						node, err := reader.GetNodeProjected(id, properties)
-						if err == nil && node != nil && len(properties) == 0 {
-							if len(headers) == 1024 {
-								clear(headers)
-							}
-							headers[id] = node
-						}
-						return node, err
-					}
+				if properties != nil && len(properties) == 0 && headers[id] != nil {
+					return headers[id], nil
 				}
-				return e.getQueryNode(store, id)
+				node, err := endpoints.read(id, properties)
+				if err == nil && node != nil && properties != nil && len(properties) == 0 {
+					if len(headers) == 1024 {
+						clear(headers)
+					}
+					headers[id] = node
+				}
+				return node, err
 			}
 			bind := func(name string, value interface{}) bool {
 				if name == "" {
@@ -119,11 +119,11 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					}
 				}
 				start, err := load(startID, startProperties)
-				if err != nil || start == nil || (hideSystemNodes && isSystemNode(start)) || !e.matchesEndPattern(start, &match.StartNode) {
+				if err != nil || start == nil || !e.matchesEndPattern(start, &match.StartNode) {
 					return nil
 				}
 				end, err := load(endID, endProperties)
-				if err != nil || end == nil || (hideSystemNodes && isSystemNode(end)) || !e.matchesEndPattern(end, &match.EndNode) {
+				if err != nil || end == nil || !e.matchesEndPattern(end, &match.EndNode) {
 					return nil
 				}
 				if !bind(match.StartNode.variable, start) || !bind(match.EndNode.variable, end) || !bind(match.Relationship.Variable, edge) {
@@ -143,27 +143,14 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				}
 				return nil
 			}
-			edgeType := ""
-			if len(match.Relationship.Types) == 1 {
-				edgeType = match.Relationship.Types[0]
-			}
-			err := storage.StreamEdgesByType(rowCtx, store, edgeType, func(edge *storage.Edge) error {
+			err := plan.visitEdges(rowCtx, e, match, func(edge *storage.Edge, start, end storage.NodeID) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if len(match.Relationship.Types) > 1 && !containsString(match.Relationship.Types, edge.Type) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+				if len(match.Relationship.Types) > 0 && !containsString(match.Relationship.Types, edge.Type) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
 					return nil
 				}
-				if match.Relationship.Direction == "incoming" {
-					return emit(edge, edge.EndNode, edge.StartNode)
-				}
-				if err := emit(edge, edge.StartNode, edge.EndNode); err != nil {
-					return err
-				}
-				if match.Relationship.Direction == "both" && edge.StartNode != edge.EndNode {
-					return emit(edge, edge.EndNode, edge.StartNode)
-				}
-				return nil
+				return emit(edge, start, end)
 			})
 			if err != nil {
 				if !errors.Is(err, storage.ErrIterationStopped) {
@@ -176,25 +163,6 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		})
 		return completed && valid
 	}, true, nil
-}
-
-// A whole-edge stream is an access path only for an unseeded scan. Predicates
-// and inline properties may select an ID/index/endpoint seed, including seek
-// capabilities supplied by the storage engine. Leave their selection to the
-// existing traversal planner instead of inspecting individual predicate forms.
-// Outer bindings are only known when the upstream source yields a row.
-func traversalSourceUnboundedScan(match *TraversalMatch, where string, row pipelineRow) bool {
-	if where != "" || len(match.StartNode.properties) != 0 || len(match.EndNode.properties) != 0 || len(match.Relationship.Properties) != 0 {
-		return false
-	}
-	for _, variable := range []string{match.StartNode.variable, match.EndNode.variable, match.Relationship.Variable, match.PathVariable} {
-		if variable != "" {
-			if _, bound := row[variable]; bound {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func traversalSourceProperties(node nodePatternInfo, where string, tail []string, pathVariable string) []string {
