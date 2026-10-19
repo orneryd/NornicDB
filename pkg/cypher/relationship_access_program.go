@@ -92,9 +92,9 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 				i = skipCypherQuotedText(pattern, i, pattern[i]) - 1
 				continue
 			}
-			if pattern[i] == '$' && i+1 < len(pattern) && pattern[i+1] == '(' {
-				if end := findMatchingDelimiter(pattern, i+1, '(', ')'); end >= 0 {
-					expressions(pattern[i+2 : end])
+			if open, _, ok := dynamicLabelOpenAt(pattern, i); ok {
+				if end := findMatchingDelimiter(pattern, open, '(', ')'); end >= 0 {
+					expressions(pattern[open+1 : end])
 					i = end
 					continue
 				}

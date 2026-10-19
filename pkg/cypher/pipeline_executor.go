@@ -2131,7 +2131,8 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 				}
 			}
 		}
-		joinedNodes, joinedRelationships := e.executeChainedMatch(ctx, pattern, []binding{nodes}, []relationshipBinding{relationships})
+		accessCtx := withRelationshipSeekPredicate(withValueBindings(ctx, row), pattern, whereClause)
+		joinedNodes, joinedRelationships := e.executeChainedMatch(accessCtx, pattern, []binding{nodes}, []relationshipBinding{relationships})
 		for index, nodeBindings := range joinedNodes {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeBindings)))
 			for name, value := range row {

@@ -1262,16 +1262,6 @@ func labelExpressionWidensMatch(c byte) bool {
 // so a query with one depends on every write, as an unlabelled one does.
 // A parameter ({k:$v}) is not one.
 func dynamicLabelStartsAt(s string, i int) bool {
-	if i+1 >= len(s) || s[i] != '$' {
-		return false
-	}
-	if s[i+1] == '(' {
-		return true
-	}
-	for _, function := range [...]string{"all(", "any("} {
-		if i+1+len(function) <= len(s) && strings.EqualFold(s[i+1:i+1+len(function)], function) {
-			return true
-		}
-	}
-	return false
+	_, _, ok := dynamicLabelOpenAt(s, i)
+	return ok
 }

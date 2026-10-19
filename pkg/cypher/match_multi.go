@@ -161,16 +161,12 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundStartNode := existing[matches.StartNode.variable]
 			boundEndNode := existing[matches.EndNode.variable]
 
-			var paths []PathResult
-			if boundStartNode != nil {
-				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
-				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
-				}
-			} else {
-				paths = e.traverseGraph(ctx, matches)
-			}
+			var start, end []*storage.Node
+			if boundStartNode != nil { start = []*storage.Node{boundStartNode} }
+			if boundEndNode != nil { end = []*storage.Node{boundEndNode} }
+			execution := e.relationshipExecutionFor(ctx, pattern, "")
+			paths, err := execution.paths(ctx, matches, start, end, nil)
+			if err != nil { recordExpressionFailure(ctx, err); return nil, nil }
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
 					continue
@@ -1415,28 +1411,12 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 			return false
 		}
 	}
-	if !match.IsChained && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 {
-		return e.evaluateBoundOneHopPattern(ctx, match, nodes)
-	}
-
-	var paths []PathResult
-	if start := nodes[match.StartNode.variable]; start != nil {
-		if match.IsChained && len(match.Segments) > 1 {
-			paths = e.traverseChainedGraph(ctx, match, []*storage.Node{start})
-		} else {
-			paths = e.traverseFromNode(ctx, start, match)
-		}
-	} else if end := nodes[match.EndNode.variable]; end != nil && !match.IsChained {
-		reversed := reverseTraversalMatch(match)
-		if reversed == nil {
-			return false
-		}
-		for _, reversedPath := range e.traverseFromNode(ctx, end, reversed) {
-			paths = append(paths, reversePathResult(reversedPath))
-		}
-	} else {
-		paths = e.traverseGraph(ctx, match)
-	}
+	var start, end []*storage.Node
+	if node := nodes[match.StartNode.variable]; node != nil { start = []*storage.Node{node} }
+	if node := nodes[match.EndNode.variable]; node != nil { end = []*storage.Node{node} }
+	execution := e.relationshipExecutionFor(ctx, match.accessPattern, "")
+	paths, err := execution.paths(ctx, match, start, end, nil)
+	if err != nil { recordExpressionFailure(ctx, err); return false }
 
 	existing := binding(nodes)
 	for _, path := range paths {
@@ -1461,9 +1441,9 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
 		return false
 	}
-	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-	paths := e.traverseGraphSequential(ctx, match, []*storage.Node{start}, viewport, checker)
+	execution := e.relationshipExecutionFor(ctx, match.accessPattern, "")
+	paths, err := execution.paths(ctx, match, []*storage.Node{start}, nil, nil)
+	if err != nil { recordExpressionFailure(ctx, err); return false }
 	end, bound := nodes[match.EndNode.variable]
 	for _, path := range paths {
 		if len(path.Nodes) == 0 {

@@ -486,12 +486,10 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
-	var paths []PathResult
-	if matches.IsChained && len(matches.Segments) > 1 {
-		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
-	} else {
-		paths = e.traverseFromNode(ctx, seed, matches)
-	}
+	ctx = withValueBindings(ctx, values)
+	execution := e.relationshipExecutionFor(ctx, pattern, where)
+	paths, err := execution.paths(ctx, matches, []*storage.Node{seed}, nil, nil)
+	if err != nil { recordExpressionFailure(ctx, err); return 0, false }
 	var count int64
 	for _, path := range paths {
 		inner := e.buildPathContext(path, matches)
@@ -859,7 +857,9 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 			return 0, false
 		}
 	}
-	return e.nodeDegreeCount(ctx, node, shape), true
+	split := relationshipAccessMatchWhere(body)
+	execution := e.relationshipExecutionFor(ctx, split.pattern, split.where)
+	return execution.degree(ctx, node, shape), true
 }
 
 // nodeDegreeCount is the degree of node along shape's direction and types.

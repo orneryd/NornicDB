@@ -112,6 +112,9 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 				return
 			}
 			require.NoError(t, err, "query=%s", tc.q)
+			if strings.HasPrefix(tc.name, "generated_") {
+				require.Equal(t, relationshipAccessGeneratedRows(tc.name), actual.Rows)
+			}
 			switch tc.name {
 			case "dynamic_create_exists_label":
 				require.Equal(t, [][]interface{}{{[]interface{}{"Made"}}}, actual.Rows)
