@@ -755,7 +755,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 		edges = e.traversalEdges(traversal, from.ID, false)
 	default:
 		var err error
-		if edges, err = undirectedIncidentEdges(e.storage, from.ID); err != nil {
+		if edges, err = undirectedIncidentEdgesContext(ctx, e.storage, from.ID); err != nil {
 			recordExpressionFailure(ctx, err)
 			return 0, true
 		}

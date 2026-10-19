@@ -1681,23 +1681,15 @@ func pipelineColumns(ctx context.Context, rows []pipelineRow, includeInternal bo
 }
 
 func pipelineScopeColumns(scope map[string]struct{}) []string {
-	return pipelineScopeColumnsWithCancellation(scope, nil)
-}
-func pipelineScopeColumnsWithCancellation(scope map[string]struct{}, probe *pipelineCancellation) []string {
-	columns := make([]string, 0, pipelineInitialCapacity(len(scope), probe))
+	// Scope names are bounded by the statement's variables, independent of
+	// the number of data rows. Keep this statement-text reader plain.
+	columns := make([]string, 0, len(scope))
 	for column := range scope {
-		if probe != nil && !probe.check() {
-			return nil
-		}
 		if !strings.HasPrefix(column, "$") && !isGeneratedVariable(column) {
-			columns = appendPipelineItem(columns, column, probe)
+			columns = append(columns, column)
 		}
 	}
-	if probe == nil {
-		sort.Strings(columns)
-	} else if probe.err != nil || !probe.SortStrings(columns) {
-		return nil
-	}
+	sort.Strings(columns)
 	return columns
 }
 

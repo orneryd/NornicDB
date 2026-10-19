@@ -1063,7 +1063,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			plan := returnProjectionPlanFor(clause.text)
 			if plan.star && len(rows) == 0 {
-				plan = plan.withStarExpanded(pipelineScopeColumnsWithCancellation(scope, cancellation))
+				plan = plan.withStarExpanded(pipelineScopeColumns(scope))
 			}
 			final, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated)
 			source = nil
