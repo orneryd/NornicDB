@@ -1621,6 +1621,16 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 // rolled back on error, preventing partial data corruption from failed queries.
 // For strict ACID guarantees with durability, use explicit BEGIN/COMMIT transactions.
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// A public procedure callback may re-enter Execute with the statement's
+	// transaction in its executor, context, or both. Reuse that owner rather
+	// than committing a nested implicit transaction independently.
+	if statementStorage, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		statementExec := e
+		if e.storage != statementStorage {
+			statementExec = e.cloneWithStorage(statementStorage)
+		}
+		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(cypher)
 	needsTransaction := statementNeedsTransaction(info, cypher)
