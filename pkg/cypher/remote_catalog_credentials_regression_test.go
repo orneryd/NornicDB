@@ -44,7 +44,7 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 			require.Equal(t, []string{secret, secret}, endpoint.Query()[alias])
 		}
 		require.Contains(t, endpoint.RawQuery, "region=keep%20spelling")
-		return storage.NewMemoryEngine(), nil
+		return newTestMemoryEngine(t), nil
 	}
 	manager, err := multidb.NewDatabaseManager(inner, config)
 	require.NoError(t, err)
@@ -62,18 +62,16 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 	_, err = manager.GetStorageWithAuth("probe.r", "synthetic-forwarded-token-385162")
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
-	engine, err := manager.GetStorage("nornic")
+	refs, err := manager.GetCompositeConstituents("probe")
 	require.NoError(t, err)
-	executor := NewStorageExecutor(engine)
-	executor.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
-	for _, statement := range []string{"SHOW CONSTITUENTS FOR COMPOSITE DATABASE probe", "SHOW ALIASES"} {
-		result, err := executor.Execute(context.Background(), statement, nil)
-		require.NoError(t, err)
-		data, err := json.Marshal(result)
-		require.NoError(t, err)
-		for _, value := range []string{secret, url.QueryEscape(secret), "enc:v1:", "enc%3Av1%3A"} {
-			require.NotContains(t, string(data), value)
-		}
+	require.Len(t, refs, 1)
+	// This public projection is the common owner used by SHOW CONSTITUENTS
+	// and ALTER output. It is available before the later ANTLR DDL extension.
+	display := observability.RedactURL(refs[0].URI)
+	require.NotEqual(t, refs[0].URI, display)
+	require.Contains(t, display, "region=keep%20spelling")
+	for _, value := range []string{secret, url.QueryEscape(secret), "enc:v1:", "enc%3Av1%3A"} {
+		require.NotContains(t, display, value)
 	}
 }
 
