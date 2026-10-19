@@ -20,7 +20,8 @@ func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
 func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
 	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"rows": []interface{}{}})
-	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
+	// Generated keyword-spelled names use the shared quoted renderer.
+	want := "UNWIND $`rows` AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
 	if got != want {
 		t.Fatalf("expected stripped query %q, got %q", want, got)
 	}
