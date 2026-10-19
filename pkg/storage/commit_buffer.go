@@ -890,7 +890,9 @@ func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 
 // Flush rotates the active generation and drains every generation
 // synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// for ~2s it returns the last apply error. It returns once every generation
+// is applied and retired, which is when its listener notifications are
+// readied (BadgerEngine.FlushWriteBehind describes the barrier).
 func (w *WriteBehindBuffer) Flush() error {
 	w.rotate()
 	w.signal()
@@ -911,7 +913,12 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			return w.LastErr()
+			if err := w.LastErr(); err != nil {
+				return err
+			}
+			// A claimed large generation may still be making progress in
+			// Badger. Absence of an apply error is not proof of completion.
+			stalls = 0
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -1412,7 +1419,9 @@ func (w *WriteBehindBuffer) PendingOps() int {
 	total := w.opCount
 	for _, buf := range w.draining {
 		if !buf.IsApplied() {
-			total += len(buf.Mutations())
+			// Rotated generations carry both legacy mutations and captured
+			// transaction commits. AddCommit does not populate Mutations().
+			total += buf.ops
 		}
 	}
 	return total

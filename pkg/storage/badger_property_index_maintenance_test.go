@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,29 +32,53 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alice"))
 	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 
-	engine.nodeCacheMu.Lock()
-	engine.nodeCache[node.ID] = &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}
-	engine.nodeCacheMu.Unlock()
-
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(node.ID, []string{"Person"})
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode(node.ID, &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}})
 	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 }
 
-func TestMaintainPropertyIndexesOnNodeDeletedWithLabels_EarlyReturns(t *testing.T) {
+func TestMaintainPropertyIndexesOnNodeDeletedWithNode_EarlyReturns(t *testing.T) {
 	engine := newTestEngine(t)
 	nodeID := NodeID("tenant:n2")
 
-	// No labels branch.
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, nil)
+	// No snapshot, and a snapshot without labels.
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, nil)
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, &Node{ID: nodeID})
 
-	// Labels with no index branch.
+	// Labels with no index.
 	sm := engine.GetSchemaForNamespace("tenant")
 	require.False(t, sm.HasAnyPropertyIndexForLabel("Person"))
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, []string{"Person"})
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, &Node{ID: nodeID, Labels: []string{"Person"}})
 
-	// Indexed label but cache miss branch.
-	require.NoError(t, sm.AddPropertyIndex("idx_person_name", "Person", []string{"name"}))
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, []string{"Person"})
+	// Unprefixed ID: no namespace schema.
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode("unprefixed", &Node{ID: "unprefixed", Labels: []string{"Person"}})
+}
+
+// Deleting a node removes its index entries on the auto-commit and the
+// explicit-transaction delete paths. Both clear the node cache before index
+// maintenance runs, so the entries must come from the deleted node itself.
+func TestDeleteNodeRemovesPropertyIndexEntries(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+			engine := newTestEngine(t)
+			sm := engine.GetSchemaForNamespace("db")
+			require.NoError(t, sm.AddPropertyIndex("idx_name", "Identity", []string{"name"}))
+			sm.MarkPropertyIndexesFilled()
+
+			_, err := engine.CreateNode(&Node{ID: "db:a", Labels: []string{"Identity"}, Properties: map[string]any{"name": "acme"}})
+			require.NoError(t, err)
+			require.Equal(t, []NodeID{"db:a"}, sm.PropertyIndexLookup("Identity", "name", "acme"))
+
+			if explicit {
+				tx, err := engine.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.DeleteNode("db:a"))
+				require.NoError(t, tx.Commit())
+			} else {
+				require.NoError(t, engine.DeleteNode("db:a"))
+			}
+			require.Empty(t, sm.PropertyIndexLookup("Identity", "name", "acme"))
+		})
+	}
 }
 
 func TestSchemaForNodeID_ReturnsNamespaceSchemaOrNil(t *testing.T) {

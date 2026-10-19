@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,17 +18,22 @@ type lifecycleSnapshotEngine struct {
 	*storage.MemoryEngine
 	entered, resume chan struct{}
 	once            sync.Once
+	armed           atomic.Bool
 }
 
 func (e *lifecycleSnapshotEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
-
-// Native snapshots collect stored bodies through this stream after #1532.
-func (e *lifecycleSnapshotEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
-	// Startup cleanup streams prefixes through the same API before snapshots start.
-	if opts.Prefix == "" {
+func (e *lifecycleSnapshotEngine) StreamNodesWithoutEmbeddings(ctx context.Context, visit func(*storage.Node) error) error {
+	if e.armed.Load() {
 		e.once.Do(func() { close(e.entered); <-e.resume })
 	}
-	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, visit)
+	return e.MemoryEngine.StreamNodesWithoutEmbeddings(ctx, visit)
+}
+
+func (e *lifecycleSnapshotEngine) StreamNodesWithOptions(ctx context.Context, options storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.armed.Load() {
+		e.once.Do(func() { close(e.entered); <-e.resume })
+	}
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, options, visit)
 }
 
 type lifecycleSnapshotManager struct{ *testDatabaseManagerAdapter }
@@ -71,6 +77,9 @@ func TestNamespaceLifecycleSnapshotKeepsPeerReadsUsable(t *testing.T) {
 				peer := executor("snapshot_b")
 				routing := executor(manager.DefaultDatabaseName())
 				typedCountRun(t, peer, "CREATE (:Peer)")
+				// Storage sizing also uses the options stream. Pause only after
+				// setup, when the native snapshot is the intended consumer.
+				base.armed.Store(true)
 				require.NoError(t, engine.EnableAutoCompaction(filepath.Join(t.TempDir(), "snapshots")))
 				select {
 				case <-base.entered:

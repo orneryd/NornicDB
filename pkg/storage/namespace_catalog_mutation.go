@@ -205,6 +205,15 @@ func (op *NamespaceDrop) applyCatalogMutation() error {
 		return err
 	}
 	defer tx.Rollback()
+	// The lifecycle journal has already committed this metadata mutation.
+	// Under write-behind, publish it through the same FIFO as earlier ACKs,
+	// then wait for a fixed frontier. A synchronous commit's global-empty
+	// fence would let unrelated traffic prevent lifecycle completion.
+	if b.writeBehind != nil {
+		if err := tx.SetImplicit(true); err != nil {
+			return err
+		}
+	}
 	namespace, _, _ := ParseDatabasePrefix(string(op.catalogMutation.Record.ID))
 	if err := tx.SetNamespace(namespace); err != nil {
 		return err
@@ -254,7 +263,13 @@ func (op *NamespaceDrop) applyCatalogMutation() error {
 	} else if err := tx.UpdateNode(document.node); err != nil {
 		return err
 	}
-	return tx.CommitContextWithPublication(context.Background(), release)
+	if err := tx.CommitContextWithPublication(context.Background(), release); err != nil {
+		return err
+	}
+	if tx.AcknowledgedBuffered() {
+		return b.writeBehind.waitThrough(context.Background(), b.writeBehind.captureFrontier())
+	}
+	return nil
 }
 
 func newCatalogRecordGate() chan struct{} {

@@ -486,6 +486,11 @@ func (b *BadgerEngine) DB() *badger.DB {
 }
 
 // OnNodeCreated adds a callback to be invoked when nodes are created.
+//
+// Callbacks run after the commit is published, in commit order, on whichever
+// goroutine drains the notification queue: a write, or a flush, can return
+// before its callbacks have run (FlushWriteBehind). The same holds for every
+// On* callback.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
 	if callback == nil {
@@ -601,7 +606,6 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 
 // publishNodeDeleted publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
 	b.enqueueCommitOperation(Operation{Type: OpDeleteNode, NodeID: nodeID})
 }
@@ -665,7 +669,6 @@ func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 }
 
 func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
 	b.enqueueCommitOperation(Operation{Type: OpDeleteEdge, EdgeID: edgeID})
 }

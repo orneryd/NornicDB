@@ -94,6 +94,13 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // search. ErrNotFound when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
 	revision := b.namespaceLifetimeRevision()
+	if b.writeBehind == nil {
+		return b.setNodeManuallySuppressed(id, suppressed, revision)
+	}
+	return b.orderBehindBufferedWrites(namespaceForNodeID(id), func() error { return b.setNodeManuallySuppressed(id, suppressed, revision) })
+}
+
+func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, revision uint64) error {
 	finish, err := b.beginWrite(namespaceForNodeID(id))
 	if err != nil {
 		return err
@@ -122,6 +129,13 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
 	revision := b.namespaceLifetimeRevision()
+	if b.writeBehind == nil {
+		return b.setEdgeManuallySuppressed(id, suppressed, revision)
+	}
+	return b.orderBehindBufferedWrites(namespaceForEdgeID(id), func() error { return b.setEdgeManuallySuppressed(id, suppressed, revision) })
+}
+
+func (b *BadgerEngine) setEdgeManuallySuppressed(id EdgeID, suppressed bool, revision uint64) error {
 	release, err := b.beginWrite(namespaceForEdgeID(id))
 	if err != nil {
 		return err
@@ -145,7 +159,11 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The in-memory mirror is derived state: it is published in commit order
+	// with the entity's other publications (badger_publication_stage.go).
+	publish := func() { b.markManualSuppression(kind, id, suppressed) }
+	keys := func() []any { return []any{manualSuppressionEntityKey(kind, id)} }
+	return b.withPublishingUpdate(func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -162,28 +180,34 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	})
-	if err != nil {
-		return err
-	}
-	b.markManualSuppression(kind, id, suppressed)
-	return nil
+	}, publish, keys)
 }
 
-// forgetManualSuppression drops a deleted entity's on-demand suppression, so
-// an entity created again with the same ID (a MERGEd relationship's ID is
-// derived from its endpoints and properties) isn't hidden.
-func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
-	revision := b.namespaceLifetimeRevision()
-	if !b.manuallySuppressed(kind, id) {
+// manualSuppressionEntityKey is the publication key of the entity a
+// suppression belongs to: its node or edge ID, the key its writes publish on.
+func manualSuppressionEntityKey(kind byte, id string) any {
+	if kind == manualSuppressionEdge {
+		return EdgeID(id)
+	}
+	return NodeID(id)
+}
+
+// unmarkDeletedManualSuppressions is a delete's publication of the
+// suppression mirror: a deleted node and the edges it took with it, or a
+// deleted edge, are no longer suppressed, so an entity created again with the
+// same ID (a MERGEd relationship's ID is derived from its endpoints and
+// properties) isn't hidden. The delete's own commit removed their keys
+// (deleteNodeInTxn, deleteEdgeInTxn and the transaction's buffered deletes).
+func (b *BadgerEngine) unmarkDeletedManualSuppressions(node NodeID, edges []EdgeID) {
+	if b.manualSuppressionCount.Load() == 0 {
 		return
 	}
-	b.markManualSuppression(kind, id, false)
-	// A delete is reported from inside its commit; the key goes in a
-	// transaction of its own.
-	go func() {
-		_ = b.retireManualSuppressionKey(kind, id, revision)
-	}()
+	if node != "" {
+		b.markManualSuppression(manualSuppressionNode, string(node), false)
+	}
+	for _, edge := range edges {
+		b.markManualSuppression(manualSuppressionEdge, string(edge), false)
+	}
 }
 
 // The scheduled cleanup retains its originating lifetime, including a wait

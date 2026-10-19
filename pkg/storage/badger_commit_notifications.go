@@ -65,13 +65,11 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool, r
 			if publishRevision {
 				b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
 			}
-			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
 			b.deleteCleanup.recordDelete()
 			for _, id := range op.DeletedEdgeIDs {
 				if publishRevision {
 					b.graphMutationVersions.changed(namespaceForEdgeID(id))
 				}
-				b.forgetManualSuppression(manualSuppressionEdge, string(id))
 				b.deleteCleanup.recordDelete()
 			}
 		case OpCreateEdge, OpUpdateEdge:
@@ -85,7 +83,6 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool, r
 			if publishRevision {
 				b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
 			}
-			b.forgetManualSuppression(manualSuppressionEdge, string(op.EdgeID))
 			b.deleteCleanup.recordDelete()
 		}
 	}

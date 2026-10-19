@@ -2,7 +2,6 @@ package storage
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -78,12 +77,10 @@ func TestManualSuppression(t *testing.T) {
 	require.NoError(t, engine.SetNodeManuallySuppressed("test:a", true))
 	require.NoError(t, engine.DeleteNode("test:a"))
 	require.False(t, engine.manuallySuppressed(manualSuppressionNode, "test:a"))
-	// The key's delete runs on its own; a reopen doesn't bring it back.
-	require.Eventually(t, func() bool {
-		fresh := &BadgerEngine{}
-		require.NoError(t, fresh.loadManualSuppressions(engine.db))
-		return !fresh.HasManualSuppressions()
-	}, time.Second, 10*time.Millisecond)
+	// The delete's commit removed the key; a reopen doesn't bring it back.
+	fresh := &BadgerEngine{}
+	require.NoError(t, fresh.loadManualSuppressions(engine.db))
+	require.False(t, fresh.HasManualSuppressions())
 }
 
 // The namespaced and WAL engines pass suppression to the stored engine, the

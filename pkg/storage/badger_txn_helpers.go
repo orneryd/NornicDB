@@ -69,7 +69,25 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // withUpdateUnits.
 func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
+	return b.withPublishingUpdate(fn, nil, nil)
+}
+
+// withPublishingUpdate is withUpdate with the commit's derived-state
+// publication (nil for none), which the ordered stage runs once the commit
+// is visible and before this returns (badger_publication_stage.go). publish
+// and keys may read what fn recorded: they run after fn. keys returns the
+// entities and unique values the publication touches.
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any) error {
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		if err := cw.writeOnce(fn); err != nil {
+			return err
+		}
+		cw.publish = publish
+		if keys != nil {
+			cw.publishKeys = keys()
+		}
+		return nil
+	})
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each

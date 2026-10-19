@@ -1,0 +1,280 @@
+package storage
+
+import "sync"
+
+// Ordered post-commit publication (F-PUBLISH).
+//
+// After a commit, the structures derived from committed entities are updated
+// in memory: the node, query-node and edge caches, the label, edge-type and
+// adjacency caches, the property and composite indexes, the unique-value
+// registries, the relationship-uniqueness index, the cached counts and the
+// pending-embedding candidates. The contract, per entity and per unique
+// value: what those structures hold for it is the result of the commits that
+// touch it applied in commit-timestamp order up to some timestamp, and a
+// write returns only once that covers its own commit.
+//
+// Each commit's update is its own delta (old to new, from the commit's own
+// operations), which is correct only right after the update of the commit
+// before it that touched the same entity or value. So every commit hands its
+// delta, with the keys it touches, to the commit writer
+// (commitWriter.publish, publishKeys) instead of applying it, and the commit
+// oracle runs them in one stage (publicationStage): each once, after Badger
+// has published it and after every earlier commit's publication that shares
+// one of its keys. Publications with disjoint keys run in parallel. The
+// committer waits for its own publication before it returns. Engine writes,
+// transaction commits, write-behind replay, the decay suppression rewrites
+// and the embedding sidecar all commit through the oracle.
+//
+// A key is an entity (NodeID, EdgeID) or a unique value the commit frees or
+// takes (uniqueConstraintLockKey, as the key locks name them). The consumers
+// whose updates commute need no key: counts, label, edge-type and adjacency
+// cache invalidations, pending-embedding candidates.
+//
+// A publication only updates in-memory structures: it takes their own locks
+// and never commits, so the stage never waits on itself
+// (TestPublicationStageBoundary). Listeners (commit notifications) and
+// Badger-side follow-ups (positional counts, ID counters, MVCC sequence)
+// stay outside it.
+
+// commitPublication is a commit's derived-state publication and the keys it
+// is ordered on.
+type commitPublication struct {
+	keys []any
+	run  func()
+}
+
+type stagedPublication struct {
+	ts      uint64
+	keys    []any
+	run     func()
+	running bool
+}
+
+// publicationStage orders the publications of written commits by commit
+// timestamp, per key.
+type publicationStage struct {
+	mu      sync.Mutex
+	changed sync.Cond
+	pending map[uint64]*stagedPublication
+	byKey   map[any][]uint64 // the pending timestamps of each key
+}
+
+// register adds the publication of the commit written at ts. The committer
+// registers it after its write and before ts is finished, so every
+// publication of a lower timestamp is registered once ts is published.
+func (s *publicationStage) register(ts uint64, pub *commitPublication) {
+	if pub == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil {
+		s.pending = make(map[uint64]*stagedPublication)
+		s.byKey = make(map[any][]uint64)
+		s.changed.L = &s.mu
+	}
+	s.pending[ts] = &stagedPublication{ts: ts, keys: pub.keys, run: pub.run}
+	for _, key := range pub.keys {
+		s.byKey[key] = append(s.byKey[key], ts)
+	}
+}
+
+// apply returns once the publication registered at ts has run, which the
+// caller has seen published. It runs it itself when no earlier pending
+// publication shares a key with it; otherwise it runs the earliest such
+// publication that can run, or waits for the one running elsewhere. So no
+// publication depends on its own committer's goroutine.
+func (s *publicationStage) apply(ts uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for {
+		p := s.pending[ts]
+		if p == nil {
+			return
+		}
+		if next := s.runnableLocked(p); next != nil {
+			s.runLocked(next)
+			continue
+		}
+		s.changed.Wait()
+	}
+}
+
+// runnableLocked returns the publication to run to make progress toward p: p
+// itself when no earlier pending publication shares a key with it, else the
+// one its earliest such publication waits on. Nil when that one is running.
+func (s *publicationStage) runnableLocked(p *stagedPublication) *stagedPublication {
+	for {
+		earlier := s.earliestDependencyLocked(p)
+		if earlier == nil {
+			if p.running {
+				return nil
+			}
+			return p
+		}
+		p = earlier
+	}
+}
+
+func (s *publicationStage) earliestDependencyLocked(p *stagedPublication) *stagedPublication {
+	var earliest *stagedPublication
+	for _, key := range p.keys {
+		for _, at := range s.byKey[key] {
+			if at < p.ts && (earliest == nil || at < earliest.ts) {
+				earliest = s.pending[at]
+			}
+		}
+	}
+	return earliest
+}
+
+// runLocked runs p without holding the stage's lock and retires it, also
+// when it panics: the panic surfaces in this caller and the stage goes on.
+func (s *publicationStage) runLocked(p *stagedPublication) {
+	p.running = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.retireLocked(p)
+	}()
+	runPublicationStageHook(p.ts)
+	p.run()
+}
+
+func (s *publicationStage) retireLocked(p *stagedPublication) {
+	delete(s.pending, p.ts)
+	for _, key := range p.keys {
+		pending := s.byKey[key]
+		for i, at := range pending {
+			if at == p.ts {
+				pending = append(pending[:i], pending[i+1:]...)
+				break
+			}
+		}
+		if len(pending) == 0 {
+			delete(s.byKey, key)
+		} else {
+			s.byKey[key] = pending
+		}
+	}
+	s.changed.Broadcast()
+}
+
+// pendingCount is the number of registered publications not yet run.
+func (s *publicationStage) pendingCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.pending)
+}
+
+// appendNodePublicationKeys appends the keys a publication of a node write
+// is ordered on: the node, and the unique values old (the pre-write node)
+// and written hold, the ones the write frees and takes.
+func appendNodePublicationKeys(keys []any, schema *SchemaManager, id NodeID, old, written *Node) []any {
+	keys = append(keys, id)
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return keys
+	}
+	for _, node := range []*Node{old, written} {
+		if node == nil {
+			continue
+		}
+		for _, c := range schema.GetConstraintsForLabels(node.Labels) {
+			if c.EffectiveEntityType() != ConstraintEntityNode || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
+				continue
+			}
+			value, ok := node.Properties[c.Properties[0]]
+			if !ok || !hasLabel(node.Labels, c.Label) {
+				continue
+			}
+			if key, keyed := uniqueConstraintValueKey(value); keyed {
+				keys = append(keys, uniqueConstraintLockKey{label: c.Label, property: c.Properties[0], value: key})
+			}
+		}
+	}
+	return keys
+}
+
+// appendEdgePublicationKeys appends the keys a publication of an edge write
+// is ordered on: the edge, and the relationship-uniqueness values old and
+// written hold.
+func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old, written *Edge) []any {
+	keys = append(keys, id)
+	if schema == nil {
+		return keys
+	}
+	for _, edge := range []*Edge{old, written} {
+		if edge == nil || len(edge.Properties) == 0 {
+			continue
+		}
+		for _, c := range schema.GetConstraintsForLabels([]string{edge.Type}) {
+			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
+				continue
+			}
+			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+			if !ok || len(values) == 0 {
+				continue
+			}
+			var key interface{} = values[0]
+			if len(values) > 1 {
+				key = NewCompositeKey(values...).Hash
+			}
+			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
+		}
+	}
+	return keys
+}
+
+// appendOperationPublicationKeys appends the keys of a commit's operations:
+// every node and edge they write, edges a node delete removed, and the unique
+// values they free and take.
+func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Operation) []any {
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode, OpUpdateNode:
+			if op.Node != nil {
+				keys = appendNodePublicationKeys(keys, schema, op.Node.ID, op.OldNode, op.Node)
+			}
+		case OpDeleteNode:
+			keys = appendNodePublicationKeys(keys, schema, op.NodeID, op.OldNode, nil)
+			for _, edgeID := range op.DeletedEdgeIDs {
+				keys = append(keys, edgeID)
+			}
+		case OpCreateEdge, OpUpdateEdge:
+			if op.Edge != nil {
+				keys = appendEdgePublicationKeys(keys, schema, op.Edge.ID, op.OldEdge, op.Edge)
+			}
+		case OpDeleteEdge:
+			keys = appendEdgePublicationKeys(keys, schema, op.EdgeID, op.OldEdge, nil)
+		}
+	}
+	return keys
+}
+
+var (
+	publicationStageHookMu sync.RWMutex
+	publicationStageHook   func(ts uint64)
+)
+
+// setPublicationStageHook installs a test seam the stage calls before each
+// publication it runs, with the commit's timestamp, and returns the restore.
+func setPublicationStageHook(hook func(ts uint64)) func() {
+	publicationStageHookMu.Lock()
+	previous := publicationStageHook
+	publicationStageHook = hook
+	publicationStageHookMu.Unlock()
+	return func() {
+		publicationStageHookMu.Lock()
+		publicationStageHook = previous
+		publicationStageHookMu.Unlock()
+	}
+}
+
+func runPublicationStageHook(ts uint64) {
+	publicationStageHookMu.RLock()
+	hook := publicationStageHook
+	publicationStageHookMu.RUnlock()
+	if hook != nil {
+		hook(ts)
+	}
+}
