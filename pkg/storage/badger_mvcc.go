@@ -399,6 +399,12 @@ func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id Ed
 }
 
 func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (*Edge, error) {
+	return b.getEdgeAtInTxn(txn, id, version, visibleRead)
+}
+
+// getEdgeAtInTxn resolves the edge's state at version in txn, through the
+// visibility layer when v applies it.
+func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, v readVisibility) (*Edge, error) {
 	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -408,7 +414,7 @@ func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version
 	}
 
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
-		edge, ok, readErr := b.readEdgeBodyInTxn(txn, id)
+		edge, ok, readErr := b.readEdgeBodyInTxn(txn, id, v)
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -441,7 +447,7 @@ func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version
 		return nil, ErrNotFound
 	}
 	edge := copyEdge(record.Edge)
-	if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+	if b.hidesEdge(v, edge, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return edge, nil
@@ -1132,7 +1138,13 @@ func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 }
 
 func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	if edge, err := b.GetEdge(id); err == nil {
+	return b.getEdgeLatest(id, visibleRead)
+}
+
+// getEdgeLatest is GetEdgeLatestVisible through the visibility layer when v
+// applies it.
+func (b *BadgerEngine) getEdgeLatest(id EdgeID, v readVisibility) (*Edge, error) {
+	if edge, err := b.getEdge(id, v); err == nil {
 		return edge, nil
 	}
 	var edge *Edge
@@ -1155,7 +1167,7 @@ func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 			return ErrNotFound
 		}
 		edge = copyEdge(record.Edge)
-		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+		if b.hidesEdge(v, edge, DecayScoringTime()) {
 			edge = nil
 			return ErrNotFound
 		}
@@ -1169,6 +1181,12 @@ func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, 
 }
 
 func (b *BadgerEngine) getEdgeVisibleAtWithView(id EdgeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Edge, error) {
+	return b.getEdgeAtWithView(id, version, visibleRead, view)
+}
+
+// getEdgeAtWithView is getEdgeVisibleAtWithView through the visibility layer
+// when v applies it.
+func (b *BadgerEngine) getEdgeAtWithView(id EdgeID, version MVCCVersion, v readVisibility, view func(func(*badger.Txn) error) error) (*Edge, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -1177,7 +1195,7 @@ func (b *BadgerEngine) getEdgeVisibleAtWithView(id EdgeID, version MVCCVersion, 
 	var edge *Edge
 	err = view(func(txn *badger.Txn) error {
 		var innerErr error
-		edge, innerErr = b.getEdgeVisibleAtInTxn(txn, id, version)
+		edge, innerErr = b.getEdgeAtInTxn(txn, id, version, v)
 		return innerErr
 	})
 	return edge, err

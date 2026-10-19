@@ -317,7 +317,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 	entityType := ConstraintEntityType(contract.TargetEntityType)
 	switch entityType {
 	case ConstraintEntityNode:
-		nodes, err := engine.GetNodesByLabel(contract.TargetLabelOrType)
+		nodes, err := GetStoredNodesByLabel(engine, contract.TargetLabelOrType)
 		if err != nil {
 			return localizedError(localization.StorageSchemaScanNodesFailed(err), err)
 		}
@@ -330,7 +330,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 		// Stream the relationship type (scoped to the engine's database)
 		// instead of loading every edge of the type into memory.
 		var violation error
-		err := StreamEdgesByType(context.Background(), engine, contract.TargetLabelOrType, func(edge *Edge) error {
+		err := StreamStoredEdgesByType(context.Background(), engine, contract.TargetLabelOrType, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -385,7 +385,8 @@ func validateConstraintContractForEdgeEngine(engine Engine, contract ConstraintC
 }
 
 // constraintGraphView is the read surface the constraint-contract evaluators
-// need: adjacency and node lookup. Both an Engine and a locked Badger
+// need: adjacency and node lookup over every stored entity, those the
+// visibility layer hides included. Both an Engine and a locked Badger
 // transaction provide it, so the evaluator logic is written once and the two
 // call paths cannot drift apart.
 type constraintGraphView interface {
@@ -397,13 +398,13 @@ type constraintGraphView interface {
 type engineConstraintView struct{ engine Engine }
 
 func (v engineConstraintView) OutgoingEdges(id NodeID) ([]*Edge, error) {
-	return v.engine.GetOutgoingEdges(id)
+	return GetStoredOutgoingEdges(v.engine, id)
 }
 func (v engineConstraintView) IncomingEdges(id NodeID) ([]*Edge, error) {
-	return v.engine.GetIncomingEdges(id)
+	return GetStoredIncomingEdges(v.engine, id)
 }
 func (v engineConstraintView) Node(id NodeID) (*Node, error) {
-	return v.engine.GetNode(id)
+	return GetStoredNode(v.engine, id)
 }
 
 type txConstraintView struct{ tx *BadgerTransaction }
@@ -1464,7 +1465,7 @@ func (tx *BadgerTransaction) currentEdgeLocked(edgeID EdgeID) (*Edge, error) {
 }
 
 func (tx *BadgerTransaction) currentOutgoingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetOutgoingEdges(nodeID)
+	committed, err := tx.engine.GetStoredOutgoingEdges(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1520,7 +1521,7 @@ func constraintContractNamespaceForEdge(edge *Edge) (string, bool) {
 }
 
 func (tx *BadgerTransaction) currentIncomingEdgesLocked(nodeID NodeID) ([]*Edge, error) {
-	committed, err := tx.engine.GetIncomingEdges(nodeID)
+	committed, err := tx.engine.GetStoredIncomingEdges(nodeID)
 	if err != nil {
 		return nil, err
 	}

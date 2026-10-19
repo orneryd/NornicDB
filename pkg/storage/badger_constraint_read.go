@@ -42,13 +42,13 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 					return err
 				}
 			}
-			if node != nil && !b.filterNodeByDecay(node, DecayScoringTime()) {
+			if node != nil {
 				nodes = append(nodes, copyNode(node))
 				seen[id] = true
 			}
 		}
 		for _, node := range pending {
-			if !seen[node.ID] && !b.filterNodeByDecay(node, DecayScoringTime()) {
+			if !seen[node.ID] {
 				nodes = append(nodes, copyNode(node))
 			}
 		}

@@ -11,6 +11,12 @@ func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, 
 }
 
 func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, vectors bool, view func(func(*badger.Txn) error) error) (*Node, error) {
+	return b.getNodeAtWithView(id, version, vectors, visibleRead, view)
+}
+
+// getNodeAtWithView is getNodeVisibleAtWithView through the visibility layer
+// when v applies it.
+func (b *BadgerEngine) getNodeAtWithView(id NodeID, version MVCCVersion, vectors bool, v readVisibility, view func(func(*badger.Txn) error) error) (*Node, error) {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -19,7 +25,7 @@ func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, 
 	var node *Node
 	err = view(func(txn *badger.Txn) error {
 		var loadErr error
-		node, loadErr = b.getNodeVisibleAtInTxn(txn, id, version, vectors)
+		node, loadErr = b.getNodeAtInTxn(txn, id, version, vectors, v)
 		return loadErr
 	})
 	return node, err
@@ -33,6 +39,12 @@ func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, 
 // its embedding metadata is settled, but no separately stored chunk vector
 // is read (loadNodeEmbeddingState).
 func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool) (*Node, error) {
+	return b.getNodeAtInTxn(txn, id, version, vectors, visibleRead)
+}
+
+// getNodeAtInTxn is getNodeVisibleAtInTxn through the visibility layer when v
+// applies it.
+func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool, v readVisibility) (*Node, error) {
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -50,7 +62,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 			if err != nil {
 				return nil, err
 			}
-			if b.filterNodeByDecay(node, DecayScoringTime()) {
+			if b.hidesNode(v, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -84,7 +96,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 		return nil, ErrNotFound
 	}
 	node := copyNode(record.Node)
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	if b.hidesNode(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
