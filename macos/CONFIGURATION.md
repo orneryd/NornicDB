@@ -4,8 +4,9 @@ The installer preserves `~/.nornicdb/config.yaml`,
 `~/.nornicdb/environment`, and
 `~/Library/LaunchAgents/com.nornicdb.server.plist` on upgrade. Both package
 editions and the developer installer use the same post-install script. An
-existing configured service resumes after installation; a fresh install waits
-for setup so encryption can be configured before the first database write.
+every installation opens setup to review the saved settings before starting
+the server. On fresh installs this also allows encryption to be configured before
+the first database write.
 An unfinished first-run marker is preserved.
 
 Setup has three steps:
@@ -83,3 +84,24 @@ make macos-menubar
 
 Installer tests execute the actual post-install script in a temporary filesystem
 with mocked launchd/privileged commands. They never touch the installed database.
+
+## Replacing an older installation
+
+Preinstall unloads both GUI agents, stops the login user's old menu-bar/server
+processes, and waits for them to exit before replacing executable payloads. It
+removes the old `/Applications/NornicDB.app` bundle and `/usr/local/bin/nornicdb`
+so obsolete executable/resources cannot survive an overlay. The legacy
+`~/Applications/NornicDB.app` is removed only when its bundle identifies it as
+NornicDB. Configuration, launch settings, models and database files are retained.
+If an old process cannot be stopped, installation fails before payload removal.
+
+Postinstall creates a review marker **before** launching the menu-bar app. It
+starts the canonical `/Applications/NornicDB.app/Contents/MacOS/NornicDB` through
+one GUI LaunchAgent; it does not also run `open` or auto-start the database.
+Reopening the app brings pending setup forward. Completing setup clears the
+review marker only after server health succeeds.
+
+The app retains a per-user operating-system lock so two updated copies cannot
+create independent tray instances. The installed owner also retires older copies
+that predate the lock. Source/build staging folders are not installation targets
+and are not deleted by the installer; use the installed application.

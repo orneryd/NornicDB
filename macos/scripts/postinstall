@@ -69,9 +69,7 @@ sudo -u "$ACTUAL_USER" tee "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar
     <string>com.nornicdb.menubar</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-a</string>
-        <string>/Applications/NornicDB.app</string>
+        <string>/Applications/NornicDB.app/Contents/MacOS/NornicDB</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -83,25 +81,13 @@ sudo -u "$ACTUAL_USER" tee "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar
 </plist>
 EOF
 
-# Load the menu bar app LaunchAgent as the user
-sudo -u $ACTUAL_USER launchctl load "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist" 2>/dev/null || true
+# Review saved settings after every installation, without replacing them or
+# auto-starting the database before the user sees the upgrade authorization.
+sudo -u "$ACTUAL_USER" touch "$USER_HOME/.nornicdb/.setup_review"
 
-# Launch menu bar app immediately
-if sudo -u "$ACTUAL_USER" open -a "/Applications/NornicDB.app"; then
-  echo "✓ Launched menu bar app (will auto-start on login)"
-else
-  echo "Menu bar app could not launch now; it will start at login" >&2
-fi
-
-# Resume an existing configured service only after installation completes.
-# New installs have no server plist and wait for setup/encryption selection.
-if [ -f "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist" ] && [ ! -e "$USER_HOME/.nornicdb/.first_run" ]; then
-    if sudo -u "$ACTUAL_USER" launchctl bootstrap "gui/$USER_UID" "$USER_HOME/Library/LaunchAgents/com.nornicdb.server.plist"; then
-        sudo -u "$ACTUAL_USER" launchctl kickstart "gui/$USER_UID/com.nornicdb.server"
-    else
-        echo "WARNING: Could not resume the configured server. Start it from the NornicDB menu and inspect its logs." >&2
-    fi
-fi
+# One launch owner and an exact executable path: no LaunchServices lookup of
+# similarly named apps in old installer staging directories or source trees.
+sudo -u "$ACTUAL_USER" launchctl bootstrap "gui/$USER_UID" "$USER_HOME/Library/LaunchAgents/com.nornicdb.menubar.plist"
 
 echo ""
 echo "✅ NornicDB installation complete!"
