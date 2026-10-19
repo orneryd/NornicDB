@@ -1,0 +1,454 @@
+{
+  "nornic": {
+    "BenchmarkPipelineLimitedCartesianCreateDelete-12": {
+      "control": [
+        {
+          "ns": 28559.0,
+          "bytes": 22357,
+          "allocs": 287
+        },
+        {
+          "ns": 29637.0,
+          "bytes": 22357,
+          "allocs": 287
+        },
+        {
+          "ns": 28699.0,
+          "bytes": 22357,
+          "allocs": 287
+        },
+        {
+          "ns": 28845.0,
+          "bytes": 22357,
+          "allocs": 287
+        },
+        {
+          "ns": 28807.0,
+          "bytes": 22357,
+          "allocs": 287
+        }
+      ],
+      "current": [
+        {
+          "ns": 28498.0,
+          "bytes": 22021,
+          "allocs": 285
+        },
+        {
+          "ns": 28086.0,
+          "bytes": 22021,
+          "allocs": 285
+        },
+        {
+          "ns": 28778.0,
+          "bytes": 22021,
+          "allocs": 285
+        },
+        {
+          "ns": 29249.0,
+          "bytes": 22021,
+          "allocs": 285
+        },
+        {
+          "ns": 28722.0,
+          "bytes": 22021,
+          "allocs": 285
+        }
+      ]
+    },
+    "BenchmarkPipelineWithScope/projection-12": {
+      "control": [
+        {
+          "ns": 276721.0,
+          "bytes": 14398,
+          "allocs": 874
+        },
+        {
+          "ns": 274963.0,
+          "bytes": 14399,
+          "allocs": 874
+        },
+        {
+          "ns": 275017.0,
+          "bytes": 14399,
+          "allocs": 874
+        },
+        {
+          "ns": 275523.0,
+          "bytes": 14400,
+          "allocs": 874
+        },
+        {
+          "ns": 275152.0,
+          "bytes": 14401,
+          "allocs": 874
+        }
+      ],
+      "current": [
+        {
+          "ns": 155750.0,
+          "bytes": 14025,
+          "allocs": 872
+        },
+        {
+          "ns": 154348.0,
+          "bytes": 14025,
+          "allocs": 872
+        },
+        {
+          "ns": 155886.0,
+          "bytes": 14027,
+          "allocs": 872
+        },
+        {
+          "ns": 155482.0,
+          "bytes": 14026,
+          "allocs": 872
+        },
+        {
+          "ns": 154855.0,
+          "bytes": 14025,
+          "allocs": 872
+        }
+      ]
+    },
+    "BenchmarkPipelineWithScope/predicate-12": {
+      "control": [
+        {
+          "ns": 344019.0,
+          "bytes": 14952,
+          "allocs": 894
+        },
+        {
+          "ns": 353086.0,
+          "bytes": 14950,
+          "allocs": 894
+        },
+        {
+          "ns": 342452.0,
+          "bytes": 14948,
+          "allocs": 894
+        },
+        {
+          "ns": 343185.0,
+          "bytes": 14952,
+          "allocs": 894
+        },
+        {
+          "ns": 335362.0,
+          "bytes": 14947,
+          "allocs": 894
+        }
+      ],
+      "current": [
+        {
+          "ns": 342433.0,
+          "bytes": 14951,
+          "allocs": 894
+        },
+        {
+          "ns": 342604.0,
+          "bytes": 14953,
+          "allocs": 894
+        },
+        {
+          "ns": 346073.0,
+          "bytes": 14949,
+          "allocs": 894
+        },
+        {
+          "ns": 342474.0,
+          "bytes": 14951,
+          "allocs": 894
+        },
+        {
+          "ns": 334151.0,
+          "bytes": 14947,
+          "allocs": 894
+        }
+      ]
+    },
+    "BenchmarkSemanticValidationDistinctText-12": {
+      "control": [
+        {
+          "ns": 16291.0,
+          "bytes": 3558,
+          "allocs": 43
+        },
+        {
+          "ns": 16238.0,
+          "bytes": 3557,
+          "allocs": 43
+        },
+        {
+          "ns": 17037.0,
+          "bytes": 3559,
+          "allocs": 43
+        },
+        {
+          "ns": 16533.0,
+          "bytes": 3558,
+          "allocs": 43
+        },
+        {
+          "ns": 16915.0,
+          "bytes": 3559,
+          "allocs": 43
+        }
+      ],
+      "current": [
+        {
+          "ns": 16420.0,
+          "bytes": 3556,
+          "allocs": 43
+        },
+        {
+          "ns": 16099.0,
+          "bytes": 3560,
+          "allocs": 43
+        },
+        {
+          "ns": 16949.0,
+          "bytes": 3558,
+          "allocs": 43
+        },
+        {
+          "ns": 16777.0,
+          "bytes": 3556,
+          "allocs": 43
+        },
+        {
+          "ns": 17273.0,
+          "bytes": 3556,
+          "allocs": 43
+        }
+      ]
+    }
+  },
+  "antlr": {
+    "BenchmarkPipelineLimitedCartesianCreateDelete-12": {
+      "control": [
+        {
+          "ns": 28905.0,
+          "bytes": 22486,
+          "allocs": 288
+        },
+        {
+          "ns": 29225.0,
+          "bytes": 22486,
+          "allocs": 288
+        },
+        {
+          "ns": 29059.0,
+          "bytes": 22486,
+          "allocs": 288
+        },
+        {
+          "ns": 30093.0,
+          "bytes": 22486,
+          "allocs": 288
+        },
+        {
+          "ns": 28821.0,
+          "bytes": 22486,
+          "allocs": 288
+        }
+      ],
+      "current": [
+        {
+          "ns": 28686.0,
+          "bytes": 22150,
+          "allocs": 286
+        },
+        {
+          "ns": 28936.0,
+          "bytes": 22149,
+          "allocs": 286
+        },
+        {
+          "ns": 29671.0,
+          "bytes": 22150,
+          "allocs": 286
+        },
+        {
+          "ns": 28729.0,
+          "bytes": 22150,
+          "allocs": 286
+        },
+        {
+          "ns": 29335.0,
+          "bytes": 22150,
+          "allocs": 286
+        }
+      ]
+    },
+    "BenchmarkPipelineWithScope/projection-12": {
+      "control": [
+        {
+          "ns": 277111.0,
+          "bytes": 14503,
+          "allocs": 875
+        },
+        {
+          "ns": 278371.0,
+          "bytes": 14502,
+          "allocs": 875
+        },
+        {
+          "ns": 275530.0,
+          "bytes": 14506,
+          "allocs": 875
+        },
+        {
+          "ns": 274925.0,
+          "bytes": 14502,
+          "allocs": 875
+        },
+        {
+          "ns": 276430.0,
+          "bytes": 14502,
+          "allocs": 875
+        }
+      ],
+      "current": [
+        {
+          "ns": 155562.0,
+          "bytes": 14126,
+          "allocs": 873
+        },
+        {
+          "ns": 154565.0,
+          "bytes": 14124,
+          "allocs": 873
+        },
+        {
+          "ns": 154735.0,
+          "bytes": 14125,
+          "allocs": 873
+        },
+        {
+          "ns": 155307.0,
+          "bytes": 14124,
+          "allocs": 873
+        },
+        {
+          "ns": 154741.0,
+          "bytes": 14125,
+          "allocs": 873
+        }
+      ]
+    },
+    "BenchmarkPipelineWithScope/predicate-12": {
+      "control": [
+        {
+          "ns": 336006.0,
+          "bytes": 15053,
+          "allocs": 895
+        },
+        {
+          "ns": 341982.0,
+          "bytes": 15055,
+          "allocs": 895
+        },
+        {
+          "ns": 336244.0,
+          "bytes": 15053,
+          "allocs": 895
+        },
+        {
+          "ns": 343409.0,
+          "bytes": 15055,
+          "allocs": 895
+        },
+        {
+          "ns": 337824.0,
+          "bytes": 15055,
+          "allocs": 895
+        }
+      ],
+      "current": [
+        {
+          "ns": 334590.0,
+          "bytes": 15053,
+          "allocs": 895
+        },
+        {
+          "ns": 335257.0,
+          "bytes": 15053,
+          "allocs": 895
+        },
+        {
+          "ns": 344686.0,
+          "bytes": 15056,
+          "allocs": 895
+        },
+        {
+          "ns": 336414.0,
+          "bytes": 15053,
+          "allocs": 895
+        },
+        {
+          "ns": 334507.0,
+          "bytes": 15052,
+          "allocs": 895
+        }
+      ]
+    },
+    "BenchmarkSemanticValidationDistinctText-12": {
+      "control": [
+        {
+          "ns": 16515.0,
+          "bytes": 3559,
+          "allocs": 43
+        },
+        {
+          "ns": 16698.0,
+          "bytes": 3556,
+          "allocs": 43
+        },
+        {
+          "ns": 16857.0,
+          "bytes": 3558,
+          "allocs": 43
+        },
+        {
+          "ns": 16620.0,
+          "bytes": 3558,
+          "allocs": 43
+        },
+        {
+          "ns": 16816.0,
+          "bytes": 3555,
+          "allocs": 43
+        }
+      ],
+      "current": [
+        {
+          "ns": 16973.0,
+          "bytes": 3556,
+          "allocs": 43
+        },
+        {
+          "ns": 16439.0,
+          "bytes": 3559,
+          "allocs": 43
+        },
+        {
+          "ns": 16649.0,
+          "bytes": 3555,
+          "allocs": 43
+        },
+        {
+          "ns": 16845.0,
+          "bytes": 3559,
+          "allocs": 43
+        },
+        {
+          "ns": 16740.0,
+          "bytes": 3557,
+          "allocs": 43
+        }
+      ]
+    }
+  }
+}

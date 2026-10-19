@@ -1,0 +1,32 @@
+File: nornic-1472-final-current.test
+Type: alloc_space
+Time: 2026-10-18 21:07:43 MST
+Showing nodes accounting for 1880.84MB, 62.23% of 3022.45MB total
+Dropped 205 nodes (cum <= 15.11MB)
+Showing top 25 nodes out of 149
+      flat  flat%   sum%        cum   cum%
+  166.41MB  5.51%  5.51%   166.41MB  5.51%  github.com/dgraph-io/badger/v4/skl.newArena
+  158.59MB  5.25% 10.75%   283.62MB  9.38%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).BeginTransaction
+  127.04MB  4.20% 14.96%   250.55MB  8.29%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).storeSnapshotLabelPrefixLocked
+  120.52MB  3.99% 18.94%   243.53MB  8.06%  github.com/dgraph-io/badger/v4.(*Txn).Get
+  111.01MB  3.67% 22.62%   111.01MB  3.67%  github.com/orneryd/nornicdb/pkg/storage.copyNodeWithoutEmbeddings
+  103.02MB  3.41% 26.02%   119.52MB  3.95%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).DeleteEdge
+   88.51MB  2.93% 28.95%    88.51MB  2.93%  github.com/dgraph-io/badger/v4.(*Iterator).newItem (inline)
+   78.51MB  2.60% 31.55%   221.57MB  7.33%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).bufferNewEdgeLocked
+   69.51MB  2.30% 33.85%    69.51MB  2.30%  github.com/dgraph-io/badger/v4.(*DB).newTransaction
+   67.01MB  2.22% 36.07%    67.01MB  2.22%  github.com/dgraph-io/badger/v4/y.SafeCopy (inline)
+   65.54MB  2.17% 38.24%    65.54MB  2.17%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).bufferAdjustEdgeTypeLabelCount (inline)
+   65.04MB  2.15% 40.39%    73.54MB  2.43%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).cloneWithStorage
+   63.02MB  2.09% 42.47%    63.02MB  2.09%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).snapshotNamespaceVersions
+   58.52MB  1.94% 44.41%    58.52MB  1.94%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).cacheCommittedNodeLabelsLocked
+   56.51MB  1.87% 46.28%  1173.68MB 38.83%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelineNodeMatchSourceWithHint.func1
+   51.01MB  1.69% 47.97%    51.01MB  1.69%  github.com/orneryd/nornicdb/pkg/cypher.ensureOptimisticMeta
+   51.01MB  1.69% 49.65%    51.01MB  1.69%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).cacheValidatedSnapshotPrefixNodeByIDLocked
+      51MB  1.69% 51.34%       51MB  1.69%  internal/bytealg.MakeNoZero
+   49.51MB  1.64% 52.98%   114.52MB  3.79%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerEngine).newNodeIndexReader
+   48.02MB  1.59% 54.57%    48.02MB  1.59%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).bufferAdjustEdgeTypeCount (inline)
+   48.01MB  1.59% 56.16%    76.51MB  2.53%  github.com/orneryd/nornicdb/pkg/cypher.(*StorageExecutor).pipelinePlanCreateRow
+   47.51MB  1.57% 57.73%    65.01MB  2.15%  github.com/dgraph-io/badger/v4.(*Txn).NewIterator
+      47MB  1.56% 59.28%   954.14MB 31.57%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).StreamNodesByLabelProjected
+   46.01MB  1.52% 60.81%    97.02MB  3.21%  github.com/orneryd/nornicdb/pkg/cypher.addOptimisticRelationshipID
+   43.01MB  1.42% 62.23%    43.01MB  1.42%  github.com/orneryd/nornicdb/pkg/storage.(*BadgerTransaction).physicalOperationsLocked
