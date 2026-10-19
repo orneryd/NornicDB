@@ -58,6 +58,13 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 			t.Error(label + " disclosed a synthetic password; value withheld")
 		}
 	}
+	checkDuplicatePassword := func() {
+		t.Helper()
+		for _, command := range []string{"CREATE COMPOSITE DATABASE malformed_password ALIAS r FOR DATABASE nornic", "ALTER COMPOSITE DATABASE malformed_password ADD ALIAS r FOR DATABASE nornic"} {
+			request(t, "duplicate PASSWORD error", command+" AT 'http://127.0.0.1:1' USER 'admin' PASSWORD PASSWORD '"+investigationPass+"'", true)
+		}
+	}
+	checkDuplicatePassword()
 	for _, scheme := range []string{"http", "bolt"} {
 		for _, form := range []string{"explicit", "uri", "both"} {
 			t.Run("native/"+scheme+"/"+form, func(t *testing.T) {
@@ -87,6 +94,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		stop()
 		stop = investigationStart(t, binary, serverDir, hp, bp, false, "antlr")
 		ready()
+		checkDuplicatePassword()
 		// The existing remote-DDL grammar gap is not part of this correction.
 		// Exercise real rejection output and catalog display after native setup.
 		for _, command := range []string{"CREATE COMPOSITE DATABASE wire_rejected ALIAS r FOR DATABASE nornic", "ALTER COMPOSITE DATABASE wire_http_uri ADD ALIAS rejected FOR DATABASE nornic"} {
