@@ -1,0 +1,21 @@
+[
+  {
+    "ID": "case_lists_empty",
+    "Query": "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN [1] ELSE ['a'] END) AS v",
+    "Code": "Neo.ClientError.Statement.SyntaxError"
+  },
+  {
+    "ID": "aggregate_noninteger_empty",
+    "Query": "MATCH (n:ReviewNoNodes) WITH n.v * 1.0 AS x CALL (*) { WITH count(*) AS c RETURN [1,2][x] AS v } RETURN v",
+    "Code": "Neo.ClientError.Statement.SyntaxError"
+  },
+  {
+    "ID": "case_valid",
+    "Query": "RETURN toUpper(CASE WHEN false THEN 1 ELSE 'a' END) AS v",
+    "Rows": [
+      [
+        "A"
+      ]
+    ]
+  }
+]
