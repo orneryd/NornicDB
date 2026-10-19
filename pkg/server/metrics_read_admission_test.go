@@ -19,10 +19,22 @@ type metricsReadStorageProbe struct{ engine *storage.BadgerEngine }
 
 func (p metricsReadStorageProbe) NodeCount() int64 { n, _ := p.engine.NodeCount(); return n }
 func (p metricsReadStorageProbe) EdgeCount() int64 { n, _ := p.engine.EdgeCount(); return n }
-func (p metricsReadStorageProbe) IDDictCounterNodes() uint64 { n, _ := p.engine.IDDictCounters(); return n }
-func (p metricsReadStorageProbe) IDDictCounterEdges() uint64 { _, n := p.engine.IDDictCounters(); return n }
-func (p metricsReadStorageProbe) IDDictFreelistNodes() int64 { n, _ := p.engine.IDDictFreelistPending(); return n }
-func (p metricsReadStorageProbe) IDDictFreelistEdges() int64 { _, n := p.engine.IDDictFreelistPending(); return n }
+func (p metricsReadStorageProbe) IDDictCounterNodes() uint64 {
+	n, _ := p.engine.IDDictCounters()
+	return n
+}
+func (p metricsReadStorageProbe) IDDictCounterEdges() uint64 {
+	_, n := p.engine.IDDictCounters()
+	return n
+}
+func (p metricsReadStorageProbe) IDDictFreelistNodes() int64 {
+	n, _ := p.engine.IDDictFreelistPending()
+	return n
+}
+func (p metricsReadStorageProbe) IDDictFreelistEdges() int64 {
+	_, n := p.engine.IDDictFreelistPending()
+	return n
+}
 
 func legacyMetricValue(t testing.TB, body, name string) float64 {
 	t.Helper()
@@ -70,7 +82,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			cypherMetrics := observability.NewCypherMetrics(registry, tenantLabels, nil)
 			cypherMetrics.BindSlowQueries("nornic").Add(2)
 			cypherMetrics.BindSlowQueries("metrics_private").Add(7)
-			if tenantLabels { cypherMetrics.BindSlowQueries("metrics_alias").Add(4) }
+			if tenantLabels {
+				cypherMetrics.BindSlowQueries("metrics_alias").Add(4)
+			}
 			embedMetrics := observability.NewEmbedMetrics(registry, nil)
 			embedMetrics.Processed.WithLabelValues("local", "test", "success", "cpu").Add(9)
 			s.SetObsRegistry(registry)
@@ -92,11 +106,15 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 				}
 			}
 			visibleSlow := float64(0)
-			if tenantLabels { visibleSlow = 2 }
+			if tenantLabels {
+				visibleSlow = 2
+			}
 			t.Run("omitted-allowlist", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias"}))
 			aliasSlow := float64(0)
-			if tenantLabels { aliasSlow = 6 }
+			if tenantLabels {
+				aliasSlow = 6
+			}
 			t.Run("alias-granted", func(t *testing.T) { check(t, 2, 1, aliasSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			t.Run("alias-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
@@ -129,7 +147,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
 					fullSlow := float64(9)
-					if tenantLabels { fullSlow = 13 }
+					if tenantLabels {
+						fullSlow = 13
+					}
 					require.Equal(t, fullSlow, legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
 					require.Equal(t, float64(9), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
 				})
