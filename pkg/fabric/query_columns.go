@@ -56,6 +56,14 @@ func (q *QueryStructure) ValidateUnions() error {
 	if q.Err != nil {
 		return q.Err
 	}
+	return q.unionErr
+}
+
+// Static schemas belong to the immutable syntax result, not each execution.
+func (q *QueryStructure) validateUnionSchemas() error {
+	if q.Err != nil {
+		return q.Err
+	}
 	var schemas [][]string
 	var projection *QueryProjection
 	union := false
