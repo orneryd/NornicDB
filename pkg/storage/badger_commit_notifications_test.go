@@ -362,7 +362,8 @@ func TestCommitNotifications_PanicReleasesLifetime(t *testing.T) {
 				if path == "buffered" {
 					// Invoke the real replay callback in this goroutine so a
 					// caller-level recovery can inspect the deferred lifetime.
-					_ = b.replayWriteBehind(b.writeBehind.active)
+					b.writeBehind.rotate()
+					_ = b.replayWriteBehind(b.writeBehind.draining[0])
 				}
 			}()
 			require.Equal(t, "review callback panic", caught)

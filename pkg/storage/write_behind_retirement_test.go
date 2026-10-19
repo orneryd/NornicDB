@@ -9,6 +9,50 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// An applied frontier must certify that the generation is gone from the same
+// boundary used by snapshot capture, not just that Badger has committed it.
+func TestWriteBehindRetirementCompletesUnderCaptureLock(t *testing.T) {
+	w := NewWriteBehindBuffer(time.Hour, 0, nil)
+	w.Close()
+	w.AppendNode(&Node{ID: "test:own"})
+	w.rotate()
+	generation := w.draining[0]
+	w.mu.RLock()
+	done := make(chan struct{})
+	go func() {
+		w.removeDrained(generation)
+		close(done)
+	}()
+	// A pending writer prevents a new read lock while the captured reader
+	// still owns its original read lock.
+	deadline := time.Now().Add(3 * time.Second)
+	for w.mu.TryRLock() {
+		w.mu.RUnlock()
+		if time.Now().After(deadline) {
+			w.mu.RUnlock()
+			t.Fatal("retirement did not reach the capture lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	assert.False(t, generation.IsApplied())
+	w.mu.RUnlock()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("retirement did not complete")
+	}
+	require.True(t, generation.IsApplied())
+	require.Empty(t, w.draining)
+	_, found, _ := w.GetNode("test:own")
+	require.False(t, found)
+	epoch, idle := w.idleReadEpoch("test")
+	require.True(t, idle)
+	w.removeDrained(generation)
+	after, idle := w.idleReadEpoch("test")
+	require.True(t, idle)
+	require.Equal(t, epoch, after, "repeat retirement must not change read epochs")
+}
+
 // A listener may write synchronously as soon as replay completes. Every read
 // source must then use the new committed state, including stored reads and
 // property indexes, rather than the generation that caused the notification.

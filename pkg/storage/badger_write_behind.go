@@ -270,9 +270,9 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 	return nil
 }
 
-// replayWriteBehind replays one drained generation into Badger. It marks
-// the generation applied once the replay is published and before its
-// listeners run, so the buffer retires its read overlay first: a listener
+// replayWriteBehind replays the oldest drained generation into Badger. It
+// retires the generation through the buffer owner once replay is published
+// and before its listeners run, including every read overlay: a listener
 // reads its own synchronous write, and a flush it starts can reach the
 // generations after this one.
 func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
@@ -280,7 +280,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, buf.markApplied)
+	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, func() { b.writeBehind.removeDrained(buf) })
 }
 
 // applyBufferedCommits replays buffered commits into Badger: a single Badger
