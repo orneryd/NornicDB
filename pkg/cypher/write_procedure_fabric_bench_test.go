@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkFabricProcedureAdmission(b *testing.B) {
-	for _, route := range []string{"read", "create", "registered", "apoc"} {
+	for _, route := range []string{"read", "create", "registered", "apoc", "dynamicWrite", "dynamicRead"} {
 		b.Run(route, func(b *testing.B) {
 			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
 			if err != nil {
@@ -38,6 +38,7 @@ func BenchmarkFabricProcedureAdmission(b *testing.B) {
 				b.Fatal(err)
 			}
 			fragment := "RETURN 1 AS value"
+			inner := statement
 			switch route {
 			case "create":
 				fragment = statement
@@ -45,9 +46,12 @@ func BenchmarkFabricProcedureAdmission(b *testing.B) {
 				fragment = "CALL u5tx.fabricbench($value) YIELD value RETURN value"
 			case "apoc":
 				fragment = "CALL apoc.cypher.doIt($statement,{value:$value}) YIELD value RETURN value.value AS value"
+			case "dynamicWrite", "dynamicRead":
+				fragment = "CALL apoc.cypher.run($statement,{value:$value}) YIELD value RETURN value.value AS value"
+				if route == "dynamicRead" { inner = "RETURN $value AS value" }
 			}
 			query := "CALL { USE u5_fabric.shard " + fragment + " } RETURN value"
-			params := map[string]interface{}{"value": 0, "statement": statement}
+			params := map[string]interface{}{"value": 0, "statement": inner}
 			if _, err := exec.Execute(context.Background(), query, params); err != nil {
 				b.Fatal(err)
 			}
