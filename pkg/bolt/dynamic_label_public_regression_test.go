@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/dynamiclabels"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,9 @@ func TestDynamicLabelPublicBolt(t *testing.T) {
 	}
 	for _, normalization := range []string{"true", "false"} {
 		t.Run("normalization="+normalization, func(t *testing.T) {
-			t.Setenv("NORNICDB_CYPHER_QUERY_NORMALIZATION", normalization)
+			previous := config.IsCypherQueryNormalizationEnabled()
+			config.SetCypherQueryNormalizationEnabled(normalization == "true")
+			t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(previous) })
 			for _, explicit := range []bool{false, true} {
 				for _, c := range dynamiclabels.Cases() {
 					t.Run(fmt.Sprintf("tx=%t/%s", explicit, c.Name), func(t *testing.T) {
