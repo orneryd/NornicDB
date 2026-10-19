@@ -332,28 +332,23 @@ func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
 	}
 	var names []string
 	if store, ok := s.collections.(*databaseCollectionStore); ok {
-		for _, database := range store.dbManager.ListDatabases() {
-			if database != nil && database.Type != "system" {
-				names = append(names, database.Name)
-			}
-		}
+		names = store.dbManager.ListDatabaseNames()
 	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
 		names = lister.ListNamespaces()
 	} else {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
 	}
-	for _, database := range names {
-		if database == "" || database == "system" {
-			continue
+	var denied error
+	auth.DatabasePopulationAccess(names, func(database string) bool {
+		if denied == nil {
+			denied = s.AllowDatabaseAccess(ctx, database, false)
+			if denied == nil {
+				denied = s.AllowDatabaseAccess(ctx, database, true)
+			}
 		}
-		if err := s.AllowDatabaseAccess(ctx, database, false); err != nil {
-			return err
-		}
-		if err := s.AllowDatabaseAccess(ctx, database, true); err != nil {
-			return err
-		}
-	}
-	return nil
+		return denied == nil
+	})
+	return denied
 }
 
 // authorizeRequestDatabase covers named and empty/batch requests before the
