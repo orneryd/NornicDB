@@ -339,7 +339,7 @@ func (g *hnswBuildGraphSnapshot) signatureOf(id uint32) uint64 {
 type hnswBuildPair struct {
 	id      string
 	vec     []float32
-	hint nodeLexicalHint
+	hint    nodeLexicalHint
 	hasHint bool
 }
 
