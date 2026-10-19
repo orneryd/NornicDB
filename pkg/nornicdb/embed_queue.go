@@ -1692,26 +1692,19 @@ func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []
 	var embeddings [][]float32
 	var err error
 	for attempt := 1; attempt <= ew.config.MaxRetries; attempt++ {
-		type embedResult struct {
-			embeddings [][]float32
-			err        error
+		if err := ew.ctx.Err(); err != nil {
+			return nil, err
 		}
-		resultCh := make(chan embedResult, 1)
-		go func() {
-			var embs [][]float32
-			var embedErr error
-			if typed, ok := provider.(embed.TypedEmbedder); ok {
-				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
-			} else {
-				embs, embedErr = provider.EmbedBatch(ew.ctx, chunks)
-			}
-			resultCh <- embedResult{embeddings: embs, err: embedErr}
-		}()
-		select {
-		case <-ew.ctx.Done():
-			return nil, ew.ctx.Err()
-		case result := <-resultCh:
-			embeddings, err = result.embeddings, result.err
+		// The worker owns the actual provider call until it returns. Returning
+		// on cancellation from a detached goroutine lets DB.Close free native
+		// model state while that goroutine is still using it.
+		if typed, ok := provider.(embed.TypedEmbedder); ok {
+			embeddings, err = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
+		} else {
+			embeddings, err = provider.EmbedBatch(ew.ctx, chunks)
+		}
+		if canceled := ew.ctx.Err(); canceled != nil {
+			return nil, canceled
 		}
 		ew.waitAfterProviderRequest()
 		if err == nil {

@@ -679,6 +679,7 @@ func TestWarmupSkipsRecentActivity(t *testing.T) {
 func TestCloseStopsWarmup(t *testing.T) {
 	// Create embedder with warmup channels properly set up
 	embedder := &LocalGGUFEmbedder{
+		warmupStarted: true,
 		modelName:     "test-model",
 		modelPath:     "/test/path/model.gguf",
 		stopWarmup:    make(chan struct{}),
