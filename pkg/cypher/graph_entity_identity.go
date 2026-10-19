@@ -412,6 +412,31 @@ func graphAlgorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntit
 	return algorithmRows(nodes, values)
 }
 
+// Projection builders receive keys and payloads together from this boundary.
+// They cannot reconstruct an endpoint or property key from a native local ID.
+type projectionNodeInput struct {
+	key string
+	labels []string
+	properties map[string]interface{}
+}
+
+type projectionEdgeInput struct {
+	key, source, target, relationshipType string
+	properties map[string]interface{}
+}
+
+func (p *GraphProjection) nativeNodeInput(node *storage.Node) projectionNodeInput {
+	return projectionNodeInput{key: node.Identity().InDatabase(p.Database), labels: node.Labels, properties: node.Properties}
+}
+
+func (p *GraphProjection) nativeEdgeInput(edge *storage.Edge) projectionEdgeInput {
+	return projectionEdgeInput{
+		key: edge.Identity().InDatabase(p.Database),
+		source: edge.StartIdentity().InDatabase(p.Database), target: edge.EndIdentity().InDatabase(p.Database),
+		relationshipType: edge.Type, properties: edge.Properties,
+	}
+}
+
 // bindIdentity converts native/config references only after the graph's key
 // domain is known. Projection IDs retain their public catalog domain; stored
 // graphs use the same canonical read view as scalar and APOC algorithms.

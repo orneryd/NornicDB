@@ -2,12 +2,6 @@ package cypher
 
 import "github.com/orneryd/nornicdb/pkg/storage"
 
-// nodeIdentity keeps existing local projection IDs, qualifying only entities
-// from another database. The same owner keys nodes, properties and endpoints.
-func (p *GraphProjection) nodeIdentity(database string, id storage.NodeID) string {
-	return (storage.EntityIdentity{Database: database, LocalID: string(id)}).InDatabase(p.Database)
-}
-
 func (p *GraphProjection) nodeReference(value interface{}) (string, bool) {
 	identity, ok := graphEntityReference(value)
 	if !ok {
