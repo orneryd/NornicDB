@@ -319,3 +319,5 @@ brew services start nornicdb
 - **Issues**: [GitHub Issues](https://github.com/orneryd/nornicdb/issues)
 - **Docs**: [Full Documentation](https://github.com/orneryd/nornicdb/docs)
 - **Discussions**: [GitHub Issues](https://github.com/orneryd/NornicDB/issues)
+
+See [Configuration and upgrades](CONFIGURATION.md) for the three-step setup, external AI providers, and optional Advanced startup settings.
