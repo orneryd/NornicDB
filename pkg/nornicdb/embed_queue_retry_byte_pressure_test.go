@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Permanent version of the r4 review probe. The old cooldown is replaced by
-// advancing admission's clock directly, so elapsed time cannot release pressure.
+// Permanent version of the r4 probe, adapted to the maintainer's new rule:
+// elapsed time never increases retained bytes, and a full cache never holds MAIN.
 func TestReviewRetryBytePressurePersistsUntilDrain(t *testing.T) {
 	worker, queue, provider := nodeSaveRetryFixture(t, "whole", 4, 1000)
 	require.True(t, worker.processNextBatch())
@@ -20,19 +20,21 @@ func TestReviewRetryBytePressurePersistsUntilDrain(t *testing.T) {
 	require.Len(t, worker.embeddingRetries, 1)
 	require.Equal(t, 2, provider.GetEmbedCount())
 	worker.claimMu.Lock()
-	for _, retry := range worker.embeddingRetries {
+	for _, retry := range worker.nodeRetries {
 		retry.retryAt = time.Now().Add(2 * time.Hour)
 	}
-	worker.retryTurn = false
 	candidate := worker.nextEmbeddingNodeID(time.Now().Add(time.Hour))
 	worker.claimMu.Unlock()
-	require.Empty(t, candidate, "elapsed time cannot admit fresh purchases without retained capacity draining")
+	require.Equal(t, storage.NodeID("node-002"), candidate, "MAIN always precedes DLQ regardless of cache pressure or elapsed time")
 	makeNodeSaveRetriesReady(worker)
 	worker.processNextBatch()
 	require.Len(t, worker.embeddingRetries, 1)
 	require.Equal(t, size, worker.nodeEmbeddingRetryBytes())
-	require.Equal(t, 2, provider.GetEmbedCount(), "byte pressure must not buy another unretainable result before retention drains")
-	require.Greater(t, time.Until(worker.embeddingRetries["node-000"].retryAt), time.Second, "retained writes still back off")
+	require.Equal(t, 3, provider.GetEmbedCount(), "one first attempt for each MAIN node")
+	require.True(t, worker.processNextBatch()) // Last MAIN item, with cache still full.
+	require.Equal(t, size, worker.nodeEmbeddingRetryBytes())
+	worker.processNextBatch() // Only now may DLQ run.
+	require.Greater(t, time.Until(worker.nodeRetries["node-000"].retryAt), time.Second, "retained writes still back off")
 	queue.rejections = 0
 	makeNodeSaveRetriesReady(worker)
 	for i := 0; i < 8 && worker.processed.Load() < 4; i++ {
@@ -49,14 +51,14 @@ func TestEmbedWorkerRetryBytePressureInvalidation(t *testing.T) {
 			require.True(t, worker.processNextBatch())
 			worker.retryMaxBytes = worker.nodeEmbeddingRetryBytes() + 1
 			require.True(t, worker.processNextBatch())
-			require.True(t, worker.retryBudgetBlocked)
+			require.Len(t, worker.nodeRetries, 2)
 			if setter == "embedder" {
 				worker.SetEmbedder(provider)
 			} else {
 				selected := worker.currentEmbedder()
 				worker.SetEmbedderResolver(func(storage.NodeID) (embed.Embedder, error) { return selected, nil })
 			}
-			require.False(t, worker.retryBudgetBlocked)
+			require.Empty(t, worker.nodeRetries)
 			require.Empty(t, worker.embeddingRetries)
 			queue.rejections = 0
 			for i := 0; i < 4 && worker.processed.Load() < 2; i++ {

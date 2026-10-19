@@ -20,17 +20,26 @@ type retainedNodeEmbedding struct {
 
 	identity string
 	epoch    uint64
-	failures int
-	retryAt  time.Time
 	bytes    int64
+}
+
+// nodeEmbeddingRetry is the DLQ entry, independent of the optional payload
+// cache. It retains no node body, properties, vectors or provider object.
+// Like the existing MAIN index it has one small record per failed node.
+// DLQ deadlines/order are process-local; terminal failure sidecars are durable.
+type nodeEmbeddingRetry struct {
+	updatedAt time.Time
+	retryAt time.Time
+	order uint64
+	failures int
+	terminal bool
 }
 
 const nodeEmbeddingRetryMaxCount = 128
 const nodeEmbeddingRetryMaxBytes int64 = 64 << 20
 
-// Bounds include claimed retry payloads. Fresh claims reserve count slots;
-// provider outputs already in flight may not fit and are then left pending
-// without retaining their payload. Their bounded batch memory is not a cache.
+// Bounds include claimed retry payloads. They bound the optional payload cache,
+// never admission to MAIN. An uncached DLQ entry regenerates only on its turn.
 func (ew *EmbedWorker) nodeEmbeddingRetryBudget() (int, int64) {
 	count, bytes := ew.retryMaxCount, ew.retryMaxBytes
 	if count <= 0 {
@@ -129,11 +138,8 @@ func nodeEmbeddingRetryValueBytes(v reflect.Value, budget int64, depth int) int6
 }
 
 func (ew *EmbedWorker) dropNodeEmbeddingRetryLocked(id storage.NodeID) {
-	if _, ok := ew.embeddingRetries[id]; ok {
-		delete(ew.embeddingRetries, id)
-		ew.retryBudgetBlocked = false
-		ew.retryAdmissionAt = time.Time{}
-	}
+	delete(ew.embeddingRetries, id)
+	delete(ew.nodeRetries, id)
 }
 
 func (ew *EmbedWorker) dropNodeEmbeddingRetry(id storage.NodeID) {
@@ -146,7 +152,10 @@ func (ew *EmbedWorker) dropNodeEmbeddingRetry(id storage.NodeID) {
 // owner. Spans and provider metadata are already prepared in EmbedMeta.
 func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Embedder, retained *retainedNodeEmbedding) {
 	ew.claimMu.Lock()
-	defer ew.claimMu.Unlock()
+	if !ew.validNodeClaimLocked(node.ID) {
+		ew.claimMu.Unlock()
+		return
+	}
 	if retained == nil {
 		retained = &retainedNodeEmbedding{
 			labels: node.Labels, properties: node.Properties,
@@ -156,6 +165,7 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 		}
 	}
 	if retained.epoch != ew.embeddingEpoch.Load() {
+		ew.claimMu.Unlock()
 		return // A provider setter invalidated this in-flight result.
 	}
 	if retained.bytes == 0 {
@@ -168,31 +178,56 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 			}
 		}
 		if len(ew.embeddingRetries) >= countLimit || retained.bytes > byteLimit-ew.nodeEmbeddingRetryBytes() {
-			// A batch/another worker may already have bought this result before
-			// the budget filled. Admission stays blocked until retained capacity
-			// is released or the owner is invalidated.
-			if len(ew.embeddingRetries) > 0 {
-				ew.retryBudgetBlocked = true
-			} else {
-				// An unretainable first result has no capacity owner to drain.
-				// Back off new attempts without creating an unreleaseable latch.
-				ew.retryAdmissionAt = time.Now().Add(30 * time.Second)
-			}
-			return
+			retained = nil // Queue the ID without retaining an oversized payload.
 		}
 	}
-	if retained.failures < 6 {
-		retained.failures++
-	}
-	delay := time.Second << (retained.failures - 1)
-	if delay > 30*time.Second {
-		delay = 30 * time.Second
-	}
-	retained.retryAt = time.Now().Add(delay)
-	if ew.embeddingRetries == nil {
+	if retained != nil && ew.embeddingRetries == nil {
 		ew.embeddingRetries = make(map[storage.NodeID]*retainedNodeEmbedding)
 	}
-	ew.embeddingRetries[node.ID] = retained
+	if retained != nil { ew.embeddingRetries[node.ID] = retained }
+	terminal := ew.recordNodeFailureLocked(node, nil)
+	ew.claimMu.Unlock()
+	if terminal { ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding save retry limit reached")) }
+}
+
+func (ew *EmbedWorker) validNodeClaimLocked(id storage.NodeID) bool {
+	epoch, claimed := ew.claimedNodes[string(id)]
+	return claimed && epoch == ew.embeddingEpoch.Load() && !ew.invalidatedClaims[id]
+}
+
+// All six provider dispatch routes and rejected saves converge on this owner.
+// MaxRetries counts DLQ retries after the initial attempt, never inline calls.
+func (ew *EmbedWorker) recordNodeFailureLocked(node *storage.Node, failure error) bool {
+	if ew.nodeRetries == nil { ew.nodeRetries = make(map[storage.NodeID]*nodeEmbeddingRetry) }
+	state := ew.nodeRetries[node.ID]
+	if state == nil { state = &nodeEmbeddingRetry{updatedAt: node.UpdatedAt}; ew.nodeRetries[node.ID] = state }
+	state.failures++
+	limit := ew.config.MaxRetries
+	if limit < 0 { limit = 0 }
+	state.terminal = state.failures > limit
+	ew.retrySequence++
+	state.order = ew.retrySequence // Every failure rejoins the DLQ tail.
+	base, cap := ew.config.ProviderRetryBackoff, ew.config.ProviderRetryBackoffMax
+	if base <= 0 { base = time.Second }
+	if cap < base { cap = 30*time.Second; if cap < base { cap = base } }
+	delay := base
+	for i:=1; i<state.failures && delay<cap; i++ { if delay > cap/2 { delay=cap } else { delay*=2 } }
+	if requested, ok := retryDelay(failure); ok && requested > delay { delay = requested }
+	state.retryAt = time.Now().Add(delay)
+	ew.markNodeEmbedded(node.ID) // DLQ owns the ID until update/success/terminal.
+	if state.terminal { delete(ew.embeddingRetries,node.ID) }
+	return state.terminal
+}
+
+func (ew *EmbedWorker) failNodeEmbedding(node *storage.Node, failure error) {
+	ew.providerWriteMu.RLock()
+	defer ew.providerWriteMu.RUnlock()
+	ew.claimMu.Lock()
+	valid := ew.validNodeClaimLocked(node.ID)
+	terminal := false
+	if valid { terminal = ew.recordNodeFailureLocked(node,failure) }
+	ew.claimMu.Unlock()
+	if terminal { ew.markNodeEmbeddingFailed(node.ID,failure) }
 }
 
 // Provider objects identify their configuration; model/space and worker text
@@ -213,71 +248,63 @@ func (ew *EmbedWorker) nodeEmbeddingIdentity(provider embed.Embedder) string {
 func (ew *EmbedWorker) invalidateNodeEmbeddingRetries() {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
-	for id := range ew.embeddingRetries {
+	ew.clearNodeEmbeddingRetriesLocked()
+}
+
+func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
+	for id, state := range ew.nodeRetries {
+		if state.terminal { continue }
 		ew.addNodeToPendingEmbeddings(id)
 	}
 	ew.embeddingRetries = nil
-	ew.retryBudgetBlocked = false
-	ew.retryAdmissionAt = time.Time{}
+	ew.nodeRetries = nil
 }
 
 // nextEmbeddingNodeID runs under claimMu. Storage markers for retained IDs are
 // consumed while seeking fresh work; the retry owner keeps those IDs and its
 // deadline wakes the worker independently of the storage index.
 func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
-	var due storage.NodeID
-	var earliest time.Time
-	for id, result := range ew.embeddingRetries {
-		if _, claimed := ew.claimedNodes[string(id)]; !claimed && !now.Before(result.retryAt) && (due == "" || result.retryAt.Before(earliest)) {
-			due, earliest = id, result.retryAt
-		}
-	}
-	if due != "" && ew.retryTurn {
-		ew.retryTurn = false
-		return due
-	}
-	countLimit, byteLimit := ew.nodeEmbeddingRetryBudget()
-	count := len(ew.embeddingRetries)
-	for id := range ew.claimedNodes {
-		if _, retained := ew.embeddingRetries[storage.NodeID(id)]; !retained {
-			count++
-		}
-	}
-	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || ew.retryBudgetBlocked || now.Before(ew.retryAdmissionAt) {
-		return due // Saving retained work needs no new provider result.
-	}
-	for attempts := 0; attempts <= len(ew.embeddingRetries); attempts++ {
+	// MAIN is the storage pending index. A body update restores a DLQ ID to
+	// that index; detect it even when the update did not call Enqueue.
+	blockedMain := false
+	for attempts, bound := 0, len(ew.nodeRetries)+len(ew.claimedNodes)+1; attempts < bound; attempts++ {
 		pending := ew.findNodeWithoutEmbedding()
 		if pending == nil {
 			break
 		}
-		if _, retained := ew.embeddingRetries[pending.ID]; !retained {
-			ew.retryTurn = true
-			return pending.ID
+		if state := ew.nodeRetries[pending.ID]; state != nil {
+			if !state.updatedAt.Equal(pending.UpdatedAt) {
+				ew.dropNodeEmbeddingRetryLocked(pending.ID)
+			} else { blockedMain = true; ew.markNodeEmbedded(pending.ID); continue }
 		}
+		if _, claimed := ew.claimedNodes[string(pending.ID)]; !claimed { return pending.ID }
+		blockedMain = true
 		ew.markNodeEmbedded(pending.ID)
 	}
 	// Engines without a mutable pending index cannot advance past a retained
 	// candidate by removing its marker. Use their generic node stream and the
 	// same storage eligibility predicate, excluding the retry owner's IDs.
-	if _, indexed := ew.storage.(EmbeddingIndexManager); !indexed && len(ew.embeddingRetries) > 0 {
+	if _, indexed := ew.storage.(EmbeddingIndexManager); (blockedMain || !indexed) && len(ew.nodeRetries)+len(ew.claimedNodes) > 0 {
 		var fresh storage.NodeID
 		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{}, func(node *storage.Node) error {
-			_, retained := ew.embeddingRetries[node.ID]
+			state := ew.nodeRetries[node.ID]
 			_, claimed := ew.claimedNodes[string(node.ID)]
-			if !retained && !claimed && storage.NodeNeedsEmbedding(node) {
+			if state != nil && !state.updatedAt.Equal(node.UpdatedAt) { ew.dropNodeEmbeddingRetryLocked(node.ID); state=nil }
+			if state == nil && !claimed && storage.NodeNeedsEmbedding(node) {
 				fresh = node.ID
 				return storage.ErrIterationStopped
 			}
 			return nil
 		})
 		if fresh != "" {
-			ew.retryTurn = true
 			return fresh
 		}
 	}
-	if due != "" {
-		ew.retryTurn = false
+	var due storage.NodeID
+	var order uint64
+	for id, state := range ew.nodeRetries {
+		_, claimed := ew.claimedNodes[string(id)]
+		if !claimed && !state.terminal && !now.Before(state.retryAt) && (due=="" || state.order<order) { due,order=id,state.order }
 	}
 	return due
 }
@@ -286,10 +313,8 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duration {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
-	if remaining := time.Until(ew.retryAdmissionAt); remaining > 0 && remaining < delay {
-		delay = remaining
-	}
-	for id, result := range ew.embeddingRetries {
+	for id, result := range ew.nodeRetries {
+		if result.terminal { continue }
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue
 		}

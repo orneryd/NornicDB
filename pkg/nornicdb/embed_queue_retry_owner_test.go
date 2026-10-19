@@ -14,7 +14,7 @@ import (
 func makeNodeSaveRetriesReady(worker *EmbedWorker) {
 	worker.claimMu.Lock()
 	defer worker.claimMu.Unlock()
-	for _, result := range worker.embeddingRetries {
+	for _, result := range worker.nodeRetries {
 		result.retryAt = time.Time{}
 	}
 }
@@ -59,6 +59,20 @@ func TestEmbedWorkerRetryOwnerAllowsFreshUnindexedWork(t *testing.T) {
 	require.NotEmpty(t, saved.ChunkEmbeddings)
 }
 
+// A sidecar/index outage may prevent deletion of the stale pending marker.
+// Its void index API must not let that failed ID hide another MAIN node.
+type stuckIndexedRetryOwnerQueue struct{ *unindexedRetryOwnerQueue }
+func (*stuckIndexedRetryOwnerQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
+func (*stuckIndexedRetryOwnerQueue) MarkNodeEmbedded(storage.NodeID) {}
+func TestEmbedWorkerRetryOwnerAllowsFreshWithStuckIndex(t *testing.T) {
+	worker,queue,_:=nodeSaveRetryFixture(t,"whole",2,1000)
+	queue.attempts["node-001"]=1000
+	worker.storage=&stuckIndexedRetryOwnerQueue{&unindexedRetryOwnerQueue{Engine:queue.Engine,queue:queue}}
+	require.True(t,worker.processNextBatch())
+	require.True(t,worker.processNextBatch())
+	require.Equal(t,int64(1),worker.processed.Load(),"a retained failure cannot block MAIN behind an undeletable marker")
+}
+
 func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
 	worker, queue, provider := nodeSaveRetryFixture(t, "whole", 1, 1000)
 	require.True(t, worker.processNextBatch())
@@ -71,7 +85,7 @@ func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
 	require.False(t, worker.processNextBatch(), "a due retry rejected again must report no progress")
 	require.Equal(t, 2, queue.attempts["node-000"])
 	worker.claimMu.Lock()
-	retry := worker.embeddingRetries["node-000"]
+	retry := worker.nodeRetries["node-000"]
 	require.Equal(t, 2, retry.failures)
 	require.Greater(t, time.Until(retry.retryAt), time.Second)
 	worker.claimMu.Unlock()
@@ -80,7 +94,7 @@ func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
 		require.False(t, worker.processNextBatch())
 	}
 	worker.claimMu.Lock()
-	require.Equal(t, 6, retry.failures, "backoff exponent must be capped")
+	require.Equal(t, 12, retry.failures, "retry count keeps advancing while backoff stays bounded")
 	require.InDelta(t, 30, time.Until(retry.retryAt).Seconds(), 0.5)
 	worker.claimMu.Unlock()
 }
@@ -198,7 +212,7 @@ func TestEmbedWorkerRetryOwnerInvalidatesLiveSpace(t *testing.T) {
 	require.Equal(t, "after", saved.EmbedMeta["embedding_space"])
 }
 
-func TestEmbedWorkerRetryOwnerInterleavesDueRetries(t *testing.T) {
+func TestEmbedWorkerRetryOwnerMainBeforeDueRetries(t *testing.T) {
 	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 3, 1000)
 	queue.attempts["node-001"] = 1000
 	queue.attempts["node-002"] = 1000

@@ -124,17 +124,29 @@ type embeddingSourceJudge interface {
 // The policy is the one of the engine judge wraps (UnwrapEngine), or the
 // default policy when it has none.
 func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) {
-	if prev == nil || len(prev.EmbedMeta) == 0 || len(node.ChunkEmbeddings) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
+	if prev == nil || len(prev.EmbedMeta) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
 		return
 	}
+	failed, _ := prev.EmbedMeta["embedding_failed"].(bool)
+	if len(node.ChunkEmbeddings) == 0 && !failed {
+		return
+	}
+	if !canCarryManagedEmbeddings(judge, prev, node) {
+		node.ChunkEmbeddings = nil
+		node.EmbedMeta = nil
+	}
+}
+
+// A body update starts a new attempt even for an idempotent upsert whose caller
+// kept the timestamp. Terminal metadata is never carried into that attempt;
+// actual vectors still obey the provider's consumed-source contract.
+func canCarryManagedEmbeddings(judge Engine, prev, node *Node) bool {
+	if failed, _ := prev.EmbedMeta["embedding_failed"].(bool); failed { return false }
 	same := EmbeddingSourceMatches(prev, node, defaultEmbeddingTextPolicy)
 	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
 		same = engine.sameEmbeddingSource(prev, node)
 	}
-	if !same {
-		node.ChunkEmbeddings = nil
-		node.EmbedMeta = nil
-	}
+	return same
 }
 
 // sameLabelSet reports whether two label lists hold the same labels in any

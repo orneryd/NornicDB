@@ -983,7 +983,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 			return nil, err
 		}
 	}
-	if tx.engine.sameEmbeddingSource(oldNode, node) {
+	if canCarryManagedEmbeddings(tx.engine, oldNode, node) {
 		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
 		node.EmbedMeta = oldNode.EmbedMeta
 		if !sidecar {

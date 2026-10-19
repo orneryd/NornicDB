@@ -213,28 +213,18 @@ func TestTransientDocumentBatchFailureDoesNotBisectProviderOutage(t *testing.T) 
 	}
 }
 
-func TestTransientProviderCooldownIsSharedAndHonorsRequestedDelay(t *testing.T) {
-	provider := &recordingDocumentBatchEmbedder{rejectingContentEmbedder: rejectingContentEmbedder{calls: make(map[string]int)}}
-	worker := NewEmbedWorker(provider, storage.NewMemoryEngine(), &EmbedWorkerConfig{
-		NumWorkers:              0,
-		DeferWorkerStart:        true,
-		ProviderRetryBackoff:    5 * time.Millisecond,
-		ProviderRetryBackoffMax: 20 * time.Millisecond,
-	})
-	t.Cleanup(worker.Close)
-
-	worker.recordProviderFailure(provider, delayedTransientEmbeddingError{delay: 50 * time.Millisecond})
-	state := worker.providerRetries[providerRetryKey(provider)]
-	require.Equal(t, 1, state.failures)
-	require.GreaterOrEqual(t, time.Until(state.retryAt), 40*time.Millisecond)
-
-	started := time.Now()
-	require.True(t, worker.waitForProviderRetry(provider))
-	require.GreaterOrEqual(t, time.Since(started), 35*time.Millisecond)
-	worker.clearProviderFailure(provider)
-	require.Empty(t, worker.providerRetries)
+func TestTransientProviderDelayIsPerNodeAndHonorsRequestedDelay(t *testing.T) {
+ worker,queue,_:=nodeSaveRetryFixture(t,"whole",2,1000)
+ node:=worker.claimNextNode();require.NotNil(t,node)
+ worker.failNodeEmbedding(node,delayedTransientEmbeddingError{delay:50*time.Second})
+ worker.releaseNodeClaim(node.ID)
+ state:=worker.nodeRetries[node.ID]
+ require.Equal(t,1,state.failures)
+ require.GreaterOrEqual(t,time.Until(state.retryAt),49*time.Second)
+ other:=worker.claimNextNode();require.NotNil(t,other,"a provider-requested delay never blocks MAIN")
+ require.NotEqual(t,node.ID,other.ID);worker.releaseNodeClaim(other.ID)
+ require.Zero(t,queue.attempts[node.ID])
 }
-
 func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerRestart(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	store := storage.NewNamespacedEngine(base, "embedding-failure-recovery")
@@ -365,6 +355,7 @@ func TestRejectedNodeIsParkedWhileFollowingNodeCompletes(t *testing.T) {
 
 	require.True(t, worker.processNextBatch())
 	require.True(t, worker.processNextBatch())
+	for i:=0;i<3;i++ {makeNodeSaveRetriesReady(worker);worker.processNextBatch()}
 
 	poison, err := store.GetNode("poison")
 	require.NoError(t, err)
