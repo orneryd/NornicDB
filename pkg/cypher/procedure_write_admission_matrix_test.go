@@ -127,7 +127,13 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 									transactional = nested.inTransaction(ctx)
 									return result, err
 								}
-								if writes {
+								if origin.OwnsTransactions {
+ return nested.executePeriodicBatch(ctx,origin.Name,func(batchCtx context.Context,batch *StorageExecutor)(*ExecuteResult,error){
+  transactional=batch.inTransaction(batchCtx)
+  return batch.Execute(batchCtx,"CREATE (:U5AdmissionMatrix) RETURN 1 AS value",nil)
+ })
+}
+         if writes {
 									return nested.Execute(ctx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
 								}
 								return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
@@ -160,7 +166,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 							nodes, err := shard.GetNodesByLabel("U5AdmissionMatrix")
 							require.NoError(t, err)
 							want := 0
-							if writes && !reject {
+							if writes && (!reject || origin.OwnsTransactions) {
 								want = 1
 							}
 							require.Len(t, nodes, want)
@@ -193,7 +199,7 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 	}
 	for _, procedure := range ListRegisteredProcedures() {
 		call, exists := profiles[procedure.Name]
-		if procedure.ExecutesStatements {
+		if procedure.ExecutesStatements || procedure.OwnsTransactions {
 			require.True(t, exists, "missing actual-handler fixture for dynamic registry contract %s", procedure.Name)
 		}
 		if !exists {
@@ -234,7 +240,7 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 						if procedure.Name == "apoc.import.json" {
 							want = 2
 						}
-						if reject {
+						if reject && !procedure.OwnsTransactions {
 							want = 0
 						}
 						require.Len(t, nodes, want)

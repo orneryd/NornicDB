@@ -54,6 +54,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	stats := &QueryStats{}
 	errorCount := int64(0)
 	successCount := int64(0)
+ failedBatches:=int64(0)
 
 	for batchNum := 0; batchNum < batches; batchNum++ {
 		startIdx := batchNum * batchSize
@@ -76,6 +77,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
   })
   if batchErr!=nil {
    errorCount+=int64(endIdx-startIdx)
+   failedBatches++
    continue
   }
   successCount+=int64(endIdx-startIdx)
@@ -91,13 +93,13 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 				int64(0),                 // timeTaken (ms) - not measured
 				successCount,             // committedOperations
 				errorCount,               // failedOperations
-				int64(0),                 // failedBatches
+				failedBatches,            // failedBatches
 				int64(0),                 // retries
 				map[string]interface{}{}, // errorMessages
 				map[string]interface{}{ // batch
 					"total":     int64(batches),
-					"committed": int64(batches),
-					"failed":    int64(0),
+					"committed": int64(batches)-failedBatches,
+					"failed":    failedBatches,
 					"errors":    map[string]interface{}{},
 				},
 				map[string]interface{}{ // operations
