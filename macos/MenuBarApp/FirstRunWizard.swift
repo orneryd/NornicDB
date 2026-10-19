@@ -41,6 +41,7 @@ struct FirstRunWizard: View {
                         Text("Server: \(config.hostAddress), HTTP \(config.httpPortNumber), Bolt \(config.boltPortNumber)")
                         Text("Authentication: \(config.adminUsername). Encryption: \(config.encryptionEnabled ? "enabled" : "disabled")")
                         Text("AI features: K-Means \(config.kmeansEnabled ? "on" : "off"), Memory Decay \(config.memoryDecayEnabled ? "on" : "off"), Auto-TLP \(config.autoTLPEnabled ? "on" : "off")")
+                        Text("Search continuation: \(config.searchCursorMax == 0 ? "disabled" : "up to \(config.searchCursorMax) active cursors")")
                         summary("Embeddings", enabled: config.embeddingsEnabled, provider: config.embeddingProvider, model: config.embeddingModel)
                         summary("Reranking", enabled: config.searchRerankEnabled, provider: config.searchRerankProvider, model: config.searchRerankModel)
                         summary("Heimdall", enabled: config.heimdallEnabled, provider: config.heimdallProvider, model: config.heimdallModel)
