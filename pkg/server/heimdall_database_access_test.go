@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,7 +9,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
-	"github.com/orneryd/nornicdb/pkg/localization"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -40,9 +39,9 @@ func heimdallPermissions(allowed map[auth.Permission]bool) func(string, auth.Per
 
 func requireHeimdallForbidden(t *testing.T, err error) {
 	t.Helper()
-	var localized *localization.LocalizedError
-	require.True(t, errors.As(err, &localized), "want a Forbidden error, got %v", err)
-	require.Equal(t, "Neo.ClientError.Security.Forbidden", localized.Code)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Security.Forbidden", code)
 }
 
 // Heimdall's database router checks the request principal's permissions on
