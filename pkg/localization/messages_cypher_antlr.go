@@ -22,8 +22,8 @@ func CypherANTLRUnexpectedInput(line, column int) Message {
 }
 
 // CypherANTLRParseSyntaxError identifies invalid syntax encountered by Parse.
-func CypherANTLRParseSyntaxError(detail string) Message {
-	return Message{ID: MessageCypherANTLRParseSyntaxError, Fallback: "syntax error: " + detail, Data: map[string]any{"Detail": detail}}
+func CypherANTLRParseSyntaxError(detail string, diagnostics ...Message) Message {
+	return Message{ID: MessageCypherANTLRParseSyntaxError, Fallback: "syntax error: " + detail, Data: map[string]any{"Detail": cypherANTLRDiagnosticDetail(detail, diagnostics)}}
 }
 
 // CypherANTLRValidateEmptyQuery identifies an empty query passed to Validate.
@@ -32,6 +32,14 @@ func CypherANTLRValidateEmptyQuery() Message {
 }
 
 // CypherANTLRValidateSyntaxError identifies invalid syntax encountered by Validate.
-func CypherANTLRValidateSyntaxError(detail string) Message {
-	return Message{ID: MessageCypherANTLRValidateSyntaxError, Fallback: "syntax error: " + detail, Data: map[string]any{"Detail": detail}}
+func CypherANTLRValidateSyntaxError(detail string, diagnostics ...Message) Message {
+	return Message{ID: MessageCypherANTLRValidateSyntaxError, Fallback: "syntax error: " + detail, Data: map[string]any{"Detail": cypherANTLRDiagnosticDetail(detail, diagnostics)}}
+}
+
+func cypherANTLRDiagnosticDetail(detail string, diagnostics []Message) any {
+	if len(diagnostics) == 0 {
+		return detail
+	}
+	// Validate returns its listener to a pool; returned errors own their slice.
+	return MessageSequence{Messages: append([]Message(nil), diagnostics...), Separator: "; "}
 }

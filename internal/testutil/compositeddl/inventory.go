@@ -163,5 +163,36 @@ func Cases() []Case {
 			cases = append(cases, c)
 		}
 	}
+	// A native-extension dispatch must not turn an unparsed listing suffix into
+	// a successful, unfiltered catalog read. All public routes share these cases.
+	for i, statement := range []string{
+		"SHOW ALIASES garbage",
+		"SHOW ALIASES garbage WHERE alias = '$db_alias'",
+		"SHOW ALIASES garbage YIELD alias, database",
+		"SHOW ALIASES garbage FOR DATABASE $db",
+		"SHOW ALIASES FOR",
+		"SHOW ALIASES FOR DATABASE",
+		"SHOW ALIASES FOR DATABASE $db garbage",
+		"SHOW ALIASES FOR DATABASE $db garbage WHERE alias = '$db_alias'",
+		"SHOW ALIASES FOR DATABASE $db garbage YIELD alias, database",
+		"SHOW ALIASES FOR DATABASES garbage",
+		"SHOW ALIASES FOR DATABASE $db,garbage",
+		"SHOW ALIASES FOR DATABASE $db@garbage",
+		"SHOW ALIASES FOR DATABASE $db;garbage",
+	} {
+		cases = append(cases, Case{Name: "show_aliases_invalid_" + strconv.Itoa(i), Setup: []string{local, "CREATE ALIAS $db_alias FOR DATABASE $db"}, Statement: statement, Reject: true, Inspect: "aliases"})
+	}
+	for i, statement := range []string{
+		"SHOW ALIASES WHERE alias = '$db_alias'",
+		"SHOW ALIASES YIELD alias, database WHERE alias = '$db_alias'",
+		"SHOW ALIASES FOR DATABASES WHERE alias = '$db_alias'",
+	} {
+		cases = append(cases, Case{Name: "show_aliases_tail_" + strconv.Itoa(i), Setup: []string{local, "CREATE ALIAS $db_alias FOR DATABASE $db"}, Statement: statement, Grammar: true, Inspect: "aliases", Alias: "$db_alias", Database: "$db", ReplyAlias: "$db_alias"})
+	}
+	for i, suffix := range []string{"-1", ".1"} {
+		// The lexer reads .1 as a numeric literal. That native name extension
+		// uses administration dispatch; both public parser routes must accept it.
+		cases = append(cases, Case{Name: "show_aliases_numeric_" + strconv.Itoa(i), DatabaseSuffix: suffix, Setup: []string{local, "CREATE ALIAS numeric_$db FOR DATABASE $db"}, Statement: "SHOW ALIASES FOR DATABASE $db WHERE alias = 'numeric_$db'", Grammar: suffix == "-1", Inspect: "aliases", Alias: "numeric_$db", Database: "$db", ReplyAlias: "numeric_$db"})
+	}
 	return cases
 }
