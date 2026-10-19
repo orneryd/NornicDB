@@ -454,7 +454,7 @@ type httpCypherTx struct {
 }
 
 type remoteTxRequest struct {
-	Statements []remoteStatement `json:"statements"`
+	Statements          []remoteStatement      `json:"statements"`
 	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
 }
 

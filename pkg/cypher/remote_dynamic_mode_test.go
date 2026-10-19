@@ -49,8 +49,13 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 			return
 		}
 		if len(parts) == 3 && r.Method == http.MethodPost {
-			var openRequest struct { TransactionMetadata map[string]interface{} `json:"tx_metadata"` }
-			if err := json.NewDecoder(r.Body).Decode(&openRequest); err != nil { reply(nil, err); return }
+			var openRequest struct {
+				TransactionMetadata map[string]interface{} `json:"tx_metadata"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&openRequest); err != nil {
+				reply(nil, err)
+				return
+			}
 			store, err := remote.GetStorage(parts[1])
 			if err != nil {
 				reply(nil, err)
@@ -182,7 +187,7 @@ func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
 		{"resolved reads", read, read, [2]string{"owner", "owner"}, false, [2]int{}},
 		{"write then read", write, read, [2]string{"owner", "owner"}, false, [2]int{1, 0}},
 		{"two resolved writers", write, write, [2]string{"owner", "owner"}, true, [2]int{}},
-        {"periodic batches cannot escape second writer", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", [2]string{"owner","owner"},true,[2]int{}},
+		{"periodic batches cannot escape second writer", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", [2]string{"owner", "owner"}, true, [2]int{}},
 		{"standard updates", write, write, [2]string{"standard", "standard"}, true, [2]int{}},
 		{"callbacks without counters", noStats, noStats, [2]string{"owner", "owner"}, true, [2]int{}},
 		{"missing summaries", write, write, [2]string{"missing", "missing"}, true, [2]int{}},
@@ -201,7 +206,11 @@ func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
 				query := "CALL { USE remote_modes.one CALL apoc.cypher.run($first,{}) YIELD value RETURN value } RETURN value UNION ALL CALL { USE remote_modes.two CALL apoc.cypher.run($second,{}) YIELD value RETURN value } RETURN value"
 				result, err := exec.Execute(ctx, query, map[string]interface{}{"first": tc.first, "second": tc.second})
 				if tc.reject {
-					if tc.name=="periodic batches cannot escape second writer" { require.ErrorContains(t,err,"unsupported query type in transaction") } else { require.ErrorContains(t, err, "AccessMode") }
+					if tc.name == "periodic batches cannot escape second writer" {
+						require.ErrorContains(t, err, "unsupported query type in transaction")
+					} else {
+						require.ErrorContains(t, err, "AccessMode")
+					}
 				} else {
 					require.NoError(t, err)
 					require.Len(t, result.Rows, 2)

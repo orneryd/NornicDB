@@ -148,11 +148,11 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 								statement = "CREATE (:U5AdmissionMatrix) RETURN 1 AS value"
 							}
 							_, err := exec.Execute(ctx, admissionMatrixQuery(call, composite, reject), map[string]interface{}{"statement": statement})
- if origin.OwnsTransactions && composite {
-  requireBatchScopeRejected(t,exec,shard,explicit,err)
-  require.False(t,invoked,"scope rejection must precede the registered handler")
-  return
- }
+							if origin.OwnsTransactions && composite {
+								requireBatchScopeRejected(t, exec, shard, explicit, err)
+								require.False(t, invoked, "scope rejection must precede the registered handler")
+								return
+							}
 							if reject {
 								require.ErrorContains(t, err, failure.Error())
 							} else {
@@ -227,10 +227,10 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 							"merge":     "MERGE (:U5AdmissionMatrix {id:1}) RETURN 1 AS value", "file": file,
 						})
 						if procedure.OwnsTransactions && composite {
- requireBatchScopeRejected(t,exec,shard,explicit,err)
- return
-}
-      if reject {
+							requireBatchScopeRejected(t, exec, shard, explicit, err)
+							return
+						}
+						if reject {
 							require.ErrorContains(t, err, failure.Error())
 						} else {
 							require.NoError(t, err)
@@ -270,9 +270,14 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 	}
 }
 
-func requireBatchScopeRejected(t *testing.T,exec *StorageExecutor,shard storage.Engine,explicit bool,err error) {
- t.Helper()
- require.ErrorContains(t,err,"unsupported query type in transaction")
- if explicit { _,err=exec.Execute(context.Background(),"ROLLBACK",nil); require.NoError(t,err) }
- nodes,readErr:=shard.GetNodesByLabel("U5AdmissionMatrix"); require.NoError(t,readErr); require.Empty(t,nodes,"scope rejection must precede independent writes")
+func requireBatchScopeRejected(t *testing.T, exec *StorageExecutor, shard storage.Engine, explicit bool, err error) {
+	t.Helper()
+	require.ErrorContains(t, err, "unsupported query type in transaction")
+	if explicit {
+		_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
+		require.NoError(t, err)
+	}
+	nodes, readErr := shard.GetNodesByLabel("U5AdmissionMatrix")
+	require.NoError(t, readErr)
+	require.Empty(t, nodes, "scope rejection must precede independent writes")
 }

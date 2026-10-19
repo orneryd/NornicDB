@@ -769,7 +769,7 @@ func (s *Server) writeRequestAdmissionError(w http.ResponseWriter, r *http.Reque
 // TransactionRequest follows Neo4j HTTP API format. TransactionMetadata is
 // NornicDB's HTTP equivalent of Bolt BEGIN's standard tx_metadata field.
 type TransactionRequest struct {
-	Statements []StatementRequest `json:"statements"`
+	Statements          []StatementRequest     `json:"statements"`
 	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
 }
 

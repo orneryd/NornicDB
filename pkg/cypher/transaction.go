@@ -54,15 +54,15 @@ var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9
 type TransactionContext struct {
 	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
 	coordinatorOwned bool
-	tx              interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
-	engine          storage.Engine // Engine owning this transaction's commit.
-	storageWrapper  *transactionStorageWrapper
-	active          bool
-	wal             *storage.WAL
-	walSeqStart     uint64
-	database        string
-	txID            string
-	fabricRemoteExe *fabric.RemoteFragmentExecutor
+	tx               interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
+	engine           storage.Engine // Engine owning this transaction's commit.
+	storageWrapper   *transactionStorageWrapper
+	active           bool
+	wal              *storage.WAL
+	walSeqStart      uint64
+	database         string
+	txID             string
+	fabricRemoteExe  *fabric.RemoteFragmentExecutor
 	// running is the transaction's SHOW TRANSACTIONS entry (#718).
 	running *runningTransaction
 

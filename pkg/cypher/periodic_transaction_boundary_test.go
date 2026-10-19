@@ -22,60 +22,73 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 			for _, explicit := range []bool{false, true} {
 				for _, failure := range []bool{false, true} {
 					for _, dynamic := range []bool{false, true} {
-					t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v/dynamic=%v", name, composite, explicit, failure, dynamic), func(t *testing.T) {
-						exec, committed := newProcedureAdmissionExecutor(t, composite)
-						cleanupAdmissionProcedure(t, "u5batch.step")
-						calls, visible := 0, -1
-						require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5batch.step", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
-							calls++
-							if calls == 1 {
-								return caller.Execute(ctx, "CREATE (:U5BatchBoundary) RETURN 1 AS v", nil)
+						t.Run(fmt.Sprintf("%s/fabric=%v/explicit=%v/failure=%v/dynamic=%v", name, composite, explicit, failure, dynamic), func(t *testing.T) {
+							exec, committed := newProcedureAdmissionExecutor(t, composite)
+							cleanupAdmissionProcedure(t, "u5batch.step")
+							calls, visible := 0, -1
+							require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "u5batch.step", Mode: ProcedureModeWrite, Returns: []ProcedureColumn{{Name: "v", Type: "INTEGER"}}}, func(ctx context.Context, caller *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+								calls++
+								if calls == 1 {
+									return caller.Execute(ctx, "CREATE (:U5BatchBoundary) RETURN 1 AS v", nil)
+								}
+								nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
+								if err != nil {
+									return nil, err
+								}
+								visible = len(nodes)
+								if failure {
+									return nil, errors.New("u5 deliberate later batch failure")
+								}
+								return &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(0)}}, Stats: &QueryStats{}}, nil
+							}))
+							body := "CALL u5batch.step() YIELD v RETURN * LIMIT 1"
+							call := "CALL " + name + "('UNWIND [1,2] AS input RETURN input',$body,{batchSize:1}) YIELD total RETURN total"
+							if name == "apoc.periodic.commit" {
+								call = "CALL " + name + "($body,{}) YIELD executions RETURN executions"
+							}
+							params := map[string]interface{}{"body": body}
+							if dynamic {
+								params["periodic"] = call
+								call = "CALL apoc.cypher.run($periodic,{body:$body}) YIELD value RETURN value"
+							}
+							if composite {
+								call = "CALL { USE admission_comp.one " + call + " } RETURN *"
+							}
+							if explicit {
+								_, err := exec.Execute(context.Background(), "BEGIN", nil)
+								require.NoError(t, err)
+							}
+							result, err := exec.Execute(context.Background(), call, params)
+							if composite {
+								require.ErrorContains(t, err, "unsupported query type in transaction")
+								require.Zero(t, calls, "unsupported managed scope must fail before any batch action")
+								if explicit {
+									_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
+									require.NoError(t, err)
+								}
+								nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
+								require.NoError(t, err)
+								require.Empty(t, nodes)
+								return
+							}
+							wantVisible := 1
+							if explicit {
+								wantVisible = 0
+							}
+							require.Equal(t, wantVisible, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
+							require.NoError(t, err)
+							if explicit {
+								_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
+								require.NoError(t, err)
 							}
 							nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
-							if err != nil {
-								return nil, err
-							}
-							visible = len(nodes)
-							if failure {
-								return nil, errors.New("u5 deliberate later batch failure")
-							}
-							return &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(0)}}, Stats: &QueryStats{}}, nil
-						}))
-						body := "CALL u5batch.step() YIELD v RETURN * LIMIT 1"
-						call := "CALL " + name + "('UNWIND [1,2] AS input RETURN input',$body,{batchSize:1}) YIELD total RETURN total"
-						if name == "apoc.periodic.commit" {
-							call = "CALL " + name + "($body,{}) YIELD executions RETURN executions"
-						}
-						params := map[string]interface{}{"body": body}
-						if dynamic {
-							params["periodic"] = call
-							call = "CALL apoc.cypher.run($periodic,{body:$body}) YIELD value RETURN value"
-						}
-						if composite {
-							call = "CALL { USE admission_comp.one " + call + " } RETURN *"
-						}
-						if explicit {
-							_, err := exec.Execute(context.Background(), "BEGIN", nil)
 							require.NoError(t, err)
-						}
-						result, err := exec.Execute(context.Background(), call, params)
-						if composite {
- require.ErrorContains(t,err,"unsupported query type in transaction")
- require.Zero(t,calls,"unsupported managed scope must fail before any batch action")
- if explicit { _,err=exec.Execute(context.Background(),"ROLLBACK",nil); require.NoError(t,err) }
- nodes,err:=committed.GetNodesByLabel("U5BatchBoundary"); require.NoError(t,err); require.Empty(t,nodes)
- return
-}
-      wantVisible:=1; if explicit {wantVisible=0}; require.Equal(t, wantVisible, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
-						require.NoError(t, err)
-						if explicit {
-							_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
-							require.NoError(t, err)
-						}
-						nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
-						require.NoError(t, err)
-						wantNodes:=1; if explicit {wantNodes=0}; require.Len(t, nodes, wantNodes, "explicit rollback retains shipped folding; autocommit retains completed batches")
-					})
+							wantNodes := 1
+							if explicit {
+								wantNodes = 0
+							}
+							require.Len(t, nodes, wantNodes, "explicit rollback retains shipped folding; autocommit retains completed batches")
+						})
 					}
 				}
 			}
@@ -114,18 +127,24 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 				}
 				result, err := exec.Execute(context.Background(), query, nil)
 				if composite {
- require.ErrorContains(t,err,"unsupported query type in transaction"); require.Zero(t,calls)
- nodes,readErr:=committed.GetNodesByLabel("U5BatchAtomic"); require.NoError(t,readErr); require.Empty(t,nodes); return
- }
+					require.ErrorContains(t, err, "unsupported query type in transaction")
+					require.Zero(t, calls)
+					nodes, readErr := committed.GetNodesByLabel("U5BatchAtomic")
+					require.NoError(t, readErr)
+					require.Empty(t, nodes)
+					return
+				}
 				require.NoError(t, err)
 				require.Equal(t, 2, visible, "first two-row batch committed before next begins")
 				nodes, err := committed.GetNodesByLabel("U5BatchAtomic")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2, "failed batch rolls back its earlier action, retaining completed batch")
-				require.Len(t,result.Rows,1)
-    observed:=make(map[string]interface{},len(result.Columns))
-    for index,column:=range result.Columns { observed[column]=result.Rows[0][index] }
-    require.Equal(t,map[string]interface{}{"committedOperations":int64(2),"failedOperations":int64(2),"failedBatches":int64(1)},observed)
+				require.Len(t, result.Rows, 1)
+				observed := make(map[string]interface{}, len(result.Columns))
+				for index, column := range result.Columns {
+					observed[column] = result.Rows[0][index]
+				}
+				require.Equal(t, map[string]interface{}{"committedOperations": int64(2), "failedOperations": int64(2), "failedBatches": int64(1)}, observed)
 			})
 		}
 	}
