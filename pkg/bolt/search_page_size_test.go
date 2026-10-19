@@ -16,7 +16,7 @@ func TestSearchContinuationPageSizeBolt(t *testing.T) {
 			base := storage.NewMemoryEngine()
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "nornic")
-			for i := 0; i < limit + 2; i++ {
+			for i := 0; i < limit+2; i++ {
 				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("page-%04d", i))})
 				require.NoError(t, err)
 			}
