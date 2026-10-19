@@ -209,18 +209,11 @@ skipArrayIndexing:
 	// ========================================
 	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		args := e.splitFunctionArgs(inner)
-		fnCtx := cypherfn.Context{
-			Nodes:    nodes,
-			Rels:     rels,
-			Storage:  e.storage,
-			Database: e.executionDatabaseName(ctx),
-			Eval: func(argExpr string) (interface{}, error) {
-				return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
-			},
-			Now:      time.Now,
-			Graphs:   e,
-			Cypher25: cypherVersionFromContext(ctx) == "25",
-		}
+		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
+			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		})
+		fnCtx.Nodes = nodes
+		fnCtx.Rels = rels
 
 		if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
 			originalEval := fnCtx.Eval

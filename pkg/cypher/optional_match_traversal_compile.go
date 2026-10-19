@@ -33,7 +33,6 @@ import (
 	"context"
 	"strconv"
 	"strings"
-	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -172,21 +171,14 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 
 	captured := expr
 	return func(row traversalOptRow) interface{} {
-		fnCtx := cypherfn.Context{
-			Nodes:    row.nodes,
-			Rels:     row.rels,
-			Storage:  e.storage,
-			Database: e.executionDatabaseName(ctx),
-			Eval: func(argExpr string) (interface{}, error) {
-				if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {
-					return argFn(row), nil
-				}
-				return e.evaluateExpressionWithContext(ctx, argExpr, row.nodes, row.rels), nil
-			},
-			Now:      time.Now,
-			Graphs:   e,
-			Cypher25: cypherVersionFromContext(ctx) == "25",
-		}
+		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
+			if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {
+				return argFn(row), nil
+			}
+			return e.evaluateExpressionWithContext(ctx, argExpr, row.nodes, row.rels), nil
+		})
+		fnCtx.Nodes = row.nodes
+		fnCtx.Rels = row.rels
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
