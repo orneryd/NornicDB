@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -155,4 +156,29 @@ func TestRelationshipEmbeddingSaveDoesNotPublishSupersededVectors(t *testing.T) 
 			require.Zero(t, svc.RelationshipEmbeddingCount())
 		})
 	}
+}
+
+func TestRelationshipEmbeddingSavesWhileWritesContinue(t *testing.T) {
+	engine := relationshipTestEngine(t)
+	svc := NewServiceWithDimensions(engine, 3)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.SetPersistenceEnabled(true)
+	svc.SetFulltextIndexPath(filepath.Join(t.TempDir(), "bm25"))
+	calls := 0
+	svc.EnableRelationshipSearch(func(context.Context, *storage.Edge) (RelationshipEmbedding, error) {
+		calls++
+		if calls <= 4 {
+			svc.IndexRelationship(&storage.Edge{ID: storage.EdgeID(fmt.Sprint(calls)), Type: "CITES", Properties: map[string]any{"reason": "next document"}})
+		}
+		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
+	})
+	edge, err := engine.GetEdge("r1")
+	require.NoError(t, err)
+	svc.IndexRelationship(edge)
+	changed, failed := svc.embedPendingRelationships(context.Background(), svc.relationshipSearch())
+	require.True(t, changed)
+	require.False(t, failed)
+	require.Equal(t, 1, calls, "new arrivals must not postpone this batch's save")
+	require.Equal(t, 1, svc.RelationshipEmbeddingCount())
+	require.Len(t, svc.loadRelationshipVectors(), 1)
 }
