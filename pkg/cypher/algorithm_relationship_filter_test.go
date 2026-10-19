@@ -10,19 +10,21 @@ import (
 
 func algorithmRelationshipFixture(t *testing.T, types ...string) *StorageExecutor {
 	t.Helper()
-		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "filtered_algo")
-		for _, id := range []string{"a", "b", "c", "d"} {
-			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
-			require.NoError(t, err)
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "filtered_algo")
+	for _, id := range []string{"a", "b", "c", "d"} {
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"P"}, Properties: map[string]interface{}{"name": id}})
+		require.NoError(t, err)
+	}
+	for _, kind := range types {
+		pairs := [][2]string{{"a", "b"}, {"b", "c"}}
+		if kind == "L" {
+			pairs = [][2]string{{"a", "c"}, {"c", "d"}}
 		}
-		for _, kind := range types {
-			pairs := [][2]string{{"a", "b"}, {"b", "c"}}
-			if kind == "L" { pairs = [][2]string{{"a", "c"}, {"c", "d"}} }
-			for _, pair := range pairs {
-				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(kind+pair[0]+pair[1]), StartNode: storage.NodeID(pair[0]), EndNode: storage.NodeID(pair[1]), Type: kind}))
-			}
+		for _, pair := range pairs {
+			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(kind + pair[0] + pair[1]), StartNode: storage.NodeID(pair[0]), EndNode: storage.NodeID(pair[1]), Type: kind}))
 		}
-		return NewStorageExecutor(store)
+	}
+	return NewStorageExecutor(store)
 
 }
 
@@ -47,8 +49,12 @@ func TestAlgorithmRelationshipFilterContract(t *testing.T) {
 	for _, proc := range []string{"pageRank", "betweenness", "closeness", "louvain", "labelPropagation", "wcc"} {
 		t.Run(proc, func(t *testing.T) {
 			column := "score"
-			if proc == "louvain" || proc == "labelPropagation" { column = "community" }
-			if proc == "wcc" { column = "componentId" }
+			if proc == "louvain" || proc == "labelPropagation" {
+				column = "community"
+			}
+			if proc == "wcc" {
+				column = "componentId"
+			}
 			read := func(exec *StorageExecutor, arguments string) [][]interface{} {
 				result, err := exec.Execute(context.Background(), "CALL apoc.algo."+proc+"("+arguments+") YIELD node, "+column+" RETURN node.name, "+column+" ORDER BY node.name", nil)
 				require.NoError(t, err, arguments)
@@ -69,7 +75,7 @@ func TestAlgorithmRelationshipFilterContract(t *testing.T) {
 			}
 			result, err := full.Execute(context.Background(), "MATCH (n:P) WHERE n.name IN ['a','b'] WITH collect(n) AS chosen CALL apoc.algo."+proc+"(chosen, ['K']) YIELD node RETURN node.name ORDER BY node.name", nil)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"a"},{"b"}}, result.Rows)
+			require.Equal(t, [][]interface{}{{"a"}, {"b"}}, result.Rows)
 		})
 	}
 }
@@ -79,8 +85,10 @@ func TestAlgorithmRelationshipFilterKeepsConfig(t *testing.T) {
 	physical := algorithmRelationshipFixture(t, "K")
 	for _, proc := range []string{"pageRank", "louvain"} {
 		column, config := "score", "{iterations: 1, dampingFactor: 0.5}"
-		if proc == "louvain" { column, config = "community", "{weightProperty: 'w'}" }
-		suffix := ") YIELD node, "+column+" RETURN node.name, "+column+" ORDER BY node.name"
+		if proc == "louvain" {
+			column, config = "community", "{weightProperty: 'w'}"
+		}
+		suffix := ") YIELD node, " + column + " RETURN node.name, " + column + " ORDER BY node.name"
 		want, err := physical.Execute(context.Background(), "CALL apoc.algo."+proc+"(['P'], "+config+suffix, nil)
 		require.NoError(t, err)
 		got, err := full.Execute(context.Background(), "CALL apoc.algo."+proc+"(['P'], ['K'], "+config+suffix, nil)
@@ -101,9 +109,13 @@ func TestAlgorithmRelationshipFilterMatchesPhysicalSubgraph(t *testing.T) {
 		for _, proc := range []string{"pageRank", "betweenness", "closeness", "louvain", "labelPropagation", "wcc"} {
 			t.Run(proc+"/"+kind, func(t *testing.T) {
 				column := "score"
-				if proc == "louvain" || proc == "labelPropagation" { column = "community" }
-				if proc == "wcc" { column = "componentId" }
-				suffix := ") YIELD node, "+column+" RETURN node.name, "+column+" ORDER BY node.name"
+				if proc == "louvain" || proc == "labelPropagation" {
+					column = "community"
+				}
+				if proc == "wcc" {
+					column = "componentId"
+				}
+				suffix := ") YIELD node, " + column + " RETURN node.name, " + column + " ORDER BY node.name"
 				want, err := physical.Execute(context.Background(), "CALL apoc.algo."+proc+"(['P']"+suffix, nil)
 				require.NoError(t, err)
 				got, err := full.Execute(context.Background(), "CALL apoc.algo."+proc+"(['P'], ['"+kind+"']"+suffix, nil)
