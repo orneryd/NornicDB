@@ -20,7 +20,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	}
 
 	becameSuppressed := false
-	nodeChanged := false
+	var nodeChanged *Node
 	var edgeChanged *Edge
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		if isEdge {
@@ -38,27 +38,29 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		}
 		return err
 	})
-	if err == nil && nodeChanged {
+	if err == nil && nodeChanged != nil {
 		// Suppression rewrites the persisted body without UpdateNode. Drop both
-		// node caches with their generation guard before indexed reads reuse it.
+		// node caches with their generation guard before indexed reads reuse it,
+		// and report the change as an update, as UpdateNode does: search drops a
+		// suppressed node and indexes one shown again.
 		b.cacheDeleteNode(NodeID(entityID))
-		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
+		b.notifyNodeUpdated(nodeChanged)
 	}
 	if err == nil && edgeChanged != nil {
 		// A policy transition rewrites the relationship body just like UpdateEdge.
 		// Publish it through the same cache lifecycle so adjacency/type reads do
 		// not retain a suppressed body or an empty filtered scan after relaxation.
 		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
-		b.graphMutationVersions.changed(namespaceForEdgeID(edgeChanged.ID))
+		b.notifyEdgeUpdated(edgeChanged)
 	}
 
 	return becameSuppressed, err
 }
 
-func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID NodeID) (bool, bool, error) {
+func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID NodeID) (bool, *Node, error) {
 	item, err := txn.Get(nodeKey(nodeID))
 	if err != nil {
-		return false, false, nil
+		return false, nil, nil
 	}
 
 	var node *Node
@@ -67,7 +69,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
-		return false, false, nil
+		return false, nil, nil
 	}
 
 	nowNanos := DecayScoringTime()
@@ -79,29 +81,29 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		node.VisibilitySuppressed = true
 		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
 		if err != nil {
-			return false, false, err
+			return false, nil, err
 		}
 		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return false, false, err
+			return false, nil, err
 		}
 		if err := enqueueWorkItemInTxn(txn, string(nodeID), "NODE"); err != nil {
-			return false, false, err
+			return false, nil, err
 		}
-		return true, true, nil
+		return true, node, nil
 	}
 
 	if !suppress && wasSuppressed {
 		data, _, err := b.encodeNodeInTxn(txn, namespaceForNodeID(nodeID), node)
 		if err != nil {
-			return false, false, err
+			return false, nil, err
 		}
 		if err := txn.Set(nodeKey(nodeID), data); err != nil {
-			return false, false, err
+			return false, nil, err
 		}
-		return false, true, clearTombstonesForEntityInTxn(txn, string(nodeID))
+		return false, node, clearTombstonesForEntityInTxn(txn, string(nodeID))
 	}
 
-	return false, false, nil
+	return false, nil, nil
 }
 
 // rescoreSuppressionAfterLabelChangeInTxn re-evaluates a node's decay

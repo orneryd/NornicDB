@@ -89,7 +89,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 				log.Printf("⚠️  Retention: failed to process %s: %v", node.ID, err)
 			} else {
 				deleted++
-				if idxErr := db.removeNodeFromSearchIndexes(ctx, dbName, db.storage, node.ID); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
+				if idxErr := db.refreshNodeInSearchIndexes(ctx, dbName, db.storage, node.ID); idxErr != nil && !db.shouldIgnoreSearchIndexingError(idxErr) {
 					log.Printf("⚠️  Retention: failed to remove %s from search indexes: %v", node.ID, idxErr)
 				}
 			}
