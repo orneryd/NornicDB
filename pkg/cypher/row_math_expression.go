@@ -3,7 +3,6 @@ package cypher
 import (
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 )
 
 // evaluateRowMathFunction evaluates scalar math functions for the converged
