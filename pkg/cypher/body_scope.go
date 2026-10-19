@@ -21,6 +21,18 @@ type bodyScope struct {
 	Branches []branchScope
 }
 
+// patternPartEnd excludes a pattern clause's WHERE and MERGE actions from
+// the pattern declarations recorded by the shared body scope walk.
+func patternPartEnd(clause pipelineClause) int {
+	end := len(clause.text)
+	for _, keyword := range [...]string{"WHERE", "ON"} {
+		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
+			end = index
+		}
+	}
+	return end
+}
+
 // branchScope is one UNION branch of a body.
 type branchScope struct {
 	// Reads are the enclosing names this branch reads.
