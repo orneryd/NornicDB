@@ -50,6 +50,7 @@ class ConfigManager: ObservableObject {
         if let value = environment["NORNICDB_SEARCH_RERANK_ENABLED"], let parsed = yamlBool(value) { searchRerankEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_SEARCH_RERANK_ENABLED") }
         if let value = environment["NORNICDB_HEIMDALL_ENABLED"], let parsed = yamlBool(value) { heimdallEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_HEIMDALL_ENABLED") }
         if let value = environment["NORNICDB_KMEANS_CLUSTERING_ENABLED"], let parsed = yamlBool(value) { kmeansEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_KMEANS_CLUSTERING_ENABLED") }
+        if let value = environment["NORNICDB_SEARCH_CURSOR_MAX"], let parsed = Int(value), parsed >= 0 { searchCursorMax = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_SEARCH_CURSOR_MAX") }
         if let value = environment["NORNICDB_MEMORY_DECAY_ENABLED"], let parsed = yamlBool(value) { memoryDecayEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_MEMORY_DECAY_ENABLED") }
         if let value = environment["NORNICDB_AUTO_TLP_ENABLED"], let parsed = yamlBool(value) { autoTLPEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_AUTO_TLP_ENABLED") }
         if let value = environment["NORNICDB_ENCRYPTION_ENABLED"], let parsed = yamlBool(value) { encryptionEnabled = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_ENCRYPTION_ENABLED") }
@@ -63,6 +64,7 @@ class ConfigManager: ObservableObject {
         runtimeArguments = arguments.isEmpty ? ["serve"] : Array(arguments.dropFirst())
     }
     @Published var embeddingsEnabled: Bool = false
+    @Published var searchCursorMax: Int = 0
     @Published var kmeansEnabled: Bool = false
     @Published var searchRerankEnabled: Bool = false
     @Published var memoryDecayEnabled: Bool = true
@@ -413,6 +415,7 @@ class ConfigManager: ObservableObject {
 
         // Load memory section
         let memorySection = yamlSection(root, "memory")
+        if let count = yamlInt(memorySection["search_cursor_max"]), count >= 0 { searchCursorMax = count }
         if let enabled = yamlBool(memorySection["decay_enabled"]) {
             memoryDecayEnabled = enabled
             print("✅ Loaded memory decay enabled: \(memoryDecayEnabled)")
@@ -583,6 +586,10 @@ class ConfigManager: ObservableObject {
 
     func saveConfig() -> Bool {
         configurationError = ""
+        guard searchCursorMax >= 0 else {
+            configurationError = "Maximum active search cursors must be zero or greater (zero disables continuation)."
+            return false
+        }
         guard embeddingWorkers >= 0 && embeddingDimensions > 0 else {
             configurationError = "Embedding workers must be zero or greater and dimensions must be positive."
             return false
@@ -612,6 +619,7 @@ class ConfigManager: ObservableObject {
 
         kmeansSection["enabled"] = kmeansEnabled
         memorySection["decay_enabled"] = memoryDecayEnabled
+        memorySection["search_cursor_max"] = searchCursorMax
         autoTLPSection["enabled"] = autoTLPEnabled
 
 
@@ -725,6 +733,7 @@ func launchAgentEnvironmentVariables(config: ConfigManager, homeDir: String) -> 
         "NORNICDB_EMBEDDING_API_KEY": config.useAppleIntelligence ? ConfigManager.getAppleIntelligenceAPIKey() : config.embeddingAPIKey,
         "NORNICDB_EMBED_CHUNK_SIZE": "\(config.effectiveEmbeddingChunkSize())",
         "NORNICDB_EMBED_CHUNK_OVERLAP": "\(config.effectiveEmbeddingChunkOverlap())",
+        "NORNICDB_SEARCH_CURSOR_MAX": String(config.searchCursorMax),
         "NORNICDB_KMEANS_CLUSTERING_ENABLED": config.kmeansEnabled ? "true" : "false",
         "NORNICDB_SEARCH_RERANK_ENABLED": config.searchRerankEnabled ? "true" : "false",
         "NORNICDB_SEARCH_RERANK_PROVIDER": config.searchRerankProvider,
