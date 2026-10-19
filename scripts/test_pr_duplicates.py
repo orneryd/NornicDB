@@ -352,7 +352,7 @@ class HttpClientTests(unittest.TestCase):
     def test_ranked_score_floor_must_be_finite_and_positive(self):
         for floor in [None, 0, -0.01, True, float("nan"), float("inf"), "invalid"]:
             with self.subTest(floor=floor), self.assertRaises(ValueError):
-                pd.NornicDB("http://localhost:7474", "u", "p", exhaust=True, min_rrf_score=floor)
+                pd.NornicDB("http://localhost:7474", "u", "p", require_scores=True, min_rrf_score=floor)
 
     def test_bearer_search_request_shape(self):
         server = FakeServer(search_hits=[hit_json("a", "f()", "lib/a.py", FUNC_A, line=7)])
