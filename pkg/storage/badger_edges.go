@@ -31,7 +31,7 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -180,11 +180,11 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
 	}, func() { b.cacheOnEdgeCreated(edge) }, func() []any {
 		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, nil, edge)
-	})
+	}, notification)
 
 	if err == nil {
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		b.notifyEdgeCreated(edge)
+		notification.ops = []Operation{{Type: OpCreateEdge, Edge: edge}}
 	}
 
 	return err
@@ -302,7 +302,7 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -510,11 +510,11 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
 	}, func() { b.cacheOnEdgeUpdated(oldType, edge) }, func() []any {
 		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, oldEdge, edge)
-	})
+	}, notification)
 
 	// Notify listeners on successful update
 	if err == nil {
-		b.notifyEdgeUpdated(edge)
+		notification.ops = []Operation{{Type: OpUpdateEdge, Edge: edge}}
 	}
 
 	return err
@@ -536,7 +536,7 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -613,11 +613,11 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
 	}, publish, func() []any {
 		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(id)), id, edge, nil)
-	})
+	}, notification)
 
 	if err == nil {
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
-		b.notifyEdgeDeleted(id)
+		notification.ops = []Operation{{Type: OpDeleteEdge, EdgeID: id}}
 	}
 
 	return err

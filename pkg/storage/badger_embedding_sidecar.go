@@ -158,7 +158,7 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	release, err := b.beginWrite()
+	notification, release, err := b.beginNotifyingWrite()
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 		cw.publish = func() { b.cacheDeleteNode(node.ID) }
 		cw.publishKeys = []any{node.ID}
 		return nil
-	})
+	}, notification)
 	if errors.Is(err, badger.ErrConflict) {
 		return ErrEmbeddingSourceChanged
 	}
@@ -207,7 +207,7 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	b.notifyNodeUpdated(node)
+	notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
 	return nil
 }
 

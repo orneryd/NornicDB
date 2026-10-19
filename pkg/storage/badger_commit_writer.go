@@ -30,6 +30,9 @@ type commitWriter struct {
 	engine *BadgerEngine
 	db     *managedBadgerDB
 	large  *largeCommit
+	// notification follows timestamp assignment through ordinary/large commits.
+	notification *commitNotification
+
 	// publish, when set, is the commit's derived-state publication, and
 	// publishKeys the entities and unique values it touches: the writer fills
 	// them before finish, and the ordered stage runs publish after the commit
@@ -64,7 +67,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -126,7 +129,7 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commitPublishing(cw.txn, cw.publication(), admit)
+		return cw.db.commitPublishing(cw.txn, cw.publication(), admit, cw.reserveNotification)
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
@@ -153,6 +156,10 @@ func (cw *commitWriter) admit() error {
 		return nil
 	}
 	return errBufferedWritePending
+}
+
+func (cw *commitWriter) reserveNotification() {
+	cw.engine.reserveCommitNotification(cw.notification)
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch
