@@ -32,6 +32,7 @@ type rule73HTTPCase struct {
 func rule73HTTPInventory() []rule73HTTPCase {
 	constantBody := func(value any) func(string) any { return func(string) any { return value } }
 	return []rule73HTTPCase{
+		{"db.info.missing", http.MethodGet, "missing", rule73HTTPRead, func(db string) string { return "/db/" + db + "_missing" }, nil},
 		{"embed.pause", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/pause" }, nil},
 		{"embed.resume", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/resume" }, nil},
 		{"embed.status", http.MethodGet, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/status" }, nil},
@@ -120,6 +121,9 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	allowed := func(p profile, tc rule73HTTPCase, database string) bool {
 		if p.name == "admin" {
 			return true
+		}
+		if tc.target == "missing" {
+			return false
 		}
 		if tc.target == "all" && (!p.allowedDatabases["nornic"] || !p.allowedDatabases["rule73_named"]) {
 			return false
