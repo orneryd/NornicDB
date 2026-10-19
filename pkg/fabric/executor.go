@@ -1366,10 +1366,7 @@ func parseSimpleBatchedLookupReturnItems(returnPart, matchVar string) ([]fabricR
 	out := make([]fabricReturnItem, 0, len(p.Items))
 	for _, item := range p.Items {
 		v, prop, ok := syntaxProperty(item.tree)
-		alias := item.Alias
-		if alias == "" {
-			alias = item.Expression
-		}
+		alias := item.Column
 		if !ok || v != matchVar || !isSimpleIdentifier(v) || !isSimpleIdentifier(prop) || !isSimpleIdentifier(alias) {
 			return nil, false
 		}
@@ -1410,10 +1407,7 @@ func parseSimpleBatchedCountReturnItems(returnPart string) ([]fabricCountReturnI
 	}
 	out := make([]fabricCountReturnItem, 0, len(p.Items))
 	for _, item := range p.Items {
-		alias := item.Alias
-		if alias == "" {
-			alias = item.Expression
-		}
+		alias := item.Column
 		if !isSimpleIdentifier(alias) || !isSimpleCountExpr(item.Expression) {
 			return nil, false
 		}
@@ -1460,7 +1454,7 @@ func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec
 	}
 	clauses := q.Clauses
 	p := clauses[0].Projection
-	if p == nil || p.Star || p.Distinct || p.Modifiers != "" || clauses[0].Predicate != "" || len(p.Items) != 1 || !isSimpleIdentifier(p.Items[0].Name) || p.Items[0].Alias != "" {
+	if p == nil || p.Star || p.Distinct || p.Modifiers != "" || clauses[0].Predicate != "" || len(p.Items) != 1 || !isSimpleIdentifier(p.Items[0].Name) || p.Items[0].HasAlias {
 		return applyCorrelatedLookupSpec{}, false
 	}
 	spec := applyCorrelatedLookupSpec{importCol: p.Items[0].Name}
@@ -1583,10 +1577,7 @@ func synthesizeEmptyCollectOnlyReturn(query string) ([]string, []interface{}, bo
 		if _, ok := syntaxCollect(item.Expression); !ok {
 			return nil, nil, false
 		}
-		alias := item.Alias
-		if alias == "" {
-			alias = item.Expression
-		}
+		alias := item.Column
 		cols = append(cols, alias)
 		row = append(row, []interface{}{})
 	}
@@ -1613,10 +1604,7 @@ func projectSimpleReturnFromRow(query string, inputCols []string, inputRow []int
 		if !ok || i >= len(inputRow) {
 			return nil, nil, false
 		}
-		alias := item.Alias
-		if alias == "" {
-			alias = item.Name
-		}
+		alias := item.Column
 		cols = append(cols, alias)
 		values = append(values, inputRow[i])
 	}
@@ -1703,10 +1691,7 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 			}
 			parsed := make([]retItem, 0, len(items))
 			for _, it := range items {
-				src, alias := it.Name, it.Alias
-				if alias == "" {
-					alias = src
-				}
+				src, alias := it.Name, it.Column
 				if src == "" || alias == "" {
 					return nil, false
 				}
@@ -2518,7 +2503,7 @@ func isSimpleWithImportClause(withClause string, importCols []string) bool {
 		allowed[col] = true
 	}
 	for i, name := range names {
-		if !allowed[name] || p.Items[i].Alias != "" {
+		if !allowed[name] || p.Items[i].HasAlias {
 			return false
 		}
 	}
