@@ -82,7 +82,7 @@ func TestCompositeCapabilityParity_MVCCAndVisibilityReads(t *testing.T) {
 			return true
 		}))
 		require.Len(t, seen, 2)
-		require.True(t, seen["a:n-1"] && seen["b:m-1"])
+		require.True(t, seen["4:a:n-1"] && seen["4:b:m-1"])
 	})
 
 	t.Run("projected read routes by ID", func(t *testing.T) {
