@@ -191,6 +191,9 @@ func (s *Service) currentBM25FormatVersion() string {
 }
 
 func (s *Service) persistSearchBuildSettings(fulltextPath, vectorPath, hnswPath string) {
+	if !s.populationCanPersist() {
+		return
+	}
 	path := searchBuildSettingsPath(fulltextPath, vectorPath, hnswPath)
 	if path == "" {
 		return

@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"errors"
 	"math"
 	"reflect"
@@ -145,15 +146,18 @@ func (s *Service) startBuildWrites() {
 // A build that another one waits for leaves the rest, and publication, to it.
 // Caller owns buildMu and releases it next, so a write that finds the queue
 // closed waits only for that release.
-func (s *Service) endBuildWrites(buildErr error) error {
+func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	s.ready.Store(false)
+	if buildErr != nil {
+		s.population.state.Store(populationFailed)
+	}
 	q := &s.buildWrites
 	q.mu.Lock()
 	q.owners--
 	if q.owners > 0 {
 		q.mu.Unlock()
 		s.setBuildPhase("idle")
-		return buildErr
+		return s.finishPopulationPersistence(ctx, buildErr, true, false)
 	}
 	q.open.Store(false)
 	q.deferring.Store(false)
@@ -162,9 +166,7 @@ func (s *Service) endBuildWrites(buildErr error) error {
 	q.mu.Unlock()
 	changed, err := s.applyBuildWrites(writes)
 	resultErr := errors.Join(buildErr, err)
-	if changed && err == nil && !s.buildInProgress.Load() {
-		s.schedulePersist()
-	}
+	resultErr = s.finishPopulationPersistence(ctx, resultErr, false, changed)
 	// A new build can claim the next sequence while the final batch applies.
 	// Check and publish under the same lock that claims its ownership.
 	q.mu.Lock()
@@ -186,7 +188,11 @@ func (s *Service) completeBuildPopulation() error {
 	q.mu.Lock()
 	q.populated = true
 	q.mu.Unlock()
-	return s.drainBuildWrites()
+	if err := s.drainBuildWrites(); err != nil {
+		return err
+	}
+	s.population.state.Store(populationComplete)
+	return nil
 }
 
 // queueBuildWrite prepares write for the build that owns or awaits buildMu
@@ -534,6 +540,7 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 			}
 		}
 		if err != nil {
+			s.population.state.Store(populationFailed)
 			resultErr = errors.Join(resultErr, write.replayError(err))
 		}
 	}
