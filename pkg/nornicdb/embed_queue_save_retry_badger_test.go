@@ -43,6 +43,7 @@ func TestEmbedWorkerSaveRetryAfterSameSourceUpdate(t *testing.T) {
 				require.False(t, before.UpdatedAt.Equal(current.UpdatedAt))
 				require.True(t, (storage.EmbeddingTextPolicy{IncludeLabels: true}).SameSource(before, current))
 
+				makeNodeSaveRetriesReady(worker)
 				require.True(t, worker.processNextBatch())
 				require.NotNil(t, published)
 				require.Equal(t, int64(1), worker.processed.Load())
