@@ -99,7 +99,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 }
 
 func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil
 	}

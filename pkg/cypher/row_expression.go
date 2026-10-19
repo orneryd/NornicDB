@@ -84,7 +84,7 @@ func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right
 // rowValueProgram keeps the decisions it makes about a text and calls it
 // for the forms it doesn't compile.
 func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil, false, nil
 	}
