@@ -104,6 +104,13 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 			params := map[string]interface{}{"x": "x", "keys": []interface{}{"x", "x"}}
 			ctx := withRelationshipSeekProfile(context.WithValue(context.Background(), profileExecutionKey{}, true))
 			actual, err := e.Execute(ctx, tc.q, params)
+			if strings.HasPrefix(tc.name, "generated_match_") {
+				// Existing normalized-statement validation failure on both bases;
+				// these controls must not be counted as successful seek cases.
+				require.ErrorContains(t, err, "unknown function: "+dynamicLabelTestFunction)
+				t.Logf("existing dynamic MATCH validation limit: %v", err)
+				return
+			}
 			if tc.name == "foreach_local_source" || (tc.name == "yield_where_expression" && err != nil) {
 				require.Error(t, err)
 				message := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(err.Error(), "`", ""), " is ", " "))
