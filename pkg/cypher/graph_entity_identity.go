@@ -25,6 +25,21 @@ func graphEntityReference(value interface{}) (storage.EntityIdentity, bool) {
 	return storage.EntityIdentity{}, false
 }
 
+// graphEntityDisplayID renders the public value, before any graph-domain
+// canonicalization. Internal keys must never be formatted in client messages.
+func graphEntityDisplayID(value interface{}) (storage.NodeID, bool) {
+ reference, ok := graphEntityReference(value)
+ if !ok { return "", false }
+ return storage.NodeID(reference.InDatabase("")), true
+}
+
+// identityGraphEngine preserves nil storage so existing graph builders return
+// their established error. Wrapping nil would hide that contract from them.
+func identityGraphEngine(engine storage.Engine) storage.Engine {
+ if engine == nil { return nil }
+ return graphIdentityView(engine)
+}
+
 // graphIdentityStorage is a read view for algorithms whose maps accept NodeID.
 // Inside that view every node, edge and endpoint uses the canonical identity
 // key. Native values are restored at the result boundary; no identity cache or
@@ -85,7 +100,9 @@ func graphIdentityPathValue(path PathResult) PathResult {
 }
 
 func (e *StorageExecutor) graphIdentityExecutor(ctx context.Context) *StorageExecutor {
-	return e.cloneForStorage(graphIdentityView(e.getStorage(ctx)))
+	engine := identityGraphEngine(e.getStorage(ctx))
+ if engine == nil { return e }
+ return e.cloneForStorage(engine)
 }
 
 func (e *StorageExecutor) graphReadArguments(ctx context.Context, args []interface{}, nodeCount int) (*StorageExecutor, []interface{}) {
@@ -353,4 +370,11 @@ func (c *linkPredictionConfig) identityRows(result *ExecuteResult) *ExecuteResul
 
 func (v *graphIdentityStorage) outputID(key storage.NodeID) string {
 	return storage.EntityIdentityFromKey(string(key)).InDatabase(storageDatabaseName(v.Engine))
+}
+
+func (c *linkPredictionConfig) sourceDisplay() string {
+ value := c.sourceValue
+ if value == nil { value = string(c.SourceNode) }
+ id, _ := graphEntityDisplayID(value)
+ return string(id)
 }

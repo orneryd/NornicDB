@@ -403,15 +403,17 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
-	id, ok := gdsNodeID(value)
+	reference, ok := graphEntityReference(value)
 	if !ok {
 		// Preserve asNode's extension: other values may name string IDs.
-		id = storage.NodeID(fmt.Sprint(value))
+		reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)}
 	}
 	// A function has no executor: the store's transaction alone decides
 	// (getQueryNode with no read-only statement signal).
 	var noExecutor *StorageExecutor
-	if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
+	id, valid := reference.NodeLookupID(store)
+ if !valid { return nil }
+ if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
 		return node
 	}
 	return nil
