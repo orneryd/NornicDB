@@ -555,8 +555,9 @@ func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (Cons
 	if !exists || info.Type != "composite" {
 		return ConstituentRef{}, "", false
 	}
-	for _, ref := range canonicalConstituents(info.Constituents) {
-		if !strings.EqualFold(ref.Alias, constituentAlias) {
+	aliasKey := strings.ToLower(constituentAlias)
+	for key, ref := range canonicalConstituents(info.Constituents) {
+		if key != aliasKey {
 			continue
 		}
 		resolvedName := ref.DatabaseName
@@ -659,7 +660,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	}
 
 	aliases := append([]string(nil), info.Aliases...)
-	constituents := canonicalConstituents(info.Constituents)
+	constituents := snapshotConstituents(info.Constituents)
 
 	info.sizeMu.RLock()
 	totalSize := info.totalSize

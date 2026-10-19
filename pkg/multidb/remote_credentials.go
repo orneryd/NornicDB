@@ -109,6 +109,9 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 // Only credential values change; escaped delimiters remain part of their value.
 func mapRemoteURLCredentials(endpoint *url.URL, transform func(string) (string, error)) error {
 	mapQuery := func(query string) (string, error) {
+		if query == "" {
+			return query, nil
+		}
 		parts := strings.Split(query, "&")
 		for i, part := range parts {
 			key, value, found := strings.Cut(part, "=")
