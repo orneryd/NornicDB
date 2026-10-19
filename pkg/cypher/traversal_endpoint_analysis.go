@@ -57,6 +57,7 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(match *
 	}
 	add(match.StartNode.variable)
 	add(match.EndNode.variable)
+	add(match.Relationship.Variable)
 	for _, seg := range match.Segments {
 		add(seg.FromNode.variable)
 		add(seg.ToNode.variable)

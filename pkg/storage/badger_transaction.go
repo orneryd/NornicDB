@@ -1971,16 +1971,24 @@ func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
 		return nil, err
 	}
-	if node, connected := tx.connectedDeletes[nodeID]; connected {
-		return copyNodeForCaller(node), nil
+	var node *Node
+	var err error
+	if connected, exists := tx.connectedDeletes[nodeID]; exists {
+		node = copyNodeForCaller(connected)
+	} else if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return nil, ErrNotFound
+	} else if pending, exists := tx.pendingNodes[nodeID]; exists {
+		node = copyNodeForCaller(pending)
+	} else {
+		node, err = tx.getCommittedNodeReadLocked(nodeID, false)
 	}
-	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+	// Snapshot scan caches hold complete bodies, including suppressed nodes.
+	// Every query point read must apply the scan's visibility decision before
+	// a caller can project or admit an endpoint from any cache or overlay.
+	if err == nil && tx.engine.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
-	if node, exists := tx.pendingNodes[nodeID]; exists {
-		return copyNodeForCaller(node), nil
-	}
-	return tx.getCommittedNodeReadLocked(nodeID, false)
+	return node, err
 }
 
 // GetNodeProjected implements ProjectedNodeReader inside the transaction: it

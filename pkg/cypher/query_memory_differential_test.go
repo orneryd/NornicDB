@@ -40,7 +40,15 @@ func queryMemoryCanonicalRows(t *testing.T, rows [][]interface{}) []string {
 	t.Helper()
 	out := make([]string, len(rows))
 	for index, row := range rows {
-		encoded, err := json.Marshal(row)
+		values := make([]interface{}, len(row))
+		for index, value := range row {
+			if path, ok := value.(map[string]interface{}); ok && path["_pathResult"] != nil {
+				nodes, relationships, _, _ := pathValueParts(path)
+				value = map[string]interface{}{"nodes": nodes, "relationships": relationships, "length": path["length"]}
+			}
+			values[index] = value
+		}
+		encoded, err := json.Marshal(values)
 		require.NoError(t, err)
 		out[index] = string(encoded)
 	}
