@@ -127,8 +127,12 @@ func compareLexicalBuildPairs(left, right hnswBuildPair) int {
 }
 
 func (s *Service) hnswLexicalSeedHints(ft bm25Index, graphM int) nodeLexicalHints {
-	if ft == nil { return nil }
-	if graphM < 2 { graphM = DefaultHNSWConfig().M }
+	if ft == nil {
+		return nil
+	}
+	if graphM < 2 {
+		graphM = DefaultHNSWConfig().M
+	}
 	return nodeHintsFromValues(ft.LexicalSeedHints(graphM*graphM, max(1, graphM/2)))
 }
 
