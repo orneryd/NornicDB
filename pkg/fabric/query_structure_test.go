@@ -104,3 +104,28 @@ func TestFabricStructureIncompleteGraphInvocation(t *testing.T) {
 	require.Error(t, q.Err)
 	require.Equal(t, []UseClause{{Function: "graph.byName"}}, q.Uses())
 }
+
+func TestEmbeddingOptionUsesGrammarContext(t *testing.T) {
+	for _, separator := range []string{" ", "  ", "\n", " /* option */ "} {
+		text := "CREATE (n:Doc) WITH" + separator + "EMBEDDING RETURN n"
+		stripped, ok := StripEmbeddingOption(text)
+		if !ok || stripped != "CREATE (n:Doc) RETURN n" {
+			t.Fatalf("option %q: %q %v", text, stripped, ok)
+		}
+		if strings.Contains(LocalQuery(text), "`EMBEDDING`") {
+			t.Fatalf("option lowered as a name: %q", LocalQuery(text))
+		}
+	}
+	for _, text := range []string{
+		"WITH 7 AS embedding WITH embedding RETURN embedding",
+		"CREATE (embedding:Doc) WITH embedding AS retained RETURN retained",
+		"WITH $embedding AS embedding RETURN embedding",
+		"RETURN 'WITH EMBEDDING' AS s",
+		"RETURN 7 AS `WITH EMBEDDING`",
+		"RETURN 7 /* WITH EMBEDDING */ AS k",
+	} {
+		if _, ok := StripEmbeddingOption(text); ok {
+			t.Fatalf("name/data read as option: %q", text)
+		}
+	}
+}
