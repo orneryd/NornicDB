@@ -180,6 +180,7 @@ func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
 		{"resolved reads", read, read, [2]string{"owner", "owner"}, false, [2]int{}},
 		{"write then read", write, read, [2]string{"owner", "owner"}, false, [2]int{1, 0}},
 		{"two resolved writers", write, write, [2]string{"owner", "owner"}, true, [2]int{}},
+        {"periodic batches cannot escape second writer", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", "CALL apoc.periodic.iterate('RETURN 1 AS input','CREATE (:U5RemoteMode)',{batchSize:1}) YIELD total RETURN total", [2]string{"owner","owner"},true,[2]int{}},
 		{"standard updates", write, write, [2]string{"standard", "standard"}, true, [2]int{}},
 		{"callbacks without counters", noStats, noStats, [2]string{"owner", "owner"}, true, [2]int{}},
 		{"missing summaries", write, write, [2]string{"missing", "missing"}, true, [2]int{}},
