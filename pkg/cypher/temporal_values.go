@@ -564,6 +564,14 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 }
 
 func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
+	// Public parameters may carry a pointer to any typed temporal value.
+	// Project the value before reading its source date, clock and offset.
+	if pointer := reflect.ValueOf(value); pointer.IsValid() && pointer.Kind() == reflect.Ptr {
+		if pointer.IsNil() {
+			return nil, false
+		}
+		value = pointer.Elem().Interface()
+	}
 	date, hasDate := temporalBaseDate(value)
 	clock, zoned, hasTime := temporalTimeParts(value)
 	switch kind {
