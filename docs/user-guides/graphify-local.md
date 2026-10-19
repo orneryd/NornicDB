@@ -106,18 +106,18 @@ The detector uses the reference action's analysis, not just an embedding thresho
    at least one changed code line. Generated paths are excluded. The local
    guard deliberately checks small edits too; the reference action defaults to
    requiring 50% added body lines.
-2. Start NornicDB continuation in `ranked` mode with 25 results per page, then
-   drain subsequent matching results through `qid`. Compare only ranked matches
-   whose finite RRF score is at least **0.01**, including matches on later pages.
-   This is the search engine's default RRF floor; it is distinct from cosine
-   similarity and the code-similarity threshold below. The hook verifies the
-   score on every page and rejects missing/malformed scores or a catalog-mode
-   response. Each request retains the same database and credentials. Duplicate
-   hits are compared once. Completion must report ranked candidate-pool or
-   retrieval exhaustion; arbitrary `max_results` truncation, failed/repeated
-   cursors and incomplete responses block the commit. Abandoned cursors are
-   explicitly discarded. The console reports search/comparison time separately
-   from staged-tree extraction time.
+2. Make one ordinary hybrid search request per candidate with `limit: 1000`.
+   No cursor, continuation mode, catalog scan or cursor cleanup is requested.
+   The server applies its configured relevance filtering. The HTTP endpoint has
+   no per-request similarity-threshold field; the hook additionally verifies each
+   returned finite RRF score and compares only scores at least **0.01** (the
+   search engine's default RRF floor). RRF is distinct from cosine similarity
+   and the code-similarity threshold below. Missing/malformed scores, failed
+   requests and malformed response lists block the commit.
+   This is a bounded candidate search, not proof of collection exhaustion:
+   matches beyond the highest 1,000 returned candidates are not checked.
+   Database/repository scoping, credentials and duplicate blocking are unchanged.
+   The console reports search/comparison time separately from extraction.
    Compare code tokens, normalized structure and receiver-normalized code; a
    similarity of at least 0.8 is a code match.
 3. Also detect semantic standouts using chunk similarity relative to the result
@@ -215,7 +215,7 @@ so NornicDB worktrees reuse `nornicdbcode`. The commit check never creates a dat
 An unborn branch can be checked against an existing ingested graph without a Git
 `HEAD`. A missing database or ingest record still blocks source commits. An empty
 database is never accepted as a substitute for the intended graph. Search must be
-ready and continuation must exhaust the ranked matching candidates. Failed
+ready for the bounded candidate search. Failed
 authentication, unavailable service, timeouts and incomplete searches block commits.
 
 **Mandatory check:** Do not override, bypass or disable the hook to get a commit
@@ -223,7 +223,7 @@ through. Fix the database selection, baseline ingestion, search readiness or
 duplicate/divergent code before proceeding. Failures include this warning and
 identify the repository and target database so configuration can be repaired.
 
-Live regression evidence (2026-10-17): from the `NornicDB-1406` linked worktree,
+Historical cursor-mode regression evidence (2026-10-17; superseded by the bounded search policy above): from the `NornicDB-1406` linked worktree,
 the installed global hook searched `orneryd/NornicDB` in `nornicdbcode`. A staged
 copy of `scripts/graphify_local.py:comments_for_node()` renamed the function and
 changed its empty-result behavior instead of reusing the owner. The real commit
@@ -241,15 +241,11 @@ Global hooks require URL/credentials in the Git process environment; installatio
 stores no credentials. Export them in your shell startup configuration and ensure
 your IDE's Git process inherits them. Missing configuration produces setup guidance.
 
-Continuation must be enabled on the server with a positive
-`NORNICDB_SEARCH_CURSOR_MAX` (or `memory.search_cursor_max`). For example, a local
-server can retain 128 cursors with `NORNICDB_SEARCH_CURSOR_MAX=128` and a 15-minute
-TTL using `NORNICDB_SEARCH_CURSOR_TTL=900000` (milliseconds). Restart after changing
-startup configuration. A disabled or invalidated cursor blocks analysis and gives
-setup/error guidance. Complete cursors can be invalidated by graph changes; retry
-after ingestion/embedding activity settles. Exhausting the complete population is
-slower than checking the first page, and large repositories may require a larger
-`CODE_INTEL_DEADLINE_SECONDS` and server cursor/build limits.
+The commit check does not require server cursor support or depend on cursor TTL.
+`CODE_INTEL_DEADLINE_SECONDS` bounds search and comparison after extraction
+(default 300 seconds). Query embeddings must be available for semantic behavior
+matching; full-text retrieval still supports lexical/structural code matching.
+A high result limit does not guarantee exhaustive duplicate detection.
 
 Rerun the global installer to update its copied runtime. To undo global installation,
 restore the previous `core.hooksPath` (recorded as

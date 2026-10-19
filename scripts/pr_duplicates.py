@@ -292,13 +292,13 @@ def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_
 class NornicDB:
     """Cypher and search over the HTTP API with Basic or Bearer auth. Never opens a Bolt connection."""
 
-    def __init__(self, uri, user, password, token=None, database="nornic", timeout=60, exhaust=False, repo=None, deadline=None,
+    def __init__(self, uri, user, password, token=None, database="nornic", timeout=60, require_scores=False, repo=None, deadline=None,
                  min_rrf_score=0.01):
         self.driver = gi.HttpDriver(uri, user, password, token)
         self.base_url = self.driver.base_url
         self.database = database
         self.timeout = timeout
-        self.exhaust = exhaust
+        self.require_scores = require_scores
         self.repo = repo
         self.deadline = deadline
         self.min_rrf_score = _number(min_rrf_score)
@@ -322,56 +322,25 @@ class NornicDB:
         }
         if self.repo:
             body["filters"]["repo"] = [self.repo]
-        if not self.exhaust:
-            payload = self._search_page(body)
-            return self._parse_hits(payload if isinstance(payload, list) else payload.get("results", []))
-        body.update(mode="ranked", n=limit)
-        active, seen_tokens, hits, seen_hits = None, set(), [], set()
-        try:
-            while True:
-                payload = self._search_page(body)
-                if not isinstance(payload, dict) or not isinstance(payload.get("has_more"), bool) or not isinstance(payload.get("results"), list):
-                    raise AnalysisError("Search continuation is required; enable NORNICDB_SEARCH_CURSOR_MAX on the server and use a server with continuation support.", "incomplete")
-                if payload["has_more"]:
-                    active = payload.get("qid")
-                    if not isinstance(active, str) or not active or active in seen_tokens:
-                        raise AnalysisError("Search continuation did not advance to a new qid; analysis is incomplete.", "incomplete")
-                    seen_tokens.add(active)
-                if payload.get("mode") != "ranked":
-                    raise AnalysisError("The duplicate check requires ranked matches, not a catalog scan.", "incomplete")
-                matching = []
-                for item in payload["results"]:
-                    score = _number(item.get("rrf_score", item.get("score"))) if isinstance(item, dict) else None
-                    if score is None:
-                        raise AnalysisError("Ranked search returned a missing or invalid match score; analysis is incomplete.", "incomplete")
-                    if score >= self.min_rrf_score:
-                        matching.append(item)
-                for hit in self._parse_hits(matching):
-                    identity = (hit.repo, hit.id)
-                    if identity not in seen_hits:
-                        hits.append(hit)
-                        seen_hits.add(identity)
-                if not payload["has_more"]:
-                    active = None
-                    completion = payload.get("completion")
-                    if completion == "max_results_reached" or (payload.get("collection_exhausted") is not True
-                            and completion != "candidate_pool_exhausted"):
-                        raise AnalysisError("Ranked match search ended incompletely: " + str(completion or "unknown"), "incomplete")
-                    return hits
-                body = {"database": self.database, "qid": active, "n": limit}
-        finally:
-            if active:
-                try:
-                    self._search_page({"database": self.database, "qid": active, "discard": True}, cleanup=True)
-                except AnalysisError:
-                    print("Warning: search cursor cleanup failed; the server TTL will release it.", file=sys.stderr)
+        payload = self._search_page(body)
+        items = payload if isinstance(payload, list) else payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            raise AnalysisError("Search returned no result list; duplicate analysis is incomplete.", "incomplete")
+        if self.require_scores:
+            matching = []
+            for item in items:
+                score = _number(item.get("rrf_score", item.get("score"))) if isinstance(item, dict) else None
+                if score is None:
+                    raise AnalysisError("Search returned a missing or invalid match score; analysis is incomplete.", "incomplete")
+                if score >= self.min_rrf_score:
+                    matching.append(item)
+            items = matching
+        return self._parse_hits(items)
 
-    def _timeout(self, cleanup=False):
-        if cleanup:
-            return min(self.timeout, 5)
+    def _timeout(self):
         remaining = self.timeout if self.deadline is None else min(self.timeout, self.deadline - time.monotonic())
         if remaining <= 0:
-            raise AnalysisError("Duplicate analysis deadline reached before collection exhaustion; increase CODE_INTEL_DEADLINE_SECONDS.", "incomplete")
+            raise AnalysisError("Duplicate analysis deadline reached before search/comparison completed; increase CODE_INTEL_DEADLINE_SECONDS.", "incomplete")
         return remaining
 
     def _backoff(self, seconds):
@@ -379,22 +348,20 @@ class NornicDB:
             raise AnalysisError("Duplicate analysis deadline reached while retrying search; increase CODE_INTEL_DEADLINE_SECONDS.", "incomplete")
         time.sleep(seconds)
 
-    def _search_page(self, body, cleanup=False):
+    def _search_page(self, body):
         request = urllib.request.Request(
             self.base_url + "/nornicdb/search", data=json.dumps(body).encode("utf-8"), method="POST",
             headers={"Authorization": self.driver.auth_header, "Content-Type": "application/json",
                      "Accept": "application/json"})
         last = None
-        for attempt in range(1 if cleanup else SEARCH_ATTEMPTS):
+        for attempt in range(SEARCH_ATTEMPTS):
             try:
-                with urllib.request.urlopen(request, timeout=self._timeout(cleanup)) as response:
+                with urllib.request.urlopen(request, timeout=self._timeout()) as response:
                     payload = json.load(response)
                 break
             except urllib.error.HTTPError as error:
                 detail = error.read().decode("utf-8", "replace")[:300]
-                if error.code == 409 and "continuation_disabled" in detail:
-                    raise AnalysisError("Search continuation is disabled. Set NORNICDB_SEARCH_CURSOR_MAX to a positive value on the server and restart it.", "incomplete") from error
-                if not cleanup and error.code in (429, 502, 503, 504) and attempt < SEARCH_ATTEMPTS - 1:
+                if error.code in (429, 502, 503, 504) and attempt < SEARCH_ATTEMPTS - 1:
                     # "search busy" is normal while the server is embedding a fresh ingest: back off 3, 6, 12 ... s
                     last = f"HTTP {error.code}"
                     self._backoff(3 * 2 ** attempt)
@@ -402,7 +369,7 @@ class NornicDB:
                 raise AnalysisError(f"HTTP {error.code} from /nornicdb/search: {detail}", _kind_of(f"HTTP {error.code}")) from error
             except (urllib.error.URLError, TimeoutError, ConnectionError, IncompleteRead) as error:
                 last = str(error)
-                if not cleanup and attempt < SEARCH_ATTEMPTS - 1:
+                if attempt < SEARCH_ATTEMPTS - 1:
                     self._backoff(3 * 2 ** attempt)
                     continue
                 raise AnalysisError(f"cannot reach NornicDB at {self.base_url}: {last}", "unreachable") from error
