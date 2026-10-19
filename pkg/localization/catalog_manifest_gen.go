@@ -1496,6 +1496,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "qdrant.hnsw_ef_too_large", Constructor: "QdrantHNSWEfTooLarge", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "qdrant.index_point_failed", Constructor: "QdrantIndexPointFailed", Fields: []string{"Cause", "PointID"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.invalid_or_expired_token", Constructor: "QdrantInvalidOrExpiredToken", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "qdrant.invalid_quantization_config", Constructor: "QdrantInvalidQuantizationConfig", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "qdrant.invalid_quantization_oversampling", Constructor: "QdrantInvalidQuantizationOversampling", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "qdrant.invalid_vectors_config", Constructor: "QdrantInvalidVectorsConfig", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "qdrant.limit_too_large", Constructor: "QdrantLimitTooLarge", Fields: []string{"Limit", "Maximum"}, PluralForms: []string{"other"}},
 	{ID: "qdrant.list_collections_failed", Constructor: "QdrantListCollectionsFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
