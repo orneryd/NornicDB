@@ -83,6 +83,7 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		})
 	}
 }
+
 func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedHints nodeLexicalHints) []hnswBuildPair {
 	vi.mu.RLock()
 	pairs := make([]hnswBuildPair, 0, len(vi.vectors))
