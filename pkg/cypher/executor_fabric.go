@@ -157,11 +157,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		defer func() { _ = remoteExec.Close() }()
 		if prepared.hasRemote {
-			locations, err := e.logicalRemoteLocations()
-			if err != nil {
-				return nil, err
-			}
-			if err := remoteExec.CaptureLogicalBegin(ctx, locations, authToken); err != nil {
+			if err := remoteExec.CaptureLogicalBegin(ctx, prepared.remotes, authToken); err != nil {
 				return nil, err
 			}
 		}
@@ -216,6 +212,7 @@ type fabricPreparedExec struct {
 	sessionDB string
 	fragment  fabric.Fragment
 	hasRemote bool
+	remotes   []*fabric.LocationRemote
 }
 
 // fabricResultCacheKey binds each local target's identity, catalog generation
@@ -337,11 +334,13 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
+	remotes := fabricFragmentRemoteTargets(catalog, fragment)
 	return &fabricPreparedExec{
 		catalog:   catalog,
 		sessionDB: sessionDB,
 		fragment:  fragment,
-		hasRemote: fabricFragmentHasRemoteTarget(catalog, fragment),
+		hasRemote: len(remotes) != 0,
+		remotes:   remotes,
 	}, nil
 }
 
@@ -361,27 +360,34 @@ func (e *StorageExecutor) preparedFabricFromContext(ctx context.Context) (*fabri
 }
 
 func fabricFragmentHasRemoteTarget(catalog *fabric.Catalog, f fabric.Fragment) bool {
+	return len(fabricFragmentRemoteTargets(catalog, f)) != 0
+}
+
+// Auto-commit captures only this plan's remote participants. Explicit BEGIN
+// retains its transaction-wide capture because later statements are unknown.
+func fabricFragmentRemoteTargets(catalog *fabric.Catalog, f fabric.Fragment) []*fabric.LocationRemote {
 	if catalog == nil || f == nil {
-		return false
+		return nil
 	}
 	switch frag := f.(type) {
 	case *fabric.FragmentExec:
+		locations := fabricFragmentRemoteTargets(catalog, frag.Input)
 		loc, err := catalog.Resolve(frag.GraphName)
 		if err != nil {
-			return false
+			return locations
 		}
-		_, isRemote := loc.(*fabric.LocationRemote)
-		return isRemote
+		if remote, ok := loc.(*fabric.LocationRemote); ok {
+			locations = append(locations, remote)
+		}
+		return locations
 	case *fabric.FragmentApply:
-		return fabricFragmentHasRemoteTarget(catalog, frag.Input) || fabricFragmentHasRemoteTarget(catalog, frag.Inner)
+		return append(fabricFragmentRemoteTargets(catalog, frag.Input), fabricFragmentRemoteTargets(catalog, frag.Inner)...)
 	case *fabric.FragmentUnion:
-		return fabricFragmentHasRemoteTarget(catalog, frag.LHS) || fabricFragmentHasRemoteTarget(catalog, frag.RHS)
+		return append(fabricFragmentRemoteTargets(catalog, frag.LHS), fabricFragmentRemoteTargets(catalog, frag.RHS)...)
 	case *fabric.FragmentLeaf:
-		return fabricFragmentHasRemoteTarget(catalog, frag.Input)
-	case *fabric.FragmentInit:
-		return false
+		return fabricFragmentRemoteTargets(catalog, frag.Input)
 	default:
-		return false
+		return nil
 	}
 }
 
