@@ -58,6 +58,9 @@ func deterministicExecution(ctx context.Context, text string, depth int) bool {
 		if body == "" {
 			return errNonDeterministicExecution
 		}
+		if volatility == functionTemporalTruncation && len(splitProcedureTopLevelComma(body)) < 2 {
+			return errNonDeterministicExecution
+		}
 		if volatility == functionTemporalConstructor {
 			// A temporal map may request the current instant (timezone only,
 			// for example). Only resolved textual construction is proven pure.
