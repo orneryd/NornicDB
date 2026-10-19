@@ -3,7 +3,7 @@
 package dynamiclabels
 
 // Fixture is reset before each case so writes cannot affect later controls.
-const Fixture = "CREATE (a:Anchor {id: 0}), (n:A {id: 1}), (m:A:B {id: 2}), (b:B {id: 3}), (:C {id: 4}), (a)-[:R]->(n), (a)-[:R]->(m), (a)-[:R]->(b)"
+const Fixture = "CREATE (a:Anchor {id: 0}), (n:A {id: 1}), (m:A:B {id: 2}), (b:B {id: 3}), (:C {id: 4}), (a)-[:R {p: 'x'}]->(n), (a)-[:R {p: 'x'}]->(m), (a)-[:R {p: 'x'}]->(b)"
 
 // Case specifies rows or a Neo4j status code for a public statement.
 type Case struct {
@@ -39,6 +39,10 @@ func Cases() []Case {
 		{"graph-expression", "$(CASE WHEN EXISTS { MATCH (:Anchor) } THEN 'A' ELSE 'Missing' END)", a},
 		{"graph-all", "$all(CASE WHEN EXISTS { MATCH (:Anchor) } THEN ['A','B'] ELSE ['Missing'] END)", one},
 		{"graph-any", "$any(CASE WHEN EXISTS { MATCH (:Anchor) } THEN ['A','B'] ELSE ['Missing'] END)", anyAB},
+		{"edge-graph", "$(CASE WHEN EXISTS { MATCH ()-[r:R]->() WHERE r.p='x' } THEN 'A' ELSE 'Missing' END)", a},
+		{"edge-graph-all", "$all(CASE WHEN EXISTS { MATCH ()-[r:R]->() WHERE r.p='x' } THEN ['A','B'] ELSE ['Missing'] END)", one},
+		{"edge-graph-any", "$any(CASE WHEN EXISTS { MATCH ()-[r:R]->() WHERE r.p='x' } THEN ['A','B'] ELSE ['Missing'] END)", anyAB},
+		{"edge-graph-upper-any", "$ANY(CASE WHEN EXISTS { MATCH ()-[r:R]->() WHERE r.p='x' } THEN ['A','B'] ELSE ['Missing'] END)", anyAB},
 		{"empty-all", "$all([])", [][]any{{int64(0)}, {int64(1)}, {int64(2)}, {int64(3)}, {int64(4)}}},
 		{"empty-any", "$any([])", [][]any{}},
 	} {
@@ -46,6 +50,9 @@ func Cases() []Case {
 		if form.name == "row-list" || form.name == "row-all" || form.name == "row-any" { prefix = "WITH ['A','B'] AS ls " }
 		params := map[string]any{"label":"A", "labels": []any{"A","B"}}
 		cases = append(cases, Case{Name:"match/"+form.name, Query:prefix+"MATCH (n:"+form.text+") RETURN n.id AS id ORDER BY id", Params:params, Rows:form.rows})
+		if form.name == "edge-graph" || form.name == "edge-graph-all" || form.name == "edge-graph-any" || form.name == "edge-graph-upper-any" {
+			cases = append(cases, Case{Name:"profile/"+form.name, Query:"PROFILE MATCH (n:"+form.text+") RETURN n.id AS id ORDER BY id", Params:params, Rows:form.rows})
+		}
 		if prefix == "" {
 			cases = append(cases, Case{Name:"call/"+form.name, Query:"CALL { MATCH (n:"+form.text+") RETURN n.id AS id } RETURN id ORDER BY id", Params:params, Rows:form.rows})
 		}
@@ -76,6 +83,7 @@ func Cases() []Case {
 				want = 2-want
 			}
 			cases = append(cases, Case{Name:clause+"/"+value.name, Query:query, Params:map[string]any{"labels":[]any{"D","E"}}, Rows:[][]any{{want}}})
+			cases = append(cases, Case{Name:"call/"+clause+"/"+value.name, Query:"CALL { "+query+" } RETURN c", Params:map[string]any{"labels":[]any{"D","E"}}, Rows:[][]any{{want}}})
 		}
 	}
 	for _, form := range []string{"$('A')", "$all(['A','B'])", "$any($labels)"} {
@@ -87,6 +95,8 @@ func Cases() []Case {
 		cases = append(cases, Case{Name:"where-25/"+form, Query:"CYPHER 25 "+query, Params:map[string]any{"labels":[]any{"A","B"}}, Rows:rows, Cypher25:true})
 	}
 	return append(cases,
+		Case{Name:"CREATE/all", Query:"CREATE (n:$all($labels)) RETURN size(labels(n)) AS c", Params:map[string]any{"labels":[]any{"D","E"}}, Rows:[][]any{{int64(2)}}},
+		Case{Name:"MERGE/row", Query:"WITH $labels AS ls MERGE (n:$(ls) {id: 2}) RETURN n.id AS id", Params:map[string]any{"labels":[]any{"A","B"}}, Rows:one},
 		Case{Name:"optional/missing", Query:"OPTIONAL MATCH (n:$any(['Missing'])) RETURN n.id AS id", Rows:[][]any{{nil}}},
 		Case{Name:"profile/runtime", Query:"PROFILE WITH ['A','B'] AS ls MATCH (n:$any(ls)) RETURN n.id AS id ORDER BY id", Rows:anyAB},
 	)
