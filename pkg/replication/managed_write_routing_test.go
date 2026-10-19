@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/config"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -95,7 +95,8 @@ func TestManagedReplicationModesPreserveNativeJournal(t *testing.T) {
 			cfg := DefaultConfig()
 			var r Replicator
 			switch mode {
-			case "standalone": r = NewStandaloneReplicator(cfg, adapter)
+			case "standalone":
+				r = NewStandaloneReplicator(cfg, adapter)
 			case "ha":
 				cfg.Mode, cfg.NodeID = ModeHAStandby, "managed-primary"
 				cfg.HAStandby.Role, cfg.HAStandby.PeerAddr, cfg.HAStandby.SyncMode = "primary", "managed-peer:7000", SyncAsync
