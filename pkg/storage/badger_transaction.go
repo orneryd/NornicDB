@@ -26,6 +26,7 @@ import (
 type snapshotLabelCacheKey struct {
 	projectionKey string
 	reveal        bool
+	stored        bool
 }
 
 // BadgerTransaction wraps Badger's native transaction with constraint validation.
@@ -1170,6 +1171,9 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 		if edge != nil && (edge.StartNode == nodeID || edge.EndNode == nodeID) && !skip(edgeID) {
 			include(edge)
 		}
+		// A rewrite shadows its old buffered/committed adjacency even
+		// when its new endpoints no longer include this node.
+		listed[edgeID] = struct{}{}
 	}
 	// Acknowledged relationships the buffer has not flushed yet, read before
 	// the committed index so a flush between the two reads lists them there.
@@ -1928,6 +1932,10 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 // reject every committed value as "not yet visible" — which manifests as
 // lost updates under the Read-Modify-Write retry loop in DB.Update.
 func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
+	return tx.getNode(nodeID, visibleRead)
+}
+
+func (tx *BadgerTransaction) getNode(nodeID NodeID, v readVisibility) (*Node, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
@@ -1952,7 +1960,7 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 		return copyNode(node), nil
 	}
 
-	return tx.getCommittedNodeReadLocked(nodeID, true, visibleRead)
+	return tx.getCommittedNodeReadLocked(nodeID, true, v)
 }
 
 // GetQueryNode implements QueryNodeReader inside the
@@ -2140,6 +2148,10 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 // readTS is bound to the namespace's actual sequence rather than the
 // pre-pin sequence-0 placeholder.
 func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
+	return tx.getEdge(edgeID, visibleRead)
+}
+
+func (tx *BadgerTransaction) getEdge(edgeID EdgeID, v readVisibility) (*Edge, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
@@ -2157,7 +2169,7 @@ func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
 		return copyEdge(edge), nil
 	}
 
-	return tx.getCommittedEdgeReadLocked(edgeID, visibleRead)
+	return tx.getCommittedEdgeReadLocked(edgeID, v)
 }
 
 // GetOutgoingEdges returns outgoing edges including pending transaction writes.
@@ -2316,6 +2328,10 @@ func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
 // stop iteration without forcing the transaction to resolve or copy the rest
 // of the label population.
 func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return tx.streamNodesByLabelProjected(label, properties, visibleRead, visit)
+}
+
+func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, properties []string, v readVisibility, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -2351,7 +2367,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		scope := tx.labelScanScopeLocked()
 		nowNanos := DecayScoringTime()
 		for _, n := range overlay {
-			if !nodeIDInScope(n.ID, scope) || tx.engine.filterNodeByDecay(n, nowNanos) {
+			if !nodeIDInScope(n.ID, scope) || tx.engine.hidesNode(v, n, nowNanos) {
 				continue
 			}
 			if err := invokeVisit(projectCachedNodeForRead(n, properties, false)); err != nil {
@@ -2404,7 +2420,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load()}
+	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load(), stored: v == storedRead}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
 		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
@@ -2444,13 +2460,13 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, streamVisit)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.StreamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, streamVisit)
+		err = tx.engine.streamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, v, streamVisit)
 	} else {
-		err = tx.engine.streamNodesByLabelVisibleAtSnapshotWithView(
+		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			tx.labelScanScopeLocked(),
-			label, tx.readTS, tx.withSnapshotViewLocked, properties, streamVisit,
+			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit,
 		)
 	}
 	if err != nil {
