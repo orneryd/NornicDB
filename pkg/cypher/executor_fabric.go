@@ -26,12 +26,9 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	//   - USE <composite>
 	//   - USE <composite>.<constituent>
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
-	for _, use := range fabric.ReadQueryStructure(cypher).Uses() {
-		if e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite()) {
-			return true
-		}
-	}
-	return false
+	return fabric.ReadQueryStructure(cypher).AnyUse(func(use fabric.UseClause) bool {
+		return e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())
+	})
 }
 
 func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
