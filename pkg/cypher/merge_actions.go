@@ -251,12 +251,15 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 			return nil, nil, false, shapeErr
 		}
 		for _, content := range [...]string{shape.startContent, shape.endContent} {
-			if _, properties := splitNodePatternProperties("(" + content + ")"); properties != "" {
-				evaluated, err := e.parseMergeProperties(ctx, properties, nodeContext, relContext)
-				if err != nil {
-					return nil, nil, false, err
-				}
-				if err := validateMergePatternProperties(evaluated, "node"); err != nil {
+			variable, labels, properties, parseErr := e.parseMergeNodePattern(ctx, "("+content+")", nodeContext, relContext)
+			if parseErr != nil {
+				return nil, nil, false, parseErr
+			}
+			if err := validateMergePatternProperties(properties, "node"); err != nil {
+				return nil, nil, false, err
+			}
+			if nodeContext[variable] == nil {
+				if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
 					return nil, nil, false, err
 				}
 			}
