@@ -144,8 +144,19 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	require.Zero(t, svc.vectorIndex.Count(), "file-backed vectors leave the in-memory index empty")
 
 	ivfHNSWBuildHook = func() {
-		svc.SetPersistenceEnabled(false)
-		svc.maybeAutoSetVectorDimensions(dimensions + 1)
+		// Stage an administrative call from its own operation, while clustering
+		// owns shared build access. Retirement joins base builds, not this reader.
+		changed := make(chan struct{})
+		go func() {
+			svc.SetPersistenceEnabled(false)
+			svc.maybeAutoSetVectorDimensions(dimensions + 1)
+			close(changed)
+		}()
+		select {
+		case <-changed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("persistence retirement waited for the clustering reader")
+		}
 	}
 	t.Cleanup(func() { ivfHNSWBuildHook = nil })
 	require.NoError(t, svc.TriggerClustering(ctx))
