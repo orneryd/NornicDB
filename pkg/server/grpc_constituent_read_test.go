@@ -7,6 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/qdrantgrpc"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -77,4 +78,24 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestGRPCCustomResolvedAccessResolverRemainsAuthoritative(t *testing.T) {
+	server, users := setupTestServer(t)
+	config := qdrantgrpc.DefaultConfig()
+	config.ListenAddr = "127.0.0.1:0"
+	config.DatabaseAccessModeResolver = server.GetDatabaseAccessModeForRoles
+	config.ResolvedAccessResolver = func([]string, string) auth.ResolvedAccess { return auth.ResolvedAccess{} }
+	service, err := qdrantgrpc.NewServerWithDatabaseManager(config, server.dbManager, server.db.GetBaseStorageForManager(), nil, users)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, service.CollectionStore().Create(ctx, "grpc_custom", 4, qpb.Distance_Cosine))
+	require.NoError(t, service.Start())
+	t.Cleanup(service.Stop)
+	connection, err := grpc.NewClient(service.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = connection.Close() })
+	reader := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+getAuthToken(t, users, "reader")))
+	_, err = qpb.NewPointsClient(connection).Count(reader, &qpb.CountPoints{CollectionName: "grpc_custom"})
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "configured privilege resolver must remain authoritative")
 }

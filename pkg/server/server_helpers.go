@@ -121,9 +121,6 @@ func (m *serverDatabaseAccessMode) CanAccessDatabase(database string) bool {
 	}
 	return m.server.allowlistStore != nil && m.server.allowlistStore.CanAccessDatabaseForRoles(m.roles, database)
 }
-func (m *serverDatabaseAccessMode) ResolveDatabaseAccess(database string, write bool) (bool, auth.ResolvedAccess) {
-	return m.server.databaseAccessForRoles(m.roles, database, m, write)
-}
 
 // getDatabaseAccessMode returns the per-database access mode for the given principal (claims).
 // When auth is disabled returns Full; when unauthenticated returns DenyAll;
