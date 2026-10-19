@@ -239,6 +239,9 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 		return nil, "", r.databaseForbidden(database)
 	}
 	if !allows(dbName, permission) {
+		if permission == auth.Permission("access") {
+			return nil, "", r.databaseForbidden(database)
+		}
 		return nil, "", &cypher.PermissionDeniedError{Permission: string(permission)}
 	}
 	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
