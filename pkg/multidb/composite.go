@@ -5,6 +5,7 @@
 package multidb
 
 import (
+	"iter"
 	"strings"
 	"time"
 
@@ -295,25 +296,42 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 		return nil, localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	return canonicalConstituents(info.Constituents), nil
+	return snapshotConstituents(info.Constituents), nil
 }
 
-// canonicalConstituents is the shared catalog/manager view of graph aliases.
+// canonicalConstituents is the shared catalog/manager reader of graph aliases.
 // Preserve the catalog's last-registration-wins rule for case-folded duplicates.
-// Stored metadata retains its original spelling and order.
-func canonicalConstituents(refs []ConstituentRef) []ConstituentRef {
+// Walk backward so a single lookup can stop at its winner without copying the
+// catalog. The yielded key has exactly the catalog's case normalization.
+func canonicalConstituents(refs []ConstituentRef) iter.Seq2[string, ConstituentRef] {
+	return func(yield func(string, ConstituentRef) bool) {
+		seen := make(map[string]struct{}, len(refs))
+		for i := len(refs) - 1; i >= 0; i-- {
+			ref := refs[i]
+			key := strings.ToLower(ref.Alias)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			if !yield(key, ref) {
+				return
+			}
+		}
+	}
+}
+
+// snapshotConstituents returns the same winners in their stored order for
+// metadata/catalog callers that need an independent slice.
+func snapshotConstituents(refs []ConstituentRef) []ConstituentRef {
 	if refs == nil {
 		return nil
 	}
-	winners := make(map[string]int, len(refs))
-	for i, ref := range refs {
-		winners[strings.ToLower(ref.Alias)] = i
+	result := make([]ConstituentRef, 0, len(refs))
+	for _, ref := range canonicalConstituents(refs) {
+		result = append(result, ref)
 	}
-	result := make([]ConstituentRef, 0, len(winners))
-	for i, ref := range refs {
-		if winners[strings.ToLower(ref.Alias)] == i {
-			result = append(result, ref)
-		}
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
 	}
 	return result
 }
@@ -369,8 +387,8 @@ func (m *DatabaseManager) ExistsOrIsConstituent(name string) bool {
 		constituentAlias := name[dotIdx+1:]
 		info, exists := m.databases[compositeName]
 		if exists && info.Type == "composite" {
-			for _, ref := range info.Constituents {
-				if strings.EqualFold(ref.Alias, constituentAlias) {
+			for key := range canonicalConstituents(info.Constituents) {
+				if key == strings.ToLower(constituentAlias) {
 					return true
 				}
 			}
