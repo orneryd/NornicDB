@@ -63,7 +63,7 @@ func rule73HTTPInventory() []rule73HTTPCase {
 		{"retention.hold", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/holds/missing" }, nil},
 		{"retention.erasures", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/erasures" }, nil},
 		{"retention.process-erasure", http.MethodPost, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/erasures/missing/process" }, nil},
-		{"retention.sweep", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/admin/retention/sweep" }, nil},
+		{"retention.sweep", http.MethodPost, "default", rule73HTTPAdmin, func(string) string { return "/admin/retention/sweep" }, nil},
 		{"retention.status", http.MethodGet, "default", rule73HTTPReadAdmin, func(string) string { return "/admin/retention/status" }, nil},
 	}
 }
