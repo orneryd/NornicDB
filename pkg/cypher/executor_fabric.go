@@ -600,7 +600,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
-	exec := c.base.cloneForStorage(engine)
+	var exec *StorageExecutor
 	if len(recordBindings) > 0 {
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
@@ -612,6 +612,9 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 			}
 			exec = txExec
 		}
+	}
+	if exec == nil {
+		exec = c.base.cloneForStorage(engine)
 	}
 
 	ctx = withExecutionDatabase(ctx, dbName)
