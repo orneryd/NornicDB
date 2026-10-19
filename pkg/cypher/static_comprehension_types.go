@@ -11,7 +11,7 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 		return staticOperand{}, operandMismatch(source, "List<T>")
 	}
 	types := typeScopeOf(checker.scope)
-	types[variable] = typedOperand(elementOfType(source.kind))
+	types[variable] = typedOperand(elementOfType(source.typeName()))
 	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
@@ -57,7 +57,7 @@ func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOp
 		return staticOperand{}, err
 	}
 	types := typeScopeOf(checker.scope)
-	types[form.variable] = typedOperand(elementOfType(source.kind))
+	types[form.variable] = typedOperand(elementOfType(source.typeName()))
 	types[form.accumulator] = initial
 	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
 	nested.scope.complete = checker.scope.complete

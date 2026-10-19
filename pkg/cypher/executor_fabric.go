@@ -113,7 +113,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	ctx = context.WithValue(ctx, queryStatsAccumulatorKey{}, statsAcc)
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
-	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
+	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec, newFabricRowEquivalence)
 	fabricExecutor.SetConcurrentExecution(autoCommit)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
@@ -283,7 +283,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if dbFromCtx := GetUseDatabaseFromContext(ctx); strings.TrimSpace(dbFromCtx) != "" {
 		sessionDB = dbFromCtx
 	}
-	fragment, err := e.planFabricQuery(catalog, cypher, sessionDB)
+	fragment, err := e.planFabricQuery(ctx, catalog, cypher, sessionDB)
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
@@ -335,20 +335,34 @@ func fabricFragmentHasRemoteTarget(catalog *fabric.Catalog, f fabric.Fragment) b
 	}
 }
 
-func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+	planCacheKey := semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25")
 	if e.fabricPlanCache != nil {
-		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
+		if cached, found := e.fabricPlanCache.Get(planCacheKey, sessionDB); found && cached != nil {
+			// The immutable plan carries the logical compiler's admission
+			// verdict and frames, independently of physical result caching.
 			return cached, nil
 		}
 	}
 
+	plannedQuery := fabric.PreserveNameRoles(cypher)
+	admittedQuery, names := canonicalizeQuotedVariables(fabric.LocalQuery(plannedQuery))
+	logicalQuery := fabric.SemanticQuery(admittedQuery)
 	planner := fabric.NewFabricPlanner(catalog)
-	fragment, err := planner.Plan(cypher, sessionDB)
+	recording := newScopeRecording(admittedQuery, cypherVersionFromContext(ctx) == "25")
+	recording.names = names
+	admissionCtx := withQueryParams(ctx, names.parameterValues(getParamsFromContext(ctx)))
+	if err := e.validateSemanticScopes(admissionCtx, logicalQuery, recording); err != nil {
+		_, err = names.restore(nil, err, e.parseReturnItems)
+		return nil, err
+	}
+	planner.SetColumnResolver(recording.resolve)
+	fragment, err := planner.Plan(plannedQuery, sessionDB)
 	if err != nil {
 		return nil, err
 	}
 	if e.fabricPlanCache != nil {
-		e.fabricPlanCache.Put(cypher, sessionDB, fragment)
+		e.fabricPlanCache.Put(planCacheKey, sessionDB, fragment)
 	}
 	return fragment, nil
 }
@@ -619,9 +633,6 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	if err := exec.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, err
 	}
-	if len(recordBindings) > 0 {
-		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
-	}
 	ctx = withExecutionDatabase(ctx, dbName)
 	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
 }
@@ -634,16 +645,18 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 		recordBindings = names.bindingValues(recordBindings)
 		ctx = withQuotedVariableNames(ctx, names)
 	}
+	if fabric.LogicalFrameFromContext(ctx) != nil {
+		globals := fabric.CallScopeFromContext(ctx).Globals
+		if names != nil {
+			globals = names.bindingValues(globals)
+		}
+		ctx = withPipelineImports(ctx, pipelineRow(globals))
+	}
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
-	// Fragment imports are installed before the engine's shared compile-time
-	// scope/type owner runs. Both parser paths enter through this gate, so
-	// body-scope improvements apply here without another Fabric scope reader.
-	if err := exec.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
-		_, err = names.restore(nil, err, exec.parseReturnItems)
-		return nil, nil, err
-	}
+	// The complete logical statement passed semantic admission before planning.
+	// A physical fragment no longer owns or reinterprets that compile verdict.
 	var result *ExecuteResult
 	var err error
 	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && (embedding || fabric.ReadQueryStructure(query).HasEmbeddingCandidate()) {
@@ -748,15 +761,16 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 }
 
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
-// (USE graph.byName(g)) for Fabric: values holds the statement's
-// parameters and the current row's variables.
-func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
+// (USE graph.byName(g)) with the same separate row and parameter environments
+// used by native execution and physical fragment adapters.
+func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, parameters map[string]interface{}) ([]string, error) {
+	records, _ := fabric.RecordBindingsFromContext(ctx)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings("RETURN "+expression, values)
-		bindings, params := values, values
+		query, names := canonicalizeQuotedVariablesWithBindings("RETURN "+expression, records)
+		bindings, params := records, parameters
 		if names != nil {
-			bindings, params = names.bindingValues(values), names.parameterValues(values)
+			bindings, params = names.bindingValues(records), names.parameterValues(parameters)
 		}
 		projection := fabric.ReadQueryStructure(query).ResultClause()
 		if projection == nil || projection.Projection == nil || len(projection.Projection.Items) != 1 {

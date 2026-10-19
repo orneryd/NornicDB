@@ -109,7 +109,7 @@ func parseProjectionExprAlias(item string) (string, string) {
 		v := p.Items[0]
 		alias := v.Column
 
-		return v.Expression, alias
+		return lexicalExpressionText(v.Expression), alias
 	}
 	trimmed := strings.TrimSpace(item)
 	if trimmed == "" {

@@ -115,7 +115,7 @@ func canonicalizeLocalQuotedVariables(query string, fabricQuery bool) (string, *
 
 // External row bindings have the same identifier roles as bindings declared
 // in the query. The local query and its row keys are translated together.
-func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]interface{}) (string, *quotedVariableNames) {
+func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]interface{}, owners ...*quotedVariableNames) (string, *quotedVariableNames) {
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
@@ -126,6 +126,31 @@ func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]i
 	bound := make(map[string]struct{})
 	for name := range bindings {
 		bound[name] = struct{}{}
+	}
+	var owner *quotedVariableNames
+	if len(owners) > 0 {
+		owner = owners[0]
+	}
+	if owner != nil {
+		for internal, original := range owner.internal {
+			if _, parameter := owner.parameters[internal]; !parameter {
+				bound[original.name] = struct{}{}
+			}
+		}
+	}
+	identifierFor := func(name string, parameter bool, used map[string]struct{}) string {
+		if owner != nil {
+			for internal, original := range owner.internal {
+				_, isParameter := owner.parameters[internal]
+				if original.name == name && isParameter == parameter {
+					return internal
+				}
+			}
+		}
+		if parameter {
+			name = "$" + name
+		}
+		return internalVariableIdentifier(query, name, used)
 	}
 	for _, token := range tokens {
 		if token.binding {
@@ -142,7 +167,7 @@ func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]i
 		}
 		identifier := token.name
 		if !isPlainVariableName(identifier) {
-			identifier = internalVariableIdentifier(query, token.name, used)
+			identifier = identifierFor(token.name, false, used)
 			names.internal[identifier] = quotedVariableName{name: token.name, written: token.written}
 		}
 		identifiers[token.name] = identifier
@@ -163,7 +188,7 @@ func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]i
 				if identifier, ok := identifiers[key]; ok {
 					replacement = identifier
 				} else {
-					replacement = internalVariableIdentifier(query, key, used)
+					replacement = identifierFor(token.name, true, used)
 					identifiers[key] = replacement
 					used[replacement] = struct{}{}
 					names.internal[replacement] = quotedVariableName{name: token.name, written: token.written}

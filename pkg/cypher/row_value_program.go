@@ -661,7 +661,7 @@ type rowBoundNode struct {
 }
 
 func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	if value, ok := values[n.text]; ok {
+	if value, ok := rowExpressionBinding(values, n.text); ok {
 		return runtimeRowResult(value, true, nil)
 	}
 	return n.inner.eval(e, values, frames)

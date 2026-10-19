@@ -3,6 +3,8 @@ package fabric
 import (
 	"iter"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // queryToken is a complete lexical unit with byte offsets in the original
@@ -25,12 +27,12 @@ func queryTokens(query string) iter.Seq[queryToken] {
 			start := i
 			word := false
 			switch ch := query[i]; {
-			case ch == '\'' || ch == '"' || ch == '`':
-				i = min(skipQuoted(query, i)+1, len(query))
+			case cyphertext.IsQuote(ch):
+				i, _ = cyphertext.ScanQuotedText(query, i)
 			case ch == '$':
 				i++
-				if i < len(query) && query[i] == '`' {
-					i = min(skipQuoted(query, i)+1, len(query))
+				if i < len(query) && cyphertext.IsBacktick(query[i]) {
+					i, _ = cyphertext.ScanQuotedText(query, i)
 				} else {
 					for i < len(query) && (isNameByte(query[i]) || query[i] == '$') {
 						i++

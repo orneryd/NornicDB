@@ -16,7 +16,7 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.Equal(t, "WITH x CREATE (n)", stripLeadingWithImportsForFabricRecord("WITH x CREATE (n)", map[string]interface{}{"x": 1}))
 	require.Equal(t, "WITH x, y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
 	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": 1, "y": 2}))
-	require.Equal(t, "USE shard RETURN $x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
+	require.Equal(t, "USE shard RETURN x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
 
 	// findLeadingWithEndLocal branches
 	require.Equal(t, -1, findLeadingWithEndLocal("WITH x + 1"))

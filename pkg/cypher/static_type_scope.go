@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"maps"
 	"strings"
 )
@@ -35,7 +36,7 @@ func (operand staticOperand) bindingKind() matchBindingKind {
 	}
 	// A type of several choices that may be a node or relationship ("Map,
 	// Node or Relationship") is checked when the row runs.
-	for _, choice := range staticTypeChoices(operand.kind) {
+	for _, choice := range staticTypeChoices(operand.typeName()) {
 		if choice == "Node" || choice == "Relationship" {
 			return matchBindingUnknown
 		}
@@ -79,14 +80,44 @@ func typedOperand(typeName string) staticOperand {
 	if typeName == staticPropertyValueType {
 		return staticOperand{display: typeName, nonEntity: true}
 	}
+	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+		return knownOperand(typeName)
+	}
+	if choices := staticTypeChoices(typeName); len(choices) > 1 {
+		// Existing numeric operands already have an operator category. Other
+		// unions retain their alternatives without claiming one scalar kind.
+		if operand := knownOperand(typeName); operand.numeric() {
+			return operand
+		}
+		operand := staticOperand{display: typeName, union: true, alternatives: choices}
+		allLists, allNumbers, allMaps := true, true, true
+		operand.nonInteger, operand.nonBoolean, operand.nonEntity = true, true, true
+		for _, choice := range choices {
+			member := knownOperand(choice)
+			operand.nonInteger = operand.nonInteger && member.excludesInteger()
+			operand.nonBoolean = operand.nonBoolean && member.excludesBoolean()
+			operand.nonEntity = operand.nonEntity && member.excludesEntity()
+			allLists = allLists && member.list()
+			allNumbers = allNumbers && member.numeric()
+			allMaps = allMaps && containsString(staticCatalogTypeNames["MAP"], choice)
+		}
+		if allLists {
+			operand.kind = "List<T>"
+		} else if allNumbers {
+			operand.kind = "Number"
+		} else if allMaps {
+			operand.kind = "Map"
+		}
+		return operand
+	}
 	return knownOperand(typeName)
 }
 
 // typeName is the static type name of operand: its kind, or a property
 // value's type (typedOperand); "" when neither is known.
 func (operand staticOperand) typeName() string {
-	if operand.kind == "" && operand.display == staticPropertyValueType {
-		return staticPropertyValueType
+	if operand.union || operand.kind == "" && operand.display == staticPropertyValueType {
+		return operand.display
 	}
 	return operand.kind
 }
@@ -294,7 +325,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 		// An element of a typed list ([n, o][0], nodes(p)[0]) has its
 		// element type; a slice is the list's type.
 		list := projectedOperand(types, input, receiver)
-		if element := elementOfType(list.kind); element != "" {
+		if element := elementOfType(list.typeName()); element != "" {
 			if _, _, slice := staticSliceBounds(index); slice {
 				return list
 			}
@@ -320,7 +351,7 @@ func unwoundOperand(types typeScope, input staticTypeScope, clause string) stati
 // variable, a comprehension's or quantifier's local; localBindingKind).
 func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
 	operand := projectedOperand(types, input, list)
-	if element := elementOfType(operand.kind); element != "" {
+	if element := elementOfType(operand.typeName()); element != "" {
 		return typedOperand(element)
 	}
 	if operand.kind != "" && !strings.Contains(operand.kind, "List<") {
@@ -357,32 +388,79 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
 }
 
+// carryStaticSubqueryImports models both possible global-aggregate rows. A
+// nonempty group carries current operands; an empty group's missing input
+// falls back to original imports. Both scopes use the runtime retention owner.
+// Keep the type facts shared by both rows and defer only disagreements until
+// execution. No cardinality guess is needed for parameterized UNWIND, filters
+// or data-dependent MATCH.
+func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+	var empty typeScope
+	if len(imports) > 0 && pipelineProjectionHasOnlyAggregates(returnProjectionPlanFor("RETURN "+projection).projections) {
+		empty = maps.Clone(projected)
+		carrySubqueryImports(empty, nil, imports)
+	}
+	carrySubqueryImports(projected, input, imports)
+	for name, operand := range empty {
+		projected[name] = commonStaticOperand(projected[name], operand)
+	}
+}
+
+// commonStaticOperand widens differing facts independently: an unrelated map
+// member must not erase the Map kind or another member's agreed type. Members
+// present in only one alternative have no guaranteed type in the result.
+// Exclusions (nonBoolean, nonInteger, nonEntity) hold only when both
+// alternatives agree; a deferred predicate check stays deferred if either
+// alternative defers it.
+func commonStaticOperand(left, right staticOperand) staticOperand {
+	common := staticOperand{
+		nonBoolean:        left.excludesBoolean() && right.excludesBoolean(),
+		predicateDeferred: left.predicateDeferred || right.predicateDeferred,
+		nonInteger:        left.excludesInteger() && right.excludesInteger(),
+		nonEntity:         left.excludesEntity() && right.excludesEntity(),
+		// Alternative membership and common operator categories are independent.
+		union: left.union || right.union,
+	}
+	if left.kind == right.kind {
+		common.kind = left.kind
+	}
+	if left.display == right.display {
+		common.display = left.display
+	}
+	if left.parameter == right.parameter {
+		common.parameter = left.parameter
+	}
+	if choices, complete := joinedOperandAlternatives(left, right); complete {
+		joined := typedOperand(joinTypeNames(choices))
+		common.kind, common.display, common.union, common.alternatives = joined.kind, joined.display, joined.union, choices
+	}
+	for name, member := range left.members {
+		if other, exists := right.members[name]; exists {
+			if common.members == nil {
+				common.members = make(map[string]staticOperand)
+			}
+			common.members[name] = commonStaticOperand(member, other)
+		}
+	}
+	return common
+}
+
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
 // (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
 // every outer variable (the latter's leading WITH picks them). ok is false
 // for a CALL without a body; scoped is set for CALL (…) { }.
 func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
-	trimmed := strings.TrimSpace(callText)
-	open := strings.IndexByte(trimmed, '{')
-	call := indexASCIIFold(trimmed, "call")
-	if open < 0 || call < 0 || call > open {
+	q := fabric.ReadQueryStructure(callText)
+	call := q.First("CALL")
+	if q.Err != nil || call == nil || call.Nested == nil {
 		return nil, false, false
 	}
-	initial := make(typeScope)
-	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
-	if imports, scoped := stripEnclosingRowDelimiter(head, '(', ')'); scoped && strings.TrimSpace(imports) != "*" {
-		for _, name := range splitTopLevelComma(imports) {
-			name = normalizeProjectionColumnName(strings.TrimSpace(name))
-			if operand, bound := outer[name]; bound {
-				initial[name] = operand
-			}
-		}
-		return initial, true, true
+	plan, err := planCallBranchBindings(call.Body, outer, call.Scoped, call.ScopeNames)
+	if err != nil {
+		return nil, call.Scoped, false
 	}
-	for name, operand := range outer {
-		initial[name] = operand
-	}
-	return initial, false, true
+	initial, _, missing := callBranchBindingValues(plan, outer)
+	return initial, call.Scoped, missing == ""
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
@@ -394,35 +472,40 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok := callSubqueryImports(callText, outer)
-	if !ok {
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool, recordings ...*scopeRecording) (typeScope, error) {
+	call := fabric.ReadQueryStructure(callText).First("CALL")
+	if call == nil || call.Nested == nil {
 		return nil, nil
 	}
 	var returned typeScope
 	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+		clauses, ok := semanticScopeClauses(branch)
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		body := subqueryScope{}
-		if scoped {
-			body.visible = initial
-		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
+		plan, err := planCallBranchBindings(branch, outer, call.Scoped, call.ScopeNames)
 		if err != nil {
-			if !scoped {
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, nil
-			}
+			return nil, err
+		}
+		branchInitial, retained, missing := callBranchBindingValues(plan, outer)
+		if missing != "" {
+			return nil, createUndefinedVariableError(missing)
+		}
+		final, complete, err := e.semanticScopeWalk(clauses, branchInitial, cypher25, subqueryScope{visible: retained}, recordings...)
+		if err != nil {
 			return nil, err
 		}
 		last := clauses[len(clauses)-1]
-		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
+		if complete && last.kind == pipelineClauseReturn {
 			returnClause := strings.TrimSpace(last.text)
-			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+			projected := projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+			if returned == nil {
+				returned = projected
+			} else {
+				for name, operand := range returned {
+					returned[name] = commonStaticOperand(operand, projected[name])
+				}
+			}
 		}
 	}
 	return returned, nil

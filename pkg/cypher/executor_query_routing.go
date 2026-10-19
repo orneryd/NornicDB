@@ -79,6 +79,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
 		return result, err
 	}
+	// The logical row frame constrains operator selection after the statement
+	// entry has installed its storage view. Fast paths without import retention
+	// cannot consume that frame, even when its current query looks independent.
+	if len(pipelineImports(ctx)) > 0 {
+		return e.executeRequiredPipeline(ctx, cypher)
+	}
 	if strings.Contains(upperQuery, "CALL") {
 		if firstTopLevelCallSubquery(cypher) >= 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
