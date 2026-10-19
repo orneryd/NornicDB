@@ -717,11 +717,14 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		err = engine.DeleteNode(storage.NodeID("to-delete"))
 		require.NoError(t, err)
 
-		// DeleteNode already removed the pending marker, so this is a genuinely
-		// empty lookup rather than a candidate skipped during the claim.
+		// processNextBatch should skip the deleted node
+		// It will find the node from the index, but then check if it exists
+		// and skip it if it's been deleted
 		didWork := worker.processNextBatch()
 
-		assert.False(t, didWork, "an empty queue does no work")
+		// Should return false (no work done) because node was deleted
+		// The node was found in the index but doesn't exist, so it's skipped
+		assert.False(t, didWork, "Should skip deleted node and return false")
 
 		// Verify node was not embedded (embedder should not have been called)
 		assert.Equal(t, 0, embedder.embedCount, "Should not embed deleted node")
@@ -2168,7 +2171,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			trigger:  make(chan struct{}, 1),
 		}
 		didWork := ew.processNextBatch()
-		require.True(t, didWork, "discarding a stale pending marker advances the drain")
+		require.False(t, didWork)
 		require.Equal(t, []storage.NodeID{"missing"}, qe.marked)
 	})
 
@@ -2189,11 +2192,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		}
 
 		didWork := ew.processNextBatch()
-		require.True(t, didWork, "discarding a stale pending marker advances the drain")
+		require.False(t, didWork)
 		require.Equal(t, []storage.NodeID{"ghost"}, qe.marked)
 	})
 
-	t.Run("processNextBatch retains local batch work after bounded request retries", func(t *testing.T) {
+	t.Run("processNextBatch sends failed local batch work to DLQ", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2219,12 +2222,13 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{node.ID}, qe.added)
+		require.Empty(t, qe.added, "failed work leaves MAIN")
+		require.Contains(t, ew.nodeRetries, node.ID)
 		require.Zero(t, ew.parked.Load())
 		require.Nil(t, qe.updatedEmbedding)
 	})
 
-	t.Run("processNextBatch marks non-retryable embed failures permanent", func(t *testing.T) {
+	t.Run("processNextBatch makes provider failures terminal after DLQ limit", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2250,12 +2254,21 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
-		require.Equal(t, 1, emb.callCount, "non-retryable errors must not consume the retry budget")
+		require.Equal(t, 1, emb.callCount, "one provider request per attempt")
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Empty(t, qe.added, "permanent errors must not be requeued")
 		// The claim removes the pending work; the terminal failure's writeback
 		// removes it again in its own commit, not by a separate call (#889).
 		require.Equal(t, []storage.NodeID{node.ID}, qe.marked, "the claim removes pending work")
+		require.Zero(t, ew.parked.Load())
+		require.Contains(t, ew.nodeRetries, node.ID)
+		for i := 0; i < 3; i++ {
+			makeNodeSaveRetriesReady(ew)
+			qe.findReturned = false
+			require.True(t, ew.processNextBatch())
+		}
+		require.Equal(t, 4, emb.callCount)
+		require.Equal(t, int64(1), ew.parked.Load())
 		require.NotNil(t, qe.updatedEmbedding)
 		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 		require.Equal(t, false, qe.updatedEmbedding.EmbedMeta["has_embedding"])
@@ -2286,7 +2299,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		for attempt := 1; attempt <= 3; attempt++ {
 			qe.findReturned = false
 			require.True(t, ew.processNextBatch())
-			require.Len(t, qe.added, attempt, "retryable failure must remain pending after an attempt budget is exhausted")
+			require.Empty(t, qe.added, "DLQ owns the failed attempt")
+			require.Equal(t, attempt, ew.nodeRetries[node.ID].failures)
+			makeNodeSaveRetriesReady(ew)
 		}
 		require.Equal(t, 3, emb.callCount)
 		require.Equal(t, int64(3), ew.failed.Load())
@@ -2332,7 +2347,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []string{"chunk-one", "chunk-two"}, emb.batchCalls[0])
 	})
 
-	t.Run("processNextBatch parks an empty embedding response", func(t *testing.T) {
+	t.Run("processNextBatch retries then parks an empty embedding response", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2359,6 +2374,10 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Empty(t, qe.added)
+		require.Zero(t, ew.parked.Load())
+		makeNodeSaveRetriesReady(ew)
+		qe.findReturned = false
+		require.True(t, ew.processNextBatch())
 		require.Equal(t, int64(1), ew.parked.Load())
 		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 	})
@@ -2388,7 +2407,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		}
 
 		didWork := ew.processNextBatch()
-		require.True(t, didWork, "discarding a deleted candidate advances the drain")
+		require.False(t, didWork)
 		require.Equal(t, []storage.NodeID{"n3", "n3"}, qe.marked)
 	})
 
@@ -2420,7 +2439,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		// claim): the worker marks it embedded and skips it. One mark comes
 		// from the claim itself, the other from the delete-skip.
 		didWork := ew.processNextBatch()
-		require.True(t, didWork, "discarding a deleted candidate advances the drain")
+		require.False(t, didWork)
 		require.Equal(t, []storage.NodeID{"n4", "n4"}, qe.marked)
 	})
 
@@ -2486,7 +2505,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Len(t, worker.trigger, 1)
 	})
 
-	t.Run("worker waits for embedder then enqueue picks up new node", func(t *testing.T) {
+	t.Run("worker waits for embedder then ticker picks up new node", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		base.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(base, "test")
@@ -2505,13 +2524,14 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		defer worker.Close()
 		worker.StartWorkers()
 
-		// Worker should be waiting for the model without accessing storage.
+		// Worker should be waiting for embedder and not processing yet. Let
+		// it wait through one poll interval before the embedder arrives.
 		time.Sleep(1100 * time.Millisecond)
 		require.Equal(t, 0, worker.Stats().Processed)
 
 		worker.SetEmbedder(newMockEmbedder())
 
-		// Create a node after activation and notify the sleeping worker.
+		// Create node after worker activation; ticker path should discover it without explicit Trigger.
 		_, err := engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID("ticker-node"),
 			Labels: []string{"Doc"},
@@ -2520,7 +2540,6 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		worker.Enqueue("ticker-node")
 
 		require.Eventually(t, func() bool {
 			return worker.Stats().Processed >= 1

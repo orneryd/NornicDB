@@ -23,7 +23,7 @@ func TestReviewRetryBytePressurePersistsUntilDrain(t *testing.T) {
 	for _, retry := range worker.nodeRetries {
 		retry.retryAt = time.Now().Add(2 * time.Hour)
 	}
-	candidate := worker.nextEmbeddingNodeID(time.Now().Add(time.Hour))
+	candidate := worker.nextEmbeddingNodeID(time.Now().Add(time.Hour), false)
 	worker.claimMu.Unlock()
 	require.Equal(t, storage.NodeID("node-002"), candidate, "MAIN always precedes DLQ regardless of cache pressure or elapsed time")
 	makeNodeSaveRetriesReady(worker)

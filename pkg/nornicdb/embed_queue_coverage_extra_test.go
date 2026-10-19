@@ -243,7 +243,9 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 
 		require.True(t, ew.processNextBatch())
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{node.ID}, qe.added)
+		require.Empty(t, qe.added, "failed writes leave MAIN")
+		require.Contains(t, ew.nodeRetries, node.ID)
+		require.Contains(t, ew.embeddingRetries, node.ID)
 	})
 }
 

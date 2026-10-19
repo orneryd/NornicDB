@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -29,10 +30,10 @@ type retainedNodeEmbedding struct {
 // DLQ deadlines/order are process-local; terminal failure sidecars are durable.
 type nodeEmbeddingRetry struct {
 	updatedAt time.Time
-	retryAt time.Time
-	order uint64
-	failures int
-	terminal bool
+	retryAt   time.Time
+	order     uint64
+	failures  int
+	terminal  bool
 }
 
 const nodeEmbeddingRetryMaxCount = 128
@@ -184,38 +185,118 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 	if retained != nil && ew.embeddingRetries == nil {
 		ew.embeddingRetries = make(map[storage.NodeID]*retainedNodeEmbedding)
 	}
-	if retained != nil { ew.embeddingRetries[node.ID] = retained }
+	if retained != nil {
+		ew.embeddingRetries[node.ID] = retained
+	}
 	terminal := ew.recordNodeFailureLocked(node, nil)
 	ew.claimMu.Unlock()
-	if terminal { ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding save retry limit reached")) }
+	if terminal {
+		ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding save retry limit reached"))
+	}
 }
 
 func (ew *EmbedWorker) validNodeClaimLocked(id storage.NodeID) bool {
+	ew.applyNodeUpdatesLocked()
 	epoch, claimed := ew.claimedNodes[string(id)]
 	return claimed && epoch == ew.embeddingEpoch.Load() && !ew.invalidatedClaims[id]
+}
+
+// Enqueue only journals IDs; it never waits for a storage claim to finish.
+// The retry owner consumes notifications before selection and result validity.
+func (ew *EmbedWorker) applyNodeUpdatesLocked() {
+	if !ew.nodeUpdatesPending.Load() {
+		return
+	}
+	ew.mu.Lock()
+	updates := ew.nodeUpdates
+	ew.nodeUpdates = nil
+	ew.nodeUpdatesPending.Store(false)
+	ew.mu.Unlock()
+	matches := func(id string) bool {
+		for {
+			if _, ok := updates[id]; ok {
+				return true
+			}
+			_, suffix, ok := strings.Cut(id, ":")
+			if !ok {
+				return false
+			}
+			id = suffix
+		}
+	}
+	for id := range ew.embeddingRetries {
+		if !matches(string(id)) {
+			continue
+		}
+		if _, tracked := ew.nodeRetries[id]; !tracked {
+			if _, claimed := ew.claimedNodes[string(id)]; !claimed {
+				ew.addNodeToPendingEmbeddings(id)
+			}
+		}
+	}
+	for id := range ew.nodeRetries {
+		if !matches(string(id)) {
+			continue
+		}
+		delete(ew.nodeRetries, id) // Reset attempts/deadline; validate payload source on its MAIN claim.
+		if _, claimed := ew.claimedNodes[string(id)]; !claimed {
+			ew.addNodeToPendingEmbeddings(id)
+		}
+	}
+	for id := range ew.claimedNodes {
+		if matches(id) {
+			if ew.invalidatedClaims == nil {
+				ew.invalidatedClaims = make(map[storage.NodeID]bool)
+			}
+			ew.invalidatedClaims[storage.NodeID(id)] = true
+		}
+	}
 }
 
 // All six provider dispatch routes and rejected saves converge on this owner.
 // MaxRetries counts DLQ retries after the initial attempt, never inline calls.
 func (ew *EmbedWorker) recordNodeFailureLocked(node *storage.Node, failure error) bool {
-	if ew.nodeRetries == nil { ew.nodeRetries = make(map[storage.NodeID]*nodeEmbeddingRetry) }
+	if ew.nodeRetries == nil {
+		ew.nodeRetries = make(map[storage.NodeID]*nodeEmbeddingRetry)
+	}
 	state := ew.nodeRetries[node.ID]
-	if state == nil { state = &nodeEmbeddingRetry{updatedAt: node.UpdatedAt}; ew.nodeRetries[node.ID] = state }
+	if state == nil {
+		state = &nodeEmbeddingRetry{updatedAt: node.UpdatedAt}
+		ew.nodeRetries[node.ID] = state
+	}
 	state.failures++
 	limit := ew.config.MaxRetries
-	if limit < 0 { limit = 0 }
+	if limit < 0 {
+		limit = 0
+	}
 	state.terminal = state.failures > limit
 	ew.retrySequence++
 	state.order = ew.retrySequence // Every failure rejoins the DLQ tail.
 	base, cap := ew.config.ProviderRetryBackoff, ew.config.ProviderRetryBackoffMax
-	if base <= 0 { base = time.Second }
-	if cap < base { cap = 30*time.Second; if cap < base { cap = base } }
+	if base <= 0 {
+		base = time.Second
+	}
+	if cap < base {
+		cap = 30 * time.Second
+		if cap < base {
+			cap = base
+		}
+	}
 	delay := base
-	for i:=1; i<state.failures && delay<cap; i++ { if delay > cap/2 { delay=cap } else { delay*=2 } }
-	if requested, ok := retryDelay(failure); ok && requested > delay { delay = requested }
+	for i := 1; i < state.failures && delay < cap; i++ {
+		if delay > cap/2 {
+			delay = cap
+		} else {
+			delay *= 2
+		}
+	}
+	if requested, ok := retryDelay(failure); ok && requested > delay {
+		delay = requested
+	}
 	state.retryAt = time.Now().Add(delay)
-	ew.markNodeEmbedded(node.ID) // DLQ owns the ID until update/success/terminal.
-	if state.terminal { delete(ew.embeddingRetries,node.ID) }
+	if state.terminal {
+		delete(ew.embeddingRetries, node.ID)
+	}
 	return state.terminal
 }
 
@@ -223,11 +304,15 @@ func (ew *EmbedWorker) failNodeEmbedding(node *storage.Node, failure error) {
 	ew.providerWriteMu.RLock()
 	defer ew.providerWriteMu.RUnlock()
 	ew.claimMu.Lock()
-	valid := ew.validNodeClaimLocked(node.ID)
+	valid := ew.validNodeClaimLocked(node.ID) && ew.ctx.Err() == nil
 	terminal := false
-	if valid { terminal = ew.recordNodeFailureLocked(node,failure) }
+	if valid {
+		terminal = ew.recordNodeFailureLocked(node, failure)
+	}
 	ew.claimMu.Unlock()
-	if terminal { ew.markNodeEmbeddingFailed(node.ID,failure) }
+	if terminal {
+		ew.markNodeEmbeddingFailed(node.ID, failure)
+	}
 }
 
 // Provider objects identify their configuration; model/space and worker text
@@ -252,8 +337,21 @@ func (ew *EmbedWorker) invalidateNodeEmbeddingRetries() {
 }
 
 func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
+	for id := range ew.embeddingRetries {
+		if _, tracked := ew.nodeRetries[id]; tracked {
+			continue
+		}
+		if _, claimed := ew.claimedNodes[string(id)]; !claimed {
+			ew.addNodeToPendingEmbeddings(id)
+		}
+	}
 	for id, state := range ew.nodeRetries {
-		if state.terminal { continue }
+		if state.terminal {
+			continue
+		}
+		if _, claimed := ew.claimedNodes[string(id)]; claimed {
+			continue
+		} // release owns its requeue
 		ew.addNodeToPendingEmbeddings(id)
 	}
 	ew.embeddingRetries = nil
@@ -263,22 +361,38 @@ func (ew *EmbedWorker) clearNodeEmbeddingRetriesLocked() {
 // nextEmbeddingNodeID runs under claimMu. Storage markers for retained IDs are
 // consumed while seeking fresh work; the retry owner keeps those IDs and its
 // deadline wakes the worker independently of the storage index.
-func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
+func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage.NodeID {
 	// MAIN is the storage pending index. A body update restores a DLQ ID to
 	// that index; detect it even when the update did not call Enqueue.
 	blockedMain := false
+	var skipped storage.NodeID
 	for attempts, bound := 0, len(ew.nodeRetries)+len(ew.claimedNodes)+1; attempts < bound; attempts++ {
 		pending := ew.findNodeWithoutEmbedding()
 		if pending == nil {
 			break
 		}
+		if pending.ID == skipped {
+			blockedMain = true
+			break
+		} // Index deletion did not advance.
 		if state := ew.nodeRetries[pending.ID]; state != nil {
-			if !state.updatedAt.Equal(pending.UpdatedAt) {
-				ew.dropNodeEmbeddingRetryLocked(pending.ID)
-			} else { blockedMain = true; ew.markNodeEmbedded(pending.ID); continue }
+			// Finder projections need only identify the node. Retry metadata
+			// compares the authoritative body, never a partial index projection.
+			body, err := ew.storage.GetNode(pending.ID)
+			if err == nil && body != nil && !state.updatedAt.Equal(body.UpdatedAt) {
+				delete(ew.nodeRetries, pending.ID) // New attempt; payload validity still uses consumed source.
+			} else {
+				blockedMain = true
+				skipped = pending.ID
+				ew.markNodeEmbedded(pending.ID)
+				continue
+			}
 		}
-		if _, claimed := ew.claimedNodes[string(pending.ID)]; !claimed { return pending.ID }
+		if _, claimed := ew.claimedNodes[string(pending.ID)]; !claimed {
+			return pending.ID
+		}
 		blockedMain = true
+		skipped = pending.ID
 		ew.markNodeEmbedded(pending.ID)
 	}
 	// Engines without a mutable pending index cannot advance past a retained
@@ -289,7 +403,10 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{}, func(node *storage.Node) error {
 			state := ew.nodeRetries[node.ID]
 			_, claimed := ew.claimedNodes[string(node.ID)]
-			if state != nil && !state.updatedAt.Equal(node.UpdatedAt) { ew.dropNodeEmbeddingRetryLocked(node.ID); state=nil }
+			if state != nil && !state.updatedAt.Equal(node.UpdatedAt) {
+				delete(ew.nodeRetries, node.ID)
+				state = nil
+			}
 			if state == nil && !claimed && storage.NodeNeedsEmbedding(node) {
 				fresh = node.ID
 				return storage.ErrIterationStopped
@@ -300,11 +417,16 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 			return fresh
 		}
 	}
+	if mainOnly {
+		return ""
+	}
 	var due storage.NodeID
 	var order uint64
 	for id, state := range ew.nodeRetries {
 		_, claimed := ew.claimedNodes[string(id)]
-		if !claimed && !state.terminal && !now.Before(state.retryAt) && (due=="" || state.order<order) { due,order=id,state.order }
+		if !claimed && !state.terminal && !now.Before(state.retryAt) && (due == "" || state.order < order) {
+			due, order = id, state.order
+		}
 	}
 	return due
 }
@@ -314,7 +436,9 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 	for id, result := range ew.nodeRetries {
-		if result.terminal { continue }
+		if result.terminal {
+			continue
+		}
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue
 		}
@@ -333,11 +457,15 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 // write attempt. All provider paths enter here, so none can re-embed a retained
 // result before its source has been checked.
 func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
+	return ew.claimNextNodeResultFrom(false)
+}
+
+func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool) (*storage.Node, bool) {
 	// Rejected retained writes are not progress, but they are not an empty
 	// queue either. Continue selection within a bounded pass so healthy work
 	// reaches every dispatch route without waiting for a new wakeup.
 	for attempts := 0; attempts <= nodeEmbeddingRetryMaxCount; attempts++ {
-		node, progressed, attempted := ew.tryNextNodeResult()
+		node, progressed, attempted := ew.tryNextNodeResult(mainOnly)
 		if node != nil || progressed || !attempted {
 			return node, progressed
 		}
@@ -345,8 +473,8 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	return nil, false
 }
 
-func (ew *EmbedWorker) tryNextNodeResult() (*storage.Node, bool, bool) {
-	node, retained, progressed := ew.claimNextNodeSource()
+func (ew *EmbedWorker) tryNextNodeResult(mainOnly bool) (*storage.Node, bool, bool) {
+	node, retained, progressed := ew.claimNextNodeSourceFrom(mainOnly)
 	if node == nil {
 		return nil, progressed, false
 	}
@@ -378,7 +506,8 @@ func (ew *EmbedWorker) claimNodeBatch(limit int) ([]*storage.Node, bool) {
 	nodes := make([]*storage.Node, 0, limit)
 	progressed := false
 	for attempts := 0; attempts < limit; attempts++ {
-		node, advanced := ew.claimNextNodeResult()
+		// Finish the MAIN batch before selecting or saving any DLQ entry.
+		node, advanced := ew.claimNextNodeResultFrom(len(nodes) > 0)
 		progressed = progressed || advanced
 		if node == nil {
 			if advanced {

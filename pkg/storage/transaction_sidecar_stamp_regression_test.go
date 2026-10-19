@@ -7,16 +7,25 @@ import (
 )
 
 func TestTerminalFailureClearedByIdempotentBodyUpdate(t *testing.T) {
-	for _,route:=range []string{"direct","transaction"} {
-		t.Run(route,func(t *testing.T){
-			b:=newSidecarTestBadger(t);defer b.Close()
-			n:=sidecarTestNode(t,b,"terminal-reset",map[string]any{"text":"same"},time.Now())
-			require.NoError(t,b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t,b,n.ID,nil,map[string]any{"embedding_failed":true},time.Time{})))
-			body,err:=b.GetNode(n.ID);require.NoError(t,err)
-			if route=="direct" {require.NoError(t,b.UpdateNode(body))} else {
-				tx,err:=b.BeginTransaction();require.NoError(t,err);require.NoError(t,tx.UpdateNode(body));require.NoError(t,tx.Commit())
+	for _, route := range []string{"direct", "transaction"} {
+		t.Run(route, func(t *testing.T) {
+			b := newSidecarTestBadger(t)
+			defer b.Close()
+			n := sidecarTestNode(t, b, "terminal-reset", map[string]any{"text": "same"}, time.Now())
+			require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, nil, map[string]any{"embedding_failed": true}, time.Time{})))
+			body, err := b.GetNode(n.ID)
+			require.NoError(t, err)
+			if route == "direct" {
+				require.NoError(t, b.UpdateNode(body))
+			} else {
+				tx, err := b.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.UpdateNode(body))
+				require.NoError(t, tx.Commit())
 			}
-			got,err:=b.GetNode(n.ID);require.NoError(t,err);require.Empty(t,got.EmbedMeta,"a body update clears terminal state even when properties and timestamp are unchanged")
+			got, err := b.GetNode(n.ID)
+			require.NoError(t, err)
+			require.Empty(t, got.EmbedMeta, "a body update clears terminal state even when properties and timestamp are unchanged")
 		})
 	}
 }
@@ -59,9 +68,11 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 				got, err := b.GetNode(n.ID)
 				require.NoError(t, err)
 				if layout == "failed" {
-				 require.Empty(t,got.ChunkEmbeddings);require.Empty(t,got.EmbedMeta,"body updates clear terminal failure metadata")
+					require.Empty(t, got.ChunkEmbeddings)
+					require.Empty(t, got.EmbedMeta, "body updates clear terminal failure metadata")
 				} else {
-				 require.Equal(t,chunks,got.ChunkEmbeddings);require.Equal(t,meta,got.EmbedMeta)
+					require.Equal(t, chunks, got.ChunkEmbeddings)
+					require.Equal(t, meta, got.EmbedMeta)
 				}
 				require.True(t, at.Add(time.Duration(writes)*time.Second).Equal(got.UpdatedAt))
 			})

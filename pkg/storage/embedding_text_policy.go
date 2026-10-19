@@ -141,7 +141,9 @@ func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) {
 // kept the timestamp. Terminal metadata is never carried into that attempt;
 // actual vectors still obey the provider's consumed-source contract.
 func canCarryManagedEmbeddings(judge Engine, prev, node *Node) bool {
-	if failed, _ := prev.EmbedMeta["embedding_failed"].(bool); failed { return false }
+	if failed, _ := prev.EmbedMeta["embedding_failed"].(bool); failed {
+		return false
+	}
 	same := EmbeddingSourceMatches(prev, node, defaultEmbeddingTextPolicy)
 	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
 		same = engine.sameEmbeddingSource(prev, node)

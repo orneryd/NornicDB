@@ -44,14 +44,18 @@ func (p *dlqPublicProvider) EmbedBatch(_ context.Context, texts []string) ([][]f
 }
 type dlqPublicStore struct {
 	storage.Engine
+	disk *storage.BadgerEngine
+	path string
 	mu sync.Mutex
 	pending []storage.NodeID
 	attempts []storage.NodeID
 	reject map[storage.NodeID]bool
 	pause *atomic.Bool
 	beforeWrite func(*storage.Node)
+	beforeFind func()
 }
 func (s *dlqPublicStore) FindNodeNeedingEmbedding() *storage.Node {
+	if s.beforeFind!=nil {s.beforeFind()}
 	s.mu.Lock(); defer s.mu.Unlock()
 	if len(s.pending)==0 { return nil }; n, _ := s.Engine.GetNode(s.pending[0]); return n
 }
@@ -75,14 +79,14 @@ func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
 }
 func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nornicdb.EmbedWorkerConfig)) (*nornicdb.EmbedWorker,*dlqPublicStore) {
 	t.Helper()
-	base, err := storage.NewBadgerEngine(t.TempDir()); require.NoError(t,err)
-	s := &dlqPublicStore{Engine:storage.NewNamespacedEngine(base,"dlq"),reject:make(map[storage.NodeID]bool)}
+	path:=t.TempDir();base, err := storage.NewBadgerEngine(path); require.NoError(t,err)
+	s := &dlqPublicStore{Engine:storage.NewNamespacedEngine(base,"dlq"),disk:base,path:path,reject:make(map[storage.NodeID]bool)}
 	cfg:=nornicdb.DefaultEmbedWorkerConfig(); cfg.DeferWorkerStart=true; cfg.NumWorkers=1; cfg.EmbedBatchSize=1
 	cfg.MaxRetries=2; cfg.BatchDelay=0; cfg.ScanInterval=time.Hour; cfg.TriggerDebounceDelay=0
 	cfg.ProviderRetryBackoff=20*time.Millisecond; cfg.ProviderRetryBackoffMax=40*time.Millisecond
 	for _,fn:=range configure {fn(cfg)}
 	w:=nornicdb.NewEmbedWorker(p,s,cfg)
-	t.Cleanup(func(){w.Close(); require.NoError(t,base.Close())})
+	t.Cleanup(func(){w.Close(); require.NoError(t,s.disk.Close())})
 	return w,s
 }
 func dlqPublicAdd(t *testing.T,s *dlqPublicStore,id string) {
@@ -163,6 +167,9 @@ func TestEmbedWorkerDLQPublicTerminalSurvivesRestart(t *testing.T) {
 	dlqPublicAdd(t,s,"poison");w.StartWorkers()
 	require.Eventually(t,func()bool{return w.Stats().Parked==1},4*time.Second,time.Millisecond)
 	w.Close()
+	require.NoError(t,s.disk.Close())
+	reopened,err:=storage.NewBadgerEngine(s.path);require.NoError(t,err)
+	s.disk=reopened;s.Engine=storage.NewNamespacedEngine(reopened,"dlq")
 	cfg:=nornicdb.DefaultEmbedWorkerConfig();cfg.DeferWorkerStart=true
 	restarted:=nornicdb.NewEmbedWorker(p,s,cfg);defer restarted.Close()
 	failures,err:=restarted.ParkedEmbeddingFailures(context.Background(),10)
@@ -257,4 +264,19 @@ func TestEmbedWorkerDLQPublicFailureRoutes(t *testing.T){
 			failures,err:=w.ParkedEmbeddingFailures(context.Background(),10);require.NoError(t,err);require.Len(t,failures,1)
 		})
 	}
+}
+
+func TestEmbedWorkerDLQPublicEnqueueDoesNotWaitForClaim(t *testing.T) {
+	w,s:=dlqPublicFixture(t,&dlqPublicProvider{})
+	started,release:=make(chan struct{}),make(chan struct{})
+	var once,releaseOnce sync.Once
+	t.Cleanup(func(){releaseOnce.Do(func(){close(release)})})
+	s.beforeFind=func(){once.Do(func(){close(started);<-release})}
+	w.StartWorkers()
+	select{case <-started:case <-time.After(3*time.Second):t.Fatal("no storage claim")}
+	dlqPublicAdd(t,s,"arriving")
+	done:=make(chan struct{});go func(){w.Enqueue("arriving");close(done)}()
+	select{case <-done:case <-time.After(time.Second):t.Fatal("enqueue waited for the empty claim it must wake")}
+	releaseOnce.Do(func(){close(release)})
+	require.Eventually(t,func()bool{return w.Stats().Processed==1},3*time.Second,time.Millisecond)
 }
