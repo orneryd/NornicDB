@@ -972,7 +972,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Property access (n.prop)
-	if dotIdx := strings.Index(text, "."); dotIdx > 0 && !strings.Contains(text, "(") {
+	if dotIdx := strings.Index(text, "."); dotIdx > 0 && len(readFunctionSyntax(text).calls)==0 {
 		expr.Type = ASTExprProperty
 		expr.Property = &ASTPropertyAccess{
 			Variable: text[:dotIdx],
