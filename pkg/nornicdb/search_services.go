@@ -285,6 +285,9 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// database managed by this service, including services created before the
 	// server installs its per-database options resolver.
 	resolvedOptions.DatabaseID = dbName
+	if db.config != nil {
+		resolvedOptions.SearchCursorMaxPageSize = db.config.Memory.SearchCursorMaxPageSize
+	}
 	selectedStemmer := stemmer.NormalizeSelection(resolvedOptions.BM25StemmerID)
 	if selectedStemmer != stemmer.NoneID {
 		reg, ok := stemmer.Lookup(selectedStemmer)
@@ -439,15 +442,18 @@ func (db *DB) getOrCreateSearchContinuationRegistry() (*resultstream.Registry, e
 		return db.searchContinuation, nil
 	}
 	maxStreams := int64(0)
+	maxPageSize := 0
 	ttl := 5 * time.Minute
 	if db.config != nil {
 		maxStreams = db.config.Memory.SearchCursorMax
+		maxPageSize = db.config.Memory.SearchCursorMaxPageSize
 		if db.config.Memory.SearchCursorTTL > 0 {
 			ttl = db.config.Memory.SearchCursorTTL
 		}
 	}
 	registry, err := resultstream.NewRegistry(resultstream.Config{
 		Disabled: maxStreams == 0, MaxStreams: maxStreams, TTL: ttl,
+		MaxPageSize: maxPageSize,
 	})
 	if err != nil {
 		return nil, err

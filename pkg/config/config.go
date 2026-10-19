@@ -58,6 +58,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"gopkg.in/yaml.v3"
 )
 
@@ -792,6 +793,8 @@ type MemoryConfig struct {
 	SearchCursorMax int64
 	// SearchCursorTTL is the fixed lifetime assigned when a cursor starts.
 	SearchCursorTTL time.Duration
+	// SearchCursorMaxPageSize bounds n on continuation START and PULL.
+	SearchCursorMaxPageSize int
 }
 
 // ComplianceConfig holds settings for GDPR/HIPAA/FISMA/SOC2 compliance.
@@ -1714,6 +1717,8 @@ type YAMLConfig struct {
 		QueryCacheTTL                int64   `yaml:"query_cache_ttl"`
 		SearchCursorMax              int64   `yaml:"search_cursor_max"`
 		SearchCursorTTL              int64   `yaml:"search_cursor_ttl"`
+
+		SearchCursorMaxPageSize int `yaml:"search_cursor_max_page_size"`
 	} `yaml:"memory"`
 
 	// Embedding worker configuration
@@ -2101,6 +2106,7 @@ func LoadDefaults() *Config {
 	config.Memory.QueryCacheTTL = 5 * time.Minute
 	config.Memory.SearchCursorMax = 0
 	config.Memory.SearchCursorTTL = 5 * time.Minute
+	config.Memory.SearchCursorMaxPageSize = resultstream.DefaultMaxPageSize
 
 	// Embedding worker defaults
 	config.EmbeddingWorker.NumWorkers = 1
@@ -2797,6 +2803,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if milliseconds := getEnvInt("NORNICDB_SEARCH_CURSOR_TTL", 0); milliseconds > 0 {
 		config.Memory.SearchCursorTTL = time.Duration(milliseconds) * time.Millisecond
+	}
+	if value := getEnvInt("NORNICDB_SEARCH_CURSOR_MAX_PAGE_SIZE", 0); value > 0 {
+		config.Memory.SearchCursorMaxPageSize = value
 	}
 
 	// Embedding worker settings
@@ -3800,6 +3809,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.Memory.SearchCursorTTL > 0 {
 		config.Memory.SearchCursorTTL = time.Duration(yamlCfg.Memory.SearchCursorTTL) * time.Millisecond
+	}
+	if yamlCfg.Memory.SearchCursorMaxPageSize > 0 {
+		config.Memory.SearchCursorMaxPageSize = yamlCfg.Memory.SearchCursorMaxPageSize
 	}
 
 	// === Embedding Worker ===

@@ -52,6 +52,9 @@ type SearchContinuationRequest struct {
 
 // SearchContinuationPage is the protocol-neutral continued-search response.
 type SearchContinuationPage struct {
+	// MaxPageSize is the effective registry limit, advertised on page responses.
+	MaxPageSize int
+
 	response            *SearchResponse
 	Results             []SearchResult
 	QID                 string
@@ -81,6 +84,7 @@ type continuationRegistry interface {
 	Pull(context.Context, resultstream.Scope, string, int) (*resultstream.Page, error)
 	Discard(resultstream.Scope, string) error
 	Close()
+	MaxPageSize() int
 }
 
 type cachedTextPreparation struct {
@@ -172,11 +176,16 @@ func (s *Service) SearchTextContinuation(
 	embedQuery EmbedQueryFunc,
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
-) (*SearchContinuationPage, error) {
+) (out *SearchContinuationPage, err error) {
 	registry, err := s.searchContinuationRegistry()
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if out != nil && !out.Released {
+			out.MaxPageSize = registry.MaxPageSize()
+		}
+	}()
 	database := request.Database
 	if database == "" {
 		database = s.cacheNamespace
@@ -418,7 +427,7 @@ func (s *Service) searchContinuationRegistry() (continuationRegistry, error) {
 	if s.continuationRegistry != nil {
 		return s.continuationRegistry, nil
 	}
-	registry, err := resultstream.NewRegistry(resultstream.Config{})
+	registry, err := resultstream.NewRegistry(resultstream.Config{MaxPageSize: s.continuationMaxPageSize})
 	if err != nil {
 		return nil, err
 	}

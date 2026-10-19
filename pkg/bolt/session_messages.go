@@ -286,8 +286,7 @@ func (s *Session) handleRun(data []byte) error {
 				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 			}
 		}
-		code, msg := mapBoltQueryErrorForQuery(err, query)
-		return s.sendRunFailureWithDetail(code, msg, boltErrorDetail(err))
+		return s.sendRunQueryFailure(err, query)
 	}
 	rows := 0
 	if result != nil && result.Rows != nil {
@@ -1615,6 +1614,10 @@ func (s *Session) sendFailure(code, message string) error {
 }
 
 func (s *Session) sendFailureWithDetail(code, message, detail string) error {
+	return s.sendFailureWithMetadata(code, message, detail, nil)
+}
+
+func (s *Session) sendFailureWithMetadata(code, message, detail string, fields map[string]any) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1628,6 +1631,9 @@ func (s *Session) sendFailureWithDetail(code, message, detail string) error {
 	}
 	if detail != "" {
 		metadata["gql_status"] = detail
+	}
+	for key, value := range fields {
+		metadata[key] = value
 	}
 	buf = encodePackStreamMapIntoWithUTC(buf, metadata, s.useUTCDateTimeStructs())
 
