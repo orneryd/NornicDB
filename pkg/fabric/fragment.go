@@ -26,6 +26,7 @@ type Fragment interface {
 // It produces a single empty row (like a SQL "dual" table) and defines
 // the initial variable scope for downstream fragments.
 type FragmentInit struct {
+	logicalQuery string
 	// Columns lists the argument columns available to downstream fragments.
 	Columns []string
 
@@ -63,6 +64,7 @@ func (f *FragmentLeaf) OutputColumns() []string {
 // FragmentExec is an executable fragment bound to a specific graph location.
 // It represents a unit of work that can be dispatched to either a local or remote executor.
 type FragmentExec struct {
+	Frame *LogicalFrame
 	// Input is the fragment that feeds rows into this executable unit.
 	Input Fragment
 
@@ -102,6 +104,9 @@ func (f *FragmentExec) OutputColumns() []string {
 type FragmentApply struct {
 	// Projection marks an outer continuation whose columns replace input bindings.
 	Projection bool
+	// Call is the complete logical CALL clause from the native syntax owner.
+	// Continuations have no Call; they replace the current frame's projection.
+	Call *QueryClause
 	// Input is the outer fragment producing driver rows.
 	Input Fragment
 
@@ -116,7 +121,13 @@ func (*FragmentApply) fragment() {}
 
 // OutputColumns returns the apply's output columns.
 func (f *FragmentApply) OutputColumns() []string {
-	return f.Columns
+	if f.Columns != nil {
+		return f.Columns
+	}
+	if f.Projection {
+		return f.Inner.OutputColumns()
+	}
+	return combineColumns(f.Input.OutputColumns(), f.Inner.OutputColumns())
 }
 
 // FragmentUnion represents parallel execution of two branches with result merging.
@@ -142,5 +153,8 @@ func (*FragmentUnion) fragment() {}
 
 // OutputColumns returns the union's output columns.
 func (f *FragmentUnion) OutputColumns() []string {
-	return f.Columns
+	if f.Columns != nil {
+		return f.Columns
+	}
+	return f.LHS.OutputColumns()
 }

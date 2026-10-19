@@ -189,7 +189,7 @@ type concatRowIterator struct {
 
 type distinctRowIterator struct {
 	base RowIterator
-	seen map[uint64]struct{}
+	seen RowEquivalence
 	row  []interface{}
 	err  error
 }
@@ -355,13 +355,13 @@ func (it *concatRowIterator) Close() error {
 }
 
 // NewDistinctRowIterator filters duplicate rows while streaming.
-func NewDistinctRowIterator(base RowIterator) RowIterator {
+func NewDistinctRowIterator(base RowIterator, equivalence RowEquivalence) RowIterator {
 	if base == nil {
 		base = NewResultRowIterator(nil)
 	}
 	return &distinctRowIterator{
 		base: base,
-		seen: make(map[uint64]struct{}),
+		seen: equivalence,
 	}
 }
 
@@ -371,11 +371,9 @@ func (it *distinctRowIterator) Next() bool {
 	}
 	for it.base.Next() {
 		row := it.base.Row()
-		key := hashRow(row)
-		if _, exists := it.seen[key]; exists {
+		if it.seen.Duplicate(row) {
 			continue
 		}
-		it.seen[key] = struct{}{}
 		it.row = row
 		return true
 	}

@@ -48,6 +48,9 @@ type staticOperand struct {
 	// union keeps the complete result type in display when kind can only
 	// describe a common operator category (or is unknown to operator rules).
 	union bool
+	// alternatives retains finite type facts across joins; kind is their common
+	// operator category rather than a reason to discard those facts.
+	alternatives []string
 	// members are the static types of a map literal's entries by key, in a
 	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
 	// Neo4j 5.26 doesn't): staticMapMember reads them.
@@ -66,12 +69,12 @@ func knownOperand(kind string) staticOperand {
 }
 
 func (operand staticOperand) known() bool {
-	return operand.kind != "" && (!operand.union || operand.list() || operand.kind == "Map")
+	return operand.kind != ""
 }
 
 func (operand staticOperand) numeric() bool {
-	return !operand.union && (operand.kind == "Integer" || operand.kind == "Float" || operand.kind == "Number" ||
-		operand.kind == "Float, Integer or Number")
+	return operand.kind == "Integer" || operand.kind == "Float" || operand.kind == "Number" ||
+		operand.kind == "Float, Integer or Number"
 }
 
 func (operand staticOperand) list() bool { return strings.HasPrefix(operand.kind, "List<") }
@@ -360,12 +363,12 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result st
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }

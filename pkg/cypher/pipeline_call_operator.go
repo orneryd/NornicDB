@@ -80,30 +80,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	scopedImports := parsed.scopedImports
-	hasLegacyImports := false
-	if !scoped {
-		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
-			_, exists := rows[0][name]
-			return exists && !strings.HasPrefix(name, "$")
-		}, false)
-		if importErr != nil {
-			return nil, nil, true, importErr
-		}
-	}
-	// CALL (*) imports every outer variable, including for WITH/RETURN *.
-	// An unscoped body without an importing WITH implicitly imports the
-	// outer variables it reads: a NornicDB extension.
-	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
-	// defined"); NornicDB keeps running such statements as before, since
-	// the import is unambiguous (#907, kept at the owner's direction).
-	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
-				imports = append(imports, name)
-			}
-		}
+	imports, hasLegacyImports, importErr := callSubqueryBindingImports(body, rows[0], scoped, scopedImports)
+	if importErr != nil {
+		return nil, nil, true, importErr
 	}
 	write := callSubqueryQueryIsWriteFor(ctx, body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write

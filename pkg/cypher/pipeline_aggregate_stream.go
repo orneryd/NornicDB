@@ -540,8 +540,8 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		state.percentileRows = append(state.percentileRows, stored)
 		return true
 	}
-	value, ok := row[state.expression]
-	if !ok || isLiteralKeyword(state.expression) {
+	value, ok := rowExpressionBinding(row, state.expression)
+	if !ok {
 		value, ok = scope.evaluate(ctx, executor, state.expression)
 	}
 	if !ok {

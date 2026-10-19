@@ -47,7 +47,7 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
-	if val, ok := row[expr]; ok {
+	if val, ok := rowExpressionBinding(row, expr); ok {
 		return coerceToUnwindItems(val), true
 	}
 	// Property access (a.b): the whole expression only, not one that starts

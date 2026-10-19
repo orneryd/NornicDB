@@ -35,10 +35,10 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	retention := newMemoryRetention(ctx)
 	defer retention.close()
 	if plan, ok := parsePipelineRowWith(clause); ok {
-		plan.imports = pipelineImports(ctx)
+		invocation := plan.withImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, invocation, nil, nil)
 			if !resolved {
 				return nil, false
 			}
@@ -265,16 +265,17 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
+	rowPlan := pipelineRowWith{where: postWithWhere}
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
+	invocation := rowPlan.withImports(ctx)
 	for _, row := range rows {
 		var scope pipelineRow
 		if postWithWhere != "" || needsOrderScopes {
 			scope = make(pipelineRow, len(row)+len(projections))
 		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, invocation, nil, scope)
 		if !ok {
 			return nil, false
 		}
@@ -885,7 +886,7 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 				}
 				plan.starItems = append(plan.starItems, text)
 			} else {
-				plan.addProjection(item.Expression, alias)
+				plan.addProjection(lexicalExpressionText(item.Expression), alias)
 			}
 		}
 		plan.valid = p.Star || len(plan.projections) > 0
@@ -979,7 +980,7 @@ func starProjectionItems(columns, items []string) []string {
 // projectionVariableText is a variable as an expression: backtick-quoted when
 // it isn't a plain identifier.
 func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
+	if isPlainVariableName(name) {
 		return name
 	}
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
@@ -1394,7 +1395,7 @@ func pipelineScopeColumns(scope map[string]struct{}) []string {
 // binding row. Returns (value, true) on success, (nil, false) otherwise.
 func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
-	if val, ok := row[expr]; ok {
+	if val, ok := rowExpressionBinding(row, expr); ok {
 		return val, true
 	}
 	upperExpr := upperASCII(expr)

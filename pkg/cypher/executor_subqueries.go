@@ -772,7 +772,7 @@ func unscopedCallImports(subqueryBody string, outer func(string) bool, collectNa
 // ordinary projection inside the subquery (#907). An importing WITH must
 // be followed by a query clause: CALL { WITH x } imports and is an error.
 func branchLeadingWithImport(branch string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	trimmed := strings.TrimSpace(branch)
+	trimmed := strings.TrimSpace(fabric.SemanticQuery(branch))
 	if !startsWithKeywordFold(trimmed, "WITH") {
 		return nil, false, nil
 	}

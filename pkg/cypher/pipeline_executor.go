@@ -58,12 +58,17 @@ const (
 	pipelineClauseCall
 	pipelineClauseLet
 	pipelineClauseFilter
+	// USE is retained by semantic compilation and lowered before row execution.
+	pipelineClauseUse
+	pipelineClauseLoadCSV
 )
 
 // pipelineClause is one segment of the pipeline. `text` includes the leading
 // keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
 // what you would pass to the clause implementation.
 type pipelineClause struct {
+	selection          *fabric.UseClause
+	syntax             *fabric.QueryClause
 	embeddingCandidate string
 	kind               pipelineClauseKind
 	text               string
@@ -160,7 +165,7 @@ type pipelineRow map[string]interface{}
 // clause kinds this executor understands. Any unsupported clause (CALL
 // subquery, etc.) causes a false return so the
 // caller can select a specialized physical plan.
-func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
+func canExecuteAsPipeline(cypher string, boundFrame ...bool) ([]pipelineClause, bool) {
 	clauses, ok := pipelineClausesFor(cypher)
 	if !ok {
 		return nil, false
@@ -174,7 +179,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 	// Single graph reads, writes and CALL subqueries own their seed row. A
 	// lone WITH or UNWIND is a whole statement only before FINISH (#907),
 	// and runs on the seed row too.
-	if len(clauses) < 2 {
+	if len(clauses) < 2 && (len(boundFrame) == 0 || !boundFrame[0]) {
 		if len(clauses) == 0 {
 			return nil, false
 		}
@@ -284,13 +289,18 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 // true) on success. On anything unsupported (e.g. nested MERGE or CALL
 // subquery) returns (nil, false) so the caller falls back. topLevelCall
 // reports whether the query has a CALL of its own (cachedPipelineClauses).
-func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+func parsePipelineClauses(cypher string, logical ...bool) (clauses []pipelineClause, ok bool, topLevelCall bool) {
 	// Fabric fragments and ordinary grammar-supported statements share the
 	// parser's clause ownership, including keyword-named expressions. The
 	// scanner below remains only for Nornic extensions absent from the grammar.
 	if structure := fabric.ReadQueryStructure(cypher); structure.Err == nil {
 		kinds := map[string]pipelineClauseKind{"MATCH": pipelineClauseMatch, "OPTIONAL MATCH": pipelineClauseOptionalMatch, "CREATE": pipelineClauseCreate, "MERGE": pipelineClauseMerge, "DELETE": pipelineClauseDelete, "DETACH DELETE": pipelineClauseDelete, "SET": pipelineClauseSet, "REMOVE": pipelineClauseRemove, "WITH": pipelineClauseWith, "UNWIND": pipelineClauseUnwind, "FOR": pipelineClauseUnwind, "RETURN": pipelineClauseReturn, "FOREACH": pipelineClauseForeach, "LET": pipelineClauseLet, "FILTER": pipelineClauseFilter}
-		for _, clause := range structure.Clauses {
+		if len(logical) > 0 && logical[0] {
+			kinds["USE"] = pipelineClauseUse
+			kinds["LOAD CSV"] = pipelineClauseLoadCSV
+		}
+		for i := range structure.Clauses {
+			clause := &structure.Clauses[i]
 			kind, found := kinds[clause.Kind]
 			if clause.Kind == "CALL" {
 				found = true
@@ -303,7 +313,7 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 			if !found {
 				return nil, false, topLevelCall
 			}
-			clauses = append(clauses, pipelineClause{kind: kind, text: clause.ExecutionText, embeddingCandidate: clause.EmbeddingCandidate, optional: clause.Optional && clause.Kind == "CALL"})
+			clauses = append(clauses, pipelineClause{kind: kind, text: clause.ExecutionText, syntax: clause, selection: clause.Use, embeddingCandidate: clause.EmbeddingCandidate, optional: clause.Optional && clause.Kind == "CALL"})
 		}
 		return clauses, len(clauses) > 0, topLevelCall
 	}
@@ -554,7 +564,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(cypher) >= 0
-	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
+	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") && len(pipelineImports(ctx)) == 0 {
 		if !pipelineUnwindUsesRange(cypher) {
 			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
@@ -565,14 +575,14 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 			}
 		}
 	}
-	clauses, ok := canExecuteAsPipeline(cypher)
+	clauses, ok := canExecuteAsPipeline(cypher, fabric.LogicalFrameFromContext(ctx) != nil)
 	if !ok {
 		return newPipelineDispatchOutcome(nil, false, nil)
 	}
 	originalClauses := clauses
 	if pipelineHasClauseKind(clauses, pipelineClauseSet) {
 		cypher = normalizePipelineWhitespace(cypher)
-		clauses, ok = canExecuteAsPipeline(cypher)
+		clauses, ok = canExecuteAsPipeline(cypher, fabric.LogicalFrameFromContext(ctx) != nil)
 		if !ok {
 			return newPipelineDispatchOutcome(nil, false, nil)
 		}
@@ -584,7 +594,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// unbound, so a correlated body (EXISTS / COUNT / COLLECT over an
 	// imported variable) takes the row pipeline, which is seeded with the
 	// imports below.
-	if !hasCallSubquery && !e.pipelineReadsImportedBinding(ctx, clauses) {
+	if !hasCallSubquery && !e.pipelineReadsImportedBinding(ctx, clauses) && len(pipelineImports(ctx)) == 0 {
 		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
@@ -592,13 +602,18 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
 	}
-	if result, handled, err := e.tryExecutePipelineCreatePlan(ctx, clauses, originalClauses); handled || err != nil {
-		return newPipelineDispatchOutcome(result, handled, err)
+	if len(pipelineImports(ctx)) == 0 {
+		if result, handled, err := e.tryExecutePipelineCreatePlan(ctx, clauses, originalClauses); handled || err != nil {
+			return newPipelineDispatchOutcome(result, handled, err)
+		}
 	}
 	// Start with one binding row. Parameters retain their typed values under
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
+	for name, value := range pipelineImports(ctx) {
+		initialRow[name] = value
+	}
 	for name, value := range e.fabricRecordBindings {
 		initialRow[name] = value
 	}
@@ -629,13 +644,18 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 // (result, true, nil), (nil, false, nil) when a clause shape is unsupported
 // before anything was written, or (nil, true, err).
 func (e *StorageExecutor) runPipelineClauses(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause) (*ExecuteResult, bool, error) {
-	return e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil)
+	var output *pipelineRowOutput
+	if fabric.LogicalFrameFromContext(ctx) != nil && len(pipelineImports(ctx)) > 0 {
+		output = &pipelineRowOutput{fragmentFrame: true}
+	}
+	return e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, output)
 }
 
 type pipelineRowOutput struct {
-	rows  []pipelineRow
-	scope map[string]struct{}
-	wrote bool
+	fragmentFrame bool
+	rows          []pipelineRow
+	scope         map[string]struct{}
+	wrote         bool
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
@@ -902,7 +922,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					continue
 				}
 				if plan, local := parsePipelineRowWith(clause.text); local {
-					source = e.pipelineWithRowSource(ctx, source, plan)
+					source = e.pipelineWithRowSource(ctx, source, plan.withImports(ctx))
 					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 					continue
 				}
@@ -1043,7 +1063,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				e.refreshRowEntities(ctx, rows)
 			}
 		case pipelineClauseReturn:
-			if streamsReturn(ctx, clauses, idx) {
+			if !(output != nil && output.fragmentFrame) && streamsReturn(ctx, clauses, idx) {
 				columns, streamedRows, handled, err := e.pipelineStreamReturn(ctx, boundResultStream(ctx, &clauses[idx]), rows, source, clauses, originalClauses, idx, scope, wrote)
 				if !handled || err != nil {
 					return nil, handled, err
@@ -1062,6 +1082,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			rowsValidated := source == nil
 			if source == nil {
 				source = pipelineRowsSource(rows)
+			}
+			if output != nil && output.fragmentFrame {
+				final, ok := e.pipelineProjectFragmentResult(ctx, rows, source, scope, clause.text, pipelineOriginalReturnText(originalClauses, idx), rowsValidated)
+				if !ok {
+					return pipelineDecline(ctx, wrote, clause.text)
+				}
+				result.Columns, result.Rows = final.Columns, final.Rows
+				return result, true, nil
 			}
 			plan := returnProjectionPlanFor(clause.text)
 			if plan.star && len(rows) == 0 {

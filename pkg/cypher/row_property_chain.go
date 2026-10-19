@@ -15,6 +15,18 @@ func isLiteralKeyword(name string) bool {
 	return ok
 }
 
+// rowExpressionBinding is the shared binding lookup for expressions. Literal
+// words keep their native syntax role even when a CALL frame retains an import
+// with the same name. Quoted references keep their distinct expression text.
+func rowExpressionBinding[T any](values map[string]T, expression string) (T, bool) {
+	if isLiteralKeyword(expression) {
+		var zero T
+		return zero, false
+	}
+	value, bound := values[expression]
+	return value, bound
+}
+
 // literalKeywordValue is the value of a literal word (isLiteralKeyword).
 func literalKeywordValue(name string) (interface{}, bool) {
 	switch len(name) {
