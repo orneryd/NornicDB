@@ -6,6 +6,7 @@ package cypher
 
 // findMatchingParen finds the index of the closing parenthesis matching the one at startIdx.
 func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
+	if startIdx < 0 || startIdx >= len(s) || s[startIdx] != '(' { return -1 }
 	return syntaxGroupClose(s, startIdx)
 }
 
