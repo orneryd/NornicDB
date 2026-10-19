@@ -18,6 +18,18 @@ func RelationshipElementID(database string, id EdgeID) string {
 	return formatElementID("5", database, string(id))
 }
 
+// SourceNodeElementID qualifies a stored local ID whose source is known. Unlike
+// NodeElementID's legacy convenience form, an ID resembling an element ID is
+// still local data here and cannot replace the authoritative source database.
+func SourceNodeElementID(database string, id NodeID) string {
+	return "4:" + database + ":" + string(id)
+}
+
+// SourceRelationshipElementID qualifies a relationship's stored local ID.
+func SourceRelationshipElementID(database string, id EdgeID) string {
+	return "5:" + database + ":" + string(id)
+}
+
 // ParseElementID reads the database and local identity from a native element ID.
 // Local IDs may contain colons; only the two structural separators are split.
 func ParseElementID(value string) (kind, database, id string, ok bool) {

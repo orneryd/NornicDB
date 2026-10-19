@@ -1011,7 +1011,11 @@ func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbNam
 	} else {
 		dst = encodePackStreamMapIntoWithUTC(dst, rel.properties, true)
 	}
-	return encodePackStreamStringInto(dst, storage.RelationshipElementID(storage.EntityDatabase(rel.database, dbName), rel.id))
+	id := storage.RelationshipElementID(dbName, rel.id)
+	if rel.database != "" {
+		id = storage.SourceRelationshipElementID(rel.database, rel.id)
+	}
+	return encodePackStreamStringInto(dst, id)
 }
 
 // encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound

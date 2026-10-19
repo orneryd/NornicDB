@@ -5,15 +5,6 @@ import (
 	"strings"
 )
 
-// EntityDatabase keeps the database carried by a value across USE and Fabric
-// boundaries. The executing database is only a fallback for unscoped values.
-func EntityDatabase(origin, fallback string) string {
-	if origin != "" {
-		return origin
-	}
-	return fallback
-}
-
 // EntityIdentityKey is an unambiguous key for a database-local stored ID.
 // Keep unscoped IDs unchanged for engines without a database namespace.
 func EntityIdentityKey(database, id string) string {
@@ -34,22 +25,34 @@ func (e *Edge) IdentityKey() string { return EntityIdentityKey(e.Database, strin
 
 // ElementID uses source provenance, falling back only for unscoped values.
 func (n *Node) ElementID(fallback string) string {
-	return NodeElementID(EntityDatabase(n.Database, fallback), n.ID)
+	if n.Database != "" {
+		return SourceNodeElementID(n.Database, n.ID)
+	}
+	return NodeElementID(fallback, n.ID)
 }
 
 // ElementID uses source provenance, falling back only for unscoped values.
 func (e *Edge) ElementID(fallback string) string {
-	return RelationshipElementID(EntityDatabase(e.Database, fallback), e.ID)
+	if e.Database != "" {
+		return SourceRelationshipElementID(e.Database, e.ID)
+	}
+	return RelationshipElementID(fallback, e.ID)
 }
 
 // StartElementID identifies the source endpoint in the relationship's database.
 func (e *Edge) StartElementID(fallback string) string {
-	return NodeElementID(EntityDatabase(e.Database, fallback), e.StartNode)
+	if e.Database != "" {
+		return SourceNodeElementID(e.Database, e.StartNode)
+	}
+	return NodeElementID(fallback, e.StartNode)
 }
 
 // EndElementID identifies the target endpoint in the relationship's database.
 func (e *Edge) EndElementID(fallback string) string {
-	return NodeElementID(EntityDatabase(e.Database, fallback), e.EndNode)
+	if e.Database != "" {
+		return SourceNodeElementID(e.Database, e.EndNode)
+	}
+	return NodeElementID(fallback, e.EndNode)
 }
 
 // DatabaseOf follows the same wrapper boundary as QualifiedEntityID. It does
