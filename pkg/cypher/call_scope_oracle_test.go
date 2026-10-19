@@ -172,7 +172,7 @@ func TestCallScopeNeo4jOracle(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:CallScopeOracleTarget {n:7, oracleRun:$oracleRun})", parameters)
 	require.NoError(t, err)
 	cases := generatedCallScopeOracleCases()
-	require.Len(t, cases, 2442, "2430 Cartesian cases plus 12 extension and rejection controls")
+	require.Len(t, cases, 2447, "2430 Cartesian cases plus 17 extension, quoted-name and rejection controls")
 	seen := make(map[string]struct{}, len(cases))
 	comparisons, mismatches := 0, 0
 	extensions := map[string]int{}
@@ -233,6 +233,6 @@ func TestCallScopeNeo4jOracle(t *testing.T) {
 	exec.fabricRecordBindings = nil
 	report, _ := json.Marshal(map[string]any{"cases": len(cases), "comparisons": comparisons, "reference_queries": len(cache), "mismatches": mismatches, "allowed_differences": extensions, "reference_version": "5.26.30", "parser": os.Getenv("NORNICDB_PARSER")})
 	fmt.Println("CALL_SCOPE_ORACLE " + string(report))
-	require.Equal(t, 9768, comparisons)
+	require.Equal(t, 9788, comparisons)
 	require.Zero(t, mismatches)
 }

@@ -174,7 +174,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		}
 		var projectedTypes typeScope
 		if clause.kind == pipelineClauseWith {
-			projectedTypes = projectTypeScopeIn(types, view, clause.text)
+			projectedTypes = projectLocalTypeScope(types, scopeVisibleTypes(types, enclosing.visible), view, clause.text)
 			// The projection reads the incoming variables; WITH … WHERE
 			// reads the projected ones.
 			projection := clause.text
@@ -1420,7 +1420,7 @@ func simpleSemanticIdentifier(expression string) string {
 
 func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 	pattern := strings.TrimSpace(clause)
-	for _, keyword := range []string{"CREATE", "MERGE"} {
+	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH", "CREATE", "MERGE"} {
 		if startsWithKeywordFold(pattern, keyword) {
 			pattern = strings.TrimSpace(pattern[len(keyword):])
 			break

@@ -411,8 +411,11 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	}
 	names := make([]string, 0, len(values))
 	dependencies := pipelineDependencyClauses(query)
+	input := make(typeScope, len(values))
+	for name := range values { if !strings.HasPrefix(name, "$") { input[name] = staticOperand{} } }
+	proof, complete := input.pipelineDependencies(dependencies)
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && pipelineReadsBinding(dependencies, name) {
+		if !strings.HasPrefix(name, "$") && (!complete || proof.reads[name]) {
 			names = append(names, name)
 		}
 	}

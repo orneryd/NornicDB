@@ -230,6 +230,10 @@ func projectTypeScope(types typeScope, cypher25 bool, clause string) typeScope {
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
 func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) typeScope {
+	return projectLocalTypeScope(types, types, input, clause)
+}
+
+func projectLocalTypeScope(types, named typeScope, input staticTypeScope, clause string) typeScope {
 	input.complete = false
 	projected := make(typeScope)
 	types.forEachProjectedBinding(clause, func(name, expression string, inherited bool) {
@@ -237,7 +241,7 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 			projected[name] = types[name]
 			return
 		}
-		operand := projectedOperand(typeScopeOf(input), input, expression)
+		operand := projectedOperand(named, input, expression)
 		if simpleSemanticIdentifier(name) == "" {
 			// Unaliased, a column is named by its text (WITH {a: 1}); only a
 			// name binds a variable whose members are known.

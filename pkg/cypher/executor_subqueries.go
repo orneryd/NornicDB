@@ -819,12 +819,15 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 	}
 	referenced := make([]string, 0, len(seedResult.Columns))
 	dependencies := pipelineDependencyClauses(subqueryBody)
+	input := make(typeScope, len(seedResult.Columns))
+	for _, name := range seedResult.Columns { input[strings.TrimSpace(name)] = staticOperand{} }
+	proof, complete := input.pipelineDependencies(dependencies)
 	for _, col := range seedResult.Columns {
 		name := strings.TrimSpace(col)
 		if name == "" {
 			continue
 		}
-		if pipelineReadsBinding(dependencies, name) {
+		if !complete || proof.reads[name] {
 			referenced = append(referenced, name)
 		}
 	}
