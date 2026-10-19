@@ -86,6 +86,12 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
+	return forEachFunctionInvocation(text, func(name, normalized string, _ int) error { return visit(name, normalized) })
+}
+
+// forEachFunctionInvocation preserves the common semantic scanner and also
+// exposes the argument delimiter to consumers that need invocation semantics.
+func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
@@ -107,9 +113,7 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 		}
 		parts, cursor := dottedNameParts(expression, next, true)
 		name += parts
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
+		cursor = queryGapEnd(expression, cursor)
 		if cursor >= len(expression) || expression[cursor] != '(' {
 			index = next
 			continue
@@ -122,7 +126,7 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 		if isNonFunctionSemanticKeyword(normalized) {
 			continue
 		}
-		if err := visit(name, normalized); err != nil {
+		if err := visit(name, normalized, cursor); err != nil {
 			return err
 		}
 	}
