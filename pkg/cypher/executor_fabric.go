@@ -632,7 +632,17 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
-	result, err := exec.executeInternal(ctx, query, params)
+	var result *ExecuteResult
+	var err error
+	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && embedding {
+		// Inline embeddings use the normal mutation/transaction owner. Internal
+		// fragment execution alone deliberately does not start an implicit tx.
+		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+			return txExec.executeInternal(txCtx, stripped, params)
+		})
+	} else {
+		result, err = exec.executeInternal(ctx, query, params)
+	}
 	result, err = names.restore(result, err, exec.parseReturnItems)
 	if err != nil {
 		return nil, nil, err
