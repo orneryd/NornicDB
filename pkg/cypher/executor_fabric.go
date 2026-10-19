@@ -160,8 +160,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	// dispatch without voting WRITE before their actual body executes.
 	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
-	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
-	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
+ fabricExecutor.SetRemoteModeUncertainty(func(query string) bool {
+  contract,err:=readStatementExecutionContract(query)
+  return err!=nil || contract.calls
+ })
+ fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
