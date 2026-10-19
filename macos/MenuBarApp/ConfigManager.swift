@@ -315,7 +315,8 @@ class ConfigManager: ObservableObject {
         return normalized
     }
 
-    private let firstRunPath = NSString(string: "~/.nornicdb/.first_run").expandingTildeInPath
+    private var firstRunPath: String { URL(fileURLWithPath: configPath).deletingLastPathComponent().appendingPathComponent(".first_run").path }
+    private var setupReviewPath: String { URL(fileURLWithPath: configPath).deletingLastPathComponent().appendingPathComponent(".setup_review").path }
     private let launchAgentPath = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
 
     func effectiveEmbeddingChunkSize() -> Int {
@@ -341,11 +342,12 @@ class ConfigManager: ObservableObject {
     @Published var upgradeStorageOnNextStart: Bool = false
 
     func isFirstRun() -> Bool {
-        return FileManager.default.fileExists(atPath: firstRunPath)
+        return FileManager.default.fileExists(atPath: firstRunPath) || FileManager.default.fileExists(atPath: setupReviewPath)
     }
 
     func completeFirstRun() {
         try? FileManager.default.removeItem(atPath: firstRunPath)
+        try? FileManager.default.removeItem(atPath: setupReviewPath)
     }
 
     func loadConfig() {
