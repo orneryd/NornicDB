@@ -217,6 +217,18 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 	return true
 }
 
+func (s *Server) canReadAllDatabases(r *http.Request) bool {
+	for _, database := range s.dbManager.ListDatabases() {
+		if database == nil || database.Type == "system" {
+			continue
+		}
+		if _, readable := s.databaseReadAccess(getClaims(r), database.Name); !readable {
+			return false
+		}
+	}
+	return true
+}
+
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
