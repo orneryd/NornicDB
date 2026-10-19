@@ -54,9 +54,9 @@ func TestSystemCypherSkipsDataSearchSetup(t *testing.T) {
 				require.Equal(t, http.StatusOK, response.Code)
 				var result struct {
 					Errors []any `json:"errors"`
-					Data map[string]struct {
-						Columns []string `json:"columns"`
-						RowCount int `json:"rowCount"`
+					Data   map[string]struct {
+						Columns  []string `json:"columns"`
+						RowCount int      `json:"rowCount"`
 					} `json:"data"`
 				}
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
