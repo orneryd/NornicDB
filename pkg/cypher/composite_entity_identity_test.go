@@ -61,6 +61,8 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 		{"relationship element ids", "RETURN elementId(r) = elementId(s)", false},
 		{"relationship equality", "RETURN r = s", false},
 		{"relationship distinct", "UNWIND [r,s,r] AS x RETURN count(DISTINCT x)", int64(2)},
+		{"relationship start provenance", "RETURN elementId(startNode(r)) = elementId(startNode(s))", false},
+		{"relationship end provenance", "RETURN elementId(endNode(r)) = elementId(endNode(s))", false},
 		{"path equality", "RETURN p = q", false},
 		{"path distinct", "UNWIND [p,q,p] AS x RETURN count(DISTINCT x)", int64(2)},
 		{"map distinct", "UNWIND [{n:n},{n:m},{n:n}] AS x RETURN count(DISTINCT x)", int64(2)},

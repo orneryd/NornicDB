@@ -1911,7 +1911,7 @@ func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, val
 	if edge == nil {
 		return nil, true, nil
 	}
-	entry := rowEndpointMemoEntry{id: edge.ID, end: end}
+	entry := rowEndpointMemoEntry{id: storage.EdgeID(edge.IdentityKey()), end: end}
 	if result, read := memo[entry]; read {
 		return result, true, nil
 	}
@@ -1950,17 +1950,20 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if edge == nil {
 		return nil
 	}
-	// A deleted relationship has no endpoints. Only a value shaped like its
-	// view (deletedEntityViews.edge) can be one, and storage confirms it: a
-	// relationship carrying its properties costs no second read.
-	if mayBeDeletedRelationshipView(edge) {
-		if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-			return nil
-		}
-	}
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
+	}
+	edgeID := edge.ID
+	if _, composite := e.storage.(*storage.CompositeEngine); composite && edge.Database != "" {
+		edgeID = storage.EdgeID(edge.ElementID(""))
+		id = storage.NodeID(storage.NodeElementID(edge.Database, id))
+	}
+	// A deleted relationship has no endpoints; full values avoid a second read.
+	if mayBeDeletedRelationshipView(edge) {
+		if current, err := e.storage.GetEdge(edgeID); err != nil || current == nil {
+			return nil
+		}
 	}
 	node, err := e.getQueryNode(e.storage, id)
 	if err != nil {
