@@ -529,17 +529,23 @@ type callSubqueryScopeClause struct {
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
- // Fabric's maintained grammar owns source structure. The engine's scope
- // contract supplies import facts to static and runtime consumers alike.
- if query:=fabric.ReadQueryStructure(cypher);query.Err==nil {
-  if !query.Starts("CALL") {return callSubqueryScopeClause{}}
-  clause:=query.Clauses[0]
-  scope:=callSubqueryScopeClause{scoped:clause.Scoped,text:clause.ScopeText,bodyOffset:clause.BodyOffset}
-  if clause.Scoped {
-   if clause.ScopeNames==nil {scope.text="*"} else {scope.names=append([]string{},clause.ScopeNames...)}
-  }
-  return scope
- }
+	// Fabric's maintained grammar owns source structure. The engine's scope
+	// contract supplies import facts to static and runtime consumers alike.
+	if query := fabric.ReadQueryStructure(cypher); query.Err == nil {
+		if !query.Starts("CALL") {
+			return callSubqueryScopeClause{}
+		}
+		clause := query.Clauses[0]
+		scope := callSubqueryScopeClause{scoped: clause.Scoped, text: clause.ScopeText, bodyOffset: clause.BodyOffset}
+		if clause.Scoped {
+			if clause.ScopeNames == nil {
+				scope.text = "*"
+			} else {
+				scope.names = append([]string{}, clause.ScopeNames...)
+			}
+		}
+		return scope
+	}
 	trimmed := strings.TrimSpace(cypher)
 	if findKeywordIndex(trimmed, "CALL") != 0 {
 		return callSubqueryScopeClause{}
