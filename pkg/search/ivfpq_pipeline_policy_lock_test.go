@@ -12,10 +12,9 @@ import (
 )
 
 // TestCompressedPipelineCreationRacesPolicyChange: a compression policy change
-// holds indexMu while it takes pipelineMu, so compressed pipeline creation
-// must not read the node metadata (the IVF-PQ build's BM25 seeds) under
-// pipelineMu. Creation is parked inside pipelineMu on ivfpqMu while a policy
-// change takes indexMu and waits for pipelineMu; both must then finish.
+// takes pipelineMu before indexMu. Creation is parked inside pipelineMu on
+// ivfpqMu while a policy change queues on pipelineMu; it must leave admission
+// free while waiting. Both operations must then finish.
 func TestCompressedPipelineCreationRacesPolicyChange(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
@@ -34,28 +33,28 @@ func TestCompressedPipelineCreationRacesPolicyChange(t *testing.T) {
 	svc.hnswIndexPath = filepath.Join(dir, "hnsw")
 	svc.mu.Unlock()
 
-	held := func(tryLock func() bool, unlock func()) bool {
-		if tryLock() {
-			unlock()
-			return false
-		}
-		return true
-	}
 	svc.ivfpqMu.Lock()
 	created := make(chan error, 1)
 	go func() {
 		_, err := svc.getOrCreateVectorPipeline(context.Background())
 		created <- err
 	}()
-	require.Eventually(t, func() bool { return held(svc.pipelineMu.TryLock, svc.pipelineMu.Unlock) },
-		10*time.Second, time.Millisecond, "creation never reached pipelineMu")
+	serviceLockWait(t, "pipeline construction waiting for the compressed model", func() bool {
+		return serviceLockStack("getOrBuildIVFPQIndex", "getOrCreateVectorPipeline")
+	})
 	configured := make(chan error, 1)
 	go func() {
 		configured <- svc.ConfigureHNSWQuantization(context.Background(), HNSWQuantizationConfig{Mode: HNSWQuantizationBinary})
 	}()
-	require.Eventually(t, func() bool { return held(svc.indexMu.TryRLock, svc.indexMu.RUnlock) },
-		10*time.Second, time.Millisecond, "the policy change never took indexMu")
+	serviceLockWait(t, "policy change waiting for pipelineMu", func() bool {
+		return serviceLockStack("setHNSWQuantizationOverride", "sync.(*RWMutex).Lock")
+	})
+	admissionFree := svc.indexMu.TryLock()
+	if admissionFree {
+		svc.indexMu.Unlock()
+	}
 	svc.ivfpqMu.Unlock()
+	require.True(t, admissionFree, "policy must not own indexMu while waiting on pipelineMu")
 
 	deadline := time.After(30 * time.Second)
 	select {

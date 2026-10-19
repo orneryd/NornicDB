@@ -14,10 +14,11 @@ import "github.com/orneryd/nornicdb/pkg/gpu"
 // later search reads.
 //
 // The owner takes no lock of its own except pipelineMu, and only when
-// retirePipeline is set: callers may then hold indexMu, which ranks before
-// pipelineMu, but not mu or hnswMu, which pipeline construction takes under
-// pipelineMu. Every retiring publication is made where the code it replaces
-// took pipelineMu, or where no lock is held. A publication made under mu or
+// retirePipeline is set: callers must then hold no indexMu, clusterStateMu,
+// mu or hnswMu, which pipeline construction takes under pipelineMu. A caller
+// publishing under mutation admission takes pipelineMu before indexMu and
+// retires the cached pipeline inside install with retirePipeline=false.
+// A publication made under mu or
 // hnswMu, or while pipelineMu is held (by the pipeline being created, or by
 // clearIndexes), passes retirePipeline=false.
 func (s *Service) publishVectorServing(install func(), retirePipeline bool) {

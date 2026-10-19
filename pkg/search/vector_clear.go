@@ -33,7 +33,7 @@ func (s *Service) clearIndexes(all bool) error {
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
 	defer s.indexChanged()
-	// Lock order: pipelineMu -> mu -> hnswMu, matching pipeline construction paths.
+	// Lock order: pipelineMu -> indexMu -> clusterStateMu -> mu -> leaf locks.
 	s.pipelineMu.Lock()
 	defer s.pipelineMu.Unlock()
 	s.cacheDerivedVectorPipelineLocked(nil)
