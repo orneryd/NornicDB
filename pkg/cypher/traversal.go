@@ -2058,7 +2058,7 @@ func (e *StorageExecutor) findPaths(
 	pathEdges []*storage.Edge,
 	depth int,
 	endPattern *nodePatternInfo,
-, probe *pipelineCancellation) []PathResult {
+probe *pipelineCancellation) []PathResult {
 	var results []PathResult
 
 	// Every frame and sibling expansion must observe cancellation. Sampling

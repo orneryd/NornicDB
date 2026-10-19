@@ -139,7 +139,7 @@ func findParsedMergeRelationships(
 	pattern *mergeRelationshipPattern,
 	startNode *storage.Node,
 	endNode *storage.Node,
-, probe *pipelineCancellation) ([]*storage.Edge, error) {
+probe *pipelineCancellation) ([]*storage.Edge, error) {
 	lookupStart, lookupEnd := startNode, endNode
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode

@@ -1035,7 +1035,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	nodePattern nodePatternInfo,
 	whereClause string,
-, probe *pipelineCancellation) ([]*storage.Node, bool, error) {
+probe *pipelineCancellation) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1908,7 +1908,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 	nodePattern nodePatternInfo,
 	property string,
 	lookup func(label string) ([]storage.NodeID, bool),
-, probe *pipelineCancellation) (nodes []*storage.Node, used bool) {
+probe *pipelineCancellation) (nodes []*storage.Node, used bool) {
 	labels := e.indexCandidateLabels(schema, nodePattern.labels, property, probe)
 	if len(labels) == 0 {
 		return nil, false

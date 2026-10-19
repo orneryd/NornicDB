@@ -554,7 +554,7 @@ func relationshipBatchPropertiesPreserveMatch(
 	props map[string]interface{},
 	merge relationshipMergeSpec,
 	row map[string]interface{},
-, probe *pipelineCancellation) bool {
+probe *pipelineCancellation) bool {
 	for _, prop := range merge.keyProps {
 		want := prop.literal
 		if !prop.literalSet {
@@ -656,7 +656,7 @@ func relationshipBatchScalarEdgeKey(
 	relType string,
 	keyProps []relationshipMergeKeyProp,
 	valueFor func(relationshipMergeKeyProp) (interface{}, bool),
-, probe *pipelineCancellation) (string, bool) {
+probe *pipelineCancellation) (string, bool) {
 	if len(keyProps) == 0 {
 		return "", false
 	}

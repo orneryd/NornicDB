@@ -1159,7 +1159,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 		nodes    []*storage.Node
 	},
 	whereClause string,
-, probe *pipelineCancellation) ([]map[string]*storage.Node, bool) {
+probe *pipelineCancellation) ([]map[string]*storage.Node, bool) {
 	if len(patternMatches) < 2 || strings.TrimSpace(whereClause) == "" {
 		return nil, false
 	}
