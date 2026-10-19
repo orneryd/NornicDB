@@ -167,7 +167,8 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 		return false
 	}
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, e.storage, node.ID, "both")
+	view := graphIdentityView(e.getStorage(ctx))
+	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.NodeID(node.IdentityKey()), "both")
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +189,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 				if pair.direction == "in" {
 					other = edge.StartNode
 				}
-				if other == target.ID {
+				if other == storage.NodeID(target.IdentityKey()) {
 					return true, nil
 				}
 			} else {
