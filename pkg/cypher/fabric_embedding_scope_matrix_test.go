@@ -11,9 +11,10 @@ import (
 
 // Exercise the execution frame through the public entry, rather than teaching
 // the embedding extension how each scope construct exports its variables.
+type embeddingFrameForm struct{ name, prefix, suffix, value string }
+
 func TestFabricEmbeddingExecutionFrameMatrix(t *testing.T) {
-	type form struct{ name, prefix, suffix, value string }
-	forms := []form{
+	forms := []embeddingFrameForm{
 		{"with", "WITH 7 AS @ ", "", "@"},
 		{"with_star", "WITH 7 AS @ WITH * ", "", "@"},
 		{"unwind", "UNWIND [7] AS @ ", "", "@"},
@@ -36,6 +37,10 @@ func TestFabricEmbeddingExecutionFrameMatrix(t *testing.T) {
 		{"list_comprehension_shadow", "WITH 7 AS @ WITH @, [@ IN [9] | @] AS list ", "", "@"},
 		{"null_binding", "WITH null AS @ ", "", "coalesce(@,7)"},
 	}
+	runFabricEmbeddingExecutionFrames(t, forms)
+}
+
+func runFabricEmbeddingExecutionFrames(t *testing.T, forms []embeddingFrameForm) {
 	mutations := []string{
 		"CREATE (w:FrameMutation {id:$id,k:7})",
 		"MERGE (w:FrameMutation {id:$id,k:7})",
@@ -76,7 +81,7 @@ func TestFabricEmbeddingExecutionFrameMatrix(t *testing.T) {
 										require.NoError(t, err)
 										defer exec.Execute(ctx, "ROLLBACK", nil)
 									}
-									result, err := exec.Execute(ctx, query, map[string]interface{}{"id": t.Name()})
+									result, err := exec.Execute(ctx, query, map[string]interface{}{"id": t.Name(), "frameName": symbolicNameValue(name)})
 									require.NoError(t, err, query)
 									require.NotEmpty(t, result.Rows, query)
 									for _, row := range result.Rows {
@@ -115,4 +120,22 @@ func TestFabricEmbeddingExecutionFrameMatrix(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Additional engine bindings from the complete reading/pattern inventory.
+// LET/FOR are Nornic extensions; the Cypher 5 reference intentionally excludes
+// them. Procedure output schemas, including YIELD *, belong to the operator.
+func TestFabricEmbeddingAdditionalExecutionFrames(t *testing.T) {
+	require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "review.frame", Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 1}, func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		return &ExecuteResult{Columns: []string{args[0].(string)}, Rows: [][]interface{}{{int64(7)}}}, nil
+	}))
+	defer ClearUserProcedures()
+	runFabricEmbeddingExecutionFrames(t, []embeddingFrameForm{
+		{"let", "LET @ = 7 ", "", "@"},
+		{"for", "FOR @ IN [7] ", "", "@"},
+		{"yield_alias", "CALL review.frame('value') YIELD value AS @ ", "", "@"},
+		{"yield_star", "CALL review.frame($frameName) YIELD * ", "", "@"},
+		{"relationship_binding", "CREATE ()-[@:FrameRelation {k:7}]->() ", "", "@.k"},
+		{"path_binding", "CREATE @=(:FramePath)-[:FRAME]->(:FramePath) ", "", "length(@)+6"},
+	})
 }
