@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -91,11 +92,15 @@ func BenchmarkCodeIntelRelationshipReads(b *testing.B) {
 				if run.stream.streamed() {
 					for {
 						_, done := run.stream.Next(128)
-						if done { break }
+						if done {
+							break
+						}
 					}
 				}
 				<-run.stream.Done()
-				if run.err != nil { b.Fatal(run.err) }
+				if run.err != nil {
+					b.Fatal(run.err)
+				}
 			}
 		})
 	}
@@ -172,4 +177,49 @@ func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
 	require.Less(t, live, int64(8<<20), "fetching 16 scalar rows must not retain all relationship bindings")
 }
 
+func TestQueryMemoryTraversalCancellation(t *testing.T) {
+	exec := codeIntelReadFixture(t, 32, 1024)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run := executeStreamed(ctx, exec, "MATCH ()-[r]->() RETURN r.props_hash", 16)
+	require.True(t, run.stream.streamed())
+	cancel()
+	select {
+	case <-run.stream.Done():
+		require.ErrorIs(t, run.err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled relationship source did not release the storage cursor")
+	}
+}
 
+type queryMemoryNodeReadGuard struct {
+	*storage.BadgerEngine
+	fullReads int
+}
+
+func (g *queryMemoryNodeReadGuard) GetNode(id storage.NodeID) (*storage.Node, error) {
+	g.fullReads++
+	return g.BadgerEngine.GetNode(id)
+}
+
+func (g *queryMemoryNodeReadGuard) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+	g.fullReads++
+	return g.BadgerEngine.GetQueryNode(id)
+}
+
+func TestQueryMemoryScalarEndpointsSkipNodeBodies(t *testing.T) {
+	seed := codeIntelReadFixture(t, 4, 8)
+	base := seed.storage.(*storage.NamespacedEngine).GetInnerEngine().(*storage.BadgerEngine)
+	guard := &queryMemoryNodeReadGuard{BadgerEngine: base}
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(guard, "codeintel"))
+	exec.cache = nil
+	wasDisabled := rowValueProgramsDisabled.Load()
+	t.Cleanup(func() { rowValueProgramsDisabled.Store(wasDisabled) })
+	for _, disabled := range []bool{true, false} {
+		rowValueProgramsDisabled.Store(disabled)
+		result, err := exec.Execute(context.Background(), "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 8)
+		require.Zero(t, guard.fullReads, "scalar endpoints decoded a full node body (programs disabled=%v)", disabled)
+	}
+}
