@@ -94,12 +94,12 @@ func Parse(query string) (*ParseResult, error) {
 
 	result := &ParseResult{
 		Tree:   tree,
-		Errors: errorListener.errors,
+		Errors: errorListener.fallbacks(),
 	}
 
 	// Check for errors
 	if len(errorListener.errors) > 0 {
-		message := localization.CypherANTLRParseSyntaxError(strings.Join(errorListener.errors, "; "))
+		message := localization.CypherANTLRParseSyntaxError(strings.Join(result.Errors, "; "), errorListener.errors...)
 		return result, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
@@ -170,7 +170,7 @@ func ValidateContext(ctx context.Context, query string) (retErr error) {
 		_ = v.parser.Script()
 
 		if len(v.errorListener.errors) > 0 {
-			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.errors, "; "))
+			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.fallbacks(), "; "), v.errorListener.errors...)
 			return localization.NewLocalizedError(string(message.ID), message, nil)
 		}
 	}
@@ -210,7 +210,18 @@ func (s *validationTokenStream) Seek(i int)           { s.check(); s.CommonToken
 // parseErrorListener collects syntax errors during parsing
 type parseErrorListener struct {
 	*antlr.DefaultErrorListener
-	errors []string
+	errors []localization.Message
+}
+
+func (e *parseErrorListener) fallbacks() []string {
+	if len(e.errors) == 0 {
+		return nil
+	}
+	result := make([]string, len(e.errors))
+	for i, message := range e.errors {
+		result[i] = message.Fallback
+	}
+	return result
 }
 
 func (e *parseErrorListener) reset() {
@@ -222,7 +233,7 @@ func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingS
 	// the offending token, including in lexer errors before a token exists.
 	// Parse, Validate, and ParseResult share this structural diagnostic owner.
 	message := localization.CypherANTLRUnexpectedInput(line, column)
-	e.errors = append(e.errors, message.Fallback)
+	e.errors = append(e.errors, message)
 }
 
 func isASCII(s string) bool {

@@ -1678,10 +1678,15 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 		return nil, localizedError(localization.CypherResidualShowAliasesManagerUnavailable(), nil)
 	}
 
-	// Find "SHOW ALIASES" keyword position
+	// executeShowWithTail has separated WHERE / YIELD from the command head.
+	// Consume that head completely; looking anywhere for FOR DATABASE silently
+	// accepted arbitrary suffixes when ANTLR delegated this extension to us.
 	showAliasesIdx := findMultiWordKeywordIndex(cypher, "SHOW", "ALIASES")
-	if showAliasesIdx == -1 {
-		return nil, localizedError(localization.CypherResidualShowAliasesSyntaxInvalid(), nil)
+	invalid := func() (*ExecuteResult, error) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause", localization.CypherResidualShowAliasesSyntaxInvalid())
+	}
+	if showAliasesIdx != 0 {
+		return invalid()
 	}
 
 	// Skip "SHOW" and whitespace to find "ALIASES"
@@ -1700,23 +1705,33 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 	// Check for "FOR DATABASE" clause
 	var databaseName string
 	if startPos < len(cypher) {
-		forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
-		if forIdx >= 0 {
-			// Extract database name
-			dbStartPos := startPos + forIdx + len("FOR")
-			for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
-				dbStartPos++
-			}
-			// Skip "DATABASE" and whitespace
-			if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
-				dbStartPos += len("DATABASE")
-				for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
-					dbStartPos++
+		parts := strings.Fields(cypher[startPos:])
+		switch {
+		case len(parts) == 2 && strings.EqualFold(parts[0], "FOR") && strings.EqualFold(parts[1], "DATABASES"):
+			// Neo4j's explicit all-databases form.
+		case len(parts) == 3 && strings.EqualFold(parts[0], "FOR") && strings.EqualFold(parts[1], "DATABASE"):
+			// Use the symbolic-name reader for each qualified name component,
+			// retaining native dotted/hyphenated names while rejecting adjacent
+			// punctuation or another statement after the database name.
+			_, end, ok := scanSymbolicName(parts[2], 0)
+			for ok && end < len(parts[2]) && (parts[2][end] == '.' || parts[2][end] == '-') {
+				start := end + 1
+				if start < len(parts[2]) && parts[2][start] >= '0' && parts[2][start] <= '9' {
+					// Native administration names also allow numeric components.
+					end = start + 1
+					for end < len(parts[2]) && isIdentByte(parts[2][end]) {
+						end++
+					}
+				} else {
+					_, end, ok = scanSymbolicName(parts[2], start)
 				}
 			}
-			if dbStartPos < len(cypher) {
-				databaseName = strings.TrimSpace(cypher[dbStartPos:])
+			if !ok || end != len(parts[2]) {
+				return invalid()
 			}
+			databaseName = parts[2]
+		default:
+			return invalid()
 		}
 	}
 
