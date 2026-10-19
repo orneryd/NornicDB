@@ -45,7 +45,7 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
     token := getAuthToken(t, users, "admin")
     caller := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+token))
     snapshots := qpb.NewSnapshotsClient(conn)
-    for index, readable := range []bool{false, true, false} {
+    for _, readable := range []bool{false, true, false} {
         require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", readable, readable))
         control := makeRequest(t, s, http.MethodGet, "/db/system", nil, "Bearer "+token)
         if !readable { require.Equal(t, http.StatusForbidden, control.Code, control.Body.String()) }
@@ -56,7 +56,7 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
         } else {
             if status.Code(err) != codes.PermissionDenied { t.Errorf("unreadable system included by CreateFull: %v", err) }
         }
-        if index == 0 && err == nil {
+        if readable {
             description := response.GetSnapshotDescription()
             require.NotNil(t, description)
             restored, err := storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore"))
@@ -70,6 +70,10 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
         }
         _, listErr := snapshots.ListFull(caller, &qpb.ListFullSnapshotsRequest{})
         t.Logf("system read=%v; gRPC ListFull=%s", readable, status.Code(listErr))
-        if !readable && status.Code(listErr) != codes.PermissionDenied { t.Errorf("unreadable system snapshot metadata exposed: %v", listErr) }
+                if readable { require.NoError(t, listErr) } else { require.Equal(t, codes.PermissionDenied, status.Code(listErr)) }
+        snapshotName := "refused.snapshot"
+        if readable { snapshotName = response.GetSnapshotDescription().GetName() }
+        _, deleteErr := snapshots.DeleteFull(caller, &qpb.DeleteFullSnapshotRequest{SnapshotName: snapshotName})
+        if readable { require.NoError(t, deleteErr) } else { require.Equal(t, codes.PermissionDenied, status.Code(deleteErr)) }
     }
 }

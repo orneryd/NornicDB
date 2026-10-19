@@ -26,12 +26,12 @@ func TestBifrostGlobalFeedRequiresAllDatabaseReads(t *testing.T) {
 		{"feed-default", []string{"nornic"}, true},
 		{"feed-named", []string{"feed_named"}, true},
 		{"feed-write-only", []string{"nornic", "feed_named"}, false},
-		{"feed-reader", []string{"nornic", "feed_named"}, true},
+		{"feed-reader", []string{"nornic", "feed_named", "system"}, true},
 	} {
 		require.NoError(t, server.roleStore.CreateRole(ctx, spec.name))
 		require.NoError(t, server.roleEntitlementsStore.Set(ctx, spec.name, []string{"read", "write"}))
 		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, spec.name, spec.databases))
-		for _, database := range []string{"nornic", "feed_named"} {
+		for _, database := range []string{"nornic", "feed_named", "system"} {
 			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, spec.name, database, spec.read, true))
 		}
 		_, err := users.CreateUser(spec.name, "password123", []auth.Role{auth.Role(spec.name)})
@@ -80,19 +80,21 @@ func TestBifrostGlobalFeedRequiresAllDatabaseReads(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("allowed global feed did not deliver a result")
 	}
-	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", "feed_named", false, true))
+	for _, database := range []string{"feed_named", "system"} {
+	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, false, true))
 	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "after-event-marker"))
 	select {
 	case event := <-events:
 		t.Fatalf("global result delivered after database read revocation: %s", event)
 	case <-time.After(150 * time.Millisecond):
 	}
-	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", "feed_named", true, true))
+	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, true, true))
 	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "restored-event-marker"))
 	select {
 	case <-events:
 	case <-time.After(time.Second):
 		t.Fatal("restored read permission did not resume the global feed")
+	}
 	}
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "feed-reader", []string{"nornic"}))
 	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "allowlist-revoked-event-marker"))
