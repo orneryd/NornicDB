@@ -26,6 +26,7 @@ func Cases() []Case {
 		{Name: "storedProcedure", Setup: "CREATE OR REPLACE PROCEDURE nestedstats.write() MODE WRITE AS " + body, Query: "CALL nestedstats.write() YIELD value RETURN value", Direct: body},
 		{Name: "subquery", Query: "CALL { CREATE (:NestedStats {p: 1}) RETURN 1 AS value } RETURN value", Direct: body},
 		{Name: "inTransactions", Query: "CALL { CREATE (:NestedStats {p: 1}) RETURN 1 AS value } IN TRANSACTIONS OF 1 ROW RETURN value", Direct: body},
+		{Name: "nestedMany", Query: "CALL apoc.cypher.run('CALL apoc.cypher.runMany($statements,{}) YIELD row RETURN row',{statements:$statements}) YIELD value RETURN count(value)", Direct: "CREATE (:NestedStats {p:1}),(:NestedStats {p:1}) RETURN 1 AS value", Params: map[string]any{"statements": body + ";" + body}},
 		{Name: "nestedTwice", Query: "CALL apoc.cypher.run('CALL apoc.cypher.run($body,{}) YIELD value RETURN value',{body:$body}) YIELD value RETURN value", Direct: body, Params: params},
 		{Name: "sharedPipelineResult", Query: "UNWIND [1,2] AS i CALL apoc.cypher.run($body,{}) YIELD value RETURN count(value)", Direct: body, Params: params},
 		{Name: "runManyStatements", Query: "CALL apoc.cypher.runMany($body,{}) YIELD row RETURN count(row)", Direct: "CREATE (:NestedStats {p:1}),(:NestedStats {p:1}) RETURN 1 AS value", Params: map[string]any{"body": body + ";" + body}},
