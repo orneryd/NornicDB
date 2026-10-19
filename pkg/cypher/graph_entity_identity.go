@@ -25,17 +25,43 @@ func graphEntityReference(value interface{}) (storage.EntityIdentity, bool) {
 	return storage.EntityIdentity{}, false
 }
 
+// graphEntityDisplayID renders the public value, before any graph-domain
+// canonicalization. Internal keys must never be formatted in client messages.
+func graphEntityDisplayID(value interface{}) (storage.NodeID, bool) {
+	reference, ok := graphEntityReference(value)
+	if !ok {
+		return "", false
+	}
+	return storage.NodeID(reference.InDatabase("")), true
+}
+
+// identityGraphEngine preserves nil storage so existing graph builders return
+// their established error. Wrapping nil would hide that contract from them.
+func identityGraphEngine(engine storage.Engine, scopes ...*graphIdentityScope) storage.Engine {
+	if engine == nil {
+		return nil
+	}
+	return graphIdentityView(engine, scopes...)
+}
+
 // graphIdentityStorage is a read view for algorithms whose maps accept NodeID.
 // Inside that view every node, edge and endpoint uses the canonical identity
 // key. Native values are restored at the result boundary; no identity cache or
 // graph-sized cross-stream seen set is retained by this adapter.
-type graphIdentityStorage struct{ storage.Engine }
+type graphIdentityStorage struct {
+	storage.Engine
+	scope *graphIdentityScope
+}
 
-func graphIdentityView(engine storage.Engine) *graphIdentityStorage {
+func graphIdentityView(engine storage.Engine, scopes ...*graphIdentityScope) *graphIdentityStorage {
 	if view, ok := engine.(*graphIdentityStorage); ok {
 		return view
 	}
-	return &graphIdentityStorage{Engine: engine}
+	var scope *graphIdentityScope
+	if len(scopes) > 0 {
+		scope = scopes[0]
+	}
+	return &graphIdentityStorage{Engine: engine, scope: scope}
 }
 
 func (v *graphIdentityStorage) node(node *storage.Node) *storage.Node {
@@ -85,7 +111,11 @@ func graphIdentityPathValue(path PathResult) PathResult {
 }
 
 func (e *StorageExecutor) graphIdentityExecutor(ctx context.Context) *StorageExecutor {
-	return e.cloneForStorage(graphIdentityView(e.getStorage(ctx)))
+	engine := identityGraphEngine(e.getStorage(ctx), e.graphIdentityScope)
+	if engine == nil {
+		return e
+	}
+	return e.cloneForStorage(engine)
 }
 
 func (e *StorageExecutor) graphReadArguments(ctx context.Context, args []interface{}, nodeCount int) (*StorageExecutor, []interface{}) {
@@ -258,6 +288,10 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 			if kind != "4" {
 				return "", false
 			}
+			domain := graphIdentityDomain{engine: v.Engine, scope: v.scope}
+			if storage.CompositeDatabaseOf(v.Engine) == "" && !domain.foreignQualifier(database) {
+				database = storage.DatabaseOf(v.Engine)
+			}
 			reference.Database, reference.LocalID = database, local
 		} else if storage.CompositeDatabaseOf(v.Engine) == "" {
 			reference.Database = storage.DatabaseOf(v.Engine)
@@ -271,7 +305,7 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 // algorithmIdentityInput gives all whole-graph algorithms one key domain for
 // native arguments, graph scans, adjacency and their computed maps.
 func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
-	view := graphIdentityView(e.storage)
+	view := graphIdentityView(e.storage, e.graphIdentityScope)
 	graph := e.cloneForStorage(view)
 	input := append([]interface{}(nil), args...)
 	if len(input) > 0 {
@@ -315,7 +349,7 @@ func (c *linkPredictionConfig) bindIdentity(engine storage.Engine, projection *G
 		c.identityOutput = func(id storage.NodeID) string { return string(id) }
 	} else {
 		view := graphIdentityView(engine)
-		read, c.identityStore, c.identityOutput = view.inputKey, view, view.outputID
+		read, c.identityStore, c.identityOutput = view.inputKey, identityGraphEngine(engine), view.outputID
 	}
 	value := c.sourceValue
 	if value == nil {
@@ -353,4 +387,45 @@ func (c *linkPredictionConfig) identityRows(result *ExecuteResult) *ExecuteResul
 
 func (v *graphIdentityStorage) outputID(key storage.NodeID) string {
 	return storage.EntityIdentityFromKey(string(key)).InDatabase(storageDatabaseName(v.Engine))
+}
+
+func (c *linkPredictionConfig) sourceDisplay() string {
+	value := c.sourceValue
+	if value == nil {
+		value = string(c.SourceNode)
+	}
+	id, _ := graphEntityDisplayID(value)
+	return string(id)
+}
+
+// graphEntityLookupID is the storage-domain adapter for utility functions.
+// Preserve their legacy string coercion without losing native provenance.
+func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...graphIdentityDomain) (storage.NodeID, bool) {
+	reference, ok := graphEntityReference(value)
+	if !ok {
+		reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)}
+	}
+	if _, native := value.(*storage.Node); !native {
+		if kind, database, local, qualified := storage.ParseElementID(reference.LocalID); qualified {
+			if kind != "4" {
+				return "", false
+			}
+			domain := graphIdentityDomain{engine: engine}
+			if len(domains) > 0 {
+				domain = domains[0]
+			}
+			if storage.CompositeDatabaseOf(engine) == "" && !domain.foreignQualifier(database) {
+				return storage.NodeID(local), true
+			}
+			reference = storage.EntityIdentity{Database: database, LocalID: local}
+		}
+	}
+	return reference.NodeLookupID(engine)
+}
+
+// gdsNodeID is confined to the deferred row-similarity key domain. The source
+// guard forbids its use by projection or stored-graph consumers.
+func gdsNodeID(value interface{}) (storage.NodeID, bool) {
+	reference, ok := graphEntityReference(value)
+	return storage.NodeID(reference.LocalID), ok
 }

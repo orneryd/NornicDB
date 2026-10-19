@@ -846,7 +846,7 @@ func (n *rowComparisonNode) eval(e *StorageExecutor, values map[string]interface
 	if n.subqueries {
 		return evaluateScannedComparisonChain(rowStatementContextOrBackground(values), n.text, &n.scan, n.normalizeIdentity, resolve, compareCypherPredicateValue, rowIsCypher25(values))
 	}
-	return evaluateComparisonLinks(n.text, &n.scan, n.normalizeIdentity, resolve, compareCypherPredicateValue, rowIsCypher25(values), false)
+	return evaluateComparisonLinks(n.text, &n.scan, n.normalizeIdentity, resolve, compareCypherPredicateValue, rowIsCypher25(values), false, e.graphIdentityDomain())
 }
 
 type rowNullTestNode struct {
@@ -883,7 +883,7 @@ func (n *rowMembershipNode) eval(e *StorageExecutor, values map[string]interface
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, n.identity)
+	value, ok := rowMembershipOfValues(needle, haystack, n.identity, e.graphIdentityDomain())
 	if !n.negated || !ok || value == nil {
 		return value, ok, nil
 	}

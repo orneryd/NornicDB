@@ -365,7 +365,7 @@ func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Conte
 	if !leftOK || !rightOK {
 		return false
 	}
-	membership, known := rowMembershipOfValues(needle, haystack, n.identity)
+	membership, known := rowMembershipOfValues(needle, haystack, n.identity, e.graphIdentityDomain())
 	return known && membership == !n.negated
 }
 
@@ -389,7 +389,7 @@ type rowPredicateComparisonNode struct {
 func (n *rowPredicateComparisonNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	result, resolved, err := evaluateScannedComparisonChain(ctx, n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
 		return n.operands[index].foldOperand(e, ctx, values, false)
-	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain())
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false

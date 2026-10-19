@@ -87,7 +87,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	seen := make(map[string]bool)
 	relationshipKeys := make(map[string][]string) // each type's property keys, its first relationship's
 	addNode := func(value, labels, properties interface{}, labelsKey, variable string) (string, error) {
-		id, integer, err := gdsProjectionNode(value)
+		id, integer, err := gdsProjectionNode(value, projection)
 		if err != nil {
 			return "", err
 		}
@@ -284,7 +284,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 // gdsProjectionNode reads a projected node: a node, or a non-negative INTEGER
 // id, which needn't be a stored node's, as in GDS. integer reports an INTEGER
 // id, which the algorithms' rows return as an INTEGER.
-func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
+func gdsProjectionNode(value interface{}, scopes ...*GraphProjection) (id string, integer bool, err error) {
 	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
 	if isIntegerProcedureValue(value) {
 		number := gdsInteger(value)
@@ -294,7 +294,12 @@ func gdsProjectionNode(value interface{}) (id string, integer bool, err error) {
 		return strconv.FormatInt(number, 10), true, nil
 	}
 	if node, ok := value.(*storage.Node); ok && node != nil {
-		return string(node.ID), false, nil
+		if len(scopes) > 0 && scopes[0] != nil {
+			id, _ := scopes[0].nodeReference(node)
+			return id, false, nil
+		}
+		id, _ := graphEntityDisplayID(node)
+		return string(id), false, nil
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {
