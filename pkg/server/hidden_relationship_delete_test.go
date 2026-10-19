@@ -219,3 +219,83 @@ func TestDeleteNodeWithHiddenRelationships(t *testing.T) {
 		}
 	}
 }
+
+// Re-ingestion may MERGE the same physical identity while it is suppressed.
+// That remains a successful, suppressed overwrite, with one stored relationship.
+func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
+	for _, writeBehind := range []bool{false, true} {
+		for _, route := range []string{"bolt", "http"} {
+			name := route + "/write-behind off"
+			if writeBehind {
+				name = route + "/write-behind on"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				h := openHiddenDeleteServer(t, dir, writeBehind, route)
+				t.Cleanup(func() {
+					if h != nil {
+						h.shutdown(t)
+					}
+				})
+				run := func(query string) hiddenDeleteOutcome {
+					t.Helper()
+					outcome := h.run(t, query)
+					require.Empty(t, outcome.code, query)
+					return outcome
+				}
+				flush := func() {
+					t.Helper()
+					engine := h.db.GetBaseStorageForManager()
+					for {
+						if badger, ok := engine.(*storage.BadgerEngine); ok {
+							require.NoError(t, badger.FlushWriteBehind())
+							return
+						}
+						wrapper, ok := engine.(storage.EngineUnwrapper)
+						require.True(t, ok, "database must expose its physical engine")
+						engine = wrapper.GetInnerEngine()
+					}
+				}
+				var physicalID storage.EdgeID
+				counts := func() {
+					t.Helper()
+					store := h.db.GetStorage()
+					// Enumerate physical records independently of the counters and
+					// of the query visibility layer that intentionally hides them.
+					stored, err := storage.CollectStoredEdges(context.Background(), store)
+					require.NoError(t, err)
+					require.Len(t, stored, 1)
+					if physicalID == "" {
+						physicalID = stored[0].ID
+					}
+					assert.Equal(t, physicalID, stored[0].ID)
+					for _, read := range []func() (int64, error){
+						store.EdgeCount,
+						func() (int64, error) { return store.EdgeCountByType("INGEST") },
+						func() (int64, error) { return store.EdgeCountByStartLabel("Source", "INGEST") },
+						func() (int64, error) { return store.EdgeCountByEndLabel("Target", "INGEST") },
+					} {
+						count, err := read()
+						require.NoError(t, err)
+						assert.EqualValues(t, 1, count, "stored counters must match the single physical record")
+					}
+					assert.Equal(t, [][]interface{}{{int64(0)}}, run("MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
+				}
+				run("CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
+				const merge = "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[r:INGEST {id: 'same'}]->(b)"
+				run(merge)
+				flush()
+				run("MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
+				counts()
+				run(merge)
+				counts()
+				flush()
+				counts()
+				h.shutdown(t)
+				h = nil
+				h = openHiddenDeleteServer(t, dir, writeBehind, route)
+				counts()
+			})
+		}
+	}
+}
