@@ -715,7 +715,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
 		switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
 		case string(auth.PermRead):
-			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
+			return nil, &cypher.PermissionDeniedError{Permission: string(auth.PermRead)}
 		case string(auth.PermWrite):
 			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
 		}
