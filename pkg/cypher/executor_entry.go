@@ -230,6 +230,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
+	// Establish Fabric's grammar roles before shared normalization, framing
+	// and extension rewrites can mistake a keyword-spelled name for a clause.
+	fabricQuery := e.shouldUseFabricPlanner(cypher)
+	if fabricQuery {
+		cypher = fabric.LocalQuery(cypher)
+	}
 	if config.IsCypherQueryNormalizationEnabled() {
 		canonical, rewrite = canonicalizeQueryText(cypher)
 	}
@@ -431,7 +437,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
-	if e.shouldUseFabricPlanner(cypher) {
+	if fabricQuery {
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -104,6 +105,17 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 }
 
 func parseProjectionExprAlias(item string) (string, string) {
+	if p := fabric.ProjectionSyntax(item); p != nil && !p.Star && len(p.Items) == 1 {
+		v := p.Items[0]
+		alias := v.Alias
+		if alias == "" {
+			alias = v.Name
+		}
+		if alias == "" {
+			alias = v.Expression
+		}
+		return v.Expression, alias
+	}
 	trimmed := strings.TrimSpace(item)
 	if trimmed == "" {
 		return "", ""
