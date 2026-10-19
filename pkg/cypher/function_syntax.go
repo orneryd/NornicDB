@@ -443,3 +443,67 @@ func functionReadsVariable(text, name, variable string) bool {
 	}
 	return false
 }
+
+func lexicalProcedureNameAt(text string, offset int) (string, bool) {
+ start:=queryGapEnd(text,offset)
+ for _,call:=range readFunctionSyntax(text).calls {
+  if call.start==start {return call.name,true}
+ }
+ // The registry's standalone-name protocol has no CALL keyword. Parse that
+ // protocol through the same owner; whole-statement offsets never use it.
+ if offset==0 {
+  for _,call:=range readFunctionSyntax("CALL "+text).calls {
+   if call.procedure && call.start==len("CALL ")+start {return call.name,true}
+  }
+ }
+ return "",false
+}
+
+func containsProcedureCallNamed(text, expected string) bool {
+ for _,call:=range readFunctionSyntax(text).calls {if call.procedure && strings.EqualFold(call.name,expected) {return true}}
+ return false
+}
+// dottedNameParts returns the dotted parts (.b.c) following a name that ends
+// at end, and where they end. Each name is read as the code that runs it
+// reads it: whitespace may stand around a dot only when spaced is set, for a
+// procedure, function or graph name. Contiguous unquoted components reuse
+// the source slice; only names containing trivia or quotes are normalized.
+func dottedNameParts(expression string, end int, spaced bool) (string, int) {
+	skip := func(index int) int {
+		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
+			return queryGapEnd(expression, index)
+		}
+		return index
+	}
+	origin := end
+	var normalized strings.Builder
+	normalizing := false
+	for {
+		dot := skip(end)
+		if dot >= len(expression) || expression[dot] != '.' {
+			if normalizing {
+				return normalized.String(), end
+			}
+			return expression[origin:end], end
+		}
+		partStart := skip(dot + 1)
+		part, partEnd, ok := scanIdentifierToken(expression, partStart)
+		if !ok {
+			if normalizing {
+				return normalized.String(), end
+			}
+			return expression[origin:end], end
+		}
+		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
+			normalized.WriteString(expression[origin:end])
+			normalizing = true
+		}
+		if normalizing {
+			normalized.WriteByte('.')
+			normalized.WriteString(part)
+		}
+		end = partEnd
+	}
+}
+
+

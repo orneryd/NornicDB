@@ -153,49 +153,6 @@ func forEachSemanticCall(text string, visit func(name, normalized string, argume
 	return nil
 }
 
-// dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end. Each name is read as the code that runs it
-// reads it: whitespace may stand around a dot only when spaced is set, for a
-// procedure, function or graph name. Contiguous unquoted components reuse
-// the source slice; only names containing trivia or quotes are normalized.
-func dottedNameParts(expression string, end int, spaced bool) (string, int) {
-	skip := func(index int) int {
-		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
-			return queryGapEnd(expression, index)
-		}
-		return index
-	}
-	origin := end
-	var normalized strings.Builder
-	normalizing := false
-	for {
-		dot := skip(end)
-		if dot >= len(expression) || expression[dot] != '.' {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
-		if !ok {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
-			normalized.WriteString(expression[origin:end])
-			normalizing = true
-		}
-		if normalizing {
-			normalized.WriteByte('.')
-			normalized.WriteString(part)
-		}
-		end = partEnd
-	}
-}
-
 func skipQuotedSemanticText(expression string, start int) int {
 	return skipCypherQuotedText(expression, start, expression[start])
 }
