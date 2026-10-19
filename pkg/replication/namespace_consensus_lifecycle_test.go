@@ -50,8 +50,14 @@ func TestNamespaceDropConsensusLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			cancel() // Stops the client, never the eventual committed entry.
 			if outcome == "discard" {
+				// Retain the original backing slice to verify the upstream log
+				// truncation releases unreachable entries after lifecycle aborts.
+				raft.log = append(raft.log, &RaftLogEntry{Index: 2, Term: 1, Command: &Command{Type: CmdCreateNode, Data: []byte("discarded")}})
+				discardedBacking := raft.log
 				response := raft.handleAppendEntriesRequest(&AppendEntriesRequest{Term: 2, LeaderID: "peer", Entries: []*RaftLogEntry{{Index: 1, Term: 2}}})
 				require.True(t, response.Success)
+				require.Nil(t, discardedBacking[2], "truncation must not retain the discarded suffix")
+				require.ErrorIs(t, <-future.errCh, ErrNotLeader, "discard must resolve the waiting proposal before clearing entries")
 				select {
 				case <-op.Done():
 				case <-time.After(time.Second):
