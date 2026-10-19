@@ -743,13 +743,15 @@ type LoadedHeimdallPlugin struct {
 // SubsystemManager manages all SLM plugins/subsystems.
 // Provides the SLM with full control over registered subsystems.
 type SubsystemManager struct {
-	mu             sync.RWMutex
-	plugins        map[string]*LoadedHeimdallPlugin // keyed by plugin name
-	actions        map[string]ActionFunc            // keyed by full name: slm.plugin.action
-	ctx            SubsystemContext                 // shared context for subsystems
-	initialized    bool
-	orderedPlugins []*LoadedHeimdallPlugin
-	orderDirty     bool
+	mu              sync.RWMutex
+	plugins         map[string]*LoadedHeimdallPlugin // keyed by plugin name
+	actions         map[string]ActionFunc            // keyed by full name: slm.plugin.action
+	ctx             SubsystemContext                 // shared context for subsystems
+	initialized     bool
+	orderedPlugins  []*LoadedHeimdallPlugin
+	orderDirty      bool
+	orderGeneration uint64
+	registering     map[string]struct{} // names reserved during initialization
 }
 
 var (
@@ -789,33 +791,49 @@ func (m *SubsystemManager) SetContext(ctx SubsystemContext) {
 
 // RegisterPlugin registers an SLM plugin and initializes it.
 func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// Plugin methods may consult the manager, including during initialization.
 	name := p.Name()
-
-	// Verify it's an SLM plugin type
-	if p.Type() != PluginTypeHeimdall {
-		return fmt.Errorf("plugin %s has type %q, expected %q", name, p.Type(), PluginTypeHeimdall)
+	pluginType := p.Type()
+	if pluginType != PluginTypeHeimdall {
+		return fmt.Errorf("plugin %s has type %q, expected %q", name, pluginType, PluginTypeHeimdall)
 	}
 
-	if _, exists := m.plugins[name]; exists {
+	m.mu.Lock()
+	_, exists := m.plugins[name]
+	_, registering := m.registering[name]
+	if exists || registering {
+		m.mu.Unlock()
 		return fmt.Errorf("plugin already registered: %s", name)
 	}
+	if m.registering == nil {
+		m.registering = make(map[string]struct{})
+	}
+	m.registering[name] = struct{}{}
+	ctx := m.ctx
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.registering, name)
+		m.mu.Unlock()
+	}()
 
-	// Initialize the subsystem
-	if err := p.Initialize(m.ctx); err != nil {
+	if err := p.Initialize(ctx); err != nil {
 		return fmt.Errorf("failed to initialize %s: %w", name, err)
 	}
+	actions := p.Actions()
+	lp := &LoadedHeimdallPlugin{Plugin: p, Path: path, Builtin: builtin}
 
-	// Register plugin
-	lp := &LoadedHeimdallPlugin{
-		Plugin:  p,
-		Path:    path,
-		Builtin: builtin,
-	}
+	m.mu.Lock()
 	m.plugins[name] = lp
 	m.orderDirty = true
+	m.orderGeneration++
+	for actionName, action := range actions {
+		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
+		action.Name = fullName
+		m.actions[fullName] = action
+	}
+	m.initialized = true
+	m.mu.Unlock()
 
 	globalEventDispatcher.mu.RLock()
 	running := globalEventDispatcher.running
@@ -823,17 +841,6 @@ func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin
 	if running {
 		globalEventDispatcher.ensurePluginQueueForPlugin(lp)
 	}
-
-	// Register all actions from this plugin
-	for actionName, action := range p.Actions() {
-		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
-		action.Name = fullName
-		m.actions[fullName] = action
-	}
-
-	// Mark as initialized once we have at least one plugin
-	m.initialized = true
-
 	return nil
 }
 
@@ -882,20 +889,32 @@ func (m *SubsystemManager) StopAll() error {
 
 // ShutdownAll shuts down all registered subsystems.
 func (m *SubsystemManager) ShutdownAll() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var plugins []*LoadedHeimdallPlugin
+	for {
+		var generation uint64
+		plugins, generation = m.orderedPluginSnapshot()
+		m.mu.Lock()
+		if generation != m.orderGeneration {
+			m.mu.Unlock()
+			continue
+		}
+		// Ordering callbacks saw the installed peers. Detach that same generation
+		// before shutdown callbacks, preserving any registrations they perform.
+		m.plugins = make(map[string]*LoadedHeimdallPlugin)
+		m.actions = make(map[string]ActionFunc)
+		m.orderedPlugins = nil
+		m.orderDirty = true
+		m.orderGeneration++
+		m.mu.Unlock()
+		break
+	}
 
 	var lastErr error
-	plugins := m.listOrderedPluginsLocked()
 	for _, lp := range plugins {
 		if err := lp.Plugin.Shutdown(); err != nil {
 			lastErr = fmt.Errorf("failed to shutdown %s: %w", lp.Plugin.Name(), err)
 		}
 	}
-	m.plugins = make(map[string]*LoadedHeimdallPlugin)
-	m.actions = make(map[string]ActionFunc)
-	m.orderedPlugins = nil
-	m.orderDirty = true
 	return lastErr
 }
 
@@ -1205,33 +1224,36 @@ func ListHeimdallPlugins() []*LoadedHeimdallPlugin {
 	return m.listOrderedPlugins()
 }
 
-// listOrderedPlugins returns a stable snapshot and fills a dirty ordering cache
-// under the manager's exclusive lock. The second check in the locked helper
-// lets concurrent readers reuse the first completed fill.
+// listOrderedPlugins computes ordering outside the manager lock: plugin ordering
+// callbacks may consult the manager. Publish only if the registry is unchanged.
 func (m *SubsystemManager) listOrderedPlugins() []*LoadedHeimdallPlugin {
+	plugins, _ := m.orderedPluginSnapshot()
+	return plugins
+}
+
+func (m *SubsystemManager) orderedPluginSnapshot() ([]*LoadedHeimdallPlugin, uint64) {
 	m.mu.RLock()
 	if !m.orderDirty && m.orderedPlugins != nil {
 		plugins := append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
+		generation := m.orderGeneration
 		m.mu.RUnlock()
-		return plugins
+		return plugins, generation
+	}
+	generation := m.orderGeneration
+	plugins := make(map[string]*LoadedHeimdallPlugin, len(m.plugins))
+	for name, lp := range m.plugins {
+		plugins[name] = lp
 	}
 	m.mu.RUnlock()
 
+	ordered := orderPlugins(plugins)
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.listOrderedPluginsLocked()
-}
-
-// listOrderedPluginsLocked requires m.mu to be held exclusively.
-func (m *SubsystemManager) listOrderedPluginsLocked() []*LoadedHeimdallPlugin {
-	if !m.orderDirty && m.orderedPlugins != nil {
-		return append([]*LoadedHeimdallPlugin(nil), m.orderedPlugins...)
+	if m.orderGeneration == generation {
+		m.orderedPlugins = ordered
+		m.orderDirty = false
 	}
-
-	ordered := orderPlugins(m.plugins)
-	m.orderedPlugins = ordered
-	m.orderDirty = false
-	return append([]*LoadedHeimdallPlugin(nil), ordered...)
+	m.mu.Unlock()
+	return append([]*LoadedHeimdallPlugin(nil), ordered...), generation
 }
 
 func orderPlugins(plugins map[string]*LoadedHeimdallPlugin) []*LoadedHeimdallPlugin {
