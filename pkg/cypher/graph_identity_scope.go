@@ -56,8 +56,12 @@ func (domain graphIdentityDomain) foreignQualifier(database string) bool {
 }
 
 func (e *StorageExecutor) FunctionStorage(database string) (storage.Engine,error) {
+ return e.graphFunctionStorage(database,e.storage)
+}
+
+func (e *StorageExecutor) graphFunctionStorage(database string,fallback storage.Engine) (storage.Engine,error) {
  if database == "" && e.graphIdentityScope != nil { database=e.graphIdentityScope.database }
- if database == "" || database == storageDatabaseName(e.storage) || e.graphIdentityScope == nil || e.graphIdentityScope.manager == nil { return e.storage,nil }
+ if database == "" || database == storageDatabaseName(fallback) || e.graphIdentityScope == nil || e.graphIdentityScope.manager == nil { return fallback,nil }
  scope := e.graphIdentityScope
  scope.once.Do(func(){
   selected,err := scope.manager.GetStorageForUse(scope.database,scope.authToken)

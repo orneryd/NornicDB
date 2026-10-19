@@ -1947,14 +1947,18 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 	if err != nil {
 		return nil, err
 	}
-	return e.relationshipEndpoint(edge, end), nil
+	store,err := e.FunctionStorage(e.databaseName())
+ if err != nil { return nil,err }
+ return e.relationshipEndpoint(edge, end,store), nil
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the
 // endpoint read by its id, null when it is gone. The one implementation, for
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
-func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
+ store := e.storage
+ if len(stores)>0 { store=stores[0] }
 	if edge == nil {
 		return nil
 	}
@@ -1962,15 +1966,15 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if end {
 		id = edge.EndNode
 	}
-	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
-	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(e.storage)
+	edgeID, edgeSelected := edge.Identity().LookupID(store, "5")
+	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(store)
 	if !edgeSelected || !nodeSelected {
 		return nil
 	}
-	if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
+	if current, err := store.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
 		return nil
 	}
-	node, err := e.getQueryNode(e.storage, nodeID)
+	node, err := e.getQueryNode(store, nodeID)
 	if err != nil {
 		return nil
 	}
