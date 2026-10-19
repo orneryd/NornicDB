@@ -716,7 +716,7 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, service.IndexNode(node))
 	}
-	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil)
+	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
 
