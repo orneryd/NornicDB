@@ -364,7 +364,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 			defaultDatabase = configuredDefault
 		}
 	}
-	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope(defaultDatabase, selections))
+	ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase, selections, func(selection string) bool {
+		_, allowed := s.graphAccess(databaseAccessMode, selection)
+		return allowed
+	}))
 	return r.WithContext(ctx)
 }
 
