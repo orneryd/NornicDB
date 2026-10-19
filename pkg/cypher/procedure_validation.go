@@ -94,7 +94,8 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 }
 
 func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
-	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
+	call, explicit := firstProcedureCall(callCypher)
+	if len(spec.Params) == 0 || explicit && call.open >= 0 {
 		return nil
 	}
 	if parseYieldClause(callCypher) == nil && !hasTail {

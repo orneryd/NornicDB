@@ -59,12 +59,12 @@ func cacheableReadQuery(cypher string, depth int) bool {
 
 	// Non-deterministic / time-sensitive builtins.
 	// Keep this intentionally small and conservative; add more as we support them.
-	if strings.Contains(upper, "RAND(") ||
-		strings.Contains(upper, "RANDOMUUID(") ||
-		strings.Contains(upper, "DATETIME(") ||
-		strings.Contains(upper, "DATE(") ||
-		strings.Contains(upper, "TIME(") ||
-		strings.Contains(upper, "TIMESTAMP(") {
+	if containsFunctionCallNamed(upper, "RAND") ||
+		containsFunctionCallNamed(upper, "RANDOMUUID") ||
+		containsFunctionCallNamed(upper, "DATETIME") ||
+		containsFunctionCallNamed(upper, "DATE") ||
+		containsFunctionCallNamed(upper, "TIME") ||
+		containsFunctionCallNamed(upper, "TIMESTAMP") {
 		return false
 	}
 

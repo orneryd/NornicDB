@@ -927,7 +927,7 @@ func (e *StorageExecutor) parseStringArray(s string) []string {
 	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
 		s = s[1 : len(s)-1]
 		var result []string
-		for _, item := range strings.Split(s, ",") {
+		for _, item := range splitTopLevelComma(s) {
 			item = strings.Trim(strings.TrimSpace(item), "'\"")
 			if item != "" {
 				result = append(result, item)

@@ -12,7 +12,7 @@ import (
 func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := lowerASCII(function)
 	// Nested calls may contain commas without adding arguments to this call.
-	if fn, single := singleValueFunctions[name]; single && (strings.IndexByte(argument, ',') < 0 || len(splitTopLevelComma(argument)) == 1) {
+	if fn, single := singleValueFunctions[name]; single && len(splitTopLevelComma(argument)) == 1 {
 		// The argument's value goes straight to the one implementation.
 		value, resolved, err := e.evaluateRowValue(argument, values)
 		if err != nil || !resolved {

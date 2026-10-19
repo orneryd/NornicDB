@@ -1650,7 +1650,7 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 		findKeywordIndex(query, "REMOVE") >= 0 {
 		return false
 	}
-	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
+	if !strings.Contains(upper, "RETURN") || !containsFunctionCallNamed(upper, "COUNT") {
 		return false
 	}
 	// Rewrites should preserve semantics. We only apply when unwind items are

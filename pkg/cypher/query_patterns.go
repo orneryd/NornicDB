@@ -101,7 +101,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	}
 
 	// Check for incoming count aggregation
-	if info.Pattern == PatternGeneric && strings.Contains(upperQuery, "COUNT(") {
+	if info.Pattern == PatternGeneric && containsFunctionCallNamed(upperQuery, "COUNT") {
 		// Guardrails: the (in|out) count optimizers only support a very narrow query shape.
 		// Do NOT route queries that:
 		//   - have other aggregations (AVG/SUM/MIN/MAX/COLLECT)
@@ -109,11 +109,11 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 		//
 		// Those queries should use the generic executor (and any traversal fast paths),
 		// otherwise we can mis-route multi-hop queries and/or return incorrect columns.
-		if !strings.Contains(upperQuery, "SUM(") &&
-			!strings.Contains(upperQuery, "AVG(") &&
-			!strings.Contains(upperQuery, "MIN(") &&
-			!strings.Contains(upperQuery, "MAX(") &&
-			!strings.Contains(upperQuery, "COLLECT(") {
+		if !containsFunctionCallNamed(upperQuery, "SUM") &&
+			!containsFunctionCallNamed(upperQuery, "AVG") &&
+			!containsFunctionCallNamed(upperQuery, "MIN") &&
+			!containsFunctionCallNamed(upperQuery, "MAX") &&
+			!containsFunctionCallNamed(upperQuery, "COLLECT") {
 			matchClause := extractMatchClause(query)
 			if countRelationshipPatterns(matchClause) == 1 {
 				if detectIncomingCountAgg(ctx, query, &info) {
