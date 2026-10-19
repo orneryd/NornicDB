@@ -302,6 +302,9 @@ func (s *Server) registerHeimdallRoutes(mux *http.ServeMux) {
 	}, auth.PermRead))
 	// SSE events - read access required
 	mux.HandleFunc("/api/bifrost/events", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
+			return
+		}
 		serveHeimdall(w, r)
 	}, auth.PermRead))
 }
