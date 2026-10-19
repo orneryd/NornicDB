@@ -307,9 +307,15 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	visible := make(typeScope)
-	for name := range values { if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") { visible[name] = staticOperand{} } }
+	for name := range values {
+		if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") {
+			visible[name] = staticOperand{}
+		}
+	}
 	model, scopeErr := e.scalarQueryScope(kind, body, visible, nil, cypherVersionFromContext(ctx) == "25")
-	if scopeErr != nil { return nil, false, scopeErr }
+	if scopeErr != nil {
+		return nil, false, scopeErr
+	}
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -327,7 +333,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			}
 		}
 	}
-	if model.complete { body = model.executionQuery() }
+	if model.complete {
+		body = model.executionQuery()
+	}
 	if cypherVersionFromContext(ctx) != "25" {
 		grouped, err := cypher5ImportGrouping(body, values)
 		if err != nil {
@@ -415,8 +423,11 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	}
 	names := make([]string, 0, len(values))
 	dependencies := pipelineDependencyClauses(query)
+	input := make(typeScope, len(values))
+	for name := range values { if !strings.HasPrefix(name, "$") { input[name] = staticOperand{} } }
+	proof, complete := input.pipelineDependencies(dependencies)
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && pipelineReadsBinding(dependencies, name) {
+		if !strings.HasPrefix(name, "$") && (!complete || proof.reads[name]) {
 			names = append(names, name)
 		}
 	}

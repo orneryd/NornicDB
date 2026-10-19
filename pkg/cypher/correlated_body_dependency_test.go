@@ -93,7 +93,7 @@ func TestCorrelatedBodyDependencyDifferential(t *testing.T) {
 							}
 							require.True(t, handled, query)
 							actual := exec.executePipeline(runCtx, query)
-							require.True(t, actual.handled(), query)
+							require.True(t, actual.terminal(), query)
 							if generalErr != nil {
 								require.Error(t, actual.err, query)
 								require.Equal(t, generalErr.Error(), actual.err.Error(), query)

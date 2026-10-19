@@ -340,7 +340,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if character == '\'' || character == '"' || character == '`' {
+		if character == '\'' || character == '"' {
 			quote := character
 			index++
 			for index < len(expression) {
@@ -390,6 +390,7 @@ func expressionFreeVariables(expression string) []string {
 				delimiters = delimiters[:len(delimiters)-1]
 			}
 		}
+		quotedIdentifier := character == '`'
 		name, next, ok := scanIdentifierToken(expression, index)
 		if !ok {
 			index++
@@ -448,7 +449,8 @@ func expressionFreeVariables(expression string) []string {
 			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
 			normalForm = word && strings.EqualFold(form, "NORMALIZED")
 		}
-		keyword := setExpressionKeyword(upper)
+		if quotedIdentifier { normalForm = false }
+		keyword := !quotedIdentifier && setExpressionKeyword(upper)
 		// END is also a legal variable, notably the operand in NOT end +
 		// another CASE. Preserve the full expression when asking the CASE
 		// grammar owner, before evaluation splits it into atomic operands.

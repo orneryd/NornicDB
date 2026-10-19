@@ -6,18 +6,18 @@ import (
 )
 
 type callScopeOracleCase struct {
-	name           string
-	query          string
-	reference      string
-	compatibility  string
-	extension      string
-	call           string
-	projection     string
-	depth          int
-	kinds          []string
-	union          string
-	unionLevel     int
-	seed           string
+	name          string
+	query         string
+	reference     string
+	compatibility string
+	extension     string
+	call          string
+	projection    string
+	depth         int
+	kinds         []string
+	union         string
+	unionLevel    int
+	seed          string
 }
 
 // The generator is independent of the production parser and scope walker.
@@ -81,8 +81,19 @@ func callScopeOracleExtensionControls() []callScopeOracleCase {
 		item.reference = "WITH $outer AS a " + body + " RETURN *"
 		item.extension = "907-return-outer-unchanged"
 		item.compatibility = "WITH $outer AS scopeInput CALL (scopeInput) { RETURN scopeInput AS a } RETURN *"
-		if call == "implicit" { item.extension = "907-unscoped-implicit-import" }
+		if call == "implicit" {
+			item.extension = "907-unscoped-implicit-import"
+		}
 		cases = append(cases, item)
+		quoted := callScopeOracleCase{name: "control/quoted/" + call, call: call, union: "none"}
+		quotedBody := quoted.callBody([]string{"RETURN `a` + 1 AS v"}, false)
+		quoted.query = "WITH a " + quotedBody + " RETURN a,v"
+		quoted.reference = "WITH $outer AS a " + quotedBody + " RETURN a,v"
+		if call == "implicit" {
+			quoted.extension = "907-unscoped-implicit-import"
+			quoted.compatibility = "WITH $outer AS scopeInput CALL { WITH scopeInput WITH scopeInput AS a RETURN `a` + 1 AS v } RETURN scopeInput AS a,v"
+		}
+		cases = append(cases, quoted)
 	}
 	for _, call := range []string{"explicit", "all"} {
 		for _, binding := range []string{"WITH a+1 AS a", "UNWIND [a+1] AS a"} {

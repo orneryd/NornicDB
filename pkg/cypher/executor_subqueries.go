@@ -538,6 +538,7 @@ func parseCallSubqueryImportVariables(cypher string) []string {
 	names, _, _ := readCallScopeClause(cypher)
 	return names
 }
+
 type callSubqueryScopeClause struct {
 	names      []string
 	scoped     bool
@@ -819,12 +820,15 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 	}
 	referenced := make([]string, 0, len(seedResult.Columns))
 	dependencies := pipelineDependencyClauses(subqueryBody)
+	input := make(typeScope, len(seedResult.Columns))
+	for _, name := range seedResult.Columns { input[strings.TrimSpace(name)] = staticOperand{} }
+	proof, complete := input.pipelineDependencies(dependencies)
 	for _, col := range seedResult.Columns {
 		name := strings.TrimSpace(col)
 		if name == "" {
 			continue
 		}
-		if pipelineReadsBinding(dependencies, name) {
+		if !complete || proof.reads[name] {
 			referenced = append(referenced, name)
 		}
 	}
@@ -917,7 +921,9 @@ func unscopedBranchLocals(branch string, names []string) []string {
 // outer variable applies only to a name the branch reads first (#907).
 func branchDeclaresVariable(branch, variable string) bool {
 	clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	input := typeScope{variable: staticOperand{}}
 	proof := newSemanticDependencies(input)
 	proof.implicit = true
@@ -925,6 +931,7 @@ func branchDeclaresVariable(branch, variable string) bool {
 	_, _, _ = (&StorageExecutor{}).semanticScopeWalk(clauses, input, false, subqueryScope{dependencies: proof, result: model})
 	return model.locals[variable]
 }
+
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
 // at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
 func patternPartEnd(clause pipelineClause) int {

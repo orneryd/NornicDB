@@ -27,16 +27,26 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	outerScope := make(typeScope)
 	if metadata != nil {
-		for name := range metadata.scope { outerScope[name] = staticOperand{} }
+		for name := range metadata.scope {
+			outerScope[name] = staticOperand{}
+		}
 	} else if len(rows) > 0 {
-		for name := range rows[0] { if !strings.HasPrefix(name, "$") { outerScope[name] = staticOperand{} } }
+		for name := range rows[0] {
+			if !strings.HasPrefix(name, "$") {
+				outerScope[name] = staticOperand{}
+			}
+		}
 	}
 	model, scopeErr := e.callQueryScope(clause, outerScope, nil, cypherVersionFromContext(ctx) == "25")
-	if scopeErr != nil { return nil, nil, true, scopeErr }
+	if scopeErr != nil {
+		return nil, nil, true, scopeErr
+	}
 	if len(rows) == 0 {
 		if metadata != nil && model != nil {
 			metadata.columns = append([]string(nil), model.columns...)
-			for _, name := range model.columns { metadata.scope[name] = struct{}{} }
+			for _, name := range model.columns {
+				metadata.scope[name] = struct{}{}
+			}
 		}
 		return []pipelineRow{}, &QueryStats{}, true, nil
 	}
@@ -58,13 +68,17 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	imports := make([]string, 0, len(model.imports))
-	for name := range model.imports { imports = append(imports, name) }
+	for name := range model.imports {
+		imports = append(imports, name)
+	}
 	sort.Strings(imports)
 	write := callSubqueryQueryIsWrite(body)
 	independentRead := model.complete && model.proof.complete && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(body)
 	branchScopes := make(map[string]*semanticQueryScope, len(model.branches))
-	for _, branch := range model.branches { branchScopes[strings.TrimSpace(branch.query)] = branch }
+	for _, branch := range model.branches {
+		branchScopes[strings.TrimSpace(branch.query)] = branch
+	}
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
 		clauses, ok := pipelineClausesFor(body)
 		if !ok && !isUnion {
@@ -78,7 +92,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			bindParameterRow(runCtx, input)
 			for _, name := range imports {
 				value, exists := outer[name]
-				if !exists { return out, stats, true, createUndefinedVariableError(name) }
+				if !exists {
+					return out, stats, true, createUndefinedVariableError(name)
+				}
 				input[name] = value
 			}
 			runBranch := func(query string) (*ExecuteResult, error) {
@@ -99,9 +115,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					}
 				}
 				branchModel := branchScopes[strings.TrimSpace(query)]
-				if branchModel != nil && branchModel.complete { branchClauses = branchModel.clauses }
+				if branchModel != nil && branchModel.complete {
+					branchClauses = branchModel.clauses
+				}
 				var localNames map[string]bool
-				if branchModel != nil { localNames = branchModel.locals }
+				if branchModel != nil {
+					localNames = branchModel.locals
+				}
 				for name := range localNames {
 					delete(branchInput, name)
 					delete(scope, name)

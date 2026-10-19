@@ -225,7 +225,9 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names
 // validateCallSubqueryScopes uses the shared semantic scope owner for CALL
 // imports, nested bodies and mutation clause scopes, before physical routing.
 func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
-	if !containsFold(cypher, "CALL") { return nil }
+	if !containsFold(cypher, "CALL") {
+		return nil
+	}
 	return e.validateMatchSemanticScopes(cypher, cypher25)
 }
 func hasUnexpectedIdentifierAfterNumber(expression string) bool {

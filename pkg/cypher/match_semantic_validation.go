@@ -86,9 +86,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 // WITH … AS or UNWIND … AS is an error (redeclarationError). The zero value
 // is a statement's own walk.
 type subqueryScope struct {
-	visible typeScope
+	visible      typeScope
 	dependencies *semanticDependencyScope
-	result *semanticQueryScope
+	result       *semanticQueryScope
 	// outer: an EXISTS / COUNT / COLLECT body, which may not declare the
 	// enclosing query's variables again. A CALL (…) body may declare its
 	// imports again, as a top-level WITH may: the new value holds in the
@@ -138,7 +138,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
-		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil { return types, false, err }
+		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
+			return types, false, err
+		}
 		if clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
 			enclosing.declarePatternLocals(types, clause)
 			stale = true
@@ -162,8 +164,12 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		scope, valueTypes, valueMembers = view.kinds, view.values, view.members
 		if clause.kind == pipelineClauseSet || clause.kind == pipelineClauseRemove || clause.kind == pipelineClauseDelete || clause.kind == pipelineClauseForeach {
 			bindings := newSemanticBindingScope()
-			for name := range scope { bindings.bind(name) }
-			if err := e.validateMutationClauseScopes([]pipelineClause{clause}, bindings); err != nil { return types, false, err }
+			for name := range scope {
+				bindings.bind(name)
+			}
+			if err := e.validateMutationClauseScopes([]pipelineClause{clause}, bindings); err != nil {
+				return types, false, err
+			}
 		}
 		// Every clause but RETURN and DELETE may change types.
 		stale = true
@@ -174,7 +180,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		}
 		var projectedTypes typeScope
 		if clause.kind == pipelineClauseWith {
-			projectedTypes = projectTypeScopeIn(types, view, clause.text)
+			projectedTypes = projectLocalTypeScope(types, scopeVisibleTypes(types, enclosing.visible), view, clause.text)
 			// The projection reads the incoming variables; WITH … WHERE
 			// reads the projected ones.
 			projection := clause.text
@@ -225,20 +231,22 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if err != nil {
 				return types, false, err
 			}
-			if model == nil || !model.complete { return types, false, nil }
-				for _, name := range model.columns {
-					// A returned column is a new variable of the enclosing
-					// query: one it already binds is declared twice
-					// (Neo4j 5.26.30's VariableAlreadyBound), unless every
-					// branch returns that outer variable itself, unchanged
-					// (callSubqueryReturnsOuterUnchanged).
-					if _, bound := scope[name]; bound && !model.unchanged[name] {
-						return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-							localization.CypherCoreVariableDeclaredInOuterScope(name))
-					}
-					types[name] = model.returned[name]
-					scope[name] = types[name].bindingKind()
+			if model == nil || !model.complete {
+				return types, false, nil
+			}
+			for _, name := range model.columns {
+				// A returned column is a new variable of the enclosing
+				// query: one it already binds is declared twice
+				// (Neo4j 5.26.30's VariableAlreadyBound), unless every
+				// branch returns that outer variable itself, unchanged
+				// (callSubqueryReturnsOuterUnchanged).
+				if _, bound := scope[name]; bound && !model.unchanged[name] {
+					return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+						localization.CypherCoreVariableDeclaredInOuterScope(name))
 				}
+				types[name] = model.returned[name]
+				scope[name] = types[name].bindingKind()
+			}
 		case pipelineClauseCall:
 			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
 			// VariableAlreadyBound). YIELD * names nothing statically, so
@@ -287,7 +295,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			bindings := make(matchSemanticScope)
 			addMatchPatternBindingKinds(bindings, clause.text[:patternPartEnd(clause)])
-			for name := range bindings { types[name] = operandOfKind(scope[name]) }
+			for name := range bindings {
+				types[name] = operandOfKind(scope[name])
+			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {
 				return types, false, err
 			}
@@ -330,8 +340,13 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				if _, alias := parseProjectionExprAlias(strings.TrimSpace(raw)); alias != "" {
 					name := normalizeProjectionColumnName(alias)
 					if simpleSemanticIdentifier(unwrapOuterParens(expression)) != name {
-						if proof := enclosing.dependencies; proof != nil && proof.implicit && proof.active[name] && !proof.touched[name] && enclosing.result != nil { enclosing.result.locals[name] = true; delete(enclosing.visible, name) }
-						if enclosing.dependencies != nil { delete(enclosing.dependencies.active, name) }
+						if proof := enclosing.dependencies; proof != nil && proof.implicit && proof.active[name] && !proof.touched[name] && enclosing.result != nil {
+							enclosing.result.locals[name] = true
+							delete(enclosing.visible, name)
+						}
+						if enclosing.dependencies != nil {
+							delete(enclosing.dependencies.active, name)
+						}
 					}
 				}
 				if expression != "*" {
@@ -348,15 +363,23 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			for name := range enclosing.visible {
-				if operand, exists := projectedTypes[name]; exists { enclosing.visible[name] = operand } else if operand, exists := types[name]; exists { enclosing.visible[name] = operand }
+				if operand, exists := projectedTypes[name]; exists {
+					enclosing.visible[name] = operand
+				} else if operand, exists := types[name]; exists {
+					enclosing.visible[name] = operand
+				}
 			}
 			types = projectedTypes
 			if proof := enclosing.dependencies; proof != nil {
 				retained := make(map[string]bool)
-				for name := range enclosing.visible { retained[name] = proof.active[name] }
+				for name := range enclosing.visible {
+					retained[name] = proof.active[name]
+				}
 				projectionTypes := scopeVisibleTypes(types, nil)
 				projectionTypes.forEachProjectedBinding(clause.text, func(name, expression string, inherited bool) {
-					if simpleSemanticIdentifier(unwrapOuterParens(expression)) == name { retained[name] = proof.active[name] }
+					if simpleSemanticIdentifier(unwrapOuterParens(expression)) == name {
+						retained[name] = proof.active[name]
+					}
 				})
 				proof.active = retained
 			}
@@ -393,7 +416,10 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				input.complete = false
 				types[alias] = unwoundOperand(types, input, clause.text)
 				if proof := enclosing.dependencies; proof != nil {
-					if proof.implicit && proof.active[alias] && !proof.touched[alias] && enclosing.result != nil { enclosing.result.locals[alias] = true; delete(enclosing.visible, alias) }
+					if proof.implicit && proof.active[alias] && !proof.touched[alias] && enclosing.result != nil {
+						enclosing.result.locals[alias] = true
+						delete(enclosing.visible, alias)
+					}
 					delete(proof.active, alias)
 				}
 				scope[alias] = types[alias].bindingKind()
@@ -407,7 +433,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 		case pipelineClauseReturn:
 			stale = false
-			if err := enclosing.projectedScope(clause, types, view); err != nil { return types, false, err }
+			if err := enclosing.projectedScope(clause, types, view); err != nil {
+				return types, false, err
+			}
 			if err := validateReturnSemanticScopeIn(scope, clause.text, enclosing.visible); err != nil {
 				return types, false, err
 			}
@@ -426,7 +454,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			addMatchPatternBindingKinds(scope, clause.text)
 			bindings := make(matchSemanticScope)
 			addMatchPatternBindingKinds(bindings, clause.text)
-			for name := range bindings { types[name] = operandOfKind(scope[name]) }
+			for name := range bindings {
+				types[name] = operandOfKind(scope[name])
+			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {
 				return types, false, err
 			}
@@ -946,7 +976,7 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 		if strings.HasPrefix(body, "(") {
 			body = "MATCH " + body
 		}
-			visible := typeScopeOf(local)
+		visible := typeScopeOf(local)
 		if _, err := e.scalarQueryScope(subquery.kind, body, visible, scope.dependencies, scope.cypher25); err != nil {
 			return err
 		}
@@ -1407,7 +1437,7 @@ func simpleSemanticIdentifier(expression string) string {
 
 func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 	pattern := strings.TrimSpace(clause)
-	for _, keyword := range []string{"CREATE", "MERGE"} {
+	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH", "CREATE", "MERGE"} {
 		if startsWithKeywordFold(pattern, keyword) {
 			pattern = strings.TrimSpace(pattern[len(keyword):])
 			break
@@ -1481,7 +1511,9 @@ func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
 		input := typeScope{name: staticOperand{}}
 		proof := newSemanticDependencies(input)
 		model, err := (&StorageExecutor{}).walkQueryScope(branch, input, subqueryScope{dependencies: proof}, false)
-		if err != nil || !model.complete || !model.unchanged[name] { return false }
+		if err != nil || !model.complete || !model.unchanged[name] {
+			return false
+		}
 	}
 	return len(branches) > 0
 }
