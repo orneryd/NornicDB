@@ -12,12 +12,12 @@ import (
 type requestRBACKey uint8
 
 const (
-    requestRBACKeyResolvedAccessResolver requestRBACKey = iota
-    requestRBACKeyPrincipalRoles
-    requestRBACKeyDatabaseAccessMode
-    requestRBACKeyEntitlementResolver
-    requestRBACKeyDatabaseScope
-    requestRBACKeyAuthenticationDisabled
+	requestRBACKeyResolvedAccessResolver requestRBACKey = iota
+	requestRBACKeyPrincipalRoles
+	requestRBACKeyDatabaseAccessMode
+	requestRBACKeyEntitlementResolver
+	requestRBACKeyDatabaseScope
+	requestRBACKeyAuthenticationDisabled
 )
 
 // RequestEntitlementResolver checks an effective permission for a database.
