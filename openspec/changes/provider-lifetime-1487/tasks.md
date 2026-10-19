@@ -5,8 +5,9 @@ Resumed at maintainer request after macOS installation work. Mandatory live dupl
 - [x] Reproduce late publication on original #1487 and premature provider Close on the prior lifecycle owner for ordinary/typed background calls.
 - [x] Integrate the existing shared DB provider owner; keep actual batch calls synchronous within joined workers. Validate current-release integration before publication.
 - [x] Restore DB-side embeddings in localization tests and remove the queue-publication wait.
-- [ ] Run deterministic lifecycle/race checks, affected packages, native checks and required verification.
-- [ ] Update #1487 title/description, push source and report exact verification/limits.
+- [x] Run deterministic lifecycle/race checks, affected packages and native checks.
+- [ ] Complete final frozen-head required verification and post exact head/base results and skips.
+- [x] Publish integrated source and update #1487 title/description with the full runtime scope and verification limits.
 
 - [x] Apply maintainer instruction: remove forwarding constructor APIs, migrate every Go consumer and DB factory to the single context-taking constructor, update examples.
 - [x] Replace DB.Open salt generation with existing encryption.GenerateSalt owner; encryption regressions pass.
@@ -18,3 +19,5 @@ Resumed at maintainer request after macOS installation work. Mandatory live dupl
 - [x] Consolidate handler/resolver database-manager fixtures into one cleanup owner; remove both duplicate helpers and migrate their callers.
 
 - [x] Preserve both current-release GraphQL cleanup regressions; consolidate subscription available/missing-broker assertions as explicit cases.
+
+- [x] Release held constructor/provider fixtures before DB cleanup on assertion failure, so lifecycle regressions cannot deadlock their own cleanup.
