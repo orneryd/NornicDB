@@ -17,26 +17,22 @@ type FabricPlanner struct {
 func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	parts := make([]string, 0, 2)
 	ops := make([]bool, 0, 1)
-	start, afterUnion := 0, false
-	for token := range queryTokens(query) {
-		if afterUnion {
-			afterUnion = false
-			if token.is("ALL") {
-				ops[len(ops)-1] = false
-				start = token.end
-				continue
-			}
-		}
-		if token.depth != 0 || !token.is("UNION") {
+	structure := ReadQueryStructure(query)
+	if structure.Err != nil {
+		return nil, nil, false, structure.Err
+	}
+	start := 0
+	for _, clause := range structure.Clauses {
+		if clause.Kind != "UNION" {
 			continue
 		}
-		part := strings.TrimSpace(query[start:token.start])
+		part := strings.TrimSpace(query[start:clause.Start])
 		if part == "" {
 			return nil, nil, false, fmt.Errorf("invalid UNION: empty branch")
 		}
 		parts = append(parts, part)
-		ops = append(ops, true)
-		start, afterUnion = token.end, true
+		ops = append(ops, clause.Distinct)
+		start = clause.End
 	}
 	if len(parts) == 0 {
 		return nil, nil, false, nil
@@ -49,11 +45,6 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	return parts, ops, true, nil
 }
 
-func keywordAt(s string, idx int, keyword string) bool {
-	return ClauseKeywordAt(s, idx, keyword)
-}
-
-// NewFabricPlanner creates a planner backed by the given catalog.
 func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
 	return &FabricPlanner{catalog: catalog}
 }
@@ -84,6 +75,16 @@ func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope stri
 		return nil, err
 	}
 	if hasUnion {
+		var knownColumns []string
+		for _, part := range parts {
+			if columns := inferReturnColumnsFromQuery(part); columns != nil {
+				if knownColumns == nil {
+					knownColumns = columns
+				} else if _, same := UnionColumnOrder(knownColumns, columns); !same {
+					return nil, fmt.Errorf("UNION queries must return the same columns (got %v and %v)", knownColumns, columns)
+				}
+			}
+		}
 		lhs, err := p.planQuery(parts[0], current, scope, inSubquery)
 		if err != nil {
 			return nil, err
@@ -146,6 +147,9 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			return nil, err
 		}
 		if isFabricBlock {
+			if block.inTransactions {
+				return nil, fmt.Errorf("CALL IN TRANSACTIONS across composite constituents is not supported")
+			}
 			fabricBlocks = append(fabricBlocks, block)
 		}
 	}
@@ -205,9 +209,9 @@ func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) erro
 }
 
 func splitAtTopLevelUse(query string) (string, string, bool) {
-	for token := range queryTokens(query) {
-		if token.depth == 0 && token.is("USE") && token.start > skipSpacesAndComments(query, 0) {
-			return query[:token.start], query[token.start:], true
+	for i, clause := range ReadQueryStructure(query).Clauses {
+		if clause.Kind == "USE" && i > 0 {
+			return query[:clause.Start], query[clause.Start:], true
 		}
 	}
 	return "", "", false
@@ -221,7 +225,7 @@ func ensureRowProducingPrefix(query string) string {
 	if hasTopLevelReturnClause(trimmed) {
 		return trimmed
 	}
-	if ClauseKeywordAt(trimmed, skipSpacesAndComments(trimmed, 0), "WITH") {
+	if ReadQueryStructure(trimmed).Starts("WITH") {
 		if aliases := trailingWithAliases(trimmed); len(aliases) > 0 {
 			return trimmed + " RETURN " + strings.Join(aliases, ", ")
 		}
@@ -230,40 +234,22 @@ func ensureRowProducingPrefix(query string) string {
 }
 
 func hasTopLevelReturnClause(query string) bool {
-	return indexTopLevelKeyword(query, "RETURN") >= 0
+	return ReadQueryStructure(query).First("RETURN") != nil
 }
 
 func trailingWithAliases(query string) []string {
-	lastWith := -1
-	for token := range queryTokens(query) {
-		if token.depth == 0 && token.is("WITH") {
-			lastWith = token.start
-		}
-	}
-	if lastWith < 0 {
+	with := ReadQueryStructure(query).Last("WITH")
+	if with == nil || with.Projection == nil {
 		return nil
 	}
-
-	clause := strings.TrimSpace(query[lastWith+len("WITH"):])
-	if clause == "" {
-		return nil
-	}
-	parts := splitTopLevelCSV(clause)
-	aliases := make([]string, 0, len(parts))
-	for _, p := range parts {
-		item := strings.TrimSpace(p)
-		if item == "" {
-			continue
+	var aliases []string
+	for _, item := range with.Projection.Items {
+		name := item.Alias
+		if name == "" {
+			name = item.Name
 		}
-		if idx := lastAsIndexFold(item); idx >= 0 {
-			alias := strings.TrimSpace(item[idx+4:])
-			if isValidIdentifier(alias) {
-				aliases = append(aliases, alias)
-			}
-			continue
-		}
-		if isValidIdentifier(item) {
-			aliases = append(aliases, item)
+		if name != "" {
+			aliases = append(aliases, quoteCypherIdentifier(name))
 		}
 	}
 	return aliases
@@ -361,18 +347,22 @@ func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string
 // import clause is preserved (e.g. "WITH x USE db MATCH ..." -> "WITH x MATCH ...").
 func parseLeadingWithUse(body string) (use UseClause, rewritten string, ok bool, err error) {
 	trimmed := strings.TrimSpace(body)
-	if !ClauseKeywordAt(trimmed, skipSpacesAndComments(trimmed, 0), "WITH") {
+	structure := ReadQueryStructure(trimmed)
+	if structure.Err != nil {
+		return UseClause{}, "", false, structure.Err
+	}
+	if !structure.Starts("WITH") {
 		return UseClause{}, body, false, nil
 	}
 
-	withEnd, found := findLeadingWithClauseEnd(trimmed)
+	withEnd, found := LeadingWithClauseEnd(trimmed)
 	if !found || withEnd <= 0 || withEnd >= len(trimmed) {
 		return UseClause{}, body, false, nil
 	}
 
 	withClause := strings.TrimSpace(trimmed[:withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
-	if !ClauseKeywordAt(rest, skipSpacesAndComments(rest, 0), "USE") {
+	if !ReadQueryStructure(rest).Starts("USE") {
 		return UseClause{}, body, false, nil
 	}
 
@@ -395,7 +385,8 @@ type callSubqueryBlock struct {
 	startPos int
 
 	// endPos is the byte offset after the closing }.
-	endPos int
+	endPos         int
+	inTransactions bool
 }
 
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
@@ -508,22 +499,16 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 
 // extractTopLevelCallBlocks finds CALL { ... } blocks in the current query scope.
 func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
+	structure := ReadQueryStructure(query)
+	if structure.Err != nil {
+		return nil, structure.Err
+	}
 	var blocks []callSubqueryBlock
-	after := 0
-	for token := range queryTokens(query) {
-		if token.start < after || token.depth != 0 || !token.is("CALL") {
+	for _, clause := range structure.Clauses {
+		if clause.Kind != "CALL" || clause.Nested == nil {
 			continue
 		}
-		open := skipSpacesAndComments(query, token.end)
-		if open >= len(query) || query[open] != '{' {
-			continue
-		}
-		closePos, err := findMatchingBrace(query, open)
-		if err != nil {
-			return nil, fmt.Errorf("unmatched brace in CALL subquery at position %d: %w", token.start, err)
-		}
-		blocks = append(blocks, callSubqueryBlock{body: strings.TrimSpace(query[open+1 : closePos]), startPos: token.start, endPos: closePos + 1})
-		after = closePos + 1
+		blocks = append(blocks, callSubqueryBlock{body: clause.Body, startPos: clause.Start, endPos: clause.End, inTransactions: clause.InTransactions})
 	}
 	return blocks, nil
 }
@@ -565,118 +550,15 @@ func callBlockContainsFabricUse(body string) (bool, error) {
 
 // findMatchingBrace finds the position of the closing } matching the { at pos.
 // Handles nested braces, string literals, and comments.
-func findMatchingBrace(s string, pos int) (int, error) {
-	if pos < 0 || pos >= len(s) || s[pos] != '{' {
-		return -1, fmt.Errorf("expected '{' at position %d", pos)
-	}
-	depth := 0
-	for token := range queryTokens(s[pos:]) {
-		switch token.text {
-		case "{":
-			depth++
-		case "}":
-			depth--
-			if depth == 0 {
-				return pos + token.start, nil
-			}
-		}
-	}
-	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
-}
-
-// extractWithImports parses a leading WITH clause to extract imported variable names.
-// e.g. "WITH translationId MATCH ..." returns ["translationId"]
 func extractWithImports(body string) []string {
-	start := skipSpacesAndComments(body, 0)
-	if !ClauseKeywordAt(body, start, "WITH") {
-		return nil
-	}
-	end, ok := LeadingWithClauseEnd(body)
-	if !ok {
-		return nil
-	}
-	var imports []string
-	for token := range queryTokens(body[start+len("WITH") : end]) {
-		if token.depth != 0 || token.text == "," || token.is("AS") {
-			continue
-		}
-		if len(token.text) > 1 && token.text[0] == '`' {
-			name, _, valid := scanBacktickName(token.text, 0)
-			if valid {
-				imports = append(imports, name)
-			}
-		} else {
-			imports = append(imports, token.text)
-		}
-	}
-	return imports
+	return ReadQueryStructure(body).ImportNames()
 }
 
-func isWithImportStopKeyword(token string) bool {
-	switch {
-	case strings.EqualFold(token, "MATCH"),
-		strings.EqualFold(token, "OPTIONAL"),
-		strings.EqualFold(token, "CREATE"),
-		strings.EqualFold(token, "MERGE"),
-		strings.EqualFold(token, "DELETE"),
-		strings.EqualFold(token, "DETACH"),
-		strings.EqualFold(token, "SET"),
-		strings.EqualFold(token, "REMOVE"),
-		strings.EqualFold(token, "RETURN"),
-		strings.EqualFold(token, "WITH"),
-		strings.EqualFold(token, "WHERE"),
-		strings.EqualFold(token, "ORDER"),
-		strings.EqualFold(token, "SKIP"),
-		strings.EqualFold(token, "LIMIT"),
-		strings.EqualFold(token, "UNWIND"),
-		strings.EqualFold(token, "CALL"),
-		strings.EqualFold(token, "FOREACH"),
-		strings.EqualFold(token, "LOAD"),
-		strings.EqualFold(token, "USE"):
-		return true
-	default:
-		return false
-	}
-}
-
-// queryIsWrite performs a simple heuristic check for write operations.
 func queryIsWrite(query string) bool {
-	for token := range queryTokens(query) {
-		if token.is("CREATE") || token.is("MERGE") || token.is("DELETE") || token.is("SET") || token.is("REMOVE") {
-			return true
-		}
-	}
-	return false
+	return ReadQueryStructure(query).Writes()
 }
 
 // startsWithFold checks if s starts with prefix (case-insensitive).
-func startsWithFold(s, prefix string) bool {
-	if len(s) < len(prefix) {
-		return false
-	}
-	return strings.EqualFold(s[:len(prefix)], prefix)
-}
-
-func containsFold(s, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	if len(needle) > len(s) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(needle); i++ {
-		if strings.EqualFold(s[i:i+len(needle)], needle) {
-			return true
-		}
-	}
-	return false
-}
-
 func isWhitespace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
-}
-
-func isIdentChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9') || b == '_'
 }

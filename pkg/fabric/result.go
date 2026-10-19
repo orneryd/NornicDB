@@ -479,3 +479,33 @@ func sameColumns(a, b []string) bool {
 	}
 	return true
 }
+
+// UnionColumnOrder is the shared column-name contract for local and Fabric UNION.
+func UnionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
+	if len(columns) != len(branch) {
+		return nil, false
+	}
+	inOrder := true
+	for index := range columns {
+		if columns[index] != branch[index] {
+			inOrder = false
+			break
+		}
+	}
+	if inOrder {
+		return nil, true
+	}
+	positions := make(map[string]int, len(branch))
+	for index, name := range branch {
+		positions[name] = index
+	}
+	order = make([]int, len(columns))
+	for index, name := range columns {
+		position, found := positions[name]
+		if !found {
+			return nil, false
+		}
+		order[index] = position
+	}
+	return order, true
+}
