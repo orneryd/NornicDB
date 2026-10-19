@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"hash/crc32"
 	"os"
@@ -69,4 +70,41 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 		}
 	}
 	require.IsType(t, cypher.CypherDateTime{}, properties["datetime"], "caller retains original values")
+
+	// Exercise each registered property kind on the snapshot-only transcoder's
+	// public path. Extensions use its general fallback; complete edge frames
+	// must remain identical to an interface-only stored stream.
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	for _, id := range []storage.NodeID{"nornic:a", "nornic:b"} {
+		_, err := engine.CreateNode(&storage.Node{ID: id})
+		require.NoError(t, err)
+	}
+	for key, value := range properties {
+		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("nornic:" + key), StartNode: "nornic:a", EndNode: "nornic:b", Type: "TYPED",
+			Properties: map[string]any{"value": value}, VisibilitySuppressed: true}))
+	}
+	var fast, general bytes.Buffer
+	require.NoError(t, storage.WriteSnapshot(context.Background(), engine, &fast, storage.SnapshotOptions{}))
+	reference := registeredPropertySnapshotStream{StreamingEngine: engine}
+	require.NoError(t, storage.WriteSnapshot(context.Background(), reference, &general, storage.SnapshotOptions{}))
+	const snapshotHeaderBytes = 4 + 1 + 8 + 8
+	require.Equal(t, general.Bytes()[snapshotHeaderBytes:], fast.Bytes()[snapshotHeaderBytes:])
+	require.NoError(t, os.WriteFile(newPath, fast.Bytes(), 0644))
+	edgeSnapshot, err := storage.LoadSnapshot(newPath)
+	require.NoError(t, err)
+	require.Len(t, edgeSnapshot.Edges, len(properties), "hidden typed relationships remain recoverable")
+}
+
+type registeredPropertySnapshotStream struct {
+	storage.StreamingEngine
+}
+
+func (s registeredPropertySnapshotStream) StreamEdges(ctx context.Context, visit func(*storage.Edge) error) error {
+	if stored, ok := s.StreamingEngine.(interface {
+		StreamStoredEdgesByType(context.Context, string, func(*storage.Edge) error) error
+	}); ok {
+		return stored.StreamStoredEdgesByType(ctx, "", visit)
+	}
+	return s.StreamingEngine.StreamEdges(ctx, visit)
 }
