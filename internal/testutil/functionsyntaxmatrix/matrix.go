@@ -108,7 +108,9 @@ func MapAggregateCases() []Case {
 			for contentIndex, content := range contents {
 				for _, style := range []string{"block", "line"} {
 					comment := "/* " + content + " */ "
-					if style == "line" { comment = "// " + content + "\n" }
+					if style == "line" {
+						comment = "// " + content + "\n"
+					}
 					prefix := fmt.Sprintf("%s/%d/", style, contentIndex)
 					add(prefix+"before-key", comment+key+":"+call)
 					add(prefix+"after-key", key+comment+":"+call)
