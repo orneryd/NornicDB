@@ -401,7 +401,7 @@ func TestResolvedSearchServiceFollowsReset(t *testing.T) {
 	db.searchServicesMu.RUnlock()
 	db.ResetSearchService(name)
 	// The replaced entry takes no further refresh, retried or queued.
-	db.searchRefreshRetry(old)("a", "", errors.New("read failed"))
+	db.searchRefreshRetry(old)(search.RefreshRetry{Node: svc.ReserveNodeMutation("a")}, errors.New("read failed"))
 	require.False(t, old.hasPending(), "a replaced entry still queues refreshes")
 	replaced := resolve(name)
 	require.NotNil(t, replaced)
