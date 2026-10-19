@@ -23,7 +23,8 @@ func TestUnaryDatabaseAdmissionScopeAndLifetime(t *testing.T) {
 		resolutions++
 		return auth.ResolvedAccess{Read: allowed && database == "selected"}
 	}
-	server, err := NewServer(config, newTestCollectionStore(t), base, nil, nil)
+	store, _ := newTestCollectionStore(t)
+	server, err := NewServer(config, store, base, nil, nil)
 	require.NoError(t, err)
 	claims := &auth.JWTClaims{Roles: []string{"viewer"}}
 	ctx := &authenticatedUnaryContext{Context: context.Background(), server: server, claims: claims}
@@ -33,7 +34,8 @@ func TestUnaryDatabaseAdmissionScopeAndLifetime(t *testing.T) {
 	require.Equal(t, 1, resolutions, "one admission for one unary operation")
 	require.Equal(t, codes.PermissionDenied, status.Code(server.AllowDatabaseAccess(ctx, "other", false)))
 	require.Equal(t, codes.PermissionDenied, status.Code(server.AllowDatabaseAccess(ctx, "selected", true)))
-	otherServer, err := NewServer(config, newTestCollectionStore(t), base, nil, nil)
+	otherStore, _ := newTestCollectionStore(t)
+	otherServer, err := NewServer(config, otherStore, base, nil, nil)
 	require.NoError(t, err)
 	allowed = false
 	require.Equal(t, codes.PermissionDenied, status.Code(otherServer.AllowDatabaseAccess(ctx, "selected", false)), "another server cannot inherit admission")

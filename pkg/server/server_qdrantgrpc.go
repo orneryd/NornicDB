@@ -110,6 +110,7 @@ func (s *Server) startQdrantGRPC() error {
 	if s.isRBACEnforced() {
 		cfg.DatabaseAccessModeResolver = s.GetDatabaseAccessModeForRoles
 		cfg.ResolvedAccessResolver = s.grpcDatabaseAccessForRoles
+		cfg.DatabaseOperationAccessResolver = s.databaseAccessForRoles
 	}
 
 	searchProvider := func(database string, store storage.Engine) (*search.Service, error) {
