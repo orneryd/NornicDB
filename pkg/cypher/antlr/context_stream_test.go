@@ -36,3 +36,26 @@ func TestValidateContextAlreadyCanceled(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, ValidateContext(ctx, "RETURN 1"), context.Canceled)
 }
+
+type panicDuringLookahead struct {
+	context.Context
+	checks int
+}
+
+func (c *panicDuringLookahead) Err() error {
+	c.checks++
+	if c.checks == 3 {
+		panic("unrelated prediction panic")
+	}
+	return c.Context.Err()
+}
+
+func TestValidateContextUnrelatedPanicPropagates(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	during := &panicDuringLookahead{Context: ctx}
+	require.PanicsWithValue(t, "unrelated prediction panic", func() {
+		_ = ValidateContext(during, "MATCH (n) WHERE n.x > 1 RETURN n")
+	})
+	require.NoError(t, Validate("RETURN 1"), "panic unwind releases the validator")
+}
