@@ -225,9 +225,14 @@ func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 // insertions and maintenance rebuilds without retaining BM25 postings here.
 // Hint IDs are vector-entry keys; document hints are projected by the key owner.
 func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
+	h.setBuildLexicalHints(entryHintsFromValues(hints))
+}
+
+// Internal callers retain the key domain instead of round-tripping strings.
+func (h *HNSWIndex) setBuildLexicalHints(hints entryLexicalHints) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.buildLexicalHints = entryHintsFromValues(hints)
+	h.buildLexicalHints = hints
 }
 
 func (h *HNSWIndex) setBuildLexicalHint(key string, hint nodeLexicalHint) {
