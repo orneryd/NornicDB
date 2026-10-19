@@ -245,12 +245,15 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
 		identityPattern = strings.TrimSpace(identityPattern[:where])
 	}
-	for _, segment := range mergePathSegments(identityPattern) {
+	for index, segment := range mergePathSegments(identityPattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
 		if shapeErr != nil {
 			return nil, nil, false, shapeErr
 		}
-		for _, content := range [...]string{shape.startContent, shape.endContent} {
+		for side, content := range [...]string{shape.startContent, shape.endContent} {
+			if index > 0 && side == 0 {
+				continue // the previous segment's end node, already checked and admitted
+			}
 			variable, labels, properties, parseErr := e.parseMergeNodePattern(ctx, "("+content+")", nodeContext, relContext)
 			if parseErr != nil {
 				return nil, nil, false, parseErr
