@@ -169,9 +169,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 	}
 
 	gen := b.nodeCacheGen.current()
-	var state bufferedEntityState
 	var node *Node
-	loaded := false
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		node = nil
 		if w != nil {
@@ -195,25 +193,24 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		b.nodeCacheMu.RUnlock()
 		return found, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
-		if state.found {
-			if state.deleted {
+	// The cached callback resolves the requested buffered key while the owner
+	// holds the retirement lock. Only a miss needs a transaction; no overlay
+	// for this key remains to capture, and no decode closure is built on a hit.
+	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
+	loaded := view != nil
+	if err == nil && view != nil {
+		err = view.readAndClose(func(txn *badger.Txn) error {
+			item, err := txn.Get(nodeKey(id))
+			if err == badger.ErrKeyNotFound {
 				return ErrNotFound
 			}
-			node = state.node
-			return nil
-		}
-		item, err := txn.Get(nodeKey(id))
-		if err == badger.ErrKeyNotFound {
-			return ErrNotFound
-		}
-		if err != nil {
+			if err != nil {
+				return err
+			}
+			node, err = decode(txn, item)
 			return err
-		}
-		loaded = true
-		node, err = decode(txn, item)
-		return err
-	}, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
