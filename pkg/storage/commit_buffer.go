@@ -510,7 +510,7 @@ func (w *WriteBehindBuffer) signal() {
 func (w *WriteBehindBuffer) AppendNode(n *Node) {
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	w.markReadScopeLocked(string(n.ID))
+	if n != nil { w.markReadScopeLocked(string(n.ID)) }
 	w.active.addNode(n)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
@@ -524,7 +524,7 @@ func (w *WriteBehindBuffer) AppendNode(n *Node) {
 func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	w.markReadScopeLocked(string(e.ID))
+	if e != nil { w.markReadScopeLocked(string(e.ID)) }
 	w.active.addEdge(e)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
