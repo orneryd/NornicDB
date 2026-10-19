@@ -11,7 +11,7 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ctx      context.Context
+	canRead  func() bool
 	ch       interface{} // Channel (type varies by subscription type)
 	database string
 	labels   []string
@@ -121,11 +121,13 @@ func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string)
 }
 
 func (b *EventBroker) SubscribeNodeCreatedInDatabase(ctx context.Context, database string, labels []string) <-chan *models.Node {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan *models.Node, 10) // Buffered to prevent blocking
 
 	b.mu.Lock()
 	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		labels:   labels,
@@ -148,11 +150,13 @@ func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labe
 }
 
 func (b *EventBroker) SubscribeNodeUpdatedInDatabase(ctx context.Context, database string, id *string, labels []string) <-chan *models.Node {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan *models.Node, 10)
 
 	b.mu.Lock()
 	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		labels:   labels,
@@ -175,11 +179,13 @@ func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string)
 }
 
 func (b *EventBroker) SubscribeNodeDeletedInDatabase(ctx context.Context, database string, labels []string) <-chan string {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan string, 10)
 
 	b.mu.Lock()
 	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		labels:   labels,
@@ -201,11 +207,13 @@ func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []
 }
 
 func (b *EventBroker) SubscribeRelationshipCreatedInDatabase(ctx context.Context, database string, types []string) <-chan *models.Relationship {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan *models.Relationship, 10)
 
 	b.mu.Lock()
 	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		types:    types,
@@ -227,11 +235,13 @@ func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *stri
 }
 
 func (b *EventBroker) SubscribeRelationshipUpdatedInDatabase(ctx context.Context, database string, id *string, types []string) <-chan *models.Relationship {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan *models.Relationship, 10)
 
 	b.mu.Lock()
 	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		types:    types,
@@ -254,11 +264,13 @@ func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []
 }
 
 func (b *EventBroker) SubscribeRelationshipDeletedInDatabase(ctx context.Context, database string, types []string) <-chan string {
+
+	database, canRead := auth.BindRequestDatabaseRead(ctx, database)
 	ch := make(chan string, 10)
 
 	b.mu.Lock()
 	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
-		ctx:      ctx,
+		canRead:  canRead,
 		ch:       ch,
 		database: database,
 		types:    types,
@@ -290,7 +302,7 @@ func (b *EventBroker) PublishNodeCreatedInDatabase(database string, node *models
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
-		if (auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) && sub.canRead() {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -318,7 +330,7 @@ func (b *EventBroker) PublishNodeUpdatedInDatabase(database string, node *models
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if (auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) && sub.canRead() {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -349,7 +361,7 @@ func (b *EventBroker) PublishNodeDeletedInDatabase(database, nodeID string) {
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
-		if !(auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) {
+		if !matchesDatabase(sub.database, database) || !sub.canRead() {
 			continue
 		}
 		if ch, ok := sub.ch.(chan string); ok {
@@ -378,7 +390,7 @@ func (b *EventBroker) PublishRelationshipCreatedInDatabase(database string, rel 
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if (auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) && sub.canRead() {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -406,7 +418,7 @@ func (b *EventBroker) PublishRelationshipUpdatedInDatabase(database string, rel 
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if (auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
+		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) && sub.canRead() {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -437,7 +449,7 @@ func (b *EventBroker) PublishRelationshipDeletedInDatabase(database, relID strin
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
-		if !(auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) {
+		if !matchesDatabase(sub.database, database) || !sub.canRead() {
 			continue
 		}
 		if ch, ok := sub.ch.(chan string); ok {

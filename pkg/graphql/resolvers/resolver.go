@@ -237,11 +237,7 @@ func (r *Resolver) readableDatabase(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, readable := auth.ResolveDatabaseReadAccess(
-		auth.RequestDatabaseAccessModeFromContext(ctx),
-		auth.RequestResolvedAccessResolverFromContext(ctx),
-		database,
-	)
+	readable := auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead)
 	if !readable {
 		denied := localization.DatabaseAccessDenied(database)
 		return "", localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)

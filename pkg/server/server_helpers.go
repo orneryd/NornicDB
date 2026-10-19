@@ -168,10 +168,24 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 	if s.dbManager == nil {
 		return []string{physical}, true
 	}
-	if resolved, err := s.dbManager.ResolveDatabase(physical); err == nil {
-		physical = resolved
+
+	// A remote constituent is a graph selection in the existing policy, not
+	// a local catalog name. In particular a same-named local alias must not
+	// redirect its authorization. GraphAccess checks its composite and target.
+	if dot := strings.IndexByte(database, '.'); dot > 0 && s.dbManager.IsCompositeDatabase(database[:dot]) {
+		info, err := s.dbManager.GetDatabase(database[:dot])
+		if err != nil {
+			return nil, false
+		}
+		for _, ref := range info.Constituents {
+			if strings.EqualFold(ref.Alias, database[dot+1:]) && ref.Type == "remote" {
+				return []string{physical}, true
+			}
+		}
 	}
-	if mode != nil && !mode.CanAccessDatabase(physical) {
+	// Resolve local constituent aliases through the same selection decision.
+	physical, allowed = s.graphAccess(mode, physical)
+	if !allowed {
 		return nil, false
 	}
 	if !s.dbManager.IsCompositeDatabase(physical) {
@@ -182,21 +196,12 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 		return nil, false
 	}
 	targets := []string{physical}
-	for _, constituent := range info.Constituents {
-		if constituent.Type != "local" {
+	for _, ref := range info.Constituents {
+		children, allowed := s.databaseReadTargets(physical+"."+ref.Alias, mode)
+		if !allowed {
 			return nil, false
 		}
-		target, ok := s.graphAccess(mode, constituent.DatabaseName)
-		if !ok {
-			return nil, false
-		}
-		if resolved, err := s.dbManager.ResolveDatabase(target); err == nil {
-			target = resolved
-		}
-		if mode != nil && !mode.CanAccessDatabase(target) {
-			return nil, false
-		}
-		targets = append(targets, target)
+		targets = append(targets, children...)
 	}
 	return targets, true
 }
@@ -289,8 +294,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
 	// Heimdall, MCP and plugins authorize through them.
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
-		// Streaming consumers must observe current database privileges and
-		// allowlists, rather than the selection snapshot at subscription time.
+		if permission == auth.PermRead {
+			_, readable := s.databaseReadAccess(claims, database)
+			return readable
+		}
 		return s.principalAccess(claims).Allows(database, string(permission))
 	})
 	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
@@ -298,7 +305,7 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	defaultDatabase := ""
 	if s.dbManager != nil {
 		for _, database := range s.dbManager.ListDatabases() {
-			if database == nil || database.Type == "system" || !databaseAccessMode.CanAccessDatabase(database.Name) {
+			if database == nil || !databaseAccessMode.CanAccessDatabase(database.Name) {
 				continue
 			}
 			selections[database.Name] = database.Name
