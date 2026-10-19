@@ -18,9 +18,9 @@ type retainedNodeEmbedding struct {
 	meta       map[string]any
 
 	identity string
-	epoch uint64
+	epoch    uint64
 	failures int
-	retryAt time.Time
+	retryAt  time.Time
 }
 
 // retainNodeEmbedding transfers this claim's private payload to the retry
@@ -33,7 +33,7 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 			labels: node.Labels, properties: node.Properties,
 			vectors: node.ChunkEmbeddings, meta: node.EmbedMeta,
 			identity: ew.nodeEmbeddingIdentity(provider),
-			epoch: ew.claimedNodes[string(node.ID)],
+			epoch:    ew.claimedNodes[string(node.ID)],
 		}
 	}
 	if retained.epoch != ew.embeddingEpoch.Load() {
@@ -44,7 +44,7 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 	}
 	delay := time.Second << (retained.failures - 1)
 	if delay > 30*time.Second {
-		delay = 30*time.Second
+		delay = 30 * time.Second
 	}
 	retained.retryAt = time.Now().Add(delay)
 	if ew.embeddingRetries == nil {
@@ -64,7 +64,7 @@ func (ew *EmbedWorker) nodeEmbeddingIdentity(provider embed.Embedder) string {
 		space = p.EmbeddingSpace()
 	}
 	cfg := ew.config
-	return fmt.Sprintf("%s:%s:%d:%s:%d:%d:%v:%v:%t", providerRetryKey(provider), provider.Model(), provider.Dimensions(), space,
+	return fmt.Sprintf("%s:%q:%d:%q:%d:%d:%q:%q:%t", providerRetryKey(provider), provider.Model(), provider.Dimensions(), space,
 		cfg.ChunkSize, cfg.ChunkOverlap, cfg.PropertiesInclude, cfg.PropertiesExclude, cfg.IncludeLabels)
 }
 
@@ -138,7 +138,7 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 		}
 		remaining := time.Until(result.retryAt)
 		if remaining < 100*time.Millisecond {
-			remaining = 100*time.Millisecond
+			remaining = 100 * time.Millisecond
 		}
 		if remaining < delay {
 			delay = remaining
