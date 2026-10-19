@@ -150,7 +150,7 @@ func TestServicePipelineDimensionsVersusClose(t *testing.T) {
 	case <-time.After(time.Second):
 		serviceLockDump(t, "retirement did not finish")
 	}
-	if !svc.Closed() || svc.currentPipelineStrategy() != strategyModeUnknown {
+	if !errors.Is(svc.lifecycleCtx.Err(), context.Canceled) || svc.currentPipelineStrategy() != strategyModeUnknown {
 		t.Fatal("shutdown left a live service or published pipeline")
 	}
 	_ = svc.Close()
