@@ -340,6 +340,7 @@ func mainEntryLexicalHintsForNodes(docs nodeLexicalHints) entryLexicalHints {
 	}
 	return out
 }
+
 // entryHintsFromValues is the public HNSW per-entry hint API boundary. Its IDs
 // already identify entries; the retained hint still names the owning document.
 func entryHintsFromValues(hints []LexicalSeedHint) entryLexicalHints {
