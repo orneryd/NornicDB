@@ -400,23 +400,13 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
-	if store == nil || value == nil {
-		return nil
-	}
-	reference, ok := graphEntityReference(value)
-	if !ok {
-		// Preserve asNode's extension: other values may name string IDs.
-		reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)}
-	}
-	// A function has no executor: the store's transaction alone decides
-	// (getQueryNode with no read-only statement signal).
-	var noExecutor *StorageExecutor
-	id, valid := reference.NodeLookupID(store)
- if !valid { return nil }
- if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
-		return node
-	}
-	return nil
+ if store == nil || value == nil { return nil }
+ id, ok := graphEntityLookupID(store,value)
+ if !ok { return nil }
+ // Storage's transaction owner decides visibility; preserve getQueryNode.
+ var noExecutor *StorageExecutor
+ if node, err := noExecutor.getQueryNode(store,id); err == nil && node != nil { return node }
+ return nil
 }
 
 // fnGDSIsFinite is gds.util.isFinite / isInfinite: isFinite is true for a

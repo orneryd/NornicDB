@@ -332,7 +332,7 @@ func (c *linkPredictionConfig) bindIdentity(engine storage.Engine, projection *G
 		c.identityOutput = func(id storage.NodeID) string { return string(id) }
 	} else {
 		view := graphIdentityView(engine)
-		read, c.identityStore, c.identityOutput = view.inputKey, view, view.outputID
+		read, c.identityStore, c.identityOutput = view.inputKey, identityGraphEngine(engine), view.outputID
 	}
 	value := c.sourceValue
 	if value == nil {
@@ -377,4 +377,17 @@ func (c *linkPredictionConfig) sourceDisplay() string {
  if value == nil { value = string(c.SourceNode) }
  id, _ := graphEntityDisplayID(value)
  return string(id)
+}
+// graphEntityLookupID is the storage-domain adapter for utility functions.
+// Preserve their legacy string coercion without losing native provenance.
+func graphEntityLookupID(engine storage.Engine, value interface{}) (storage.NodeID, bool) {
+ reference, ok := graphEntityReference(value)
+ if !ok { reference = storage.EntityIdentity{LocalID: fmt.Sprint(value)} }
+ return reference.NodeLookupID(engine)
+}
+// gdsNodeID is confined to the deferred row-similarity key domain. The source
+// guard forbids its use by projection or stored-graph consumers.
+func gdsNodeID(value interface{}) (storage.NodeID, bool) {
+ reference, ok := graphEntityReference(value)
+ return storage.NodeID(reference.LocalID), ok
 }
