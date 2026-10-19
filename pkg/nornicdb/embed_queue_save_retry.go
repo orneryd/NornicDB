@@ -124,7 +124,7 @@ func nodeEmbeddingRetryValueBytes(v reflect.Value, budget int64, depth int) int6
 func (ew *EmbedWorker) dropNodeEmbeddingRetryLocked(id storage.NodeID) {
 	if _, ok := ew.embeddingRetries[id]; ok {
 		delete(ew.embeddingRetries, id)
-		ew.retryBudgetBlockedUntil = time.Time{}
+		ew.retryBudgetBlocked = false
 	}
 }
 
@@ -161,8 +161,9 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 		}
 		if len(ew.embeddingRetries) >= countLimit || retained.bytes > byteLimit-ew.nodeEmbeddingRetryBytes() {
 			// A batch/another worker may already have bought this result before
-			// the budget filled. Do not grow the cache or immediately buy more.
-			ew.retryBudgetBlockedUntil = time.Now().Add(30 * time.Second)
+			// the budget filled. Admission stays blocked until retained capacity
+			// is released or the owner is invalidated.
+			ew.retryBudgetBlocked = true
 			return
 		}
 	}
@@ -202,7 +203,7 @@ func (ew *EmbedWorker) invalidateNodeEmbeddingRetries() {
 		ew.addNodeToPendingEmbeddings(id)
 	}
 	ew.embeddingRetries = nil
-	ew.retryBudgetBlockedUntil = time.Time{}
+	ew.retryBudgetBlocked = false
 }
 
 // nextEmbeddingNodeID runs under claimMu. Storage markers for retained IDs are
@@ -227,7 +228,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 			count++
 		}
 	}
-	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || now.Before(ew.retryBudgetBlockedUntil) {
+	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || ew.retryBudgetBlocked {
 		return due // Saving retained work needs no new provider result.
 	}
 	for attempts := 0; attempts <= len(ew.embeddingRetries); attempts++ {
@@ -270,9 +271,6 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duration {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
-	if remaining := time.Until(ew.retryBudgetBlockedUntil); remaining > 0 && remaining < delay {
-		delay = remaining
-	}
 	for id, result := range ew.embeddingRetries {
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue

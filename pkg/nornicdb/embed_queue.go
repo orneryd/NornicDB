@@ -110,7 +110,7 @@ type EmbedWorker struct {
 	embeddingRetries        map[storage.NodeID]*retainedNodeEmbedding
 	retryMaxCount           int // zero uses the shared owner default
 	retryMaxBytes           int64
-	retryBudgetBlockedUntil time.Time
+	retryBudgetBlocked      bool // claimMu; cleared only when capacity is released or invalidated
 
 	embeddingEpoch atomic.Uint64
 	retryTurn      bool // claimMu alternates due retries with fresh work.
@@ -661,7 +661,7 @@ func (ew *EmbedWorker) Reset() {
 	ew.claimMu.Lock()
 	ew.claimedNodes = make(map[string]uint64)
 	ew.embeddingRetries = nil
-	ew.retryBudgetBlockedUntil = time.Time{}
+	ew.retryBudgetBlocked = false
 	ew.claimMu.Unlock()
 	ew.processed.Store(0)
 	ew.failed.Store(0)
@@ -715,7 +715,7 @@ func (ew *EmbedWorker) Close() {
 	ew.wg.Wait()
 	ew.claimMu.Lock()
 	ew.embeddingRetries = nil
-	ew.retryBudgetBlockedUntil = time.Time{}
+	ew.retryBudgetBlocked = false
 	ew.claimMu.Unlock()
 }
 
