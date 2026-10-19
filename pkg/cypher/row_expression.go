@@ -2063,20 +2063,13 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 // EXISTS { pattern } owner with the whole row, so bound relationships, row
 // values in property maps and rows without a node binding are all seen.
 func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
-	return e.rowExistsBodyMatches(ctx, strings.TrimSpace(pattern), values)
+	return e.evaluateRowExistsPredicate(ctx, "EXISTS { "+strings.TrimSpace(pattern)+" }", values)
 }
 
 // rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the
 // whole EXISTS { } text; recognized is false for an empty body.
 func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists string, values map[string]interface{}) (matched bool, recognized bool) {
 	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
-	return e.rowExistsBodyMatches(ctx, subquery, values)
-}
-
-// Both already-recognized pattern predicates and EXISTS subqueries enter the
-// same body evaluator. A pattern does not need a synthetic EXISTS wrapper
-// allocated and parsed again for every row.
-func (e *StorageExecutor) rowExistsBodyMatches(ctx context.Context, subquery string, values map[string]interface{}) (matched bool, recognized bool) {
 	if subquery == "" {
 		return false, false
 	}
