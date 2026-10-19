@@ -108,8 +108,9 @@ func TestNamedLabelledEndpointCountReadsOnlyLabels(t *testing.T) {
 	require.Equal(t, store.reads.Load(), store.projected.Load(), "no full node read for a count-only named endpoint")
 }
 
-// A named labelled endpoint whose property is read still loads the full node.
-func TestNamedLabelledEndpointPropertyReadStillLoadsFullNode(t *testing.T) {
+// A streamed endpoint property reads the selected value without its other
+// properties, while still returning the same scalar as a full-node read.
+func TestNamedLabelledEndpointPropertyReadUsesProjection(t *testing.T) {
 	ctx := context.Background()
 	store := &countingEndpointEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
 	exec := NewStorageExecutor(store)
@@ -124,7 +125,8 @@ func TestNamedLabelledEndpointPropertyReadStillLoadsFullNode(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (a:P)-[:K]->(l:Q) RETURN l.text AS t", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"y"}}, result.Rows)
-	require.Zero(t, store.projected.Load(), "a property read must not use the labels-only read")
+	require.Greater(t, store.projected.Load(), int64(0), "the selected property must use projection")
+	require.Equal(t, store.projected.Load(), store.reads.Load(), "no full node-body read")
 }
 
 // A count over a labelled anonymous endpoint reads only the endpoint's labels
