@@ -1255,7 +1255,8 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(items) != 1 {
 		return nil, false, nil
 	}
-	count, ok, err := e.relationshipCountFromStore(ctx, matches, items[0])
+	execution := e.relationshipExecutionFor(ctx, matchBody, "")
+	count, ok, err := execution.count(ctx, matches, items[0])
 	if err != nil {
 		return nil, true, err
 	}

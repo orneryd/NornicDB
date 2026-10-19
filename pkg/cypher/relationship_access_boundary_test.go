@@ -18,7 +18,7 @@ import (
 func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 	type function struct {
 		name, position           string
-		owner, typed, result, io bool
+		owner, typed, result, value, io bool
 		calls                    map[string]bool
 	}
 	fset := token.NewFileSet()
@@ -57,6 +57,10 @@ func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 				return true
 			})
 			if fn.Type.Results != nil {
+				for _, result := range fn.Type.Results.List {
+					switch result.Type.(type) { case *ast.InterfaceType: item.value = true }
+					if id, ok := result.Type.(*ast.Ident); ok && id.Name == "any" { item.value = true }
+				}
 				ast.Inspect(fn.Type.Results, func(n ast.Node) bool {
 					if id, ok := n.(*ast.Ident); ok && id.Name == "ExecuteResult" {
 						item.result = true
@@ -80,7 +84,7 @@ func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 					name = target.Sel.Name
 				}
 				item.calls[name] = true
-				if ((strings.HasPrefix(name, "Get") || strings.HasPrefix(name, "Count")) && strings.Contains(name, "Edge")) || name == "SeekRelationships" || name == "RelationshipCount" {
+				if strings.HasPrefix(name, "GetOutgoingEdge") || strings.HasPrefix(name, "GetIncomingEdge") || name == "GetAllEdges" || name == "GetEdgesByType" || strings.HasPrefix(name, "CountEdges") || name == "SeekRelationships" || name == "RelationshipCount" {
 					item.io = true
 				}
 				return true
@@ -110,7 +114,7 @@ func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 				continue
 			}
 			for callee := range fn.calls {
-				if next := functions[callee]; next != nil && !ownerNames[callee] && !next.result && next.io {
+				if next := functions[callee]; next != nil && !ownerNames[callee] && !next.result && !next.value && next.io {
 					fn.io = true
 					changed = true
 					break
