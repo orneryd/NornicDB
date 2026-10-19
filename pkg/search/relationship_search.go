@@ -76,6 +76,20 @@ type relationshipEntry struct {
 }
 
 type relationshipSearch struct {
+	// The lifecycle lock pairs worker startup with Close's join. These
+	// fields are separate from the loader's live-write ordering state.
+	workerMu      sync.Mutex
+	workerStarted bool
+	done          chan struct{}
+	embedMu       sync.Mutex
+	saveErr       error
+	// staged belongs to the embedding worker. Failed saves keep the batch
+	// here so retrying persistence never buys the same embeddings again.
+	staged map[string]*relationshipEntry
+
+	// beforeSave is a per-service persistence barrier used by tests.
+	beforeSave func()
+
 	mu       sync.RWMutex
 	fulltext bm25Index
 	entries  map[string]*relationshipEntry
@@ -90,17 +104,6 @@ type relationshipSearch struct {
 	wake   chan struct{}
 	ready  chan struct{}
 	start  sync.Once
-
-	// beforeSave is a per-service persistence barrier used by tests.
-	beforeSave func()
-
-	workerMu sync.Mutex
-	done     chan struct{}
-	embedMu  sync.Mutex
-	saveErr  error
-	// staged belongs to the embedding worker. Failed saves keep the batch
-	// here so retrying persistence never buys the same embeddings again.
-	staged map[string]*relationshipEntry
 }
 
 type relationshipVectorsFile struct {
@@ -125,6 +128,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 		wake:     make(chan struct{}, 1),
 		ready:    make(chan struct{}),
 		staged:   make(map[string]*relationshipEntry),
+		done:     make(chan struct{}),
 	})
 }
 
@@ -167,13 +171,13 @@ func (s *Service) StartRelationshipIndex() {
 	if rs == nil {
 		return
 	}
+	rs.workerMu.Lock()
+	defer rs.workerMu.Unlock()
+	if s.lifecycleCtx.Err() != nil {
+		return
+	}
+	rs.workerStarted = true
 	rs.start.Do(func() {
-		rs.workerMu.Lock()
-		defer rs.workerMu.Unlock()
-		if s.lifecycleCtx.Err() != nil {
-			return
-		}
-		rs.done = make(chan struct{})
 		go s.runRelationshipIndex(rs)
 	})
 }
@@ -535,8 +539,9 @@ func (s *Service) joinRelationshipIndex() error {
 	if rs := s.relationshipSearch(); rs != nil {
 		rs.workerMu.Lock()
 		done := rs.done
+		started := rs.workerStarted
 		rs.workerMu.Unlock()
-		if done != nil {
+		if started {
 			<-done
 			return rs.saveErr
 		}
