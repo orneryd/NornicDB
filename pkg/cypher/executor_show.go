@@ -1260,7 +1260,13 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Create database
-	err = e.dbManager.CreateDatabase(dbName)
+	if manager, ok := e.dbManager.(interface {
+		CreateDatabaseContext(context.Context, string) error
+	}); ok {
+		err = manager.CreateDatabaseContext(ctx, dbName)
+	} else {
+		err = e.dbManager.CreateDatabase(dbName)
+	}
 	if err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)

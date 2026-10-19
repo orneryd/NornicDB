@@ -83,6 +83,7 @@ type EmbeddingFailureStreamer interface {
 // exclusively, so body commits and their current-range cleanup cannot
 // interleave with this embedding-only write (#1228).
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	beginRevision := b.namespaceLifetimeRevision()
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -150,7 +151,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
 	notification := &commitNotification{}
 	defer b.completeCommitNotification(notification)
-	err = b.commitEmbeddingSidecar(node.ID, len(node.ChunkEmbeddings) > 0 || writeMeta, notification, func(cw *commitWriter) error {
+	err = b.commitEmbeddingSidecar(node.ID, len(node.ChunkEmbeddings) > 0 || writeMeta, notification, beginRevision, func(cw *commitWriter) error {
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			return b.checkEmbeddingSourceInTxn(txn, node)
 		}); err != nil {

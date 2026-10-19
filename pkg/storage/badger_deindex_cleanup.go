@@ -72,6 +72,7 @@ func (j *DeindexCleanupJob) run(ctx context.Context) {
 // RunOnce processes all pending deindex work items. Returns the number of
 // entities successfully deindexed.
 func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
+	token := j.engine.CaptureNamespaceTask()
 	items, err := j.engine.ScanPendingDeindexWorkItems()
 	if err != nil {
 		return 0, fmt.Errorf("scan pending work items: %w", err)
@@ -86,14 +87,19 @@ func (j *DeindexCleanupJob) RunOnce(ctx context.Context) (int, error) {
 			return deindexed, ctx.Err()
 		}
 
-		if err := j.processWorkItem(item); err != nil {
+		if err := j.engine.RunNamespaceTask(token, item.TargetID, func() error {
+			err := j.processWorkItem(item)
+			if err != nil {
+				j.retryWorkItem(item)
+			}
+			return err
+		}); err != nil {
 			j.engine.log.Warn("deindex work item failed",
 				"component", "deindex",
 				"target_id", item.TargetID,
 				"retry", item.RetryCount,
 				"error", err,
 			)
-			j.retryWorkItem(item)
 			continue
 		}
 		deindexed++

@@ -92,11 +92,15 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // whether or not decay is enabled (#1064). Showing it again re-indexes it for
 // search. ErrNotFound when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
+	revision := b.namespaceLifetimeRevision()
 	notification, finish, err := b.beginNotifyingWrite()
 	if err != nil {
 		return err
 	}
 	defer finish()
+	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(id), revision); err != nil {
+		return err
+	}
 	var node *Node
 	err = b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
 		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
@@ -116,7 +120,16 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	err := b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, nil)
+	revision := b.namespaceLifetimeRevision()
+	release, err := b.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := b.checkNamespaceLifetimeRevision(namespaceForEdgeID(id), revision); err != nil {
+		return err
+	}
+	err = b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, nil)
 	if err != nil {
 		return err
 	}

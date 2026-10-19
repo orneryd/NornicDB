@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ClusterMessageType identifies cluster protocol messages.
@@ -86,7 +87,9 @@ const (
 // forwardApplyResponse is the payload of ClusterMsgForwardApplyResponse.
 // Err is empty on success; otherwise the leader's error message.
 type forwardApplyResponse struct {
-	Err string
+	Err                string
+	DropOutcome        string
+	Canceled, Deadline bool
 }
 
 // ClusterMessage is the on-wire format for cluster communication.
@@ -773,6 +776,15 @@ func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, 
 	}
 	if result.Err != "" {
 		cause := errors.New(result.Err)
+		if result.DropOutcome != "" {
+			if result.Canceled {
+				cause = errors.Join(cause, context.Canceled)
+			}
+			if result.Deadline {
+				cause = errors.Join(cause, context.DeadlineExceeded)
+			}
+			return &storage.NamespaceDropError{Committed: result.DropOutcome == "committed", Aborted: result.DropOutcome == "aborted", Cause: cause}
+		}
 		return localizedError(localization.ReplicationRPCRemoteApplyFailed(result.Err), cause)
 	}
 	return nil

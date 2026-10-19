@@ -319,6 +319,10 @@ type databaseManagerAdapter struct {
 	server  *Server // Reference to server for cache invalidation
 }
 
+func (a *databaseManagerAdapter) CreateDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.CreateDatabaseContext(ctx, name)
+}
+
 func (a *databaseManagerAdapter) CreateDatabase(name string) error {
 	return a.manager.CreateDatabase(name)
 }
@@ -340,21 +344,7 @@ func (a *databaseManagerAdapter) DropDatabase(name string) error {
 }
 
 func (a *databaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
-	if err := a.manager.DropDatabaseContext(ctx, name); err != nil {
-		return err
-	}
-	if a.db != nil {
-		a.db.DropSearchServiceState(name)
-		a.db.ResetInferenceService(name)
-	}
-	// Invalidate cached executor for dropped database
-	if a.server != nil {
-		a.server.invalidateExecutor(name)
-		// Also invalidate all executors to ensure fresh database manager references
-		// This ensures queries from other databases see the updated database list
-		a.server.invalidateAllExecutors()
-	}
-	return nil
+	return a.manager.DropDatabaseContext(ctx, name)
 }
 
 func (a *databaseManagerAdapter) ListDatabases() []cypher.DatabaseInfoInterface {
@@ -400,6 +390,10 @@ func (a *databaseManagerAdapter) GetDatabaseLimits(databaseName string) (interfa
 }
 
 func (a *databaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return a.CreateCompositeDatabaseContext(context.Background(), name, constituents)
+}
+
+func (a *databaseManagerAdapter) CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error {
 	// Convert []interface{} to []multidb.ConstituentRef
 	refs := make([]multidb.ConstituentRef, len(constituents))
 	for i, c := range constituents {
@@ -424,23 +418,15 @@ func (a *databaseManagerAdapter) CreateCompositeDatabase(name string, constituen
 		}
 		refs[i] = ref
 	}
-	return a.manager.CreateCompositeDatabase(name, refs)
+	return a.manager.CreateCompositeDatabaseContext(ctx, name, refs)
 }
 
 func (a *databaseManagerAdapter) DropCompositeDatabase(name string) error {
-	if err := a.manager.DropCompositeDatabase(name); err != nil {
-		return err
-	}
-	// Invalidate any cached executors that might reference this composite database
-	// Note: Composite databases don't have their own executors cached, but we should
-	// invalidate the executor for the database we're querying from (usually "nornic")
-	// to ensure subsequent queries see the updated state
-	if a.server != nil {
-		// Invalidate executor cache to force fresh database manager reference
-		// This ensures all executors see the updated database list
-		a.server.invalidateAllExecutors()
-	}
-	return nil
+	return a.DropCompositeDatabaseContext(context.Background(), name)
+}
+
+func (a *databaseManagerAdapter) DropCompositeDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropCompositeDatabaseContext(ctx, name)
 }
 
 func (a *databaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {

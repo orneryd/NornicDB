@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -43,6 +44,8 @@ func (e *ReplicatedEngine) GetInnerEngine() storage.Engine {
 	}
 	return e.Engine
 }
+
+func (e *ReplicatedEngine) LocalCompletionStorage() storage.Engine { return e.Engine }
 
 // Backup delegates a native backup to the local storage chain. Replication
 // writes are already applied locally before their acknowledgement returns.
@@ -222,6 +225,12 @@ func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix str
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
 	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
+	op := storage.NamespaceDropFromContext(ctx)
+	if op == nil {
+		op = storage.NewNamespaceDrop(nil)
+	}
+	cmd.namespaceDrop = op
+	ctx = storage.WithNamespaceDrop(ctx, op)
 	if replicator, ok := e.replicator.(ContextReplicator); ok {
 		err = replicator.ApplyContext(ctx, cmd, e.timeout)
 	} else if ctx.Done() == nil {
@@ -230,7 +239,10 @@ func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix str
 		err = storage.ErrNotImplemented
 	}
 	if err != nil {
-		return 0, 0, err
+		if op.Committed() {
+			err = errors.Join(err, ctx.Err())
+		}
+		return 0, 0, op.Result(err)
 	}
 	// Best-effort counts are not returned by the replication protocol today.
 	return 0, 0, nil

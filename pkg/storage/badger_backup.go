@@ -78,7 +78,11 @@ func (b *BadgerEngine) Restore(path string) error {
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
 	restoreErr := b.restoreOffline(path)
-	return errors.Join(restoreErr, b.restartIndexBackfills())
+	backfillErr := b.restartIndexBackfills()
+	if restoreErr != nil {
+		return errors.Join(restoreErr, backfillErr)
+	}
+	return errors.Join(backfillErr, b.refreshNamespaceCatalogs())
 }
 
 // restartIndexBackfills starts the index backfills the store needs, as open
@@ -125,6 +129,9 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
+	if err := b.loadNamespaceLifetimes(loader, true); err != nil {
+		return err
+	}
 	if err := b.loadMVCCFloorKeys(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -232,11 +239,45 @@ func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string)
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
-	release, err := b.beginPrefixDeletion(ctx, prefix)
+	op := NamespaceDropFromContext(ctx)
+	if op == nil {
+		op = NewNamespaceDrop(nil)
+	}
+	namespace, whole := strings.CutSuffix(prefix, ":")
+	whole = whole && namespace != "" && !strings.Contains(namespace, ":")
+	if whole && op.engine == nil {
+		if err := b.PrepareNamespaceDrop(ctx, prefix, op); err != nil {
+			return 0, 0, err
+		}
+	}
+	if op.phase.Load() == dropProposed {
+		ctx = context.WithoutCancel(ctx)
+	}
+	var release func()
+	if whole {
+		if op.engine != b || op.prefix != prefix {
+			return 0, 0, ErrConflict
+		}
+		release, err = b.beginSchemaWriteContext(ctx)
+	} else {
+		release, err = b.beginPrefixDeletion(ctx, prefix)
+		op.engine, op.prefix = b, prefix
+	}
 	if err != nil {
+		op.Abort()
 		return 0, 0, err
 	}
-	defer release()
+	nodesDeleted, edgesDeleted, err = b.deleteByPrefixLocked(ctx, prefix, op)
+	release()
+	if op.Committed() {
+		err = op.physicalComplete(ctx, err)
+	} else {
+		op.Abort()
+	}
+	return nodesDeleted, edgesDeleted, err
+}
+
+func (b *BadgerEngine) deleteByPrefixLocked(ctx context.Context, prefix string, op *NamespaceDrop) (nodesDeleted int64, edgesDeleted int64, err error) {
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -339,12 +380,10 @@ func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string)
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := ctx.Err(); err != nil {
+	if err := op.commitLocked(ctx); err != nil {
 		return 0, 0, err
 	}
-	if wholeNamespace {
-		defer b.retireNamespace(namespace)
-	}
+	ctx = context.WithoutCancel(ctx)
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
@@ -477,6 +516,7 @@ func (b *BadgerEngine) DeleteByPrefixContext(ctx context.Context, prefix string)
 	}
 
 	// Clear/adjust caches and cached counters.
+	b.retireNamespaceSideState(prefix, namespace, wholeNamespace, nodeNums, edgeNums)
 	b.nodeCacheMu.Lock()
 	b.nodeCacheGen.advance()
 	for id := range b.nodeCache {

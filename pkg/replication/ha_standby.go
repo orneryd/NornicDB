@@ -11,6 +11,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // HAStandbyReplicator implements hot standby replication between 2 nodes.
@@ -653,6 +654,15 @@ func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, ti
 
 	// Honor write-ack mode: optionally wait for standby acknowledgement.
 	walPos, _ := r.storage.GetWALPosition()
+	if cmd.Type == CmdDeleteByPrefix {
+		op := storage.NamespaceDropFromContext(ctx)
+		if op == nil {
+			op = cmd.namespaceDrop
+		}
+		if op != nil && op.JournalPosition() != 0 {
+			walPos = op.JournalPosition()
+		}
+	}
 	ackStart := time.Now()
 	ackErr := r.waitForReplicationAckContext(ctx, walPos, timeout)
 	ackDur := time.Since(ackStart)
@@ -660,7 +670,10 @@ func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, ti
 		r.config.logPrintf(context.Background(), slog.LevelInfo, "[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
 			cmd.Type, applyDur, ackDur, time.Since(start), r.config.HAStandby.SyncMode, walPos, ackErr)
 	}
-	return ackErr
+	if ackErr != nil {
+		return &storage.AppliedMutationError{Cause: ackErr}
+	}
+	return nil
 }
 
 // ApplyBatch applies multiple commands.
@@ -978,7 +991,7 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 			continue // Already applied
 		}
 
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := applyCommittedStorageCommand(a.storage, entry.Command); err != nil {
 			return lastApplied, err
 		}
 
@@ -995,7 +1008,7 @@ func (a *WALApplier) Flush() error {
 	defer a.mu.Unlock()
 
 	for _, entry := range a.pendingBatch {
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := applyCommittedStorageCommand(a.storage, entry.Command); err != nil {
 			return err
 		}
 	}

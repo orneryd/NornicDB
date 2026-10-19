@@ -643,11 +643,12 @@ func DefaultConfig() *Config {
 //	defer cancel()
 //	server.Stop(ctx)
 type Server struct {
-	config    *Config
-	db        *nornicdb.DB
-	dbManager *multidb.DatabaseManager // Manages multiple databases
-	auth      *auth.Authenticator
-	audit     *audit.Logger
+	config                        *Config
+	db                            *nornicdb.DB
+	dbManager                     *multidb.DatabaseManager // Manages multiple databases
+	unregisterNamespaceRetirement func()
+	auth                          *auth.Authenticator
+	audit                         *audit.Logger
 
 	// nextHTTPConnectionID numbers HTTP requests for SHOW TRANSACTIONS
 	// (connectionId http-N).
@@ -1168,6 +1169,15 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		dbConfigPending:      make(map[string]map[string]struct{}),
 	}
 	// A changed password stops working at once (auth.BasicAuthCache).
+	s.unregisterNamespaceRetirement = storage.RegisterNamespaceRetirement(storageEngine, func(name string) error {
+		s.db.DropSearchServiceState(name)
+		s.db.ResetInferenceService(name)
+		s.searchServicesMu.Lock()
+		delete(s.searchServices, name)
+		s.searchServicesMu.Unlock()
+		s.invalidateAllExecutors()
+		return nil
+	})
 	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
 	// Foreground-first policy: while tx requests are active, background embed work yields.
 	s.db.SetEmbedQueueShouldYield(func() bool {
@@ -2013,6 +2023,9 @@ func (s *Server) Start() error {
 func (s *Server) Stop(ctx context.Context) (err error) {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
+	}
+	if s.unregisterNamespaceRetirement != nil {
+		s.unregisterNamespaceRetirement()
 	}
 
 	// Cancel the background embedder initialisation now and wait for it

@@ -16,6 +16,8 @@ const (
 
 // loadMetadata loads database metadata from storage.
 func (m *DatabaseManager) loadMetadata() error {
+	m.catalogRefreshMu.Lock()
+	defer m.catalogRefreshMu.Unlock()
 	// Use system namespace to load metadata
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
@@ -27,6 +29,8 @@ func (m *DatabaseManager) loadMetadata() error {
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.serverID, _ = node.Properties["server_id"].(string)
 	if createdAt, ok := node.Properties["server_created_at"].(string); ok {
@@ -45,6 +49,43 @@ func (m *DatabaseManager) loadMetadata() error {
 		if err := json.Unmarshal([]byte(data), &databases); err != nil {
 			return localizedError(localization.MultidbMetadataParseFailed(err), err)
 		}
+		births := make(map[string]uint64)
+		if encoded, ok := node.Properties["namespace_lifetimes"].(string); ok {
+			if err := json.Unmarshal([]byte(encoded), &births); err != nil {
+				return err
+			}
+		}
+		storage.ObserveNamespaceCatalogLifetimes(m.inner, births)
+		for name, info := range databases {
+			info.namespaceLifetime = births[name]
+			if storage.NamespaceCatalogRetired(m.inner, name, info.namespaceLifetime) {
+				delete(databases, name)
+				continue
+			}
+			if previous := m.databases[name]; previous != nil && previous.ID == info.ID {
+				// JSON updates only exported metadata, retaining the live size
+				// accounting object and its mutex across catalog publications.
+				encoded, err := json.Marshal(info)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(encoded, previous); err != nil {
+					return err
+				}
+				previous.namespaceLifetime = info.namespaceLifetime
+				databases[name] = previous
+			}
+			m.applyChangeCapture(name, info.Options)
+		}
+		for name, previous := range m.databases {
+			if current := databases[name]; current == nil || current.ID != previous.ID {
+				delete(m.engines, name)
+				delete(m.limitCheckers, name)
+				if current == nil {
+					m.applyChangeCapture(name, nil)
+				}
+			}
+		}
 		m.databases = databases
 	}
 
@@ -52,7 +93,7 @@ func (m *DatabaseManager) loadMetadata() error {
 }
 
 // persistMetadata saves database metadata to storage.
-func (m *DatabaseManager) persistMetadata() error {
+func (m *DatabaseManager) persistMetadata(completion ...bool) error {
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
@@ -69,20 +110,49 @@ func (m *DatabaseManager) persistMetadata() error {
 	if err != nil {
 		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
 	}
+	births := make(map[string]uint64, len(m.databases))
+	for name, info := range m.databases {
+		births[name] = info.namespaceLifetime
+	}
+	lifetimes, err := json.Marshal(births)
+	if err != nil {
+		return err
+	}
 
-	// Use system namespace to store metadata
-	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
+	// A replica completes committed retirement locally; its catalog mutation
+	// must not forward a new command back into the primary's ACK/apply loop.
+	catalogStorage := m.inner
+	if len(completion) != 0 && completion[0] {
+		if leader, ok := m.inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
+			catalogStorage = storage.LocalCompletionStorage(m.inner)
+		}
+	}
+	systemEngine := storage.NewNamespacedEngine(catalogStorage, m.config.SystemDatabase)
 
 	node := &storage.Node{
 		ID:     storage.NodeID(metadataNodeID),
 		Labels: []string{"_System", "_Metadata"},
 		Properties: map[string]any{
-			"data":              string(data),
-			"type":              "databases",
-			"updated_at":        time.Now().Unix(),
-			"server_id":         m.serverID,
-			"server_created_at": m.serverCreatedAt.Format(time.RFC3339Nano),
+			"data":                string(data),
+			"namespace_lifetimes": string(lifetimes),
+			"type":                "databases",
+			"updated_at":          time.Now().Unix(),
+			"server_id":           m.serverID,
+			"server_created_at":   m.serverCreatedAt.Format(time.RFC3339Nano),
 		},
+	}
+
+	// Capture the catalog publication order while holding m.mu, then release
+	// it for every storage/snapshot/replication wait. A later snapshot cannot
+	// overtake this one and overwrite a newer catalog with older metadata.
+	previous := m.metadataTail
+	done := make(chan struct{})
+	m.metadataTail = done
+	m.mu.Unlock()
+	defer m.mu.Lock()
+	defer close(done)
+	if previous != nil {
+		<-previous
 	}
 
 	// Check if node exists
@@ -90,6 +160,9 @@ func (m *DatabaseManager) persistMetadata() error {
 	if err == storage.ErrNotFound {
 		// Create new
 		_, err := systemEngine.CreateNode(node)
+		if len(completion) != 0 && completion[0] && storage.MutationApplied(err) {
+			return nil
+		}
 		return err
 	}
 	if err != nil {
@@ -98,7 +171,11 @@ func (m *DatabaseManager) persistMetadata() error {
 
 	// Update existing
 	node.CreatedAt = existing.CreatedAt
-	return systemEngine.UpdateNode(node)
+	err = systemEngine.UpdateNode(node)
+	if len(completion) != 0 && completion[0] && storage.MutationApplied(err) {
+		return nil
+	}
+	return err
 }
 
 // ServerIdentity returns the persisted installation UUID and creation time.

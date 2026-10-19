@@ -52,6 +52,7 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	if n == nil {
 		return false
 	}
+	b.publishNamespaceCatalogOperations(n.ops)
 	// Mutation bookkeeping belongs to publication, even if a busy listener
 	// delays delivery. Keep event payloads independent of subsequent caller edits.
 	for i := range n.ops {
