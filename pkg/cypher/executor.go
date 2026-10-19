@@ -1636,8 +1636,8 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	needsTransaction := statementNeedsTransaction(info, cypher, getParamsFromContext(ctx))
 	// Fabric owns this statement's lifetime. Actual writes have already passed
 	// the resolved execution gate; conditional reads must not open a second tx.
-	if _,fabricOwned := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); fabricOwned {
-		return e.executeWithoutTransaction(ctx,cypher,upperQuery)
+	if _, fabricOwned := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); fabricOwned {
+		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 
 	// For write operations, use implicit transaction for atomicity

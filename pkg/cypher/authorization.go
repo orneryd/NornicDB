@@ -148,13 +148,15 @@ func callsDataWriteProcedure(query string, _ ...map[string]interface{}) bool {
 // Statement execution is a capability, not a predicted WRITE vote. Native
 // statements need a rollback owner; Fabric promotes only at actual execution.
 func callsDynamicStatementProcedure(query string) bool {
-	return visitRegisteredProcedureCalls(query,func(procedure ProcedureSpec,_ string) bool {
+	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
 		return procedure.ExecutesStatements
 	})
 }
 
-func statementWritesGraph(info *QueryInfo,query string) bool {
-	if matchKeywordAt(query,0,"EXPLAIN") { return false }
+func statementWritesGraph(info *QueryInfo, query string) bool {
+	if matchKeywordAt(query, 0, "EXPLAIN") {
+		return false
+	}
 	return info.IsWriteQuery || info.HasCall && callsDataWriteProcedure(query)
 }
 

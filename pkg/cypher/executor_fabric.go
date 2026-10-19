@@ -152,7 +152,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	// dispatch without voting WRITE before their actual body executes.
 	fabricExecutor.SetConcurrentExecution(autoCommit && !callsDynamicStatementProcedure(cypher))
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
- fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
+	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
 			return err
@@ -193,7 +193,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		Columns: stream.Columns,
 		Rows:    stream.Rows,
 		Stats:   &s,
-	}, tx.WriteShard()!=""), nil
+	}, tx.WriteShard() != ""), nil
 }
 
 type fabricPreparedExec struct {
@@ -671,8 +671,8 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
-	ctx = context.WithValue(ctx,dynamicWriteAdmissionKey{},dynamicWriteAdmission(func(callCtx context.Context,caller *StorageExecutor,statement string) error {
-		return c.promoteResolvedStatement(callCtx,caller,dbName,engine,statement)
+	ctx = context.WithValue(ctx, dynamicWriteAdmissionKey{}, dynamicWriteAdmission(func(callCtx context.Context, caller *StorageExecutor, statement string) error {
+		return c.promoteResolvedStatement(callCtx, caller, dbName, engine, statement)
 	}))
 	var exec *StorageExecutor
 	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {

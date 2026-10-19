@@ -124,8 +124,8 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 								invoked, transactional = true, nested.inTransaction(ctx)
 								if origin.ExecutesStatements {
 									result, err := nested.Execute(ctx, args[0].(string), nil)
- transactional = nested.inTransaction(ctx)
- return result, err
+									transactional = nested.inTransaction(ctx)
+									return result, err
 								}
 								if writes {
 									return nested.Execute(ctx, "CREATE (:U5AdmissionMatrix) RETURN 1 AS value", nil)
