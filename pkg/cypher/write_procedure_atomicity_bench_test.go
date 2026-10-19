@@ -22,7 +22,9 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 			inner := statement
 			if route == "dynamicWrite" || route == "dynamicRead" {
 				query = "CALL apoc.cypher.run($statement,{value:$value}) YIELD value RETURN value.value"
-				if route == "dynamicRead" { inner = "RETURN $value AS value" }
+				if route == "dynamicRead" {
+					inner = "RETURN $value AS value"
+				}
 			}
 			if route == "registered" {
 				if err := RegisterUserProcedure(ProcedureSpec{
