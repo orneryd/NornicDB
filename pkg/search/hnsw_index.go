@@ -115,6 +115,13 @@ type HNSWIndex struct {
 	internalToID []string
 	deleted      []bool
 	liveCount    int
+	// liveOrder holds every live internal ID in ascending (storage) order,
+	// plus removed ones not yet compacted away, never more than the live
+	// ones (liveOrderDead counts them). The population-wide scan ranges it,
+	// so its work follows the live population while it still reads the
+	// vectors in storage order.
+	liveOrder     []uint32
+	liveOrderDead int
 	// fingerprints, when non-nil (cluster graphs), holds the coordinate
 	// fingerprint each node was inserted with, by internal ID (hnsw_fingerprint.go).
 	fingerprints []uint64
@@ -373,6 +380,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.internalToID = append(h.internalToID, id)
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
+	h.liveOrder = append(h.liveOrder, internalID)
 	h.recordFingerprintLocked(internalID, vec)
 	h.liveCount++
 	if h.quantized != nil {
@@ -457,23 +465,47 @@ func (h *HNSWIndex) levelZeroSearchLocked(ctx context.Context, normalized []floa
 	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
 }
 
+// rebuildLiveOrderLocked sets liveOrder to the live internal IDs of a
+// restored graph, ascending. Caller holds h.mu for writing.
+func (h *HNSWIndex) rebuildLiveOrderLocked() {
+	live := make([]uint32, 0, h.liveCount)
+	for id, deleted := range h.deleted {
+		if !deleted && uint64(id) <= uint64(^uint32(0)) {
+			live = append(live, uint32(id))
+		}
+	}
+	h.liveOrder, h.liveOrderDead = live, 0
+}
+
+// compactLiveOrderLocked drops removed IDs from liveOrder in place, keeping
+// its order. Removal calls it once removed entries outnumber live ones, so
+// each removal costs amortized O(1) and liveOrder never holds more than
+// twice the live population. Caller holds h.mu for writing.
+func (h *HNSWIndex) compactLiveOrderLocked() {
+	live := h.liveOrder[:0]
+	for _, id := range h.liveOrder {
+		if validHNSWIndex(id, len(h.deleted)) && !h.deleted[id] {
+			live = append(live, id)
+		}
+	}
+	h.liveOrder, h.liveOrderDead = live, 0
+}
+
 // scanLiveLocked scores every live vector, closest first, in a slice from
 // itemsPool, with the same distance as the layer-0 search (the quantized
-// scorer when the query carries one). It ranges the live IDs (idToInternal),
-// so its work follows the live population: tombstone slots left by removals
-// are never visited. Caller holds h.mu for reading.
+// scorer when the query carries one). It ranges liveOrder, so its work
+// follows the live population (tombstone slots left by removals are never
+// visited) and reads vectors in storage order. Caller holds h.mu for reading.
 func (h *HNSWIndex) scanLiveLocked(ctx context.Context, normalized []float32) ([]hnswDistItem, error) {
 	scorer, _ := ctx.Value(hnswQuantizedQueryKey{}).(*hnswQuantizedQuery)
 	items := h.itemsPool.Get().([]hnswDistItem)[:0]
-	visited := 0
-	for _, internalID := range h.idToInternal {
-		if visited&1023 == 0 {
+	for i, internalID := range h.liveOrder {
+		if i&1023 == 0 {
 			if err := ctx.Err(); err != nil {
 				h.itemsPool.Put(items[:0])
 				return nil, err
 			}
 		}
-		visited++
 		if !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
 			continue
 		}
@@ -626,6 +658,7 @@ func (h *HNSWIndex) Clear() {
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
 	h.liveCount = 0
+	h.liveOrder, h.liveOrderDead = nil, 0
 	if h.fingerprints != nil {
 		h.fingerprints = h.fingerprints[:0]
 	}
@@ -992,6 +1025,7 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 		h.fingerprints = snap.Fingerprints
 	}
 	h.liveCount = snap.LiveCount
+	h.rebuildLiveOrderLocked()
 	h.entryPoint = snap.EntryPoint
 	h.hasEntryPoint = snap.HasEntryPoint
 	h.maxLevel = snap.MaxLevel
@@ -1335,6 +1369,9 @@ func (h *HNSWIndex) removeLocked(internalID uint32) {
 
 	h.deleted[internalID] = true
 	h.liveCount--
+	if h.liveOrderDead++; h.liveOrderDead > h.liveCount {
+		h.compactLiveOrderLocked()
+	}
 
 	if validHNSWIndex(internalID, len(h.internalToID)) {
 		delete(h.idToInternal, h.internalToID[internalID])
