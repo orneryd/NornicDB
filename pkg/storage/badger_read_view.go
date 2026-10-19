@@ -31,6 +31,12 @@ type badgerReadView struct {
 // means cached completed the read. The idle case uses two epoch loads, no
 // transaction, overlay copy or view allocation. Busy cache reads and transaction
 // capture share the retirement lock. Default callers always get a strict view.
+//
+// Whenever a view is opened, capture always runs under the retirement boundary,
+// including when write-behind is disabled or idle. Its argument is the selected
+// overlay source: nil means empty, and the overlay selectors accept nil without
+// allocating. Committed index/cache reads belong outside any nil-overlay guard.
+// Only a complete cached result can return without opening a view or capturing.
 func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
 	if len(options) == 0 {
 		return b.captureReadViewFallback(b.writeBehind, capture, readViewOptions{})
@@ -76,10 +82,12 @@ func (b *BadgerEngine) captureReadViewFallback(w *WriteBehindBuffer, capture fun
 		return nil, err
 	}
 	view := &badgerReadView{txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
-	if w != nil && capture != nil {
-		if _, idle := w.idleReadEpoch(opts.scope); !idle {
-			capture(w)
+	if capture != nil {
+		overlay := w
+		if _, idle := w.idleReadEpoch(opts.scope); idle {
+			overlay = nil
 		}
+		capture(overlay)
 	}
 	if opts.longLived {
 		b.txnWG.Done()
