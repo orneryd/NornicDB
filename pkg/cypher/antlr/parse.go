@@ -6,7 +6,6 @@ package antlr
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +18,12 @@ import (
 type ParseResult struct {
 	Tree   IScriptContext
 	Errors []string
+}
+
+// compositeKeyword recognizes administration-only words without reserving them
+// in the lexer used by both parser paths and the canonical redaction owner.
+func (p *CypherParser) compositeKeyword(word string) bool {
+	return strings.EqualFold(p.GetCurrentToken().GetText(), word)
 }
 
 type pooledValidator struct {
@@ -225,7 +230,11 @@ func (e *parseErrorListener) reset() {
 }
 
 func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, ex antlr.RecognitionException) {
-	e.errors = append(e.errors, fmt.Sprintf("line %d:%d %s", line, column, msg))
+	// Do not persist ANTLR's token/excerpt text: a malformed password can be
+	// the offending token, including in lexer errors before a token exists.
+	// Parse, Validate, and ParseResult share this structural diagnostic owner.
+	message := localization.CypherANTLRUnexpectedInput(line, column)
+	e.errors = append(e.errors, message.Fallback)
 }
 
 func isASCII(s string) bool {
