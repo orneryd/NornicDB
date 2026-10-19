@@ -116,7 +116,7 @@ func NewRegistry(config Config) (*Registry, error) {
 		config.MaxStreamsPerOwner = 64
 	}
 	if config.MaxPageSize == 0 {
-		config.MaxPageSize = 500
+		config.MaxPageSize = DefaultMaxPageSize
 	}
 	if config.MaxRetainedBytes == 0 {
 		config.MaxRetainedBytes = 1 << 30
@@ -408,7 +408,10 @@ func (r *Registry) validate(scope Scope, n int) error {
 	if scope.Owner == "" || scope.Database == "" || len(scope.Database) > maxTokenDatabaseBytes {
 		return ErrInvalidScope
 	}
-	if n <= 0 || n > r.config.MaxPageSize {
+	if n > r.config.MaxPageSize {
+		return r.pageSizeExceeded()
+	}
+	if n <= 0 {
 		return ErrInvalidPageSize
 	}
 	return nil

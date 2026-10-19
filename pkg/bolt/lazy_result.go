@@ -213,6 +213,5 @@ func (s *Session) sendLazyFailure(failure *lazyStatementError) error {
 		}
 		return s.flushIfPending()
 	}
-	code, message := mapBoltQueryErrorForQuery(failure.err, failure.query)
-	return s.sendRunFailureWithDetail(code, message, boltErrorDetail(failure.err))
+	return s.sendRunQueryFailure(failure.err, failure.query)
 }
