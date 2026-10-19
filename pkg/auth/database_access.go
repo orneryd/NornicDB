@@ -74,6 +74,10 @@ func ResolveDatabaseReadAccess(mode DatabaseAccessMode, resolve func(string) Res
 // resolver and database selection rules to a direct (non-Cypher) operation.
 // It does not introduce privileges or grant authority to acquire a database.
 func RequestDatabasePermissionAllowed(ctx context.Context, database string, permission Permission) bool {
+	if permission == PermRead {
+		_, allows := BindRequestDatabaseRead(ctx, database)
+		return allows()
+	}
 	if ctx == nil {
 		return false
 	}
@@ -86,10 +90,6 @@ func RequestDatabasePermissionAllowed(ctx context.Context, database string, perm
 			return false
 		}
 	}
-	if permission == PermRead {
-		_, allowed := ResolveDatabaseReadAccess(mode, RequestResolvedAccessResolverFromContext(ctx), database)
-		return allowed
-	}
 	if allows := RequestEntitlementResolverFromContext(ctx); allows != nil {
 		return allows(database, permission)
 	}
@@ -99,4 +99,35 @@ func RequestDatabasePermissionAllowed(ctx context.Context, database string, perm
 		}
 	}
 	return true
+}
+
+// BindRequestDatabaseRead resolves a request selection once and binds its live
+// read checks. It caches no permission result: mode and resolver callbacks run
+// on each invocation, including legacy callbacks without a change generation.
+// Consumers can retain the canonical database and predicate for their lifetime.
+func BindRequestDatabaseRead(ctx context.Context, database string) (string, func() bool) {
+	refused := func() bool { return false }
+	if ctx == nil {
+		return database, refused
+	}
+	selection := database
+	if scope := RequestDatabaseScopeFromContext(ctx); scope != nil {
+		canonical, allowed := scope.Resolve(database)
+		if !allowed {
+			return database, refused
+		}
+		database = canonical
+	}
+	mode := RequestDatabaseAccessModeFromContext(ctx)
+	legacy, _ := ctx.Value(requestRBACKeyResolvedAccessResolver).(func(string) ResolvedAccess)
+	allows := RequestEntitlementResolverFromContext(ctx)
+	return database, func() bool {
+		if mode != nil && (!mode.CanAccessDatabase(selection) || selection != database && !mode.CanAccessDatabase(database)) {
+			return false
+		}
+		if legacy != nil {
+			return legacy(database).Read
+		}
+		return allows == nil || allows(database, PermRead)
+	}
 }
