@@ -350,7 +350,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if result == nil {
 		return nil, false, nil
 	}
-	recordSubqueryStats(ctx, result.Stats)
+	queryStatsAccumulatorFromContext(ctx).add(result.Stats)
 	if kind == "EXISTS" || kind == "COUNT" {
 		return rowCountValue(kind, int64(len(result.Rows))), true, nil
 	}
