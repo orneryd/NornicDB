@@ -52,6 +52,8 @@ var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9
 
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
+	// Captured at BEGIN, independent of user-editable tx.setMetaData values.
+	coordinatorOwned bool
 	tx              interface{} // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
 	engine          storage.Engine
 	storageWrapper  *transactionStorageWrapper

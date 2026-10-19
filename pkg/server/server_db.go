@@ -864,9 +864,11 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// TransactionRequest follows Neo4j HTTP API format exactly.
+// TransactionRequest follows Neo4j HTTP API format. TransactionMetadata is
+// NornicDB's HTTP equivalent of Bolt BEGIN's standard tx_metadata field.
 type TransactionRequest struct {
 	Statements []StatementRequest `json:"statements"`
+	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
 }
 
 // StatementRequest is a single Cypher statement.
@@ -1912,6 +1914,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		return
 	}
 
+	r = r.WithContext(cypher.WithTransactionMetadata(r.Context(), req.TransactionMetadata))
 	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
 	if openErr != nil {
 		status := http.StatusInternalServerError

@@ -271,7 +271,7 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
 	})
-	tx, err := session.BeginTransaction(ctx)
+	tx, err := session.BeginTransaction(ctx, neo4j.WithTxMetadata(coordinatorTransactionMetadata(ctx)))
 	if err != nil {
 		_ = session.Close(ctx)
 		return nil, err
@@ -451,6 +451,7 @@ type httpCypherTx struct {
 
 type remoteTxRequest struct {
 	Statements []remoteStatement `json:"statements"`
+	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
 }
 
 type remoteTxResponse struct {
@@ -628,7 +629,7 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 }
 
 func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
-	openBody := remoteTxRequest{Statements: []remoteStatement{}}
+	openBody := remoteTxRequest{Statements: []remoteStatement{}, TransactionMetadata: coordinatorTransactionMetadata(ctx)}
 	raw, err := json.Marshal(openBody)
 	if err != nil {
 		return nil, err
