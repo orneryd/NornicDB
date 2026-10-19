@@ -148,7 +148,9 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
-	fabricExecutor.SetConcurrentExecution(autoCommit)
+	// Conditional statements may promote while running. Serialize their
+	// dispatch without voting WRITE before their actual body executes.
+	fabricExecutor.SetConcurrentExecution(autoCommit && !callsDynamicStatementProcedure(cypher))
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
@@ -668,6 +670,9 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
+	ctx = context.WithValue(ctx,dynamicWriteAdmissionKey{},dynamicWriteAdmission(func(callCtx context.Context,caller *StorageExecutor,statement string) error {
+		return c.promoteResolvedStatement(callCtx,caller,dbName,engine,statement)
+	}))
 	var exec *StorageExecutor
 	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
 		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {

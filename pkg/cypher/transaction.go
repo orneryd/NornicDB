@@ -483,22 +483,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// preserving namespace and mutation state, this prevents every statement
 	// (including RETURN literals) from allocating and reseeding a 1000-entry
 	// transaction lookup cache.
-	txWrapper := e.txContext.storageWrapper
-	if txWrapper == nil || txWrapper.tx != tx {
-		engines := e.resolveImplicitTxEngines()
-		separator := ":"
-		if engines.namespace == "" {
-			separator = ""
-		}
-		txWrapper = &transactionStorageWrapper{
-			tx:             tx,
-			underlying:     e.storage,
-			namespace:      engines.namespace,
-			separator:      separator,
-			mutatedNodeIDs: make(map[string]struct{}),
-		}
-		e.txContext.storageWrapper = txWrapper
-	}
+	txWrapper := e.transactionStorageFor(tx)
 
 	// Pass the wrapper through context (same pattern as implicit transactions)
 	// This is thread-safe and allows getStorage() to automatically use the transaction
@@ -518,6 +503,22 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		txWrapper.clearMutatedNodeIDs(mutated)
 	}
 	return result, nil
+}
+
+// transactionStorageFor is the transaction's sole storage-adapter owner.
+// Runtime Fabric promotion and ordinary explicit execution reuse this adapter;
+// neither creates another transaction or terminal lifecycle.
+func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *transactionStorageWrapper {
+	if wrapper := e.txContext.storageWrapper; wrapper != nil && wrapper.tx == tx { return wrapper }
+	engines := e.resolveImplicitTxEngines()
+	separator := ":"
+	if engines.namespace == "" { separator = "" }
+	wrapper := &transactionStorageWrapper{
+		tx:tx,underlying:e.storage,namespace:engines.namespace,separator:separator,
+		mutatedNodeIDs:make(map[string]struct{}),
+	}
+	e.txContext.storageWrapper = wrapper
+	return wrapper
 }
 
 func looksLikeWriteQuery(cypher string) bool {

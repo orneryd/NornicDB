@@ -1634,6 +1634,11 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(cypher)
 	needsTransaction := statementNeedsTransaction(info, cypher, getParamsFromContext(ctx))
+	// Fabric owns this statement's lifetime. Actual writes have already passed
+	// the resolved execution gate; conditional reads must not open a second tx.
+	if _,fabricOwned := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); fabricOwned {
+		return e.executeWithoutTransaction(ctx,cypher,upperQuery)
+	}
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
@@ -1658,7 +1663,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // statementNeedsTransaction keeps write clauses and registered WRITE procedures
 // under the same statement rollback owner. tx.setMetaData also needs a transaction.
 func statementNeedsTransaction(info *QueryInfo, cypher string, parameters ...map[string]interface{}) bool {
-	return info.IsWriteQuery || (info.HasCall && callsDataWriteProcedure(cypher, parameters...)) ||
+	return info.IsWriteQuery || (info.HasCall && (callsDataWriteProcedure(cypher) || callsDynamicStatementProcedure(cypher))) ||
 		(matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
 }
 

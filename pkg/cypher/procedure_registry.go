@@ -50,14 +50,6 @@ type ProcedureColumn struct {
 	IsDeprecated bool
 }
 
-// ProcedureStatement describes an executable argument whose graph-write mode
-// depends on the inner statement. ParamsIndex is -1 when no parameter map is
-// passed to that statement. Declared WRITE procedures always remain writes.
-type ProcedureStatement struct {
-	QueryIndex  int
-	ParamsIndex int
-}
-
 // ProcedureSpec is the canonical contract for built-in and user-defined procedures.
 // Admin, IsDeprecated and DeprecatedBy describe the procedure in SHOW PROCEDURES;
 // they do not replace handler authorization or change execution behavior.
@@ -77,7 +69,10 @@ type ProcedureSpec struct {
 	Returns            []ProcedureColumn
 	MinArgs            int
 	MaxArgs            int
-	Statement          *ProcedureStatement
+	// ExecutesStatements requests a native statement rollback owner. Its
+	// handler resolves arguments normally; actual inner writes promote a
+	// Fabric participant at the shared execution boundary.
+	ExecutesStatements bool
 }
 
 // writes reports whether a call of the procedure changes the database: its
@@ -237,12 +232,6 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	}
 	if spec.MaxArgs >= 0 && spec.MaxArgs < spec.MinArgs {
 		return fmt.Errorf("procedure %q: MaxArgs(%d) < MinArgs(%d)", spec.Name, spec.MaxArgs, spec.MinArgs)
-	}
-	if statement := spec.Statement; statement != nil {
-		if statement.QueryIndex < 0 || statement.ParamsIndex < -1 || spec.MaxArgs >= 0 &&
-			(statement.QueryIndex >= spec.MaxArgs || statement.ParamsIndex >= spec.MaxArgs) {
-			return fmt.Errorf("procedure %q: executable statement argument is outside its signature", spec.Name)
-		}
 	}
 	return nil
 }
