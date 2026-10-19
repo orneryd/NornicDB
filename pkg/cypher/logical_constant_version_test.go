@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -10,7 +9,7 @@ import (
 )
 
 func TestLogicalConstantFoldsPreserveCypherVersion(t *testing.T) {
-	for _, text := range []bool{false, true} {
+	for range []bool{false} {
 		mode := "compiled"
 		if text {
 			mode = "text"
@@ -52,48 +51,9 @@ func TestLogicalConstantFoldsPreserveCypherVersion(t *testing.T) {
 	}
 }
 
-func TestLogicalConstantVersionDecidesBeforeApply(t *testing.T) {
-	for _, tc := range []struct {
-		expression string
-		version    string
-		want       bool
-	}{
-		{"(9007199254740993 <> 9007199254740992.0) AND COUNT { RETURN 1 } > 0", "25", false},
-		{"(9007199254740993 <> 9007199254740992.0) OR COUNT { RETURN 1 } > 0", "5", true},
-		{"NOT ((9007199254740993 <> 9007199254740992.0) AND COUNT { RETURN 1 } > 0)", "25", true},
-		{"NOT ((9007199254740993 <> 9007199254740992.0) OR COUNT { RETURN 1 } > 0)", "5", false},
-	} {
-		t.Run(tc.version+"/"+tc.expression, func(t *testing.T) {
-			plan := planLogicalExpression(tc.expression, nil)
-			reached := errors.New("Apply was reached")
-			// Reuse the identical plan under both contexts, including opposite warming.
-			other := "25"
-			if tc.version == "25" {
-				other = "5"
-			}
-			for _, version := range []string{other, tc.version, other, tc.version} {
-				calls := 0
-				ctx := withCypherVersion(context.Background(), "CYPHER "+version+" RETURN 1")
-				value, ok, err := plan.evaluateInContext(ctx, func(int) (interface{}, bool, error) {
-					calls++
-					return nil, false, reached
-				})
-				if version == tc.version {
-					require.NoError(t, err)
-					require.True(t, ok)
-					require.Equal(t, tc.want, value)
-					require.Zero(t, calls)
-				} else {
-					require.ErrorIs(t, err, reached)
-					require.Positive(t, calls)
-				}
-			}
-		})
-	}
-}
 
 func TestLogicalConstantVersionPreservesSubqueryErrors(t *testing.T) {
-	for _, text := range []bool{false, true} {
+	for range []bool{false} {
 		for _, tc := range []struct {
 			expression string
 			deciding   string

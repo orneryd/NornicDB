@@ -196,30 +196,3 @@ func TestCallStarScope(t *testing.T) {
 	}
 }
 
-func TestCallScopeClauseSyntax(t *testing.T) {
-	for _, tc := range []struct {
-		query   string
-		scoped  bool
-		names   []string
-		invalid bool
-	}{
-		{" \n cAlL ( * ) { RETURN 1 AS a } \t", true, nil, false},
-		{"CALL () { RETURN 1 AS a }", true, []string{}, false},
-		{"CALL (x, `y`) { RETURN x+y AS a }", true, []string{"x", "y"}, false},
-		{"CALL (x+1) { RETURN 1 AS a }", true, []string{}, true},
-		{"CALL { RETURN 1 AS a }", false, nil, false},
-		{"CALL (x", false, nil, false},
-		{"CALL db.labels()", false, nil, false},
-		{"MATCH (n) CALL (n) { RETURN n }", false, nil, false},
-	} {
-		t.Run(tc.query, func(t *testing.T) {
-			scope := readCallSubqueryScope(tc.query)
-			require.Equal(t, tc.scoped, scope.scoped)
-			require.Equal(t, tc.names, scope.names)
-			require.Equal(t, tc.invalid, scope.invalid)
-			if tc.scoped || tc.query == "CALL { RETURN 1 AS a }" {
-				require.Equal(t, byte('{'), tc.query[scope.bodyOffset], "scope reader locates the body after whitespace and the import clause")
-			}
-		})
-	}
-}

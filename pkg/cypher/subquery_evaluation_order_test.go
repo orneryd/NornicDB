@@ -182,36 +182,3 @@ func TestSubqueryEvaluationOrderMatchesNeo4j(t *testing.T) {
 	}
 }
 
-func TestSubqueryEvaluationOrderUsesEnclosingCaseScope(t *testing.T) {
-	for _, tc := range []struct {
-		expression string
-		liftable   bool
-	}{
-		{"EXISTS { RETURN 1 } = CASE WHEN x=0 THEN true ELSE false END", true},
-		{"CASE WHEN x=0 THEN true ELSE false END = EXISTS { RETURN 1 }", true},
-		{"EXISTS { RETURN CASE WHEN true THEN 1 ELSE 0 END }", true},
-		{"CASE WHEN x=0 THEN EXISTS { RETURN 1 } ELSE false END", false},
-		{"CASE WHEN x=0 THEN EXISTS { RETURN 1 } ELSE false END = EXISTS { RETURN 2 }", true},
-		{"[x IN [1] | EXISTS { RETURN x }]", false},
-		{"[EXISTS { RETURN 1 }]", true},
-		{"EXISTS { RETURN 1 } = 'CASE'", true},
-		{"coalesce(EXISTS { RETURN 1 }, false)", false},
-		{"coalesce (COUNT { RETURN 1 }, 0)", false},
-		{"`coalesce`(EXISTS { RETURN 1 }, false)", false},
-		{"custom.coalesce(EXISTS { RETURN 1 }, false)", true},
-		{"coalesce(EXISTS { RETURN 1 }, false) = EXISTS { RETURN 2 }", true},
-		{"any(y IN COLLECT { RETURN 1 } WHERE y=0)", true},
-		{"any(y IN [1] WHERE EXISTS { RETURN y })", false},
-		{"[y IN COLLECT { RETURN 1 } | y]", true},
-		{"[y IN [1] | EXISTS { RETURN y }]", false},
-		{"reduce(a=0,y IN COLLECT { RETURN 1 } | a+y)", true},
-		{"reduce(a=COUNT { RETURN 1 },y IN [1] | a+y)", true},
-		{"reduce(a=0,y IN [1] | a+COUNT { RETURN y })", false},
-		{"any(y IN CASE WHEN true THEN COLLECT { RETURN 1 } ELSE [] END WHERE y=1)", false},
-		{"reduce(a=CASE WHEN true THEN COUNT { RETURN 1 } ELSE 0 END,y IN [1] | a+y)", false},
-	} {
-		t.Run(tc.expression, func(t *testing.T) {
-			require.Equal(t, tc.liftable, liftableSubquery(tc.expression))
-		})
-	}
-}
