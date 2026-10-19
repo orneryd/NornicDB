@@ -55,7 +55,7 @@ type ProcedureColumn struct {
 // depends on the inner statement. ParamsIndex is -1 when no parameter map is
 // passed to that statement. Declared WRITE procedures always remain writes.
 type ProcedureStatement struct {
-	QueryIndex int
+	QueryIndex  int
 	ParamsIndex int
 }
 
@@ -252,7 +252,7 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	if statement := spec.Statement; statement != nil {
 		if statement.QueryIndex < 0 || statement.ParamsIndex < -1 || spec.MaxArgs >= 0 &&
 			(statement.QueryIndex >= spec.MaxArgs || statement.ParamsIndex >= spec.MaxArgs) {
-			return fmt.Errorf("procedure %q: executable statement argument is outside its signature",spec.Name)
+			return fmt.Errorf("procedure %q: executable statement argument is outside its signature", spec.Name)
 		}
 	}
 	return nil
