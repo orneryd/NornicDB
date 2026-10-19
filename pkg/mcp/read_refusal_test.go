@@ -13,7 +13,10 @@ func TestCallToolReadRefusalPreservesAdmissionError(t *testing.T) {
 	server := NewServer(nil, nil)
 	ctx := auth.WithRequestDatabaseScope(context.Background(), auth.NewRequestDatabaseScope("tenant", map[string]string{"tenant": "tenant"}))
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(string, auth.Permission) bool { return false })
-	for name := range toolDatabaseAccessByName {
+	for name, access := range toolDatabaseAccessByName {
+		if access != toolDatabaseRead {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			called := false
 			server.handlers[name] = func(context.Context, map[string]interface{}) (interface{}, error) {
