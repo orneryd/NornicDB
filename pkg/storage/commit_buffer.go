@@ -80,7 +80,7 @@ type bufferedCommit struct {
 // append-only while active and read-only while draining.
 type CommitBuffer struct {
 	readScopes map[string]struct{}
-	commits []bufferedCommit
+	commits    []bufferedCommit
 
 	nodes   map[NodeID]*Node
 	edges   map[EdgeID]*Edge
@@ -350,13 +350,13 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu       sync.RWMutex
-	readScopes sync.Map
-	readEpoch atomic.Uint64
+	mu           sync.RWMutex
+	readScopes   sync.Map
+	readEpoch    atomic.Uint64
 	readTracking bool
-	active   *CommitBuffer
-	draining []*CommitBuffer
-	opCount  int
+	active       *CommitBuffer
+	draining     []*CommitBuffer
+	opCount      int
 
 	interval time.Duration
 	maxOps   int
@@ -451,16 +451,16 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 	}
 	w := &WriteBehindBuffer{
 		readTracking: true,
-		active:      newCommitBuffer(),
-		interval:    interval,
-		curInterval: interval,
-		maxOps:      maxOps,
-		targetOps:   maxOps,
-		apply:       apply,
-		minDelay:    defaultWriteBehindMinDelay,
-		maxDelay:    defaultWriteBehindMaxDelay,
-		flushCh:     make(chan struct{}, 1),
-		done:        make(chan struct{}),
+		active:       newCommitBuffer(),
+		interval:     interval,
+		curInterval:  interval,
+		maxOps:       maxOps,
+		targetOps:    maxOps,
+		apply:        apply,
+		minDelay:     defaultWriteBehindMinDelay,
+		maxDelay:     defaultWriteBehindMaxDelay,
+		flushCh:      make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 	if w.minDelay > interval {
 		w.minDelay = interval
@@ -510,7 +510,9 @@ func (w *WriteBehindBuffer) signal() {
 func (w *WriteBehindBuffer) AppendNode(n *Node) {
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	if n != nil { w.markReadScopeLocked(string(n.ID)) }
+	if n != nil {
+		w.markReadScopeLocked(string(n.ID))
+	}
 	w.active.addNode(n)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
@@ -524,7 +526,9 @@ func (w *WriteBehindBuffer) AppendNode(n *Node) {
 func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
-	if e != nil { w.markReadScopeLocked(string(e.ID)) }
+	if e != nil {
+		w.markReadScopeLocked(string(e.ID))
+	}
 	w.active.addEdge(e)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
