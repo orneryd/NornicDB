@@ -143,8 +143,10 @@ func (s *Service) ConfigureHNSWQuantization(ctx context.Context, cfg HNSWQuantiz
 
 // setHNSWQuantizationOverride re-encodes the global graph, records cfg as
 // the configured policy and drops the pipeline, under the admission
-// boundary (indexMu, then pipelineMu: the known exception to the lock order).
+// boundary, taking pipelineMu before indexMu like clear and strategy swaps.
 func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuantizationConfig) (bool, error) {
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.mu.RLock()
@@ -167,6 +169,6 @@ func (s *Service) setHNSWQuantizationOverride(ctx context.Context, cfg HNSWQuant
 		s.resultCache.Invalidate()
 	}
 	s.mu.Unlock()
-	s.publishVectorServing(func() {}, true)
+	s.publishVectorServing(func() { s.cacheDerivedVectorPipelineLocked(nil) }, false)
 	return true, nil
 }
