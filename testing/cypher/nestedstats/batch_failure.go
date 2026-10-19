@@ -17,7 +17,7 @@ func BatchFailureCases() []Case {
 			Case{Name: "dynamic_" + tc.Name, Query: "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", Params: map[string]any{"body": tc.Query}},
 		)
 		if tc.Name != "subqueryCONTINUE" && tc.Name != "subqueryBREAK" {
-			cases = append(cases, Case{Name: "stored_" + tc.Name, Setup: "CREATE OR REPLACE PROCEDURE nestedstats.batchFailure() MODE WRITE AS " + tc.Query, Query: "CALL nestedstats.batchFailure() YIELD * RETURN *"})
+			cases = append(cases, Case{Name: "stored_" + tc.Name, Setup: "CREATE OR REPLACE PROCEDURE nestedstats.batchfailure($body) MODE WRITE AS CALL apoc.cypher.run($body,{}) YIELD value RETURN value", Query: "CALL nestedstats.batchfailure($body) YIELD value RETURN value", Params: map[string]any{"body": tc.Query}})
 		}
 	}
 	return cases
