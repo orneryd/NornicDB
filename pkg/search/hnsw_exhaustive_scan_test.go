@@ -443,7 +443,7 @@ func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.
 	for i := 0; i < 30; i++ {
 		indexDoc(i)
 	}
-	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil)
+	graph, err := service.getOrCreateHNSWIndex(context.Background(), 2)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
 
@@ -645,7 +645,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, service.IndexNode(node))
 			}
-			graph, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil)
+			graph, err := service.getOrCreateHNSWIndex(context.Background(), 2)
 			require.NoError(t, err)
 			require.Eventually(t, func() bool { return !service.hnswRebuildInFlight.Load() }, 10*time.Second, time.Millisecond)
 
