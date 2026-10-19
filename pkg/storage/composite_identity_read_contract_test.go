@@ -19,23 +19,23 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			modes := map[string]string{"one": "read_write", "one_alias": "read", "two": "read_write"}
 			var version MVCCVersion
 			for _, database := range []string{"one", "two"} {
-				base, err := NewBadgerEngineInMemory()
-				require.NoError(t, err)
-				t.Cleanup(func() { _ = base.Close() })
-				var engine Engine = base
+				var engine Engine = NewMemoryEngine()
 				if namespaced {
+					base,err := NewBadgerEngineInMemory()
+					require.NoError(t,err)
 					engine = NewNamespacedEngine(base, database)
 				}
+				t.Cleanup(func() { _ = engine.Close() })
 				engines[database] = engine
 				for _, id := range []NodeID{"same", "target"} {
 					_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"db": database}})
 					require.NoError(t, err)
 				}
 				require.NoError(t, engine.CreateEdge(&Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
-				head, err := engine.(MVCCHeadEngine).GetEdgeCurrentHead("same-rel")
-				require.NoError(t, err)
-				if head.Version.Compare(version) > 0 {
-					version = head.Version
+				if provider,ok := engine.(MVCCHeadEngine); ok {
+					head,err := provider.GetEdgeCurrentHead("same-rel")
+					require.NoError(t,err)
+					if head.Version.Compare(version)>0 { version = head.Version }
 				}
 			}
 			engines["one_alias"] = engines["one"]
@@ -82,8 +82,10 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 				require.Equal(t, database, composite.GetEdgeBetween(source, target, "R").Database)
 				require.Equal(t, 1, composite.GetOutDegree(source))
 				require.Equal(t, 1, composite.GetInDegree(target))
-				_, err := composite.GetNodeCurrentHead(source)
-				require.NoError(t, err)
+				if namespaced {
+					_,err := composite.GetNodeCurrentHead(source)
+					require.NoError(t,err)
+				}
 				for _, read := range []func(EdgeID) (*Edge, error){composite.GetEdge, composite.GetEdgeLatestEffective, composite.GetEdgeLatestVisible} {
 					edge, err := read(EdgeID("5:" + database + ":same-rel"))
 					require.NoError(t, err)

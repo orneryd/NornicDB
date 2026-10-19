@@ -1601,13 +1601,10 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		}
 	}
 
-	// Strip canonical element ID prefix (4:dbname:rawid).
-	lookupID := idValue
-	if kind == "elementId" || strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
-	}
+	// Endpoint seeks use the same source selection as ordinary MATCH seeks.
+	// Ambiguous composite raw IDs stay on the normal predicate path.
+	lookupID,found,applicable := e.entitySeekLookup(idValue,"4",kind)
+	if !applicable || !found { return "",nil }
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {

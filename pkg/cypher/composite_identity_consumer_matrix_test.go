@@ -204,3 +204,32 @@ func TestCompositeGraphTraversalConsumerMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestCompositeEntityLookupConsumers(t *testing.T) {
+	for _,explicit := range []bool{false,true} {
+		t.Run(map[bool]string{false:"autocommit",true:"explicit"}[explicit],func(t *testing.T) {
+			ctx := context.Background()
+			for _,procedure := range []string{"kp.resolve","nornicdb.knowledgepolicy.resolve"} {
+				exec,_ := newCompositeIdentityExecutor(t,explicit)
+				_,err := exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:one:same')",nil)
+				require.NoError(t,err)
+				_,err = exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:two:same')",nil)
+				require.Error(t,err,"a foreign entity cannot resolve against this database")
+			}
+			// Use a fresh executor after the expected error, since an explicit
+			// transaction is correctly poisoned by its first failed statement.
+			exec,manager := newCompositeIdentityExecutor(t,explicit)
+			for _,id := range []string{"4:two:same","4:one:same"} {
+				result,err := exec.Execute(ctx,"USE comp.one MATCH (n:P) WHERE elementId(n) = $id CREATE (n)-[:MATRIX_LINK]->(:Created) RETURN elementId(n)",map[string]interface{}{"id":id})
+				require.NoError(t,err)
+				if id == "4:two:same" { require.Empty(t,result.Rows) } else { require.Equal(t,[][]interface{}{{"4:one:same"}},result.Rows) }
+			}
+			if explicit { _,err := exec.Execute(ctx,"COMMIT",nil); require.NoError(t,err) }
+			store,err := manager.GetStorage("one")
+			require.NoError(t,err)
+			nodes,err := store.GetNodesByLabel("Created")
+			require.NoError(t,err)
+			require.Len(t,nodes,1)
+		})
+	}
+}

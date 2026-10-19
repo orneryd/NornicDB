@@ -117,23 +117,6 @@ func containsFold(s, sub string) bool {
 	return false
 }
 
-// normalizeNodeIDValue converts canonical element ID strings to raw internal IDs.
-// Examples:
-// - "4:nornicdb:abc-123" -> "abc-123"
-// - "abc-123" -> "abc-123"
-func normalizeNodeIDValue(v interface{}) interface{} {
-	s, ok := v.(string)
-	if !ok {
-		return v
-	}
-	s = strings.TrimSpace(s)
-	parts := strings.SplitN(s, ":", 3)
-	if len(parts) == 3 && parts[0] == "4" {
-		return parts[2]
-	}
-	return s
-}
-
 // evaluateWhereAsBoolean evaluates a WHERE expression (e.g. size(n.content) > 10000, exists(n.prop))
 // using the expression evaluator and returns a boolean. Used when evaluateWhere does not handle
 // the condition as id(), elementId(), or variable.property.
