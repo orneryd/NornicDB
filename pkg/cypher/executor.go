@@ -550,6 +550,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
 	return &StorageExecutor{
+ graphIdentityScope: e.graphIdentityScope,
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
