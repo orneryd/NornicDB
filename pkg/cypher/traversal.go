@@ -463,12 +463,13 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	isAggFlags := make([]bool, len(returnItems))
 	for i, item := range returnItems {
 		upperExprs[i] = upperASCII(item.expr)
-		isAggFlags[i] = strings.HasPrefix(upperExprs[i], "COUNT(") ||
-			strings.HasPrefix(upperExprs[i], "SUM(") ||
-			strings.HasPrefix(upperExprs[i], "AVG(") ||
-			strings.HasPrefix(upperExprs[i], "MIN(") ||
-			strings.HasPrefix(upperExprs[i], "MAX(") ||
-			strings.HasPrefix(upperExprs[i], "COLLECT(")
+		name, _, ok := parseFunctionCallWS(item.expr)
+		if ok {
+			switch lowerASCII(name) {
+			case "count", "sum", "avg", "min", "max", "collect":
+				isAggFlags[i] = true
+			}
+		}
 	}
 
 	// Check if this is an aggregation query

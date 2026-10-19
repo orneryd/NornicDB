@@ -79,9 +79,8 @@ func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.No
 
 		// Evaluate this part
 		var value float64
-		upperPart := upperASCII(part)
 
-		if strings.HasPrefix(upperPart, "SUM(") {
+		if isFunctionCallWS(part, "sum") {
 			if agg := ParseAggregation(part); agg != nil && agg.Function == "SUM" && agg.Property != "" {
 				for _, node := range nodes {
 					if val, exists := node.Properties[agg.Property]; exists {

@@ -112,6 +112,8 @@ func functionCallBeforeParen(text string, open int) (functionCallSpan, bool) {
 		if call, ok := functionCallAt(text, start); ok && call.open == open {
 			return call, true
 		}
+	} else if end == 0 || text[end-1] != '`' {
+		return functionCallSpan{}, false
 	}
 	for index := 0; index < open; {
 		call, ok := nextFunctionCallMode(text, index, true, true)
