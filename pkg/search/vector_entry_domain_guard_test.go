@@ -277,6 +277,7 @@ func domainEntryReader(t types.Type) bool {
 	}
 	return false
 }
+
 // Explicit logical API contracts. Generic backend strings are already entry
 // identities; graph/fulltext identities remain nodes. These do not bless call
 // sites: every supplied argument is still derived and checked independently.
