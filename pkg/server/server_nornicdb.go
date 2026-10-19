@@ -59,7 +59,7 @@ type embedTarget struct {
 // embedTargets resolves the databases an embedding clear/regenerate request names:
 // a JSON body {"databases": ["a", "b"]}, or ?database=a&database=b (also
 // ?database=a,b). With none, the default database only, as before. Each one must
-// exist, may not be system or a composite, and the caller needs write access to it
+// exist, may not be system or a composite, and the caller needs read, write and admin access to it
 // (as for /nornicdb/search/rebuild); otherwise nothing is cleared and the error names
 // the database. Writes the error response and returns false on failure.
 func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTarget, bool) {
@@ -90,7 +90,6 @@ func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTa
 		names = []string{s.dbManager.DefaultDatabaseName()}
 	}
 
-	claims := getClaims(r)
 	seen := make(map[string]bool, len(names))
 	targets := make([]embedTarget, 0, len(names))
 	for _, name := range names {
@@ -103,19 +102,12 @@ func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTa
 				"The system database has no embeddings.")
 			return nil, false
 		}
-		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(name) {
-			s.writeNeo4jDatabaseAccessDenied(w, r, name)
+		if !s.authorizeDatabaseOperation(w, r, name, auth.PermRead, auth.PermWrite, auth.PermAdmin) {
 			return nil, false
 		}
 		if s.dbManager.IsCompositeDatabase(name) {
 			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
 				fmt.Sprintf("Embeddings of composite database '%s' cannot be cleared; name its constituent databases.", name))
-			return nil, false
-		}
-		// Clearing embeddings is a write to the database (enforced when RBAC is on, as
-		// the Cypher permission checker does).
-		if s.isRBACEnforced() && !s.getResolvedAccess(claims, name).Write {
-			s.writeNeo4jDatabaseWriteDenied(w, r, name)
 			return nil, false
 		}
 		engine, err := s.dbManager.GetStorage(name)
@@ -372,10 +364,6 @@ func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request)
 // handleEmbedClear clears all embeddings from nodes (admin only).
 // This allows regeneration with a new model or fixing corrupted embeddings.
 func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
-		return
-	}
-
 	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 		s.writeNeo4jPostOrDeleteRequired(w, r)
 		return

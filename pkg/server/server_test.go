@@ -4305,6 +4305,7 @@ func TestDbConfigGPUAndMiddleware_AdditionalBranches(t *testing.T) {
 
 	t.Run("db config prefix method not allowed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/admin/databases/nornic/config", nil)
+		req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 		rec := httptest.NewRecorder()
 		server.handleDbConfigPrefix(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
