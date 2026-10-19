@@ -886,4 +886,88 @@ reservedWord
     | DROP
     | FOREACH
     | REDUCE
+    | GRAPH
+    | LOAD
+    | CSV
+    | HEADERS
+    | FIELDTERMINATOR
+    | INSERT
+    | NODETACH
+    | OFFSET
+    ;
+
+// Fabric is a grammar entry, not a text preprocessor. In particular USE may
+// follow a subquery's importing WITH, so projection/expression prediction must
+// see that complete enclosing context when a name is spelled NOT, USE, etc.
+fabricScript
+    : fabricBody EOF
+    ;
+
+fabricBody
+    : fabricClause*
+    ;
+
+fabricClause
+    : fabricUseClause
+    | withSt
+    | returnSt
+    | matchSt
+    | unwindSt
+    | createSt
+    | fabricInsertSt
+    | mergeSt
+    | deleteSt
+    | fabricNoDetachDeleteSt
+    | setSt
+    | removeSt
+    | foreachSt
+    | letSt
+    | filterSt
+    | forSt
+    | fabricCallSubquery
+    | queryCallSt
+    | fabricLoadCsv
+    | schemaCommand
+    | showCommand
+    | terminateCommand
+    | orderSt
+    | skipSt
+    | limitSt
+    | fabricOffsetSt
+    | UNION ALL?
+    | FINISH
+    | queryPrefix
+    | cypherGroup
+    | SEMI
+    ;
+
+fabricUseClause
+    : USE GRAPH?
+      (functionInvocation | symbol (DOT symbol)*)
+    ;
+
+fabricCallSubquery
+    : OPTIONAL? CALL fabricCallScope? LBRACE fabricBody RBRACE
+      (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    ;
+
+fabricCallScope
+    : LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN
+    ;
+
+fabricLoadCsv
+    : LOAD CSV (WITH HEADERS)? FROM expression AS symbol
+      (FIELDTERMINATOR stringLit)?
+    ;
+
+fabricInsertSt
+    : INSERT pattern
+    ;
+
+fabricNoDetachDeleteSt
+    : NODETACH DELETE expressionChain
+    ;
+
+fabricOffsetSt
+    : OFFSET expression
     ;

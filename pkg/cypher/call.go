@@ -29,6 +29,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -78,6 +79,17 @@ type callSplit struct {
 // a WHERE / ORDER inside a subquery, a list or a string, and the WITH of
 // STARTS WITH, belong to the expression they are in.
 func parseYieldClause(cypher string) *yieldClause {
+	if q := fabric.ReadQueryStructure(cypher); q.Starts("CALL") && q.Clauses[0].Nested == nil {
+		y := q.Clauses[0].Yield
+		if y == nil {
+			return nil
+		}
+		result := &yieldClause{yieldAll: y.Star, where: y.Where, orderBy: y.OrderBy, skip: y.Skip, limit: y.Limit, items: []yieldItem{}}
+		for _, item := range y.Items {
+			result.items = append(result.items, yieldItem{name: item.Name, alias: item.Alias})
+		}
+		return result
+	}
 	// Normalize whitespace: replace newlines/tabs with spaces for keyword detection
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
 	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
@@ -194,6 +206,10 @@ func findYieldOuterBoundary(afterYield string) int {
 }
 
 func splitCallAndTail(cypher string) callSplit {
+	if q := fabric.ReadQueryStructure(cypher); q.Starts("CALL") {
+		c := q.Clauses[0]
+		return callSplit{callOnly: c.Text, tail: c.Remaining}
+	}
 	normalized := strings.ReplaceAll(strings.ReplaceAll(cypher, "\n", " "), "\t", " ")
 	yieldIdx := findKeywordIndexInContext(normalized, "YIELD")
 	if yieldIdx == -1 {
@@ -248,6 +264,14 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 	}
 	injected := strings.Join(predicates, " AND ")
 	trimmed := strings.TrimSpace(tail)
+	if q := fabric.ReadQueryStructure(tail); q.Starts("MATCH") || q.Starts("OPTIONAL MATCH") {
+		c := q.Clauses[0]
+		predicate := c.Predicate
+		if predicate != "" {
+			predicate += " AND "
+		}
+		return strings.TrimSpace(c.Kind + " " + c.Pattern + " WHERE " + predicate + injected + " " + c.Remaining)
+	}
 
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	if whereIdx != -1 {
@@ -280,6 +304,9 @@ func buildCallTailPredicateInjection(tail string, predicates []string) string {
 }
 
 func tailStartsWithMatchClause(tail string) bool {
+	if q := fabric.ReadQueryStructure(tail); q.Err == nil {
+		return q.Starts("MATCH") || q.Starts("OPTIONAL MATCH")
+	}
 	trimmed := upperASCII(strings.TrimSpace(tail))
 	return strings.HasPrefix(trimmed, "MATCH ") || strings.HasPrefix(trimmed, "OPTIONAL MATCH ")
 }
@@ -287,6 +314,12 @@ func tailStartsWithMatchClause(tail string) bool {
 // expectedReturnColumnsFromTail is the column names of the tail's RETURN:
 // the one outside any CALL { } subquery, whose own RETURN is inside braces.
 func expectedReturnColumnsFromTail(tail string) []string {
+	if q := fabric.ReadQueryStructure(tail); q.Err == nil {
+		if c := q.Last("RETURN"); c != nil && c.Projection != nil && c.Projection.Star {
+			return []string{"*"}
+		}
+		return fabric.ReturnColumns(tail)
+	}
 	trimmed := strings.TrimSpace(tail)
 	retIdx := topLevelKeywordIndex(trimmed, "RETURN")
 	if retIdx == -1 {
@@ -411,7 +444,14 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	seed *ExecuteResult,
 	tail string,
 ) (*ExecuteResult, bool, error) {
-	callIndex := findKeywordIndexInContext(tail, "CALL")
+	callIndex := -1
+	if q := fabric.ReadQueryStructure(tail); q.Err == nil {
+		if c := q.First("CALL"); c != nil {
+			callIndex = c.Start
+		}
+	} else {
+		callIndex = findKeywordIndexInContext(tail, "CALL")
+	}
 	if callIndex <= 0 {
 		return nil, false, nil
 	}
@@ -461,6 +501,9 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 }
 
 func splitChainedProcedureCall(cypher string) callSplit {
+	if q := fabric.ReadQueryStructure(cypher); q.Starts("CALL") {
+		return splitCallAndTail(cypher)
+	}
 	parts := splitCallAndTail(cypher)
 	if strings.TrimSpace(parts.tail) != "" {
 		return parts
@@ -482,6 +525,24 @@ func splitChainedProcedureCall(cypher string) callSplit {
 }
 
 func callTailWithProjectionColumns(withClause string) ([]string, bool) {
+	if q := fabric.ReadQueryStructure(withClause); q.Starts("WITH") && q.Clauses[0].Projection != nil {
+		p := q.Clauses[0].Projection
+		if p.Star {
+			return nil, false
+		}
+		var columns []string
+		for _, item := range p.Items {
+			name := item.Alias
+			if name == "" {
+				name = item.Name
+			}
+			if name == "" {
+				name = item.Expression
+			}
+			columns = append(columns, name)
+		}
+		return columns, len(columns) > 0
+	}
 	body := strings.TrimSpace(withClause[len("WITH "):])
 	if whereIndex := findKeywordIndexInContext(body, "WHERE"); whereIndex >= 0 {
 		body = strings.TrimSpace(body[:whereIndex])
@@ -499,21 +560,11 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 }
 
 func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
+	q := fabric.ReadQueryStructure(tail)
+	if !q.Starts("RETURN") || len(q.Clauses) != 1 || q.Clauses[0].Projection == nil || !q.Clauses[0].Projection.Star {
 		return nil, false, nil
 	}
-	body := strings.TrimSpace(trimmed[len("RETURN "):])
-	modifierStart := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 && index < modifierStart {
-			modifierStart = index
-		}
-	}
-	if strings.TrimSpace(body[:modifierStart]) != "*" {
-		return nil, false, nil
-	}
-
+	modifiers := q.Clauses[0].Projection.Modifiers
 	result := &ExecuteResult{
 		Columns: append([]string(nil), seed.Columns...),
 		Rows:    make([][]interface{}, len(seed.Rows)),
@@ -522,7 +573,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 	for index, row := range seed.Rows {
 		result.Rows[index] = append([]interface{}(nil), row...)
 	}
-	modifiers := strings.TrimSpace(body[modifierStart:])
+
 	if modifiers == "" {
 		return result, true, nil
 	}
@@ -674,6 +725,9 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 }
 
 func isPotentialWriteTail(tail string) bool {
+	if q := fabric.ReadQueryStructure(tail); q.Err == nil {
+		return q.Writes()
+	}
 	t := upperASCII(strings.TrimSpace(tail))
 	return findKeywordIndexInContext(t, "CREATE") >= 0 ||
 		findKeywordIndexInContext(t, "MERGE") >= 0 ||
@@ -874,27 +928,16 @@ func (e *StorageExecutor) parseCallTailRelationshipMatchPlan(ctx context.Context
 
 // planCallTailRelationshipMatch parses a relationship MATCH tail, or returns nil.
 func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRelationshipMatchPlan {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "MATCH ") || isPotentialWriteTail(trimmed) {
+	q := fabric.ReadQueryStructure(tail)
+	if !q.Starts("MATCH") || q.Writes() {
 		return nil
 	}
-	parts, ok := parseCallTailRelationshipPattern(trimmed)
+	parts, ok := parseCallTailRelationshipPattern(q.Clauses[0].Text)
 	if !ok {
 		return nil
 	}
-	rest := strings.TrimSpace(parts.rest)
-	withIdx := topLevelKeywordIndex(rest, "WITH")
-	if withIdx < 0 {
-		return nil
-	}
-	whereClause := strings.TrimSpace(rest[:withIdx])
-	if whereClause != "" {
-		if !hasPrefixFoldASCII(whereClause, "WHERE ") {
-			return nil
-		}
-		whereClause = strings.TrimSpace(whereClause[len("WHERE "):])
-	}
-	projection := e.planCallTailProjection(strings.TrimSpace(rest[withIdx:]))
+	whereClause := q.Clauses[0].Predicate
+	projection := e.planCallTailProjection(q.Clauses[0].Remaining)
 	if projection == nil {
 		return nil
 	}
@@ -923,11 +966,11 @@ func (e *StorageExecutor) planCallTailRelationshipMatch(tail string) *callTailRe
 
 func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternParts, bool) {
 	var parts callTailRelationshipPatternParts
-	rest := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(rest, "MATCH") {
+	q := fabric.ReadQueryStructure(tail)
+	if !q.Starts("MATCH") {
 		return parts, false
 	}
-	rest = strings.TrimSpace(rest[len("MATCH"):])
+	rest := q.Clauses[0].Pattern
 	startVar, startLabel, rest, ok := parseCallTailNodeToken(rest)
 	if !ok {
 		return parts, false
@@ -962,7 +1005,13 @@ func parseCallTailRelationshipPattern(tail string) (callTailRelationshipPatternP
 	parts.propertyExpr = propertyExpr
 	parts.endVar = endVar
 	parts.endLabel = endLabel
-	parts.rest = rest
+	if strings.TrimSpace(rest) != "" {
+		return parts, false
+	}
+	parts.rest = q.Clauses[0].Remaining
+	if q.Clauses[0].Predicate != "" {
+		parts.rest = "WHERE " + q.Clauses[0].Predicate + " " + parts.rest
+	}
 	return parts, true
 }
 
@@ -1171,69 +1220,24 @@ func callTailPlanTokensResolve(ctx context.Context, plan *callTailProjectionPlan
 // planCallTailProjection parses a tail that is exactly WITH … [WHERE …]
 // RETURN …, or returns nil.
 func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectionPlan {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "WITH ") || isPotentialWriteTail(trimmed) {
+	q := fabric.ReadQueryStructure(tail)
+	if !q.Starts("WITH") || len(q.Clauses) != 2 || q.Clauses[1].Kind != "RETURN" {
 		return nil
 	}
-	withIdx := len("WITH ")
-	returnIdx := topLevelKeywordIndex(trimmed, "RETURN")
-	if returnIdx < 0 {
+	with, ret := q.Clauses[0].Projection, q.Clauses[1].Projection
+	if with == nil || ret == nil || with.Star || ret.Star || with.Distinct || ret.Distinct || with.Aggregates || ret.Aggregates {
 		return nil
 	}
-	beforeReturn := strings.TrimSpace(trimmed[withIdx:returnIdx])
-	returnAndModifiers := strings.TrimSpace(trimmed[returnIdx+len("RETURN"):])
-	if beforeReturn == "" || returnAndModifiers == "" {
-		return nil
-	}
-	// The plan covers exactly WITH … [WHERE …] RETURN …; a tail with another
-	// clause between them (WITH label MATCH (n) RETURN …) is the pipeline's.
-	for _, keyword := range callTailPlanClauseKeywords {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+	for _, item := range ret.Order {
+		if p := fabric.ProjectionSyntax(item.Expression); p != nil && p.Aggregates {
 			return nil
 		}
 	}
-
-	withProjection := beforeReturn
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
-		withProjection = strings.TrimSpace(beforeReturn[:whereIdx])
-	}
-	if withProjection == "" {
-		return nil
-	}
-	returnProjection, orderBy, limitToken, skipToken := splitCallTailProjectionModifiers(returnAndModifiers)
-	if returnProjection == "" {
-		return nil
-	}
-	// The plan projects row by row: aggregation, DISTINCT and SKIP / LIMIT
-	// expressions (LIMIT 0 + 1) are the pipeline's (executeCallTailPipeline).
-	if startsWithDistinct(withProjection) || startsWithDistinct(returnProjection) ||
-		containsAggregateFunc(withProjection) || containsAggregateFunc(returnProjection) || containsAggregateFunc(orderBy) {
-		return nil
-	}
-	withItems := e.parseReturnItems(withProjection)
-	returnItems := e.parseReturnItems(returnProjection)
-	if len(withItems) == 0 || len(returnItems) == 0 || hasStarReturnItem(withItems) || hasStarReturnItem(returnItems) {
-		return nil
-	}
-	plan := &callTailProjectionPlan{
-		withClause:   "WITH " + beforeReturn,
-		returnClause: "RETURN " + returnAndModifiers,
-		limitToken:   limitToken,
-		skipToken:    skipToken,
-	}
-	plan.passThroughWith = true
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if topLevelKeywordIndex(beforeReturn, keyword) >= 0 {
+	plan := &callTailProjectionPlan{withClause: q.Clauses[0].Text, returnClause: q.Clauses[1].Text, limitToken: ret.Limit, skipToken: ret.Skip, withWhere: q.Clauses[0].Predicate, passThroughWith: with.Modifiers == ""}
+	for _, item := range with.Items {
+		if item.Name == "" || (item.Alias != "" && item.Alias != item.Name) {
 			plan.passThroughWith = false
 		}
-	}
-	for _, item := range withItems {
-		if !isValidIdentifier(item.expr) || item.alias != item.expr {
-			plan.passThroughWith = false
-		}
-	}
-	if whereIdx := topLevelKeywordIndex(beforeReturn, "WHERE"); whereIdx >= 0 {
-		plan.withWhere = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
 	}
 	return plan
 }
@@ -1256,6 +1260,17 @@ func hasStarReturnItem(items []returnItem) bool {
 }
 
 func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, orderBy, limitToken, skipToken string) {
+	if p := fabric.ProjectionSyntax(returnAndModifiers); p != nil {
+		order := ""
+		if p.OrderText != "" {
+			order = "ORDER BY " + p.OrderText
+		}
+		projection = p.Text
+		if p.Distinct {
+			projection = "DISTINCT " + projection
+		}
+		return projection, order, p.Limit, p.Skip
+	}
 	projection = strings.TrimSpace(returnAndModifiers)
 	modifierStart := len(projection)
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
@@ -1293,6 +1308,15 @@ func splitCallTailProjectionModifiers(returnAndModifiers string) (projection, or
 // LIMIT 0 + 1 stays whole, so the projection plan declines it instead of
 // reading LIMIT 0 (#572).
 func extractCallTailModifierToken(modifiers, keyword string) string {
+	if p := fabric.ResultModifierSyntax(modifiers); p != nil {
+		switch keyword {
+		case "SKIP":
+			return p.Skip
+		case "LIMIT":
+			return p.Limit
+		}
+		return ""
+	}
 	idx := topLevelKeywordIndex(modifiers, keyword)
 	if idx < 0 {
 		return ""
