@@ -86,49 +86,18 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
-	expression := text
-	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' {
-			index = skipQuotedSemanticText(expression, index)
-			continue
-		}
-		if end := queryCommentEnd(expression, index); end >= 0 {
-			index = end
-			continue
-		}
-		name, next, ok := scanIdentifierToken(expression, index)
+	for index := 0; index < len(text); {
+		call, ok := nextFunctionCall(text, index)
 		if !ok {
-			index++
-			continue
+			break
 		}
-		if expression[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
-			index = skipCalledName(expression, next)
-			continue
-		}
-		parts, cursor := dottedNameParts(expression, next, true)
-		name += parts
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor >= len(expression) || expression[cursor] != '(' {
-			index = next
-			continue
-		}
-		index = cursor + 1
-		normalized := lowerASCII(normalizeProjectionColumnName(name))
-		// Clause and predicate keywords can legally be followed by a parenthesized
-		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
-		// function invocations.
-		if isNonFunctionSemanticKeyword(normalized) {
-			continue
-		}
-		if err := visit(name, normalized); err != nil {
+		if err := visit(call.name, lowerASCII(call.name)); err != nil {
 			return err
 		}
+		index = call.open + 1
 	}
 	return nil
 }
-
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
 	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
@@ -142,7 +111,7 @@ func isNonFunctionSemanticKeyword(name string) bool {
 // or graph name, dotted, which is not a function call. Anything else after
 // the keyword (a subquery, its imports) is scanned on.
 func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, skipSpaces(expression, start))
+	_, end, ok := scanIdentifierToken(expression, queryGapEnd(expression, start))
 	if !ok {
 		return start
 	}
