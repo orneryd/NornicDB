@@ -1660,14 +1660,6 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
-	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
-	defer func() {
-		if retErr == nil {
-			statsScope.commit()
-		} else {
-			statsScope.discard()
-		}
-	}()
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -1772,6 +1764,19 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+
+	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
+	defer func() {
+		if retErr == nil {
+			var batchStats *QueryStats
+			if result != nil {
+				batchStats = result.Stats
+			}
+			statsScope.commit(batchStats)
+		} else {
+			statsScope.discard()
+		}
+	}()
 
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)

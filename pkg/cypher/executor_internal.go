@@ -32,8 +32,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		// completed summary enters this collector only through this result.
 		defer func() {
 			if err == nil && result != nil {
-				totals.executed = true
-				totals.stats = mergeQueryStats(totals.stats, result.Stats)
+				totals.record(result.Stats)
 			}
 		}()
 	}

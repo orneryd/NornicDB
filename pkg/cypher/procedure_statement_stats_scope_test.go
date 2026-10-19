@@ -46,24 +46,77 @@ func TestProcedureStatementStatsScopeNesting(t *testing.T) {
 	ctx, outer := beginProcedureStatementStatsScope(parent)
 	childCtx, inner := beginProcedureStatementStatsScope(ctx)
 	totals := childCtx.Value(procedureStatementStatsKey{}).(*procedureStatementStats)
-	totals.executed = true
 	totals.stats = &QueryStats{NodesCreated: 1, NodesDeleted: 2, RelationshipsCreated: 3, RelationshipsDeleted: 4, PropertiesSet: 5, LabelsAdded: 6, LabelsRemoved: 7, IndexesAdded: 8, IndexesRemoved: 9, ConstraintsAdded: 10, ConstraintsRemoved: 11}
-	inner.commit()
-	inner.commit()
+	inner.commit(totals.stats)
+	inner.commit(totals.stats)
 	require.Nil(t, parent.stats)
 	want := *totals.stats
-	outer.commit()
-	outer.commit()
+	outer.commit(outer.summary())
+	outer.commit(outer.summary())
 	require.Equal(t, &want, parent.stats, "a committed child contributes exactly once")
 	_, discarded := beginProcedureStatementStatsScope(parent)
-	discarded.executed = true
 	discarded.stats = &QueryStats{NodesCreated: 100}
 	discarded.discard()
-	discarded.commit()
+	discarded.commit(discarded.summary())
 	require.Equal(t, &want, parent.stats)
 	plain := context.Background()
 	unchanged, absent := beginProcedureStatementStatsScope(plain)
 	require.Equal(t, plain, unchanged)
-	absent.commit()
+	absent.commit(nil)
 	absent.discard()
+}
+
+func TestProcedureStatementStatsNestedIndependentUnits(t *testing.T) {
+	for _, commitOuter := range []bool{false, true} {
+		t.Run(map[bool]string{false: "outerRollback", true: "outerCommit"}[commitOuter], func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nested_units")
+			failure := errors.New("outer batch failed after the inner commit")
+			require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: "nestedstats.ownedunits", Mode: ProcedureModeWrite, MinArgs: 0, MaxArgs: 0}, func(ctx context.Context, _ *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+				outerOwner := NewStorageExecutor(store)
+				_, err := outerOwner.executeWithImplicitTransactionCallback(ctx, "CREATE (:PendingStats)", "CREATE (:PendingStats)", func(outerCtx context.Context, outer *StorageExecutor) (*ExecuteResult, error) {
+					innerOwner := NewStorageExecutor(store)
+					inner, err := innerOwner.executeWithImplicitTransactionCallback(outerCtx, "CREATE (:DurableStats)", "CREATE (:DurableStats)", func(innerCtx context.Context, inner *StorageExecutor) (*ExecuteResult, error) {
+						return inner.executeUserStatement(innerCtx, "CREATE (:DurableStats {p:1})", nil)
+					})
+					require.NoError(t, err)
+					pending, err := outer.executeUserStatement(outerCtx, "CREATE (:PendingStats {p:1})", nil)
+					require.NoError(t, err)
+					if !commitOuter {
+						return nil, failure
+					}
+					return &ExecuteResult{Stats: mergeQueryStats(inner.Stats, pending.Stats)}, nil
+				})
+				if commitOuter {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, failure)
+				}
+				return &ExecuteResult{Stats: &QueryStats{}}, nil
+			}))
+			exec := NewStorageExecutor(store)
+			result, err := exec.Execute(context.Background(), "CALL nestedstats.ownedunits()", nil)
+			require.NoError(t, err)
+			want := 1
+			if commitOuter {
+				want++
+			}
+			require.Equal(t, &QueryStats{NodesCreated: want, PropertiesSet: want, LabelsAdded: want}, result.Stats)
+			for label, count := range map[string]int{"DurableStats": 1, "PendingStats": want - 1} {
+				physical, err := exec.Execute(context.Background(), "MATCH (n:"+label+") RETURN count(n)", nil)
+				require.NoError(t, err)
+				require.EqualValues(t, count, physical.Rows[0][0])
+			}
+		})
+	}
+}
+
+func TestProcedureStatementStatsReadIsolation(t *testing.T) {
+	first, second := &procedureStatementStats{}, &procedureStatementStats{}
+	first.record(nil)
+	second.record(nil)
+	first.record(&QueryStats{NodesCreated: 1})
+	first.record(nil)
+	require.Equal(t, &QueryStats{NodesCreated: 1}, first.summary())
+	require.Nil(t, second.summary())
+	require.Equal(t, QueryStats{}, procedureStatementReadStats)
 }
