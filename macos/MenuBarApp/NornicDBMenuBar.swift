@@ -472,6 +472,8 @@ struct NornicDBMenuBarApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusItem: NSStatusItem!
+    private let instanceLock = MenuBarInstanceLock()
+    private var ownsAppSession = false
     private var healthCheckTimer: Timer?
     @Published var serverStatus: ServerStatus = .unknown
     var configManager: ConfigManager = ConfigManager()
@@ -491,9 +493,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide dock icon - we only want menu bar presence
         NSApp.setActivationPolicy(.accessory)
-        
+        do {
+            let lockURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".nornicdb/menubar.lock")
+            guard try instanceLock.acquire(at: lockURL) else {
+                NSRunningApplication.runningApplications(withBundleIdentifier: "com.nornicdb.menubar")
+                    .first(where: { $0.processIdentifier != getpid() })?.activate(options: [.activateIgnoringOtherApps])
+                NSApp.terminate(nil)
+                return
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Cannot start NornicDB menu bar app"
+            alert.informativeText = "Cannot lock the app session. Check permissions for ~/.nornicdb/menubar.lock before retrying."
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+        ownsAppSession = true
+        retireLegacyMenuBarInstances()
         // Load configuration
         configManager.loadConfig()
         
@@ -522,14 +540,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         startHealthCheck()
         
         // Show first-run wizard if needed
-        if configManager.isFirstRun() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.showFirstRunWizard()
-            }
-        }
+        if configManager.isFirstRun() { showFirstRunWizard() }
     }
     
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if ownsAppSession && statusItem != nil && configManager.isFirstRun() {
+            showFirstRunWizard()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard ownsAppSession && statusItem != nil else { return false }
+        if configManager.isFirstRun() { showFirstRunWizard() }
+        else { openSettings() }
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        guard ownsAppSession else { return }
         healthCheckTimer?.invalidate()
         // Stop Apple Intelligence embedding server if running
         Task { @MainActor in
@@ -608,7 +636,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
     
+    // Older binaries predate the lock. Only the installed lock owner retires
+    // those copies; the existing health timer also catches later legacy launches.
+    private func retireLegacyMenuBarInstances() {
+        guard Bundle.main.bundleURL.standardizedFileURL.path == "/Applications/NornicDB.app" else { return }
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "com.nornicdb.menubar")
+            where app.processIdentifier != getpid() {
+            app.forceTerminate()
+        }
+    }
+
     private func checkHealth() {
+        retireLegacyMenuBarInstances()
         let url = URL(string: "http://localhost:7474/health")!
         
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
@@ -818,6 +857,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     func showFirstRunWizard() {
+        if let existing = firstRunWindowController {
+            existing.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         let wizardView = FirstRunWizard(config: configManager, appDelegate: self) {
             self.firstRunWindowController?.window?.close()
             self.firstRunWindowController = nil

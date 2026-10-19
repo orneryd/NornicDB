@@ -23,3 +23,9 @@ as protected values. Preserve custom settings on upgrade and use the same launch
 configuration whenever the server starts. Advanced overrides must have explicit
 precedence over ordinary settings, with conflicting values visible to the user.
 The three-step setup remains the primary flow; Advanced is optional.
+
+Installer lifecycle correction from live testing: replace old installed executable
+payloads after stopping both agents; retain all configuration/data/models. Launch
+one canonical menu-bar executable, enforce one per-user owner, and request setup
+review on every install before starting the database. Setup must display loaded
+settings and retain the storage authorization on its first page and Review.

@@ -14,3 +14,9 @@
 - [ ] Publish separate release PR and verification evidence; resume #1487.
 
 - [x] Maintainer clarified: no additional feature scope; pause all installed duplication/ingest hooks and continue this installer work.
+
+- [x] Reproduce missing upgrade review marker against previous postinstall.
+- [x] Stop both agents and retire old installed executable payloads; reject replacement while an old process remains alive. Isolated tests preserve config/data/models.
+- [x] Add per-user app lock, legacy-copy retirement, exact canonical launch path and reopen routing for pending setup.
+- [x] Thirteen Swift regressions and seven isolated installer tests pass on the corrected lifecycle source.
+- [ ] Build corrected lifecycle package and verify actual replacement, one tray owner and visible review wizard on local reinstall.

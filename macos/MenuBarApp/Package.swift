@@ -29,6 +29,7 @@ let package = Package(
             sources: [
                 "NornicDBMenuBar.swift",
                 "ConfigManager.swift",
+                "MenuBarInstanceLock.swift",
                 "ServiceSettingsViews.swift",
                 "FirstRunWizard.swift",
                 "FileIndexer.swift",
