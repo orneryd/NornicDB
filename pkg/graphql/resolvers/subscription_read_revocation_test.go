@@ -56,8 +56,14 @@ func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope(database, map[string]string{database: database}))
-				ctx = auth.WithRequestResolvedAccessResolver(ctx, func(selected string) auth.ResolvedAccess {
-					return auth.ResolvedAccess{Read: selected == database && readable.Load()}
+				var reads, writes atomic.Int64
+				ctx = auth.WithRequestEntitlementResolver(ctx, func(selected string, permission auth.Permission) bool {
+					if permission != auth.PermRead {
+						writes.Add(1)
+						return false
+					}
+					reads.Add(1)
+					return selected == database && readable.Load()
 				})
 				channel, err := test.subscribe(ctx)
 				require.NoError(t, err)
@@ -71,13 +77,23 @@ func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 					}
 					return value.Interface(), true
 				}
+				require.Zero(t, writes.Load(), "read admission queried write")
+				before := reads.Load()
+				test.publish("another-database", "unmatched")
+				require.Equal(t, before, reads.Load(), "unmatched event queried permissions")
 				test.publish(database, "before-revoke")
+				require.Equal(t, before+1, reads.Load(), "one live read predicate per matching event")
 				_, delivered := receive(time.Second)
 				require.True(t, delivered, "allowed event was not delivered")
 				readable.Store(false)
 				test.publish(database, "after-revoke")
 				event, delivered := receive(100 * time.Millisecond)
 				require.False(t, delivered, "event delivered after read revocation: %v", event)
+				readable.Store(true)
+				test.publish(database, "after-restore")
+				_, delivered = receive(time.Second)
+				require.True(t, delivered, "restored permission was cached as refused")
+				require.Zero(t, writes.Load(), "delivery queried write")
 			})
 		}
 	}
