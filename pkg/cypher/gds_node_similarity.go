@@ -279,19 +279,19 @@ func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func
 	if !ok {
 		return "", false
 	}
-	node, isString := item.(string)
+	_, isString := item.(string)
 	if !isString {
 		return string(id), true
 	}
-	if _, projected := proj.nodeIndex[node]; projected {
-		return node, true
+	if _, projected := proj.nodeIndex[id]; projected {
+		return id, true
 	}
 	// id(n) is a string in NornicDB. Numeric ids remain valid outside
 	// the projection; stored nonnumeric ids use the same reader.
-	if _, err := strconv.ParseInt(node, 10, 64); err == nil {
-		return node, true
+	if _, err := strconv.ParseInt(id, 10, 64); err == nil {
+		return id, true
 	}
-	return node, len(nodeExists) > 0 && nodeExists[0](node)
+	return id, len(nodeExists) > 0 && nodeExists[0](id)
 }
 
 // nodeSimilarityPair is one scored pair.
