@@ -972,7 +972,7 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
     }
     for alias, group := range groups {
         engine := engines[alias]
-        if err := engine.BulkCreateNodes(group); err != nil { return err }
+        if err := engine.BulkCreateNodes(group); err != nil { return localizedError(localization.StorageCompositeNodeBulkCreateFailed(alias,err),err) }
         for _, node := range group { node.Database = c.constituentDatabase(alias, engine) }
     }
     return nil
@@ -989,7 +989,7 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
         groups[alias], originals[alias], engines[alias] = append(groups[alias], prepared), append(originals[alias], edge), engine
     }
     for alias, group := range groups {
-        if err := engines[alias].BulkCreateEdges(group); err != nil { return err }
+        if err := engines[alias].BulkCreateEdges(group); err != nil { return localizedError(localization.StorageCompositeEdgeBulkCreateFailed(alias,err),err) }
         for i, prepared := range group {
             edge := originals[alias][i]
             edge.Database, edge.StartNode, edge.EndNode = prepared.Database, prepared.StartNode, prepared.EndNode
