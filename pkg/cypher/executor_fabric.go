@@ -152,6 +152,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	// dispatch without voting WRITE before their actual body executes.
 	fabricExecutor.SetConcurrentExecution(autoCommit && !callsDynamicStatementProcedure(cypher))
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
+ fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	fragment := fabricProcedureWritePlan(prepared.fragment, params)
 	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
@@ -183,11 +184,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	}
 	e.normalizeFabricRowWrapper(cypher, stream)
 	s := statsAcc.snapshot()
-	return &ExecuteResult{
+	return resolvedStatementModeResult(&ExecuteResult{
 		Columns: stream.Columns,
 		Rows:    stream.Rows,
 		Stats:   &s,
-	}, nil
+	}, tx.WriteShard()!=""), nil
 }
 
 type fabricPreparedExec struct {

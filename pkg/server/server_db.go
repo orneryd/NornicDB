@@ -987,7 +987,8 @@ type GraphRelationship struct {
 // singular "relationship_deleted"), and every counter is always present, as
 // Neo4j sends them.
 type QueryStats struct {
-	ContainsUpdates       bool `json:"contains_updates"`
+ ContainsUpdates bool `json:"contains_updates"`
+ QueryType string `json:"query_type,omitempty"`
 	NodesCreated          int  `json:"nodes_created"`
 	NodesDeleted          int  `json:"nodes_deleted"`
 	PropertiesSet         int  `json:"properties_set"`
@@ -1008,6 +1009,7 @@ type QueryStats struct {
 // contains_updates is true when any counter is non-zero.
 func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 	stats := &QueryStats{}
+ if result!=nil { stats.QueryType,_=cypher.ResolvedStatementQueryType(result.Metadata) }
 	if result != nil && result.Stats != nil {
 		stats.NodesCreated = result.Stats.NodesCreated
 		stats.NodesDeleted = result.Stats.NodesDeleted
