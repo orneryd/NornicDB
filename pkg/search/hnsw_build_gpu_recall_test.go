@@ -243,7 +243,7 @@ func TestHNSWGraphAcceleratedBuildWithLexicalHintsRecallMatchesCPU(t *testing.T)
 			sig |= uint64(stableLexicalHash(fmt.Sprintf("t%d", int(v[b]*8+8)))) & 0xffff << (16 * uint(b))
 		}
 		pairs[i] = hnswBuildPair{id: fmt.Sprintf("v%d", i), vec: v, hasHint: true,
-			hint: LexicalSeedHint{ID: fmt.Sprintf("v%d", i), Rank: uint32(i), Signature: sig}}
+			hint: nodeLexicalHint{ID: vectorNodeID(fmt.Sprintf("v%d", i)), Rank: uint32(i), Signature: sig}}
 	}
 	config := DefaultHNSWConfig()
 	cpu, _, err := buildHNSWSequential(dims, config, pairs)
