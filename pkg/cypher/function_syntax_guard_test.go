@@ -45,19 +45,19 @@ var callTextInput = regexp.MustCompile(`(?i)(expr|arg|param|signature|call|conte
 
 func alternateFunctionSyntax(body ast.Node) []string {
 	reasons := map[string]bool{}
-	callIdentity, delimiterMatcher := false, false
+	// A retained call already owns its close. Reject consumers that ignore
+	// that fact and match its opening again. Unrelated map/pattern matching
+	// in a larger statement compiler is a different grammar operation.
 	ast.Inspect(body, func(node ast.Node) bool {
-		if name, ok := node.(*ast.Ident); ok {
-			switch name.Name {
-			case "parseFunctionCallWS", "functionCallAt", "functionCallBeforeParen", "bindingFunctionBeforeParen", "parseReduceForm":
-				callIdentity = true
-			case "findMatchingDelimiter", "findMatchingParen":
-				delimiterMatcher = true
-			}
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) < 2 { return true }
+		name, ok := call.Fun.(*ast.Ident)
+		if !ok || (name.Name != "findMatchingDelimiter" && name.Name != "findMatchingParen") { return true }
+		if opening, ok := call.Args[1].(*ast.SelectorExpr); ok && opening.Sel.Name == "open" {
+			reasons["independent callable group matcher"] = true
 		}
 		return true
 	})
-	if callIdentity && delimiterMatcher { reasons["independent callable group matcher"] = true }
 	patterns := map[string]bool{}
 	for changed := true; changed; {
 		changed = false
@@ -165,7 +165,7 @@ func TestFunctionSyntaxGuardDetectsAlternateReaders(t *testing.T) {
 		`package p; func f(expr string) int { return strings.IndexByte(expr, '(') }`,
 		`package p; func f(args string) []string { return strings.Split(args, ",") }`,
 		"package p; func f(s string) { for _, c := range s { switch c { case '\\'': case '.': case '(': } } }",
-		`package p; func f(s string) { functionCallAt(s,0); findMatchingDelimiter(s,0,'(',')') }`,
+		`package p; func f(s string) { call,_:=functionCallAt(s,0); findMatchingDelimiter(s,call.open,'(',')') }`,
 		`package p; func f(q string) bool { prefix:="count("; alias:=prefix; return strings.Contains(q,alias) }`,
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "mutant.go", source, 0)
@@ -183,6 +183,24 @@ var functionGrammarBoundary = map[string]string{
 	"executor_subqueries.go:firstVariableOccurrence":     "Free-variable diagnostic position.",
 	"label_expression_rewrite.go:nameSingleNodePaths":    "Generated graph node names.",
 	"set_semantic_validation.go:expressionFreeVariables": "Local variable bindings.",
+	"create.go:parseParamPathParts": "Parameter member paths, not callable identities.",
+	"executor_query_routing.go:validateSyntaxNornic": "Statement grammar and delimiter validity.",
+	"group_by_rewrite.go:projectionWords": "Projection clause words.",
+	"keyword_scan.go:inPatternClause": "Clause and graph-pattern context.",
+	"label_expression_rewrite.go:mayReadPatternInPropertyMap": "Graph expressions in node property maps.",
+	"label_expression_rewrite.go:expression": "Graph-expression rewriting grammar.",
+	"literal_normalization.go:normalizeLiteralText": "Literal and interpolation rewriting.",
+	"map_pattern_context.go:newMapPatternContext": "Map versus graph-pattern context.",
+	"operators.go:enclosingCaseBlockEnd": "CASE block grammar.",
+	"path_selector_search.go:readsPatternVariable": "Pattern variable references.",
+	"pipeline_write_stretch.go:addStretchPropertyReads": "Property dependency tracking.",
+	"property_access_semantic_validation.go:scanPropertyAccesses": "Property and variable references.",
+	"query_structure_rewrite.go:topLevelWords": "Statement clause words.",
+	"return_order_semantic_validation.go:forEachSemanticExpressionReference": "Expression variable references.",
+	"set_semantic_validation.go:trailingWordAfterOperand": "Operand-following syntax.",
+	"standalone_order_rewrite.go:scanStandaloneOrderClauses": "Standalone ordering clause grammar.",
+	"static_operator_types.go:staticSliceBounds": "List subscript slice bounds.",
+	"traversal_endpoint_analysis.go:traversalVariablePropertiesRead": "Graph endpoint property dependencies.",
 }
 
 func rawCallablePattern(node ast.Node, aliases map[string]bool) bool {
