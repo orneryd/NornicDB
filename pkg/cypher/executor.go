@@ -1081,11 +1081,11 @@ func (e *StorageExecutor) logger() *slog.Logger {
 // this method is called, i.e., only when the executor's measured duration
 // exceeded the configured threshold. The hot path (Execute fast return)
 // never enters this method.
-func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, duration time.Duration) {
+func (e *StorageExecutor) emitSlowQueryLog(ctx context.Context, query string, plan *ExecutionPlan, duration time.Duration) {
 	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
 		return
 	}
-	redacted := e.redactForLog(StripComments(query))
+	redacted := e.redactForLog(ctx, StripComments(query))
 	hash := PlanHash(plan)
 	if plan == nil || plan.Root == nil {
 		// The normal (non-EXPLAIN/PROFILE) Execute() path never builds an

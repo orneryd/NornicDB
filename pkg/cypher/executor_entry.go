@@ -158,16 +158,27 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		embeddingGeneration = embeddingState.generation
 	}
 	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
+	// Logging is part of the statement's deadline. Release registry and query
+	// limit contexts after its deferred emission, so normal completion does
+	// not look like cancellation to the redactor.
+	var running runningStatement
+	var queryLimitCancel context.CancelFunc
+	defer func() {
+		running.done()
+		if queryLimitCancel != nil {
+			queryLimitCancel()
+		}
+	}()
 	originalCypher := cypher
 	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
 	defer func() {
 		dur := time.Since(slowStart)
 		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, dur, retErr == nil)
-		e.emitRejectionReport(originalCypher, retErr)
+		e.emitRejectionReport(ctx, originalCypher, retErr)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
 		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
 		// thread the planned tree here once cypher EXPLAIN refactoring is in.
-		e.emitSlowQueryLog(originalCypher, nil, dur)
+		e.emitSlowQueryLog(ctx, originalCypher, nil, dur)
 		// Plan 04-03 / MET-08 slow_queries_total: increments only when
 		// duration meets the configured threshold (matches the D-04c
 		// emitSlowQueryLog gate semantics — single threshold, single
@@ -672,7 +683,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// checked write path, the row loop) and whether it read or wrote;
 	// only an auto-commit statement that had already committed keeps its
 	// result (#751).
-	var running runningStatement
 	defer func() {
 		if running.tx != nil && running.tx.terminated.Load() && !running.tx.committed.Load() {
 			result, retErr = nil, transactionTerminatedError()
@@ -690,7 +700,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				result, retErr = nil, err
 			}
 		}
-		running.done()
 	}()
 	registerStatement := func() error {
 		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
@@ -790,7 +799,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// (a routed statement is admitted by its target database's Execute):
 	// query rate, the database's query time limit and concurrency slots.
 	// Uses interface{} to avoid importing multidb package (prevents circular dependencies)
-	var queryLimitCancel context.CancelFunc
 	if namespacedEngine, ok := e.storage.(interface {
 		GetQueryLimitChecker() interface {
 			CheckQueryRate() error
