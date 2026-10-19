@@ -2211,6 +2211,7 @@ func (s *Service) Close() error {
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
 	}
+	relationshipErr := s.joinRelationshipIndex()
 	s.continuationMu.Lock()
 	if s.continuationRegistry != nil && s.continuationOwned {
 		s.continuationRegistry.Close()
@@ -2253,7 +2254,7 @@ func (s *Service) Close() error {
 	s.indexMu.Unlock()
 	s.persistRunMu.Unlock()
 	s.publishClusterServing()
-	return nil
+	return relationshipErr
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.
