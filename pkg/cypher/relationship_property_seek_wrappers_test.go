@@ -90,8 +90,12 @@ func TestRelationshipPropertySeekWrappedEngineStack(t *testing.T) {
 					var seeks []*cypher.PlanOperator
 					var visit func(*cypher.PlanOperator)
 					visit = func(op *cypher.PlanOperator) {
-						if op.OperatorType == "RelationshipIndexSeek" { seeks = append(seeks, op) }
-						for _, child := range op.Children { visit(child) }
+						if op.OperatorType == "RelationshipIndexSeek" {
+							seeks = append(seeks, op)
+						}
+						for _, child := range op.Children {
+							visit(child)
+						}
 					}
 					visit(plan.Root)
 					require.Len(t, seeks, 1, "%s/%s must execute a seek", database, pattern)

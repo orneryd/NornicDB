@@ -16,13 +16,17 @@ func (w *WALEngine) ScopedRelationshipPropertySeeksAvailable() bool {
 
 func (w *WALEngine) SeekRelationships(ctx context.Context, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
 	p, ok := w.engine.(RelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationships(ctx, relType, properties, values)
 }
 
 func (w *WALEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
 	p, ok := w.engine.(ScopedRelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
 }
 
@@ -38,13 +42,17 @@ func (t *TracedEngine) ScopedRelationshipPropertySeeksAvailable() bool {
 
 func (t *TracedEngine) SeekRelationships(ctx context.Context, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
 	p, ok := t.Engine.(RelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationships(ctx, relType, properties, values)
 }
 
 func (t *TracedEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
 	p, ok := t.Engine.(ScopedRelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
 }
 
@@ -53,8 +61,8 @@ var (
 	_ ScopedRelationshipPropertySeeker = (*MemoryEngine)(nil)
 	_ ScopedRelationshipPropertySeeker = (*WALEngine)(nil)
 	_ ScopedRelationshipPropertySeeker = (*TracedEngine)(nil)
-	_ RelationshipPropertySeeker = (*WALEngine)(nil)
-	_ RelationshipPropertySeeker = (*TracedEngine)(nil)
-	_ RelationshipPropertySeeker = (*NamespacedEngine)(nil)
-	_ RelationshipPropertySeeker = (*BadgerTransaction)(nil)
+	_ RelationshipPropertySeeker       = (*WALEngine)(nil)
+	_ RelationshipPropertySeeker       = (*TracedEngine)(nil)
+	_ RelationshipPropertySeeker       = (*NamespacedEngine)(nil)
+	_ RelationshipPropertySeeker       = (*BadgerTransaction)(nil)
 )

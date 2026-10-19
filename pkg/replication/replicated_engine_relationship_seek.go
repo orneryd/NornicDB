@@ -20,17 +20,21 @@ func (e *ReplicatedEngine) ScopedRelationshipPropertySeeksAvailable() bool {
 
 func (e *ReplicatedEngine) SeekRelationships(ctx context.Context, relType string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
 	p, ok := e.Engine.(storage.RelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationships(ctx, relType, properties, values)
 }
 
 func (e *ReplicatedEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
 	p, ok := e.Engine.(storage.ScopedRelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
 }
 
 var (
-	_ storage.RelationshipPropertySeeker = (*ReplicatedEngine)(nil)
+	_ storage.RelationshipPropertySeeker       = (*ReplicatedEngine)(nil)
 	_ storage.ScopedRelationshipPropertySeeker = (*ReplicatedEngine)(nil)
 )
