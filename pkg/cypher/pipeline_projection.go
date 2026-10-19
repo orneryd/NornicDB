@@ -820,13 +820,8 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 		p := q.Clauses[0].Projection
 		plan := &returnProjectionPlan{modifiers: p.Modifiers, distinct: p.Distinct, star: p.Star}
 		for _, item := range p.Items {
-			alias := item.Alias
-			if alias == "" {
-				alias = item.Name
-			}
-			if alias == "" {
-				alias = item.Expression
-			}
+			alias := item.Column
+
 			if p.Star {
 				text := item.Expression
 				if item.Alias != "" {

@@ -44,27 +44,24 @@ func TestFabricStructuralWriteAndUnionOracle(t *testing.T) {
 					{"mismatch_names", "RETURN 1 AS a UNION ALL RETURN 2 AS b", "", true},
 					{"mismatch_count", "RETURN 1 AS a UNION RETURN 2 AS a,3 AS b", "", true},
 					{"empty_mismatch", "UNWIND [] AS n RETURN n AS a UNION ALL RETURN 2 AS b", "", true},
+					{"star_mismatch", "WITH 1 AS a RETURN * UNION ALL WITH 2 AS b RETURN *", "", true},
+					{"expression_name_mismatch", "WITH 7 AS union RETURN coalesce(union,0) UNION ALL WITH 7 AS union RETURN coalesce(`union`,0)", "", true},
 				} {
 					t.Run(fmt.Sprintf("%s/explicit_%v", shape.name, explicit), func(t *testing.T) {
+						var expectedColumns []string
 						if driver != nil {
 							ref, err := neo4j.ExecuteQuery(ctx, driver, shape.body, nil, neo4j.EagerResultTransformer)
 							if shape.invalid {
 								require.Error(t, err)
 							} else {
 								require.NoError(t, err)
+								expectedColumns = ref.Keys
 								rows := make([][]interface{}, 0, len(ref.Records))
 								for _, record := range ref.Records {
 									rows = append(rows, record.Values)
 								}
 								rowsEqual(t, rows, shape.want)
 							}
-						}
-						exec := base
-						if explicit {
-							exec = fabricCallRowsCompositeExecutor(t, base)
-							_, err := exec.Execute(ctx, "BEGIN", nil)
-							require.NoError(t, err)
-							defer func() { _, err := exec.Execute(ctx, "ROLLBACK", nil); require.NoError(t, err) }()
 						}
 						// The outer USE is inherited by both branches; the nested variant also
 						// exercises APPLY's UNION iterator rather than only top-level execution.
@@ -77,12 +74,25 @@ func TestFabricStructuralWriteAndUnionOracle(t *testing.T) {
 							projection = "RETURN `UNION`, `CALL`"
 						}
 						for _, query := range []string{"USE comp.one " + body, "USE comp CALL { USE comp.one " + body + " } " + projection} {
+							exec := base
+							if explicit {
+								exec = fabricCallRowsCompositeExecutor(t, base)
+								_, err := exec.Execute(ctx, "BEGIN", nil)
+								require.NoError(t, err)
+							}
 							result, err := exec.Execute(ctx, query, nil)
+							if explicit {
+								_, endErr := exec.Execute(ctx, "ROLLBACK", nil)
+								require.NoError(t, endErr)
+							}
 							if shape.invalid {
 								require.ErrorContains(t, err, "same columns")
 								continue
 							}
 							require.NoError(t, err)
+							if expectedColumns != nil {
+								require.Equal(t, expectedColumns, result.Columns)
+							}
 							rowsEqual(t, result.Rows, shape.want)
 						}
 					})

@@ -16,10 +16,11 @@ import (
 // between importing WITH and a subquery, which the single-graph script rule
 // cannot represent. No consumer recognizes keywords in source text.
 type QueryStructure struct {
-	Clauses   []QueryClause
-	Err       error
-	LocalText string
-	tree      antlr4.ParserRuleContext
+	Clauses    []QueryClause
+	Err        error
+	LocalText  string
+	LocalEdits []QueryTextEdit
+	tree       antlr4.ParserRuleContext
 }
 
 type QueryClause struct {
@@ -58,6 +59,7 @@ type QueryProjection struct {
 
 type QueryProjectionItem struct {
 	Expression, Alias, Name string
+	Column                  string
 	tree                    grammar.IExpressionContext
 }
 
@@ -455,6 +457,13 @@ func (r *structureReader) projection(body grammar.IProjectionBodyContext) *Query
 			v.Alias = unquoteSyntaxName(r.source(item.Symbol()))
 		}
 		v.Name = syntaxIdentifier(item.Expression())
+		v.Column = v.Alias
+		if v.Column == "" {
+			v.Column = v.Name
+		}
+		if v.Column == "" {
+			v.Column = v.Expression
+		}
 		walkSyntax(item.Expression(), func(node antlr4.Tree) {
 			switch value := node.(type) {
 			case grammar.ICountAllContext:
@@ -1322,15 +1331,24 @@ func (r *structureReader) lower(q *QueryStructure) string {
 		if len(gap) > 0 && (keywords[previousStart] && keywords[start] || strings.Contains(gap, "/*") || strings.Contains(gap, "//")) {
 			gap = " "
 		}
+		if gap != r.text[previousEnd:start] {
+			q.LocalEdits = append(q.LocalEdits, QueryTextEdit{previousEnd, start, gap})
+		}
 		out.WriteString(gap)
 		if nameIndex < len(names) && names[nameIndex].start == start {
 			out.WriteString(names[nameIndex].text)
 			end = names[nameIndex].end
+			if names[nameIndex].text != r.text[start:end] {
+				q.LocalEdits = append(q.LocalEdits, QueryTextEdit{start, end, names[nameIndex].text})
+			}
 			nameIndex++
 		} else {
 			out.WriteString(r.text[start:end])
 		}
 		previousEnd, previousStart = end, start
 	}
-	return strings.TrimSpace(out.String())
+	if previousEnd < len(r.text) {
+		q.LocalEdits = append(q.LocalEdits, QueryTextEdit{previousEnd, len(r.text), ""})
+	}
+	return out.String()
 }
