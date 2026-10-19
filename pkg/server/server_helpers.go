@@ -189,6 +189,34 @@ func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, d
 	return true
 }
 
+// authorizeDatabaseOperation checks direct data operations against the same
+// principal permission resolver as Cypher, before feature or data handling.
+func (s *Server) authorizeDatabaseOperation(w http.ResponseWriter, r *http.Request, database string, permissions ...auth.Permission) bool {
+	access := s.principalAccess(getClaims(r))
+	for _, permission := range permissions {
+		if !access.Allows(database, string(permission)) {
+			s.writeBoundaryNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", &cypher.PermissionDeniedError{Permission: string(permission)})
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Request, permissions ...auth.Permission) bool {
+	if len(permissions) == 0 {
+		permissions = []auth.Permission{auth.PermRead, auth.PermWrite, auth.PermAdmin}
+	}
+	for _, database := range s.dbManager.ListDatabases() {
+		if database == nil || database.Type == "system" {
+			continue
+		}
+		if !s.authorizeDatabaseOperation(w, r, database.Name, permissions...) {
+			return false
+		}
+	}
+	return true
+}
+
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
@@ -208,9 +236,10 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	// The principal's one permission resolver (principalAccess), which
 	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
 	// Heimdall, MCP and plugins authorize through them.
-	access := s.principalAccess(claims)
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
-		return access.Allows(database, string(permission))
+		// Streaming consumers must observe current database privileges and
+		// allowlists, rather than the selection snapshot at subscription time.
+		return s.principalAccess(claims).Allows(database, string(permission))
 	})
 	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	selections := make(map[string]string)

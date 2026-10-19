@@ -28,6 +28,9 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		if dbName == "system" {
 			continue
 		}
+		if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+			continue
+		}
 
 		storage, err := s.dbManager.GetStorage(dbName)
 		if err != nil {
@@ -49,7 +52,7 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	dbStats := map[string]interface{}{
 		"node_count":   totalNodeCount,
 		"edge_count":   totalEdgeCount,
-		"databases":    len(databases),
+		"databases":    len(perDatabaseStats),
 		"per_database": perDatabaseStats,
 	}
 
@@ -79,6 +82,10 @@ func (s *Server) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -109,6 +116,10 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAllDatabaseOperation(w, r) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
