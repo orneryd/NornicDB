@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retried before the fixed expiry. Other producer errors and failed delivery of
   a produced page still retire the stream and release capacity (#1580).
 
+- Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
+  and read scalar endpoint properties without decoding whole node bodies (#1496, #1497).
+
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 
