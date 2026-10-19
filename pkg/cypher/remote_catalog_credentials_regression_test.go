@@ -24,7 +24,7 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 	const secret = "synthetic-query-public-492715 /+&=?"
 	aliases := []string{"password", "api_key", "X-Amz-Signature", "X-Goog-Signature", "AWSAccessKeyId", "clientSecret", "fixture_seal"}
 	for _, key := range observability.DefaultRedactKeys {
-		if alias, ok := strings.CutPrefix(key, "url_query_"); ok {
+		if alias, ok := strings.CutPrefix(key, "url_query_"); ok && alias != "fixture_seal" {
 			aliases = append(aliases, alias)
 		}
 	}
