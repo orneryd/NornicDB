@@ -12,7 +12,10 @@ import (
 // Observe committed storage from inside the next public procedure action.
 // Reading the caller's pending wrapper would conceal an outer-transaction bug.
 func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
- for _,name:=range []string{"apoc.periodic.iterate","apoc.periodic.rock_n_roll","apoc.periodic.commit"} {
+ ensureBuiltInProceduresRegistered()
+ for _,contract:=range ListRegisteredProcedures() {
+  if !contract.OwnsTransactions { continue }
+  name:=contract.Name
   for _,composite:=range []bool{false,true} {
    for _,explicit:=range []bool{false,true} {
     for _,failure:=range []bool{false,true} {
@@ -40,6 +43,32 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
      })
     }
    }
+  }
+ }
+}
+
+func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
+ ensureBuiltInProceduresRegistered()
+ for _,contract:=range ListRegisteredProcedures() {
+  if !contract.OwnsTransactions || contract.Name=="apoc.periodic.commit" { continue }
+  for _,composite:=range []bool{false,true} {
+   t.Run(fmt.Sprintf("%s/fabric=%v",contract.Name,composite),func(t *testing.T){
+    exec,committed:=newProcedureAdmissionExecutor(t,composite)
+    cleanupAdmissionProcedure(t,"u5batch.atomic")
+    calls,visible:=0,-1
+    require.NoError(t,RegisterUserProcedure(ProcedureSpec{Name:"u5batch.atomic",Mode:ProcedureModeWrite,Returns:[]ProcedureColumn{{Name:"v",Type:"INTEGER"}}},func(ctx context.Context,caller *StorageExecutor,_ string,_ []interface{})(*ExecuteResult,error){
+     calls++
+     if calls==3 { nodes,err:=committed.GetNodesByLabel("U5BatchAtomic"); if err!=nil{return nil,err}; visible=len(nodes) }
+     if calls==4 { return nil,errors.New("u5 atomic batch action failure") }
+     return caller.Execute(ctx,"CREATE (:U5BatchAtomic) RETURN 1 AS v",nil)
+    }))
+    query:="CALL "+contract.Name+"('UNWIND [1,2,3,4] AS input RETURN input','CALL u5batch.atomic() YIELD v RETURN v',{batchSize:2}) YIELD committedOperations,failedOperations,failedBatches RETURN committedOperations,failedOperations,failedBatches"
+    if composite { query="CALL { USE admission_comp.one "+query+" } RETURN *" }
+    result,err:=exec.Execute(context.Background(),query,nil); require.NoError(t,err)
+    require.Equal(t,2,visible,"first two-row batch committed before next begins")
+    nodes,err:=committed.GetNodesByLabel("U5BatchAtomic"); require.NoError(t,err); require.Len(t,nodes,2,"failed batch rolls back its earlier action, retaining completed batch")
+    require.Equal(t,[][]interface{}{{int64(2),int64(2),int64(1)}},result.Rows)
+   })
   }
  }
 }
