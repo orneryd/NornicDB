@@ -461,6 +461,23 @@ func NewCPUExactScorer(getter VectorGetter) *CPUExactScorer {
 
 // ScoreCandidates computes exact scores for candidates using CPU.
 func (c *CPUExactScorer) ScoreCandidates(ctx context.Context, query []float32, candidates []Candidate) ([]ScoredCandidate, error) {
+	scored, err := c.scoreCandidateValues(ctx, query, candidates)
+	if err != nil {
+		return nil, err
+	}
+	if _, fileScored := c.getter.(*VectorFileStore); fileScored {
+		return scored, nil // the file scorer already returns score order
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].Score > scored[j].Score
+	})
+	return scored, nil
+}
+
+// scoreCandidateValues owns CPU scoring without imposing an output order.
+// The pipeline collapses member scores to nodes and orders those nodes itself;
+// sorting all member vectors before that collapse repeats discarded work.
+func (c *CPUExactScorer) scoreCandidateValues(ctx context.Context, query []float32, candidates []Candidate) ([]ScoredCandidate, error) {
 	if c.getter == nil {
 		return nil, nil
 	}
@@ -495,11 +512,6 @@ func (c *CPUExactScorer) ScoreCandidates(ctx context.Context, query []float32, c
 			Score: float64(score),
 		})
 	}
-
-	// Sort by exact score descending
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].Score > scored[j].Score
-	})
 
 	return scored, nil
 }
@@ -974,7 +986,13 @@ func pushBestScores(scores []float64, score float64, k int) []float64 {
 
 // scoreFinal scores the pool with the pipeline's exact scorer.
 func (p *VectorSearchPipeline) scoreFinal(ctx context.Context, query []float32, pool []Candidate) ([]ScoredCandidate, error) {
-	scored, err := p.exactScorer.ScoreCandidates(ctx, query, pool)
+	var scored []ScoredCandidate
+	var err error
+	if cpu, ok := p.exactScorer.(*CPUExactScorer); ok {
+		scored, err = cpu.scoreCandidateValues(ctx, query, pool)
+	} else {
+		scored, err = p.exactScorer.ScoreCandidates(ctx, query, pool)
+	}
 	if err != nil {
 		return nil, localizedError(localization.SearchExactScoringFailed(err), err)
 	}
