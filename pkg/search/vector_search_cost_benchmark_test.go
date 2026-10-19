@@ -174,14 +174,14 @@ func BenchmarkChunkedCorpusVectorSearch(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
+			buildCtx, cancelBuild := context.WithTimeout(context.Background(), time.Minute)
+			_, buildErr := svc.getOrCreateHNSWIndex(buildCtx, dims)
+			cancelBuild()
+			if buildErr != nil {
+				b.Fatal(buildErr)
+			}
 			if _, err := svc.getOrCreateVectorPipeline(context.Background()); err != nil {
 				b.Fatal(err)
-			}
-			for deadline := time.Now().Add(time.Minute); svc.hnswRebuildInFlight.Load(); {
-				if time.Now().After(deadline) {
-					b.Fatal("HNSW build did not finish")
-				}
-				time.Sleep(time.Millisecond)
 			}
 			query := next()
 			for _, page := range []struct {
